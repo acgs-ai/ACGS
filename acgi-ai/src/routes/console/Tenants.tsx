@@ -65,9 +65,9 @@ export function Tenants() {
         </div>
       )}
 
-      <div className="c-toolbar" style={{ marginTop: 32 }}>
-        <strong style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 400 }}>
-          All <em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>tenancies</em>
+      <div className="c-toolbar u-mt-3xl">
+        <strong className="u-display-h">
+          All <em className="u-em-rust">tenancies</em>
         </strong>
         <span className="c-meta">switching reloads the constitution against the new tenant</span>
       </div>
@@ -79,9 +79,9 @@ export function Tenants() {
             <th>Tenant</th>
             <th>Tier</th>
             <th>Jurisdiction</th>
-            <th style={{ textAlign: 'right' }}>Agents</th>
-            <th style={{ textAlign: 'right' }}>Matters</th>
-            <th style={{ textAlign: 'right' }}>Refusals · 24h</th>
+            <th className="u-align-right">Agents</th>
+            <th className="u-align-right">Matters</th>
+            <th className="u-align-right">Refusals · 24h</th>
             <th>State</th>
             <th>Action</th>
           </tr>
@@ -91,52 +91,24 @@ export function Tenants() {
             <tr key={t.id}>
               <td className="mono">{t.id}</td>
               <td>
-                <strong style={{ fontWeight: 600 }}>{t.name}</strong>
-                <div
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    color: 'var(--muted)',
-                    marginTop: 2,
-                    letterSpacing: '0.04em',
-                  }}
-                >
-                  last {t.lastActivity}
-                </div>
+                <strong className="u-fw-600">{t.name}</strong>
+                <div className="tenants-cell-meta">last {t.lastActivity}</div>
               </td>
-              <td className="mono" style={{ color: 'var(--ink-2)' }}>
-                {t.tier}
-              </td>
-              <td className="mono" style={{ color: 'var(--muted)' }}>
-                {t.jurisdiction}
-              </td>
-              <td className="num" style={{ textAlign: 'right' }}>
-                {t.agents}
-              </td>
-              <td className="num" style={{ textAlign: 'right' }}>
-                {t.matters}
-              </td>
-              <td className="num" style={{ textAlign: 'right' }}>
-                {t.refusals24h.toLocaleString()}
-              </td>
+              <td className="mono u-color-ink-2">{t.tier}</td>
+              <td className="mono u-color-muted">{t.jurisdiction}</td>
+              <td className="num u-align-right">{t.agents}</td>
+              <td className="num u-align-right">{t.matters}</td>
+              <td className="num u-align-right">{t.refusals24h.toLocaleString()}</td>
               <td>
                 <span className={`pill ${STATE_TO_PILL[t.state]}`}>{t.state}</span>
               </td>
               <td>
                 {t.state === 'active' ? (
-                  <span className="c-meta" style={{ color: 'var(--ink-3)' }}>
-                    in session
-                  </span>
+                  <span className="c-meta u-color-ink-3">in session</span>
                 ) : t.state === 'sealed' ? (
-                  <span className="c-meta" style={{ color: 'var(--muted)' }}>
-                    request unsealing
-                  </span>
+                  <span className="c-meta u-color-muted">request unsealing</span>
                 ) : (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    style={{ padding: '6px 12px', fontSize: 13 }}
-                  >
+                  <button type="button" className="btn btn-ghost btn-sm">
                     Switch to →
                   </button>
                 )}
@@ -146,15 +118,7 @@ export function Tenants() {
         </tbody>
       </table>
 
-      <p
-        style={{
-          marginTop: 28,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--muted)',
-          letterSpacing: '0.06em',
-        }}
-      >
+      <p className="u-mt-xxl u-mono-cap-wide">
         ⁂ Switching tenancy emits an audit event; sealed tenancies require a custodian + maintainer
         attestation to reopen
       </p>

@@ -54,7 +54,7 @@ export function Privacy() {
           >
             acgs <span className="folio">⁂</span>
           </a>
-          <div className="m-nav-links" style={{ display: 'flex' }}>
+          <div className="m-nav-links">
             <a
               href="/"
               onClick={(e) => {
@@ -86,34 +86,15 @@ export function Privacy() {
           </a>
         </nav>
 
-        <header style={{ padding: '64px 0 40px' }}>
+        <header className="privacy-header">
           <div className="m-eyebrow">
             <span className="asterism">⁂</span>
             <span>Disclosure · effective MMXXVI · v1.0</span>
           </div>
-          <h1
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 400,
-              fontSize: 'clamp(48px, 6vw, 76px)',
-              lineHeight: 1.0,
-              letterSpacing: '-0.02em',
-              marginTop: 28,
-              maxWidth: '16ch',
-            }}
-          >
-            Privacy and <em style={{ fontStyle: 'italic', color: 'var(--accent)' }}>provenance</em>
+          <h1 className="privacy-h1">
+            Privacy and <em className="u-em-rust">provenance</em>
           </h1>
-          <p
-            style={{
-              fontFamily: 'var(--font-serif)',
-              fontSize: 20,
-              lineHeight: 1.55,
-              color: 'var(--ink-3)',
-              maxWidth: '60ch',
-              marginTop: 28,
-            }}
-          >
+          <p className="privacy-lede">
             Constitutional governance is a story about who is allowed to see what, and what gets
             countersigned. This page tells the same story about the operator behind the service. No
             third party touches the privileged console.
@@ -125,7 +106,7 @@ export function Privacy() {
             Marketing is hosted on a global edge CDN; the privileged console is hosted on
             operator-controlled compute. The split is structural, not stylistic — see DEPLOY.md §2.
           </p>
-          <table className="m-coverage" style={{ marginTop: 24 }}>
+          <table className="m-coverage privacy-coverage">
             <thead>
               <tr>
                 <th>Subprocessor</th>
@@ -139,16 +120,10 @@ export function Privacy() {
               {SUBPROCESSORS.map((s) => (
                 <tr key={s.name}>
                   <td>{s.name}</td>
-                  <td className="mono" style={{ color: 'var(--ink-2)' }}>
-                    {s.surface}
-                  </td>
-                  <td style={{ fontFamily: 'var(--font-serif)' }}>{s.purpose}</td>
-                  <td className="mono" style={{ color: 'var(--ink-3)' }}>
-                    {s.region}
-                  </td>
-                  <td className="mono" style={{ color: 'var(--muted)' }}>
-                    {s.dpa}
-                  </td>
+                  <td className="mono u-color-ink-2">{s.surface}</td>
+                  <td className="privacy-purpose-cell">{s.purpose}</td>
+                  <td className="mono u-color-ink-3">{s.region}</td>
+                  <td className="mono u-color-muted">{s.dpa}</td>
                 </tr>
               ))}
             </tbody>
@@ -187,7 +162,7 @@ export function Privacy() {
             Data subject requests, access, deletion, portability — all routed to the same address.
             Reply within ten business days, fulfill within thirty.
           </p>
-          <p style={{ marginTop: 16 }}>
+          <p className="u-mt-lg">
             <strong>Data Protection Officer:</strong>{' '}
             <a className="m-text-link" href="mailto:dpo@acgs.ai">
               dpo@acgs.ai
@@ -195,16 +170,7 @@ export function Privacy() {
           </p>
         </Section>
 
-        <p
-          style={{
-            margin: '64px 0',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--muted)',
-            letterSpacing: '0.06em',
-            textAlign: 'center',
-          }}
-        >
+        <p className="privacy-version-stamp">
           ⁂ This document is itself versioned · v1.0 · 608508a9bd224290 · MMXXVI
         </p>
 
@@ -291,23 +257,12 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <section style={{ marginTop: 40 }}>
+    <section className="privacy-section">
       <div className="m-sec-head">
         <div className="num">{folio}</div>
         <h2>{title}</h2>
       </div>
-      <div
-        style={{
-          marginTop: 28,
-          fontFamily: 'var(--font-serif)',
-          fontSize: 16,
-          lineHeight: 1.65,
-          color: 'var(--ink-2)',
-          maxWidth: '64ch',
-        }}
-      >
-        {children}
-      </div>
+      <div className="privacy-section-body">{children}</div>
     </section>
   )
 }

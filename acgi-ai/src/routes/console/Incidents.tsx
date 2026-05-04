@@ -67,15 +67,7 @@ export function Incidents() {
         ))}
       </div>
 
-      <p
-        style={{
-          marginTop: 24,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--muted)',
-          letterSpacing: '0.06em',
-        }}
-      >
+      <p className="u-mt-xl u-mono-cap-wide">
         ⁂ Incidents are escalations off the audit trail · every entry here is also signed into the
         ledger at the same hash
       </p>

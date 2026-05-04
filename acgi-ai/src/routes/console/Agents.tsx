@@ -46,7 +46,7 @@ export function Agents() {
             <th>Role</th>
             <th>MACI lane</th>
             <th>Model</th>
-            <th style={{ textAlign: 'right' }}>Refusals · 24h</th>
+            <th className="u-align-right">Refusals · 24h</th>
             <th>Posture</th>
             <th>Last seen</th>
           </tr>
@@ -56,26 +56,18 @@ export function Agents() {
             <tr key={a.id}>
               <td className="mono">{a.id}</td>
               <td>
-                <strong style={{ fontWeight: 600 }}>{a.name}</strong>
+                <strong className="u-fw-600">{a.name}</strong>
               </td>
-              <td style={{ color: 'var(--ink-2)' }}>{a.role}</td>
-              <td className="mono" style={{ color: 'var(--ink-2)' }}>
-                {a.lane}
-              </td>
-              <td className="mono" style={{ color: 'var(--muted)' }}>
-                {a.model}
-              </td>
-              <td className="num" style={{ textAlign: 'right' }}>
-                {a.refusals24h.toLocaleString()}
-              </td>
+              <td className="u-color-ink-2">{a.role}</td>
+              <td className="mono u-color-ink-2">{a.lane}</td>
+              <td className="mono u-color-muted">{a.model}</td>
+              <td className="num u-align-right">{a.refusals24h.toLocaleString()}</td>
               <td>
                 <span className={`pill ${a.health}`}>
                   {a.health === 'privileged' ? 'Privileged' : a.health}
                 </span>
               </td>
-              <td className="mono" style={{ color: 'var(--muted)' }}>
-                {a.lastSeen}
-              </td>
+              <td className="mono u-color-muted">{a.lastSeen}</td>
             </tr>
           ))}
         </tbody>

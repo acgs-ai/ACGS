@@ -16,6 +16,7 @@
  * ============================================================================ */
 
 @import "./fonts.css";
+@import "./csp-utilities.css";
 
 :root {
   /* §2.1 Color — warm paper */

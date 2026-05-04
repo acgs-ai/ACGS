@@ -1,0 +1,263 @@
+/* ============================================================================
+ * CSP-safe utilities — DEPLOY.md §5.
+ *
+ * Replaces inline style={{}} attributes in JSX so the privileged console
+ * origin can ship `style-src 'self'` with no `'unsafe-inline'`. React's
+ * style={{}} compiles to inline style="..." attributes, which CSP cannot
+ * hash and cannot nonce; the only path to strict CSP is to eliminate them.
+ *
+ * Naming: `.u-*` marks utilities consumed across many components.
+ * Component-scoped one-offs (.privacy-*, .compile-*, .tenants-*, etc.)
+ * live here too, named for their owner.
+ *
+ * These are NOT Tailwind. The design contract still bans Tailwind utility
+ * names in JSX (CLAUDE.md / DESIGN.md).
+ * ============================================================================ */
+
+/* ── Text alignment ─────────────────────────────────────────────────────── */
+.u-align-right {
+  text-align: right;
+}
+.u-text-center {
+  text-align: center;
+}
+
+/* ── Color ──────────────────────────────────────────────────────────────── */
+.u-color-ink-2 {
+  color: var(--ink-2);
+}
+.u-color-ink-3 {
+  color: var(--ink-3);
+}
+.u-color-muted {
+  color: var(--muted);
+}
+
+/* ── Weight ─────────────────────────────────────────────────────────────── */
+.u-fw-600 {
+  font-weight: 600;
+}
+
+/* ── Italic-rust em (DESIGN.md §2.2 — the single brand emphasis) ───────── */
+.u-em-rust {
+  font-style: italic;
+  color: var(--accent);
+}
+
+/* ── Editorial prose lede ───────────────────────────────────────────────── */
+.u-prose-lede {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 64ch;
+  margin-bottom: var(--space-2xl);
+}
+.u-prose-lede-tight {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  max-width: 64ch;
+}
+
+/* ── Mono caption variants ──────────────────────────────────────────────── */
+.u-mono-cap {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.u-mono-cap-wide {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+.u-mono-cap-accent {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* ── Small display heading (in-section subtitles, Tenants/Compile) ──────── */
+.u-display-h {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+}
+
+/* ── Vertical rhythm — exact pixel values used by component layouts ─────── */
+.u-mt-2 {
+  margin-top: 2px;
+}
+.u-mt-sm {
+  margin-top: 8px;
+}
+.u-mt-md {
+  margin-top: 14px;
+}
+.u-mt-lg {
+  margin-top: 16px;
+}
+.u-mt-xl {
+  margin-top: 24px;
+}
+.u-mt-xxl {
+  margin-top: 28px;
+}
+.u-mt-3xl {
+  margin-top: 32px;
+}
+.u-mt-4xl {
+  margin-top: 40px;
+}
+.u-ml-auto {
+  margin-left: auto;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+/* Small variant used on .btn-ghost in row-level actions. */
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+/* Disabled state for ghost buttons — replaces inline opacity/cursor toggles. */
+.btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Tag spacing — Settings inline tag inside lede paragraph ───────────── */
+.u-tag-inline {
+  margin: 0 6px;
+}
+
+/* ── Flex rows ─────────────────────────────────────────────────────────── */
+/* Deliberations card foot (pill + mono cap). */
+.u-row-mt-md {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+/* NotFound minimal nav row. */
+.u-nav-row {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+}
+
+/* ── Privacy page (component-scoped) ───────────────────────────────────── */
+.privacy-header {
+  padding: 64px 0 40px;
+}
+.privacy-h1 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(48px, 6vw, 76px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin-top: 28px;
+  max-width: 16ch;
+}
+.privacy-lede {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  max-width: 60ch;
+  margin-top: 28px;
+}
+.privacy-section {
+  margin-top: 40px;
+}
+.privacy-section-body {
+  margin-top: 28px;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  max-width: 64ch;
+}
+.privacy-version-stamp {
+  margin: 64px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+.privacy-coverage {
+  margin-top: 24px;
+}
+.privacy-purpose-cell {
+  font-family: var(--font-serif);
+}
+
+/* ── Compile page (component-scoped) ───────────────────────────────────── */
+.compile-prose {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  max-width: 64ch;
+}
+.compile-counts-grid {
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line-softer);
+  border: 1px solid var(--line-softer);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.compile-count-cell {
+  background: var(--paper-2);
+  padding: 24px 24px 22px;
+}
+.compile-count-value {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-size: 44px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.compile-count-foot {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.compile-hash-meta {
+  color: var(--ink-3);
+  text-transform: none;
+  letter-spacing: 0.04em;
+}
+.compile-note-cell {
+  color: var(--ink-3);
+  font-family: var(--font-serif);
+  font-size: 14px;
+}
+
+/* ── Tenants page (component-scoped) ───────────────────────────────────── */
+.tenants-cell-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  letter-spacing: 0.04em;
+}
+
+/* ── Account page (component-scoped) ───────────────────────────────────── */
+.account-stamp {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}

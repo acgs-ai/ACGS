@@ -34,22 +34,14 @@ export function Account() {
 
   return (
     <div>
-      <p
-        style={{
-          fontFamily: 'var(--font-serif)',
-          fontSize: 17,
-          lineHeight: 1.65,
-          color: 'var(--ink-2)',
-          maxWidth: '64ch',
-        }}
-      >
+      <p className="u-prose-lede-tight">
         Your record on the bus. The constitution decides which lanes you may operate in; you decide
         your authentication factors. Everything you do from this surface is countersigned in the
         audit trail under your name.
       </p>
 
       {/* Identity */}
-      <div className="settings-section" style={{ marginTop: 32 }}>
+      <div className="settings-section u-mt-3xl">
         <div className="settings-section-head">Identity</div>
         {data.identity.map((f) => (
           <div className="settings-row" key={f.key}>
@@ -70,15 +62,9 @@ export function Account() {
             </span>
             <span className="val">{f.value}</span>
             <button
-              className="btn btn-ghost"
+              className="btn btn-ghost btn-sm"
               type="button"
               disabled={f.source === 'constitution' || f.source === 'sso'}
-              style={{
-                padding: '6px 12px',
-                fontSize: 13,
-                opacity: f.source === 'self' ? 1 : 0.4,
-                cursor: f.source === 'self' ? 'pointer' : 'not-allowed',
-              }}
             >
               {f.source === 'self' ? 'Rotate' : '—'}
             </button>
@@ -89,7 +75,7 @@ export function Account() {
       {/* Active sessions */}
       <div className="settings-section">
         <div className="settings-section-head">Active sessions</div>
-        <table className="c-table" style={{ marginTop: 8 }}>
+        <table className="c-table u-mt-sm">
           <thead>
             <tr>
               <th>ID</th>
@@ -106,15 +92,9 @@ export function Account() {
               <tr key={s.id}>
                 <td className="mono">{s.id}</td>
                 <td>{s.device}</td>
-                <td className="mono" style={{ color: 'var(--ink-2)' }}>
-                  {s.ip}
-                </td>
-                <td className="mono" style={{ color: 'var(--muted)' }}>
-                  {s.location}
-                </td>
-                <td className="mono" style={{ color: 'var(--muted)' }}>
-                  {s.started}
-                </td>
+                <td className="mono u-color-ink-2">{s.ip}</td>
+                <td className="mono u-color-muted">{s.location}</td>
+                <td className="mono u-color-muted">{s.started}</td>
                 <td>
                   {s.current ? (
                     <span className="pill confirmed">this session</span>
@@ -124,15 +104,9 @@ export function Account() {
                 </td>
                 <td>
                   {s.current ? (
-                    <span className="c-meta" style={{ color: 'var(--ink-3)' }}>
-                      —
-                    </span>
+                    <span className="c-meta u-color-ink-3">—</span>
                   ) : (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ padding: '6px 12px', fontSize: 13 }}
-                    >
+                    <button type="button" className="btn btn-ghost btn-sm">
                       Revoke
                     </button>
                   )}
@@ -146,7 +120,7 @@ export function Account() {
       {/* Recent actions — scoped to this user */}
       <div className="settings-section">
         <div className="settings-section-head">Recent actions · last 5 by you</div>
-        <div className="audit-list" style={{ marginTop: 8 }}>
+        <div className="audit-list u-mt-sm">
           {data.recentActions.map((a) => (
             <div className="audit-row" key={a.ts}>
               <span className="ts">{a.ts}</span>
@@ -177,28 +151,10 @@ export function Account() {
         <button className="btn btn-ghost" type="button" onClick={() => navigate('/login')}>
           Sign out
         </button>
-        <span
-          style={{
-            marginLeft: 'auto',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11,
-            color: 'var(--muted)',
-            letterSpacing: '0.04em',
-          }}
-        >
-          608508a9 · attest carried · session S-9421
-        </span>
+        <span className="account-stamp">608508a9 · attest carried · session S-9421</span>
       </div>
 
-      <p
-        style={{
-          marginTop: 28,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--muted)',
-          letterSpacing: '0.06em',
-        }}
-      >
+      <p className="u-mt-xxl u-mono-cap-wide">
         ⁂ The constitution rules you, you do not rule it · personal preferences do not override lane
         policy
       </p>

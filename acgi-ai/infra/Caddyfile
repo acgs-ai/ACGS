@@ -60,9 +60,10 @@
     Permissions-Policy        "camera=(), microphone=(), geolocation=(), interest-cohort=()"
     Cross-Origin-Opener-Policy   "same-origin"
     Cross-Origin-Resource-Policy "same-origin"
-    # CSP carries 'unsafe-inline' on style-src as a tracked debt — DEPLOY.md
-    # §5 retires this alongside the WOFF2 self-host before real tenant data.
-    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+    # Strict CSP — no 'unsafe-inline' anywhere. JSX inline styles eliminated
+    # in favour of utility/component classes (src/csp-utilities.css). See
+    # DEPLOY.md §5 for the rationale.
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
     # Don't advertise the server.
     -Server
   }

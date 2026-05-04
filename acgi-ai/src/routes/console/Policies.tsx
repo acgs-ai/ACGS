@@ -76,7 +76,7 @@ export function Policies() {
             <span>{active.id}</span>
             <span>· {active.citation}</span>
             <span>· hash 608508a9</span>
-            <span style={{ marginLeft: 'auto' }}>
+            <span className="u-ml-auto">
               <span className={`pill ${active.posture}`}>
                 {active.posture === 'privileged' ? 'Privileged' : active.posture}
               </span>

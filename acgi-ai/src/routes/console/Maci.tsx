@@ -19,9 +19,7 @@ function Lane({ title, meta, cards }: { title: string; meta: string; cards: Maci
             <span className={`pill ${c.posture}`}>
               {c.posture === 'privileged' ? 'Privileged' : c.posture}
             </span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)' }}>
-              open ›
-            </span>
+            <span className="u-mono-cap-accent">open ›</span>
           </div>
         </article>
       ))}
@@ -55,16 +53,7 @@ export function Maci() {
 
   return (
     <div>
-      <p
-        style={{
-          fontFamily: 'var(--font-serif)',
-          fontSize: 16,
-          lineHeight: 1.6,
-          color: 'var(--ink-3)',
-          maxWidth: '64ch',
-          marginBottom: 24,
-        }}
-      >
+      <p className="u-prose-lede">
         Three lanes, no overlap. An agent that drafts cannot validate; an agent that validates
         cannot execute. The bus refuses to dispatch any action whose lane provenance is missing or
         duplicated.

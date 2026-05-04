@@ -42,20 +42,9 @@ export function Settings() {
         <span className="c-meta">12 keys · 4 sections · v3.1.0</span>
       </div>
 
-      <p
-        style={{
-          fontFamily: 'var(--font-serif)',
-          fontSize: 16,
-          lineHeight: 1.6,
-          color: 'var(--ink-3)',
-          maxWidth: '64ch',
-          marginBottom: 24,
-        }}
-      >
+      <p className="u-prose-lede">
         Operator overrides are themselves audited. A value with the
-        <span className="tag constitution" style={{ margin: '0 6px' }}>
-          Constitution
-        </span>
+        <span className="tag constitution u-tag-inline">Constitution</span>
         tag cannot be edited from this page; amend the rule first, then compile.
       </p>
 
@@ -71,15 +60,9 @@ export function Settings() {
               <span className={`tag ${s.source}`}>{SOURCE_LABEL[s.source]}</span>
               <span className="val">{s.value}</span>
               <button
-                className="btn btn-ghost"
+                className="btn btn-ghost btn-sm"
                 type="button"
                 disabled={s.source === 'constitution'}
-                style={{
-                  padding: '6px 12px',
-                  fontSize: 13,
-                  opacity: s.source === 'constitution' ? 0.4 : 1,
-                  cursor: s.source === 'constitution' ? 'not-allowed' : 'pointer',
-                }}
               >
                 Edit
               </button>
@@ -88,15 +71,7 @@ export function Settings() {
         </div>
       ))}
 
-      <p
-        style={{
-          marginTop: 28,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--muted)',
-          letterSpacing: '0.06em',
-        }}
-      >
+      <p className="u-mt-xxl u-mono-cap-wide">
         ⁂ Every edit on this page lands in the audit trail · the bus does not silently re-read its
         own configuration
       </p>

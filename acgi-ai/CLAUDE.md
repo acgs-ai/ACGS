@@ -76,9 +76,12 @@ components:
 Router when data loaders or nested layouts are needed (DESIGN.md §7.3).
 
 **Styling.** Pure CSS with custom properties. Tokens declared once in
-`src/index.css`; component CSS lives in `src/App.css`. Hardcoded hex outside
-`src/index.css` is banned. Inline `style={{}}` is allowed only for one-off
-flexbox alignments and must reference `var(--*)` for any colour or font.
+`src/index.css`; component CSS lives in `src/App.css`; CSP-safe utilities and
+component-scoped one-offs in `src/csp-utilities.css`. Hardcoded hex outside
+`src/index.css` is banned. **Inline `style={{}}` is forbidden** — strict CSP
+on the console (`style-src 'self'`, no `'unsafe-inline'`) blocks both `<style>`
+tags and `style="..."` attributes (DEPLOY.md §5). Use an existing utility
+(`u-*`) or add a component-scoped class.
 
 **Data.** Every list, table, and queue renders module-level fixture data.
 There is no API client, no auth, no persistence. When real data lands it must

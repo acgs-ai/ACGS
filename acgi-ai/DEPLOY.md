@@ -262,12 +262,12 @@ The marketing and console surfaces share a baseline; the console adds.
 | `Cross-Origin-Resource-Policy` | cross-origin | **same-origin** | Console isolates |
 | `Content-Security-Policy` | report-only | **enforced** | See below |
 
-**Console CSP (target, enforced):**
+**Console CSP (enforced):**
 
 ```
 default-src 'self';
 script-src  'self';
-style-src   'self' 'unsafe-inline';   /* see note */
+style-src   'self';
 font-src    'self';
 img-src     'self' data:;
 connect-src 'self';
@@ -277,12 +277,12 @@ form-action 'self';
 upgrade-insecure-requests;
 ```
 
-**`'unsafe-inline'` on `style-src` is a debt, not a permission.** The
-React surface uses inline `style={{}}` for one-off flexbox alignments
-(`DESIGN.md §5.3`). To remove the debt either (a) move every inline
-style into a CSS class, or (b) ship a build-time nonce or hash list.
-Option (a) is cheapest and matches the design contract better. Track
-this as P0-before-real-tenants alongside the WOFF2 self-host.
+**Strict — no `'unsafe-inline'` anywhere.** Reaching this state required
+eliminating every JSX `style={{}}` from the source tree, since CSP cannot
+hash or nonce inline `style="..."` attributes. The replacements live in
+`src/csp-utilities.css` (utility `.u-*` classes + component-scoped
+classes). The design contract (CLAUDE.md) now bans inline styles on the
+privileged surface.
 
 **Marketing CSP (target, report-only):**
 
@@ -452,7 +452,6 @@ hash-anchored, operator-readable.
 
 | Item | Trigger | Notes |
 |---|---|---|
-| Strict CSP on console (`'unsafe-inline'` removed) | Before any real tenant URL | §5 of this doc. |
 | API reverse proxy on console origin | When `src/core/shared/` lands | §4 Caddyfile already sketches it. |
 | Cloudflare in front (single-domain) | If WAF / bot management becomes a buyer requirement | §2 weighed and deferred. |
 | Multi-region failover | When availability SLO > 99.9% | Single-region is fine until then; pair primary with a warm passive in another region. |

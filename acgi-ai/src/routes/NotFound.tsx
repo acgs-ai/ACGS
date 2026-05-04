@@ -28,7 +28,7 @@ export function NotFound({ surface, path }: Props) {
           >
             acgs <span className="folio">⁂</span>
           </a>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 24 }}>
+          <div className="u-nav-row">
             <a
               href="/"
               onClick={(e) => {

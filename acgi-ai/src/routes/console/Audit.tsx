@@ -57,15 +57,7 @@ export function Audit() {
         ))}
       </div>
 
-      <p
-        style={{
-          marginTop: 24,
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          color: 'var(--muted)',
-          letterSpacing: '0.06em',
-        }}
-      >
+      <p className="u-mt-xl u-mono-cap-wide">
         ⁂ Append-only · every entry is countersigned by the constitutional hash 608508a9bd224290 ·
         this view is a window onto the ledger, not the ledger
       </p>

@@ -61,20 +61,11 @@ export function Deliberations() {
                 <span>due {d.due.split(' ')[1]}</span>
               </div>
               <p className="body">{d.body}</p>
-              <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div className="u-row-mt-md">
                 <span className={`pill ${d.posture}`}>
                   {d.posture === 'privileged' ? 'Privileged' : d.posture}
                 </span>
-                <span
-                  style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 11,
-                    color: 'var(--muted)',
-                    letterSpacing: '0.04em',
-                  }}
-                >
-                  608508a9 · attest required
-                </span>
+                <span className="u-mono-cap">608508a9 · attest required</span>
               </div>
             </div>
             <div className="delib-card-actions">
