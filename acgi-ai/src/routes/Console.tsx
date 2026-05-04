@@ -1,5 +1,5 @@
-import { ArrowRight, Bell } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { ArrowRight, Bell, Menu, X } from 'lucide-react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { navigate } from '../lib/navigate'
 import { Account } from './console/Account'
 import { Agents } from './console/Agents'
@@ -177,10 +177,28 @@ const NOT_FOUND_META = {
 
 export function Console({ path }: { path: string }) {
   const meta = PAGE_TITLES[path] ?? (path === '/console' ? PAGE_TITLES['/console'] : NOT_FOUND_META)
+  const [navOpen, setNavOpen] = useState(false)
+
+  // F-A1 — close the mobile drawer whenever the route changes. The
+  // sidebar's <a onClick> handlers call navigate(), which mutates `path`
+  // through the popstate listener in App.tsx; this effect catches every
+  // such mutation and any external navigation as well.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: path is the reactivity trigger; the effect deliberately ignores its value
+  useEffect(() => {
+    setNavOpen(false)
+  }, [path])
+
   return (
-    <div className="console">
+    <div className={`console${navOpen ? ' nav-open' : ''}`}>
+      {/* Backdrop — visible only at <=720 when the drawer is open */}
+      <button
+        type="button"
+        className="c-nav-backdrop"
+        aria-label="Close navigation"
+        onClick={() => setNavOpen(false)}
+      />
       {/* Sidebar */}
-      <aside className="c-side" aria-label="Console navigation">
+      <aside id="c-side" className="c-side" aria-label="Console navigation">
         <a
           className="c-brand"
           href="/"
@@ -256,6 +274,16 @@ export function Console({ path }: { path: string }) {
         </div>
 
         <div className="c-topbar">
+          <button
+            type="button"
+            className="c-nav-toggle"
+            aria-expanded={navOpen}
+            aria-controls="c-side"
+            aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+            onClick={() => setNavOpen((v) => !v)}
+          >
+            {navOpen ? <X size={16} strokeWidth={1.8} /> : <Menu size={16} strokeWidth={1.8} />}
+          </button>
           <div>
             <div className="crumb">{meta.crumb}</div>
             <h1>{meta.title}</h1>

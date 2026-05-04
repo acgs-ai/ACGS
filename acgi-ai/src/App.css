@@ -866,6 +866,37 @@
   gap: 8px;
 }
 
+/* F-A1 — mobile drawer trigger + backdrop. Both base-hidden at desktop;
+   the @media (max-width: 720px) block flips them on along with the
+   fixed-position .c-side drawer. */
+.c-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.c-nav-toggle:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+.c-nav-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 26, 26, 0.4);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  z-index: 99;
+}
+
 .c-heartbeat {
   display: grid;
   grid-template-columns: max-content repeat(6, minmax(0, 1fr));
@@ -1553,8 +1584,37 @@
   .c-main {
     min-width: 0;
   }
+  /* F-A1 — sidebar becomes a fixed-position drawer that slides in from
+     the left when .console.nav-open is set. Backdrop covers the rest of
+     the viewport so a tap outside dismisses. */
   .c-side {
-    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(82vw, 320px);
+    transform: translateX(-100%);
+    transition: transform 220ms ease-out;
+    z-index: 100;
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+  }
+  .console.nav-open .c-side {
+    transform: translateX(0);
+  }
+  .console.nav-open .c-nav-backdrop {
+    display: block;
+  }
+  /* Lift the toggle above the drawer so the X icon stays tappable when
+     the drawer is open — same affordance as the backdrop tap, plus a
+     visible close target inside the drawer overlap. */
+  .c-nav-toggle {
+    display: inline-flex;
+    position: relative;
+    z-index: 101;
+  }
+  .c-topbar {
+    align-items: center;
   }
   /* F-A1b — at <=720 the inline nav becomes a hamburger-revealed panel.
      The toggle (.m-nav-toggle) is the trigger; .is-open on .m-nav reveals
