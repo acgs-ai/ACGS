@@ -74,9 +74,7 @@ export function Tenants() {
           placeholder="Search tenants, jurisdictions, tiers…"
           aria-label="Search tenants"
         />
-        <span className="c-meta">
-          4 tenants · 1 active · 1 sealed · custodian-01 has access
-        </span>
+        <span className="c-meta">4 tenants · 1 active · 1 sealed · custodian-01 has access</span>
       </div>
 
       {active && (
@@ -190,8 +188,8 @@ export function Tenants() {
           letterSpacing: '0.06em',
         }}
       >
-        ⁂ Switching tenancy emits an audit event; sealed tenancies require a
-        custodian + maintainer attestation to reopen
+        ⁂ Switching tenancy emits an audit event; sealed tenancies require a custodian + maintainer
+        attestation to reopen
       </p>
     </div>
   )

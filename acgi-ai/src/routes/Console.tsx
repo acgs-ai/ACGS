@@ -1,7 +1,6 @@
 import { ArrowRight, Bell } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { navigate } from '../lib/navigate'
-import { NotFound } from './NotFound'
 import { Account } from './console/Account'
 import { Agents } from './console/Agents'
 import { Audit } from './console/Audit'
@@ -13,6 +12,7 @@ import { Overview } from './console/Overview'
 import { Policies } from './console/Policies'
 import { Settings } from './console/Settings'
 import { Tenants } from './console/Tenants'
+import { NotFound } from './NotFound'
 
 const NAV: { section: string; items: { path: string; label: string; count?: string }[] }[] = [
   {

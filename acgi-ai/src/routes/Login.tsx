@@ -68,9 +68,9 @@ export function Login() {
         </h1>
 
         <p className="login-lede">
-          Every dispatch on the bus is countersigned by the constitution and by
-          the agent that proposed it. The same applies to humans: identify
-          yourself before you are admitted to the privileged surface.
+          Every dispatch on the bus is countersigned by the constitution and by the agent that
+          proposed it. The same applies to humans: identify yourself before you are admitted to the
+          privileged surface.
         </p>
 
         <div className="login-providers">

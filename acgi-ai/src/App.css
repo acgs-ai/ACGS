@@ -2015,7 +2015,7 @@
   font-family: var(--font-display);
   font-weight: 400;
   font-size: clamp(40px, 5.5vw, 64px);
-  line-height: 1.0;
+  line-height: 1;
   letter-spacing: -0.02em;
   color: var(--ink);
   max-width: 14ch;
@@ -2047,7 +2047,9 @@
   border: 1px solid var(--line-softer);
   border-radius: var(--radius-md);
   text-align: left;
-  transition: border-color 200ms ease-out, background 200ms ease-out;
+  transition:
+    border-color 200ms ease-out,
+    background 200ms ease-out;
   font-family: var(--font-runtime);
   font-size: 14.5px;
   color: var(--ink);

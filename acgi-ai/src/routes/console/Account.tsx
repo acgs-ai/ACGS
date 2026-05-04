@@ -109,9 +109,9 @@ export function Account() {
           maxWidth: '64ch',
         }}
       >
-        Your record on the bus. The constitution decides which lanes you may
-        operate in; you decide your authentication factors. Everything you do
-        from this surface is countersigned in the audit trail under your name.
+        Your record on the bus. The constitution decides which lanes you may operate in; you decide
+        your authentication factors. Everything you do from this surface is countersigned in the
+        audit trail under your name.
       </p>
 
       {/* Identity */}
@@ -129,7 +129,9 @@ export function Account() {
                     : 'Self-managed; rotate via your IdP.'}
               </span>
             </div>
-            <span className={`tag ${f.source === 'constitution' ? 'constitution' : f.source === 'sso' ? 'operator' : 'default'}`}>
+            <span
+              className={`tag ${f.source === 'constitution' ? 'constitution' : f.source === 'sso' ? 'operator' : 'default'}`}
+            >
               {SOURCE_LABEL[f.source]}
             </span>
             <span className="val">{f.value}</span>
@@ -263,8 +265,8 @@ export function Account() {
           letterSpacing: '0.06em',
         }}
       >
-        ⁂ The constitution rules you, you do not rule it · personal preferences
-        do not override lane policy
+        ⁂ The constitution rules you, you do not rule it · personal preferences do not override lane
+        policy
       </p>
     </div>
   )
