@@ -584,6 +584,18 @@
   color: var(--accent);
   text-decoration-color: var(--accent);
 }
+/* F7 — touch-only WCAG AAA target size (44×44). On coarse pointers, expand
+   the link's vertical hit area without changing the desktop visual layout
+   (links remain inline-stacked at the same gap on mouse). 13+18+13 = 44. */
+@media (hover: none) and (pointer: coarse) {
+  .m-foot a {
+    display: inline-block;
+    padding: 13px 0;
+  }
+  .m-foot ul {
+    gap: 0;
+  }
+}
 
 .m-foot-mark {
   font-family: var(--font-display);
@@ -1002,6 +1014,12 @@
   color: var(--ink);
   width: 320px;
   max-width: 100%;
+}
+/* F3 — explicit placeholder color so the browser default (~#757575) doesn't
+   leak in as an off-system gray. */
+.c-search::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
 .c-meta {
@@ -2020,6 +2038,8 @@
   letter-spacing: -0.02em;
   color: var(--ink);
   max-width: 14ch;
+  /* F6 — keep the italic-rust word from orphaning to its own line. */
+  text-wrap: balance;
 }
 .login-h1 em {
   font-style: italic;
