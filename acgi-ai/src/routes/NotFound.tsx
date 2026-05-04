@@ -49,20 +49,28 @@ export function NotFound({ surface, path }: Props) {
 }
 
 function NotFoundContent({ surface, path }: Props) {
+  // On the console surface the shell's topbar already shows the crumb
+  // ("404 · path not enumerated") and the h1 ("Outside the *canon*"), so the
+  // body opens directly with the lede. On marketing there is no topbar to
+  // carry that work, so the eyebrow + h1 stay.
   return (
     <section className="notfound">
-      <div className="notfound-eyebrow">
-        <span className="asterism">⁂</span>
-        <span>404 · path not enumerated</span>
-      </div>
+      {surface === 'marketing' && (
+        <>
+          <div className="notfound-eyebrow">
+            <span className="asterism">⁂</span>
+            <span>404 · path not enumerated</span>
+          </div>
 
-      <h1 className="notfound-h1">
-        Outside the <em>canon</em>
-      </h1>
+          <h1 className="notfound-h1">
+            Outside the <em>canon</em>
+          </h1>
+        </>
+      )}
 
       <p className="notfound-lede">
-        The constitution does not enumerate this path. Either the link is older
-        than the canon you are reading, or someone is fishing.
+        The constitution does not enumerate this path. Either the link is older than the canon you
+        are reading, or someone is fishing.
       </p>
 
       <div className="notfound-trace">
@@ -83,11 +91,7 @@ function NotFoundContent({ surface, path }: Props) {
       <div className="notfound-actions">
         {surface === 'marketing' ? (
           <>
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={() => navigate('/')}
-            >
+            <button className="btn btn-primary" type="button" onClick={() => navigate('/')}>
               Back to home
             </button>
             <button
@@ -100,11 +104,7 @@ function NotFoundContent({ surface, path }: Props) {
           </>
         ) : (
           <>
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={() => navigate('/console')}
-            >
+            <button className="btn btn-primary" type="button" onClick={() => navigate('/console')}>
               Back to overview
             </button>
             <button
