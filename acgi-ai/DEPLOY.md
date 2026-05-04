@@ -316,9 +316,9 @@ analytics tag, not a privilege leak.
 - Both surfaces use the same bundle. Marketing inherits the privilege
   story even though it doesn't strictly need to — one font story is
   easier to reason about than two.
-- **TODO:** SIL Open Font License attribution at
-  `public/static/fonts/OFL.txt` plus a marketing footer link in the
-  "Reading room" column. Required before first real tenant.
+- License compliance: SIL Open Font License attribution lives at
+  `public/static/fonts/OFL.txt` and is linked from the marketing footer's
+  "Reading room" column.
 
 **No bundle-time secrets.** This is a fully-static frontend. There is
 no `VITE_*` env var that ever holds a credential. When the API client
@@ -452,7 +452,6 @@ hash-anchored, operator-readable.
 
 | Item | Trigger | Notes |
 |---|---|---|
-| OFL attribution (`public/static/fonts/OFL.txt` + marketing footer link) | Before any real tenant | Last loose end on the WOFF2 self-host (§6). |
 | Strict CSP on console (`'unsafe-inline'` removed) | Before any real tenant URL | §5 of this doc. |
 | API reverse proxy on console origin | When `src/core/shared/` lands | §4 Caddyfile already sketches it. |
 | Cloudflare in front (single-domain) | If WAF / bot management becomes a buyer requirement | §2 weighed and deferred. |

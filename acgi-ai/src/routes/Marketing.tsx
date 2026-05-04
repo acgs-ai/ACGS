@@ -418,6 +418,11 @@ legal technology vertical.`}
                 <a href="#coverage">Statute index</a>
               </li>
               <li>
+                <a href="/static/fonts/OFL.txt" target="_blank" rel="noopener">
+                  Font licenses
+                </a>
+              </li>
+              <li>
                 <a
                   href="/login"
                   onClick={(e) => {
