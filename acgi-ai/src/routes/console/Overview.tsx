@@ -1,56 +1,29 @@
-const STATS = [
-  ['Decisions today', '8,402', '+612 vs. 7d median'],
-  ['Refused', '1,402', '16.7% of total'],
-  ['Promoted', '312', 'P-1190 -> P-1502'],
-]
-
-const ACTIVE_CASES = [
-  [
-    'Matter-9821',
-    'Human review',
-    'MACI-3',
-    '18m / T-42',
-    '4 receipts',
-    'human review requested',
-    'partial',
-  ],
-  [
-    'Policy P-1502',
-    'Promotion',
-    'Registry',
-    '07m / T-11',
-    'Dafny replay',
-    'policy check completed',
-    'confirmed',
-  ],
-  [
-    'Appeal A-118',
-    'Counsel vote',
-    'Deliberation',
-    '41m / T-07',
-    '2 opinions',
-    'appeal queue advanced',
-    'partial',
-  ],
-  [
-    'Audit 608508a9',
-    'Seal',
-    'Audit',
-    '18s / T-03',
-    'anchor:18s',
-    'audit record sealed',
-    'confirmed',
-  ],
-]
-
-const QUEUES = [
-  ['Human review queue', '3', 'oldest 41m', 'partial'],
-  ['Appeal queue', '1', 'counsel vote open', 'partial'],
-  ['Enforcement retry/backoff', '0', 'No queued retries', 'confirmed'],
-  ['Audit backlog', '4', 'anchor due in 18s', 'confirmed'],
-]
+import { useOverview } from '../../api/hooks'
 
 export function Overview() {
+  const { data, isLoading, isError, refetch } = useOverview()
+
+  if (isLoading) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">⁂ Polling …</span>
+      </div>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">
+          ⁂ Could not reach the bus.{' '}
+          <button type="button" className="m-text-link" onClick={() => refetch()}>
+            Retry
+          </button>
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div>
       <p className="overview-intro">
@@ -61,8 +34,8 @@ export function Overview() {
       </p>
 
       <div className="overview-stats">
-        {STATS.map(([label, value, sub]) => (
-          <Stat key={label} label={label} value={value} sub={sub} />
+        {data.stats.map((s) => (
+          <Stat key={s.label} label={s.label} value={s.value} sub={s.sub} />
         ))}
       </div>
 
@@ -85,16 +58,16 @@ export function Overview() {
             </tr>
           </thead>
           <tbody>
-            {ACTIVE_CASES.map(([name, stage, lane, age, evidence, event, posture]) => (
-              <tr key={name}>
-                <td className="mono">{name}</td>
+            {data.activeCases.map((c) => (
+              <tr key={c.name}>
+                <td className="mono">{c.name}</td>
                 <td>
-                  <span className={`pill ${posture}`}>{stage}</span>
+                  <span className={`pill ${c.posture}`}>{c.stage}</span>
                 </td>
-                <td className="mono">{lane}</td>
-                <td className="num">{age}</td>
-                <td className="mono muted">{evidence}</td>
-                <td>{event}</td>
+                <td className="mono">{c.lane}</td>
+                <td className="num">{c.age}</td>
+                <td className="mono muted">{c.evidence}</td>
+                <td>{c.event}</td>
               </tr>
             ))}
           </tbody>
@@ -109,11 +82,13 @@ export function Overview() {
           <span className="c-meta">Backoff · review · audit</span>
         </div>
         <div className="queue-grid">
-          {QUEUES.map(([label, value, detail, posture]) => (
-            <div className="queue-row" key={label}>
-              <span className="queue-label">{label}</span>
-              <span className={`queue-value ${posture === 'confirmed' ? 'ok' : ''}`}>{value}</span>
-              <span className="queue-detail">{detail}</span>
+          {data.queues.map((q) => (
+            <div className="queue-row" key={q.label}>
+              <span className="queue-label">{q.label}</span>
+              <span className={`queue-value ${q.posture === 'confirmed' ? 'ok' : ''}`}>
+                {q.value}
+              </span>
+              <span className="queue-detail">{q.detail}</span>
             </div>
           ))}
         </div>
@@ -137,20 +112,14 @@ export function Overview() {
             </tr>
           </thead>
           <tbody>
-            {[
-              ['IV', '§164.502(b)', '702', '+18%', 'confirmed'],
-              ['VII', 'EU AI Act §15(4)', '441', '+4%', 'confirmed'],
-              ['II', 'SR 11-7 §V', '128', '-9%', 'partial'],
-              ['IX', 'GDPR Art. 22', '88', '+22%', 'partial'],
-              ['XI', 'Internal §3.4', '43', '+11%', 'blocked'],
-            ].map(([art, cite, n, trend, posture]) => (
-              <tr key={art}>
-                <td className="mono">Art. {art}</td>
-                <td className="mono muted">{cite}</td>
-                <td className="num align-right">{n}</td>
-                <td className="num muted">{trend}</td>
+            {data.refusalsByArticle.map((r) => (
+              <tr key={r.article}>
+                <td className="mono">Art. {r.article}</td>
+                <td className="mono muted">{r.citation}</td>
+                <td className="num align-right">{r.refusals.toLocaleString()}</td>
+                <td className="num muted">{r.trend}</td>
                 <td>
-                  <span className={`pill ${posture}`}>{posture}</span>
+                  <span className={`pill ${r.posture}`}>{r.posture}</span>
                 </td>
               </tr>
             ))}

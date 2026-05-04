@@ -1,72 +1,33 @@
-type Change = 'added' | 'amended' | 'removed'
-
-type RuleChange = {
-  id: string
-  name: string
-  citation: string
-  change: Change
-  note: string
-}
-
-const CURRENT_HASH = '608508a9bd224290'
-const PROPOSED_HASH = '4c1f7e8a92b3d501'
-
-const CHANGES: RuleChange[] = [
-  {
-    id: 'P-1207',
-    name: 'matter.disclosure',
-    citation: '§164.502(b) · HIPAA',
-    change: 'amended',
-    note: 'Adds agent.scope.contains("matter") clause; closes the public-counsel bypass found by reviewer-09.',
-  },
-  {
-    id: 'P-1215',
-    name: 'vendor.api.attestation',
-    citation: 'SR 11-7 §V',
-    change: 'added',
-    note: 'New rule. Requires every third-party tool call to carry a vendor attestation matching the catalog hash.',
-  },
-  {
-    id: 'P-1216',
-    name: 'maci.quorum.minimum',
-    citation: 'Internal §3.1',
-    change: 'added',
-    note: 'New rule. Validator dispatches refused when fewer than two independent reviewers are healthy in-lane.',
-  },
-  {
-    id: 'P-1209',
-    name: 'automated.decision.disclosure',
-    citation: 'GDPR Art. 22',
-    change: 'amended',
-    note: 'Formalises the data-subject route to deliberation that was partial coverage in v3.1.0.',
-  },
-  {
-    id: 'P-1213',
-    name: 'tool.scope.intersection',
-    citation: 'SR 11-7 §V',
-    change: 'amended',
-    note: 'Extends scope-intersection enforcement to third-party tools by reading the audited vendor catalog.',
-  },
-  {
-    id: 'P-1217',
-    name: 'phi.redaction.attestation',
-    citation: '§164.514',
-    change: 'added',
-    note: 'New rule. Splits attestation requirement out of P-1212 so the redactor can be replaced without amending the privilege rule itself.',
-  },
-  {
-    id: 'P-1198',
-    name: 'deprecated.tool.scope',
-    citation: 'Internal §3.4',
-    change: 'removed',
-    note: 'Folded into P-1213. The standalone rule duplicated coverage and confused validators.',
-  },
-]
-
-const COUNTS: Record<Change, number> = { added: 0, amended: 0, removed: 0 }
-for (const c of CHANGES) COUNTS[c.change] += 1
+import { useCompileDraft } from '../../api/hooks'
+import type { PolicyChangeKind } from '../../api/types'
 
 export function Compile() {
+  const { data, isLoading, isError, refetch } = useCompileDraft()
+
+  if (isLoading) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">⁂ Polling …</span>
+      </div>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">
+          ⁂ Could not reach the bus.{' '}
+          <button type="button" className="m-text-link" onClick={() => refetch()}>
+            Retry
+          </button>
+        </span>
+      </div>
+    )
+  }
+
+  const COUNTS: Record<PolicyChangeKind, number> = { added: 0, amended: 0, removed: 0 }
+  for (const c of data.changes) COUNTS[c.change] += 1
+
   return (
     <div>
       <p
@@ -103,7 +64,7 @@ export function Compile() {
       <div className="compile-hash">
         <div className="col">
           <span className="label">Canon · v3.1.0</span>
-          <span className="hash">{CURRENT_HASH}</span>
+          <span className="hash">{data.currentHash}</span>
           <span
             className="label"
             style={{ color: 'var(--ink-3)', textTransform: 'none', letterSpacing: '0.04em' }}
@@ -116,7 +77,7 @@ export function Compile() {
         </span>
         <div className="col">
           <span className="label">Proposed · v3.2.0-rc</span>
-          <span className="hash">{PROPOSED_HASH}</span>
+          <span className="hash">{data.proposedHash}</span>
           <span
             className="label"
             style={{ color: 'var(--ink-3)', textTransform: 'none', letterSpacing: '0.04em' }}
@@ -144,7 +105,7 @@ export function Compile() {
             </tr>
           </thead>
           <tbody>
-            {CHANGES.map((c) => (
+            {data.changes.map((c) => (
               <tr key={c.id}>
                 <td className="mono">{c.id}</td>
                 <td>
@@ -178,7 +139,7 @@ export function Compile() {
           Discard
         </button>
         <span className="attest">
-          {PROPOSED_HASH} · attest required · two reviewers, one custodian
+          {data.proposedHash} · attest required · two reviewers, one custodian
         </span>
       </div>
 
@@ -198,7 +159,15 @@ export function Compile() {
   )
 }
 
-function Stat({ label, value, marker }: { label: string; value: number; marker: Change }) {
+function Stat({
+  label,
+  value,
+  marker,
+}: {
+  label: string
+  value: number
+  marker: PolicyChangeKind
+}) {
   return (
     <div style={{ background: 'var(--paper-2)', padding: '24px 24px 22px' }}>
       <div className={`change-marker ${marker}`}>{label}</div>

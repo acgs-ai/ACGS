@@ -1,138 +1,32 @@
-type Agent = {
-  id: string
-  name: string
-  role: string
-  lane: 'Proposer' | 'Validator' | 'Executor' | 'Custodian'
-  model: string
-  refusals24h: number
-  health: 'confirmed' | 'partial' | 'blocked' | 'privileged'
-  lastSeen: string
-}
-
-const AGENTS: Agent[] = [
-  {
-    id: 'A-01',
-    name: 'analyst-04',
-    role: 'Public counsel intake',
-    lane: 'Proposer',
-    model: 'sonnet 4.6',
-    refusals24h: 184,
-    health: 'confirmed',
-    lastSeen: '14:09:02',
-  },
-  {
-    id: 'A-02',
-    name: 'analyst-12',
-    role: 'Public counsel intake',
-    lane: 'Proposer',
-    model: 'sonnet 4.6',
-    refusals24h: 211,
-    health: 'confirmed',
-    lastSeen: '14:08:51',
-  },
-  {
-    id: 'A-03',
-    name: 'reviewer-02',
-    role: 'Cross-validation',
-    lane: 'Validator',
-    model: 'opus 4.7',
-    refusals24h: 38,
-    health: 'confirmed',
-    lastSeen: '14:08:48',
-  },
-  {
-    id: 'A-04',
-    name: 'reviewer-09',
-    role: 'Cross-validation',
-    lane: 'Validator',
-    model: 'opus 4.7',
-    refusals24h: 41,
-    health: 'confirmed',
-    lastSeen: '14:09:11',
-  },
-  {
-    id: 'A-05',
-    name: 'executor-01',
-    role: 'Tool dispatch',
-    lane: 'Executor',
-    model: 'haiku 4.5',
-    refusals24h: 12,
-    health: 'partial',
-    lastSeen: '14:09:03',
-  },
-  {
-    id: 'A-06',
-    name: 'executor-03',
-    role: 'Tool dispatch',
-    lane: 'Executor',
-    model: 'haiku 4.5',
-    refusals24h: 18,
-    health: 'confirmed',
-    lastSeen: '14:09:00',
-  },
-  {
-    id: 'A-07',
-    name: 'custodian-01',
-    role: 'Matter custody',
-    lane: 'Custodian',
-    model: 'opus 4.7',
-    refusals24h: 502,
-    health: 'privileged',
-    lastSeen: '14:09:05',
-  },
-  {
-    id: 'A-08',
-    name: 'custodian-02',
-    role: 'Matter custody',
-    lane: 'Custodian',
-    model: 'opus 4.7',
-    refusals24h: 396,
-    health: 'privileged',
-    lastSeen: '14:08:58',
-  },
-  {
-    id: 'A-09',
-    name: 'redactor-04',
-    role: 'PHI redaction',
-    lane: 'Executor',
-    model: 'haiku 4.5',
-    refusals24h: 0,
-    health: 'blocked',
-    lastSeen: '13:42:11',
-  },
-  {
-    id: 'A-10',
-    name: 'historian-01',
-    role: 'Decision-log keeper',
-    lane: 'Validator',
-    model: 'opus 4.7',
-    refusals24h: 0,
-    health: 'confirmed',
-    lastSeen: '14:09:09',
-  },
-  {
-    id: 'A-11',
-    name: 'oracle-02',
-    role: 'Statute lookup',
-    lane: 'Proposer',
-    model: 'sonnet 4.6',
-    refusals24h: 0,
-    health: 'confirmed',
-    lastSeen: '14:09:07',
-  },
-  {
-    id: 'A-12',
-    name: 'maintainer-01',
-    role: 'Constitution drift watch',
-    lane: 'Custodian',
-    model: 'opus 4.7',
-    refusals24h: 0,
-    health: 'confirmed',
-    lastSeen: '14:09:10',
-  },
-]
+import { useAgents } from '../../api/hooks'
 
 export function Agents() {
+  const { data, isLoading, isError, refetch, isFetching } = useAgents()
+
+  if (isLoading) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">⁂ Polling agent registry…</span>
+      </div>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">
+          ⁂ Could not reach the bus.{' '}
+          <button type="button" className="m-text-link" onClick={() => refetch()}>
+            Retry
+          </button>
+        </span>
+      </div>
+    )
+  }
+
+  const total = data.length
+  const meta = `${total} of ${total} · ${isFetching ? 'refreshing' : 'live'} · 608508a9bd224290`
+
   return (
     <div>
       <div className="c-toolbar">
@@ -141,7 +35,7 @@ export function Agents() {
           placeholder="Search agents, roles, lanes…"
           aria-label="Search agents"
         />
-        <span className="c-meta">12 of 12 · live · 608508a9bd224290</span>
+        <span className="c-meta">{meta}</span>
       </div>
 
       <table className="c-table">
@@ -158,7 +52,7 @@ export function Agents() {
           </tr>
         </thead>
         <tbody>
-          {AGENTS.map((a) => (
+          {data.map((a) => (
             <tr key={a.id}>
               <td className="mono">{a.id}</td>
               <td>

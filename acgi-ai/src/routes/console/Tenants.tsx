@@ -1,70 +1,37 @@
-type Tenant = {
-  id: string
-  name: string
-  tier: 'Examined' | 'Governed' | 'Custodial'
-  agents: number
-  matters: number
-  refusals24h: number
-  state: 'active' | 'standby' | 'sealed'
-  lastActivity: string
-  jurisdiction: string
-}
+import { useTenants } from '../../api/hooks'
+import type { TenantState } from '../../api/types'
 
-const TENANTS: Tenant[] = [
-  {
-    id: 'T-001',
-    name: 'Hofstra & Lorenz',
-    tier: 'Custodial',
-    agents: 12,
-    matters: 84,
-    refusals24h: 1402,
-    state: 'active',
-    lastActivity: '14:09:11 · UTC',
-    jurisdiction: 'NY · DE',
-  },
-  {
-    id: 'T-002',
-    name: 'Northway Mutual',
-    tier: 'Governed',
-    agents: 6,
-    matters: 12,
-    refusals24h: 41,
-    state: 'standby',
-    lastActivity: '13:51 · UTC',
-    jurisdiction: 'CT',
-  },
-  {
-    id: 'T-003',
-    name: 'Atelier Beaumont',
-    tier: 'Examined',
-    agents: 2,
-    matters: 0,
-    refusals24h: 0,
-    state: 'standby',
-    lastActivity: 'yesterday',
-    jurisdiction: 'FR · IDF',
-  },
-  {
-    id: 'T-004',
-    name: 'Praesidium Trust',
-    tier: 'Custodial',
-    agents: 9,
-    matters: 31,
-    refusals24h: 502,
-    state: 'sealed',
-    lastActivity: '2026-04-22',
-    jurisdiction: 'CH · ZG',
-  },
-]
-
-const STATE_TO_PILL: Record<Tenant['state'], string> = {
+const STATE_TO_PILL: Record<TenantState, string> = {
   active: 'confirmed',
   standby: 'partial',
   sealed: 'blocked',
 }
 
 export function Tenants() {
-  const active = TENANTS.find((t) => t.state === 'active')
+  const { data, isLoading, isError, refetch } = useTenants()
+
+  if (isLoading) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">⁂ Polling …</span>
+      </div>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className="c-toolbar">
+        <span className="c-meta">
+          ⁂ Could not reach the bus.{' '}
+          <button type="button" className="m-text-link" onClick={() => refetch()}>
+            Retry
+          </button>
+        </span>
+      </div>
+    )
+  }
+
+  const active = data.find((t) => t.state === 'active')
 
   return (
     <div>
@@ -120,7 +87,7 @@ export function Tenants() {
           </tr>
         </thead>
         <tbody>
-          {TENANTS.map((t) => (
+          {data.map((t) => (
             <tr key={t.id}>
               <td className="mono">{t.id}</td>
               <td>
