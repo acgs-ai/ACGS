@@ -1,0 +1,162 @@
+# Console surface — Cloud Run deploy (DEPLOY.md §4, §7).
+#
+# Auth model: Workload Identity Federation (no service-account JSON in
+# secrets — the GitHub OIDC token authenticates against GCP). Set up:
+#
+#   1. Create a workload identity pool + GitHub provider in GCP IAM
+#   2. Bind a deploy service account to that provider
+#   3. Set repo secrets:
+#        GCP_PROJECT_ID
+#        GCP_REGION                  (e.g. us-central1)
+#        GCP_WORKLOAD_IDENTITY_PROVIDER  (full resource path)
+#        GCP_SERVICE_ACCOUNT         (deploy SA email)
+#        GCP_ARTIFACT_REGISTRY       (e.g. us-central1-docker.pkg.dev/<project>/acgi)
+#
+# The console image is built and pushed on every PR (so previews can run
+# against a real revision) but only deployed to production on push-to-main.
+
+name: console
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - 'infra/**'
+      - '.github/workflows/console.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - 'infra/**'
+      - '.github/workflows/console.yml'
+
+concurrency:
+  group: console-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write  # Required for Workload Identity Federation
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build (verify TS / Vite before docker)
+        run: pnpm build
+
+      - id: auth
+        name: Auth to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure docker auth
+        run: |
+          gcloud auth configure-docker \
+            "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
+
+      - name: Compute image URI
+        id: image
+        run: |
+          SHA="${GITHUB_SHA::12}"
+          URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/acgi-console:${SHA}"
+          echo "uri=$URI" >> "$GITHUB_OUTPUT"
+          echo "Image URI: $URI"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile.console
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Render service.yaml
+        run: |
+          sed -i "s|REPLACE_AT_DEPLOY_TIME|${{ needs.build.outputs.image }}|" \
+            infra/cloudrun/service.yaml
+          # Production override: keep at least one warm instance so the
+          # privilege banner (DESIGN.md §4.3) is never visually pause-gated
+          # by a cold start.
+          sed -i 's|autoscaling.knative.dev/minScale: "0"|autoscaling.knative.dev/minScale: "1"|' \
+            infra/cloudrun/service.yaml
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services replace infra/cloudrun/service.yaml \
+            --region=${{ secrets.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Smoke-test the new revision
+        run: |
+          URL=$(gcloud run services describe acgi-console \
+            --region=${{ secrets.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "Deployed: $URL"
+          # /healthz must return ok=true and the served constitutional hash.
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$URL/healthz" | grep -q '"ok":true'; then
+              echo "Health check OK"
+              exit 0
+            fi
+            echo "Health check attempt $i failed; retrying"
+            sleep 5
+          done
+          echo "Health check failed after 5 attempts" >&2
+          exit 1

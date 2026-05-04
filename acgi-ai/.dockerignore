@@ -1,0 +1,38 @@
+# Build artifacts — built fresh inside the image.
+node_modules
+dist
+dist-ssr
+
+# Local-only state.
+.git
+.gitignore
+.github
+.vscode
+.idea
+.DS_Store
+
+# OMC / agent / editor scratch — must never enter the image.
+.omc
+.gstack
+.remember
+.codex
+.omx
+.claude
+
+# Logs / temp.
+*.log
+*.local
+*.swp
+*.swo
+
+# Vercel marketing config — irrelevant to the console image.
+vercel.json
+
+# Documentation.
+*.md
+!README.md
+LICENSE*
+
+# Existing infra files — only Caddyfile is consumed by the build.
+infra/cloudrun
+infra/Dockerfile.console

@@ -1,0 +1,70 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+dist/
+build/
+target/
+
+# Rust
+target/
+Cargo.lock
+*.rlib
+*.rmeta
+
+# C / C++
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.out
+*.elf
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile.cmake
+
+# Large asset directories
+separated_32_images/
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+.gstack/
+
+# Agent / harness scratch — never tracked at this level.
+# Patterns without trailing slash match both files and directories.
+.codex
+.omc
+.remember
+.omx
+.claude
+
+# Sibling projects — out of scope for this monorepo (each has its own home).
+# Add explicitly so the working tree stays clean for tooling that gates on
+# `git status --porcelain`. Re-include any of these by removing its line.
+/ACGS/
+/acgs-lite/
+/ca-legal-agent-skills/
+/clinicalguard-privacy-hardening/
+/craft-agents-oss/
+/eab-production-hardening/
+/scheduled-todos-backup-2026-04-30/
+/swarm-mesh-refactors-backup-2026-04-30/
