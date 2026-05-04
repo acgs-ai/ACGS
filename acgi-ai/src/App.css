@@ -1580,7 +1580,15 @@
     grid-template-columns: 1fr 1fr;
   }
   .c-banner {
+    /* F-A2 — at narrow widths the two flex children (message + hash) would
+       otherwise overflow nowrap and visually intermix. Stack them so the
+       privilege story stays readable on every viewport. */
     padding: 8px 18px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    font-size: 10.5px;
+    line-height: 1.45;
   }
   .maci-board {
     grid-template-columns: 1fr;
