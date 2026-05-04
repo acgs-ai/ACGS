@@ -135,6 +135,10 @@
   margin-top: 32px;
   color: var(--ink);
   max-width: 14ch;
+  /* Keep the italic-rust word from orphaning on its own line as the
+     viewport flexes between the 56px and 96px clamp endpoints. Same
+     reasoning as F6 on .login-h1. */
+  text-wrap: balance;
 }
 
 .m-hero h1 em {
@@ -319,6 +323,7 @@
   letter-spacing: -0.015em;
   color: var(--ink);
   max-width: 20ch;
+  text-wrap: balance;
 }
 
 /* editorial cards — black-rule top, folio number, serif title */
