@@ -103,15 +103,6 @@ export function Marketing() {
             <a href="#coverage">Coverage</a>
             <a href="#pricing">Pricing</a>
             <a
-              href="/privacy"
-              onClick={(e) => {
-                e.preventDefault()
-                navigate('/privacy')
-              }}
-            >
-              Privacy
-            </a>
-            <a
               href="/console"
               onClick={(e) => {
                 e.preventDefault()
