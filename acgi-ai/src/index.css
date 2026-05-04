@@ -40,7 +40,7 @@
   --accent-soft: #f4e2d8;
 
   --boundary: #f3ead4; /* parchment — privilege */
-  --boundary-ink: #7a5a1a;
+  --boundary-ink: #5a4111; /* AAA contrast 7.96:1 on --boundary at 11.5px */
   --boundary-line: #e3d5a8;
 
   --risk-lo: #3d6b4a;
