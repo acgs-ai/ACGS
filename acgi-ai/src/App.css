@@ -97,6 +97,25 @@
   background: var(--ink-2);
 }
 
+/* F-A1b — hamburger toggle. Hidden at desktop; shown only at <=720
+   where the inline nav-links would otherwise be unreachable. */
+.m-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.m-nav-toggle:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
 /* hero — asymmetric, NOT centered (DESIGN.md §3) */
 .m-hero {
   display: grid;
@@ -1537,8 +1556,44 @@
   .c-side {
     display: none;
   }
+  /* F-A1b — at <=720 the inline nav becomes a hamburger-revealed panel.
+     The toggle (.m-nav-toggle) is the trigger; .is-open on .m-nav reveals
+     the stacked links and the CTA below the brand row. */
+  .m-nav {
+    position: relative;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-block: 18px;
+  }
+  .m-nav-toggle {
+    display: inline-flex;
+    margin-left: auto;
+    order: 2;
+  }
+  .m-nav-cta {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    display: none;
+  }
   .m-nav-links {
     display: none;
+    order: 4;
+    width: 100%;
+    flex-direction: column;
+    gap: 0;
+    font-size: 16px;
+    border-top: 1px solid var(--line);
+    margin-top: 4px;
+  }
+  .m-nav-links a {
+    display: block;
+    padding: 14px 4px;
+    border-bottom: 1px solid var(--line-softer);
+  }
+  .m-nav.is-open .m-nav-links,
+  .m-nav.is-open .m-nav-cta {
+    display: flex;
   }
   .m-sec-head {
     grid-template-columns: 1fr;

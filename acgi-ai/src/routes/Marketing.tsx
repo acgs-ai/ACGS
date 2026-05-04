@@ -1,4 +1,5 @@
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, Menu, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { navigate } from '../lib/navigate'
 
 const ASTERISM = '⁂'
@@ -88,17 +89,37 @@ const tiers = [
 ]
 
 export function Marketing() {
+  const [navOpen, setNavOpen] = useState(false)
+  const closeNav = () => setNavOpen(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const close = () => setNavOpen(false)
+    window.addEventListener('hashchange', close)
+    return () => window.removeEventListener('hashchange', close)
+  }, [])
+
   return (
     <div className="marketing">
       <div className="shell">
-        <nav className="m-nav" aria-label="Primary">
+        <nav className={`m-nav${navOpen ? ' is-open' : ''}`} aria-label="Primary">
           <a className="m-brand" href="/" aria-label="ACGS home">
             <span>acgs</span>
             <span className="folio" aria-hidden>
               {ASTERISM}
             </span>
           </a>
-          <div className="m-nav-links">
+          <button
+            type="button"
+            className="m-nav-toggle"
+            aria-expanded={navOpen}
+            aria-controls="m-nav-links"
+            aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+            onClick={() => setNavOpen((v) => !v)}
+          >
+            {navOpen ? <X size={18} strokeWidth={1.8} /> : <Menu size={18} strokeWidth={1.8} />}
+          </button>
+          <div className="m-nav-links" id="m-nav-links">
             <a href="#capabilities">Platform</a>
             <a href="#coverage">Coverage</a>
             <a href="#pricing">Pricing</a>
@@ -106,6 +127,7 @@ export function Marketing() {
               href="/console"
               onClick={(e) => {
                 e.preventDefault()
+                closeNav()
                 navigate('/console')
               }}
             >
@@ -115,6 +137,7 @@ export function Marketing() {
               href="/login"
               onClick={(e) => {
                 e.preventDefault()
+                closeNav()
                 navigate('/login')
               }}
             >
