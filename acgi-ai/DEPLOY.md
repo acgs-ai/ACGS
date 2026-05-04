@@ -301,21 +301,24 @@ analytics tag, not a privilege leak.
 - `dist/assets/*.{js,css}` — hashed filenames, `immutable, max-age=1y`
 - `dist/assets/*.{svg,png,woff2}` — same
 
-**WOFF2 self-host** (`DESIGN.md §7.1`, P0 before real tenant data):
+**WOFF2 self-host** (`DESIGN.md §7.1`, landed):
 
-- Latin subset of: Inter Tight 400/500/600, IBM Plex Serif 400/500,
-  JetBrains Mono 400. Marketing's display + sans (Instrument Serif,
-  Instrument Sans) may stay on Google Fonts — they only render on
-  marketing.
-- Generated with `glyphhanger` or `pyftsubset`, committed to
-  `public/static/fonts/` and served at `/static/fonts/*.woff2` by the
-  console origin.
-- Update `src/index.css` to switch from the `@import` Google Fonts URL
-  to local `@font-face` rules with `font-display: swap`. Keep the
-  fallback stack — never `system-ui` (`DESIGN.md §2.2`).
-- License compliance: SIL Open Font License attribution lives at
-  `public/static/fonts/OFL.txt` and is referenced from the marketing
-  footer's "Reading room" column.
+- 5 families × {latin, latin-ext} subsets under
+  `public/static/fonts/`, declared in `src/fonts.css`, served at
+  `/static/fonts/*.woff2` by the Caddy `@fonts` matcher
+  (`infra/Caddyfile`). 30 files / ~803KB total; latin loads first,
+  latin-ext deferred via `unicode-range` so most sessions never request
+  it. Cyrillic, Greek, Vietnamese subsets dropped — re-add only if a
+  new tenant needs them.
+- Source: Google Fonts CSS endpoint with a modern UA, then the
+  `gstatic.com` WOFF2 binaries downloaded once at dev time. No runtime
+  third-party fetch from either surface.
+- Both surfaces use the same bundle. Marketing inherits the privilege
+  story even though it doesn't strictly need to — one font story is
+  easier to reason about than two.
+- **TODO:** SIL Open Font License attribution at
+  `public/static/fonts/OFL.txt` plus a marketing footer link in the
+  "Reading room" column. Required before first real tenant.
 
 **No bundle-time secrets.** This is a fully-static frontend. There is
 no `VITE_*` env var that ever holds a credential. When the API client
@@ -449,8 +452,8 @@ hash-anchored, operator-readable.
 
 | Item | Trigger | Notes |
 |---|---|---|
-| WOFF2 self-host (`DESIGN.md §7.1`) | Before any real tenant URL | P0. §6 of this doc. |
-| Strict CSP on console (`'unsafe-inline'` removed) | Same trigger as WOFF2 | §5 of this doc. |
+| OFL attribution (`public/static/fonts/OFL.txt` + marketing footer link) | Before any real tenant | Last loose end on the WOFF2 self-host (§6). |
+| Strict CSP on console (`'unsafe-inline'` removed) | Before any real tenant URL | §5 of this doc. |
 | API reverse proxy on console origin | When `src/core/shared/` lands | §4 Caddyfile already sketches it. |
 | Cloudflare in front (single-domain) | If WAF / bot management becomes a buyer requirement | §2 weighed and deferred. |
 | Multi-region failover | When availability SLO > 99.9% | Single-region is fine until then; pair primary with a warm passive in another region. |

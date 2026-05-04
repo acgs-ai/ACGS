@@ -9,13 +9,13 @@
  * §2.4 Focus rings (double-ring spacer + rust)
  * §2.5 Motion (minimal-functional, honour prefers-reduced-motion)
  *
- * NOTE — fonts loaded from Google Fonts CDN here. DESIGN.md §2.2 forbids CDN
- * loads on privileged runtime surfaces (matter / session IDs in URL leak Referer).
- * This SaaS console handles tenant + agent IDs, so before going to production
- * we self-host WOFF2 subsets per §7.1.
+ * NOTE — fonts are self-hosted WOFF2 subsets (latin + latin-ext) under
+ * public/fonts/, declared in src/fonts.css. The privileged console origin
+ * MUST NOT pull fonts from a third-party CDN — matter/session IDs in URLs
+ * would leak via Referer (DESIGN.md §7.1, DEPLOY.md §3 / §7).
  * ============================================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital,wght@0,400;1,400&family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;500;600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap");
+@import "./fonts.css";
 
 :root {
   /* §2.1 Color — warm paper */

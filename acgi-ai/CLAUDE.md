@@ -93,11 +93,15 @@ legal review.
 
 ## Fonts
 
-Currently loaded from Google Fonts via `@import` in `src/index.css`. This is
-acceptable for marketing but **not for the privileged console** — once real
-tenant/matter IDs ride `/console/*` URLs they leak to the CDN via `Referer`.
-Self-host WOFF2 subsets before going to production with real tenant data
-(DESIGN.md §7.1).
+Self-hosted WOFF2 subsets (latin + latin-ext) under `public/static/fonts/`,
+declared in `src/fonts.css`, served at `/static/fonts/*.woff2` by the Caddy
+`@fonts` matcher in `infra/Caddyfile`. Both surfaces use the same bundle so
+the privilege story is uniform — the console origin must never fetch fonts
+from a third-party CDN, since matter/session IDs in `/console/*` URLs would
+leak via `Referer` (DESIGN.md §7.1, DEPLOY.md §3 / §6).
+
+Latin loads first; latin-ext is deferred via `unicode-range` and only
+fetched when extended-Latin glyphs are present.
 
 The fallback stack falls through to named families (`Helvetica Neue`, `Arial`,
 `Georgia`), never `system-ui` — that would silently swap brand voice per OS.
