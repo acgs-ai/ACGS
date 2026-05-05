@@ -32,6 +32,14 @@ class AuthorityGate:
                 {"actor_tenant": request.actor.tenant, "request_tenant": request.tenant},
             )
 
+        if self._normalize_resource(request.resource) is None:
+            return self._deny(
+                started,
+                "AUTH_RESOURCE_INVALID",
+                f"Resource '{request.resource}' contains path-traversal segments or is absolute.",
+                {"resource": request.resource},
+            )
+
         role_name = request.actor.role
         role_def = self.roles.get(role_name)
 
@@ -97,6 +105,19 @@ class AuthorityGate:
             },
             latency_ms=self._elapsed_ms(started),
         )
+
+    @staticmethod
+    def _normalize_resource(resource: str) -> str | None:
+        if not isinstance(resource, str) or not resource:
+            return None
+        if resource != resource.strip():
+            return None
+        if resource.startswith("/"):
+            return None
+        segments = resource.split("/")
+        if any(segment == ".." for segment in segments):
+            return None
+        return resource
 
     @staticmethod
     def _scope_allowed(resource: str, scopes: list[str]) -> bool:
