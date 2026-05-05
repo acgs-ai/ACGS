@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/decision_explain.schema.json",
+  "title": "ACGS Governance Decision Explanation",
+  "type": "object",
+  "required": ["event_id", "actor", "action", "versions", "checks", "conflict_resolution"],
+  "properties": {
+    "event_id": {"type": "string"},
+    "actor": {
+      "type": "object",
+      "required": ["id", "role", "tenant"]
+    },
+    "action": {
+      "type": "object",
+      "required": ["type", "resource", "intent", "inputs_hash"]
+    },
+    "versions": {
+      "type": "object",
+      "required": ["role_version", "policy_version"]
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate", "allowed", "reason_codes", "rule_ids"]
+      }
+    },
+    "conflict_resolution": {
+      "type": "string",
+      "enum": ["deny_overrides_allow", "all_required_gates_allow"]
+    }
+  }
+}

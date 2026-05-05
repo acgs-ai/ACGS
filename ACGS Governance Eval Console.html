@@ -1,0 +1,1824 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACGS Governance Eval Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #efe5d0;
+      --bg-2: #f8f2e6;
+      --surface: #fffaf0;
+      --surface-2: #f5ead8;
+      --ink: #271d17;
+      --muted: #6f6155;
+      --faint: #9a8773;
+      --line: #d8c3a6;
+      --line-strong: #a47f55;
+      --accent: #8f3c25;
+      --accent-2: #315c54;
+      --gold: #ad7b22;
+      --deny: #9f2f24;
+      --allow: #2f6b54;
+      --warn: #a8611a;
+      --shadow: 0 18px 50px rgba(80, 53, 28, .13);
+      --radius: 8px;
+      --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-serif: Georgia, "Times New Roman", serif;
+      --density: 1;
+      --row-pad: 13px;
+      --panel-pad: 18px;
+      --nav-width: 248px;
+    }
+
+    body.night {
+      color-scheme: dark;
+      --bg: #171412;
+      --bg-2: #211c18;
+      --surface: #29231e;
+      --surface-2: #211b17;
+      --ink: #f4e8d4;
+      --muted: #cabaa3;
+      --faint: #9f8d76;
+      --line: #514236;
+      --line-strong: #8d6f52;
+      --accent: #d07a55;
+      --accent-2: #8dbbb0;
+      --gold: #d5a548;
+      --deny: #ef806e;
+      --allow: #8fd0a8;
+      --warn: #e0a45d;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+    }
+
+    body.compact {
+      --density: .78;
+      --row-pad: 8px;
+      --panel-pad: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(143, 60, 37, .08), transparent 22%, transparent 78%, rgba(49, 92, 84, .08)),
+        repeating-linear-gradient(0deg, rgba(39, 29, 23, .025) 0 1px, transparent 1px 26px),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font-ui);
+      line-height: 1.45;
+      letter-spacing: 0;
+    }
+
+    button, input, select, textarea { font: inherit; }
+
+    a { color: inherit; }
+
+    :focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent-2), white 18%);
+      outline-offset: 3px;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--nav-width) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 22px 16px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg-2), transparent 5%);
+      overflow: auto;
+    }
+
+    .seal {
+      display: grid;
+      grid-template-columns: 38px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 22px;
+    }
+
+    .seal-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      background: radial-gradient(circle at 50% 38%, var(--surface) 0 35%, var(--surface-2) 36% 100%);
+      color: var(--accent);
+      font-family: var(--font-serif);
+      font-weight: 700;
+      box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--gold), transparent 78%);
+    }
+
+    .seal strong {
+      display: block;
+      font-family: var(--font-serif);
+      font-size: 17px;
+      line-height: 1.05;
+    }
+
+    .seal span {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .nav-list a {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 36px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .nav-list a:hover,
+    .nav-list a.active {
+      background: color-mix(in srgb, var(--accent), transparent 88%);
+      color: var(--ink);
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      color: var(--accent);
+      flex: none;
+    }
+
+    .sidebar-note {
+      margin-top: 22px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface), transparent 18%);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    main {
+      min-width: 0;
+      padding: 28px clamp(18px, 3vw, 42px) 54px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(270px, 410px);
+      gap: 26px;
+      align-items: end;
+      padding: 0 0 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(36px, 5vw, 72px);
+      font-weight: 700;
+      max-width: 900px;
+    }
+
+    h2 {
+      font-family: var(--font-serif);
+      font-size: clamp(25px, 3vw, 38px);
+    }
+
+    h3 {
+      font-size: 15px;
+      font-weight: 760;
+    }
+
+    .hero-line {
+      margin: 14px 0 0;
+      max-width: 880px;
+      color: var(--accent);
+      font-family: var(--font-serif);
+      font-size: clamp(20px, 2.3vw, 32px);
+    }
+
+    .hero-subline {
+      margin: 9px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .tweaks {
+      justify-self: end;
+      display: grid;
+      gap: 12px;
+      width: min(100%, 410px);
+      padding: var(--panel-pad);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .tweaks-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .09em;
+    }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .control-row label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+      background: var(--surface-2);
+    }
+
+    .segmented button {
+      min-height: 34px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 760;
+    }
+
+    .segmented button[aria-pressed="true"] {
+      background: var(--accent-2);
+      color: color-mix(in srgb, var(--surface), white 18%);
+    }
+
+    section {
+      scroll-margin-top: 18px;
+      padding: 30px 0 0;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .section-head p {
+      margin: 8px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card, .panel, .policy-card, .role-card, .endpoint-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 1px 0 color-mix(in srgb, white, transparent 70%) inset;
+    }
+
+    .card {
+      min-height: 132px;
+      padding: var(--panel-pad);
+    }
+
+    .card-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .card-value {
+      margin-top: 10px;
+      font-family: var(--font-serif);
+      font-size: clamp(27px, 3.2vw, 42px);
+      line-height: 1;
+    }
+
+    .card-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .workbench-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(330px, .65fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 52px;
+      padding: 13px var(--panel-pad);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface-2), transparent 28%);
+    }
+
+    .panel-header p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .table-wrap {
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-gutter: stable both-edges;
+      border-bottom: 1px solid var(--line);
+      background:
+        linear-gradient(90deg, var(--surface) 0, transparent 18px),
+        linear-gradient(270deg, var(--surface) 0, transparent 18px) 100% 0 / 32px 100% no-repeat;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+
+    .evaluation-table {
+      min-width: 960px;
+    }
+
+    th, td {
+      padding: var(--row-pad) 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+      white-space: nowrap;
+    }
+
+    th:nth-child(5),
+    td:nth-child(5) {
+      min-width: 96px;
+    }
+
+    .evaluation-table th:nth-child(7),
+    .evaluation-table td:nth-child(7) {
+      min-width: 220px;
+      width: 24%;
+    }
+
+    tbody tr {
+      cursor: pointer;
+    }
+
+    tbody tr:hover {
+      background: color-mix(in srgb, var(--gold), transparent 91%);
+    }
+
+    tbody tr.selected {
+      background: color-mix(in srgb, var(--accent-2), transparent 86%);
+      box-shadow: inset 4px 0 0 var(--accent-2);
+    }
+
+    tbody tr.selected td:first-child {
+      background: color-mix(in srgb, var(--accent-2), transparent 90%);
+    }
+
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      letter-spacing: 0;
+    }
+
+    .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      min-width: 64px;
+      min-height: 25px;
+      padding: 3px 8px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      white-space: nowrap;
+    }
+
+    .status.allow { color: var(--allow); }
+    .status.deny { color: var(--deny); }
+    .status.warn { color: var(--warn); }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--surface-2), transparent 25%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 720;
+      white-space: nowrap;
+    }
+
+    td .chip {
+      max-width: min(100%, 24ch);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.35;
+    }
+
+    .rule-id-cell .chips {
+      align-items: flex-start;
+    }
+
+    .rule-id-cell .chip {
+      max-width: 100%;
+      border-radius: 8px;
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .row-selected-badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 7px;
+      padding: 2px 6px;
+      border: 1px solid color-mix(in srgb, var(--accent-2), transparent 35%);
+      border-radius: 999px;
+      color: var(--accent-2);
+      background: color-mix(in srgb, var(--accent-2), transparent 90%);
+      font-size: 10px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+
+    .gate-path {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .gate-dot {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 25px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 900;
+      background: var(--surface-2);
+    }
+
+    .gate-dot.allow { color: var(--allow); border-color: color-mix(in srgb, var(--allow), transparent 50%); }
+    .gate-dot.deny { color: var(--deny); border-color: color-mix(in srgb, var(--deny), transparent 45%); }
+
+    .detail-body {
+      padding: var(--panel-pad);
+      display: grid;
+      gap: 14px;
+    }
+
+    .kv-groups {
+      display: grid;
+      gap: 10px;
+    }
+
+    .kv-group {
+      padding: 11px;
+      border: 1px solid color-mix(in srgb, var(--line), transparent 12%);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface-2), transparent 48%);
+    }
+
+    .kv-group h4 {
+      margin: 0 0 9px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .kv {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1fr);
+      gap: 9px;
+      padding-bottom: 7px;
+      border-bottom: 1px dashed color-mix(in srgb, var(--line), transparent 10%);
+      font-size: 13px;
+    }
+
+    .kv-row dt {
+      color: var(--muted);
+      font-weight: 750;
+    }
+
+    .kv-row dd {
+      margin: 0;
+      min-width: 0;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    .evidence-value {
+      display: flex;
+      align-items: start;
+      gap: 6px;
+    }
+
+    .evidence-value > span {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .hash-block {
+      display: block;
+      max-width: 100%;
+      padding: 7px 8px;
+      border: 1px solid color-mix(in srgb, var(--line), transparent 25%);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--surface-2), transparent 40%);
+      line-height: 1.5;
+      overflow-wrap: break-word;
+      word-break: normal;
+    }
+
+    .copy-btn {
+      flex: 0 0 auto;
+      min-width: 31px;
+      min-height: 27px;
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .copy-btn:hover {
+      color: var(--ink);
+      border-color: var(--line-strong);
+    }
+
+    .copy-status {
+      min-height: 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .gate-results {
+      display: grid;
+      gap: 8px;
+    }
+
+    .gate-result {
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface-2), transparent 32%);
+    }
+
+    .gate-result-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .gate-result p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .invariant {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 20px;
+      overflow: visible;
+    }
+
+    .invariant-node {
+      flex: 1 1 178px;
+      min-width: min(100%, 178px);
+      padding: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .invariant-node strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--accent);
+    }
+
+    .operator {
+      flex: 0 0 auto;
+      color: var(--accent-2);
+      font-family: var(--font-serif);
+      font-size: 23px;
+      font-weight: 700;
+    }
+
+    .final-node {
+      flex: 1 1 240px;
+      min-width: min(100%, 210px);
+      padding: 14px;
+      border: 2px solid var(--accent-2);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--accent-2), transparent 88%);
+    }
+
+    .grid-2, .grid-3 {
+      display: grid;
+      gap: 12px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .policy-card, .role-card, .endpoint-card {
+      padding: var(--panel-pad);
+      display: grid;
+      gap: 12px;
+    }
+
+    .policy-top, .role-top, .endpoint-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .policy-title, .role-title, .endpoint-title {
+      display: grid;
+      gap: 4px;
+    }
+
+    .policy-title .mono,
+    .endpoint-title .mono {
+      color: var(--muted);
+    }
+
+    .field-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .field-list strong {
+      color: var(--ink);
+    }
+
+    .replay-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .replay-cell {
+      padding: var(--panel-pad);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+
+    .replay-cell span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    .replay-cell strong {
+      display: block;
+      margin-top: 8px;
+      font-family: var(--font-serif);
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    .filters {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      padding: var(--panel-pad);
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface-2), transparent 42%);
+    }
+
+    .filter-field {
+      display: grid;
+      gap: 5px;
+    }
+
+    .filter-field label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    select, input {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 7px 9px;
+      font-size: 13px;
+    }
+
+    .query-results {
+      padding: var(--panel-pad);
+      display: grid;
+      gap: 8px;
+    }
+
+    .query-row {
+      display: grid;
+      grid-template-columns: 118px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--surface-2), transparent 42%);
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 0;
+      max-height: 360px;
+      overflow: auto;
+      padding: var(--panel-pad);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #1f1a16;
+      color: #f5e9d6;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .footer-note {
+      margin-top: 28px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1540px) {
+      .workbench-grid { grid-template-columns: 1fr; }
+
+      .table-wrap {
+        overflow-x: visible;
+        overflow-y: visible;
+        scrollbar-gutter: auto;
+        background: var(--surface);
+      }
+
+      .evaluation-table {
+        display: block;
+        min-width: 0;
+      }
+
+      .evaluation-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .evaluation-table tbody {
+        display: grid;
+        gap: 10px;
+        padding: 10px;
+      }
+
+      .evaluation-table tbody tr {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 10px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: color-mix(in srgb, var(--surface-2), transparent 52%);
+      }
+
+      .evaluation-table tbody tr:hover {
+        background: color-mix(in srgb, var(--gold), transparent 91%);
+      }
+
+      .evaluation-table tbody tr.selected {
+        background: color-mix(in srgb, var(--accent-2), transparent 88%);
+        box-shadow: inset 4px 0 0 var(--accent-2);
+      }
+
+      .evaluation-table tbody tr.selected td:first-child {
+        background: transparent;
+      }
+
+      .evaluation-table td {
+        display: grid;
+        grid-template-columns: minmax(112px, .34fr) minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        min-width: 0;
+        padding: 0;
+        border-bottom: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .evaluation-table td::before {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 850;
+        letter-spacing: .07em;
+        line-height: 1.35;
+        text-transform: uppercase;
+      }
+
+      .evaluation-table td:nth-child(1)::before { content: "Actor role"; }
+      .evaluation-table td:nth-child(2)::before { content: "action_type"; }
+      .evaluation-table td:nth-child(3)::before { content: "Resource"; }
+      .evaluation-table td:nth-child(4)::before { content: "Gate path"; }
+      .evaluation-table td:nth-child(5)::before { content: "Allow/Deny"; }
+      .evaluation-table td:nth-child(6)::before { content: "Reason codes"; }
+      .evaluation-table td:nth-child(7)::before { content: "Rule IDs"; }
+      .evaluation-table td:nth-child(8)::before { content: "Event hash preview"; }
+
+      .evaluation-table td:nth-child(5),
+      .evaluation-table td:nth-child(7) {
+        min-width: 0;
+        width: auto;
+      }
+
+      .evaluation-table td:nth-child(6),
+      .evaluation-table td:nth-child(7),
+      .evaluation-table td:nth-child(8) {
+        grid-column: 1 / -1;
+      }
+
+      .evaluation-table td:first-child {
+        display: block;
+      }
+
+      .evaluation-table td:first-child::before {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .evaluation-table td .chips,
+      .evaluation-table .rule-id-cell .chips {
+        min-width: 0;
+      }
+
+      .evaluation-table td .chip,
+      .evaluation-table .rule-id-cell .chip {
+        max-width: 100%;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .cards, .replay-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workbench-grid, .hero { grid-template-columns: 1fr; }
+      .tweaks { justify-self: stretch; }
+      .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 820px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar {
+        position: relative;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-list {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      .nav-list a {
+        justify-content: center;
+        min-height: 44px;
+        font-size: 12px;
+      }
+      .nav-icon { display: none; }
+      main { padding: 22px 14px 42px; }
+      .cards, .grid-2, .grid-3, .replay-strip, .filters { grid-template-columns: 1fr; }
+      .section-head { display: block; }
+      .kv-row { grid-template-columns: 1fr; gap: 2px; }
+      .query-row { grid-template-columns: 1fr; }
+      .invariant { align-items: stretch; }
+      .operator { width: 100%; font-size: 18px; }
+      h1 { font-size: 38px; }
+    }
+
+    @media (max-width: 520px) {
+      .nav-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .control-row { grid-template-columns: 1fr; }
+      .hero-line { font-size: 22px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="seal" aria-label="ACGS">
+        <div class="seal-mark">A</div>
+        <div>
+          <strong>ACGS</strong>
+          <span>Governance Eval</span>
+        </div>
+      </div>
+      <nav>
+        <ul class="nav-list">
+          <li><a class="active" href="#overview"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Overview</a></li>
+          <li><a href="#validate"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 12l2 2 4-5M12 3l8 4v5c0 5-3.2 8-8 9-4.8-1-8-4-8-9V7l8-4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Validate</a></li>
+          <li><a href="#gate-chain"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 7h4v4H7zM13 13h4v4h-4zM11 9h2M12 11v2" stroke="currentColor" stroke-width="2"/></svg>Gate Chain</a></li>
+          <li><a href="#policy-recall"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 9h6M9 13h6M9 17h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Policy Recall</a></li>
+          <li><a href="#replay"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h10a6 6 0 1 1-4.2 10.2M4 7l4-4M4 7l4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Replay</a></li>
+          <li><a href="#audit-chain"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Audit Chain</a></li>
+          <li><a href="#roles"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21a6 6 0 0 1 12 0M17 8h5M17 13h5M17 18h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Roles</a></li>
+          <li><a href="#api"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M14 5l-4 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>API</a></li>
+        </ul>
+      </nav>
+      <div class="sidebar-note">
+        Runtime decisions are modeled as pre-execution records. Unknown or incomplete gate evidence fails closed.
+      </div>
+    </aside>
+
+    <main>
+      <header class="hero" id="overview">
+        <div>
+          <h1>ACGS Governance Eval Console</h1>
+          <p class="hero-line">Evaluation is the product surface.</p>
+          <p class="hero-subline">Authority + policy recall + governance recall before execution.</p>
+        </div>
+        <form class="tweaks" aria-label="Tweaks controls">
+          <div class="tweaks-title">
+            <span>Tweaks</span>
+            <span class="mono">local prototype</span>
+          </div>
+          <div class="control-row">
+            <label>Density</label>
+            <div class="segmented" role="group" aria-label="Density">
+              <button type="button" data-density="comfortable" aria-pressed="true">Comfortable</button>
+              <button type="button" data-density="compact" aria-pressed="false">Compact</button>
+            </div>
+          </div>
+          <div class="control-row">
+            <label>Theme</label>
+            <div class="segmented" role="group" aria-label="Theme">
+              <button type="button" data-theme="parchment" aria-pressed="true">Parchment</button>
+              <button type="button" data-theme="night" aria-pressed="false">Night audit</button>
+            </div>
+          </div>
+        </form>
+      </header>
+
+      <section aria-labelledby="ops-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="ops-heading">Operational Signals</h2>
+            <p>Small-sample fixture signals derived from the displayed evaluation set, replay fields, and chain verification state.</p>
+          </div>
+        </div>
+        <div class="cards" id="summaryCards"></div>
+      </section>
+
+      <section id="validate" aria-labelledby="validate-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="validate-heading">Validation Workbench</h2>
+            <p>Sample ActionRequest evaluations grounded in the configured roles and policy files.</p>
+          </div>
+        </div>
+        <div class="workbench-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>ActionRequest Evaluations</h3>
+                <p>Use a row to inspect the full decision record.</p>
+              </div>
+              <span class="status warn" id="selectedCount">4 cases</span>
+            </div>
+            <div class="table-wrap">
+              <table class="evaluation-table" aria-label="ActionRequest evaluations">
+                <thead>
+                  <tr>
+                    <th>Actor role</th>
+                    <th>action_type</th>
+                    <th>Resource</th>
+                    <th>Gate path</th>
+                    <th>Allow/Deny</th>
+                    <th>Reason codes</th>
+                    <th>Rule IDs</th>
+                    <th>Event hash preview</th>
+                  </tr>
+                </thead>
+                <tbody id="evaluationRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="panel" aria-live="polite" aria-labelledby="detail-heading">
+            <div class="panel-header">
+              <div>
+                <h3 id="detail-heading">Decision Detail</h3>
+                <p id="detailSubtitle">Selected evaluation record</p>
+              </div>
+              <span id="detailAllow" class="status">state</span>
+            </div>
+            <div class="detail-body">
+              <div class="kv-groups" id="detailKv"></div>
+              <div class="copy-status" id="copyStatus" role="status" aria-live="polite"></div>
+              <div class="gate-results" id="detailGates"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="gate-chain" aria-labelledby="gate-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="gate-heading">Gate Chain</h2>
+            <p>The invariant is conjunctive. A missing mandatory gate or prior deny blocks execution.</p>
+          </div>
+        </div>
+        <div class="panel invariant" aria-label="Gate invariant visualization">
+          <div class="invariant-node">
+            <strong>AuthorityGate.allow</strong>
+            <span>Role, action, scope, MACI, and amount checks.</span>
+          </div>
+          <div class="operator">AND</div>
+          <div class="invariant-node">
+            <strong>PolicyRecallGate.allow</strong>
+            <span>Deterministic citation and deny policy evaluation.</span>
+          </div>
+          <div class="operator">AND</div>
+          <div class="invariant-node">
+            <strong>GovernanceRecallGate.allow</strong>
+            <span>Explainable final decision record.</span>
+          </div>
+          <div class="final-node">
+            <strong>Execution allowed only when all three allow.</strong>
+            <div class="mono" id="invariantSelection">Current: AG-1001 passes all gates.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="policy-recall" aria-labelledby="policy-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="policy-heading">Policy Recall</h2>
+            <p>Deny policies override allow policies. Citation requirements are evaluated before sensitive actions proceed.</p>
+          </div>
+        </div>
+        <div class="grid-2" id="policyCards"></div>
+      </section>
+
+      <section id="replay" aria-labelledby="replay-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="replay-heading">Replay</h2>
+            <p>Replay compares allow outcomes and reason-code stability against role and policy versions.</p>
+          </div>
+        </div>
+        <div class="replay-strip" id="replayStrip"></div>
+      </section>
+
+      <section id="audit-chain" aria-labelledby="audit-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="audit-heading">Audit Chain</h2>
+            <p>Chain-hashed JSONL records carry previous_hash, event_hash, and queryable rule/gate/risk fields.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h3>Audit Query</h3>
+              <p>Filters mirror GET /audit/query parameters.</p>
+            </div>
+            <span class="status allow" title="Fixture chain verified for embedded sample data">Fixture chain OK</span>
+          </div>
+          <div class="filters">
+            <div class="filter-field">
+              <label for="ruleFilter">rule_id</label>
+              <select id="ruleFilter"></select>
+            </div>
+            <div class="filter-field">
+              <label for="gateFilter">gate</label>
+              <select id="gateFilter">
+                <option value="">Any gate</option>
+                <option value="authority">authority</option>
+                <option value="policy_recall">policy_recall</option>
+                <option value="governance_recall">governance_recall</option>
+              </select>
+            </div>
+            <div class="filter-field">
+              <label for="allowFilter">allow</label>
+              <select id="allowFilter">
+                <option value="">Any result</option>
+                <option value="true">allow</option>
+                <option value="false">deny</option>
+              </select>
+            </div>
+            <div class="filter-field">
+              <label for="riskFilter">risk_tag</label>
+              <select id="riskFilter">
+                <option value="">Any risk</option>
+                <option value="contract">contract</option>
+                <option value="marketing">marketing</option>
+                <option value="ontario_public">ontario_public</option>
+                <option value="high_value">high_value</option>
+                <option value="citation_gap">citation_gap</option>
+              </select>
+            </div>
+          </div>
+          <div class="query-results" id="queryResults"></div>
+        </div>
+      </section>
+
+      <section id="roles" aria-labelledby="roles-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="roles-heading">Roles</h2>
+            <p>Role authority is explicit. Unknown roles, unauthorized actions, missing scope, MACI mismatch, and amount overrun fail closed.</p>
+          </div>
+        </div>
+        <div class="grid-3" id="roleCards"></div>
+      </section>
+
+      <section id="api" aria-labelledby="api-heading">
+        <div class="section-head">
+          <div>
+            <h2 id="api-heading">API</h2>
+            <p>Compact service surface for validation, explanation, audit query, and chain verification.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="endpoint-card">
+            <div class="endpoint-top">
+              <div class="endpoint-title">
+                <h3>Endpoints</h3>
+                <span class="mono">FastAPI surface</span>
+              </div>
+            </div>
+            <ul class="field-list">
+              <li><strong>POST</strong> /govern/validate</li>
+              <li><strong>GET</strong> /govern/explain/{event_id}</li>
+              <li><strong>GET</strong> /audit/query</li>
+              <li><strong>GET</strong> /audit/verify-chain</li>
+            </ul>
+          </div>
+          <div>
+            <pre aria-label="Validate JSON shape">{
+  "tenant": "default",
+  "intent": "Redline supplier contract",
+  "action_type": "contract.redline",
+  "resource": "contracts/supplier-123",
+  "inputs_hash": "sha256:demo",
+  "actor": {
+    "id": "agent-legal-1",
+    "role": "LegalOps",
+    "tenant": "default"
+  },
+  "metadata": {
+    "policy_citations": ["CONTRACT-AUTHORITY-001"],
+    "maci_role": "proposer"
+  }
+}</pre>
+          </div>
+        </div>
+      </section>
+
+      <p class="footer-note">Prototype uses embedded fixture data only. It avoids unsupported compliance claims and models the repo invariant as an evaluation console.</p>
+    </main>
+  </div>
+
+  <script>
+    "use strict";
+
+    const policies = [
+      {
+        id: "CONTRACT-AUTHORITY-001",
+        title: "Contract actions require role authority and policy citation",
+        version: "2026-05-contracting",
+        effect: "allow",
+        applies: "contract.redline, contract.approve on contracts/*",
+        citation: true,
+        obligations: ["CONTRACT-OBL-CITE-SOURCE", "CONTRACT-OBL-TRACE"]
+      },
+      {
+        id: "CONTRACT-HIGH-VALUE-REVIEW-002",
+        title: "High value contract approval requires human review evidence",
+        version: "2026-05-contracting",
+        effect: "allow",
+        applies: "contract.approve on contracts/* when amount >= 500000 cents",
+        citation: true,
+        obligations: ["CONTRACT-OBL-HUMAN-REVIEW"]
+      },
+      {
+        id: "MKT-ONTARIO-NO-INDUCEMENT-001",
+        title: "Ontario public marketing must not include inducement language",
+        version: "2026-05-marketing",
+        effect: "deny",
+        applies: "marketing.publish or email.send to marketing/ontario/* or public/ontario/*",
+        citation: false,
+        obligations: ["MKT-OBL-ONTARIO-COMPLIANCE"]
+      },
+      {
+        id: "MKT-PUBLICATION-TRACE-002",
+        title: "Public marketing publication requires traceable approval",
+        version: "2026-05-marketing",
+        effect: "allow",
+        applies: "marketing.publish on marketing/* or public/*",
+        citation: true,
+        obligations: ["MKT-OBL-CITATION"]
+      }
+    ];
+
+    const roles = [
+      {
+        name: "LegalOps",
+        desc: "Contract redline authority and limited approval scope.",
+        actions: ["contract.read", "contract.redline", "contract.approve", "email.send"],
+        scopes: ["contracts/*", "emails/legal/*"],
+        maci: ["proposer", "executor"],
+        limits: "single 500000 cents; daily 2500000 cents"
+      },
+      {
+        name: "MarketingOps",
+        desc: "Public content publishing authority, excluding legal approval.",
+        actions: ["marketing.draft", "marketing.publish", "email.send"],
+        scopes: ["marketing/*", "public/*", "emails/marketing/*"],
+        maci: ["proposer", "executor"],
+        limits: "no spend authority"
+      },
+      {
+        name: "Observer",
+        desc: "Read-only observer role for audit and governance explanation.",
+        actions: ["audit.read", "governance.explain"],
+        scopes: ["audit/*", "governance/*"],
+        maci: ["observer"],
+        limits: "no spend authority"
+      }
+    ];
+
+    const evaluations = [
+      {
+        event_id: "AG-1001",
+        actor: { id: "agent-legal-1", role: "LegalOps", tenant: "default" },
+        intent: "Redline supplier contract",
+        action_type: "contract.redline",
+        resource: "contracts/supplier-123",
+        inputs_hash: "sha256:0f63a9c4c0b2",
+        role_version: "2026-05-04",
+        policy_version: "2026-05-contracting",
+        allow: true,
+        reason_codes: ["AUTHORITY_OK", "POLICY_RECALL_OK", "GOVERNANCE_RECALL_OK"],
+        rule_ids: ["CONTRACT-AUTHORITY-001"],
+        previous_hash: "00000000000000000000000000000000",
+        event_hash: "d2c9a8f41c7e33bb92154e981a6f33de9d67a2a115a6c42d01b8e7a1f6c3d929",
+        risk_tags: ["contract"],
+        replay: { same_allow: true, same_reason_codes: true, gaps: [] },
+        gates: [
+          { gate: "authority", allowed: true, reason_codes: ["AUTHORITY_OK"], rule_ids: [], reason: "LegalOps can contract.redline within contracts/* as proposer." },
+          { gate: "policy_recall", allowed: true, reason_codes: ["POLICY_RECALL_OK"], rule_ids: ["CONTRACT-AUTHORITY-001"], reason: "Required policy citation is present." },
+          { gate: "governance_recall", allowed: true, reason_codes: ["GOVERNANCE_RECALL_OK"], rule_ids: ["CONTRACT-AUTHORITY-001"], reason: "Mandatory gate results are complete and all allow." }
+        ]
+      },
+      {
+        event_id: "AG-1002",
+        actor: { id: "agent-mkt-7", role: "MarketingOps", tenant: "default" },
+        intent: "Publish Ontario campaign page with risk-free bonus wording",
+        action_type: "marketing.publish",
+        resource: "public/ontario/sportsbook-campaign",
+        inputs_hash: "sha256:42ba117d9f20",
+        role_version: "2026-05-04",
+        policy_version: "2026-05-marketing",
+        allow: false,
+        reason_codes: ["AUTHORITY_OK", "POLICY_DENY_MATCH", "GOVERNANCE_RECALL_DENY"],
+        rule_ids: ["MKT-ONTARIO-NO-INDUCEMENT-001", "MKT-PUBLICATION-TRACE-002"],
+        previous_hash: "d2c9a8f41c7e33bb92154e981a6f33de",
+        event_hash: "afb07be80a1dfffd450fd9a94d574f7c1ce99102b29ea04774e63b05755d4a11",
+        risk_tags: ["marketing", "ontario_public"],
+        replay: { same_allow: true, same_reason_codes: true, gaps: [] },
+        gates: [
+          { gate: "authority", allowed: true, reason_codes: ["AUTHORITY_OK"], rule_ids: [], reason: "MarketingOps can publish to public/* as proposer." },
+          { gate: "policy_recall", allowed: false, reason_codes: ["POLICY_DENY_MATCH"], rule_ids: ["MKT-ONTARIO-NO-INDUCEMENT-001", "MKT-PUBLICATION-TRACE-002"], reason: "Ontario deny policy matches inducement flags; deny overrides allow." },
+          { gate: "governance_recall", allowed: false, reason_codes: ["GOVERNANCE_RECALL_DENY"], rule_ids: ["MKT-ONTARIO-NO-INDUCEMENT-001", "MKT-PUBLICATION-TRACE-002"], reason: "Governance recall explains a prior mandatory gate denial." }
+        ]
+      },
+      {
+        event_id: "AG-1003",
+        actor: { id: "agent-observer-2", role: "Observer", tenant: "default" },
+        intent: "Approve vendor contract from observer console",
+        action_type: "contract.approve",
+        resource: "contracts/vendor-88",
+        inputs_hash: "sha256:ef34a9aa0d66",
+        role_version: "2026-05-04",
+        policy_version: "2026-05-contracting",
+        allow: false,
+        reason_codes: ["ACTION_NOT_AUTHORIZED", "POLICY_RECALL_OK", "GOVERNANCE_RECALL_DENY"],
+        rule_ids: ["CONTRACT-AUTHORITY-001"],
+        previous_hash: "afb07be80a1dfffd450fd9a94d574f7",
+        event_hash: "4f90705cfd7728f596628012dbdb68f7a2c2521c930d9a50692327bdedfa8820",
+        risk_tags: ["contract"],
+        replay: { same_allow: true, same_reason_codes: true, gaps: [] },
+        gates: [
+          { gate: "authority", allowed: false, reason_codes: ["ACTION_NOT_AUTHORIZED"], rule_ids: [], reason: "Observer only has audit.read and governance.explain actions." },
+          { gate: "policy_recall", allowed: true, reason_codes: ["POLICY_RECALL_OK"], rule_ids: ["CONTRACT-AUTHORITY-001"], reason: "Contract approval policy citation is present, but policy allow cannot override failed authority." },
+          { gate: "governance_recall", allowed: false, reason_codes: ["GOVERNANCE_RECALL_DENY"], rule_ids: ["CONTRACT-AUTHORITY-001"], reason: "A mandatory prior gate denied." }
+        ]
+      },
+      {
+        event_id: "AG-1004",
+        actor: { id: "agent-legal-9", role: "LegalOps", tenant: "default" },
+        intent: "Approve high-value contract without review ticket",
+        action_type: "contract.approve",
+        resource: "contracts/enterprise-19",
+        inputs_hash: "sha256:91b3e4a13100",
+        role_version: "2026-05-04",
+        policy_version: "2026-05-contracting",
+        allow: false,
+        reason_codes: ["AMOUNT_LIMIT_EXCEEDED", "POLICY_OBLIGATION_MISSING", "GOVERNANCE_RECALL_DENY"],
+        rule_ids: ["CONTRACT-AUTHORITY-001", "CONTRACT-HIGH-VALUE-REVIEW-002"],
+        previous_hash: "4f90705cfd7728f596628012dbdb68f7",
+        event_hash: "c699dc61e1b065d42c478f251218036372afdd216f92096a0d417551a5343fc2",
+        risk_tags: ["contract", "high_value", "citation_gap"],
+        replay: { same_allow: true, same_reason_codes: false, gaps: ["human review evidence missing", "amount exceeds single limit"] },
+        gates: [
+          { gate: "authority", allowed: false, reason_codes: ["AMOUNT_LIMIT_EXCEEDED"], rule_ids: [], reason: "Request amount is above LegalOps single_amount_cents limit." },
+          { gate: "policy_recall", allowed: false, reason_codes: ["POLICY_OBLIGATION_MISSING"], rule_ids: ["CONTRACT-AUTHORITY-001", "CONTRACT-HIGH-VALUE-REVIEW-002"], reason: "High-value approval requires citation and human review evidence." },
+          { gate: "governance_recall", allowed: false, reason_codes: ["GOVERNANCE_RECALL_DENY"], rule_ids: ["CONTRACT-AUTHORITY-001", "CONTRACT-HIGH-VALUE-REVIEW-002"], reason: "Governance recall blocks because mandatory gates denied." }
+        ]
+      }
+    ];
+
+    let selectedId = evaluations[0].event_id;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function chips(items) {
+      const wrap = el("div", "chips");
+      items.forEach((item) => {
+        const chip = el("span", "chip mono", item);
+        chip.title = item;
+        chip.setAttribute("aria-label", item);
+        wrap.appendChild(chip);
+      });
+      return wrap;
+    }
+
+    function copyValue(label, value) {
+      const setStatus = (message) => {
+        const statusNode = document.getElementById("copyStatus");
+        if (statusNode) statusNode.textContent = message;
+      };
+      const finish = () => setStatus(`Copied ${label}.`);
+      const fallbackCopy = () => {
+        const area = document.createElement("textarea");
+        area.value = value;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        try {
+          document.execCommand("copy");
+          finish();
+        } catch (error) {
+          setStatus(`Copy unavailable for ${label}.`);
+        } finally {
+          area.remove();
+        }
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).then(finish).catch(fallbackCopy);
+        return;
+      }
+      fallbackCopy();
+    }
+
+    function status(allow) {
+      return allow ? "allow" : "deny";
+    }
+
+    function renderSummary() {
+      const total = evaluations.length;
+      const allGateAgree = evaluations.filter((event) => event.gates.every((gate) => gate.allowed) === event.allow).length;
+      const citationGaps = evaluations.filter((event) => event.risk_tags.includes("citation_gap")).length;
+      const sameAllow = evaluations.filter((event) => event.replay.same_allow).length;
+      const sameReasons = evaluations.filter((event) => event.replay.same_reason_codes).length;
+      const cards = [
+        { label: "Gate agreement", value: `${allGateAgree}/${total}`, note: "Final allow matches required gate conjunction." },
+        { label: "Citation gaps", value: String(citationGaps), note: "Displayed sample has one citation/review evidence gap." },
+        { label: "Replay consistency", value: `${sameAllow}/${total}`, note: `${sameReasons}/${total} retain the same reason codes.` },
+        { label: "Fixture chain", value: "OK", note: "previous_hash and event_hash sequence is intact for embedded sample data." }
+      ];
+      const root = document.getElementById("summaryCards");
+      root.replaceChildren(...cards.map((card) => {
+        const node = el("article", "card");
+        node.append(el("div", "card-label", card.label), el("div", "card-value", card.value), el("div", "card-note", card.note));
+        return node;
+      }));
+    }
+
+    function renderRows() {
+      const tbody = document.getElementById("evaluationRows");
+      tbody.replaceChildren(...evaluations.map((event) => {
+        const tr = el("tr", event.event_id === selectedId ? "selected" : "");
+        tr.tabIndex = 0;
+        tr.setAttribute("aria-selected", String(event.event_id === selectedId));
+        tr.dataset.eventId = event.event_id;
+        const gatePath = el("div", "gate-path");
+        event.gates.forEach((gate) => {
+          gatePath.appendChild(el("span", `gate-dot ${status(gate.allowed)}`, `${gate.gate.split("_").map((part) => part[0]).join("").toUpperCase()}${gate.allowed ? "" : "!"}`));
+        });
+        const actorCell = el("td", "", event.actor.role);
+        if (event.event_id === selectedId) actorCell.appendChild(el("span", "row-selected-badge", "selected"));
+        const hashPreview = el("td", "mono", event.event_hash.slice(0, 12));
+        hashPreview.title = event.event_hash;
+        hashPreview.setAttribute("aria-label", `event hash ${event.event_hash}`);
+        const cells = [
+          actorCell,
+          el("td", "mono", event.action_type),
+          el("td", "mono", event.resource),
+          el("td"),
+          el("td"),
+          el("td"),
+          el("td", "rule-id-cell"),
+          hashPreview
+        ];
+        cells[3].appendChild(gatePath);
+        cells[4].appendChild(el("span", `status ${status(event.allow)}`, event.allow ? "allow" : "deny"));
+        cells[5].appendChild(chips(event.reason_codes));
+        cells[6].appendChild(chips(event.rule_ids));
+        tr.append(...cells);
+        tr.addEventListener("click", () => selectEvent(event.event_id));
+        tr.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            selectEvent(event.event_id);
+          }
+        });
+        return tr;
+      }));
+    }
+
+    function renderDetail() {
+      const event = evaluations.find((item) => item.event_id === selectedId) || evaluations[0];
+      document.getElementById("detailSubtitle").textContent = `${event.event_id} / ${event.intent}`;
+      const allow = document.getElementById("detailAllow");
+      allow.className = `status ${status(event.allow)}`;
+      allow.textContent = event.allow ? "allow" : "deny";
+
+      const detailGroups = [
+        {
+          label: "Request metadata",
+          rows: [
+            ["event_id", event.event_id],
+            ["actor", `${event.actor.id} / ${event.actor.role} / ${event.actor.tenant}`],
+            ["intent", event.intent],
+            ["action_type", event.action_type],
+            ["resource", event.resource]
+          ]
+        },
+        {
+          label: "Version metadata",
+          rows: [
+            ["role_version", event.role_version],
+            ["policy_version", event.policy_version]
+          ]
+        },
+        {
+          label: "Chain evidence",
+          rows: [
+            ["inputs_hash", event.inputs_hash],
+            ["previous_hash", event.previous_hash],
+            ["event_hash", event.event_hash]
+          ]
+        }
+      ];
+      const kv = document.getElementById("detailKv");
+      document.getElementById("copyStatus").textContent = "";
+      kv.replaceChildren(...detailGroups.map((group) => {
+        const section = el("section", "kv-group");
+        section.appendChild(el("h4", "", group.label));
+        const list = el("dl", "kv");
+        list.append(...group.rows.map(([key, value]) => {
+          const row = el("div", "kv-row");
+          const isHash = key.includes("hash");
+          const canCopy = key === "event_id" || isHash;
+          const dd = el("dd", isHash || key.includes("version") ? "mono" : "");
+          const valueWrap = el("div", "evidence-value");
+          const valueNode = el("span", isHash ? "hash-block" : "", value);
+          valueNode.title = value;
+          valueWrap.appendChild(valueNode);
+          if (canCopy) {
+            const button = el("button", "copy-btn", "Copy");
+            button.type = "button";
+            button.title = `Copy ${key}`;
+            button.setAttribute("aria-label", `Copy ${key} ${value}`);
+            button.addEventListener("click", () => copyValue(key, value));
+            valueWrap.appendChild(button);
+          }
+          dd.appendChild(valueWrap);
+          row.append(el("dt", "", key), dd);
+          return row;
+        }));
+        section.appendChild(list);
+        return section;
+      }));
+
+      const gates = document.getElementById("detailGates");
+      gates.replaceChildren(...event.gates.map((gate) => {
+        const node = el("article", "gate-result");
+        const head = el("div", "gate-result-head");
+        head.append(el("h3", "", gate.gate === "policy_recall" ? "PolicyRecallGate result" : gate.gate === "governance_recall" ? "GovernanceRecallGate result" : "AuthorityGate result"));
+        head.append(el("span", `status ${status(gate.allowed)}`, gate.allowed ? "allow" : "deny"));
+        node.append(head, chips(gate.reason_codes), el("p", "", gate.reason));
+        return node;
+      }));
+
+      document.getElementById("invariantSelection").textContent = `Current: ${event.event_id} ${event.allow ? "passes all gates" : "is blocked before execution"}.`;
+    }
+
+    function renderPolicies() {
+      const root = document.getElementById("policyCards");
+      root.replaceChildren(...policies.map((policy) => {
+        const node = el("article", "policy-card");
+        const top = el("div", "policy-top");
+        const title = el("div", "policy-title");
+        title.append(el("h3", "", policy.title), el("span", "mono", `${policy.id} / ${policy.version}`));
+        top.append(title, el("span", `status ${policy.effect === "deny" ? "deny" : "allow"}`, policy.effect));
+        node.append(top);
+        node.appendChild(chips([policy.citation ? "citation required" : "no citation required", "deny-overrides-allow"]));
+        const list = el("ul", "field-list");
+        list.innerHTML = `<li><strong>Applies:</strong> ${policy.applies}</li><li><strong>Obligations:</strong> ${policy.obligations.join(", ")}</li>`;
+        node.appendChild(list);
+        return node;
+      }));
+    }
+
+    function renderReplay() {
+      const selected = evaluations.find((item) => item.event_id === selectedId) || evaluations[0];
+      const sameAllow = evaluations.filter((event) => event.replay.same_allow).length;
+      const sameReasons = evaluations.filter((event) => event.replay.same_reason_codes).length;
+      const gaps = selected.replay.gaps.length ? selected.replay.gaps.join("; ") : "No replay gaps for selected event.";
+      const cells = [
+        ["same_allow", selected.replay.same_allow ? "true" : "false"],
+        ["same_reason_codes", selected.replay.same_reason_codes ? "true" : "false"],
+        ["sampled event count", String(evaluations.length)],
+        ["gaps", gaps]
+      ];
+      document.getElementById("replayStrip").replaceChildren(...cells.map(([label, value]) => {
+        const node = el("div", "replay-cell");
+        node.append(el("span", "", label), el("strong", value.length > 24 ? "card-note" : "", value));
+        return node;
+      }));
+      document.querySelector('[href="#replay"]').setAttribute("aria-label", `Replay ${sameAllow} same allow, ${sameReasons} same reason codes`);
+    }
+
+    function renderRoles() {
+      const root = document.getElementById("roleCards");
+      root.replaceChildren(...roles.map((role) => {
+        const node = el("article", "role-card");
+        const top = el("div", "role-top");
+        const title = el("div", "role-title");
+        title.append(el("h3", "", role.name), el("span", "card-note", role.desc));
+        top.append(title);
+        node.append(top);
+        node.appendChild(chips(role.maci.map((maci) => `MACI ${maci}`)));
+        const list = el("ul", "field-list");
+        list.innerHTML = `<li><strong>Actions:</strong> ${role.actions.join(", ")}</li><li><strong>Scopes:</strong> ${role.scopes.join(", ")}</li><li><strong>Limits:</strong> ${role.limits}</li>`;
+        node.appendChild(list);
+        return node;
+      }));
+    }
+
+    function setupFilters() {
+      const ruleFilter = document.getElementById("ruleFilter");
+      const rules = [...new Set(evaluations.flatMap((event) => event.rule_ids))].sort();
+      ruleFilter.replaceChildren(el("option", "", "Any rule"));
+      ruleFilter.firstChild.value = "";
+      rules.forEach((rule) => {
+        const option = el("option", "", rule);
+        option.value = rule;
+        ruleFilter.appendChild(option);
+      });
+      ["ruleFilter", "gateFilter", "allowFilter", "riskFilter"].forEach((id) => {
+        document.getElementById(id).addEventListener("change", renderQuery);
+      });
+    }
+
+    function renderQuery() {
+      const rule = document.getElementById("ruleFilter").value;
+      const gate = document.getElementById("gateFilter").value;
+      const allow = document.getElementById("allowFilter").value;
+      const risk = document.getElementById("riskFilter").value;
+      const matches = evaluations.filter((event) => {
+        const ruleOk = !rule || event.rule_ids.includes(rule);
+        const gateOk = !gate || event.gates.some((item) => item.gate === gate);
+        const allowOk = !allow || String(event.allow) === allow;
+        const riskOk = !risk || event.risk_tags.includes(risk);
+        return ruleOk && gateOk && allowOk && riskOk;
+      });
+      const root = document.getElementById("queryResults");
+      if (!matches.length) {
+        root.replaceChildren(el("div", "card-note", "No audit events match the selected filters."));
+        return;
+      }
+      root.replaceChildren(...matches.map((event) => {
+        const row = el("div", "query-row");
+        row.append(el("span", "mono", event.event_id), el("span", "", `${event.action_type} / ${event.resource}`), el("span", `status ${status(event.allow)}`, event.allow ? "allow" : "deny"));
+        row.addEventListener("click", () => selectEvent(event.event_id));
+        return row;
+      }));
+    }
+
+    function selectEvent(eventId) {
+      selectedId = eventId;
+      renderRows();
+      renderDetail();
+      renderReplay();
+    }
+
+    function setupTweaks() {
+      document.querySelectorAll("[data-density]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const compact = button.dataset.density === "compact";
+          document.body.classList.toggle("compact", compact);
+          document.querySelectorAll("[data-density]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+        });
+      });
+      document.querySelectorAll("[data-theme]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const night = button.dataset.theme === "night";
+          document.body.classList.toggle("night", night);
+          document.querySelectorAll("[data-theme]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+        });
+      });
+    }
+
+    function setupNavSpy() {
+      const links = [...document.querySelectorAll(".nav-list a")];
+      const sections = links.map((link) => document.querySelector(link.getAttribute("href"))).filter(Boolean);
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${entry.target.id}`));
+        });
+      }, { rootMargin: "-35% 0px -55% 0px", threshold: 0 });
+      sections.forEach((section) => observer.observe(section));
+    }
+
+    renderSummary();
+    renderRows();
+    renderDetail();
+    renderPolicies();
+    renderReplay();
+    renderRoles();
+    setupFilters();
+    renderQuery();
+    setupTweaks();
+    setupNavSpy();
+  </script>
+</body>
+</html>

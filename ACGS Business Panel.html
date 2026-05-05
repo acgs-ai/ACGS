@@ -1,0 +1,1129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACGS Business Panel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --panel: #fffdf8;
+      --panel-2: #ece8de;
+      --ink: #171a1d;
+      --muted: #5f6670;
+      --soft: #8a929c;
+      --line: #d8d3c8;
+      --line-strong: #9d9587;
+      --green: #256a4d;
+      --green-bg: #e2efe8;
+      --red: #9e352c;
+      --red-bg: #f2e3df;
+      --amber: #8f6115;
+      --amber-bg: #f2ead7;
+      --blue: #235b78;
+      --blue-bg: #dfeaf0;
+      --violet: #5f4e8f;
+      --violet-bg: #e8e4f1;
+      --shadow: 0 18px 44px rgba(33, 31, 27, .08);
+      --radius: 8px;
+      --gap: 16px;
+      --pad: 18px;
+      --row-pad: 13px;
+      --font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    body.dark {
+      color-scheme: dark;
+      --bg: #121417;
+      --panel: #1b1f24;
+      --panel-2: #242a30;
+      --ink: #f3f1ea;
+      --muted: #b1b8c0;
+      --soft: #8f98a3;
+      --line: #333b43;
+      --line-strong: #5d6873;
+      --green: #8ed7ae;
+      --green-bg: #173327;
+      --red: #f09a90;
+      --red-bg: #3a211f;
+      --amber: #e4bf72;
+      --amber-bg: #372b17;
+      --blue: #91c4de;
+      --blue-bg: #172d38;
+      --violet: #c5b8ed;
+      --violet-bg: #28243c;
+      --shadow: 0 18px 42px rgba(0, 0, 0, .24);
+    }
+
+    body.compact {
+      --pad: 14px;
+      --row-pad: 9px;
+      --gap: 12px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(37, 106, 77, .07), transparent 22%, transparent 76%, rgba(35, 91, 120, .08)),
+        repeating-linear-gradient(0deg, rgba(23, 26, 29, .035) 0 1px, transparent 1px 28px),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font);
+      line-height: 1.42;
+      letter-spacing: 0;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--blue);
+      outline-offset: 3px;
+    }
+
+    .shell {
+      width: min(100%, 1500px);
+      margin: 0 auto;
+      padding: 22px clamp(14px, 2.4vw, 34px) 42px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: start;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      gap: 13px;
+      align-items: flex-start;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    h1 {
+      font-size: clamp(32px, 4vw, 58px);
+      line-height: .98;
+      max-width: 980px;
+      letter-spacing: 0;
+    }
+
+    .product-line {
+      margin-top: 8px;
+      color: var(--green);
+      font-size: clamp(18px, 2vw, 27px);
+      font-weight: 780;
+    }
+
+    .portfolio-frame {
+      max-width: 1040px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .btn {
+      min-height: 38px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 760;
+      cursor: pointer;
+    }
+
+    .btn:hover { border-color: var(--line-strong); }
+
+    .btn[aria-pressed="true"],
+    .btn.primary {
+      border-color: color-mix(in srgb, var(--green), var(--line) 30%);
+      background: var(--green-bg);
+      color: var(--green);
+    }
+
+    .command-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(310px, .75fr);
+      gap: var(--gap);
+      margin-top: var(--gap);
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--panel), transparent 2%);
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: var(--pad);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2 {
+      font-size: clamp(20px, 2vw, 29px);
+      line-height: 1.08;
+    }
+
+    .panel-head p {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .panel-body { padding: var(--pad); }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      min-height: 104px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel-2);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 710;
+      text-transform: uppercase;
+    }
+
+    .next-build {
+      display: grid;
+      gap: 13px;
+      padding: var(--pad);
+      border: 1px solid color-mix(in srgb, var(--green), var(--line) 35%);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--green-bg), transparent 6%), var(--panel));
+    }
+
+    .next-build h2 {
+      font-size: clamp(24px, 2.5vw, 34px);
+      line-height: 1.05;
+    }
+
+    .next-build p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .bridge {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .bridge-step {
+      min-height: 82px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+
+    .bridge-step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .bridge-step span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 27px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 740;
+    }
+
+    .chip.demo { color: var(--green); background: var(--green-bg); }
+    .chip.build { color: var(--blue); background: var(--blue-bg); }
+    .chip.paid { color: var(--amber); background: var(--amber-bg); }
+    .chip.enterprise { color: var(--violet); background: var(--violet-bg); }
+    .chip.guard { color: var(--red); background: var(--red-bg); }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);
+      gap: var(--gap);
+    }
+
+    .signal-card {
+      display: grid;
+      gap: 9px;
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+
+    .signal-card strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .signal-card p,
+    .signal-card li {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .signal-card ul,
+    .signal-flow {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .signal-flow li {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+    }
+
+    .step-num {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-2);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .signal-map {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .section {
+      margin-top: var(--gap);
+      display: grid;
+      gap: var(--gap);
+    }
+
+    .stack-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .stack-table th,
+    .stack-table td {
+      padding: var(--row-pad) 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    .stack-table th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .stack-table tr:last-child td { border-bottom: 0; }
+
+    .stack-table tbody tr { transition: opacity .16s ease, background .16s ease; }
+    .stack-table tbody tr:hover { background: color-mix(in srgb, var(--blue-bg), transparent 62%); }
+    .stack-table tbody tr.hidden { display: none; }
+
+    .product-name {
+      display: block;
+      font-weight: 820;
+      line-height: 1.2;
+    }
+
+    .path {
+      display: block;
+      margin-top: 6px;
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 11px;
+      overflow-wrap: anywhere;
+    }
+
+    .body-copy {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .lane-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .lane {
+      display: grid;
+      gap: 9px;
+      min-height: 176px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+
+    .lane h3 {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 14px;
+    }
+
+    .lane p,
+    .lane li {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .lane ul {
+      display: grid;
+      gap: 5px;
+      margin: 0;
+      padding-left: 17px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--gap);
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .list li {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      min-height: 30px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tick {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--green-bg);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .avoid .tick {
+      background: var(--red-bg);
+      color: var(--red);
+    }
+
+    .boundary .tick {
+      background: var(--amber-bg);
+      color: var(--amber);
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .square {
+      width: 16px;
+      height: 16px;
+      display: grid;
+      place-items: center;
+      flex: none;
+      border: 1px solid var(--green);
+      border-radius: 4px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .copy-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    .copy-line {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+
+    .copy-line code {
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: normal;
+    }
+
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: currentColor;
+      flex: none;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10;
+      max-width: min(360px, calc(100vw - 36px));
+      padding: 11px 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--ink);
+      box-shadow: var(--shadow);
+      font-size: 13px;
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1050px) {
+      .topbar,
+      .command-grid,
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+
+      .controls { justify-content: flex-start; }
+      .metric-strip,
+      .signal-map,
+      .lane-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .signal-grid { grid-template-columns: 1fr; }
+      .checklist { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
+      .shell { padding-inline: 12px; }
+      .brand { display: grid; grid-template-columns: 42px minmax(0, 1fr); }
+      .metric-strip,
+      .bridge,
+      .signal-map,
+      .lane-grid,
+      .checklist { grid-template-columns: 1fr; }
+
+      .stack-table,
+      .stack-table thead,
+      .stack-table tbody,
+      .stack-table th,
+      .stack-table td,
+      .stack-table tr {
+        display: block;
+      }
+
+      .stack-table thead { display: none; }
+      .stack-table tr {
+        border-bottom: 1px solid var(--line);
+        padding: 10px 0;
+      }
+      .stack-table tr:last-child { border-bottom: 0; }
+      .stack-table td {
+        border: 0;
+        padding: 6px 0;
+      }
+      .stack-table td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 3px;
+        color: var(--soft);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">ACGS</div>
+        <div>
+          <h1>ACGS / GovernZone Business Panel</h1>
+          <p class="product-line" id="positioningLine">Evidence, not logs.</p>
+          <p class="portfolio-frame">ACGS is the governed evidence layer. Hermes/agents execute. GovernZone shows what happened, why it was allowed or denied, whether it can be replayed, and what evidence packet can be exported.</p>
+        </div>
+      </div>
+      <div class="controls" aria-label="Panel controls">
+        <button class="btn" type="button" data-copy-target="positioningLine">Copy line</button>
+        <button class="btn" type="button" id="densityToggle" aria-pressed="false">Compact</button>
+        <button class="btn" type="button" id="themeToggle" aria-pressed="false">Dark</button>
+      </div>
+    </header>
+
+    <section class="command-grid" aria-label="Business command center">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Portfolio Command Center</h2>
+            <p>Use this view to steer buyer conversations, readiness sprints, and product sequencing without turning internal package names into the pitch.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="metric-strip" aria-label="Portfolio posture summary">
+            <div class="metric">
+              <strong>3</strong>
+              <span>Strongest bridge assets</span>
+            </div>
+            <div class="metric">
+              <strong>4</strong>
+              <span>Business lanes</span>
+            </div>
+            <div class="metric">
+              <strong>7</strong>
+              <span>Primary product surfaces</span>
+            </div>
+            <div class="metric">
+              <strong>1</strong>
+              <span>Next build to center</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="next-build" aria-labelledby="nextBuildTitle">
+        <div>
+          <h2 id="nextBuildTitle">Governed Action Evidence Packet v0</h2>
+          <p id="nextBuildLine">Shared schema and smoke flow: Hermes ACGS middleware emits governed action events, the Governance Evaluation MVP verifies and replays them, and GovernZone/acgi-ai becomes the durable inspection UI.</p>
+        </div>
+        <div class="bridge" aria-label="Bridge path">
+          <div class="bridge-step">
+            <strong>Hermes ACGS bundle</strong>
+            <span>Pre-tool, post-tool, and final-answer hooks produce governed evidence.</span>
+          </div>
+          <div class="bridge-step">
+            <strong>Governance Evaluation MVP</strong>
+            <span>Authority, policy recall, governance recall, chain hash, and replay checks.</span>
+          </div>
+          <div class="bridge-step">
+            <strong>GovernZone / acgi-ai</strong>
+            <span>Commercial console for evidence review, sampling, and export flow.</span>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip build">Build next</span>
+          <span class="chip demo">Demo bridge</span>
+          <span class="chip guard">Evidence-scoped</span>
+        </div>
+        <button class="btn primary" type="button" data-copy-target="nextBuildLine">Copy next-build line</button>
+      </aside>
+    </section>
+
+    <section class="section" aria-labelledby="signalTitle">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="signalTitle">Today's AI Operating Signal</h2>
+            <p>Founder/operator readback: the useful shift is not chasing better prompts, but turning AI work into a controllable execution system with feedback loops.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="signal-grid">
+            <article class="signal-card">
+              <strong>Core operating line</strong>
+              <p id="operatingSignalLine">Advantage comes from systems that consistently produce good answers: structured execution, persistent memory, and independent validation.</p>
+              <div class="copy-line">
+                <code>Copy the line above for founder/operator positioning.</code>
+                <button class="btn" type="button" data-copy-target="operatingSignalLine">Copy</button>
+              </div>
+            </article>
+
+            <article class="signal-card">
+              <strong>Practical techniques to standardize</strong>
+              <ul>
+                <li>Spec -> plan -> patch before broad implementation.</li>
+                <li>Check blast radius before changing a surface.</li>
+                <li>Use paired opposition or reviewer critique on important outputs.</li>
+                <li>Treat every output as a hypothesis until evidence supports it.</li>
+                <li>Anchor outputs to invariants: scope, tests, policies, and buyer-safe claims.</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="signal-map" style="margin-top: 13px" aria-label="ACGS execution system mapping">
+            <article class="signal-card">
+              <strong>Hermes / agents</strong>
+              <p>Structured execution: goal, constraints, unknowns, minimal change, and clear handoff from intent to action.</p>
+            </article>
+            <article class="signal-card">
+              <strong>ACGS</strong>
+              <p>Validation, invariants, evidence, and replay checks that make outputs inspectable instead of merely plausible.</p>
+            </article>
+            <article class="signal-card">
+              <strong>GovernZone</strong>
+              <p>Inspection, reviewer view, business readback, and reusable lessons from governed action packets.</p>
+            </article>
+          </div>
+
+          <div class="signal-grid" style="margin-top: 13px">
+            <article class="signal-card">
+              <strong>Actionable operating loop</strong>
+              <ol class="signal-flow">
+                <li><span class="step-num">1</span><span>Clarify the goal.</span></li>
+                <li><span class="step-num">2</span><span>List constraints.</span></li>
+                <li><span class="step-num">3</span><span>Identify unknowns.</span></li>
+                <li><span class="step-num">4</span><span>Apply the minimal diff.</span></li>
+                <li><span class="step-num">5</span><span>Run independent validation.</span></li>
+                <li><span class="step-num">6</span><span>Update lightweight memory or skills for reusable lessons.</span></li>
+              </ol>
+            </article>
+
+            <article class="signal-card">
+              <strong>Patterns worth watching</strong>
+              <ul>
+                <li>Skills as reusable execution units.</li>
+                <li>GitNexus-style codebase understanding engines for grounded repository context.</li>
+                <li>beads-style persistent memory for decisions, constraints, and lessons.</li>
+                <li>Router-style multi-model routing by task shape.</li>
+                <li>clawsec-style AI security layers that inspect prompts, actions, and outputs.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="lanesTitle">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="lanesTitle">Business Lanes</h2>
+            <p>Filter the product stack by the conversation you are having.</p>
+          </div>
+          <div class="controls" role="group" aria-label="Lane filter">
+            <button class="btn" type="button" data-lane-filter="all" aria-pressed="true">All</button>
+            <button class="btn" type="button" data-lane-filter="demo" aria-pressed="false">Demo now</button>
+            <button class="btn" type="button" data-lane-filter="build" aria-pressed="false">Build next</button>
+            <button class="btn" type="button" data-lane-filter="paid" aria-pressed="false">Paid proof</button>
+            <button class="btn" type="button" data-lane-filter="enterprise" aria-pressed="false">Enterprise later</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="lane-grid">
+            <article class="lane">
+              <h3><span class="status-dot" style="color: var(--green)"></span>Demo now</h3>
+              <p>Lead with the standalone Governance Eval Console and the product line. The goal is fast buyer comprehension, not backend depth.</p>
+              <ul>
+                <li>Show allow/deny reasoning.</li>
+                <li>Show replay and audit-supporting evidence.</li>
+                <li>Keep fixture and sample-policy language visible.</li>
+              </ul>
+            </article>
+            <article class="lane">
+              <h3><span class="status-dot" style="color: var(--blue)"></span>Build next</h3>
+              <p>Center the evidence packet bridge so Hermes, the eval MVP, and GovernZone share one inspectable event shape.</p>
+              <ul>
+                <li>One allowed fixture action.</li>
+                <li>One denied fixture action.</li>
+                <li>Replay result matches allow/deny and reason codes.</li>
+              </ul>
+            </article>
+            <article class="lane">
+              <h3><span class="status-dot" style="color: var(--amber)"></span>Paid proof / readiness sprint</h3>
+              <p>Use Canadian legal runtime first where matter context, citation discipline, and professional review boundaries make the value concrete.</p>
+              <ul>
+                <li>Intake to governed execution.</li>
+                <li>Cited result packet.</li>
+                <li>Exportable evidence for review.</li>
+              </ul>
+            </article>
+            <article class="lane">
+              <h3><span class="status-dot" style="color: var(--violet)"></span>Enterprise/private deployment later</h3>
+              <p>Keep runtime bus and private deployment framing behind the product proof until the external story is simple and stable.</p>
+              <ul>
+                <li>Runtime bus as control-plane candidate.</li>
+                <li>GovernZone as durable console.</li>
+                <li>ClinicalGuard as second vertical proof.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="stackTitle">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="stackTitle">Product Stack</h2>
+            <p>Rows are ordered for portfolio pickup, not by internal implementation depth.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="stack-table">
+            <thead>
+              <tr>
+                <th style="width: 23%">Product surface</th>
+                <th style="width: 29%">Business role</th>
+                <th style="width: 28%">Buyer-safe posture</th>
+                <th style="width: 20%">Lane</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-lanes="demo build enterprise">
+                <td data-label="Product surface">
+                  <span class="product-name">acgs-lite</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/ACGS/packages/acgs-lite/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Developer wedge and enforcement substrate: YAML constitutions, pre-execution validation, MACI, tamper-evident audit, and compliance-supporting reports.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Keep it as the public SDK/CLI proof. Do not bury it inside dashboards or turn internal package detail into the lead story.</td>
+                <td data-label="Lane"><span class="chip demo">Demo now</span> <span class="chip enterprise">Enterprise later</span></td>
+              </tr>
+              <tr data-lanes="enterprise build">
+                <td data-label="Product surface">
+                  <span class="product-name">enhanced_agent_bus / runtime bus</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/ACGS/packages/enhanced_agent_bus/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">FastAPI governance runtime, bus, and orchestration surface. Best framed as an enterprise runtime/control-plane candidate.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Use it behind the scenes until the external SKU story is simplified.</td>
+                <td data-label="Lane"><span class="chip enterprise">Enterprise later</span></td>
+              </tr>
+              <tr data-lanes="demo build">
+                <td data-label="Product surface">
+                  <span class="product-name">Governance Evaluation MVP</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/acgs_governance_eval_mvp/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Reviewer-facing evidence console for governed actions: AuthorityGate, PolicyRecallGate, GovernanceRecallGate, JSONL hash chain, replay, optional API, and tests.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Clearest demo for what happened, why it was allowed or denied, whether it can be replayed, and what evidence can be inspected.</td>
+                <td data-label="Lane"><span class="chip demo">Demo now</span> <span class="chip build">Build next</span></td>
+              </tr>
+              <tr data-lanes="build enterprise">
+                <td data-label="Product surface">
+                  <span class="product-name">GovernZone / acgi-ai</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/acgi-ai/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Durable product UI: marketing surface plus runtime console for audit, policies, tenants, agents, incidents, and settings.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Make it the commercial console after reconciling the standalone evidence-console IA into the React console.</td>
+                <td data-label="Lane"><span class="chip build">Build next</span> <span class="chip enterprise">Enterprise later</span></td>
+              </tr>
+              <tr data-lanes="build demo">
+                <td data-label="Product surface">
+                  <span class="product-name">Hermes ACGS bundle</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/hermes_acgs_bundle/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Execution-substrate bridge: pre-tool, post-tool, and final-answer governance hooks with an evidence writer and minimal constitution.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Use it to show governed agent actions producing evidence bundles without requiring Hermes internals to change first.</td>
+                <td data-label="Lane"><span class="chip build">Build next</span></td>
+              </tr>
+              <tr data-lanes="paid enterprise">
+                <td data-label="Product surface">
+                  <span class="product-name">Canadian legal agent runtime</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/ca-legal-agent-skills/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Vertical proof package: lawyers submit matter-context tasks; runtime selects skills, governs execution, audits output, and returns a result packet.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Keep lawyer review, citation discipline, and cross-matter controls explicit. Do not position it as a replacement for professional judgment.</td>
+                <td data-label="Lane"><span class="chip paid">Paid proof</span></td>
+              </tr>
+              <tr data-lanes="enterprise paid">
+                <td data-label="Product surface">
+                  <span class="product-name">ClinicalGuard</span>
+                  <span class="path">/home/martin/Downloads/govern-zone/ACGS/packages/clinicalguard/</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Healthcare A2A reference service with clinical action validation, HIPAA checklist, and audit query.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Second regulated-vertical proof behind the legal/runtime evidence story. Keep clinician review boundaries clear.</td>
+                <td data-label="Lane"><span class="chip enterprise">Enterprise later</span></td>
+              </tr>
+              <tr data-lanes="demo paid">
+                <td data-label="Product surface">
+                  <span class="product-name">Agency Agents</span>
+                  <span class="path">Secondary demo role; source context is weaker than the core pickup map products.</span>
+                </td>
+                <td data-label="Business role" class="body-copy">Role-aware demo/proof surface when the buyer needs to understand how agent roles map into governed action evidence.</td>
+                <td data-label="Buyer-safe posture" class="body-copy">Keep secondary. Use only to explain role-aware evidence flows, not as a front-door product claim.</td>
+                <td data-label="Lane"><span class="chip demo">Demo now</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section two-col" aria-label="Guardrails and evidence packet">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Buyer-Safe Copy Guardrails</h2>
+            <p>Use evidence-scoped language and keep professional-review boundaries visible.</p>
+          </div>
+        </div>
+        <div class="panel-body two-col">
+          <div>
+            <h3>Allowed wording</h3>
+            <ul class="list">
+              <li><span class="tick">✓</span><span>evidence-ready and replayable governed actions</span></li>
+              <li><span class="tick">✓</span><span>policy-governed action evidence</span></li>
+              <li><span class="tick">✓</span><span>audit-supporting and compliance-supporting evidence</span></li>
+              <li><span class="tick">✓</span><span>mapped to NIST AI RMF / EU AI Act concepts</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Avoid wording</h3>
+            <ul class="list avoid">
+              <li><span class="tick">!</span><span>Claims that the product alone satisfies external obligations.</span></li>
+              <li><span class="tick">!</span><span>Claims beyond the evidence packet, policy versions, replay result, and review workflow.</span></li>
+              <li><span class="tick">!</span><span>Claims that governed agents replace professional judgment in legal or clinical settings.</span></li>
+              <li><span class="tick">!</span><span>Claims that evidence capture changes underlying AI behavior.</span></li>
+            </ul>
+          </div>
+          <div style="grid-column: 1 / -1">
+            <h3>Human-review boundaries for legal and clinical verticals</h3>
+            <ul class="list boundary">
+              <li><span class="tick">!</span><span>Legal flows should preserve lawyer review, matter context, citation discipline, and professional responsibility boundaries.</span></li>
+              <li><span class="tick">!</span><span>Clinical flows should preserve clinician review, validation boundaries, and local policy review before deployment.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Evidence Packet Checklist</h2>
+            <p>Acceptance shape for the next build.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="checklist">
+            <div class="check"><span class="square">✓</span>allowed fixture action</div>
+            <div class="check"><span class="square">✓</span>denied fixture action</div>
+            <div class="check"><span class="square">✓</span>policy/role version</div>
+            <div class="check"><span class="square">✓</span>rule IDs</div>
+            <div class="check"><span class="square">✓</span>input hash</div>
+            <div class="check"><span class="square">✓</span>event hash</div>
+            <div class="check"><span class="square">✓</span>previous hash</div>
+            <div class="check"><span class="square">✓</span>replay result</div>
+            <div class="check"><span class="square">✓</span>exportable inspection packet</div>
+          </div>
+          <div class="copy-group" style="margin-top: 13px">
+            <div class="copy-line">
+              <code id="packetPitch">Next coherent build: a static export packet that can be inspected without a running service and replayed against the same policy and role versions.</code>
+              <button class="btn" type="button" data-copy-target="packetPitch">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" role="status" aria-live="polite" id="toast">Copied</div>
+
+  <script>
+    (function () {
+      var body = document.body;
+      var toast = document.getElementById("toast");
+      var themeToggle = document.getElementById("themeToggle");
+      var densityToggle = document.getElementById("densityToggle");
+      var filterButtons = Array.prototype.slice.call(document.querySelectorAll("[data-lane-filter]"));
+      var stackRows = Array.prototype.slice.call(document.querySelectorAll("[data-lanes]"));
+      var toastTimer = 0;
+
+      function showToast(message) {
+        window.clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.add("show");
+        toastTimer = window.setTimeout(function () {
+          toast.classList.remove("show");
+        }, 1700);
+      }
+
+      function setPressed(button, pressed) {
+        button.setAttribute("aria-pressed", pressed ? "true" : "false");
+      }
+
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+
+        var textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.top = "-999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        return ok ? Promise.resolve() : Promise.reject(new Error("Copy failed"));
+      }
+
+      document.addEventListener("click", function (event) {
+        var copyButton = event.target.closest("[data-copy-target]");
+        if (!copyButton) {
+          return;
+        }
+
+        var target = document.getElementById(copyButton.getAttribute("data-copy-target"));
+        if (!target) {
+          showToast("Copy target missing");
+          return;
+        }
+
+        copyText(target.textContent.trim()).then(function () {
+          showToast("Copied to clipboard");
+        }).catch(function () {
+          showToast("Select and copy manually");
+        });
+      });
+
+      themeToggle.addEventListener("click", function () {
+        var isDark = body.classList.toggle("dark");
+        themeToggle.textContent = isDark ? "Light" : "Dark";
+        setPressed(themeToggle, isDark);
+      });
+
+      densityToggle.addEventListener("click", function () {
+        var isCompact = body.classList.toggle("compact");
+        densityToggle.textContent = isCompact ? "Comfort" : "Compact";
+        setPressed(densityToggle, isCompact);
+      });
+
+      filterButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var filter = button.getAttribute("data-lane-filter");
+
+          filterButtons.forEach(function (item) {
+            setPressed(item, item === button);
+          });
+
+          stackRows.forEach(function (row) {
+            var lanes = row.getAttribute("data-lanes").split(/\s+/);
+            var visible = filter === "all" || lanes.indexOf(filter) !== -1;
+            row.classList.toggle("hidden", !visible);
+          });
+        });
+      });
+    }());
+  </script>
+</body>
+</html>

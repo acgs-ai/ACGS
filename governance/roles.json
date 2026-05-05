@@ -1,0 +1,35 @@
+{
+  "version": "2026-05-04",
+  "roles": {
+    "LegalOps": {
+      "description": "Legal operations agent with contract redline authority and limited approval scope.",
+      "actions": ["contract.read", "contract.redline", "contract.approve", "email.send"],
+      "scopes": ["contracts/*", "emails/legal/*"],
+      "maci_roles": ["proposer", "executor"],
+      "limits": {
+        "single_amount_cents": 500000,
+        "daily_amount_cents": 2500000
+      }
+    },
+    "MarketingOps": {
+      "description": "Marketing agent with public content publishing authority, excluding legal approval.",
+      "actions": ["marketing.draft", "marketing.publish", "email.send"],
+      "scopes": ["marketing/*", "public/*", "emails/marketing/*"],
+      "maci_roles": ["proposer", "executor"],
+      "limits": {
+        "single_amount_cents": 0,
+        "daily_amount_cents": 0
+      }
+    },
+    "Observer": {
+      "description": "Read-only observer role for audit and regulator view.",
+      "actions": ["audit.read", "governance.explain"],
+      "scopes": ["audit/*", "governance/*"],
+      "maci_roles": ["observer"],
+      "limits": {
+        "single_amount_cents": 0,
+        "daily_amount_cents": 0
+      }
+    }
+  }
+}
