@@ -727,3 +727,96 @@ Phases 3 (Eng) and 3.5 (DX) not run; Phase 2 (Design) auto-skipped (no UI scope)
 |---|-------|----------|----------------|--------|-----------|
 | 1 | 1 | Halt at premise gate; do not auto-decide rest of Phase 1 | User gate | D1 user choice | Premise P1 unverifiable; ADR cannot rest on fictional paper. Auto-deciding Sections 1–11 on a broken foundation wastes Codex spend. |
 | 2 | 1 | Apply P1 + P6 fixes (lean on P4, drop MACI framing) | Mechanical | User said "fix now" | P1 path B taken: rewrote §1 opener, §2 paragraph, §7 goal statement, §10 risk #1 in design doc; rewrote ADR Context (2 paragraphs) and Alternatives + Risks bullets to remove paper claim. P6: replaced "MACI-inspired role separation" with "separation-of-duties" in design §5 and ADR Decision. Body of both files now grep-clean of `paper`, `MACI`, `Section 5.3`, paper title. Premise P1 reframed from "the paper says X" to "in-context execution applies when procedure fits in context"; argument now stands on P4 (advisory vs authoritative governance) alone. |
+
+---
+
+<!-- /autoplan run 2 completed at HEAD ac3ff6b (2026-05-05T05:33Z) — APPROVED AS-IS -->
+
+## /autoplan run 2 — APPROVED AS-IS
+
+Run 2 launched on the merged branch (docs branch + fix branch via merge commit ac3ff6b) so eng phase had full code visibility. All 6 premises passed the gate cleanly.
+
+### Phase summaries
+
+| Phase | Verdict | Findings | Voices |
+|-------|---------|----------|--------|
+| 1 — CEO | 5/6 confirmed concerns | Codex 10 blind spots; subagent 5 dims (2 CRIT, 2 HIGH, 1 MED) | both ran |
+| 2 — Design | SKIPPED | no UI scope (1 grep match, below 2-match threshold) | n/a |
+| 3 — Eng | 6/6 confirmed concerns | 3 BLOCKERS (decision-state machine, TOCTOU in guard, REWRITE/REQUIRE_HUMAN absent), 4 HIGH, 3 MED | both ran |
+| 3.5 — DX | avg 4.4/10 — "not adoptable for regulated enterprise yet" | DIM 5 (upgrade safety) + DIM 8 (adapter ergonomics) worst | both ran |
+
+Test plan artifact: `~/.gstack/projects/govern-zone/docs-acgs-hermes-runtime-governance-test-plan-20260505.md`
+
+### User Challenges flagged (deferred to separate strategic decisions per D2=A)
+
+| # | Challenge | Both voices recommend | Status |
+|---|-----------|----------------------|--------|
+| UC1 | Reframe from "ACGS-governed Hermes" to agent-agnostic broker | Hermes becomes adapter #1; "agent action firewall with replayable approvals" | flagged |
+| UC2 | Drop §7 Mode 1 vs Mode 2 academic benchmark | Single-mode benchmark on gate latency, false-allow under prompt injection, audit completeness under fault | flagged |
+| UC3 | Pick ONE wedge action class | Shell / prod deploys / customer-data / payments / repo writes — pick one as v1 wedge | flagged |
+| UC4 | Add multi-vendor + regulatory + on-prem moat | Cross-vendor attestation chain + SOC2/EU AI Act packs + on-prem deployment | flagged |
+| UC5 | §5 contract requires data-model refactor BEFORE any §8 phase ships | DecisionRecord.allow:bool → 5-state enum; effective_tool_input binding; TOCTOU fix; decision_schema_version + policy_bundle_hash | flagged (BLOCKER) |
+
+### Taste decisions resolved at recommendations
+
+| # | Decision | Resolution |
+|---|----------|-----------|
+| T1 | Naming reconciliation direction | doc → code (rename §5 verbs to validate/guard/replay/explain) |
+| T2 | Phase 1 passive observation | skip; go straight to advisory + one enforced control (matches UC3) |
+| T3 | Canonical interception point | acgs-lite/integrations/hermes.py (submodule canonical home) |
+| T4 | Top-3 framework adapters | OpenAI Agents SDK, LangGraph, Anthropic Claude Agent SDK |
+| T5 | CFT pack integration | integrate into runtime audit chain (single source-of-truth) |
+
+### Cross-phase themes
+
+1. **§5 contract gap** — CEO P5 + Eng (3 BLOCKERS) + DX (DIM 2/8). Design contract richer than code can represent.
+2. **Audit chain integrity** — Eng (O(n²), no anchor) + DX (no schema_version, no bundle_hash). Same root issue.
+3. **Hermes coupling** — CEO unanimous + DX adapter ergonomics. UC1.
+4. **TOCTOU in guard()** — Eng BLOCKER + DX adapter pattern broken.
+5. **Test gaps** — Eng (12 missing) + DX (no copy-paste examples).
+
+### Deferred to TODOS.md
+
+CEL grammar parser; cross-process audit + Merkle export + external timestamp anchor; OPA/Cedar policy migration; signed cross-tenant delegation token; multi-vendor adapter expansion; CFT evaluator integration into runtime audit; per-tenant audit sharding; pre-indexed terraform changes by type; async paths (avalidate/aguard); governance.testing module + InMemoryAuditStore.
+
+### Decision Audit Trail (run 2)
+
+| # | Phase | Decision | Class | Source | Rationale |
+|---|-------|----------|-------|--------|-----------|
+| 3 | 0 | UI=no, DX=yes scope | Mech | grep | UI 1 match, DX 50+ |
+| 4 | 1 | Premise gate D1=A: accept all 6 | User | D1 | P1+P6 fixes addressed prior halt |
+| 5 | 1 | Mode = SELECTIVE EXPANSION | Auto | autoplan default | spec |
+| 6 | 1 | Approach A (unify under acgs-lite) | Auto | P1+P2 | maps to §8 |
+| 7 | 1 | Cherry-pick #2 (tenant-scoped roles) ACCEPT | Auto | P2 boil lakes | in blast radius |
+| 8 | 1 | Cherry-pick #3 (CEL parser) DEFER | Auto | out of blast radius | TODOS |
+| 9 | 1 | Cherry-pick #4 (replay verifier) ACCEPT | Auto | P2 boil lakes | in blast radius |
+| 10 | 1 | Cherry-pick #5 (Merkle anchor) DEFER | Auto | storage decision | TODOS |
+| 11 | 1 | H1 module = acgs-lite | Auto | P5+P3 | extending existing |
+| 12 | 1 | H1 REQUIRE_HUMAN = returned decision | Auto | P5 | minimal state machine |
+| 13 | 1 | H2-3 lock granularity = file-level | Auto | P5 KISS | per-tenant separate |
+| 14 | 1 | H2-3 gate input passthrough | Auto | P5 | caller canonicalizes |
+| 15 | 1 | H4-5 canonical interception | Taste | flagged | T3 |
+| 16 | 1 | H4-5 cross-tenant token format | Auto | P3 | metadata flag v1 |
+| 17 | 1 | H6+ full lifecycle test | Auto | P1 | required §8 |
+| 18 | 1 | H6+ replay-vs-bundle test | Auto | P1 | required |
+| 19 | 1 | §10 threat model section ADD | Auto | P1 | mandatory |
+| 20 | 1 | §10b ops/SRE surfaces ADD | Auto | P1 | observability gap |
+| 21 | 1 | Phase 1 passive observation | Taste | flagged | T2 |
+| 22 | 3 | §5 data-model refactor | UC | UC5 | flagged separate |
+| 23 | 3 | TOCTOU fix in guard() | Auto | Sec1 BLK | required Phase 3 |
+| 24 | 3 | Audit append O(1) amortized | Auto | Sec4 CRIT | last_hash cache |
+| 25 | 3 | API auth boundary | Auto | Sec3 HIGH | no caller forgery |
+| 26 | 3 | Replay snapshot binding | Auto | Sec3 HIGH | policy_bundle_hash |
+| 27 | 3 | fnmatch path traversal | Auto | Sec3 HIGH | resource normalization |
+| 28 | 3.5 | INTEGRATING.md + METADATA.md docs | Auto | DIM 4 | required |
+| 29 | 3.5 | InMemoryAuditStore + governance.testing | Auto | DIM 6 | dev mode |
+| 30 | 3.5 | Gate / AuditStore Protocols | Auto | DIM 7 | escape hatches |
+| 31 | 3.5 | Naming reconciliation direction | Taste | flagged | T1 |
+| 32 | 3.5 | Top-3 adapter SDKs | Taste | flagged | T4 |
+| 33 | 3.5 | CFT pack integration | Taste | flagged | T5 |
+
+### Verdict
+
+**APPROVED AS-IS.** UC1-UC5 deferred for separate strategic decisions; T1-T5 resolved at recommendations; 30 auto-decisions logged. 0 unresolved decisions; 7 critical/high gaps remain (all blocked on UC5 data-model refactor or in deferred TODOS).
+
+Doc + ADR remain a sound technical specification of *what to build*. Strategic frame around *why and for whom* is what the user challenges flagged.
