@@ -53,6 +53,14 @@ credentials/
 # Patterns without trailing slash match both files and directories.
 .codex
 .omc
+# Project-level OMC skills are knowledge artifacts, not scratch state — keep them.
+# Allow traversal into repo-root .omc/, ignore everything one level deep,
+# then re-include skills/ specifically. Subdir .omc/ dirs (e.g.
+# acgs_governance_eval_mvp/.omc/) remain fully ignored by the broad rule above.
+!/.omc/
+/.omc/*
+!/.omc/skills/
+!/.omc/skills/**
 .remember
 .omx
 .claude
