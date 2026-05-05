@@ -1,0 +1,24 @@
+[project]
+name = "acgs-governance-eval-mvp"
+version = "0.1.0"
+description = "ACGS runtime governance evaluation MVP for AI agents"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6.0"
+]
+
+[project.optional-dependencies]
+api = [
+  "fastapi>=0.111",
+  "uvicorn>=0.29"
+]
+otel = [
+  "opentelemetry-api>=1.24"
+]
+test = [
+  "pytest>=8.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

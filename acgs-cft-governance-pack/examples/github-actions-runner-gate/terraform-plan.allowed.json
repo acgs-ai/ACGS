@@ -1,0 +1,26 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.github_oidc.google_iam_workload_identity_pool_provider.github",
+      "mode": "managed",
+      "type": "google_iam_workload_identity_pool_provider",
+      "name": "github",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "workload_identity_pool_id": "github-pool",
+          "workload_identity_pool_provider_id": "github-provider",
+          "attribute_condition": "assertion.repository_owner == 'example-org' && assertion.repository == 'example-org/platform-infra'",
+          "oidc": [
+            {
+              "issuer_uri": "https://token.actions.githubusercontent.com"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

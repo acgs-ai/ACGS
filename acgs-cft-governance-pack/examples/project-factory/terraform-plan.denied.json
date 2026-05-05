@@ -1,0 +1,67 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.project_factory.google_project.project",
+      "mode": "managed",
+      "type": "google_project",
+      "name": "project",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "project_id": "unreviewed-prod-001",
+          "name": "unreviewed-prod-001",
+          "folder_id": "folders/9999999999",
+          "billing_account": "999999-888888-777777",
+          "labels": {
+            "environment": "prod"
+          }
+        }
+      }
+    },
+    {
+      "address": "module.project_factory.google_project_service.apikeys",
+      "mode": "managed",
+      "type": "google_project_service",
+      "name": "apikeys",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "project": "unreviewed-prod-001",
+          "service": "apikeys.googleapis.com"
+        }
+      }
+    },
+    {
+      "address": "module.project_factory.google_service_account_key.deployer",
+      "mode": "managed",
+      "type": "google_service_account_key",
+      "name": "deployer",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "service_account_id": "projects/unreviewed-prod-001/serviceAccounts/deployer@unreviewed-prod-001.iam.gserviceaccount.com"
+        }
+      }
+    },
+    {
+      "address": "module.project_factory.google_project_iam_member.editor",
+      "mode": "managed",
+      "type": "google_project_iam_member",
+      "name": "editor",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "project": "unreviewed-prod-001",
+          "role": "roles/editor",
+          "member": "serviceAccount:deployer@unreviewed-prod-001.iam.gserviceaccount.com"
+        }
+      }
+    }
+  ]
+}

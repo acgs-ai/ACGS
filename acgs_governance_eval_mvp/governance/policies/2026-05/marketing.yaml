@@ -1,0 +1,35 @@
+version: "2026-05-marketing"
+policies:
+  - id: "MKT-ONTARIO-NO-INDUCEMENT-001"
+    title: "Ontario public marketing must not include inducement language"
+    effect: "deny"
+    applies_when:
+      action_types:
+        - "marketing.publish"
+        - "email.send"
+      resources:
+        - "marketing/ontario/*"
+        - "public/ontario/*"
+    conditions:
+      metadata_flags_any:
+        - "bonus_offer"
+        - "inducement"
+        - "risk_free"
+    require_citation: false
+    obligations:
+      - id: "MKT-OBL-ONTARIO-COMPLIANCE"
+        text: "Ontario-facing public pages must avoid bonus, inducement, and risk-free language."
+
+  - id: "MKT-PUBLICATION-TRACE-002"
+    title: "Public marketing publication requires traceable approval"
+    effect: "allow"
+    applies_when:
+      action_types:
+        - "marketing.publish"
+      resources:
+        - "marketing/*"
+        - "public/*"
+    require_citation: true
+    obligations:
+      - id: "MKT-OBL-CITATION"
+        text: "Marketing agent must cite applicable marketing publication policy."

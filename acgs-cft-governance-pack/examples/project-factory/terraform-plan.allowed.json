@@ -1,0 +1,41 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.project_factory.google_project.project",
+      "mode": "managed",
+      "type": "google_project",
+      "name": "project",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "project_id": "acgs-dev-001",
+          "name": "acgs-dev-001",
+          "folder_id": "folders/1234567890",
+          "billing_account": "000000-111111-222222",
+          "labels": {
+            "environment": "dev",
+            "owner": "platform",
+            "data_classification": "internal"
+          }
+        }
+      }
+    },
+    {
+      "address": "module.project_factory.google_project_service.compute",
+      "mode": "managed",
+      "type": "google_project_service",
+      "name": "compute",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "project": "acgs-dev-001",
+          "service": "compute.googleapis.com"
+        }
+      }
+    }
+  ]
+}
