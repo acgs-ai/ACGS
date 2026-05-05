@@ -1,0 +1,29 @@
+id: cft-network-exposure
+description: Baseline governance controls for CFT Network plans.
+controls:
+  - id: cft-network-deny-public-admin-ingress
+    description: Public SSH/RDP ingress must be denied unless an exception is separately approved.
+    severity: critical
+    resource_types:
+      - google_compute_firewall
+    rule:
+      kind: deny_public_ingress
+      ports:
+        - "22"
+        - "3389"
+
+  - id: cft-network-firewall-logging
+    description: Firewall rules must emit logging metadata.
+    severity: high
+    resource_types:
+      - google_compute_firewall
+    rule:
+      kind: require_firewall_log_config
+
+  - id: cft-network-subnet-flow-logs
+    description: Subnets must enable VPC flow logs for auditability.
+    severity: high
+    resource_types:
+      - google_compute_subnetwork
+    rule:
+      kind: require_subnet_flow_logs

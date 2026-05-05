@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/audit_event.schema.json",
+  "title": "ACGS Governance Audit Event",
+  "type": "object",
+  "required": [
+    "event_id",
+    "tenant",
+    "allow",
+    "reasons",
+    "reason_codes",
+    "rule_ids",
+    "checks",
+    "request",
+    "policy_version",
+    "role_version",
+    "timestamp",
+    "previous_hash",
+    "event_hash"
+  ],
+  "properties": {
+    "event_id": {"type": "string"},
+    "tenant": {"type": "string"},
+    "allow": {"type": "boolean"},
+    "reasons": {"type": "array", "items": {"type": "string"}},
+    "reason_codes": {"type": "array", "items": {"type": "string"}},
+    "rule_ids": {"type": "array", "items": {"type": "string"}},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate", "allowed", "reason_codes", "reasons"],
+        "properties": {
+          "gate": {"type": "string"},
+          "allowed": {"type": "boolean"},
+          "reason_codes": {"type": "array", "items": {"type": "string"}},
+          "reasons": {"type": "array", "items": {"type": "string"}},
+          "rule_ids": {"type": "array", "items": {"type": "string"}},
+          "evidence": {"type": "object"}
+        }
+      }
+    },
+    "request": {"type": "object"},
+    "policy_version": {"type": "string"},
+    "role_version": {"type": "string"},
+    "timestamp": {"type": "string"},
+    "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -1,0 +1,38 @@
+id: cft-gke-secure-baseline
+description: Baseline governance controls for CFT Kubernetes Engine plans.
+controls:
+  - id: cft-gke-private-nodes
+    description: GKE clusters must use private nodes.
+    severity: critical
+    resource_types:
+      - google_container_cluster
+    rule:
+      kind: require_gke_private_nodes
+
+  - id: cft-gke-workload-identity
+    description: GKE clusters must enable Workload Identity.
+    severity: critical
+    resource_types:
+      - google_container_cluster
+    rule:
+      kind: require_gke_workload_identity
+
+  - id: cft-gke-shielded-nodes
+    description: GKE clusters must enable Shielded Nodes.
+    severity: high
+    resource_types:
+      - google_container_cluster
+    rule:
+      kind: require_gke_shielded_nodes
+
+  - id: cft-gke-release-channel
+    description: GKE clusters must use an explicit supported release channel.
+    severity: high
+    resource_types:
+      - google_container_cluster
+    rule:
+      kind: require_gke_release_channel
+      allowed_channels:
+        - RAPID
+        - REGULAR
+        - STABLE
