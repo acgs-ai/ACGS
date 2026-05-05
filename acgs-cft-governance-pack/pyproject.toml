@@ -1,0 +1,20 @@
+[project]
+name = "acgs-cft-governance-pack"
+version = "0.1.0"
+description = "ACGS companion policy and evidence pack for Google Cloud Foundation Toolkit Terraform plans"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6.0"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0"
+]
+
+[project.scripts]
+acgs-cft-govern = "acgs_cft_governance_pack.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -1,0 +1,49 @@
+name: terraform-acgs-governance
+
+on:
+  pull_request:
+    paths:
+      - "**/*.tf"
+      - "policies/**"
+      - ".github/workflows/terraform-acgs-governance.yml"
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Install ACGS CFT governance pack
+        run: python -m pip install .
+
+      - name: Terraform plan JSON
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -out=tfplan.binary
+          terraform show -json tfplan.binary > tfplan.json
+
+      - name: Google Cloud policy validation
+        run: |
+          echo "Run gcloud beta terraform vet here when credentials and CAI constraints are configured."
+          echo "Example: gcloud beta terraform vet tfplan.json --policy-library=policy-library"
+
+      - name: ACGS evidence gate
+        run: |
+          acgs-cft-govern evaluate \
+            --plan tfplan.json \
+            --policy-dir policies \
+            --actor github-actions \
+            --role validator \
+            --tenant cft \
+            --out acgs-cft-evidence.jsonl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acgs-cft-evidence
+          path: acgs-cft-evidence.jsonl

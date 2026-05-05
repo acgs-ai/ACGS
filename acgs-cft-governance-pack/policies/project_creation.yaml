@@ -1,0 +1,46 @@
+id: cft-project-creation
+description: Baseline governance controls for CFT Project Factory plans.
+controls:
+  - id: cft-project-required-labels
+    description: Projects must carry ownership, environment, and data-classification labels.
+    severity: high
+    resource_types:
+      - google_project
+    rule:
+      kind: require_project_labels
+      labels:
+        - environment
+        - owner
+        - data_classification
+
+  - id: cft-project-approved-folder
+    description: Projects must be created under approved foundation folders.
+    severity: critical
+    resource_types:
+      - google_project
+    rule:
+      kind: restrict_project_folder
+      allowed_folders:
+        - folders/1234567890
+        - folders/2345678901
+
+  - id: cft-project-approved-billing
+    description: Projects must use approved billing accounts.
+    severity: critical
+    resource_types:
+      - google_project
+    rule:
+      kind: restrict_billing_account
+      allowed_billing_accounts:
+        - 000000-111111-222222
+
+  - id: cft-project-forbidden-apis
+    description: High-risk or unmanaged APIs must not be enabled by default.
+    severity: high
+    resource_types:
+      - google_project_service
+    rule:
+      kind: forbidden_apis
+      services:
+        - apikeys.googleapis.com
+        - cloudkms.googleapis.com

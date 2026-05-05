@@ -1,0 +1,41 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.vpc.google_compute_firewall.public_ssh",
+      "mode": "managed",
+      "type": "google_compute_firewall",
+      "name": "public_ssh",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "allow-public-ssh",
+          "direction": "INGRESS",
+          "source_ranges": ["0.0.0.0/0"],
+          "allow": [
+            {
+              "protocol": "tcp",
+              "ports": ["22"]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "address": "module.vpc.google_compute_subnetwork.app",
+      "mode": "managed",
+      "type": "google_compute_subnetwork",
+      "name": "app",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "app-subnet",
+          "ip_cidr_range": "10.10.0.0/24"
+        }
+      }
+    }
+  ]
+}

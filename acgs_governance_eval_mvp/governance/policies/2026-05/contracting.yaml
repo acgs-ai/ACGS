@@ -1,0 +1,32 @@
+version: "2026-05-contracting"
+policies:
+  - id: "CONTRACT-AUTHORITY-001"
+    title: "Contract actions require role authority and policy citation"
+    effect: "allow"
+    applies_when:
+      action_types:
+        - "contract.redline"
+        - "contract.approve"
+      resources:
+        - "contracts/*"
+    require_citation: true
+    obligations:
+      - id: "CONTRACT-OBL-CITE-SOURCE"
+        text: "Agent must cite the applicable contract governance policy before external contract action."
+      - id: "CONTRACT-OBL-TRACE"
+        text: "Agent must preserve input hash, actor, policy version, and decision reasons."
+
+  - id: "CONTRACT-HIGH-VALUE-REVIEW-002"
+    title: "High value contract approval requires human review evidence"
+    effect: "allow"
+    applies_when:
+      action_types:
+        - "contract.approve"
+      resources:
+        - "contracts/*"
+    conditions:
+      amount_cents_gte: 500000
+    require_citation: true
+    obligations:
+      - id: "CONTRACT-OBL-HUMAN-REVIEW"
+        text: "Human reviewer ID and review ticket must be attached for high value approval."

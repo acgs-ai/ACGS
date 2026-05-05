@@ -1,0 +1,35 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.gke.google_container_cluster.primary",
+      "mode": "managed",
+      "type": "google_container_cluster",
+      "name": "primary",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "acgs-private-cluster",
+          "enable_shielded_nodes": true,
+          "private_cluster_config": [
+            {
+              "enable_private_nodes": true
+            }
+          ],
+          "workload_identity_config": [
+            {
+              "workload_pool": "acgs-dev-001.svc.id.goog"
+            }
+          ],
+          "release_channel": [
+            {
+              "channel": "REGULAR"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
