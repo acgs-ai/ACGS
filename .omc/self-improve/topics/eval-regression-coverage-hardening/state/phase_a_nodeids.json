@@ -14,6 +14,7 @@
     "tests/test_audit_chain.py::test_audit_chain_handles_concurrent_appends",
     "tests/test_audit_chain.py::test_audit_chain_valid_for_two_events",
     "tests/test_authority_gate.py::test_actor_cannot_spoof_request_tenant",
+    "tests/test_authority_gate.py::test_cross_tenant_delegation_metadata_permits_mismatch",
     "tests/test_authority_gate.py::test_legalops_can_redline_contract_scope",
     "tests/test_authority_gate.py::test_marketingops_cannot_approve_contract",
     "tests/test_authority_gate.py::test_normal_scope_still_works",

@@ -6,7 +6,7 @@
 # Exits 0 if clean, 1 if violations found, 2 on internal error.
 set -euo pipefail
 
-BASE="improve/eval-mvp-hardening"
+BASE="improve/eval-regression-coverage-hardening"
 WORKTREE="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,10 +40,10 @@ VIOLATIONS=()
 while IFS= read -r p; do
   [[ -z "$p" ]] && continue
   case "$p" in
-    tests/*|governance/*|docs/*) ;;
-    .omc/self-improve/topics/eval-mvp-hardening/state/*) ;;
-    .omc/self-improve/topics/eval-mvp-hardening/plans/*) ;;
-    .omc/self-improve/topics/eval-mvp-hardening/tracking/*) ;;
+    tests/*|governance/*|docs/*|scripts/*) ;;
+    .omc/self-improve/topics/eval-regression-coverage-hardening/state/*) ;;
+    .omc/self-improve/topics/eval-regression-coverage-hardening/plans/*) ;;
+    .omc/self-improve/topics/eval-regression-coverage-hardening/tracking/*) ;;
     *) VIOLATIONS+=("H006 scope: $p") ;;
   esac
 done <<< "$CHANGED"

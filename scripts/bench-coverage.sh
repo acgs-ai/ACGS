@@ -14,7 +14,9 @@ if git ls-files --error-unmatch .acgs/audit.jsonl >/dev/null 2>&1; then
   exit 2
 fi
 
-rm -f .acgs/audit.jsonl .acgs/audit.jsonl.lock
+# P2 fix: tests use pytest tmp_path for their own audit fixtures (see
+# tests/test_audit_chain.py); the worktree's .acgs/audit.jsonl is user data and
+# must not be deleted. Leave it untouched.
 
 TMP_DIR="$(mktemp -d)"
 TMP_OUT="$TMP_DIR/pytest.out"
@@ -131,6 +133,7 @@ PY
 set +e
 PYTHONPATH="$TMP_DIR${PYTHONPATH:+:$PYTHONPATH}" \
 BENCH_COVERAGE_PLUGIN_REPORT="$PLUGIN_REPORT" \
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
   python -m pytest --tb=no -q --no-header -p bench_coverage_plugin >"$TMP_OUT" 2>&1
 PYTEST_STATUS=$?
 set -e
