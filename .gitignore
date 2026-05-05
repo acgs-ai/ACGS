@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+*.egg-info/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# OMC / OMX runtime state (per-session, non-deterministic — must not pollute diffs)
+.omc/state/
+.omc/logs/
+.omc/notepad.md
+.omc/project-memory.json
+.omx/
+.remember/
+
+# Self-improve dynamic state (per-iteration, non-deterministic — must not pollute diffs)
+.omc/self-improve/topics/*/state/
+.omc/self-improve/topics/*/plans/
+.omc/self-improve/topics/*/tracking/
+worktrees/
+
+# ACGS runtime audit log (regenerated every test run)
+.acgs/audit.jsonl
+.acgs/*.lock
+
+# Benchmark cache
+.benchmarks/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
