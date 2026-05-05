@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import pytest
+
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore, InMemoryAuditStore
 from governance.models import ActionRequest
 from governance.testing import governance_test_harness, make_request
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#5",
+    severity="MEDIUM",
+    issue="pr5_in_memory_audit_store",
+    coverage_angle="in_memory_chain_validity_two_events",
+)
 def test_in_memory_chain_valid_for_two_events(roles_bundle, policy_bundle):
     store = InMemoryAuditStore()
     adapter = GovernedToolAdapter(
@@ -25,6 +33,12 @@ def test_in_memory_chain_valid_for_two_events(roles_bundle, policy_bundle):
     assert result["checked"] == 2
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#5",
+    severity="MEDIUM",
+    issue="pr5_in_memory_audit_store",
+    coverage_angle="in_memory_chain_tamper_detection",
+)
 def test_in_memory_chain_detects_tamper(roles_bundle, policy_bundle):
     store = InMemoryAuditStore()
     adapter = GovernedToolAdapter(
@@ -40,6 +54,12 @@ def test_in_memory_chain_detects_tamper(roles_bundle, policy_bundle):
     assert store.verify_chain()["valid"] is False
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#5",
+    severity="MEDIUM",
+    issue="pr5_in_memory_audit_store",
+    coverage_angle="memory_disk_event_hash_parity",
+)
 def test_in_memory_audit_store_produces_same_event_hash_as_disk(
     tmp_path, roles_bundle, policy_bundle
 ):
@@ -65,6 +85,12 @@ def test_in_memory_audit_store_produces_same_event_hash_as_disk(
     assert disk_store.last_hash() == mem_store.last_hash()
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#5",
+    severity="MEDIUM",
+    issue="pr5_in_memory_audit_store",
+    coverage_angle="test_harness_yields_adapter",
+)
 def test_governance_test_harness_yields_working_adapter():
     with governance_test_harness() as adapter:
         decision = adapter.validate(make_request())
@@ -76,6 +102,12 @@ def test_governance_test_harness_yields_working_adapter():
         assert adapter.audit_store.verify_chain()["valid"] is True
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#5",
+    severity="MEDIUM",
+    issue="pr5_in_memory_audit_store",
+    coverage_angle="make_request_helper_validity",
+)
 def test_make_request_helper_produces_valid_actionrequest_dict():
     payload = make_request()
     request = ActionRequest.from_dict(payload)
