@@ -71,3 +71,67 @@ def test_cross_tenant_delegation_metadata_permits_mismatch(roles_bundle):
 
     assert result.allowed is True
     assert "AUTH_ALLOWED" in result.reason_codes
+
+
+def test_scope_rejects_path_traversal(roles_bundle):
+    gate = AuthorityGate(roles_bundle)
+    request = ActionRequest(
+        actor=Principal(id="agent-legal-1", role="LegalOps"),
+        intent="Redline supplier agreement",
+        action_type="contract.redline",
+        resource="contracts/../../etc/passwd",
+        inputs_hash="sha256:test",
+    )
+
+    result = gate.validate(request)
+
+    assert result.allowed is False
+    assert "AUTH_RESOURCE_INVALID" in result.reason_codes
+
+
+def test_scope_rejects_double_dot_segment(roles_bundle):
+    gate = AuthorityGate(roles_bundle)
+    request = ActionRequest(
+        actor=Principal(id="agent-legal-1", role="LegalOps"),
+        intent="Redline supplier agreement",
+        action_type="contract.redline",
+        resource="contracts/../supplier-456",
+        inputs_hash="sha256:test",
+    )
+
+    result = gate.validate(request)
+
+    assert result.allowed is False
+    assert "AUTH_RESOURCE_INVALID" in result.reason_codes
+
+
+def test_scope_rejects_absolute_path(roles_bundle):
+    gate = AuthorityGate(roles_bundle)
+    request = ActionRequest(
+        actor=Principal(id="agent-legal-1", role="LegalOps"),
+        intent="Redline supplier agreement",
+        action_type="contract.redline",
+        resource="/etc/passwd",
+        inputs_hash="sha256:test",
+    )
+
+    result = gate.validate(request)
+
+    assert result.allowed is False
+    assert "AUTH_RESOURCE_INVALID" in result.reason_codes
+
+
+def test_normal_scope_still_works(roles_bundle):
+    gate = AuthorityGate(roles_bundle)
+    request = ActionRequest(
+        actor=Principal(id="agent-legal-1", role="LegalOps"),
+        intent="Redline supplier agreement",
+        action_type="contract.redline",
+        resource="contracts/supplier-123",
+        inputs_hash="sha256:test",
+    )
+
+    result = gate.validate(request)
+
+    assert result.allowed is True
+    assert "AUTH_ALLOWED" in result.reason_codes

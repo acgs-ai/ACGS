@@ -8,7 +8,8 @@ from governance.policy_loader import load_policy_bundle, load_roles
 
 
 try:
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import Depends, FastAPI, HTTPException, Query
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 except Exception as exc:  # pragma: no cover
     raise RuntimeError("Install the api extra: pip install -e '.[api]'") from exc
 
@@ -27,6 +28,22 @@ def build_adapter() -> GovernedToolAdapter:
 app = FastAPI(title="ACGS Governance Evaluation MVP", version="0.1.0")
 _adapter = build_adapter()
 
+_http_bearer = HTTPBearer(auto_error=False)
+
+
+def verify_caller(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
+) -> str:
+    expected = os.environ.get("ACGS_API_TOKEN")
+    if not expected or credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="invalid or missing auth token")
+    if credentials.credentials != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing auth token")
+    tenant, sep, _secret = expected.partition(":")
+    if not sep or not tenant:
+        raise HTTPException(status_code=401, detail="invalid or missing auth token")
+    return tenant
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -34,13 +51,19 @@ def health() -> dict[str, str]:
 
 
 @app.post("/govern/validate")
-def validate(payload: dict):
+def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
+    actor = payload.get("actor") or {}
+    actor_tenant = actor.get("tenant", "default") if isinstance(actor, dict) else "default"
+    metadata = payload.get("metadata") or {}
+    cross_tenant = bool(metadata.get("cross_tenant_delegation")) if isinstance(metadata, dict) else False
+    if not cross_tenant and actor_tenant != caller_tenant:
+        raise HTTPException(status_code=403, detail="actor tenant does not match caller tenant")
     decision = _adapter.validate(payload)
     return decision.to_dict()
 
 
 @app.get("/govern/explain/{event_id}")
-def explain(event_id: str):
+def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     events = _adapter.audit_store.query(event_id=event_id, limit=1)
@@ -62,6 +85,7 @@ def audit_query(
     allow: bool | None = None,
     risk_tag: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
+    caller_tenant: str = Depends(verify_caller),
 ):
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
@@ -69,7 +93,7 @@ def audit_query(
 
 
 @app.get("/audit/verify-chain")
-def verify_chain():
+def verify_chain(caller_tenant: str = Depends(verify_caller)):
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     return _adapter.audit_store.verify_chain()

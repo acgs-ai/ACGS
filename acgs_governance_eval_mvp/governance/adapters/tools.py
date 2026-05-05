@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from governance.audit.jsonl_chain import ChainHashAuditStore
 from governance.gates import AuthorityGate, GovernanceRecallGate, PolicyRecallGate
 from governance.metrics.otel import GovernanceMetrics
-from governance.models import ActionRequest, DecisionRecord, GateResult
+from governance.models import (
+    DECISION_SCHEMA_VERSION,
+    ActionRequest,
+    DecisionRecord,
+    GateResult,
+    sha256_json,
+)
 
 
 class GovernedToolAdapter:
@@ -25,6 +31,10 @@ class GovernedToolAdapter:
     ):
         self.roles_bundle = roles_bundle
         self.policy_bundle = policy_bundle
+        # Stable per-instance bundle hashes. replay compares these against the
+        # hashes stored in the audit event to detect policy drift.
+        self.policy_bundle_hash = sha256_json(policy_bundle)
+        self.role_bundle_hash = sha256_json(roles_bundle)
         self.audit_store = audit_store
         self.metrics = metrics or GovernanceMetrics.disabled()
         self.authority_gate = AuthorityGate(roles_bundle)
@@ -53,6 +63,13 @@ class GovernedToolAdapter:
         self.metrics.record_gate(governance)
 
         allow = all(check.allowed for check in checks)
+        decision_state = "allow" if allow else "deny"
+        # For "allow", the validated executor binding equals request.tool_input.
+        # Future "rewrite" gates will set effective_tool_input to a sanitized
+        # version. None is used for "deny" or when the caller supplied no
+        # tool_input (validate-only path; guard() will refuse to execute).
+        effective_tool_input = action_request.tool_input if allow else None
+
         decision = DecisionRecord(
             event_id=action_request.event_id,
             tenant=action_request.tenant,
@@ -64,6 +81,11 @@ class GovernedToolAdapter:
             request=action_request,
             policy_version=str(self.policy_bundle.get("version", "unknown")),
             role_version=str(self.roles_bundle.get("version", "unknown")),
+            decision_state=decision_state,
+            effective_tool_input=effective_tool_input,
+            policy_bundle_hash=self.policy_bundle_hash,
+            role_bundle_hash=self.role_bundle_hash,
+            decision_schema_version=DECISION_SCHEMA_VERSION,
         )
 
         if self.audit_store is not None:
@@ -83,13 +105,21 @@ class GovernedToolAdapter:
         self.metrics.record_decision(decision.to_dict())
         return decision
 
-    def guard(self, request: ActionRequest | dict[str, Any], fn, *args, **kwargs):
-        """Validate, then execute fn only when allowed.
+    def guard(
+        self,
+        request: ActionRequest | dict[str, Any],
+        fn: Callable[[dict[str, Any]], Any],
+    ) -> Any:
+        """Validate, then execute fn(decision.effective_tool_input) when allowed.
 
-        Refuses execution when audit_store is not configured: allowed side
-        effects must be persisted to a tamper-evident audit chain before
-        running. Use validate() directly for replay or dry-run paths that
-        intentionally skip audit append.
+        fn must accept exactly one argument: the validated effective_tool_input
+        dict. This binds execution to the validated input; arbitrary caller
+        args cannot bypass the gate (TOCTOU defense).
+
+        Refuses execution when audit_store is missing (allowed side effects
+        must be persisted before running) or when request.tool_input is unset
+        (executor cannot be bound to validated input). Use validate() directly
+        for input-less or replay paths.
         """
         if self.audit_store is None:
             raise RuntimeError(
@@ -99,4 +129,10 @@ class GovernedToolAdapter:
         decision = self.validate(request)
         if not decision.allow:
             raise PermissionError("; ".join(decision.reasons))
-        return fn(*args, **kwargs)
+        if decision.effective_tool_input is None:
+            raise RuntimeError(
+                "GovernedToolAdapter.guard() requires request.tool_input to be "
+                "set so the executor is bound to the validated input. Use "
+                "validate() directly when no tool input is involved."
+            )
+        return fn(decision.effective_tool_input)

@@ -22,6 +22,7 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_hash: str | None = None
 
     def append(self, decision: DecisionRecord) -> dict[str, Any]:
         # Serialize read-then-write under an exclusive lock so concurrent
@@ -32,7 +33,9 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                previous_hash = self.last_hash()
+                if self._last_hash is None:
+                    self._last_hash = self._read_last_hash_from_disk()
+                previous_hash = self._last_hash
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
                 payload.pop("event_hash", None)
@@ -43,17 +46,55 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
+                self._last_hash = str(payload["event_hash"])
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
 
     def last_hash(self) -> str:
-        last: dict[str, Any] | None = None
-        for event in self.iter_events():
-            last = event
-        if not last:
+        if self._last_hash is not None:
+            return self._last_hash
+        return self._read_last_hash_from_disk()
+
+    def _read_last_hash_from_disk(self) -> str:
+        if not self.path.exists():
             return GENESIS_HASH
-        return str(last.get("event_hash", GENESIS_HASH))
+        last_line: str | None = None
+        with self.path.open("rb") as fh:
+            try:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                if size == 0:
+                    return GENESIS_HASH
+                # Tail-read in chunks until we find a newline preceding
+                # the final record, so we never load the full file.
+                chunk = 4096
+                buf = b""
+                pos = size
+                while pos > 0:
+                    read = min(chunk, pos)
+                    pos -= read
+                    fh.seek(pos)
+                    buf = fh.read(read) + buf
+                    # Strip a single trailing newline so we look for the
+                    # newline that PRECEDES the last record.
+                    stripped = buf.rstrip(b"\n")
+                    nl = stripped.rfind(b"\n")
+                    if nl != -1:
+                        last_line = stripped[nl + 1 :].decode("utf-8")
+                        break
+                    if pos == 0:
+                        last_line = stripped.decode("utf-8")
+                        break
+            except OSError:
+                return GENESIS_HASH
+        if not last_line:
+            return GENESIS_HASH
+        try:
+            event = json.loads(last_line)
+        except json.JSONDecodeError:
+            return GENESIS_HASH
+        return str(event.get("event_hash", GENESIS_HASH))
 
     def iter_events(self) -> Iterable[dict[str, Any]]:
         if not self.path.exists():
