@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 from governance.replay import replay_event
@@ -24,6 +26,12 @@ def test_adapter_denies_without_policy_citation(tmp_path, roles_bundle, policy_b
     assert "POLICY_CITATION_MISSING" in decision.reason_codes
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="MEDIUM",
+    issue="pr4_replay_same_versions_invariant",
+    coverage_angle="replay_same_versions_byte_identical",
+)
 def test_replay_same_versions_matches(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -46,6 +54,12 @@ def test_replay_same_versions_matches(tmp_path, roles_bundle, policy_bundle):
     assert result["same_reason_codes"] is True
 
 
+@pytest.mark.regression(
+    pr="codex-investigate (no upstream PR)",
+    severity="HIGH",
+    issue="codex_no_audit_guard",
+    coverage_angle="guard_refuses_no_audit_store",
+)
 def test_guard_refuses_when_audit_store_missing(roles_bundle, policy_bundle):
     adapter = GovernedToolAdapter(
         roles_bundle=roles_bundle,

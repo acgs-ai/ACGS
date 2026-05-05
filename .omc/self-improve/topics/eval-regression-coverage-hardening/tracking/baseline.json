@@ -1,0 +1,64 @@
+{
+  "byte_identical_compared_fields": true,
+  "determinism_fields": [
+    "pass_rate",
+    "passed",
+    "failed",
+    "errors",
+    "skipped",
+    "total"
+  ],
+  "generated_at": "2026-05-05T17:37:41.788999Z",
+  "runs": [
+    {
+      "errors": 0,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "passed": 54,
+      "phase_b_new_points": 0,
+      "pytest_exit_code": 0,
+      "regression_coverage_points": 70,
+      "regression_coverage_score": 1.0,
+      "regression_marked_tests": 45,
+      "seed_baseline_points_recomputed": 70,
+      "skipped": 0,
+      "total": 54,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    {
+      "errors": 0,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "passed": 54,
+      "phase_b_new_points": 0,
+      "pytest_exit_code": 0,
+      "regression_coverage_points": 70,
+      "regression_coverage_score": 1.0,
+      "regression_marked_tests": 45,
+      "seed_baseline_points_recomputed": 70,
+      "skipped": 0,
+      "total": 54,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    {
+      "errors": 0,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "passed": 54,
+      "phase_b_new_points": 0,
+      "pytest_exit_code": 0,
+      "regression_coverage_points": 70,
+      "regression_coverage_score": 1.0,
+      "regression_marked_tests": 45,
+      "seed_baseline_points_recomputed": 70,
+      "skipped": 0,
+      "total": 54,
+      "xfailed": 0,
+      "xpassed": 0
+    }
+  ],
+  "schema_version": 1,
+  "topic": "eval-regression-coverage-hardening"
+}
