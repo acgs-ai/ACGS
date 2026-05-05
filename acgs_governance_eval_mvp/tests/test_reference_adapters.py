@@ -32,6 +32,12 @@ def _executor(tool_input):
     return {"executed": True, "echo": tool_input}
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#6",
+    severity="MEDIUM",
+    issue="pr6_reference_adapters_block_denied",
+    coverage_angle="openai_adapter_blocks_denied",
+)
 def test_openai_agents_adapter_blocks_denied_tool_call(tmp_path, roles_bundle, policy_bundle):
     adapter = _adapter(tmp_path, roles_bundle, policy_bundle)
 
@@ -46,6 +52,12 @@ def test_openai_agents_adapter_blocks_denied_tool_call(tmp_path, roles_bundle, p
         )
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#6",
+    severity="MEDIUM",
+    issue="pr6_reference_adapters_block_denied",
+    coverage_angle="openai_adapter_allows_permitted",
+)
 def test_openai_agents_adapter_allows_permitted_tool_call(tmp_path, roles_bundle, policy_bundle):
     adapter = _adapter(tmp_path, roles_bundle, policy_bundle)
     permitted_args = {**TOOL_ARGS, "policy_citations": ["CONTRACT-AUTHORITY-001"]}
@@ -62,6 +74,12 @@ def test_openai_agents_adapter_allows_permitted_tool_call(tmp_path, roles_bundle
     assert result == {"executed": True, "echo": permitted_args}
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#6",
+    severity="MEDIUM",
+    issue="pr6_reference_adapters_block_denied",
+    coverage_angle="langgraph_adapter_blocks_denied",
+)
 def test_langgraph_adapter_blocks_denied(tmp_path, roles_bundle, policy_bundle):
     adapter = _adapter(tmp_path, roles_bundle, policy_bundle)
 
@@ -76,6 +94,12 @@ def test_langgraph_adapter_blocks_denied(tmp_path, roles_bundle, policy_bundle):
         )
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#6",
+    severity="MEDIUM",
+    issue="pr6_reference_adapters_block_denied",
+    coverage_angle="anthropic_adapter_blocks_denied",
+)
 def test_anthropic_adapter_blocks_denied(tmp_path, roles_bundle, policy_bundle):
     adapter = _adapter(tmp_path, roles_bundle, policy_bundle)
 
@@ -90,6 +114,12 @@ def test_anthropic_adapter_blocks_denied(tmp_path, roles_bundle, policy_bundle):
         )
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#6",
+    severity="MEDIUM",
+    issue="pr6_canonical_hash_invariants",
+    coverage_angle="cross_adapter_canonical_hash_parity",
+)
 def test_all_three_adapters_produce_identical_inputs_hash_for_same_input():
     """Cross-adapter replay soundness: identical tool_input must yield identical inputs_hash."""
     args = dict(TOOL_ARGS)

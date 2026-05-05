@@ -27,6 +27,12 @@ def _payload(**overrides):
     return base
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#7",
+    severity="MEDIUM",
+    issue="pr7_governance_denied_error",
+    coverage_angle="denied_error_carries_full_decision",
+)
 def test_guard_raises_governance_denied_error_carrying_full_decision(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -42,6 +48,12 @@ def test_guard_raises_governance_denied_error_carrying_full_decision(tmp_path, r
     assert str(err) == "; ".join(err.decision.reasons)
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#7",
+    severity="MEDIUM",
+    issue="pr7_governance_denied_error",
+    coverage_angle="denied_error_subclasses_permissionerror",
+)
 def test_governance_denied_error_is_subclass_of_permissionerror(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -58,6 +70,12 @@ def test_governance_denied_error_is_subclass_of_permissionerror(tmp_path, roles_
     assert isinstance(raised, PermissionError)
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#7",
+    severity="MEDIUM",
+    issue="pr7_governance_denied_error",
+    coverage_angle="authority_deny_remediation_hint",
+)
 def test_authority_deny_carries_remediation_hint(roles_bundle):
     gate = AuthorityGate(roles_bundle)
     request = ActionRequest(
@@ -77,6 +95,12 @@ def test_authority_deny_carries_remediation_hint(roles_bundle):
     )
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#7",
+    severity="MEDIUM",
+    issue="pr7_governance_denied_error",
+    coverage_angle="policy_deny_remediation_hint",
+)
 def test_policy_deny_carries_remediation_hint(policy_bundle):
     gate = PolicyRecallGate(policy_bundle)
     request = ActionRequest(

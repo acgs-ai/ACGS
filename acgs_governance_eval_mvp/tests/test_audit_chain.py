@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 
@@ -53,6 +55,12 @@ def test_audit_chain_detects_tamper(tmp_path, roles_bundle, policy_bundle):
     assert store.verify_chain()["valid"] is False
 
 
+@pytest.mark.regression(
+    pr="codex-investigate (no upstream PR)",
+    severity="HIGH",
+    issue="codex_audit_race",
+    coverage_angle="audit_concurrent_append_safety",
+)
 def test_audit_chain_handles_concurrent_appends(tmp_path, roles_bundle, policy_bundle):
     import threading
 
@@ -91,6 +99,12 @@ def test_audit_chain_handles_concurrent_appends(tmp_path, roles_bundle, policy_b
     assert verification["failures"] == []
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="CRIT",
+    issue="autofix_o_n2_audit_caching",
+    coverage_angle="audit_append_amortized_O1",
+)
 def test_audit_append_is_amortized_O1(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(

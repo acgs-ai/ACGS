@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 from governance.models import DECISION_SCHEMA_VERSION, ActionRequest, Principal, sha256_json
@@ -23,6 +25,12 @@ def _allowed_payload(**overrides):
 # decision_state field
 # ---------------------------------------------------------------------------
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="decision_state_allow_aggregation",
+)
 def test_decision_state_is_allow_when_all_checks_allow(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -33,6 +41,12 @@ def test_decision_state_is_allow_when_all_checks_allow(tmp_path, roles_bundle, p
     assert decision.decision_state == "allow"
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="decision_state_deny_short_circuit",
+)
 def test_decision_state_is_deny_when_any_check_denies(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -54,6 +68,12 @@ def test_decision_state_is_deny_when_any_check_denies(tmp_path, roles_bundle, po
 # schema version + bundle hashes
 # ---------------------------------------------------------------------------
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="MEDIUM",
+    issue="pr4_uc5_decision_state_invariants",
+    coverage_angle="decision_record_schema_v1",
+)
 def test_decision_record_has_schema_version_v1(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -64,6 +84,12 @@ def test_decision_record_has_schema_version_v1(tmp_path, roles_bundle, policy_bu
     assert decision.decision_schema_version == "v1"
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="policy_bundle_hash_in_record",
+)
 def test_decision_record_carries_policy_bundle_hash(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -75,6 +101,12 @@ def test_decision_record_carries_policy_bundle_hash(tmp_path, roles_bundle, poli
     assert len(decision.policy_bundle_hash) == 64  # sha256 hex
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="role_bundle_hash_in_record",
+)
 def test_decision_record_carries_role_bundle_hash(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -89,6 +121,12 @@ def test_decision_record_carries_role_bundle_hash(tmp_path, roles_bundle, policy
 # effective_tool_input
 # ---------------------------------------------------------------------------
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="effective_tool_input_present_on_allow",
+)
 def test_effective_tool_input_set_on_allow(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -100,6 +138,12 @@ def test_effective_tool_input_set_on_allow(tmp_path, roles_bundle, policy_bundle
     assert decision.effective_tool_input == {"path": "contracts/supplier-123.txt", "limit": 10}
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="effective_tool_input_absent_on_deny",
+)
 def test_effective_tool_input_none_on_deny(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -116,6 +160,12 @@ def test_effective_tool_input_none_on_deny(tmp_path, roles_bundle, policy_bundle
     assert decision.effective_tool_input is None
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="inputs_hash_derivation_from_tool_input",
+)
 def test_action_request_from_dict_derives_inputs_hash_from_tool_input():
     tool_input = {"path": "contracts/x.txt", "redactions": []}
     request = ActionRequest.from_dict(
@@ -137,6 +187,12 @@ def test_action_request_from_dict_derives_inputs_hash_from_tool_input():
 # guard() TOCTOU defense
 # ---------------------------------------------------------------------------
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="guard_executes_effective_input_only",
+)
 def test_guard_calls_fn_with_effective_tool_input(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -153,6 +209,12 @@ def test_guard_calls_fn_with_effective_tool_input(tmp_path, roles_bundle, policy
     assert received == [{"path": "contracts/supplier-123.txt"}]
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="guard_refuses_no_input",
+)
 def test_guard_refuses_when_request_has_no_tool_input(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -176,6 +238,12 @@ def test_guard_refuses_when_request_has_no_tool_input(tmp_path, roles_bundle, po
     assert fn_called is False
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="HIGH",
+    issue="pr4_uc5_decision_state_toctou",
+    coverage_angle="guard_blocks_on_deny",
+)
 def test_guard_does_not_execute_fn_when_decision_denies(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -206,6 +274,12 @@ def test_guard_does_not_execute_fn_when_decision_denies(tmp_path, roles_bundle, 
 # replay drift detection
 # ---------------------------------------------------------------------------
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="MEDIUM",
+    issue="pr4_uc5_decision_state_invariants",
+    coverage_angle="replay_no_drift_when_bundle_stable",
+)
 def test_replay_no_drift_when_bundle_unchanged(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -220,6 +294,12 @@ def test_replay_no_drift_when_bundle_unchanged(tmp_path, roles_bundle, policy_bu
     assert result["same_allow"] is True
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="MEDIUM",
+    issue="pr4_uc5_decision_state_invariants",
+    coverage_angle="replay_detects_bundle_drift",
+)
 def test_replay_detects_policy_drift_via_bundle_hash(tmp_path, roles_bundle, policy_bundle):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(roles_bundle=roles_bundle, policy_bundle=policy_bundle, audit_store=store)
@@ -237,6 +317,12 @@ def test_replay_detects_policy_drift_via_bundle_hash(tmp_path, roles_bundle, pol
     assert result["role_drift"] is False
 
 
+@pytest.mark.regression(
+    pr="dislovelhl/govern-zone#4",
+    severity="MEDIUM",
+    issue="pr4_uc5_decision_state_invariants",
+    coverage_angle="replay_back_compat_no_bundle_hash",
+)
 def test_replay_old_event_without_bundle_hash_passes_gracefully(roles_bundle, policy_bundle):
     # Simulate an event written by a pre-refactor version: no bundle_hash fields.
     legacy_event = {
