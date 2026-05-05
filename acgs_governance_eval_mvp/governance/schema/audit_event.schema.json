@@ -45,6 +45,14 @@
     "role_version": {"type": "string"},
     "timestamp": {"type": "string"},
     "previous_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    "event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision_state": {
+      "type": "string",
+      "enum": ["allow", "deny", "require_human", "rewrite", "redact"]
+    },
+    "effective_tool_input": {"type": ["object", "null"]},
+    "policy_bundle_hash": {"type": "string"},
+    "role_bundle_hash": {"type": "string"},
+    "decision_schema_version": {"type": "string"}
   }
 }

@@ -4,8 +4,18 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
+
+
+# 5-state decision domain. Today only "allow" and "deny" are produced by the
+# runtime; "require_human", "rewrite", and "redact" are reserved for
+# follow-up gates that need a richer return shape than a single bool.
+# DecisionRecord.decision_state holds this; DecisionRecord.allow stays as a
+# back-compat boolean = (decision_state == "allow").
+DecisionState = Literal["allow", "deny", "require_human", "rewrite", "redact"]
+
+DECISION_SCHEMA_VERSION = "v1"
 
 
 def utc_now_iso() -> str:
@@ -50,6 +60,10 @@ class ActionRequest:
     event_id: str = field(default_factory=lambda: str(uuid4()))
     amount_cents: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Raw tool input for the action being validated. Required by guard() so
+    # execution can be bound to the validated input (TOCTOU defense). When
+    # provided without an explicit inputs_hash, from_dict() derives the hash.
+    tool_input: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ActionRequest":
@@ -61,16 +75,29 @@ class ActionRequest:
         else:
             raise ValueError("ActionRequest.actor must be a Principal or dict")
 
+        tool_input = data.get("tool_input")
+        if isinstance(tool_input, dict):
+            tool_input = dict(tool_input)
+        elif tool_input is None:
+            pass
+        else:
+            raise ValueError("ActionRequest.tool_input must be a dict or None")
+
+        inputs_hash = str(data.get("inputs_hash", ""))
+        if not inputs_hash and tool_input is not None:
+            inputs_hash = sha256_json(tool_input)
+
         return cls(
             event_id=str(data.get("event_id") or uuid4()),
             tenant=str(data.get("tenant", principal.tenant)),
             intent=str(data.get("intent", "")),
             action_type=str(data["action_type"]),
             resource=str(data["resource"]),
-            inputs_hash=str(data.get("inputs_hash", "")),
+            inputs_hash=inputs_hash,
             actor=principal,
             amount_cents=data.get("amount_cents"),
             metadata=dict(data.get("metadata", {})),
+            tool_input=tool_input,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,6 +133,20 @@ class DecisionRecord:
     timestamp: str = field(default_factory=utc_now_iso)
     previous_hash: str | None = None
     event_hash: str | None = None
+    # 5-state decision: "allow" | "deny" | "require_human" | "rewrite" | "redact".
+    # Today validate() only emits "allow"/"deny"; the others are reserved for
+    # follow-up gates and are accepted by the schema so events written by
+    # future versions remain replay-compatible with this version.
+    decision_state: DecisionState = "deny"
+    # Validated input bound to the decision. For "allow", equals
+    # request.tool_input. For "rewrite", is the rewriter's output. guard()
+    # invokes the executor with this value, NOT with arbitrary caller args.
+    effective_tool_input: dict[str, Any] | None = None
+    # Hash of the policy/role bundles used to make this decision. replay
+    # compares against the bundle the caller supplies; mismatch → policy drift.
+    policy_bundle_hash: str = ""
+    role_bundle_hash: str = ""
+    decision_schema_version: str = DECISION_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
