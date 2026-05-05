@@ -49,6 +49,7 @@ class PolicyRecallGate:
                     f"No applicable policy found for critical action '{request.action_type}'.",
                     [],
                     {"policy_version": self.version},
+                    remediation="Add a policy whose applies_when matches this action_type/resource, or remove the action from critical_actions if it should be unregulated",
                 )
             return GateResult(
                 gate=self.name,
@@ -69,6 +70,7 @@ class PolicyRecallGate:
                 f"Deny policy matched: {', '.join(ids)}.",
                 ids,
                 {"policy_version": self.version, "matched_policies": self._summaries(deny_hits)},
+                remediation="The action is forbidden by an active deny policy; change the action, scope, or content to no longer match the policy's applies_when/conditions",
             )
 
         missing: list[str] = []
@@ -96,6 +98,7 @@ class PolicyRecallGate:
                     "provided_citations": sorted(citations),
                     "matched_policies": self._summaries(applicable),
                 },
+                remediation="Add the missing policy id(s) (or matching obligation ids) to metadata.policy_citations",
             )
 
         rule_ids = sorted(set([str(p["id"]) for p in applicable] + accepted))
@@ -173,6 +176,8 @@ class PolicyRecallGate:
         reason: str,
         rule_ids: list[str],
         evidence: dict[str, Any],
+        *,
+        remediation: str | None = None,
     ) -> GateResult:
         return GateResult(
             gate=self.name,
@@ -182,6 +187,7 @@ class PolicyRecallGate:
             rule_ids=rule_ids,
             evidence=evidence,
             latency_ms=self._elapsed_ms(started),
+            remediation=remediation,
         )
 
     @staticmethod

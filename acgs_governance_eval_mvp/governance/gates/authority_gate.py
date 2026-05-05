@@ -30,6 +30,7 @@ class AuthorityGate:
                 "AUTH_TENANT_MISMATCH",
                 f"Actor tenant '{request.actor.tenant}' does not match request tenant '{request.tenant}'.",
                 {"actor_tenant": request.actor.tenant, "request_tenant": request.tenant},
+                remediation="Set request.tenant = actor.tenant or include metadata.cross_tenant_delegation",
             )
 
         if self._normalize_resource(request.resource) is None:
@@ -38,6 +39,7 @@ class AuthorityGate:
                 "AUTH_RESOURCE_INVALID",
                 f"Resource '{request.resource}' contains path-traversal segments or is absolute.",
                 {"resource": request.resource},
+                remediation="Resource must not contain '..' or start with '/'",
             )
 
         role_name = request.actor.role
@@ -49,6 +51,7 @@ class AuthorityGate:
                 "AUTH_ROLE_UNKNOWN",
                 f"Unknown role '{role_name}'.",
                 {"actor_id": request.actor.id, "role": role_name},
+                remediation="Add the role to roles.json or correct actor.role",
             )
 
         allowed_actions = list(role_def.get("actions", []))
@@ -58,6 +61,7 @@ class AuthorityGate:
                 "AUTH_ACTION_DENIED",
                 f"Role '{role_name}' cannot execute action '{request.action_type}'.",
                 {"allowed_actions": allowed_actions},
+                remediation="Use a role that lists this action_type, or add it to the role's actions",
             )
 
         allowed_scopes = list(role_def.get("scopes", [])) + list(request.actor.scopes)
@@ -67,6 +71,7 @@ class AuthorityGate:
                 "AUTH_SCOPE_DENIED",
                 f"Role '{role_name}' has no scope for resource '{request.resource}'.",
                 {"allowed_scopes": allowed_scopes, "resource": request.resource},
+                remediation="Add a matching scope to the role or actor.scopes",
             )
 
         required_maci_role = request.metadata.get("maci_required_role")
@@ -78,6 +83,7 @@ class AuthorityGate:
                     "AUTH_MACI_ROLE_DENIED",
                     f"Role '{role_name}' lacks MACI role '{required_maci_role}'.",
                     {"required_maci_role": required_maci_role, "maci_roles": sorted(maci_roles)},
+                    remediation="Grant the required maci_role to this role in roles.json, or use a role that already has it",
                 )
 
         if request.amount_cents is not None:
@@ -89,6 +95,7 @@ class AuthorityGate:
                     "AUTH_LIMIT_EXCEEDED",
                     f"Amount {request.amount_cents} exceeds single-action limit {single_limit}.",
                     {"amount_cents": request.amount_cents, "single_amount_cents": single_limit},
+                    remediation="Reduce amount_cents or use a role with a higher single_amount_cents limit",
                 )
 
         return GateResult(
@@ -130,7 +137,15 @@ class AuthorityGate:
                 return scope
         return None
 
-    def _deny(self, started: float, code: str, reason: str, evidence: dict[str, Any]) -> GateResult:
+    def _deny(
+        self,
+        started: float,
+        code: str,
+        reason: str,
+        evidence: dict[str, Any],
+        *,
+        remediation: str | None = None,
+    ) -> GateResult:
         return GateResult(
             gate=self.name,
             allowed=False,
@@ -139,6 +154,7 @@ class AuthorityGate:
             rule_ids=[],
             evidence={"role_version": self.version, **evidence},
             latency_ms=self._elapsed_ms(started),
+            remediation=remediation,
         )
 
     @staticmethod

@@ -113,6 +113,7 @@ class GateResult:
     rule_ids: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     latency_ms: float | None = None
+    remediation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -158,3 +159,11 @@ class DecisionRecord:
         payload = self.to_dict()
         payload.pop("event_hash", None)
         return payload
+
+
+class GovernanceDeniedError(PermissionError):
+    """Raised by GovernedToolAdapter.guard() when a decision denies. Carries the full DecisionRecord."""
+
+    def __init__(self, decision: "DecisionRecord"):
+        super().__init__("; ".join(decision.reasons))
+        self.decision = decision
