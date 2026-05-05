@@ -2,9 +2,9 @@
 
 ## Context
 
-The paper "In-Context Prompting Obsoletes Agent Orchestration for Procedural Tasks" compares LangGraph-style external node routing with placing the full procedure in a system prompt and letting a frontier model self-orchestrate the procedural conversation. In three synthetic procedural domains, the in-context approach outperformed the LangGraph approach. The reported abstract scores are 4.53-5.00 for in-context prompting versus 4.17-4.84 for LangGraph-style orchestration, with lower failure rates: travel 11.5% versus 24%, Zoom 0.5% versus 9%, and insurance 5% versus 17%.
+When a defined procedure fits within a frontier model's context window, the model can self-orchestrate the procedure from a system prompt: making local decisions, asking follow-up questions, branching on user input, all without external node routing in the LangGraph, CrewAI, or OpenAI Agents SDK style. This eliminates a class of overhead (extra LLM calls per node, mid-conversation graph state, framework coupling) for procedures that don't otherwise need external routing. It does not eliminate the need for runtime control over what side effects the model is allowed to cause.
 
-The paper also reports an efficiency tradeoff. External orchestration required more LLM calls, about 1.2x to 1.7x more, while the in-context approach used more tokens because the procedure is repeated in context. The limitations matter: the domains are synthetic, the evaluation uses LLM-as-judge, the procedure must fit in context, cost remains a factor, and only LangGraph was evaluated. Section 5.3 explicitly preserves a role for orchestration in multi-model pipelines, tool use with external state, non-procedural or open-ended tasks, and smaller models.
+External orchestration retains a role for multi-model pipelines, tool use with external state, non-procedural or open-ended tasks, and smaller models, plus any procedure that cannot fit in context. ACGS should be agnostic to whether the agent self-orchestrates in context or routes through an external graph. It governs execution boundaries, not flow.
 
 The repo already contains governance-runtime building blocks:
 
@@ -19,7 +19,7 @@ The repo already contains governance-runtime building blocks:
 
 Adopt in-context procedure execution as the default Hermes reasoning model for defined procedural tasks, and keep ACGS as an external runtime governance boundary for every side-effectful action.
 
-Hermes should self-orchestrate procedural reasoning in context when the procedure fits the model context and the task is a defined procedural conversation. ACGS should not compete with LangGraph, CrewAI, or the OpenAI Agents SDK as a default workflow orchestration engine. ACGS should instead govern execution boundaries: tool calls, API calls, file writes, shell commands, permissions, policy checks, MACI-inspired role separation, audit trails, and verifiable evidence.
+Hermes should self-orchestrate procedural reasoning in context when the procedure fits the model context and the task is a defined procedural conversation. ACGS should not compete with LangGraph, CrewAI, or the OpenAI Agents SDK as a default workflow orchestration engine. ACGS should instead govern execution boundaries: tool calls, API calls, file writes, shell commands, permissions, policy checks, separation-of-duties, audit trails, and verifiable evidence.
 
 Prompt-level governance is advisory. Runtime governance is authoritative. A model may explain the policy, but it must not decide by self-attestation that a side effect is safe, approved, or compliant. The runtime gate must make and record the decision before execution.
 
@@ -27,7 +27,7 @@ Prompt-level governance is advisory. Runtime governance is authoritative. A mode
 
 ### Pure external node routing as the default
 
-Rejected: pure external node routing as the default. The paper provides evidence that, for defined procedural conversations with frontier models, full-procedure in-context prompting can outperform LangGraph-style external routing while using fewer LLM calls. External routing remains useful for specific cases such as multi-model pipelines, tool use with external state, open-ended tasks, and smaller models, but it should not be ACGS's default product position.
+Rejected: pure external node routing as the default. For defined procedural conversations with a frontier model, in-context procedure execution can match the task quality of external graph routing without the per-node call overhead. External routing remains useful for specific cases such as multi-model pipelines, tool use with external state, open-ended tasks, smaller models, and procedures too large for context. But it should not be ACGS's default product position, since governing execution is independent from how the agent reaches a tool-call decision.
 
 ### Prompt-only compliance as sufficient
 
@@ -61,7 +61,7 @@ Tradeoffs:
 
 ## Risks
 
-- Overgeneralizing the paper into "all orchestration is useless."
+- Overgeneralizing in-context procedure execution as a universal replacement for orchestration.
 - Treating prompt instructions as enough for compliance-supporting controls.
 - Allowing side-effectful tools to bypass the runtime gate.
 - Creating audit logs that cannot be verified or replayed.

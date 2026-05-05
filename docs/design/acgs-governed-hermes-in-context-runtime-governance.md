@@ -1,8 +1,11 @@
+<!-- /autoplan restore point: /home/martin/.gstack/projects/govern-zone/docs-acgs-hermes-runtime-governance-autoplan-restore-20260505-042217.md -->
+<!-- /autoplan run: 2026-05-05T04:22:17Z | branch: docs/acgs-hermes-runtime-governance | commit: 6690915 -->
+
 # ACGS-Governed Hermes: In-Context Procedure Execution with Runtime Governance
 
 ## 1. Executive summary
 
-The paper "In-Context Prompting Obsoletes Agent Orchestration for Procedural Tasks" argues that, for defined procedural conversations, placing the complete procedure in a frontier model's system prompt can outperform LangGraph-style external node routing. The reported synthetic-domain results favor the in-context approach on task quality and failure rates: travel failure rate 11.5% versus 24%, Zoom 0.5% versus 9%, and insurance 5% versus 17%. The paper also reports that external orchestration required about 1.2x to 1.7x more LLM calls, while the in-context approach used more tokens because the procedure is repeated in context.
+When a defined procedure fits in context, frontier models can self-orchestrate that procedure from a system prompt without external node routing. This pattern is increasingly viable as model context windows grow and instruction-following improves, and it eliminates a class of orchestration overhead (extra LLM calls per node, framework coupling, mid-conversation graph state) for procedures that don't otherwise benefit from external routing. But self-orchestration does not solve runtime governance. The model can reason about a procedure end-to-end yet still propose unsafe tool calls, write to protected paths, or self-attest compliance for actions it should not have taken.
 
 The correct ACGS interpretation is narrow and operational: Hermes should be free to self-orchestrate procedural reasoning in context, but side effects must cross an external runtime governance boundary. Prompt-level governance is advisory. Runtime governance is authoritative. Prompt-level procedure and prompt-level compliance can guide behavior, but the authoritative boundary for tool calls, API calls, file writes, shell commands, permissions, data access, audit, role separation, and evidence is the runtime gate.
 
@@ -25,7 +28,7 @@ Acceptance criteria:
 
 ACGS is the runtime governance boundary for Hermes autonomous execution.
 
-The paper's result weakens the case for mandatory external procedural routing when a frontier model can hold the full procedure in context. It does not remove the need for runtime controls. Section 5.3 explicitly leaves room for orchestration in multi-model pipelines, tool use with external state, non-procedural or open-ended tasks, and smaller models. The paper also evaluates only LangGraph and relies on synthetic domains and LLM-as-judge evaluation, so it should not be generalized into "all orchestration is obsolete."
+The case for mandatory external procedural routing weakens when a frontier model can hold the full procedure in context. The case for runtime governance does not. External orchestration in graph form may still be the right answer for multi-model pipelines, tool use with external state, non-procedural or open-ended tasks, smaller models, or any case where the procedure cannot fit in context. ACGS should be agnostic to that choice. It governs execution, not flow.
 
 The product position is:
 
@@ -193,7 +196,7 @@ Test cases:
 
 ### `role_authority_check()`
 
-Purpose: enforce MACI-inspired role separation before action execution. Hermes may propose an action, but a separate validator/governor must authorize it, and execution happens through a bounded tool runtime.
+Purpose: enforce separation-of-duties before action execution. Hermes may propose an action, but a separate validator/governor must authorize it, and execution happens through a bounded tool runtime.
 
 Input schema:
 
@@ -512,7 +515,7 @@ The benchmark should compare three modes:
 - Mode 2: Full procedure in system prompt, no runtime governance.
 - Mode 3: Full procedure in system prompt plus ACGS runtime governance.
 
-The goal is not to re-prove the paper. The goal is to prove that ACGS adds value where orchestration does not: safe execution, auditability, compliance-supporting evidence, verifiable control, and recovery after denial.
+The goal is not to re-prove that in-context procedure execution can match external orchestration on task quality. The goal is to prove that ACGS adds value where orchestration alone does not: safe execution, auditability, compliance-supporting evidence, verifiable control, and recovery after denial.
 
 Metrics:
 
@@ -626,8 +629,8 @@ Future implementation test plan:
 
 ## 10. Risks and mitigations
 
-Risk: overclaiming the paper.
-Mitigation: state that the paper supports in-context procedure execution for defined procedural tasks under synthetic evaluation, not that all orchestration is obsolete.
+Risk: overgeneralizing in-context procedure execution as a universal pattern.
+Mitigation: state that in-context execution applies to defined procedural tasks where the procedure fits in context; preserve external orchestration as the right answer for multi-model pipelines, tool use with external state, open-ended tasks, smaller models, and procedures too large for context.
 
 Risk: prompt-only governance becomes confused with runtime enforcement.
 Mitigation: require all side-effectful actions to pass through ACGS gates outside model context.
@@ -692,3 +695,35 @@ Mitigation: keep ACGS model-agnostic and Hermes-API-agnostic, matching the exist
 7. Benchmark PR.
    - Compare external procedural orchestration, in-context prompt-only procedure execution, and in-context procedure execution plus ACGS runtime governance.
    - Report task quality, safety, audit, cost, latency, and recovery metrics.
+
+---
+
+<!-- /autoplan run halted at Phase 1 premise gate (2026-05-05T04:22:17Z, commit 6690915) -->
+
+## /autoplan Phase 1 — Premise gate result
+
+Status: **HALTED** at premise gate. User decision D1 = "Block on P1, fix P6 framing".
+Phases 3 (Eng) and 3.5 (DX) not run; Phase 2 (Design) auto-skipped (no UI scope).
+
+### Premises evaluated
+
+| # | Premise | Status |
+|---|---------|--------|
+| P1 | The paper "In-Context Prompting Obsoletes Agent Orchestration for Procedural Tasks" supports the decision | **BLOCK** — no authors, venue, year, or DOI; cannot be verified |
+| P2 | ACGS = runtime governance, not workflow orchestration | Accept |
+| P3 | Frontier models can self-orchestrate procedural reasoning when procedure fits context | Accept |
+| P4 | Prompt-level governance is advisory; runtime governance is authoritative | Accept (strongest claim — carries the doc on its own) |
+| P5 | ACGS already has the necessary primitives in repo | Provisional — eng phase verification deferred |
+| P6 | MACI-inspired role separation | Architecture accept, framing reject — MACI is a zk anti-collusion primitive, mismatch with proposer/validator/executor RBAC. Recommend "separation-of-duties" (standard SOX/COSO/NIST term that fits exactly) |
+
+### Required fixes before re-running /autoplan
+
+1. **P1**: either add a real citation (authors, venue, year, link/DOI) for the paper, or rewrite §1, §2, ADR Context, ADR Decision, and §10 risk #1 to drop the paper claim and stand on P4 reasoning alone. P4 is sufficient on its own.
+2. **P6**: replace "MACI-inspired role separation" with "separation-of-duties" throughout (§2 paragraph 6, §5 `role_authority_check` purpose, §10 risk #7).
+
+### Decision audit trail
+
+| # | Phase | Decision | Classification | Source | Rationale |
+|---|-------|----------|----------------|--------|-----------|
+| 1 | 1 | Halt at premise gate; do not auto-decide rest of Phase 1 | User gate | D1 user choice | Premise P1 unverifiable; ADR cannot rest on fictional paper. Auto-deciding Sections 1–11 on a broken foundation wastes Codex spend. |
+| 2 | 1 | Apply P1 + P6 fixes (lean on P4, drop MACI framing) | Mechanical | User said "fix now" | P1 path B taken: rewrote §1 opener, §2 paragraph, §7 goal statement, §10 risk #1 in design doc; rewrote ADR Context (2 paragraphs) and Alternatives + Risks bullets to remove paper claim. P6: replaced "MACI-inspired role separation" with "separation-of-duties" in design §5 and ADR Decision. Body of both files now grep-clean of `paper`, `MACI`, `Section 5.3`, paper title. Premise P1 reframed from "the paper says X" to "in-context execution applies when procedure fits in context"; argument now stands on P4 (advisory vs authoritative governance) alone. |
