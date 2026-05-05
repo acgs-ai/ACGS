@@ -34,11 +34,23 @@ def _validate_payload(actor_tenant: str = "acme", cross_tenant: bool = False) ->
     }
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="HIGH",
+    issue="autofix_api_auth_bypass",
+    coverage_angle="validate_no_token_401",
+)
 def test_validate_without_token_returns_401(client):
     response = client.post("/govern/validate", json=_validate_payload())
     assert response.status_code == 401
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="HIGH",
+    issue="autofix_api_auth_bypass",
+    coverage_angle="validate_invalid_token_401",
+)
 def test_validate_with_invalid_token_returns_401(client):
     response = client.post(
         "/govern/validate",
@@ -48,6 +60,12 @@ def test_validate_with_invalid_token_returns_401(client):
     assert response.status_code == 401
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="HIGH",
+    issue="autofix_api_auth_bypass",
+    coverage_angle="validate_tenant_mismatch_403",
+)
 def test_validate_with_tenant_mismatch_returns_403(client):
     response = client.post(
         "/govern/validate",
@@ -57,6 +75,12 @@ def test_validate_with_tenant_mismatch_returns_403(client):
     assert response.status_code == 403
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="HIGH",
+    issue="autofix_api_auth_bypass",
+    coverage_angle="validate_matched_tenant_200",
+)
 def test_validate_with_matched_tenant_returns_200(client):
     response = client.post(
         "/govern/validate",
@@ -69,6 +93,12 @@ def test_validate_with_matched_tenant_returns_200(client):
     assert "event_id" in body
 
 
+@pytest.mark.regression(
+    pr="fix/governance-eng-autofix",
+    severity="HIGH",
+    issue="autofix_api_auth_bypass",
+    coverage_angle="audit_query_no_token_401",
+)
 def test_audit_query_without_token_returns_401(client):
     response = client.get("/audit/query")
     assert response.status_code == 401

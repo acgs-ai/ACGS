@@ -22,3 +22,6 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+  "regression(pr, severity, issue, coverage_angle): regression test seed marker",
+]
