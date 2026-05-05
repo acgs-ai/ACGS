@@ -10,6 +10,7 @@ from governance.models import (
     ActionRequest,
     DecisionRecord,
     GateResult,
+    GovernanceDeniedError,
     sha256_json,
 )
 
@@ -120,6 +121,12 @@ class GovernedToolAdapter:
         must be persisted before running) or when request.tool_input is unset
         (executor cannot be bound to validated input). Use validate() directly
         for input-less or replay paths.
+
+        On denial raises GovernanceDeniedError, which subclasses
+        PermissionError (existing ``except PermissionError`` catches still
+        work). The exception carries the full DecisionRecord on
+        ``.decision`` — inspect ``.decision.reason_codes`` and
+        ``.decision.checks[i].remediation`` for actionable hints.
         """
         if self.audit_store is None:
             raise RuntimeError(
@@ -128,7 +135,7 @@ class GovernedToolAdapter:
             )
         decision = self.validate(request)
         if not decision.allow:
-            raise PermissionError("; ".join(decision.reasons))
+            raise GovernanceDeniedError(decision)
         if decision.effective_tool_input is None:
             raise RuntimeError(
                 "GovernedToolAdapter.guard() requires request.tool_input to be "
