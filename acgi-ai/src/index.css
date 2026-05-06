@@ -35,8 +35,8 @@
   --line-soft: #cfcfcf;
   --line-softer: #e5e5e5;
 
-  --accent: #d97757; /* warm rust — single brand accent */
-  --accent-2: #c96442;
+  --accent: #b8422e; /* WCAG AA rust — single brand accent */
+  --accent-2: #8f361e;
   --accent-soft: #f4e2d8;
 
   --boundary: #f3ead4; /* parchment — privilege */
@@ -44,7 +44,7 @@
   --boundary-line: #e3d5a8;
 
   --risk-lo: #3d6b4a;
-  --risk-mid: #b8842a;
+  --risk-mid: #76520d; /* WCAG AA mustard for PARTIAL */
   --risk-hi: #c8432a;
 
   /* §2.2 Typography */
