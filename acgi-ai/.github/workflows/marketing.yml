@@ -12,13 +12,13 @@ name: marketing
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - 'infra/**'
       - '.github/workflows/console.yml'
       - 'DEPLOY.md'
   push:
-    branches: [main]
+    branches: [master]
     paths-ignore:
       - 'infra/**'
       - '.github/workflows/console.yml'

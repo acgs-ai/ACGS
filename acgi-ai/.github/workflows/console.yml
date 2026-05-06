@@ -13,13 +13,13 @@
 #        GCP_ARTIFACT_REGISTRY       (e.g. us-central1-docker.pkg.dev/<project>/acgi)
 #
 # The console image is built and pushed on every PR (so previews can run
-# against a real revision) but only deployed to production on push-to-main.
+# against a real revision) but only deployed to production on push-to-master.
 
 name: console
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
       - 'src/**'
       - 'public/**'
@@ -31,7 +31,7 @@ on:
       - 'infra/**'
       - '.github/workflows/console.yml'
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - 'src/**'
       - 'public/**'
