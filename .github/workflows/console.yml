@@ -13,34 +13,39 @@
 #        GCP_ARTIFACT_REGISTRY       (e.g. us-central1-docker.pkg.dev/<project>/acgi)
 #
 # The console image is built and pushed on every PR (so previews can run
-# against a real revision) but only deployed to production on push-to-main.
+# against a real revision) but only deployed to production on push-to-master.
+#
+# Workflow lives at repo root (.github/workflows/) — GitHub Actions only
+# discovers workflows from there. The acgi-ai app is in a subdirectory, so
+# defaults.run.working-directory pins all `run:` steps there. Path filters
+# are repo-root relative.
 
 name: console
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
-      - 'src/**'
-      - 'public/**'
-      - 'index.html'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'vite.config.ts'
-      - 'tsconfig*.json'
-      - 'infra/**'
+      - 'acgi-ai/src/**'
+      - 'acgi-ai/public/**'
+      - 'acgi-ai/index.html'
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/vite.config.ts'
+      - 'acgi-ai/tsconfig*.json'
+      - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
   push:
-    branches: [main]
+    branches: [master]
     paths:
-      - 'src/**'
-      - 'public/**'
-      - 'index.html'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'vite.config.ts'
-      - 'tsconfig*.json'
-      - 'infra/**'
+      - 'acgi-ai/src/**'
+      - 'acgi-ai/public/**'
+      - 'acgi-ai/index.html'
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/vite.config.ts'
+      - 'acgi-ai/tsconfig*.json'
+      - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
 
 concurrency:
@@ -51,6 +56,10 @@ permissions:
   contents: read
   id-token: write  # Required for Workload Identity Federation
   pull-requests: write
+
+defaults:
+  run:
+    working-directory: acgi-ai
 
 jobs:
   build:
@@ -69,6 +78,7 @@ jobs:
         with:
           node-version: '20'
           cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
 
@@ -103,8 +113,10 @@ jobs:
       - name: Build & push image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: infra/Dockerfile.console
+          # Dockerfile uses `COPY package.json pnpm-lock.yaml ./` and
+          # `COPY infra/Caddyfile …`, both relative to acgi-ai/.
+          context: acgi-ai
+          file: acgi-ai/infra/Dockerfile.console
           push: true
           tags: ${{ steps.image.outputs.uri }}
           cache-from: type=gha
