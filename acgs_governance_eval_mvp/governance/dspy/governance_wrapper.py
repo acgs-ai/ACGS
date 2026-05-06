@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Callable
 
@@ -50,8 +51,8 @@ class GovernedDSPyModule:
         *,
         calling_maci_role: str,
     ) -> tuple[dict[str, Any] | None, DSPyInvocationEvidence]:
-        if calling_maci_role == self.maci_role and self.maci_role in self.forbidden_validator_roles:
-            raise MACIRoleViolation(f"MACI role {self.maci_role} cannot self-validate")
+        if calling_maci_role in self.forbidden_validator_roles:
+            raise MACIRoleViolation(f"MACI role {calling_maci_role!r} is in forbidden_validator_roles")
         if self.program_record.status != "active":
             raise DSPyProgramInactiveError(
                 f"DSPy program {self.program_record.program_id}@{self.program_record.version} is not active"
@@ -68,16 +69,33 @@ class GovernedDSPyModule:
             latency_ms = (time.perf_counter() - start) * 1000
         except Exception as exc:
             outputs = None
-            # Scrub common secret patterns before storing in the audit chain.
-            import re as _re
             _raw = f"{type(exc).__name__}: {exc}"
-            engine_error_msg = _re.sub(
-                r"(sk-|Bearer |password=|api[_-]?key=|token=)\S+",
+            # Pass 1: keyword-prefixed secrets — preserve label, redact value.
+            _scrubbed = re.sub(
+                r"(sk-|Bearer\s+|password=|api[_\-]?key=|token=)\S+",
                 r"\1<redacted>",
                 _raw,
-                flags=_re.IGNORECASE,
+                flags=re.IGNORECASE,
+            )
+            # Pass 2: standalone known-format secrets — redact entire token.
+            engine_error_msg = re.sub(
+                r"eyJ[\w\-]+\.[\w\-]+\.[\w\-]*"
+                r"|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}"
+                r"|ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|ghs_[A-Za-z0-9]{36}"
+                r"|github_pat_[A-Za-z0-9_]{22,}"
+                r"|AIza[0-9A-Za-z\-_]{35}"
+                r"|hf_[A-Za-z0-9]{34,}"
+                r"|xox[baprs]-[0-9A-Za-z\-]+"
+                r"|sk_live_[0-9A-Za-z]{24,}|rk_live_[0-9A-Za-z]{24,}",
+                "<redacted>",
+                _scrubbed,
+                flags=re.IGNORECASE,
             )[:500]
             latency_ms = (time.perf_counter() - start) * 1000
+
+        if outputs is not None and not outputs and engine_error_msg is None:
+            outputs = None
+            engine_error_msg = "engine returned empty output"
 
         if outputs is not None and self.post_validate is not None:
             self.post_validate(inputs, outputs)
