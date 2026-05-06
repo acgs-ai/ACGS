@@ -127,26 +127,34 @@ The two `!important` declarations in the `prefers-reduced-motion` reset in
 
 ## Deploy Configuration (configured by /setup-deploy 2026-05-06)
 
-Two-origin topology per `DEPLOY.md`. Workflows in `.github/workflows/` deploy
-automatically on push to `master` (corrected from `main` in the same commit
-as this section). Production domains are pending DNS/ACME provisioning per
-`PLAN.md §5.6` (formerly Phase 5, now Phase 6 after the /autoplan reorder).
+Two-origin topology per `DEPLOY.md`. Workflows live at **repo-root**
+`.github/workflows/{console,marketing}.yml` (NOT under `acgi-ai/.github/`).
+GitHub Actions only discovers workflows from the repo root; the workflows
+were originally placed under `acgi-ai/.github/workflows/` and silently never
+ran (verified by `gh run list` showing zero runs). They were moved to the
+root in this PR. The acgi-ai app is in a subdirectory, so each workflow
+sets `defaults.run.working-directory: acgi-ai` and prefixes path filters
+(e.g. `acgi-ai/src/**`) so commands run in the subdirectory while GitHub's
+file-change detection works at repo-root scope.
+
+Production domains are pending DNS/ACME provisioning per `PLAN.md §5.6`
+(formerly Phase 5, now Phase 6 after the /autoplan reorder).
 
 ### Marketing surface (Vercel)
 
 - **Platform:** Vercel
 - **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the Vercel preview from `vercel ls --prod`)
-- **Deploy workflow:** `.github/workflows/marketing.yml`
+- **Deploy workflow:** repo-root `.github/workflows/marketing.yml`
 - **Deploy trigger:** auto on push to `master`; preview on PR
 - **Required secrets:** `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
-- **Deploy status command:** `vercel ls --prod | head -3`
+- **Deploy status command:** `vercel ls --prod | head -3` (run from `acgi-ai/`)
 - **Health check URL:** the production URL (200 OK on `/`)
 
 ### Console surface (Cloud Run + Caddy)
 
-- **Platform:** Google Cloud Run (Caddy container per `infra/Dockerfile.console` + `infra/cloudrun/service.yaml`)
+- **Platform:** Google Cloud Run (Caddy container per `infra/Dockerfile.console` + `infra/cloudrun/service.yaml`, both under `acgi-ai/`)
 - **Production URL:** `https://console.acgs.ai` (pending DNS — staging URL is the auto-generated `*.run.app`)
-- **Deploy workflow:** `.github/workflows/console.yml`
+- **Deploy workflow:** repo-root `.github/workflows/console.yml` (docker build context: `acgi-ai/`, file: `acgi-ai/infra/Dockerfile.console`)
 - **Deploy trigger:** image build on PR; deploy on push to `master`
 - **Auth:** Workload Identity Federation (no service-account JSON in secrets)
 - **Required secrets:** `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_ARTIFACT_REGISTRY`
