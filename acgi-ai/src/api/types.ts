@@ -41,6 +41,42 @@ export type BadgeAttestation = {
   pqcMode: 'enforced' | 'permissive' | 'off'
 }
 
+export type ConsoleSummaryEvent = {
+  id: string
+  body: string
+  ts: string
+}
+
+export type ConsoleSummaryCoverage = {
+  label: string
+  posture: Extract<Posture, 'confirmed' | 'partial'>
+  value: string
+}
+
+export type ConsoleSummary = {
+  constitutionHash: string
+  agentsOnline: number
+  agentsTotal: number
+  checks: number
+  runtimeLabel: string
+  driftBytes: number
+  auditAnchorSeconds: number
+  nextRefreshSeconds: number
+  medianLatencyMs: number
+  refusals24h: number
+  humanReview: number
+  appeals: number
+  retryBackoff: number
+  recentEvents: ConsoleSummaryEvent[]
+  coverage: ConsoleSummaryCoverage[]
+}
+
+export type ActionReceipt = {
+  title: string
+  body: string
+  meta: string
+}
+
 // ─── Overview ─────────────────────────────────────────────────────────────
 
 export type OverviewStat = { label: string; value: string; sub: string }
@@ -149,6 +185,11 @@ export type CompileDraft = {
   currentHash: string
   proposedHash: string
   changes: PolicyChange[]
+}
+
+export type CompileActionRequest = {
+  currentHash: string
+  proposedHash: string
 }
 
 // ─── Audit ────────────────────────────────────────────────────────────────

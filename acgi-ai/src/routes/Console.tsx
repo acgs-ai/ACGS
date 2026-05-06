@@ -1,6 +1,17 @@
 import { ArrowRight, Bell, Menu, X } from 'lucide-react'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import {
+  useAgents,
+  useCompileDraft,
+  useConsoleSummary,
+  useDeliberations,
+  useIncidents,
+  useOverview,
+  usePolicies,
+  useTenants,
+} from '../api/hooks'
 import { navigate } from '../lib/navigate'
+import { clearSession } from '../lib/session'
 import { Account } from './console/Account'
 import { Agents } from './console/Agents'
 import { Audit } from './console/Audit'
@@ -13,29 +24,6 @@ import { Policies } from './console/Policies'
 import { Settings } from './console/Settings'
 import { Tenants } from './console/Tenants'
 import { NotFound } from './NotFound'
-
-const NAV: { section: string; items: { path: string; label: string; count?: string }[] }[] = [
-  {
-    section: 'Operate',
-    items: [
-      { path: '/console', label: 'Overview' },
-      { path: '/console/agents', label: 'Agents', count: '12' },
-      { path: '/console/maci', label: 'MACI lanes', count: '4' },
-      { path: '/console/deliberations', label: 'Deliberations', count: '3' },
-      { path: '/console/incidents', label: 'Incidents', count: '5' },
-    ],
-  },
-  {
-    section: 'Govern',
-    items: [
-      { path: '/console/policies', label: 'Policies', count: '47' },
-      { path: '/console/compile', label: 'Compile', count: '7' },
-      { path: '/console/audit', label: 'Audit trail' },
-      { path: '/console/settings', label: 'Settings' },
-      { path: '/console/tenants', label: 'Tenants', count: '4' },
-    ],
-  },
-]
 
 const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
   '/console': {
@@ -128,15 +116,6 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
   },
 }
 
-const HEARTBEAT = [
-  ['Agents', '12/12'],
-  ['Checks', '84'],
-  ['Runtime', '06h 14m'],
-  ['Drift', '0 byte'],
-  ['Audit anchor', '18s'],
-  ['Next refresh', '2s'],
-]
-
 function PageBody({ path }: { path: string }) {
   switch (path) {
     case '/console':
@@ -175,18 +154,134 @@ const NOT_FOUND_META = {
   ),
 }
 
+const FALLBACK_EVENTS = [
+  {
+    id: 'fallback-tool-refusal',
+    body: 'Refused tool call matter.fetch for agent analyst-04 and cited §164.502(b).',
+    ts: '14:08:22 · UTC',
+  },
+  {
+    id: 'fallback-promotion',
+    body: 'Validator promoted draft P-1207 to canon after two independent reviews and a Dafny replay.',
+    ts: '13:51:09 · UTC',
+  },
+  {
+    id: 'fallback-deliberation',
+    body: 'Human deliberation opened on Matter-9821; routed to on-call counsel.',
+    ts: '13:32:41 · UTC',
+  },
+]
+
+const FALLBACK_COVERAGE = [
+  { label: 'EU AI Act', posture: 'confirmed', value: 'Active' },
+  { label: 'SR 11-7', posture: 'confirmed', value: 'Active' },
+  { label: 'HIPAA', posture: 'confirmed', value: 'Active' },
+  { label: 'GDPR', posture: 'partial', value: 'Partial' },
+] as const
+
+function formatBytes(bytes: number): string {
+  return bytes === 1 ? '1 byte' : `${bytes.toLocaleString()} bytes`
+}
+
 export function Console({ path }: { path: string }) {
   const meta = PAGE_TITLES[path] ?? (path === '/console' ? PAGE_TITLES['/console'] : NOT_FOUND_META)
   const [navOpen, setNavOpen] = useState(false)
+  const previousPath = useRef(path)
+  const agents = useAgents()
+  const deliberations = useDeliberations()
+  const incidents = useIncidents()
+  const policies = usePolicies()
+  const compileDraft = useCompileDraft()
+  const tenants = useTenants()
+  const overview = useOverview()
+  const summary = useConsoleSummary()
 
-  // F-A1 — close the mobile drawer whenever the route changes. The
-  // sidebar's <a onClick> handlers call navigate(), which mutates `path`
-  // through the popstate listener in App.tsx; this effect catches every
-  // such mutation and any external navigation as well.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: path is the reactivity trigger; the effect deliberately ignores its value
+  const agentsOnline = summary.data?.agentsOnline ?? agents.data?.length ?? 12
+  const agentsTotal = summary.data?.agentsTotal ?? agentsOnline
+  const policyCount = policies.data?.length ?? 47
+  const compileCount = compileDraft.data?.changes.length ?? 7
+  const deliberationCount = summary.data?.humanReview ?? deliberations.data?.length ?? 3
+  const incidentCount = incidents.data?.length ?? 5
+  const tenantCount = tenants.data?.length ?? 4
+  const refusals24h =
+    summary.data?.refusals24h ??
+    overview.data?.refusalsByArticle.reduce((sum, row) => sum + row.refusals, 0) ??
+    1402
+  const checks = summary.data?.checks ?? policyCount + compileCount + 30
+  const driftBytes = summary.data?.driftBytes ?? 0
+  const auditAnchorSeconds = summary.data?.auditAnchorSeconds ?? 18
+  const nextRefreshSeconds = summary.data?.nextRefreshSeconds ?? 10
+  const runtimeLabel = summary.data?.runtimeLabel ?? '06h 14m'
+  const medianLatencyMs = summary.data?.medianLatencyMs ?? 38
+  const appeals = summary.data?.appeals ?? Math.max(1, incidentCount - deliberationCount)
+  const retryBackoff = summary.data?.retryBackoff ?? 0
+  const recentEvents = summary.data?.recentEvents ?? FALLBACK_EVENTS
+  const coverage = summary.data?.coverage ?? FALLBACK_COVERAGE
+  const nav = [
+    {
+      section: 'Operate',
+      items: [
+        { path: '/console', label: 'Overview' },
+        { path: '/console/agents', label: 'Agents', count: String(agentsOnline) },
+        { path: '/console/maci', label: 'MACI lanes', count: '4' },
+        {
+          path: '/console/deliberations',
+          label: 'Deliberations',
+          count: String(deliberationCount),
+        },
+        { path: '/console/incidents', label: 'Incidents', count: String(incidentCount) },
+      ],
+    },
+    {
+      section: 'Govern',
+      items: [
+        { path: '/console/policies', label: 'Policies', count: String(policyCount) },
+        { path: '/console/compile', label: 'Compile', count: String(compileCount) },
+        { path: '/console/audit', label: 'Audit trail' },
+        { path: '/console/settings', label: 'Settings' },
+        { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
+      ],
+    },
+  ]
+  const heartbeat = [
+    ['Agents', `${agentsOnline}/${agentsTotal}`],
+    ['Checks', String(checks)],
+    ['Runtime', runtimeLabel],
+    ['Drift', formatBytes(driftBytes)],
+    ['Audit anchor', `${auditAnchorSeconds}s`],
+    ['Next refresh', `${nextRefreshSeconds}s`],
+  ]
+
+  // F-A1 — close the mobile drawer in the same call that navigates. We
+  // collapse navigate() and setNavOpen(false) into one synchronous user
+  // event so React's set-state-in-effect rule stays clean and the close
+  // happens before the next render.
+  const go = (to: string) => {
+    setNavOpen(false)
+    navigate(to)
+  }
+
+  const signOut = () => {
+    clearSession()
+    go('/login')
+  }
+
   useEffect(() => {
+    if (previousPath.current === path) return
+    previousPath.current = path
     setNavOpen(false)
   }, [path])
+
+  // Escape dismisses the mobile drawer. Mirrors the backdrop button so
+  // keyboard users have a parity dismiss path.
+  useEffect(() => {
+    if (!navOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navOpen])
 
   return (
     <div className={`console${navOpen ? ' nav-open' : ''}`}>
@@ -204,14 +299,14 @@ export function Console({ path }: { path: string }) {
           href="/"
           onClick={(e) => {
             e.preventDefault()
-            navigate('/')
+            go('/')
           }}
         >
           acgs <em>⁂</em>
           <span className="v">v3.1.0 · 608508a9</span>
         </a>
         <nav>
-          {NAV.map((group) => (
+          {nav.map((group) => (
             <div key={group.section}>
               <div className="c-nav-section">{group.section}</div>
               <ul className="c-nav">
@@ -225,7 +320,7 @@ export function Console({ path }: { path: string }) {
                         href={item.path}
                         onClick={(e) => {
                           e.preventDefault()
-                          navigate(item.path)
+                          go(item.path)
                         }}
                       >
                         <span>{item.label}</span>
@@ -247,7 +342,7 @@ export function Console({ path }: { path: string }) {
               href="/console/account"
               onClick={(e) => {
                 e.preventDefault()
-                navigate('/console/account')
+                go('/console/account')
               }}
             >
               custodian-01 · clerk
@@ -257,7 +352,7 @@ export function Console({ path }: { path: string }) {
               href="/login"
               onClick={(e) => {
                 e.preventDefault()
-                navigate('/login')
+                signOut()
               }}
             >
               sign out →
@@ -293,14 +388,14 @@ export function Console({ path }: { path: string }) {
               className="btn btn-secondary"
               type="button"
               aria-label="Open incidents"
-              onClick={() => navigate('/console/incidents')}
+              onClick={() => go('/console/incidents')}
             >
-              <Bell size={15} strokeWidth={1.8} /> 3 events
+              <Bell size={15} strokeWidth={1.8} /> {incidentCount} events
             </button>
             <button
               className="btn btn-primary"
               type="button"
-              onClick={() => navigate('/console/compile')}
+              onClick={() => go('/console/compile')}
             >
               Compile constitution <ArrowRight size={15} strokeWidth={1.8} />
             </button>
@@ -308,8 +403,8 @@ export function Console({ path }: { path: string }) {
         </div>
 
         <div className="c-heartbeat">
-          <span className="c-heartbeat-live">Live</span>
-          {HEARTBEAT.map(([label, value]) => (
+          <span className="c-heartbeat-live">{summary.isError ? 'Fallback' : 'Live'}</span>
+          {heartbeat.map(([label, value]) => (
             <div className="c-heartbeat-item" key={label}>
               <span className="c-heartbeat-label">{label}</span>
               <span className="c-heartbeat-value">{value}</span>
@@ -329,19 +424,21 @@ export function Console({ path }: { path: string }) {
           <div className="rail-stats">
             <div className="rail-stat">
               <span className="label">Agents online</span>
-              <span className="value">12 / 12</span>
+              <span className="value">
+                {agentsOnline} / {agentsTotal}
+              </span>
             </div>
             <div className="rail-stat">
               <span className="label">Refusals · 24h</span>
-              <span className="value">1,402</span>
+              <span className="value">{refusals24h.toLocaleString()}</span>
             </div>
             <div className="rail-stat">
               <span className="label">Median latency</span>
-              <span className="value">38 ms</span>
+              <span className="value">{medianLatencyMs} ms</span>
             </div>
             <div className="rail-stat">
               <span className="label">Constitution drift</span>
-              <span className="value value-ok">0 byte</span>
+              <span className="value value-ok">{formatBytes(driftBytes)}</span>
             </div>
           </div>
         </div>
@@ -350,54 +447,39 @@ export function Console({ path }: { path: string }) {
           <div className="rail-stats">
             <div className="rail-stat">
               <span className="label">Human review</span>
-              <span className="value">3</span>
+              <span className="value">{deliberationCount}</span>
             </div>
             <div className="rail-stat">
               <span className="label">Appeals</span>
-              <span className="value">1</span>
+              <span className="value">{appeals}</span>
             </div>
             <div className="rail-stat">
               <span className="label">Retry backoff</span>
-              <span className="value value-ok">0</span>
+              <span className="value value-ok">{retryBackoff}</span>
             </div>
-            <div className="rail-empty">No queued retries</div>
+            <div className="rail-empty">
+              {retryBackoff === 0 ? 'No queued retries' : 'Retries queued under backoff'}
+            </div>
           </div>
         </div>
         <div className="rail-block">
           <h5>Recent events</h5>
-          <div className="rail-event">
-            Refused tool call <code>matter.fetch</code> for agent <strong>analyst-04</strong> and
-            cited <em>§164.502(b)</em>.<span className="ts">14:08:22 · UTC</span>
-          </div>
-          <div className="rail-event">
-            Validator promoted draft <strong>P-1207</strong> to canon after two independent reviews
-            and a Dafny replay.
-            <span className="ts">13:51:09 · UTC</span>
-          </div>
-          <div className="rail-event">
-            Human deliberation opened on <strong>Matter-9821</strong>; routed to on-call counsel.
-            <span className="ts">13:32:41 · UTC</span>
-          </div>
+          {recentEvents.map((event) => (
+            <div className="rail-event" key={event.id}>
+              {event.body}
+              <span className="ts">{event.ts}</span>
+            </div>
+          ))}
         </div>
         <div className="rail-block">
           <h5>Coverage</h5>
           <div className="rail-stats">
-            <div className="rail-stat">
-              <span className="label">EU AI Act</span>
-              <span className="pill confirmed">Active</span>
-            </div>
-            <div className="rail-stat">
-              <span className="label">SR 11-7</span>
-              <span className="pill confirmed">Active</span>
-            </div>
-            <div className="rail-stat">
-              <span className="label">HIPAA</span>
-              <span className="pill confirmed">Active</span>
-            </div>
-            <div className="rail-stat">
-              <span className="label">GDPR</span>
-              <span className="pill partial">Partial</span>
-            </div>
+            {coverage.map((item) => (
+              <div className="rail-stat" key={item.label}>
+                <span className="label">{item.label}</span>
+                <span className={`pill ${item.posture}`}>{item.value}</span>
+              </div>
+            ))}
           </div>
         </div>
       </aside>

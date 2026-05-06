@@ -122,6 +122,16 @@ export function Marketing() {
           <div className="m-nav-links" id="m-nav-links">
             <a href="#capabilities">Platform</a>
             <a href="#coverage">Coverage</a>
+            <a
+              href="/products"
+              onClick={(e) => {
+                e.preventDefault()
+                closeNav()
+                navigate('/products')
+              }}
+            >
+              Products
+            </a>
             <a href="#pricing">Pricing</a>
             <a
               href="/console"
@@ -377,6 +387,17 @@ legal technology vertical.`}
               </li>
               <li>
                 <a href="#pricing">Pricing</a>
+              </li>
+              <li>
+                <a
+                  href="/products"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/products')
+                  }}
+                >
+                  Product atlas
+                </a>
               </li>
               <li>
                 <a

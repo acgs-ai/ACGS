@@ -1,6 +1,15 @@
+import { useState } from 'react'
 import { useAccount } from '../../api/hooks'
 import type { IdentitySource } from '../../api/types'
 import { navigate } from '../../lib/navigate'
+import { clearSession } from '../../lib/session'
+import {
+  CONSTITUTION_HASH,
+  ConsoleError,
+  ConsoleLoading,
+  type LocalReceipt,
+  Receipt,
+} from './shared'
 
 const SOURCE_LABEL: Record<IdentitySource, string> = {
   sso: 'SSO',
@@ -9,27 +18,23 @@ const SOURCE_LABEL: Record<IdentitySource, string> = {
 }
 
 export function Account() {
+  const [receipt, setReceipt] = useState<LocalReceipt | null>(null)
   const { data, isLoading, isError, refetch } = useAccount()
 
   if (isLoading) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">⁂ Polling …</span>
-      </div>
-    )
+    return <ConsoleLoading />
   }
 
   if (isError || !data) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">
-          ⁂ Could not reach the bus.{' '}
-          <button type="button" className="m-text-link" onClick={() => refetch()}>
-            Retry
-          </button>
-        </span>
-      </div>
-    )
+    return <ConsoleError onRetry={() => refetch()} />
+  }
+
+  const record = (title: string, body: string) => {
+    setReceipt({
+      title,
+      body,
+      meta: `${CONSTITUTION_HASH} · account · ${new Date().toISOString()}`,
+    })
   }
 
   return (
@@ -65,6 +70,12 @@ export function Account() {
               className="btn btn-ghost btn-sm"
               type="button"
               disabled={f.source === 'constitution' || f.source === 'sso'}
+              onClick={() =>
+                record(
+                  'Local identity rotation receipt',
+                  `${f.key} rotation is queued locally; the IdP must countersign before the value changes.`,
+                )
+              }
             >
               {f.source === 'self' ? 'Rotate' : '—'}
             </button>
@@ -106,7 +117,16 @@ export function Account() {
                   {s.current ? (
                     <span className="c-meta u-color-ink-3">—</span>
                   ) : (
-                    <button type="button" className="btn btn-ghost btn-sm">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() =>
+                        record(
+                          'Local session revocation receipt',
+                          `${s.id} revocation is queued locally; the session remains active until the identity service confirms it.`,
+                        )
+                      }
+                    >
                       Revoke
                     </button>
                   )}
@@ -116,6 +136,8 @@ export function Account() {
           </tbody>
         </table>
       </div>
+
+      <Receipt receipt={receipt} />
 
       {/* Recent actions — scoped to this user */}
       <div className="settings-section">
@@ -148,7 +170,14 @@ export function Account() {
         >
           Open full audit trail →
         </button>
-        <button className="btn btn-ghost" type="button" onClick={() => navigate('/login')}>
+        <button
+          className="btn btn-ghost"
+          type="button"
+          onClick={() => {
+            clearSession()
+            navigate('/login')
+          }}
+        >
           Sign out
         </button>
         <span className="account-stamp">608508a9 · attest carried · session S-9421</span>

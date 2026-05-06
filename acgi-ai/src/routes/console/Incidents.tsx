@@ -1,71 +1,62 @@
-import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { useIncidents } from '../../api/hooks'
+import type { Incident } from '../../api/types'
+import {
+  ConsoleError,
+  ConsoleLoading,
+  EmptyState,
+  renderEmphasis,
+  SearchToolbar,
+  useTextFilter,
+} from './shared'
 
-function renderTitle(title: string, emphasis: string): ReactNode {
-  const idx = title.toLowerCase().indexOf(emphasis.toLowerCase())
-  if (idx === -1) return title
-  return (
-    <>
-      {title.slice(0, idx)}
-      <em>{title.slice(idx, idx + emphasis.length)}</em>
-      {title.slice(idx + emphasis.length)}
-    </>
-  )
-}
+const incidentFields = (i: Incident) => [i.id, i.ts, i.posture, i.title, i.src, i.body, i.hash]
 
 export function Incidents() {
+  const [query, setQuery] = useState('')
   const { data, isLoading, isError, refetch } = useIncidents()
+  const filtered = useTextFilter(data, query, incidentFields)
 
   if (isLoading) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">⁂ Polling …</span>
-      </div>
-    )
+    return <ConsoleLoading />
   }
 
   if (isError || !data) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">
-          ⁂ Could not reach the bus.{' '}
-          <button type="button" className="m-text-link" onClick={() => refetch()}>
-            Retry
-          </button>
-        </span>
-      </div>
-    )
+    return <ConsoleError onRetry={() => refetch()} />
   }
 
   return (
     <div>
-      <div className="c-toolbar">
-        <input
-          className="c-search"
-          placeholder="Search by source, citation, hash…"
-          aria-label="Search incidents"
-        />
-        <span className="c-meta">5 open · 2 blocked · oldest 6h ago</span>
-      </div>
+      <SearchToolbar
+        value={query}
+        onChange={setQuery}
+        placeholder="Search by source, citation, hash…"
+        ariaLabel="Search incidents"
+        meta={`${filtered.length} of ${data.length} open · 2 blocked · oldest 6h ago`}
+      />
 
-      <div className="incidents-list">
-        {data.map((i) => (
-          <article className="incident-row" key={i.id}>
-            <span className="ts">{i.ts}</span>
-            <span className={`pill ${i.posture}`}>
-              {i.posture === 'privileged' ? 'Privileged' : i.posture}
-            </span>
-            <div>
-              <div className="title">{renderTitle(i.title, i.emphasis)}</div>
-              <span className="src">
-                {i.id} · {i.src}
+      {filtered.length === 0 ? (
+        <EmptyState query={query} label="incidents" onClear={() => setQuery('')} />
+      ) : (
+        <div className="incidents-list">
+          {filtered.map((i) => (
+            <article className="incident-row" key={i.id}>
+              <span className="ts">{i.ts}</span>
+              <span className={`pill ${i.posture}`}>
+                {i.posture === 'privileged' ? 'Privileged' : i.posture}
               </span>
-              <p>{i.body}</p>
-            </div>
-            <span className="view">{i.hash}</span>
-          </article>
-        ))}
-      </div>
+              <div>
+                <div className="title">{renderEmphasis(i.title, i.emphasis)}</div>
+                <span className="src">
+                  {i.id} · {i.src}
+                </span>
+                <p>{i.body}</p>
+              </div>
+              <span className="view">{i.hash}</span>
+            </article>
+          ))}
+        </div>
+      )}
 
       <p className="u-mt-xl u-mono-cap-wide">
         ⁂ Incidents are escalations off the audit trail · every entry here is also signed into the
