@@ -6,18 +6,28 @@
   "framework": null,
   "cleanUrls": true,
   "trailingSlash": false,
-  "rewrites": [
+  "routes": [
     {
-      "source": "/console",
-      "destination": "https://console.acgs.ai/console"
+      "src": "/(?:.*\\/)?(?:AGENTS|CLAUDE|DESIGN|DEPLOY)\\.md$",
+      "status": 404
     },
     {
-      "source": "/console/:path*",
-      "destination": "https://console.acgs.ai/console/:path*"
+      "src": "/console",
+      "status": 308,
+      "headers": {
+        "Location": "https://console.acgs.ai/console"
+      }
     },
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "src": "/console/(.*)",
+      "status": 308,
+      "headers": {
+        "Location": "https://console.acgs.ai/console/$1"
+      }
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/"
     }
   ],
   "headers": [
