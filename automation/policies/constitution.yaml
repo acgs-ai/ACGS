@@ -1,0 +1,37 @@
+version: 1
+name: automation-self-build-constitution
+principles:
+  - governed_automation_factory
+  - review_before_execution
+  - fail_closed
+hard_rules:
+  - id: no_destructive_without_approval
+    rule: never run destructive commands without explicit approval
+  - id: no_secret_exposure
+    rule: never expose secrets
+  - id: protect_branches
+    rule: never modify protected branches directly
+  - id: tests_before_deploy
+    rule: never deploy without passing tests
+  - id: log_generated_changes
+    rule: always log generated changes
+  - id: rollback_required
+    rule: always provide rollback instructions
+defaults:
+  network_calls: disabled
+  background_daemon: disabled
+  secret_access: disabled
+  auto_merge: disabled
+  auto_deploy: disabled
+dangerous_commands:
+  - rm -rf
+  - sudo
+  - chmod 777
+  - curl | bash
+  - wget | bash
+  - git push --force
+  - git reset --hard
+  - docker system prune
+  - kubectl delete
+  - terraform destroy
+
