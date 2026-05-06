@@ -354,3 +354,313 @@ def test_replay_skips_dspy_audit_events(roles_bundle, policy_bundle):
     result = replay_event(event, roles_bundle=roles_bundle, policy_bundle=policy_bundle)
 
     assert result == {"event_id": "dspy-event-1", "kind": "dspy_audit_event", "skipped": True}
+
+
+# ---------------------------------------------------------------------------
+# governance_wrapper.py — secret scrubbing in engine error messages
+# ---------------------------------------------------------------------------
+
+def _make_error_mapper(exc: Exception) -> EvidenceToClaimMapper:
+    store = InMemoryAuditStore()
+    return EvidenceToClaimMapper(
+        program_record=active_program(),
+        engine=CountingEngine(exc=exc),
+        audit_store=store,
+    )
+
+
+@pytest.mark.parametrize("secret_fragment,expected_redacted", [
+    ("sk-abc123XYZ", "sk-<redacted>"),
+    ("Bearer supersecrettoken", "Bearer <redacted>"),
+    ("password=hunter2", "password=<redacted>"),
+    ("api_key=MY_SECRET_KEY", "api_key=<redacted>"),
+    ("token=eyJhbGciOiJSUzI1NiJ9", "token=<redacted>"),
+])
+def test_engine_error_secret_patterns_are_redacted(secret_fragment, expected_redacted):
+    store = InMemoryAuditStore()
+    engine = CountingEngine(exc=RuntimeError(secret_fragment))
+    mapper = EvidenceToClaimMapper(
+        program_record=active_program(),
+        engine=engine,
+        audit_store=store,
+    )
+
+    entry = mapper.map_claim(
+        tenant="tenant-a",
+        claim_text="Secret in error message should be scrubbed.",
+        audit_event_ids=[],
+        evidence_refs=[],
+        calling_maci_role="claim_reviewer",
+    )
+
+    assert entry.invocation.engine_error_msg is not None
+    assert expected_redacted in entry.invocation.engine_error_msg
+    # The raw secret must not appear in the stored error message.
+    raw_secret = secret_fragment.split("=", 1)[-1].split(" ", 1)[-1]
+    assert raw_secret not in entry.invocation.engine_error_msg
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — retire()
+# ---------------------------------------------------------------------------
+
+def test_registry_retire_marks_record_retired_and_removes_active():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+    registry.promote("evidence-to-claim", "v1", eval_report_hash="eval-v1")
+
+    registry.retire("evidence-to-claim", "v1")
+
+    records = {r.version: r for r in registry.list_programs("evidence-to-claim")}
+    assert records["v1"].status == "retired"
+    assert registry.get_active("evidence-to-claim") is None
+
+
+def test_registry_retire_appends_audit_event():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+    registry.promote("evidence-to-claim", "v1", eval_report_hash="eval-v1")
+    events_before = len(list(store.iter_events()))
+
+    registry.retire("evidence-to-claim", "v1")
+
+    assert len(list(store.iter_events())) == events_before + 1
+
+
+def test_registry_retire_unknown_version_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+
+    with pytest.raises(ValueError, match="unknown DSPy program"):
+        registry.retire("evidence-to-claim", "v99")
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — register() error paths
+# ---------------------------------------------------------------------------
+
+def test_registry_register_duplicate_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+
+    with pytest.raises(ValueError, match="duplicate"):
+        registry.register(draft_program("v1"))
+
+
+def test_registry_register_active_status_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    active = DSPyProgramRecord(
+        program_id="evidence-to-claim",
+        version="v1",
+        signature_hash="sig-v1",
+        weights_hash="weights-v1",
+        maci_role=EvidenceToClaimMapper.MACI_ROLE,
+        status="active",
+    )
+
+    with pytest.raises(ValueError, match="promote"):
+        registry.register(active)
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — promote() error paths
+# ---------------------------------------------------------------------------
+
+def test_registry_promote_empty_eval_report_hash_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+
+    with pytest.raises(ValueError, match="eval_report_hash"):
+        registry.promote("evidence-to-claim", "v1", eval_report_hash="")
+
+
+def test_registry_promote_unknown_program_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+
+    with pytest.raises(ValueError, match="unknown DSPy program"):
+        registry.promote("evidence-to-claim", "v99", eval_report_hash="eval-v99")
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — rollback() never-promoted rejection
+# ---------------------------------------------------------------------------
+
+def test_registry_rollback_never_promoted_raises():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+    registry.register(draft_program("v2"))
+    registry.promote("evidence-to-claim", "v1", eval_report_hash="eval-v1")
+    # v2 was registered but never promoted — rollback must refuse it.
+
+    with pytest.raises(ValueError, match="never-promoted"):
+        registry.rollback("evidence-to-claim", to_version="v2")
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — get_active() returns None when no active version
+# ---------------------------------------------------------------------------
+
+def test_registry_get_active_returns_none_when_no_active():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    registry.register(draft_program("v1"))
+
+    assert registry.get_active("evidence-to-claim") is None
+
+
+def test_registry_get_active_returns_none_for_unknown_program():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+
+    assert registry.get_active("completely-unknown") is None
+
+
+# ---------------------------------------------------------------------------
+# program_registry.py — list_programs() with no filter returns all programs
+# ---------------------------------------------------------------------------
+
+def test_registry_list_programs_no_filter_returns_all():
+    store = InMemoryAuditStore()
+    registry = DSPyProgramRegistry(store)
+    p1 = DSPyProgramRecord(
+        program_id="prog-a",
+        version="v1",
+        signature_hash="s",
+        weights_hash="w",
+        maci_role="mapper",
+    )
+    p2 = DSPyProgramRecord(
+        program_id="prog-b",
+        version="v1",
+        signature_hash="s",
+        weights_hash="w",
+        maci_role="mapper",
+    )
+    registry.register(p1)
+    registry.register(p2)
+
+    all_programs = registry.list_programs()
+
+    program_ids = {r.program_id for r in all_programs}
+    assert "prog-a" in program_ids
+    assert "prog-b" in program_ids
+    assert len(all_programs) == 2
+
+
+# ---------------------------------------------------------------------------
+# claim_mapper.py — _integrity_failed top-level event field (not nested in metadata)
+# ---------------------------------------------------------------------------
+
+def test_integrity_fail_detected_via_top_level_event_field():
+    """integrity_status on the event dict itself (not nested under request.metadata)
+    must still trigger the invalidated verdict."""
+    store = InMemoryAuditStore()
+    # Append a legitimate event, then surgically add top-level integrity_status=fail.
+    stored = append_evidence_event(store, integrity_status="pass")
+    # Find and mutate the stored event to set top-level integrity_status.
+    for ev in store._events:
+        if ev.get("event_id") == stored["event_id"]:
+            ev["integrity_status"] = "fail"
+            # Clear the metadata path so only the top-level branch fires.
+            ev.get("request", {}).get("metadata", {}).pop("integrity_status", None)
+            break
+
+    entry = mapper_with(store, CountingEngine()).map_claim(
+        tenant="tenant-a",
+        claim_text="Top-level integrity_status fail must invalidate.",
+        audit_event_ids=[stored["event_id"]],
+        evidence_refs=["audit:event"],
+        calling_maci_role="claim_reviewer",
+    )
+
+    assert entry.verdict == "invalidated"
+
+
+# ---------------------------------------------------------------------------
+# governance_wrapper.py — pre_validate and post_validate hooks
+# ---------------------------------------------------------------------------
+
+def test_governed_module_pre_validate_called_and_can_abort():
+    from governance.dspy.governance_wrapper import GovernedDSPyModule
+
+    engine = CountingEngine()
+    record = active_program()
+
+    def pre_validate(inputs: dict) -> None:
+        raise ValueError("pre_validate rejected inputs")
+
+    module = GovernedDSPyModule(
+        program_record=record,
+        engine=engine,
+        maci_role="claim_reviewer",
+        pre_validate=pre_validate,
+    )
+
+    with pytest.raises(ValueError, match="pre_validate rejected"):
+        module.invoke({"some": "input"}, calling_maci_role="other_role")
+
+    assert engine.call_count == 0
+
+
+def test_governed_module_post_validate_called_after_successful_engine():
+    from governance.dspy.governance_wrapper import GovernedDSPyModule
+
+    post_calls: list[tuple] = []
+
+    def post_validate(inputs: dict, outputs: dict) -> None:
+        post_calls.append((inputs, outputs))
+
+    record = active_program()
+    raw_output = {
+        "verdict": "supported",
+        "evidence_refs": [],
+        "missing_evidence": [],
+        "scope_boundary": "audit_events",
+        "safer_claim_text": None,
+    }
+    engine = CountingEngine(output=raw_output)
+
+    module = GovernedDSPyModule(
+        program_record=record,
+        engine=engine,
+        maci_role="claim_reviewer",
+        post_validate=post_validate,
+    )
+
+    outputs, evidence = module.invoke({"input": "data"}, calling_maci_role="other_role")
+
+    assert len(post_calls) == 1
+    assert post_calls[0][1] == raw_output
+    assert evidence.engine_error_msg is None
+
+
+def test_governed_module_post_validate_skipped_on_engine_error():
+    from governance.dspy.governance_wrapper import GovernedDSPyModule
+
+    post_calls: list = []
+
+    def post_validate(inputs: dict, outputs: dict) -> None:
+        post_calls.append(outputs)
+
+    record = active_program()
+    engine = CountingEngine(exc=RuntimeError("boom"))
+
+    module = GovernedDSPyModule(
+        program_record=record,
+        engine=engine,
+        maci_role="claim_reviewer",
+        post_validate=post_validate,
+    )
+
+    outputs, evidence = module.invoke({"input": "data"}, calling_maci_role="other_role")
+
+    assert outputs is None
+    assert evidence.engine_error_msg is not None
+    assert post_calls == []  # post_validate must NOT be called when engine raised
