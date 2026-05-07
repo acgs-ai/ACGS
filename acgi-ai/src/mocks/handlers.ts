@@ -1,3 +1,15 @@
+// MOCK-ONLY MODULE — never import from production code paths.
+// This module is only activated when VITE_USE_MOCKS=true (see src/main.tsx).
+// The compile/promote and compile/replay handlers return fixture attestations
+// that have NO cryptographic validity. Shipping them in production would
+// allow unauthenticated constitution promotions via the mock bus.
+if (import.meta.env.VITE_USE_MOCKS !== 'true') {
+  throw new Error(
+    '[acgi-ai] src/mocks/handlers.ts was loaded outside of mock mode. ' +
+      'Set VITE_USE_MOCKS=true or remove this import from the production bundle.',
+  )
+}
+
 import { HttpResponse, http } from 'msw'
 import { ACCOUNT_VIEW } from './data/account'
 import { AGENTS } from './data/agents'
