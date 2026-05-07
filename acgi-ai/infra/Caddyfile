@@ -51,6 +51,15 @@
   @html path / /index.html
   header @html Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
 
+  # ── Internal docs blocklist. Vite copies public/ verbatim into dist/, so
+  #    AGENTS.md files placed for in-repo agent navigation would otherwise be
+  #    web-reachable on the privileged origin. DEPLOY.md §4: nothing internal
+  #    leaves the audit-trail surface. Defense in depth — the source of truth
+  #    is "don't put docs in public/", this rule guarantees the URL is dead
+  #    even if one slips in.
+  @internal_docs path *AGENTS.md *CLAUDE.md *DESIGN.md *DEPLOY.md
+  respond @internal_docs 404
+
   # ── Security headers — DEPLOY.md §5.
   header {
     Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"

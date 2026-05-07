@@ -1,6 +1,8 @@
 import { ArrowRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
+import { createSession, hasSession } from '../lib/session'
+import { CONSTITUTION_HASH } from './console/shared'
 
 type Provider = {
   id: 'google' | 'entra' | 'okta'
@@ -14,9 +16,25 @@ const PROVIDERS: Provider[] = [
   { id: 'okta', label: 'Continue with Okta', hint: 'sso.okta.com' },
 ]
 
-export function Login() {
+function nextConsolePath(fallback: string | undefined): string {
+  const safeFallback = fallback?.startsWith('/console') ? fallback : '/console'
+  if (typeof window === 'undefined') return safeFallback
+  const next = new URLSearchParams(window.location.search).get('next')
+  return next?.startsWith('/console') ? next : safeFallback
+}
+
+export function Login({ nextPath }: { nextPath?: string }) {
   const [pending, setPending] = useState<Provider['id'] | null>(null)
+  const [email, setEmail] = useState('')
+  const [magicQueued, setMagicQueued] = useState(false)
   const timeoutRef = useRef<number | null>(null)
+
+  // Authenticated users do not need to see the entrance ritual again.
+  useEffect(() => {
+    if (hasSession()) {
+      navigate(nextConsolePath(nextPath))
+    }
+  }, [nextPath])
 
   // Clear the pending timeout if the user navigates away or unmounts.
   // Otherwise the deferred navigate('/console') would yank a user who
@@ -35,7 +53,8 @@ export function Login() {
     // For now, simulate a brief lag and route into the console.
     timeoutRef.current = window.setTimeout(() => {
       timeoutRef.current = null
-      navigate('/console')
+      createSession()
+      navigate(nextConsolePath(nextPath))
     }, 600)
   }
 
@@ -92,14 +111,44 @@ export function Login() {
 
         <div className="login-fallback">
           <span>or</span>
-          <button type="button" className="m-text-link" disabled={pending !== null}>
-            send a magic link to a verified address
-          </button>
+          <form
+            className="login-magic-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setMagicQueued(true)
+            }}
+          >
+            <input
+              className="login-magic-input"
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.currentTarget.value)
+                setMagicQueued(false)
+              }}
+              placeholder="verified@example.com"
+              aria-label="Verified email address"
+              disabled={pending !== null}
+              required
+            />
+            <button
+              type="submit"
+              className="m-text-link"
+              disabled={pending !== null || email.trim() === ''}
+            >
+              send a magic link
+            </button>
+          </form>
         </div>
 
         {pending && (
           <p className="login-pending">
             Redirecting to <strong>{pending}</strong>…
+          </p>
+        )}
+        {magicQueued && (
+          <p className="login-pending" role="status" aria-live="polite">
+            Magic link queued locally for <strong>{email}</strong> · {CONSTITUTION_HASH}
           </p>
         )}
 

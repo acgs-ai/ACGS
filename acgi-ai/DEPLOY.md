@@ -474,6 +474,7 @@ hash-anchored, operator-readable.
 | 2026-05-04 | Staging environments render a structural `STAGING · synthetic data only` band in the privilege strip | Same structural rule as the production banner — never animated, never gated on a flag. The point of the banner is to be impossible to miss; staging needs that property too. |
 | 2026-05-04 | Marketing's "Open the console" CTA is an absolute URL to `https://console.acgs.ai/console` in production builds | Forces the user across the privilege boundary at the network layer, not just at the React route layer. |
 | 2026-05-04 | DMARC `p=reject`, not `quarantine` | Regulated-AI brand. Phishing using `acgs.ai` is a buyer-trust event. |
+| 2026-05-04 | Internal docs are stripped from build output and denied at the deployment layer for `*AGENTS.md`, `*CLAUDE.md`, `*DESIGN.md`, `*DEPLOY.md` | Vite copies `public/` verbatim into `dist/`. Per-directory `AGENTS.md` files placed for in-repo agent navigation must never be web-reachable on either origin (privilege leak on console; brand-control on marketing). The Vite plugin removes them from `dist/`; Caddy and Vercel rules provide defense in depth if one slips through. |
 
 ---
 

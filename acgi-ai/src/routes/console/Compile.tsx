@@ -1,32 +1,73 @@
-import { useCompileDraft } from '../../api/hooks'
+import { useState } from 'react'
+import { useCompileDraft, usePromoteCompile, useReplayCompile } from '../../api/hooks'
 import type { PolicyChangeKind } from '../../api/types'
+import {
+  CONSTITUTION_HASH,
+  ConsoleError,
+  ConsoleLoading,
+  type LocalReceipt,
+  Receipt,
+} from './shared'
 
 export function Compile() {
+  const [replayComplete, setReplayComplete] = useState(false)
+  const [receipt, setReceipt] = useState<LocalReceipt | null>(null)
   const { data, isLoading, isError, refetch } = useCompileDraft()
+  const replayCompile = useReplayCompile()
+  const promoteCompile = usePromoteCompile()
 
   if (isLoading) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">⁂ Polling …</span>
-      </div>
-    )
+    return <ConsoleLoading />
   }
 
   if (isError || !data) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">
-          ⁂ Could not reach the bus.{' '}
-          <button type="button" className="m-text-link" onClick={() => refetch()}>
-            Retry
-          </button>
-        </span>
-      </div>
-    )
+    return <ConsoleError onRetry={() => refetch()} />
   }
 
   const COUNTS: Record<PolicyChangeKind, number> = { added: 0, amended: 0, removed: 0 }
   for (const c of data.changes) COUNTS[c.change] += 1
+  const actionRequest = {
+    currentHash: data.currentHash,
+    proposedHash: data.proposedHash,
+  }
+  const replay = () => {
+    replayCompile.mutate(actionRequest, {
+      onSuccess: (apiReceipt) => {
+        setReplayComplete(true)
+        setReceipt(apiReceipt)
+      },
+      onError: () => {
+        setReplayComplete(false)
+        setReceipt({
+          title: 'Replay endpoint unavailable',
+          body: 'The replay request could not reach the bus; no local promotion gate was opened.',
+          meta: `${data.proposedHash} · ${CONSTITUTION_HASH} · ${new Date().toISOString()}`,
+        })
+      },
+    })
+  }
+  const promote = () => {
+    promoteCompile.mutate(actionRequest, {
+      onSuccess: (apiReceipt) => {
+        setReceipt(apiReceipt)
+      },
+      onError: () => {
+        setReceipt({
+          title: 'Promotion endpoint unavailable',
+          body: 'The promotion request could not reach the bus; the runtime canon was not changed.',
+          meta: `${data.proposedHash} · two reviewers + one custodian pending`,
+        })
+      },
+    })
+  }
+  const discard = () => {
+    setReplayComplete(false)
+    setReceipt({
+      title: 'Local compile state cleared',
+      body: 'Replay and promotion receipts were cleared in this browser; fetched draft data is unchanged.',
+      meta: `${CONSTITUTION_HASH} · local discard · ${new Date().toISOString()}`,
+    })
+  }
 
   return (
     <div>
@@ -98,19 +139,31 @@ export function Compile() {
       </div>
 
       <div className="compile-actions">
-        <button className="btn btn-rust" type="button">
+        <button
+          className="btn btn-rust"
+          type="button"
+          disabled={!replayComplete || promoteCompile.isPending}
+          onClick={promote}
+        >
           Promote to canon
         </button>
-        <button className="btn btn-secondary" type="button">
-          Replay conformance set
+        <button
+          className="btn btn-secondary"
+          type="button"
+          disabled={replayCompile.isPending}
+          onClick={replay}
+        >
+          {replayCompile.isPending ? 'Replaying…' : 'Replay conformance set'}
         </button>
-        <button className="btn btn-ghost" type="button">
+        <button className="btn btn-ghost" type="button" onClick={discard}>
           Discard
         </button>
         <span className="attest">
-          {data.proposedHash} · attest required · two reviewers, one custodian
+          {data.proposedHash} · {replayComplete ? 'replay receipt local' : 'replay required'} · two
+          reviewers, one custodian
         </span>
       </div>
+      <Receipt receipt={receipt} />
 
       <p className="u-mt-xxl u-mono-cap-wide">
         ⁂ No compile ships without a Validator-attested replay · the bus refuses to load a

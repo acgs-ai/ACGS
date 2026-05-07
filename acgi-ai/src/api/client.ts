@@ -9,9 +9,12 @@
 
 import type {
   AccountView,
+  ActionReceipt,
   Agent,
   AuditEvent,
+  CompileActionRequest,
   CompileDraft,
+  ConsoleSummary,
   Deliberation,
   Incident,
   MaciLanes,
@@ -54,6 +57,9 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  consoleSummary: {
+    get: () => http<ConsoleSummary>('/console-summary'),
+  },
   agents: {
     list: () => http<Agent[]>('/agents'),
   },
@@ -74,6 +80,10 @@ export const api = {
   },
   compile: {
     draft: () => http<CompileDraft>('/compile/draft'),
+    replay: (body: CompileActionRequest) =>
+      http<ActionReceipt>('/compile/replay', { method: 'POST', body: JSON.stringify(body) }),
+    promote: (body: CompileActionRequest) =>
+      http<ActionReceipt>('/compile/promote', { method: 'POST', body: JSON.stringify(body) }),
   },
   audit: {
     list: () => http<AuditEvent[]>('/audit'),

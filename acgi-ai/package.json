@@ -4,9 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "design:lint": "npx -y @google/design.md lint DESIGN.md",
+    "design:check": "python scripts/check-design-tokens.py",
+    "design:export:tailwind": "npx -y @google/design.md export --format tailwind DESIGN.md > tailwind.theme.json",
+    "design:export:dtcg": "npx -y @google/design.md export --format dtcg DESIGN.md > tokens.json",
+    "design:export": "pnpm design:export:tailwind && pnpm design:export:dtcg",
     "lint": "biome check src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
     "format": "biome format --write src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
     "preview": "vite preview"
