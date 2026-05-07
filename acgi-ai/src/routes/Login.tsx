@@ -53,6 +53,7 @@ export function Login({ nextPath }: { nextPath?: string }) {
     // createSession() must only be called after a real IdP callback confirms
     // identity. Show a clear error instead of fake-granting privilege.
     setSsoError(null)
+    setMagicQueued(false)
     setPending(p.id)
     timeoutRef.current = window.setTimeout(() => {
       timeoutRef.current = null
