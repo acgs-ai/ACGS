@@ -21,6 +21,9 @@ def replay_event(
     older versions without bundle_hash fields produce drift=False (graceful
     pass-through; drift cannot be evaluated without an anchor).
     """
+    if event.get("request", {}).get("action_type", "").startswith("dspy."):
+        return {"event_id": event.get("event_id"), "kind": "dspy_audit_event", "skipped": True}
+
     request = ActionRequest.from_dict(event["request"])
 
     replay_policy_hash = sha256_json(policy_bundle)

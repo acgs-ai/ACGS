@@ -12,6 +12,9 @@ api = [
   "fastapi>=0.111",
   "uvicorn>=0.29"
 ]
+dspy = [
+  "dspy-ai>=2.5"
+]
 otel = [
   "opentelemetry-api>=1.24"
 ]

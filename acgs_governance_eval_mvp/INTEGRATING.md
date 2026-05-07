@@ -241,3 +241,30 @@ a different executor binding), follow this lifecycle.
   audit store today).
 - `governance/replay.py` — re-runs `validate()` over a stored event with
   a fresh bundle and reports drift.
+
+---
+
+## DSPy modules as governed callables
+
+Register optimized DSPy programs as immutable `DSPyProgramRecord` values
+with `program_id`, `version`, signature/weights hashes, MACI role, and
+metadata. Promotion is a registry lifecycle action, not a constructor side
+effect: call `DSPyProgramRegistry.promote(..., eval_report_hash=...)` so the
+eval report hash and active-version move are written to the audit chain.
+
+`EvidenceToClaimMapper` accepts an injectable engine, so tests and CI do not
+need DSPy or LLM credentials. Production code can use
+`EvidenceToClaimMapper.from_dspy(...)`, which lazy-imports DSPy only when the
+optional dependency is installed with `pip install '.[dspy]'`.
+
+Use `map_claim(...)` to invoke the governed callable. It performs one audit
+append with `action_type="dspy.claim_mapping"` and returns a
+`ClaimLedgerEntry` reconstructed with the persisted chain hashes.
+
+MACI separation is enforced before engine execution: the evidence-mapper role
+cannot self-validate. Engine failures are captured as invocation evidence and
+become `undecidable`.
+
+Verdicts follow the fail-closed ladder: engine error, foreign-tenant evidence,
+unknown verdict, integrity failure over claimed support, missing evidence over
+claimed support, then the verbatim engine verdict.

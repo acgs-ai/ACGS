@@ -1,5 +1,5 @@
 {
-  "frozen_at_commit": "d6ec2c2a27ece147356997c2cab9b79a8fb25a4a",
+  "frozen_at_commit": "2eb313f3d2bcbe49fb5de2354c89452a424334c8",
   "nodeids": [
     "tests/test_adapter_and_replay.py::test_adapter_denies_without_policy_citation",
     "tests/test_adapter_and_replay.py::test_guard_refuses_when_audit_store_missing",

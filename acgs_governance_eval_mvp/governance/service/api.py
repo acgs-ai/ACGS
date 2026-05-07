@@ -31,7 +31,7 @@ _adapter = build_adapter()
 _http_bearer = HTTPBearer(auto_error=False)
 
 
-def verify_caller(
+async def verify_caller(
     credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
 ) -> str:
     expected = os.environ.get("ACGS_API_TOKEN")
@@ -46,12 +46,12 @@ def verify_caller(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.post("/govern/validate")
-def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
+async def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
     actor = payload.get("actor") or {}
     actor_tenant = actor.get("tenant", "default") if isinstance(actor, dict) else "default"
     metadata = payload.get("metadata") or {}
@@ -63,7 +63,7 @@ def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
 
 
 @app.get("/govern/explain/{event_id}")
-def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
+async def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     events = _adapter.audit_store.query(event_id=event_id, limit=1)
@@ -79,7 +79,7 @@ def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
 
 
 @app.get("/audit/query")
-def audit_query(
+async def audit_query(
     rule_id: str | None = None,
     gate: str | None = None,
     allow: bool | None = None,
@@ -93,7 +93,7 @@ def audit_query(
 
 
 @app.get("/audit/verify-chain")
-def verify_chain(caller_tenant: str = Depends(verify_caller)):
+async def verify_chain(caller_tenant: str = Depends(verify_caller)):
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     return _adapter.audit_store.verify_chain()
