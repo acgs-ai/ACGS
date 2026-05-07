@@ -51,10 +51,13 @@ class InMemoryAuditStore:
         gate: str | None = None,
         allow: bool | None = None,
         risk_tag: str | None = None,
+        tenant: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for event in self.iter_events():
+            if tenant is not None and event.get("tenant") != tenant:
+                continue
             if event_id and event.get("event_id") != event_id:
                 continue
             if allow is not None and bool(event.get("allow")) is not allow:
@@ -65,8 +68,10 @@ class InMemoryAuditStore:
                 if not any(check.get("gate") == gate for check in event.get("checks", [])):
                     continue
             if risk_tag:
-                tags = event.get("request", {}).get("metadata", {}).get("risk_tags", [])
-                if risk_tag not in tags:
+                request = event.get("request")
+                metadata = request.get("metadata") if isinstance(request, dict) else None
+                tags = metadata.get("risk_tags", []) if isinstance(metadata, dict) else []
+                if not isinstance(tags, list) or risk_tag not in tags:
                     continue
             out.append(event)
             if len(out) >= limit:
