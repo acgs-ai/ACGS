@@ -32,6 +32,67 @@ try:
 except ImportError:  # pragma: no cover - supports direct file drop-in
     from evidence_writer import ChainEvidenceWriter
 
+# Optional OpenTelemetry cross-link: enrich ACGS evidence rows with the active
+# span's trace_id/span_id, and stamp the corresponding span with the ACGS
+# decision + event_hash. See docs/design/acgs-phoenix-observability.md for the
+# full cross-link contract.  No-op when opentelemetry is not installed OR when
+# no span is currently active.  Kept strictly off the ChainEvidenceWriter
+# hashing surface — only observed from _audit().
+try:
+    from opentelemetry import trace as _otel_trace  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    _otel_trace = None  # type: ignore[assignment]
+
+
+def _current_otel_ids() -> tuple[str, str] | tuple[None, None]:
+    """Return ``(trace_id_hex, span_id_hex)`` if a real span is active, else (None, None).
+
+    opentelemetry exposes an ``INVALID_SPAN`` sentinel with all-zero IDs when no
+    span is active; those are filtered out here so callers only see real spans.
+    """
+    if _otel_trace is None:
+        return (None, None)
+    try:
+        span = _otel_trace.get_current_span()
+    except Exception:  # pragma: no cover - OTEL in a broken state
+        return (None, None)
+    if span is None:
+        return (None, None)
+    try:
+        ctx = span.get_span_context()
+    except Exception:  # pragma: no cover - non-standard span impl
+        return (None, None)
+    if not ctx or not getattr(ctx, "is_valid", False):
+        return (None, None)
+    trace_id = getattr(ctx, "trace_id", 0)
+    span_id = getattr(ctx, "span_id", 0)
+    if not trace_id or not span_id:
+        return (None, None)
+    # OTEL span_context ids are ints; format to the canonical hex width used by
+    # OpenInference / Phoenix (32 hex for trace, 16 hex for span).
+    return (f"{trace_id:032x}", f"{span_id:016x}")
+
+
+def _stamp_span_with_acgs(event_hash: str, decision: str) -> None:
+    """Best-effort: set acgs.event_hash / acgs.decision on the current span.
+
+    Silent no-op when OTEL is absent, no span is active, or the set_attribute
+    call raises for any reason (never let observability degrade governance).
+    """
+    if _otel_trace is None:
+        return
+    try:
+        span = _otel_trace.get_current_span()
+        if span is None:
+            return
+        ctx = span.get_span_context()
+        if not ctx or not getattr(ctx, "is_valid", False):
+            return
+        span.set_attribute("acgs.event_hash", event_hash)
+        span.set_attribute("acgs.decision", decision)
+    except Exception:  # pragma: no cover - never let stamping break a call
+        return
+
 
 ALLOW = "ALLOW"
 DENY = "DENY"
@@ -385,11 +446,14 @@ class HermesACGSMiddleware:
             return draft_answer
 
         if decision.action == REQUIRE_HUMAN:
+            # Do NOT include draft_answer here — it must not reach the end-user before
+            # a human reviewer approves it.  The draft is available to a reviewer-side
+            # channel via the GovernanceDecision object returned by check_final().
             prefix = "Human review required before this answer is released."
             disclaimer = decision.metadata.get("disclaimer") if decision.add_disclaimer else None
             if disclaimer:
-                return f"{prefix}\n\n{disclaimer}\n\nDraft for reviewer:\n{draft_answer}"
-            return f"{prefix}\n\nDraft for reviewer:\n{draft_answer}"
+                return f"{prefix}\n\n{disclaimer}"
+            return prefix
 
         if decision.action == SOFT_BLOCK_WITH_EXPLANATION:
             reason_text = "; ".join(decision.reasons) or "Governance policy blocked the final answer."
@@ -449,11 +513,38 @@ class HermesACGSMiddleware:
         subject: str,
         input_payload: Any,
         decision: GovernanceDecision,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         if not self.evidence:
-            return
+            # No persistent audit — still stamp the span so operators can see
+            # the decision in Phoenix even when running evidence-less.
+            # Defensive wrap: observability must NEVER break governance, even
+            # if a downstream plugin monkeypatches the stamper to raise.
+            try:
+                _stamp_span_with_acgs(event_hash="", decision=decision.action)
+            except Exception:
+                pass
+            return None
 
-        self.evidence.append_event(
+        # Build audit metadata. If an OpenTelemetry span is active, fold its
+        # trace_id/span_id into the metadata so the ACGS row deterministically
+        # binds to the observability trace. These become part of the canonical
+        # event body that feeds event_hash, which is intentional: the binding
+        # is now part of the tamper-evident record, not a side channel.
+        metadata: dict[str, Any] = {
+            "agent_id": self.agent_id,
+            "add_disclaimer": decision.add_disclaimer,
+            "decision_metadata": decision.metadata,
+        }
+        # Defensive wrap: a broken OTEL SDK must not block the audit write.
+        try:
+            trace_id, span_id = _current_otel_ids()
+        except Exception:
+            trace_id, span_id = (None, None)
+        if trace_id and span_id:
+            metadata["trace_id"] = trace_id
+            metadata["span_id"] = span_id
+
+        event = self.evidence.append_event(
             hook=hook,
             subject=subject,
             input_payload=input_payload,
@@ -462,9 +553,17 @@ class HermesACGSMiddleware:
             policy_ids=decision.policy_ids,
             tags=decision.tags,
             actor_role="validator",
-            metadata={
-                "agent_id": self.agent_id,
-                "add_disclaimer": decision.add_disclaimer,
-                "decision_metadata": decision.metadata,
-            },
+            metadata=metadata,
         )
+
+        # Best-effort: stamp the Phoenix/OpenInference span with the real
+        # event_hash so the trace carries a pointer back to the authoritative
+        # record. Never let a stamping failure break governance — the
+        # authoritative record has already been persisted above.
+        event_hash = event.get("event_hash", "") if isinstance(event, dict) else ""
+        try:
+            _stamp_span_with_acgs(event_hash=event_hash, decision=decision.action)
+        except Exception:
+            pass
+
+        return event
