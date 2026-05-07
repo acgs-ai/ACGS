@@ -323,8 +323,14 @@ def _violations_when_value_not_allowed(
     allowed: set[str],
     message: str,
 ) -> list[JsonDict]:
+    # Fail closed: a restrictive allowlist with no entries is misconfiguration,
+    # not a license to allow every value. Emit a violation per change so the
+    # gate refuses the plan rather than rubber-stamping it.
     if not allowed:
-        return []
+        return [
+            _violation(change, f"{message}: allowlist not configured (refusing to evaluate)")
+            for change in changes
+        ]
     violations = []
     for change in changes:
         value = _after(change).get(field)
