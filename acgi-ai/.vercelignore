@@ -1,0 +1,18 @@
+# Exclude pnpm-workspace.yaml from Vercel uploads — it is a local dev config
+# (allowBuilds: msw) that causes --frozen-lockfile to fail in the Vercel build
+# environment when paired with a lockfile generated without workspace context.
+pnpm-workspace.yaml
+
+# Internal docs
+AGENTS.md
+CLAUDE.md
+DESIGN.md
+DEPLOY.md
+
+# Local tooling
+.gstack/
+.omc/
+.omx/
+.remember/
+scripts/
+infra/
