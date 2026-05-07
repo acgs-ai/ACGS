@@ -124,3 +124,63 @@ The fallback stack falls through to named families (`Helvetica Neue`, `Arial`,
 The two `!important` declarations in the `prefers-reduced-motion` reset in
 `src/index.css` carry `biome-ignore` comments — they are spec-mandated
 (DESIGN.md §2.5) and must remain.
+
+## Deploy Configuration (configured by /setup-deploy 2026-05-06)
+
+Two-origin topology per `DEPLOY.md`. Workflows live at **repo-root**
+`.github/workflows/{console,marketing}.yml` (NOT under `acgi-ai/.github/`).
+GitHub Actions only discovers workflows from the repo root; the workflows
+were originally placed under `acgi-ai/.github/workflows/` and silently never
+ran (verified by `gh run list` showing zero runs). They were moved to the
+root in this PR. The acgi-ai app is in a subdirectory, so each workflow
+sets `defaults.run.working-directory: acgi-ai` and prefixes path filters
+(e.g. `acgi-ai/src/**`) so commands run in the subdirectory while GitHub's
+file-change detection works at repo-root scope.
+
+Production domains are pending DNS/ACME provisioning per `PLAN.md §5.6`
+(formerly Phase 5, now Phase 6 after the /autoplan reorder).
+
+### Marketing surface (Vercel)
+
+- **Platform:** Vercel
+- **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the Vercel preview from `vercel ls --prod`)
+- **Deploy workflow:** repo-root `.github/workflows/marketing.yml`
+- **Deploy trigger:** auto on push to `master`; preview on PR
+- **Required secrets:** `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+- **Deploy status command:** `vercel ls --prod | head -3` (run from `acgi-ai/`)
+- **Health check URL:** the production URL (200 OK on `/`)
+
+### Console surface (Cloud Run + Caddy)
+
+- **Platform:** Google Cloud Run (Caddy container per `infra/Dockerfile.console` + `infra/cloudrun/service.yaml`, both under `acgi-ai/`)
+- **Production URL:** `https://console.acgs.ai` (pending DNS — staging URL is the auto-generated `*.run.app`)
+- **Deploy workflow:** repo-root `.github/workflows/console.yml` (docker build context: `acgi-ai/`, file: `acgi-ai/infra/Dockerfile.console`)
+- **Deploy trigger:** image build on PR; deploy on push to `master`
+- **Auth:** Workload Identity Federation (no service-account JSON in secrets)
+- **Required secrets:** `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_ARTIFACT_REGISTRY`
+- **Deploy status command:** `gcloud run services describe acgi-console --region=$GCP_REGION --project=$GCP_PROJECT_ID --format='value(status.url,status.latestReadyRevisionName)'`
+- **Health check URL:** `${PRODUCTION_URL}/healthz` returning `{ ok, served_hash, build_id }` per `DEPLOY.md §10`
+
+### Project type
+
+Web app (two surfaces). Not a CLI / library. Merge method: **squash** (matches the recent PR history pattern).
+
+### Custom deploy hooks
+
+- **Pre-merge:** `pnpm lint && pnpm build && pnpm test:all` once Phase 2 lands those scripts
+- **Deploy trigger:** automatic on push to `master`
+- **Deploy status:** the platform CLI commands above; or `gh run list -w marketing -L 1` / `gh run list -w console -L 1`
+- **Health check:** Curl `${PRODUCTION_URL}/healthz` for console (returns 200 + JSON), curl `${PRODUCTION_URL}` for marketing (returns 200)
+
+### Known gaps (per `PLAN.md §13` /autoplan review)
+
+These are not blockers for `/land-and-deploy` once URLs land, but they're CI/CD hygiene the Phase 0 PR series will address:
+
+- Action versions are unpinned (`@vN` not `@vN.M.P`) — see plan A12
+- Vercel CLI is `vercel@latest` — see plan A12
+- Docker base images are `node:20-alpine` (should be 24) and `caddy:2-alpine` (floating) — see plan A12
+- Marketing CSP `Content-Security-Policy-Report-Only` header is missing from `vercel.json` — see plan A11
+- Cloud Run `service.yaml` has `minScale: "0"` for all envs (production should be 1+ per plan A14)
+- Font hash manifest (`fonts.sha256`) not yet committed — see plan A12
+
+`/land-and-deploy` works without these fixes; they improve safety, not correctness.

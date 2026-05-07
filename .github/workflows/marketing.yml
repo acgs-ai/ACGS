@@ -5,24 +5,29 @@
 #   VERCEL_ORG_ID         — `vercel project ls` reveals it
 #   VERCEL_PROJECT_ID     — same
 #
-# PR runs do a preview deploy and the URL is posted as a check; main runs
-# do a production deploy.
+# PR runs do a preview deploy and the URL is posted as a check; pushes to
+# master do a production deploy.
+#
+# Workflow lives at repo root (.github/workflows/) — GitHub Actions only
+# discovers workflows from there. The acgi-ai app is in a subdirectory, so
+# defaults.run.working-directory pins all `run:` steps there. Path filters
+# are repo-root relative.
 
 name: marketing
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
     paths-ignore:
-      - 'infra/**'
+      - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'DEPLOY.md'
+      - 'acgi-ai/DEPLOY.md'
   push:
-    branches: [main]
+    branches: [master]
     paths-ignore:
-      - 'infra/**'
+      - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'DEPLOY.md'
+      - 'acgi-ai/DEPLOY.md'
 
 concurrency:
   group: marketing-${{ github.ref }}
@@ -31,6 +36,10 @@ concurrency:
 env:
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+defaults:
+  run:
+    working-directory: acgi-ai
 
 jobs:
   deploy:
@@ -50,6 +59,7 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
 

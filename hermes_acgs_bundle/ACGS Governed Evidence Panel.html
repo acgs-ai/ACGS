@@ -1,0 +1,1042 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACGS Governed Evidence Panel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5efe3;
+      --bg-ink: #efe2cd;
+      --panel: #fff9ef;
+      --panel-strong: #fff3df;
+      --text: #211b16;
+      --muted: #6d6256;
+      --line: #dac8ad;
+      --line-strong: #b99c72;
+      --accent: #8f3f2b;
+      --accent-2: #245f5a;
+      --accent-3: #b28137;
+      --ok: #2f7355;
+      --warn: #a4661a;
+      --danger: #a43a2f;
+      --paused: #7053a3;
+      --shadow: 0 20px 60px rgba(76, 47, 25, .12);
+      --radius: 8px;
+      --gap: 18px;
+      --pad: 18px;
+      --row-pad: 13px;
+      --font: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    [data-theme="night"] {
+      color-scheme: dark;
+      --bg: #171512;
+      --bg-ink: #221e18;
+      --panel: #242018;
+      --panel-strong: #2f291f;
+      --text: #f3eadc;
+      --muted: #c6b59f;
+      --line: #514433;
+      --line-strong: #876d49;
+      --accent: #e1a06f;
+      --accent-2: #7fc2b9;
+      --accent-3: #d4b06a;
+      --ok: #7fcb9d;
+      --warn: #e4b165;
+      --danger: #e5877d;
+      --paused: #bda2ef;
+      --shadow: 0 20px 70px rgba(0, 0, 0, .32);
+    }
+
+    [data-density="compact"] {
+      --gap: 12px;
+      --pad: 13px;
+      --row-pad: 8px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(120deg, rgba(143, 63, 43, .08), transparent 36%),
+        radial-gradient(circle at 80% 0%, rgba(36, 95, 90, .12), transparent 30%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .45;
+      background-image:
+        linear-gradient(rgba(83, 59, 35, .04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(83, 59, 35, .035) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: linear-gradient(to bottom, black, transparent 85%);
+    }
+
+    a, button, select { font: inherit; }
+
+    button, select {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    button {
+      min-height: 36px;
+      padding: 8px 11px;
+      cursor: pointer;
+    }
+
+    button:hover, select:hover { border-color: var(--line-strong); }
+
+    :focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent-2) 68%, transparent);
+      outline-offset: 3px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 256px minmax(0, 1fr);
+      min-height: 100vh;
+      position: relative;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg-ink) 86%, transparent);
+      backdrop-filter: blur(10px);
+    }
+
+    .seal {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 11px;
+      align-items: center;
+      margin-bottom: 26px;
+    }
+
+    .seal-mark {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--accent);
+      font-family: var(--font);
+      font-size: 20px;
+      background: var(--panel);
+      box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--accent-3) 12%, transparent);
+    }
+
+    .seal strong {
+      display: block;
+      font-family: var(--font);
+      font-size: 18px;
+      line-height: 1.05;
+    }
+
+    .seal span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav a {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 39px;
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+    }
+
+    .nav a::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border: 1px solid currentColor;
+      transform: rotate(45deg);
+    }
+
+    .nav a:hover, .nav a.active {
+      color: var(--text);
+      background: color-mix(in srgb, var(--panel) 78%, transparent);
+    }
+
+    .sidebar-note {
+      margin-top: 28px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      background: color-mix(in srgb, var(--panel) 64%, transparent);
+    }
+
+    main {
+      min-width: 0;
+      padding: 24px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      gap: var(--gap);
+      align-items: flex-start;
+      margin-bottom: var(--gap);
+    }
+
+    .hero {
+      flex: 1;
+      min-width: 0;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(90deg, color-mix(in srgb, var(--panel) 94%, transparent), color-mix(in srgb, var(--panel-strong) 72%, transparent)),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      font-family: var(--font);
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: .95;
+      max-width: 870px;
+    }
+
+    .hero-line {
+      margin: 14px 0 0;
+      font-family: var(--font);
+      color: var(--accent);
+      font-size: clamp(22px, 2.6vw, 34px);
+      line-height: 1.08;
+    }
+
+    .hero-note {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 680px;
+    }
+
+    .tweaks {
+      width: 286px;
+      padding: var(--pad);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .tweaks h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+
+    .control-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    select {
+      width: 100%;
+      min-height: 36px;
+      padding: 7px 9px;
+      text-transform: none;
+    }
+
+    .grid {
+      display: grid;
+      gap: var(--gap);
+    }
+
+    .health {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card, .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      box-shadow: 0 10px 34px rgba(65, 43, 22, .07);
+    }
+
+    .card { padding: var(--pad); }
+
+    .signal {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: start;
+      min-height: 128px;
+    }
+
+    .signal small, .section-kicker, .meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .signal strong {
+      display: block;
+      margin-top: 12px;
+      font-family: var(--font);
+      font-size: 29px;
+      line-height: 1;
+    }
+
+    .signal p {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      margin-top: 2px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 16%, transparent);
+      flex: 0 0 auto;
+    }
+
+    .dot.warn { background: var(--warn); box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 18%, transparent); }
+    .dot.danger { background: var(--danger); box-shadow: 0 0 0 5px color-mix(in srgb, var(--danger) 16%, transparent); }
+    .dot.paused { background: var(--paused); box-shadow: 0 0 0 5px color-mix(in srgb, var(--paused) 16%, transparent); }
+
+    .workbench {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(330px, .75fr);
+      gap: var(--gap);
+      align-items: start;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 12px;
+      padding: var(--pad);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-header h2 { font-size: 25px; }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 860px;
+    }
+
+    th, td {
+      padding: var(--row-pad) 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 13px;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      background: color-mix(in srgb, var(--panel-strong) 62%, transparent);
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover, tbody tr.selected { background: color-mix(in srgb, var(--accent-3) 12%, transparent); }
+
+    .mono {
+      font-family: var(--mono);
+      font-size: 12px;
+      word-break: break-word;
+    }
+
+    table .mono {
+      white-space: nowrap;
+      word-break: normal;
+    }
+
+    .kv-row .mono {
+      display: block;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+      background: color-mix(in srgb, var(--panel) 80%, transparent);
+    }
+
+    .pill.allow { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 44%, var(--line)); }
+    .pill.deny, .pill.redact { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+    .pill.review, .pill.soft { color: var(--paused); border-color: color-mix(in srgb, var(--paused) 40%, var(--line)); }
+    .pill.rewrite { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 42%, var(--line)); }
+
+    .detail {
+      position: sticky;
+      top: 18px;
+    }
+
+    .detail-body, .section-body { padding: var(--pad); }
+
+    .kv {
+      display: grid;
+      gap: 10px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 126px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .kv-row:last-child { border-bottom: 0; padding-bottom: 0; }
+
+    .kv-row span:first-child {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .actions button.primary {
+      background: var(--accent);
+      color: #fff9ef;
+      border-color: var(--accent);
+    }
+
+    .split {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .policy-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .policy-list li {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .policy-list li:last-child { border-bottom: 0; }
+
+    .policy-list code {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--accent-2);
+    }
+
+    .replay-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--panel-strong) 62%, transparent);
+    }
+
+    .mini strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 15px;
+    }
+
+    .export-list {
+      display: grid;
+      gap: 9px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .export-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .export-list li:last-child { border-bottom: 0; }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      max-width: 360px;
+      padding: 12px 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+      z-index: 10;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1120px) {
+      .health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workbench, .split { grid-template-columns: 1fr; }
+      .detail { position: static; }
+    }
+
+    @media (max-width: 760px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar {
+        position: static;
+        height: auto;
+        padding: 14px;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .nav {
+        grid-auto-flow: column;
+        grid-auto-columns: max-content;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .sidebar-note { display: none; }
+      main { padding: 14px; }
+      .topbar { flex-direction: column; }
+      .tweaks { width: 100%; }
+      .health, .replay-grid { grid-template-columns: 1fr; }
+      .kv-row { grid-template-columns: 1fr; gap: 3px; }
+      h1 { font-size: 38px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body data-density="comfortable" data-theme="parchment">
+  <div class="app">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="seal" aria-label="ACGS Hermes">
+        <div class="seal-mark">A</div>
+        <div>
+          <strong>ACGS Hermes</strong>
+          <span>Governed evidence runtime</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#overview" class="active">Overview</a>
+        <a href="#traces">Governed Traces</a>
+        <a href="#policies">Policies</a>
+        <a href="#replay">Replay Lab</a>
+        <a href="#review">Review Queue</a>
+        <a href="#exports">Audit Exports</a>
+        <a href="#admin">Admin</a>
+      </nav>
+      <div class="sidebar-note">
+        Append-only JSONL evidence with event_hash and prev_hash for trace reconstruction, verification, and export review.
+      </div>
+    </aside>
+
+    <main>
+      <section class="topbar" id="overview">
+        <header class="hero">
+          <h1>ACGS Governed Evidence Panel</h1>
+          <p class="hero-line">Evidence, not logs.</p>
+          <p class="hero-note">Powered by Hermes runtime; governed by ACGS evidence controls. Built for reviewing tool lifecycle decisions, policy application, and hash-chained evidence state.</p>
+        </header>
+        <section class="tweaks" aria-labelledby="tweaks-title">
+          <h2 id="tweaks-title">Tweaks</h2>
+          <div class="control-grid">
+            <label for="density">Density
+              <select id="density">
+                <option value="comfortable">comfortable</option>
+                <option value="compact">compact</option>
+              </select>
+            </label>
+            <label for="theme">Theme
+              <select id="theme">
+                <option value="parchment">parchment</option>
+                <option value="night">night audit</option>
+              </select>
+            </label>
+          </div>
+        </section>
+      </section>
+
+      <section class="grid health" aria-label="Evidence health summary">
+        <article class="card signal">
+          <div>
+            <small>Chain integrity</small>
+            <strong>Verified</strong>
+            <p>Latest prev_hash link resolves to the current event_hash tail.</p>
+          </div>
+          <span class="dot" aria-hidden="true"></span>
+        </article>
+        <article class="card signal">
+          <div>
+            <small>Unverified traces</small>
+            <strong>2</strong>
+            <p>Queued for recompute against canonical JSON evidence bodies.</p>
+          </div>
+          <span class="dot warn" aria-hidden="true"></span>
+        </article>
+        <article class="card signal">
+          <div>
+            <small>Human review queue</small>
+            <strong>3</strong>
+            <p>Require reviewer release before execution or final answer delivery.</p>
+          </div>
+          <span class="dot paused" aria-hidden="true"></span>
+        </article>
+        <article class="card signal">
+          <div>
+            <small>Policy drift</small>
+            <strong>1 gap</strong>
+            <p>One trace references a redaction pattern revised after capture.</p>
+          </div>
+          <span class="dot danger" aria-hidden="true"></span>
+        </article>
+      </section>
+
+      <section class="workbench" id="traces" aria-label="Governed traces workbench">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Governed Traces</p>
+              <h2>Hook Decisions</h2>
+            </div>
+            <span class="meta">session bundle: hermes-acgs-minimal v1</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Hook</th>
+                  <th>Tool / Subject</th>
+                  <th>Decision</th>
+                  <th>Policy IDs</th>
+                  <th>Verifier State</th>
+                  <th>Hash Preview</th>
+                </tr>
+              </thead>
+              <tbody id="traceRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel detail" aria-labelledby="bundle-title">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Evidence Bundle</p>
+              <h2 id="bundle-title">Selected Event</h2>
+            </div>
+          </div>
+          <div class="detail-body">
+            <div class="kv" id="detail"></div>
+            <div class="actions">
+              <button class="primary" data-action="replay">Replay against current policy</button>
+              <button data-action="export">Export packet</button>
+              <button data-action="copy">Copy event hash</button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="grid split" id="policies">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Policy Snapshot</p>
+              <h2>Minimal Constitution Rules</h2>
+            </div>
+            <span class="meta">constitution.min.yaml</span>
+          </div>
+          <div class="section-body">
+            <ul class="policy-list">
+              <li><code>TOOL_ALLOWLIST</code><span class="pill deny">DENY</span></li>
+              <li><code>PARAM_PII_GUARD</code><span class="pill deny">DENY</span></li>
+              <li><code>WRITE_OPERATION_HUMAN_REVIEW</code><span class="pill review">REQUIRE_HUMAN</span></li>
+              <li><code>OUTPUT_REDACT</code><span class="pill redact">REDACT</span></li>
+              <li><code>HIGH_RISK_DOMAIN</code><span class="pill review">REQUIRE_HUMAN</span></li>
+              <li><code>FINAL_SECRET_GUARD</code><span class="pill soft">SOFT_BLOCK</span></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="panel" id="replay">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Replay Lab</p>
+              <h2>Policy Drift Check</h2>
+            </div>
+          </div>
+          <div class="section-body">
+            <p class="meta">Replay compares the original policy IDs recorded in evidence with the current constitution snapshot. It highlights drift and missing review inputs; it does not rewrite the original evidence.</p>
+            <div class="replay-grid">
+              <div class="mini">
+                <span class="meta">Original policy</span>
+                <strong id="originalPolicy">TOOL_ALLOWLIST</strong>
+              </div>
+              <div class="mini">
+                <span class="meta">Current status</span>
+                <strong id="currentStatus">Matched</strong>
+              </div>
+              <div class="mini">
+                <span class="meta">Gaps</span>
+                <strong id="gaps">No missing inputs</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="grid split" id="review">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Review Queue</p>
+              <h2>Human Release Gates</h2>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="kv">
+              <div class="kv-row"><span>Write operation</span><strong>send_email blocked pending reviewer approval</strong></div>
+              <div class="kv-row"><span>High-risk domain</span><strong>finance final answer held with disclaimer</strong></div>
+              <div class="kv-row"><span>Final secret guard</span><strong>draft answer soft-blocked before release</strong></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="exports">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">Audit Exports</p>
+              <h2>Evidence Packet</h2>
+            </div>
+          </div>
+          <div class="section-body">
+            <p class="meta">Generate a compliance-supporting evidence packet for internal audit, counsel review, or customer assurance workflows. The packet preserves recorded decisions, hashes, policy IDs, reasons, tags, and session metadata.</p>
+            <ul class="export-list">
+              <li><span>JSONL evidence slice</span><strong>hash chain included</strong></li>
+              <li><span>Policy snapshot</span><strong>constitution v1</strong></li>
+              <li><span>Replay summary</span><strong>drift annotated</strong></li>
+              <li><span>Reviewer notes</span><strong>pending where required</strong></li>
+            </ul>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" id="admin">
+        <div class="panel-header">
+          <div>
+            <p class="section-kicker">Admin</p>
+            <h2>Runtime Controls</h2>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="replay-grid">
+            <div class="mini"><span class="meta">Actor role</span><strong>validator</strong></div>
+            <div class="mini"><span class="meta">Evidence mode</span><strong>append-only JSONL</strong></div>
+            <div class="mini"><span class="meta">Failure posture</span><strong>fail closed</strong></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" role="status" aria-live="polite" id="toast"></div>
+
+  <script>
+    const traces = [
+      {
+        hook: "pre_tool",
+        subject: "shell",
+        decision: "DENY",
+        policyIds: ["TOOL_ALLOWLIST"],
+        verifier: "verified",
+        actor: "validator",
+        session: "session-03f9",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Tool 'shell' is not in the constitution allowlist.",
+        inputHash: "0b6d91cf47ad902a2c6c2b74f4c76af4c1a4755739740980e9f472f6303a91de",
+        eventHash: "c461b9a8a6f84e61d3b22f6f3aa05c4f15ea72383e987b68d2aeb0b6a6c44a9e",
+        prevHash: "0000000000000000000000000000000000000000000000000000000000000000",
+        gaps: "No missing inputs"
+      },
+      {
+        hook: "pre_tool",
+        subject: "web_search",
+        decision: "ALLOW",
+        policyIds: ["ACGS_PRE_TOOL_ALLOW"],
+        verifier: "verified",
+        actor: "validator",
+        session: "session-03f9",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Tool allowed by current constitution and no sensitive argument pattern matched.",
+        inputHash: "b2dc0a0b9128803cf328a0d7f39c30e4bb1d9d247fe4ddc70e1d81da73571119",
+        eventHash: "dfe178a65b3db27bcbddc06a4705945d0ccf49e4c9d866489508090cf431c3a7",
+        prevHash: "c461b9a8a6f84e61d3b22f6f3aa05c4f15ea72383e987b68d2aeb0b6a6c44a9e",
+        gaps: "No missing inputs"
+      },
+      {
+        hook: "post_tool",
+        subject: "web_search",
+        decision: "REDACT",
+        policyIds: ["OUTPUT_REDACT_API_KEY_ASSIGNMENT", "OUTPUT_REDACT_OPENAI_STYLE_KEY"],
+        verifier: "drift review",
+        actor: "validator",
+        session: "session-03f9",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Tool result contained secret-like material and was redacted.",
+        inputHash: "ae72a7362ba7a42a83bc0ad40f3643f3d873c480064d1e12afed2ee6fc503fe1",
+        eventHash: "69fc992e4e8d5d3eddb863f0ab01f0e4c790f99ba7f74db5ea0f1e571a2a0b91",
+        prevHash: "dfe178a65b3db27bcbddc06a4705945d0ccf49e4c9d866489508090cf431c3a7",
+        gaps: "Current redaction pattern revised after event capture"
+      },
+      {
+        hook: "pre_tool",
+        subject: "send_email",
+        decision: "REQUIRE_HUMAN",
+        policyIds: ["WRITE_OPERATION_HUMAN_REVIEW"],
+        verifier: "review pending",
+        actor: "validator",
+        session: "session-91aa",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Tool call is a write/sensitive operation and requires human approval.",
+        inputHash: "a14cbe0a04ee4f8b12f1c3c977b64c34b27a2e7b6e12a8e3f07288bb75fd7d91",
+        eventHash: "03ce04e15449f94f0ee2cd0e3696b86950b25b233d1028193c93394f33e80f57",
+        prevHash: "69fc992e4e8d5d3eddb863f0ab01f0e4c790f99ba7f74db5ea0f1e571a2a0b91",
+        gaps: "Reviewer note required before release"
+      },
+      {
+        hook: "final_check",
+        subject: "final_answer",
+        decision: "REQUIRE_HUMAN",
+        policyIds: ["HIGH_RISK_DOMAIN"],
+        verifier: "review pending",
+        actor: "validator",
+        session: "session-91aa",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Domain 'finance' is high risk and requires human review.",
+        inputHash: "4f27f2e295569106e53e4674127356dc4f61266a0c0dc365b125d7e7378be93a",
+        eventHash: "eee759f9152ab34de647b2168a05c2018b1be7f1d71d044978427c656c090971",
+        prevHash: "03ce04e15449f94f0ee2cd0e3696b86950b25b233d1028193c93394f33e80f57",
+        gaps: "Reviewer release decision not attached"
+      },
+      {
+        hook: "final_check",
+        subject: "final_answer",
+        decision: "SOFT_BLOCK_WITH_EXPLANATION",
+        policyIds: ["FINAL_SECRET_GUARD", "OUTPUT_REDACT_OPENAI_STYLE_KEY"],
+        verifier: "unverified",
+        actor: "validator",
+        session: "session-b47d",
+        constitution: "hermes-acgs-minimal v1",
+        reason: "Draft answer appears to contain secret-like material.",
+        inputHash: "cefc2eb58d92361be50f53958c55e0d7040fc0789d8375956a6aa4db3287ab09",
+        eventHash: "8beec9dfaa63c1645e2d8f868b7bb280d9e9f863e0c120e8b04cfc9e71ef14af",
+        prevHash: "eee759f9152ab34de647b2168a05c2018b1be7f1d71d044978427c656c090971",
+        gaps: "Needs recompute from canonical event body"
+      }
+    ];
+
+    const rows = document.getElementById("traceRows");
+    const detail = document.getElementById("detail");
+    const originalPolicy = document.getElementById("originalPolicy");
+    const currentStatus = document.getElementById("currentStatus");
+    const gaps = document.getElementById("gaps");
+    const toast = document.getElementById("toast");
+    let selected = 0;
+
+    function decisionClass(decision) {
+      if (decision === "ALLOW") return "allow";
+      if (decision === "DENY") return "deny";
+      if (decision === "REDACT") return "redact";
+      if (decision === "REWRITE") return "rewrite";
+      if (decision === "REQUIRE_HUMAN") return "review";
+      return "soft";
+    }
+
+    function shortHash(hash) {
+      return `${hash.slice(0, 10)}...${hash.slice(-6)}`;
+    }
+
+    function rowTemplate(trace, index) {
+      const tr = document.createElement("tr");
+      tr.tabIndex = 0;
+      tr.className = index === selected ? "selected" : "";
+      tr.setAttribute("aria-selected", index === selected ? "true" : "false");
+      tr.innerHTML = `
+        <td><span class="mono">${trace.hook}</span></td>
+        <td><strong>${trace.subject}</strong></td>
+        <td><span class="pill ${decisionClass(trace.decision)}">${trace.decision}</span></td>
+        <td>${trace.policyIds.map(id => `<span class="mono">${id}</span>`).join("<br>")}</td>
+        <td>${trace.verifier}</td>
+        <td><span class="mono">${shortHash(trace.eventHash)}</span></td>
+      `;
+      tr.addEventListener("click", () => selectTrace(index));
+      tr.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectTrace(index);
+        }
+      });
+      return tr;
+    }
+
+    function renderRows() {
+      rows.replaceChildren(...traces.map(rowTemplate));
+    }
+
+    function renderDetail() {
+      const trace = traces[selected];
+      document.getElementById("bundle-title").textContent = `${trace.hook}: ${trace.subject}`;
+      detail.innerHTML = `
+        <div class="kv-row"><span>Actor / session</span><strong>${trace.actor} / ${trace.session}</strong></div>
+        <div class="kv-row"><span>Constitution</span><strong>${trace.constitution}</strong></div>
+        <div class="kv-row"><span>Decision reason</span><strong>${trace.reason}</strong></div>
+        <div class="kv-row"><span>Input hash</span><span class="mono">${trace.inputHash}</span></div>
+        <div class="kv-row"><span>Event hash</span><span class="mono">${trace.eventHash}</span></div>
+        <div class="kv-row"><span>Prev hash</span><span class="mono">${trace.prevHash}</span></div>
+      `;
+      originalPolicy.textContent = trace.policyIds[0];
+      currentStatus.textContent = trace.verifier === "drift review" ? "Drift annotated" : trace.verifier === "unverified" ? "Recompute needed" : "Matched";
+      gaps.textContent = trace.gaps;
+    }
+
+    function selectTrace(index) {
+      selected = index;
+      renderRows();
+      renderDetail();
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2200);
+    }
+
+    document.getElementById("density").addEventListener("change", event => {
+      document.body.dataset.density = event.target.value;
+    });
+
+    document.getElementById("theme").addEventListener("change", event => {
+      document.body.dataset.theme = event.target.value;
+    });
+
+    document.querySelectorAll("[data-action]").forEach(button => {
+      button.addEventListener("click", () => {
+        const trace = traces[selected];
+        const action = button.dataset.action;
+        if (action === "copy" && navigator.clipboard) {
+          navigator.clipboard.writeText(trace.eventHash).then(
+            () => showToast("Event hash copied."),
+            () => showToast("Clipboard unavailable; hash remains visible in the bundle.")
+          );
+          return;
+        }
+        if (action === "replay") showToast(`Replay queued for ${trace.hook} / ${trace.subject}.`);
+        if (action === "export") showToast("Compliance-supporting evidence packet staged.");
+        if (action === "copy") showToast("Clipboard unavailable; hash remains visible in the bundle.");
+      });
+    });
+
+    renderRows();
+    renderDetail();
+  </script>
+</body>
+</html>
