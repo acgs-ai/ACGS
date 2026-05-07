@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "name": "hermes-acgs-minimal",
+  "description": "Minimal runtime constitution for Hermes tool and output governance.",
+  "roles": {
+    "proposer": "hermes_agent",
+    "validator": "acgs_middleware",
+    "executor": "hermes_tool_runtime",
+    "observer": "evidence_log_reader"
+  },
+  "tool_allowlist": [
+    "web_search",
+    "retrieve_doc",
+    "calc"
+  ],
+  "write_tools": [
+    "send_email",
+    "write_file",
+    "delete_file",
+    "shell",
+    "deploy"
+  ],
+  "sensitive_operations": [
+    "write",
+    "delete",
+    "transfer",
+    "purchase",
+    "deploy"
+  ],
+  "risk_domains": [
+    "legal",
+    "medical",
+    "finance"
+  ],
+  "pii_patterns": [
+    {
+      "id": "PARAM_PII_GUARD",
+      "regex": "(?i)\\b(ssn|sin|social security|password|secret[_-]?key|api[_-]?key|private[_-]?key)\\b"
+    }
+  ],
+  "redaction_patterns": [
+    {
+      "id": "OUTPUT_REDACT_API_KEY_ASSIGNMENT",
+      "regex": "(?i)(api[_-]?key|secret[_-]?key|password)\\s*[:=]\\s*[\\\"']?[A-Za-z0-9_\\-]{8,}[\\\"']?",
+      "replacement": "[REDACTED:SECRET]"
+    },
+    {
+      "id": "OUTPUT_REDACT_OPENAI_STYLE_KEY",
+      "regex": "(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}(?![A-Za-z0-9_-])",
+      "replacement": "[REDACTED:API_KEY]"
+    }
+  ],
+  "final_disclaimer": "This AI-generated output is not a substitute for qualified professional advice. Human review is required before acting on it.",
+  "rules": {
+    "pre_tool": [
+      {
+        "id": "TOOL_ALLOWLIST",
+        "action": "DENY",
+        "when": "tool not in tool_allowlist"
+      },
+      {
+        "id": "PARAM_PII_GUARD",
+        "action": "DENY",
+        "when": "args match pii_patterns"
+      },
+      {
+        "id": "WRITE_OPERATION_HUMAN_REVIEW",
+        "action": "REQUIRE_HUMAN",
+        "when": "tool in write_tools or context.operation in sensitive_operations"
+      }
+    ],
+    "post_tool": [
+      {
+        "id": "OUTPUT_REDACT",
+        "action": "REDACT",
+        "when": "raw_result matches redaction_patterns"
+      }
+    ],
+    "final_check": [
+      {
+        "id": "HIGH_RISK_DOMAIN",
+        "action": "REQUIRE_HUMAN",
+        "when": "context.domain in risk_domains"
+      },
+      {
+        "id": "FINAL_SECRET_GUARD",
+        "action": "SOFT_BLOCK_WITH_EXPLANATION",
+        "when": "draft_answer matches redaction_patterns"
+      }
+    ]
+  }
+}

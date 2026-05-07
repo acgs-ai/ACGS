@@ -1,0 +1,69 @@
+# ACGS × Arize Phoenix — observability adjunct
+#
+# Phoenix is NOT an audit replacement. The authoritative audit trail remains
+# the ACGS chain-hashed JSONL written by ChainEvidenceWriter. Phoenix supplies
+# observability (latency, token cost, prompt/response inspection, eval scoring)
+# and cross-links back into ACGS evidence rows via trace_id/span_id metadata.
+#
+# See: ../../docs/design/acgs-phoenix-observability.md for the contract.
+#
+# Version policy: pin a specific Phoenix release, never `:latest` in a
+# governance context (reproducibility). Bump the tag explicitly and run the
+# cross-link test suite before promoting.
+#
+# Tag was verified against Arize-ai/phoenix GitHub releases (v15.4.0 shipped
+# 2026-05-05; v15.2.0 landed the SSRF fix on /chat).
+services:
+  phoenix:
+    image: arizephoenix/phoenix:version-15.4.0
+    container_name: acgs-phoenix
+    restart: unless-stopped
+    # Bind to loopback so the UI and OTLP endpoints are not exposed off-host by
+    # default. For remote access, front with a reverse proxy that terminates
+    # TLS and adds auth — do NOT change the bind address to 0.0.0.0.
+    #
+    # Port notes (Phoenix 15.x):
+    #   6006 — UI + REST + GraphQL + OTLP HTTP (at /v1/traces)
+    #   4317 — OTLP gRPC only
+    #   4318 — NOT used for HTTP OTLP (misleading — open but gRPC-only)
+    ports:
+      - "127.0.0.1:6006:6006"   # UI + REST + OTLP HTTP
+      - "127.0.0.1:4317:4317"   # OTLP gRPC
+    environment:
+      # Opt out of Phoenix's anonymous web analytics. Trace data is already
+      # never collected; this covers page-view / UI-interaction pings.
+      PHOENIX_TELEMETRY_ENABLED: "false"
+      # Keep Phoenix operating on loopback internally. The host-side bind above
+      # provides the external boundary; this is defense in depth.
+      PHOENIX_HOST: "0.0.0.0"
+      PHOENIX_PORT: "6006"
+      # Persistent SQLite store (the bundled default). Swap to Postgres via
+      # PHOENIX_SQL_DATABASE_URL=postgresql://... for production.
+      PHOENIX_WORKING_DIR: "/mnt/phoenix"
+      # Enable the deny-list / SSRF hardening from Phoenix 15.2 when making
+      # outbound model calls from the PXI / playground. Leave as a guard even
+      # if the agent is primarily used for trace ingestion only.
+      PHOENIX_ALLOWLIST_ONLY_OUTBOUND: "true"
+    volumes:
+      - phoenix-data:/mnt/phoenix
+    healthcheck:
+      # /healthz became the canonical Phoenix health endpoint around v8; works
+      # on 15.x. Fall back to /livez if Phoenix drops healthz in a future major.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6006/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Drop root — Phoenix ships a nonroot variant. Uncomment to use it; requires
+    # the volume to be chowned to UID 1000 first (see README).
+    # image: arizephoenix/phoenix:version-15.4.0-nonroot
+    # user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Phoenix writes to its working dir; switch to true and add tmpfs if locked down.
+    cap_drop:
+      - ALL
+
+volumes:
+  phoenix-data:
+    name: acgs-phoenix-data
