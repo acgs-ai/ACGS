@@ -1,0 +1,53 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8788,
+    "basePath": "/mcp",
+    "tunnelMode": false,
+    "endpointToken": "",
+    "allowedOrigins": []
+  },
+  "roots": [
+    {
+      "alias": "govern-zone",
+      "path": "..",
+      "permission": "read"
+    }
+  ],
+  "limits": {
+    "maxReadBytes": 65536,
+    "maxSearchResults": 50,
+    "maxDirEntries": 200,
+    "maxOutputBytes": 65536,
+    "gitTimeoutMs": 3000
+  },
+  "ignoredDirs": [
+    ".git",
+    "node_modules",
+    ".venv",
+    "dist",
+    "build",
+    "target",
+    ".omx/logs",
+    ".omc/logs"
+  ],
+  "deniedPatterns": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "credentials/**",
+    "secrets/**"
+  ],
+  "audit": {
+    "enabled": true,
+    "path": "./audit.log"
+  },
+  "kernel": {
+    "poolName": "chatgpt-pool",
+    "acquireTimeoutSeconds": 30,
+    "responseTimeoutMs": 120000
+  }
+}
