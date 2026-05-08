@@ -41,3 +41,31 @@ def test_tamper_audit_hash_fails_replay(tmp_path):
 
 def test_missing_receipt_fails_bundle(tmp_path):
     eval_gate.missing_receipt_fails_bundle(tmp_path)
+
+
+def test_mcp_server_import_has_no_runtime_side_effect():
+    eval_gate.mcp_server_import_has_no_runtime_side_effect()
+
+
+def test_loop_safe_read_file(tmp_path):
+    eval_gate.loop_safe_read_file(tmp_path)
+
+
+def test_loop_allow_sandbox_file_write(tmp_path):
+    eval_gate.loop_allow_sandbox_file_write(tmp_path)
+
+
+def test_loop_deny_path_escape_write(tmp_path):
+    eval_gate.loop_deny_path_escape_write(tmp_path)
+
+
+def test_loop_unknown_tool_fails_closed(tmp_path):
+    eval_gate.loop_unknown_tool_fails_closed(tmp_path)
+
+
+def test_loop_missing_constitution_fails_closed(tmp_path):
+    eval_gate.loop_missing_constitution_fails_closed(tmp_path)
+
+
+def test_loop_shell_allowlist_is_deterministic(tmp_path):
+    eval_gate.loop_shell_allowlist_is_deterministic(tmp_path)

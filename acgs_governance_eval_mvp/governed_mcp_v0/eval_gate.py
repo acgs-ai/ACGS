@@ -13,6 +13,7 @@ from governed_mcp_v0.mcp_server import (
     create_fixture_environment,
     verify_replay_bundle,
 )
+from governed_mcp_v0.graph import GovernedGraphState, execute_governed_tool_call
 
 
 def _server(tmp_path: Path, case_name: str) -> GovernedMCPServer:
@@ -127,6 +128,115 @@ def missing_receipt_fails_bundle(tmp_path: Path) -> None:
     assert any("missing_receipt" in failure for failure in replay.failures)
 
 
+def mcp_server_import_has_no_runtime_side_effect() -> None:
+    from governed_mcp_v0 import mcp_server
+
+    assert mcp_server.mcp is None
+
+
+def loop_safe_read_file(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_safe_read_file")
+    state = GovernedGraphState(tool_name="read_file", action_id="filesystem.read_file", tool_args={"path": "readme.txt"})
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is True
+    assert updated.messages[-1]["status"] == "allow"
+    assert updated.messages[-1]["result"] == "sandbox fixture\n"
+
+
+def loop_allow_sandbox_file_write(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_allow_sandbox_file_write")
+    state = GovernedGraphState(
+        tool_name="write_file",
+        action_id="filesystem.write_file",
+        tool_args={"path": "nested/allowed.txt", "content": "ok"},
+    )
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is True
+    assert updated.messages[-1]["status"] == "allow"
+    assert (server.targets.fs_dir / "nested" / "allowed.txt").read_text(encoding="utf-8") == "ok"
+    replay = verify_replay_bundle(server.targets)
+    assert replay.valid, replay.failures
+
+
+def loop_deny_path_escape_write(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_deny_path_escape_write")
+    prod_path = tmp_path / "prod" / "secret.txt"
+    state = GovernedGraphState(
+        tool_name="write_file",
+        action_id="filesystem.write_file",
+        tool_args={"path": str(prod_path), "content": "secret"},
+    )
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is False
+    assert updated.messages[-1]["status"] == "deny"
+    assert "fixtures/fs" in updated.messages[-1]["reason"]
+    assert not prod_path.exists()
+    replay = verify_replay_bundle(server.targets)
+    assert replay.valid, replay.failures
+
+
+def loop_unknown_tool_fails_closed(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_unknown_tool_fails_closed")
+    state = GovernedGraphState(tool_name="erase_world", action_id="unknown.action", tool_args={"target": "fixture"})
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is False
+    assert updated.messages[-1]["status"] == "deny"
+    assert "unknown tool" in updated.messages[-1]["reason"]
+    replay = verify_replay_bundle(server.targets)
+    assert replay.valid, replay.failures
+
+
+def loop_missing_constitution_fails_closed(tmp_path: Path) -> None:
+    targets = create_fixture_environment(tmp_path / "loop_missing_constitution_fails_closed")
+    targets.constitution_path.unlink()
+    server = GovernedMCPServer(targets)
+    state = GovernedGraphState(
+        tool_name="write_file",
+        action_id="filesystem.write_file",
+        tool_args={"path": "blocked.txt", "content": "no side effect"},
+    )
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is False
+    assert updated.messages[-1]["status"] == "deny"
+    assert "fail closed" in updated.messages[-1]["reason"]
+    assert not (targets.fs_dir / "blocked.txt").exists()
+    replay = verify_replay_bundle(targets)
+    assert replay.valid, replay.failures
+
+
+def loop_shell_allowlist_is_deterministic(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_shell_allowlist_is_deterministic")
+    pwd_state = GovernedGraphState(
+        tool_name="run_shell",
+        action_id="shell.execute_command",
+        tool_args={"command": "pwd"},
+    )
+    pwd_result = execute_governed_tool_call(pwd_state, server)
+    assert pwd_result.approved is True
+    assert pwd_result.messages[-1]["result"] == str(server.targets.fs_dir)
+
+    echo_state = GovernedGraphState(
+        tool_name="run_shell",
+        action_id="shell.execute_command",
+        tool_args={"command": "echo sandbox"},
+    )
+    echo_result = execute_governed_tool_call(echo_state, server)
+    assert echo_result.approved is True
+    assert echo_result.messages[-1]["result"] == "sandbox"
+
+    denied_state = GovernedGraphState(
+        tool_name="run_shell",
+        action_id="shell.execute_command",
+        tool_args={"command": "env"},
+    )
+    denied_result = execute_governed_tool_call(denied_state, server)
+    assert denied_result.approved is False
+    assert denied_result.messages[-1]["status"] == "deny"
+    assert "allowlist" in denied_result.messages[-1]["reason"]
+    replay = verify_replay_bundle(server.targets)
+    assert replay.valid, replay.failures
+
+
 __all__ = [
     "deny_prod_file_write",
     "allow_sandbox_file_write",
@@ -138,4 +248,11 @@ __all__ = [
     "tamper_receipt_fails_replay",
     "tamper_audit_hash_fails_replay",
     "missing_receipt_fails_bundle",
+    "mcp_server_import_has_no_runtime_side_effect",
+    "loop_safe_read_file",
+    "loop_allow_sandbox_file_write",
+    "loop_deny_path_escape_write",
+    "loop_unknown_tool_fails_closed",
+    "loop_missing_constitution_fails_closed",
+    "loop_shell_allowlist_is_deterministic",
 ]

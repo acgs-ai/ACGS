@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 from dataclasses import dataclass
@@ -398,7 +399,7 @@ class GovernedMCPServer:
 
     def run_shell(self, command: str) -> str:
         self.admit("shell.execute_command", "run_shell", {"command": command})
-        argv = command.split()
+        argv = shlex.split(command)
         completed = subprocess.run(argv, cwd=self.targets.fs_dir, check=True, capture_output=True, text=True)
         return completed.stdout.strip()
 
@@ -503,16 +504,14 @@ def verify_replay_bundle(targets: RuntimeTargets) -> ReplayResult:
     return ReplayResult(valid=not failures and checked > 0, checked_events=checked, failures=failures)
 
 
-try:  # pragma: no cover - optional MCP runtime integration.
-    from mcp.server.fastmcp import FastMCP
-except Exception:  # pragma: no cover
-    try:
-        from fastmcp import FastMCP  # type: ignore
-    except Exception:
-        FastMCP = None  # type: ignore[assignment]
-
-
 def build_fastmcp_server(targets: RuntimeTargets | None = None) -> Any:
+    try:  # pragma: no cover - optional MCP runtime integration.
+        from mcp.server.fastmcp import FastMCP
+    except Exception:  # pragma: no cover
+        try:
+            from fastmcp import FastMCP  # type: ignore
+        except Exception:
+            FastMCP = None  # type: ignore[assignment]
     if FastMCP is None:
         return None
     server = FastMCP("governed-mcp-v0")
