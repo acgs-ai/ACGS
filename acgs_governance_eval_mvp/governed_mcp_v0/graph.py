@@ -43,6 +43,21 @@ def _messages_channel() -> Any:
 
 MESSAGES_CHANNEL = _messages_channel()
 
+SAFE_TOOL_ACTIONS = {
+    "read_file": "filesystem.read_file",
+    "list_files": "filesystem.list_files",
+    "query_sql_select": "database.query_sql_select",
+    "github_read_issue": "github.read_issue",
+}
+GUARDED_TOOL_ACTIONS = {
+    "write_file": "filesystem.write_file",
+    "execute_sql": "database.execute_sql_mutation",
+    "send_email": "email.send",
+    "deploy_service": "deploy.restart_service",
+    "mutate_github": "github.mutate_repo",
+    "run_shell": "shell.execute_command",
+}
+TOOL_ACTIONS = {**SAFE_TOOL_ACTIONS, **GUARDED_TOOL_ACTIONS}
 
 if BaseModel is not object:
 
@@ -88,6 +103,7 @@ def interrupt_for_approval(state: GovernedGraphState) -> dict[str, Any]:
         "tool_name": getattr(state, "tool_name", None),
         "tool_args": getattr(state, "tool_args", {}),
         "approval_required": True,
+        "approval_source": "deterministic_policy_admission",
     }
 
 
@@ -149,6 +165,7 @@ def _message(
     reason: str,
     result: Any = None,
     receipt: dict[str, Any] | None = None,
+    approval_request: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "role": "tool",
@@ -163,6 +180,8 @@ def _message(
         entry["receipt_path"] = receipt.get("receipt_path")
         entry["event_hash"] = receipt.get("event_hash")
         entry["decision"] = receipt.get("decision")
+    if approval_request is not None:
+        entry["approval_request"] = approval_request
     return entry
 
 
@@ -249,6 +268,11 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
         return _fail_closed(state, server, reason="missing action_id")
     if not isinstance(args, dict):
         return _fail_closed(state, server, reason="malformed tool_args")
+    expected_action = TOOL_ACTIONS.get(tool_name)
+    if expected_action is None:
+        return _fail_closed(state, server, reason=f"unknown tool: {tool_name}")
+    if expected_action != action_id:
+        return _fail_closed(state, server, reason=f"tool {tool_name} cannot perform action {action_id}")
 
     try:
         if tool_name == "read_file":
@@ -300,7 +324,7 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
                 message=_message(tool_name=tool_name, action_id=action_id, status="allow", reason=reason, result=result),
             )
 
-        interrupt_for_approval(state)
+        approval_request = interrupt_for_approval(state)
         if tool_name == "write_file":
             missing = _require_args(args, ["path", "content"])
             if missing:
@@ -361,6 +385,7 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
             reason=reason,
             result=result,
             receipt=receipt,
+            approval_request=approval_request,
         ),
     )
 

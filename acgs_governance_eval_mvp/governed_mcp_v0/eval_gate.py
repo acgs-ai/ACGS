@@ -223,6 +223,7 @@ def loop_shell_allowlist_is_deterministic(tmp_path: Path) -> None:
     echo_result = execute_governed_tool_call(echo_state, server)
     assert echo_result.approved is True
     assert echo_result.messages[-1]["result"] == "sandbox"
+    assert echo_result.messages[-1]["approval_request"]["approval_required"] is True
 
     denied_state = GovernedGraphState(
         tool_name="run_shell",
@@ -235,6 +236,42 @@ def loop_shell_allowlist_is_deterministic(tmp_path: Path) -> None:
     assert "allowlist" in denied_result.messages[-1]["reason"]
     replay = verify_replay_bundle(server.targets)
     assert replay.valid, replay.failures
+
+
+def loop_action_tool_mismatch_fails_closed(tmp_path: Path) -> None:
+    server = _server(tmp_path, "loop_action_tool_mismatch_fails_closed")
+    state = GovernedGraphState(
+        tool_name="write_file",
+        action_id="database.execute_sql_mutation",
+        tool_args={"path": "mismatch.txt", "content": "must not write"},
+    )
+    updated = execute_governed_tool_call(state, server)
+    assert updated.approved is False
+    assert updated.messages[-1]["status"] == "deny"
+    assert "cannot perform action" in updated.messages[-1]["reason"]
+    assert not (server.targets.fs_dir / "mismatch.txt").exists()
+    replay = verify_replay_bundle(server.targets)
+    assert replay.valid, replay.failures
+
+
+def replay_detects_filesystem_effect_tampering(tmp_path: Path) -> None:
+    server = _server(tmp_path, "replay_detects_filesystem_effect_tampering")
+    written = server.write_file("allowed.txt", "original")
+    assert verify_replay_bundle(server.targets).valid
+    written.write_text("tampered", encoding="utf-8")
+    replay = verify_replay_bundle(server.targets)
+    assert not replay.valid
+    assert any("filesystem_effect_hash_mismatch" in failure for failure in replay.failures)
+
+
+def replay_detects_email_effect_tampering(tmp_path: Path) -> None:
+    server = _server(tmp_path, "replay_detects_email_effect_tampering")
+    server.send_email("person@example.test", "subject", "body")
+    assert verify_replay_bundle(server.targets).valid
+    server.targets.outbox_path.write_text("", encoding="utf-8")
+    replay = verify_replay_bundle(server.targets)
+    assert not replay.valid
+    assert any("email_effect_missing_or_mismatched" in failure for failure in replay.failures)
 
 
 __all__ = [
@@ -255,4 +292,7 @@ __all__ = [
     "loop_unknown_tool_fails_closed",
     "loop_missing_constitution_fails_closed",
     "loop_shell_allowlist_is_deterministic",
+    "loop_action_tool_mismatch_fails_closed",
+    "replay_detects_filesystem_effect_tampering",
+    "replay_detects_email_effect_tampering",
 ]

@@ -69,3 +69,15 @@ def test_loop_missing_constitution_fails_closed(tmp_path):
 
 def test_loop_shell_allowlist_is_deterministic(tmp_path):
     eval_gate.loop_shell_allowlist_is_deterministic(tmp_path)
+
+
+def test_loop_action_tool_mismatch_fails_closed(tmp_path):
+    eval_gate.loop_action_tool_mismatch_fails_closed(tmp_path)
+
+
+def test_replay_detects_filesystem_effect_tampering(tmp_path):
+    eval_gate.replay_detects_filesystem_effect_tampering(tmp_path)
+
+
+def test_replay_detects_email_effect_tampering(tmp_path):
+    eval_gate.replay_detects_email_effect_tampering(tmp_path)
