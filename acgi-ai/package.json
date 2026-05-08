@@ -17,6 +17,8 @@
     "design:export": "pnpm design:export:tailwind && pnpm design:export:dtcg",
     "lint": "biome check src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
     "format": "biome format --write src index.html package.json vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json biome.json",
+    "test:security": "node scripts/check-security-invariants.mjs",
+    "test:all": "pnpm run lint && pnpm run build && pnpm run test:security",
     "preview": "vite preview"
   },
   "dependencies": {

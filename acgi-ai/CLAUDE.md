@@ -46,12 +46,14 @@ In QA mode, flag any code that doesn't match `DESIGN.md`.
 pnpm dev            # vite — http://localhost:5173 (or 5174 if 5173 taken)
 pnpm build          # tsc -b && vite build
 pnpm lint           # biome check (explicit file list — see package.json)
+pnpm test:security  # static hardening invariant checks
+pnpm test:all       # lint + build + security invariants
 pnpm format         # biome format --write
 pnpm preview        # serve dist/ locally
 ```
 
-There is no test runner configured. All three of `lint`, `build`, and a manual
-browser pass must be clean before declaring work complete.
+There is no full test runner configured. `lint`, `test:security`, `build`, and
+a manual browser pass must be clean before declaring UI work complete.
 
 ## Architecture
 
@@ -167,7 +169,7 @@ Web app (two surfaces). Not a CLI / library. Merge method: **squash** (matches t
 
 ### Custom deploy hooks
 
-- **Pre-merge:** `pnpm lint && pnpm build && pnpm test:all` once Phase 2 lands those scripts
+- **Pre-merge:** `pnpm lint && pnpm build && pnpm test:all`
 - **Deploy trigger:** automatic on push to `master`
 - **Deploy status:** the platform CLI commands above; or `gh run list -w marketing -L 1` / `gh run list -w console -L 1`
 - **Health check:** Curl `${PRODUCTION_URL}/healthz` for console (returns 200 + JSON), curl `${PRODUCTION_URL}` for marketing (returns 200)

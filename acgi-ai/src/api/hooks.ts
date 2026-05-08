@@ -1,34 +1,38 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ACCOUNT_VIEW } from '../mocks/data/account'
-import { AGENTS } from '../mocks/data/agents'
-import { AUDIT_EVENTS } from '../mocks/data/audit'
-import { COMPILE_DRAFT } from '../mocks/data/compile'
-import { CONSOLE_SUMMARY } from '../mocks/data/console-summary'
-import { DELIBERATIONS } from '../mocks/data/deliberations'
-import { INCIDENTS } from '../mocks/data/incidents'
-import { MACI_LANES } from '../mocks/data/maci'
-import { OVERVIEW_SUMMARY } from '../mocks/data/overview'
-import { POLICIES } from '../mocks/data/policies'
-import { SETTING_SECTIONS } from '../mocks/data/settings'
-import { TENANTS } from '../mocks/data/tenants'
-import { api } from './client'
+import { ApiError, api } from './client'
 
 const LIVE = { staleTime: 5_000, refetchInterval: 10_000 }
 const SLOW = { staleTime: 30_000, refetchInterval: 60_000 }
 
-async function withFixtureFallback<T>(request: () => Promise<T>, fallback: T): Promise<T> {
+function canUseFixtureFallback(): boolean {
+  if (import.meta.env.PROD) return false
+  return import.meta.env.DEV && import.meta.env.VITE_FIXTURE_FALLBACK !== 'false'
+}
+
+async function withFixtureFallback<T>(
+  request: () => Promise<T>,
+  fallback: () => Promise<T>,
+): Promise<T> {
   try {
     return await request()
   } catch (error) {
+    if (error instanceof ApiError || !canUseFixtureFallback()) {
+      throw error
+    }
     console.warn('ACGS API unavailable; rendering fixture-backed console data.', error)
-    return fallback
+    return fallback()
   }
 }
 
 export function useAgents() {
   return useQuery({
     queryKey: ['agents'],
-    queryFn: () => withFixtureFallback(api.agents.list, AGENTS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.agents.list, () =>
+            import('../mocks/data/agents').then((m) => m.AGENTS),
+          )
+      : api.agents.list,
     ...LIVE,
   })
 }
@@ -36,7 +40,12 @@ export function useAgents() {
 export function useConsoleSummary() {
   return useQuery({
     queryKey: ['console-summary'],
-    queryFn: () => withFixtureFallback(api.consoleSummary.get, CONSOLE_SUMMARY),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.consoleSummary.get, () =>
+            import('../mocks/data/console-summary').then((m) => m.CONSOLE_SUMMARY),
+          )
+      : api.consoleSummary.get,
     ...LIVE,
   })
 }
@@ -44,7 +53,12 @@ export function useConsoleSummary() {
 export function useOverview() {
   return useQuery({
     queryKey: ['overview'],
-    queryFn: () => withFixtureFallback(api.overview.get, OVERVIEW_SUMMARY),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.overview.get, () =>
+            import('../mocks/data/overview').then((m) => m.OVERVIEW_SUMMARY),
+          )
+      : api.overview.get,
     ...LIVE,
   })
 }
@@ -52,7 +66,12 @@ export function useOverview() {
 export function useMaci() {
   return useQuery({
     queryKey: ['maci'],
-    queryFn: () => withFixtureFallback(api.maci.get, MACI_LANES),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.maci.get, () =>
+            import('../mocks/data/maci').then((m) => m.MACI_LANES),
+          )
+      : api.maci.get,
     ...LIVE,
   })
 }
@@ -60,7 +79,12 @@ export function useMaci() {
 export function useDeliberations() {
   return useQuery({
     queryKey: ['deliberations'],
-    queryFn: () => withFixtureFallback(api.deliberations.list, DELIBERATIONS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.deliberations.list, () =>
+            import('../mocks/data/deliberations').then((m) => m.DELIBERATIONS),
+          )
+      : api.deliberations.list,
     ...LIVE,
   })
 }
@@ -68,7 +92,12 @@ export function useDeliberations() {
 export function useIncidents() {
   return useQuery({
     queryKey: ['incidents'],
-    queryFn: () => withFixtureFallback(api.incidents.list, INCIDENTS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.incidents.list, () =>
+            import('../mocks/data/incidents').then((m) => m.INCIDENTS),
+          )
+      : api.incidents.list,
     ...LIVE,
   })
 }
@@ -76,7 +105,12 @@ export function useIncidents() {
 export function usePolicies() {
   return useQuery({
     queryKey: ['policies'],
-    queryFn: () => withFixtureFallback(api.policies.list, POLICIES),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.policies.list, () =>
+            import('../mocks/data/policies').then((m) => m.POLICIES),
+          )
+      : api.policies.list,
     ...SLOW,
   })
 }
@@ -84,7 +118,12 @@ export function usePolicies() {
 export function useCompileDraft() {
   return useQuery({
     queryKey: ['compile-draft'],
-    queryFn: () => withFixtureFallback(api.compile.draft, COMPILE_DRAFT),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.compile.draft, () =>
+            import('../mocks/data/compile').then((m) => m.COMPILE_DRAFT),
+          )
+      : api.compile.draft,
     ...SLOW,
   })
 }
@@ -114,7 +153,12 @@ export function usePromoteCompile() {
 export function useAudit() {
   return useQuery({
     queryKey: ['audit'],
-    queryFn: () => withFixtureFallback(api.audit.list, AUDIT_EVENTS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.audit.list, () =>
+            import('../mocks/data/audit').then((m) => m.AUDIT_EVENTS),
+          )
+      : api.audit.list,
     ...LIVE,
   })
 }
@@ -122,7 +166,12 @@ export function useAudit() {
 export function useSettings() {
   return useQuery({
     queryKey: ['settings'],
-    queryFn: () => withFixtureFallback(api.settings.get, SETTING_SECTIONS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.settings.get, () =>
+            import('../mocks/data/settings').then((m) => m.SETTING_SECTIONS),
+          )
+      : api.settings.get,
     ...SLOW,
   })
 }
@@ -130,7 +179,12 @@ export function useSettings() {
 export function useTenants() {
   return useQuery({
     queryKey: ['tenants'],
-    queryFn: () => withFixtureFallback(api.tenants.list, TENANTS),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.tenants.list, () =>
+            import('../mocks/data/tenants').then((m) => m.TENANTS),
+          )
+      : api.tenants.list,
     ...SLOW,
   })
 }
@@ -138,7 +192,12 @@ export function useTenants() {
 export function useAccount() {
   return useQuery({
     queryKey: ['account'],
-    queryFn: () => withFixtureFallback(api.account.get, ACCOUNT_VIEW),
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.account.get, () =>
+            import('../mocks/data/account').then((m) => m.ACCOUNT_VIEW),
+          )
+      : api.account.get,
     ...SLOW,
   })
 }
