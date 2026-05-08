@@ -5,8 +5,7 @@ const LIVE = { staleTime: 5_000, refetchInterval: 10_000 }
 const SLOW = { staleTime: 30_000, refetchInterval: 60_000 }
 
 function canUseFixtureFallback(): boolean {
-  if (import.meta.env.PROD) return false
-  return import.meta.env.DEV && import.meta.env.VITE_FIXTURE_FALLBACK !== 'false'
+  return import.meta.env.VITE_USE_MOCKS === 'true'
 }
 
 async function withFixtureFallback<T>(

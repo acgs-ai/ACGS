@@ -184,6 +184,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function Console({ path }: { path: string }) {
+  const IS_MOCK = import.meta.env.VITE_USE_MOCKS === 'true'
   const meta = PAGE_TITLES[path] ?? (path === '/console' ? PAGE_TITLES['/console'] : NOT_FOUND_META)
   const [navOpen, setNavOpen] = useState(false)
   const previousPath = useRef(path)
@@ -403,7 +404,9 @@ export function Console({ path }: { path: string }) {
         </div>
 
         <div className="c-heartbeat">
-          <span className="c-heartbeat-live">{summary.isError ? 'Fallback' : 'Live'}</span>
+          <span className={`c-heartbeat-live${IS_MOCK ? ' mock' : ''}`}>
+            {IS_MOCK ? 'Mock' : summary.data != null ? 'Live' : 'Fallback'}
+          </span>
           {heartbeat.map(([label, value]) => (
             <div className="c-heartbeat-item" key={label}>
               <span className="c-heartbeat-label">{label}</span>

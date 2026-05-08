@@ -268,3 +268,14 @@ export type AccountView = {
   sessions: Session[]
   recentActions: AccountAction[]
 }
+
+export type OperatorRole = 'custodian' | 'validator' | 'proposer' | 'executor' | 'observer'
+
+export type OperatorSession = {
+  operatorId: string
+  tenantId: string
+  email: string
+  roles: OperatorRole[]
+  permittedLanes: MaciLane[]
+  expiresAt: string
+}
