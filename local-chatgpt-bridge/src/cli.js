@@ -21,7 +21,7 @@ export async function main(argv) {
       console.log(await buildContext(config, auditor, options));
       return;
     case "ask": {
-      const prompt = options.prompt || (await buildContext(config, auditor, options));
+      const prompt = await buildContext(config, auditor, options);
       if (!process.env.OPENAI_API_KEY) {
         console.log(prompt);
         return;
@@ -31,7 +31,7 @@ export async function main(argv) {
     }
     case "browser-ask": {
       const { browserAsk, browserAskCdp } = await import("./browser-ask.js");
-      const prompt = options.prompt || (await buildContext(config, auditor, options));
+      const prompt = await buildContext(config, auditor, options);
       const sharedOpts = {
         navTimeoutMs: Number(options["nav-timeout-ms"] || 30_000),
         responseTimeoutMs: Number(options["response-timeout-ms"] || config.kernel?.responseTimeoutMs || 120_000),
