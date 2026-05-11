@@ -75,6 +75,7 @@ Codex sandbox respects `.gitignore`. The nested git repos in `packages/` are vis
 | Need | File |
 |---|---|
 | Per-package conventions | `<package>/AGENTS.md` or `<package>/CLAUDE.md` |
+| Workspace registry — what exists + what is gated where | `MONOREPO.md` |
 | Frontend plan | `PLAN.md` |
 | Monorepo plan | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |

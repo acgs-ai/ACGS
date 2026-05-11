@@ -58,6 +58,7 @@ Per-package gates remain authoritative for their own package:
 | Need | File |
 |---|---|
 | Per-package conventions | `<package>/CLAUDE.md` |
+| Workspace registry — what exists + what is gated where | `MONOREPO.md` |
 | Frontend completion plan | `PLAN.md` |
 | Monorepo unification plan | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |

@@ -1,5 +1,10 @@
 # Complete Platform Frontend — `acgi-ai`
 
+> **Scope guard:** this plan covers `acgi-ai/` only — the frontend. It is
+> **not** the monorepo unification plan. For workspace topology, submodule
+> registration, path-filtered CI, and constitutional-hash gating across all
+> packages, see `docs/PLAN-MONOREPO.md` and the registry at `MONOREPO.md`.
+
 > Scope: take the ACGS GovernZone frontend (`acgi-ai/`) from "fixture-backed
 > demo with live API fallback" to "production-ready public + privileged
 > surface" without breaking the privilege boundary that the design and
