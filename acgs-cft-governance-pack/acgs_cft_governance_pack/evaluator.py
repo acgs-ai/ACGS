@@ -59,9 +59,7 @@ def evaluate_plan(
     failures = [result for result in control_results if result["status"] == "fail"]
     decision = "deny" if failures else "allow"
     reason = (
-        f"Denied by {len(failures)} governance controls"
-        if failures
-        else "All applicable governance controls passed"
+        f"Denied by {len(failures)} governance controls" if failures else "All applicable governance controls passed"
     )
     event = {
         "schema": "acgs.cft.evidence.v1",
@@ -209,7 +207,9 @@ def _check_deny_public_ingress(changes: list[JsonDict], rule: JsonDict) -> list[
             continue
         exposed_ports = _firewall_ports(after)
         if "*" in denied_ports or denied_ports.intersection(exposed_ports) or "all" in exposed_ports:
-            violations.append(_violation(change, f"Public ingress exposes sensitive ports: {', '.join(sorted(exposed_ports))}"))
+            violations.append(
+                _violation(change, f"Public ingress exposes sensitive ports: {', '.join(sorted(exposed_ports))}")
+            )
     return violations
 
 
@@ -236,7 +236,11 @@ def _check_require_gke_private_nodes(changes: list[JsonDict], rule: JsonDict) ->
     violations = []
     for change in changes:
         private_config = _after(change).get("private_cluster_config")
-        enabled = isinstance(private_config, list) and bool(private_config) and private_config[0].get("enable_private_nodes") is True
+        enabled = (
+            isinstance(private_config, list)
+            and bool(private_config)
+            and private_config[0].get("enable_private_nodes") is True
+        )
         if not enabled:
             violations.append(_violation(change, "GKE cluster must enable private nodes"))
     return violations
@@ -246,7 +250,11 @@ def _check_require_gke_workload_identity(changes: list[JsonDict], rule: JsonDict
     violations = []
     for change in changes:
         workload_identity = _after(change).get("workload_identity_config")
-        enabled = isinstance(workload_identity, list) and bool(workload_identity) and bool(workload_identity[0].get("workload_pool"))
+        enabled = (
+            isinstance(workload_identity, list)
+            and bool(workload_identity)
+            and bool(workload_identity[0].get("workload_pool"))
+        )
         if not enabled:
             violations.append(_violation(change, "GKE cluster must enable Workload Identity"))
     return violations
@@ -327,10 +335,7 @@ def _violations_when_value_not_allowed(
     # not a license to allow every value. Emit a violation per change so the
     # gate refuses the plan rather than rubber-stamping it.
     if not allowed:
-        return [
-            _violation(change, f"{message}: allowlist not configured (refusing to evaluate)")
-            for change in changes
-        ]
+        return [_violation(change, f"{message}: allowlist not configured (refusing to evaluate)") for change in changes]
     violations = []
     for change in changes:
         value = _after(change).get(field)

@@ -25,3 +25,9 @@ packages = ["acgs_cft_governance_pack"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Same pre-existing-code rationale as acgs_governance_eval_mvp/pyproject.toml.
+# Override the monorepo root's strict `line-length = 100` for this package
+# until a cleanup PR rewrites the long lines (mostly in tests/).
+line-length = 120
