@@ -1,0 +1,5 @@
+# pnpm workspace declaration.
+# JS/TS packages only. Python packages live in pyproject.toml [tool.uv.workspace].
+# Add new JS workspace members here.
+packages:
+  - "acgi-ai"

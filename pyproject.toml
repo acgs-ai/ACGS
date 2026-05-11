@@ -1,0 +1,65 @@
+# govern-zone monorepo workspace root.
+#
+# Virtual workspace — this root is NOT a publishable package. It exists to
+# coordinate Python sub-packages via uv workspace, share dev tooling, and
+# pin a common Python floor for local development.
+#
+# Per-package metadata (description, dependencies, requires-python) lives in
+# each member's own pyproject.toml and is the source of truth for publishing.
+# Notably: packages/acgs-lite ships to PyPI with `requires-python = ">=3.10"`.
+# The workspace floor below (3.11) is local-only and matches Acgs-Swarm.
+
+[project]
+name = "govern-zone"
+version = "0.0.0"
+description = "ACGS GovernZone monorepo workspace root (not published)"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ACGS Team", email = "hello@acgs.dev" }]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "packages/acgs-lite",
+    "packages/Acgs-Swarm",
+    "packages/clinicalguard",
+    "acgs_governance_eval_mvp",
+    "acgs-cft-governance-pack",
+]
+
+# Optional: cross-link members so local edits to acgs-lite flow into Acgs-Swarm
+# without manual `pip install -e`. uv does this automatically when both are
+# workspace members AND the consumer's [project.dependencies] references the
+# member name. PyPI publish artifacts are NOT affected by this — published
+# wheels resolve dependencies from PyPI as normal.
+#
+# Phase 3 of docs/PLAN-MONOREPO.md will add explicit [tool.uv.sources] in
+# each consuming package's pyproject.toml when the local cross-link does not
+# resolve automatically.
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=4.1",
+]
+
+[tool.ruff]
+# Workspace-level defaults. Per-package overrides win.
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Permissive baseline; per-package configs tighten.
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = ["RUF002", "RUF003"]  # Acgs-Swarm latent_dna.py uses Greek chars
+
+[tool.pytest.ini_options]
+# Members override; this is the workspace fallback.
+testpaths = []
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
