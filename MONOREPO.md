@@ -19,20 +19,20 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
 | `automation/` | parent files | YAML + Python helpers | (covered by `python-other` umbrella when added) | Policies, proposals, workflows |
 
-## Nested packages (pending Phase 2 submodule registration)
+## Nested packages
 
-Each has its own `.git/` and is **not** currently tracked by the parent. Parent
-CI for these is gated on Phase 2 of `docs/PLAN-MONOREPO.md` landing — the
-workflows reference `submodules: recursive`, which is a no-op until
-`.gitmodules` exists.
+Registered as submodules — parent pins each at a specific SHA in
+`.gitmodules`. The packages remain independent repos; commits inside any
+submodule must be made from inside the package, then the parent bumps the
+pinned SHA in a follow-up parent commit.
 
-| Package | Own git? | Upstream | PyPI? | Planned parent CI | Phase 2 status |
-|---|---|---|---|---|---|
-| `packages/acgs-lite/` | yes (`main`) | independent | yes — v2.10.0 (`requires-python = ">=3.10"`) | `python-acgs-lite.yml` (deferred) | pending |
-| `packages/Acgs-Swarm/` | yes (feature branch) | independent | no — depends on `acgs-lite>=2.8.1` | `python-acgs-swarm.yml` (deferred) | pending |
-| `packages/clinicalguard/` | yes (`main`) | independent | no | `python-clinicalguard.yml` (deferred) | pending |
-| `packages/legalguard/` | **no** — plain dir | n/a | no | TBD — joins workspace, no submodule needed | n/a |
-| `packages/ca-legal-agent-skills/` | **no** — plain dir | n/a | no | TBD — joins workspace, no submodule needed | n/a |
+| Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Planned parent CI |
+|---|---|---|---|---|
+| `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` (Phase 4 remainder) |
+| `packages/Acgs-Swarm/` | `langgraph-runtime/unit-10-coordinator` (in-flight feature) | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` (Phase 4 remainder) |
+| `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` (Phase 4 remainder) |
+| `packages/legalguard/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
+| `packages/ca-legal-agent-skills/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
 
 `legalguard/` and `ca-legal-agent-skills/` were unknown in the original plan
 (`docs/PLAN-MONOREPO.md` §6 listed them as "Medium" risk pending inspection);
@@ -43,15 +43,15 @@ either.
 
 | Workflow | File | Trigger | What it gates |
 |---|---|---|---|
-| Constitutional-hash drift | `.github/workflows/constitutional-hash.yml` | PR + push to `master` | Recomputes every `# Constitutional Hash:` marker against `docs/constitutional-hashes.lock`. Lock is empty until Phase 2 makes nested-repo markers visible to the parent checkout. |
+| Constitutional-hash drift | `.github/workflows/constitutional-hash.yml` | PR + push to `master` | Recomputes every `# Constitutional Hash:` marker against `docs/constitutional-hashes.lock`. Lock holds 201 markers post-Phase 2 — drilled from the now-visible submodules; 2 fixture-bearing files (`scripts/hardening_report.py`, `tests/test_verify_constitutional_hashes.py`) are in `SKIP_FILES` so synthetic markers don't pollute the inventory. |
 | Cloud Run console | `.github/workflows/console.yml` | path-filtered on `acgi-ai/**` | Lint + build + deploy of privileged console origin |
 | Vercel marketing | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build of public marketing origin |
 
 ## Verification snapshot
 
 Latest hardening report: `artifacts/hardening_reports/` (regenerated per run,
-gitignored — audit evidence, not checked-in state). Current bar: **9/10 pass, 0
-fail, 1 pending**. The pending item is Phase 2.
+gitignored — audit evidence, not checked-in state). Current bar: **10/10
+pass, 0 fail, 0 pending** post-Phase-2.
 
 Regenerate with:
 
