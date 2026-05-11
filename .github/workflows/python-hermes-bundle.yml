@@ -35,11 +35,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
 
       - name: Install minimum deps (no pyproject)
+        # `--system` targets the active Python from setup-python above
+        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
+        # externally-managed on current ubuntu-latest runners.
         run: |
           uv pip install --system \
             pytest>=8.0 \

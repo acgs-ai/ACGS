@@ -38,12 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'acgs-cft-governance-pack/pyproject.toml'
 
       - name: Install
+        # `--system` targets the active Python from setup-python above
+        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
+        # externally-managed on current ubuntu-latest runners.
         run: uv pip install --system --editable '.[test]'
 
       - name: Lint
