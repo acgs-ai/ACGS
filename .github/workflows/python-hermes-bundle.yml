@@ -1,0 +1,51 @@
+# Path-filtered CI for hermes_acgs_bundle/ — flat-layout Python module
+# (Hermes + ACGS middleware + chain-hashed evidence writer).
+# No pyproject.toml — runs pytest directly against tests/ with deps installed
+# from the package's docker-compose-derived requirements.
+
+name: python-hermes-bundle
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'hermes_acgs_bundle/**'
+      - '.github/workflows/python-hermes-bundle.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'hermes_acgs_bundle/**'
+      - '.github/workflows/python-hermes-bundle.yml'
+
+concurrency:
+  group: python-hermes-bundle-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: hermes_acgs_bundle
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install minimum deps (no pyproject)
+        run: |
+          uv pip install --system \
+            pytest>=8.0 \
+            pyyaml>=6.0 \
+            opentelemetry-api>=1.24 \
+            opentelemetry-sdk>=1.24
+
+      - name: Test
+        run: python -m pytest tests/ -v --import-mode=importlib

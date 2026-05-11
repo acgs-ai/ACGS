@@ -1,0 +1,4 @@
+{
+  "_comment": "Pinned inventory of `Constitutional Hash:` markers across the workspace (including submodules when present). Regenerate with `python scripts/verify_constitutional_hashes.py --update`. Any drift here is treated as a governance change that needs explicit review.",
+  "hashes": {}
+}
