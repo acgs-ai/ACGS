@@ -259,7 +259,11 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
 
     # 4. Per-package CI workflows exist
     expected_workflows = [
+        # Parent-tracked Python packages
         "python-eval-mvp.yml", "python-cft-pack.yml", "python-hermes-bundle.yml",
+        # Submodule-tracked Python packages (Phase 4 remainder — needs Phase 2)
+        "python-acgs-lite.yml", "python-acgs-swarm.yml", "python-clinicalguard.yml",
+        # Cross-cutting
         "constitutional-hash.yml",
     ]
     missing = [w for w in expected_workflows if not (repo_root / ".github/workflows" / w).is_file()]

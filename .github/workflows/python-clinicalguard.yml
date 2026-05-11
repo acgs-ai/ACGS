@@ -1,0 +1,61 @@
+# Path-filtered CI for packages/clinicalguard/ — clinical-domain governance agent.
+# Triggers only when the submodule path, .gitmodules, or this workflow change.
+
+name: python-clinicalguard
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/clinicalguard/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-clinicalguard.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/clinicalguard/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-clinicalguard.yml'
+
+concurrency:
+  group: python-clinicalguard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/clinicalguard
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/clinicalguard/pyproject.toml'
+
+      - name: Install (dev extras)
+        run: uv pip install --system --editable '.[dev]'
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Test
+        run: python -m pytest --import-mode=importlib -q

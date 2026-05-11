@@ -28,9 +28,9 @@ pinned SHA in a follow-up parent commit.
 
 | Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Planned parent CI |
 |---|---|---|---|---|
-| `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` (Phase 4 remainder) |
-| `packages/Acgs-Swarm/` | `langgraph-runtime/unit-10-coordinator` (in-flight feature) | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` (Phase 4 remainder) |
-| `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` (Phase 4 remainder) |
+| `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
+| `packages/Acgs-Swarm/` | `langgraph-runtime/unit-10-coordinator` (in-flight feature) | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
+| `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
 | `packages/legalguard/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
 | `packages/ca-legal-agent-skills/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
 

@@ -1,0 +1,69 @@
+# Path-filtered CI for packages/acgs-lite/ — published PyPI library (v2.10.0+).
+# Triggers only when the submodule path, .gitmodules, or this workflow change.
+# Uses the package's own Makefile (lint / typecheck / test) so parent CI never
+# diverges from the per-package gate documented in CLAUDE.md.
+
+name: python-acgs-lite
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/acgs-lite/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-lite.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/acgs-lite/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-lite.yml'
+
+concurrency:
+  group: python-acgs-lite-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/acgs-lite
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        # Published floor is 3.10 (preserved in package metadata); workspace
+        # floor is 3.11. Run both so we catch 3.10-only breakage and stay
+        # honest about what PyPI consumers actually experience.
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/acgs-lite/pyproject.toml'
+
+      - name: Install (dev extras)
+        run: uv pip install --system --editable '.[dev]'
+
+      - name: Lint
+        run: make lint
+
+      - name: Typecheck
+        run: make typecheck
+
+      - name: Test
+        run: make test

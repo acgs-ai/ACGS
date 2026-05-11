@@ -1,0 +1,66 @@
+# Path-filtered CI for packages/Acgs-Swarm/ — constitutional swarm research package.
+# Triggers only when the submodule path, .gitmodules, or this workflow change.
+
+name: python-acgs-swarm
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/Acgs-Swarm/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-swarm.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/Acgs-Swarm/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-swarm.yml'
+
+concurrency:
+  group: python-acgs-swarm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/Acgs-Swarm
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/Acgs-Swarm/pyproject.toml'
+
+      - name: Install (dev extras)
+        run: uv pip install --system --editable '.[dev]'
+
+      - name: Lint
+        run: python -m ruff check src/
+
+      - name: Test (dev matrix — excludes research + bittensor markers)
+        run: |
+          python -m pytest tests/ \
+            --import-mode=importlib \
+            -q \
+            -m 'not research and not bittensor' \
+            --maxfail=10
