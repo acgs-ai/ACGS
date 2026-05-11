@@ -40,8 +40,10 @@ jobs:
           python-version: '3.11'
 
       - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
+        # No `enable-cache: true` — the action defaults to caching by
+        # `**/uv.lock`, and hermes-bundle is a flat-layout module with
+        # no pyproject.toml or uv.lock, so the cache key never resolves
+        # and the step errors with "No matches found for glob".
 
       - name: Install minimum deps (no pyproject)
         # `--system` targets the active Python from setup-python above

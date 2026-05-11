@@ -15,6 +15,13 @@ test = [
 [project.scripts]
 acgs-cft-govern = "acgs_cft_governance_pack.cli:main"
 
+[tool.setuptools]
+# Explicit list — setuptools' flat-layout autodiscovery walks every
+# top-level dir (ci/, evidence/, examples/, policies/, tests/) and
+# refuses to guess which one is the package. Naming it stops the
+# `Multiple top-level packages discovered` failure.
+packages = ["acgs_cft_governance_pack"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

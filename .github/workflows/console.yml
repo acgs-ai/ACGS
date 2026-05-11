@@ -94,20 +94,30 @@ jobs:
       - name: Build (verify TS / Vite before docker)
         run: pnpm build
 
+      # ---- Image build + push: master pushes only ----
+      # PRs run Lint + Build above as verification; only pushes to master
+      # authenticate to GCP and push an image. This keeps PRs unblocked
+      # when GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT secrets
+      # aren't yet configured (which causes the auth action to abort with
+      # "must specify exactly one of workload_identity_provider or
+      # credentials_json").
       - id: auth
         name: Auth to GCP via WIF
+        if: github.event_name == 'push'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Configure docker auth
+        if: github.event_name == 'push'
         run: |
           gcloud auth configure-docker \
             "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
 
       - name: Compute image URI
         id: image
+        if: github.event_name == 'push'
         run: |
           SHA="${GITHUB_SHA::12}"
           URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/acgi-console:${SHA}"
@@ -115,8 +125,10 @@ jobs:
           echo "Image URI: $URI"
 
       - uses: docker/setup-buildx-action@v3
+        if: github.event_name == 'push'
 
       - name: Build & push image
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           # Dockerfile uses `COPY package.json pnpm-lock.yaml ./` and

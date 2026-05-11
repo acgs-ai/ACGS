@@ -40,9 +40,13 @@ line-length = 120
 # Per-rule pragma — none of these are introduced by this PR; they're
 # pre-existing code that the CI lint step started flagging once the
 # PEP 668 install fix let the step actually run:
-#   B008  — fastapi/click idiom; Depends() / Argument() in defaults
-#           is the documented pattern, not an anti-pattern here.
+#   B008   — fastapi/click idiom; Depends() / Argument() in defaults
+#            is the documented pattern, not an anti-pattern here.
 #   RUF012 — governance test scaffolding uses mutable class attrs as
-#           fixture stores; ClassVar migration is out of scope.
-#   RUF059, UP028 — single occurrences each; sweep in a cleanup PR.
-ignore = ["B008", "RUF012", "RUF059", "UP028"]
+#            fixture stores; ClassVar migration is out of scope.
+#   UP028  — single occurrence; sweep in cleanup PR.
+# RUF059 is intentionally NOT listed — the CI lint step pins
+# `uvx ruff@0.8`, which predates RUF059 and errors on parsing an
+# unknown selector. Newer local ruff (≥0.12) flags one occurrence
+# we'll sweep in the cleanup PR.
+ignore = ["B008", "RUF012", "UP028"]
