@@ -60,6 +60,14 @@ ignore = ["RUF002", "RUF003"]  # Acgs-Swarm latent_dna.py uses Greek chars
 
 [tool.pytest.ini_options]
 # Members override; this is the workspace fallback.
-testpaths = []
+testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
+# Suppress upstream noise unrelated to monorepo tests:
+#   - langchain_core imports pydantic.v1 which is incompatible with Py 3.14;
+#     the warning fires at import time and clutters test output. We do not
+#     own langchain_core; the fix is upstream.
+filterwarnings = [
+    "ignore::UserWarning:langchain_core.*",
+    "ignore:Core Pydantic V1 functionality isn't compatible with Python 3.14:UserWarning",
+]

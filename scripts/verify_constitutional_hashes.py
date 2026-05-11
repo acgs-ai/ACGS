@@ -63,7 +63,7 @@ def _list_files() -> Iterable[Path]:
             text=True,
             check=True,
         )
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         # Older git, or submodule not initialized. Fall back to single repo.
         result = subprocess.run(
             ["git", "ls-files"],
