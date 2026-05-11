@@ -40,6 +40,12 @@ Makefile.cmake
 # Large asset directories
 separated_32_images/
 
+# Hardening sprint evidence — generated per-run, not checked in.
+artifacts/
+
+# Turborepo cache
+.turbo/
+
 # Secrets / credentials
 *.pem
 *.key
