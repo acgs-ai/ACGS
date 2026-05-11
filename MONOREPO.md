@@ -48,6 +48,12 @@ either.
 | Cloud Run console | `.github/workflows/console.yml` | path-filtered on `acgi-ai/**` | Lint + build + deploy of privileged console origin |
 | Vercel marketing | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build of public marketing origin |
 
+## Required Actions secrets
+
+| Secret | Used by | What it does |
+|---|---|---|
+| `SUBMODULE_TOKEN` | `constitutional-hash.yml`, `python-acgs-lite.yml`, `python-acgs-swarm.yml`, `python-clinicalguard.yml` | Fine-grained PAT (or GitHub App token) with `contents:read` on every submodule repo (notably the private `dislovelhl/clinicalguard`). Default `github.token` is repo-scoped — submodule `recursive` clones 404 without this. Workflows fall back to `github.token` when the secret is absent, so public-only checkouts still work; the four submodule-aware jobs simply fail at the clone step until it's added. |
+
 ## Verification snapshot
 
 Latest hardening report: `artifacts/hardening_reports/` (regenerated per run,

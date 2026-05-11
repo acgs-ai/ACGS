@@ -41,6 +41,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          # See SUBMODULE_TOKEN note in constitutional-hash.yml.
+          # clinicalguard is the actual private repo that motivates this token.
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: actions/setup-python@v5
         with:
