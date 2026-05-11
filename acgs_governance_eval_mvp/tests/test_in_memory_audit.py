@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore, InMemoryAuditStore
 from governance.models import ActionRequest
@@ -60,9 +59,7 @@ def test_in_memory_chain_detects_tamper(roles_bundle, policy_bundle):
     issue="pr5_in_memory_audit_store",
     coverage_angle="memory_disk_event_hash_parity",
 )
-def test_in_memory_audit_store_produces_same_event_hash_as_disk(
-    tmp_path, roles_bundle, policy_bundle
-):
+def test_in_memory_audit_store_produces_same_event_hash_as_disk(tmp_path, roles_bundle, policy_bundle):
     # Build one DecisionRecord without a store, then append the SAME record to
     # both backends. Identical payloads + identical previous_hash (genesis) must
     # produce identical event_hash, which is what makes the in-memory store

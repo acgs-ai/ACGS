@@ -4,7 +4,6 @@ import json
 import time
 
 import pytest
-
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 
@@ -84,10 +83,7 @@ def test_audit_chain_handles_concurrent_appends(tmp_path, roles_bundle, policy_b
         )
 
     n_workers = 8
-    threads = [
-        threading.Thread(target=submit, args=(f"contracts/supplier-{i}",))
-        for i in range(n_workers)
-    ]
+    threads = [threading.Thread(target=submit, args=(f"contracts/supplier-{i}",)) for i in range(n_workers)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -147,9 +143,7 @@ def test_audit_append_is_amortized_O1(tmp_path, roles_bundle, policy_bundle):
     issue="autofix_o_n2_audit_caching",
     coverage_angle="audit_append_does_not_reread_chain_after_warmup",
 )
-def test_audit_append_does_not_reread_chain_after_warmup(
-    tmp_path, roles_bundle, policy_bundle, monkeypatch
-):
+def test_audit_append_does_not_reread_chain_after_warmup(tmp_path, roles_bundle, policy_bundle, monkeypatch):
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     adapter = GovernedToolAdapter(
         roles_bundle=roles_bundle,
@@ -179,8 +173,7 @@ def test_audit_append_does_not_reread_chain_after_warmup(
         adapter.validate({**base_payload, "resource": f"contracts/hot-{i}"})
 
     assert counter["n"] == 0, (
-        f"hot-path appends triggered {counter['n']} disk reads; "
-        "O(n^2) regression: cached _last_hash was not reused"
+        f"hot-path appends triggered {counter['n']} disk reads; O(n^2) regression: cached _last_hash was not reused"
     )
 
 
@@ -190,9 +183,7 @@ def test_audit_append_does_not_reread_chain_after_warmup(
     issue="autofix_o_n2_audit_caching",
     coverage_angle="audit_append_cold_start_invokes_disk_read_exactly_once",
 )
-def test_audit_append_cold_start_invokes_disk_read_exactly_once(
-    tmp_path, roles_bundle, policy_bundle, monkeypatch
-):
+def test_audit_append_cold_start_invokes_disk_read_exactly_once(tmp_path, roles_bundle, policy_bundle, monkeypatch):
     base_payload = {
         "actor": {"id": "agent-legal-1", "role": "LegalOps"},
         "intent": "Redline supplier agreement",
@@ -251,9 +242,7 @@ def test_audit_append_cold_start_invokes_disk_read_exactly_once(
     issue="autofix_o_n2_audit_caching",
     coverage_angle="audit_verify_chain_one_hash_per_event",
 )
-def test_audit_verify_chain_one_hash_per_event(
-    tmp_path, roles_bundle, policy_bundle, monkeypatch
-):
+def test_audit_verify_chain_one_hash_per_event(tmp_path, roles_bundle, policy_bundle, monkeypatch):
     audit_path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(audit_path)
     adapter = GovernedToolAdapter(
@@ -299,9 +288,7 @@ def test_audit_verify_chain_one_hash_per_event(
     issue="autofix_o_n2_audit_caching",
     coverage_angle="audit_append_writes_one_line_no_rewrite",
 )
-def test_audit_append_writes_one_line_no_rewrite(
-    tmp_path, roles_bundle, policy_bundle
-):
+def test_audit_append_writes_one_line_no_rewrite(tmp_path, roles_bundle, policy_bundle):
     audit_path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(audit_path)
     adapter = GovernedToolAdapter(
@@ -324,19 +311,14 @@ def test_audit_append_writes_one_line_no_rewrite(
         sizes.append(audit_path.stat().st_size)
 
     deltas = [sizes[i + 1] - sizes[i] for i in range(n_appends)]
-    assert all(d > 0 for d in deltas), (
-        f"non-positive size delta detected: {deltas}; "
-        "append should be strictly additive"
-    )
+    assert all(d > 0 for d in deltas), f"non-positive size delta detected: {deltas}; append should be strictly additive"
 
     content = audit_path.read_text(encoding="utf-8")
     line_count = content.count("\n")
     assert line_count == n_appends, (
-        f"file has {line_count} newlines for {n_appends} appends; "
-        "append produced unexpected line count"
+        f"file has {line_count} newlines for {n_appends} appends; append produced unexpected line count"
     )
 
     assert sizes[-1] == sum(deltas), (
-        f"final size {sizes[-1]} != sum of deltas {sum(deltas)}; "
-        "append rewrote prior content"
+        f"final size {sizes[-1]} != sum of deltas {sum(deltas)}; append rewrote prior content"
     )

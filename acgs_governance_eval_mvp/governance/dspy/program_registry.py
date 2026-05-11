@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import threading
+from dataclasses import replace
 from typing import Any
 
 from governance.audit import AuditStore
@@ -14,7 +14,6 @@ from governance.models import (
 )
 
 from .models import DSPyProgramRecord
-
 
 DSPY_PROGRAM_REGISTRY_ACTION_TYPE = "dspy.program_registry"
 

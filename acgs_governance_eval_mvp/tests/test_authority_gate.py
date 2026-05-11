@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.gates import AuthorityGate
 from governance.models import ActionRequest, Principal
 

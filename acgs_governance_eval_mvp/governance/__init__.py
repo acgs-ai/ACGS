@@ -1,4 +1,3 @@
-from .models import ActionRequest, DecisionRecord, GateResult, GovernanceDeniedError, Principal
 from .adapters.tools import GovernedToolAdapter
 from .dspy import (
     ClaimLedgerEntry,
@@ -10,6 +9,7 @@ from .dspy import (
     EvidenceToClaimMapper,
     MACIRoleViolation,
 )
+from .models import ActionRequest, DecisionRecord, GateResult, GovernanceDeniedError, Principal
 
 __all__ = [
     "ActionRequest",
@@ -23,7 +23,7 @@ __all__ = [
     "EvidenceToClaimMapper",
     "GateResult",
     "GovernanceDeniedError",
-    "Principal",
     "GovernedToolAdapter",
     "MACIRoleViolation",
+    "Principal",
 ]

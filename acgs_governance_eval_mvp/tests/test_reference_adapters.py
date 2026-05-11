@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.adapters.anthropic_claude import govern_anthropic_tool_call
 from governance.adapters.langgraph import govern_langgraph_tool_call
 from governance.adapters.openai_agents import govern_openai_agent_tool_call
@@ -9,7 +8,6 @@ from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 from governance.models import ActionRequest, Principal
 from governance.utils import canonical_input_hash
-
 
 PRINCIPAL = {"id": "agent-legal-1", "role": "LegalOps"}
 TOOL_ARGS = {

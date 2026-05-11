@@ -7,7 +7,6 @@ from governance.adapters.tools import GovernedToolAdapter
 from governance.audit.jsonl_chain import ChainHashAuditStore
 from governance.policy_loader import load_policy_bundle, load_roles
 
-
 try:
     from fastapi import Depends, FastAPI, HTTPException, Query
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

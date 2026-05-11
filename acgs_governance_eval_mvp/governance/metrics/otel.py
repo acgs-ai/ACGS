@@ -28,7 +28,7 @@ class GovernanceMetrics:
             self._decision_counter = self._meter.create_counter("acgs_governance_decisions_total")
 
     @classmethod
-    def disabled(cls) -> "GovernanceMetrics":
+    def disabled(cls) -> GovernanceMetrics:
         return cls(enabled=False)
 
     def record_gate(self, result: GateResult) -> None:

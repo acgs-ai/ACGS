@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 from governance.gates import AuthorityGate, PolicyRecallGate
@@ -90,9 +89,7 @@ def test_authority_deny_carries_remediation_hint(roles_bundle):
 
     assert result.allowed is False
     assert "AUTH_ACTION_DENIED" in result.reason_codes
-    assert result.remediation == (
-        "Use a role that lists this action_type, or add it to the role's actions"
-    )
+    assert result.remediation == ("Use a role that lists this action_type, or add it to the role's actions")
 
 
 @pytest.mark.regression(

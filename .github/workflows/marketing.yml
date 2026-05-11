@@ -62,7 +62,9 @@ jobs:
           cache: pnpm
           cache-dependency-path: acgi-ai/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-workspace` keeps acgi-ai installed against its own
+      # pnpm-lock.yaml. See console.yml for the full rationale.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Lint
         run: pnpm lint

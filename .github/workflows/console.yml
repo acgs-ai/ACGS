@@ -81,7 +81,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: acgi-ai/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-workspace` keeps acgi-ai installed against its own
+      # pnpm-lock.yaml. Without this, pnpm walks up to the monorepo root,
+      # finds pnpm-workspace.yaml + root package.json, treats the whole
+      # workspace as installable, and demands a non-existent root
+      # pnpm-lock.yaml — failing with ERR_PNPM_NO_LOCKFILE.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Lint
         run: pnpm lint

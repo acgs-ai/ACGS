@@ -23,7 +23,8 @@ raised exception to the model as a tool-use failure.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.models import ActionRequest, Principal

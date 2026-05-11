@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from governance.models import sha256_json, utc_now_iso
 
-
 Verdict = Literal["supported", "partial", "invalidated", "undecidable"]
 ProgramStatus = Literal["draft", "active", "retired"]
 

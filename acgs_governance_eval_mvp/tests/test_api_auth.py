@@ -4,7 +4,6 @@ import importlib
 
 import pytest
 
-
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
@@ -15,6 +14,7 @@ from fastapi.testclient import TestClient
 def client(monkeypatch):
     monkeypatch.setenv("ACGS_API_TOKEN", "acme:secret-test-token")
     import governance.service.api as api_module
+
     api_module = importlib.reload(api_module)
     with TestClient(api_module.app) as test_client:
         yield test_client

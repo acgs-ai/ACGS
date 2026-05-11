@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from governance.models import DecisionRecord, sha256_json
-
 
 GENESIS_HASH = "0" * 64
 

@@ -4,7 +4,6 @@ import importlib
 import sys
 
 import pytest
-
 from governance.audit import InMemoryAuditStore
 from governance.dspy import (
     DSPyProgramRecord,
@@ -360,6 +359,7 @@ def test_replay_skips_dspy_audit_events(roles_bundle, policy_bundle):
 # governance_wrapper.py — secret scrubbing in engine error messages
 # ---------------------------------------------------------------------------
 
+
 def _make_error_mapper(exc: Exception) -> EvidenceToClaimMapper:
     store = InMemoryAuditStore()
     return EvidenceToClaimMapper(
@@ -369,13 +369,16 @@ def _make_error_mapper(exc: Exception) -> EvidenceToClaimMapper:
     )
 
 
-@pytest.mark.parametrize("secret_fragment,expected_redacted", [
-    ("sk-abc123XYZ", "sk-<redacted>"),
-    ("Bearer supersecrettoken", "Bearer <redacted>"),
-    ("password=hunter2", "password=<redacted>"),
-    ("api_key=MY_SECRET_KEY", "api_key=<redacted>"),
-    ("token=eyJhbGciOiJSUzI1NiJ9", "token=<redacted>"),
-])
+@pytest.mark.parametrize(
+    "secret_fragment,expected_redacted",
+    [
+        ("sk-abc123XYZ", "sk-<redacted>"),
+        ("Bearer supersecrettoken", "Bearer <redacted>"),
+        ("password=hunter2", "password=<redacted>"),
+        ("api_key=MY_SECRET_KEY", "api_key=<redacted>"),
+        ("token=eyJhbGciOiJSUzI1NiJ9", "token=<redacted>"),
+    ],
+)
 def test_engine_error_secret_patterns_are_redacted(secret_fragment, expected_redacted):
     store = InMemoryAuditStore()
     engine = CountingEngine(exc=RuntimeError(secret_fragment))
@@ -403,6 +406,7 @@ def test_engine_error_secret_patterns_are_redacted(secret_fragment, expected_red
 # ---------------------------------------------------------------------------
 # program_registry.py — retire()
 # ---------------------------------------------------------------------------
+
 
 def test_registry_retire_marks_record_retired_and_removes_active():
     store = InMemoryAuditStore()
@@ -441,6 +445,7 @@ def test_registry_retire_unknown_version_raises():
 # program_registry.py — register() error paths
 # ---------------------------------------------------------------------------
 
+
 def test_registry_register_duplicate_raises():
     store = InMemoryAuditStore()
     registry = DSPyProgramRegistry(store)
@@ -470,6 +475,7 @@ def test_registry_register_active_status_raises():
 # program_registry.py — promote() error paths
 # ---------------------------------------------------------------------------
 
+
 def test_registry_promote_empty_eval_report_hash_raises():
     store = InMemoryAuditStore()
     registry = DSPyProgramRegistry(store)
@@ -491,6 +497,7 @@ def test_registry_promote_unknown_program_raises():
 # program_registry.py — rollback() never-promoted rejection
 # ---------------------------------------------------------------------------
 
+
 def test_registry_rollback_never_promoted_raises():
     store = InMemoryAuditStore()
     registry = DSPyProgramRegistry(store)
@@ -506,6 +513,7 @@ def test_registry_rollback_never_promoted_raises():
 # ---------------------------------------------------------------------------
 # program_registry.py — get_active() returns None when no active version
 # ---------------------------------------------------------------------------
+
 
 def test_registry_get_active_returns_none_when_no_active():
     store = InMemoryAuditStore()
@@ -525,6 +533,7 @@ def test_registry_get_active_returns_none_for_unknown_program():
 # ---------------------------------------------------------------------------
 # program_registry.py — list_programs() with no filter returns all programs
 # ---------------------------------------------------------------------------
+
 
 def test_registry_list_programs_no_filter_returns_all():
     store = InMemoryAuditStore()
@@ -558,6 +567,7 @@ def test_registry_list_programs_no_filter_returns_all():
 # claim_mapper.py — _integrity_failed top-level event field (not nested in metadata)
 # ---------------------------------------------------------------------------
 
+
 def test_integrity_fail_detected_via_top_level_event_field():
     """integrity_status on the event dict itself (not nested under request.metadata)
     must still trigger the invalidated verdict."""
@@ -586,6 +596,7 @@ def test_integrity_fail_detected_via_top_level_event_field():
 # ---------------------------------------------------------------------------
 # governance_wrapper.py — pre_validate and post_validate hooks
 # ---------------------------------------------------------------------------
+
 
 def test_governed_module_pre_validate_called_and_can_abort():
     from governance.dspy.governance_wrapper import GovernedDSPyModule

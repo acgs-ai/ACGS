@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
 from governance.replay import replay_event
