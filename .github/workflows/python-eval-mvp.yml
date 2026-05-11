@@ -1,0 +1,62 @@
+# Path-filtered CI for acgs_governance_eval_mvp/ — Python eval surface.
+# Triggers only when files under this package change.
+
+name: python-eval-mvp
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'acgs_governance_eval_mvp/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-eval-mvp.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'acgs_governance_eval_mvp/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-eval-mvp.yml'
+
+concurrency:
+  group: python-eval-mvp-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: acgs_governance_eval_mvp
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'acgs_governance_eval_mvp/pyproject.toml'
+
+      - name: Install
+        # `--system` targets the active Python from setup-python above
+        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
+        # externally-managed on current ubuntu-latest runners.
+        run: uv pip install --system --editable '.[test]'
+
+      - name: Lint
+        run: |
+          uvx ruff@0.8 check .
+          uvx ruff@0.8 format --check .
+
+      - name: Test
+        run: python -m pytest tests/ -v --import-mode=importlib

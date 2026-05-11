@@ -4,14 +4,12 @@ import asyncio
 import sys
 
 import pytest
-
 from governance.policy_loader import load_policy_bundle, load_roles
-
 
 if sys.version_info >= (3, 14):
     try:
-        import httpx
         import fastapi.testclient as fastapi_testclient
+        import httpx
         import starlette.testclient as starlette_testclient
     except Exception:
         pass

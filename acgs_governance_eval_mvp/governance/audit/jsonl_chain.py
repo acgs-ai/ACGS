@@ -3,11 +3,11 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from governance.models import DecisionRecord, sha256_json
-
 
 GENESIS_HASH = "0" * 64
 

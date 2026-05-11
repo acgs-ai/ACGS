@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit.in_memory import InMemoryAuditStore
 from governance.policy_loader import load_policy_bundle, load_roles
-
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _DEFAULT_ROLES_PATH = _PACKAGE_ROOT / "roles.json"

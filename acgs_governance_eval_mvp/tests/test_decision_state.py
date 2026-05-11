@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
-
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit import ChainHashAuditStore
-from governance.models import DECISION_SCHEMA_VERSION, ActionRequest, Principal, sha256_json
+from governance.models import DECISION_SCHEMA_VERSION, ActionRequest, sha256_json
 from governance.replay import replay_event
 
 
@@ -24,6 +23,7 @@ def _allowed_payload(**overrides):
 # ---------------------------------------------------------------------------
 # decision_state field
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression(
     pr="dislovelhl/govern-zone#4",
@@ -67,6 +67,7 @@ def test_decision_state_is_deny_when_any_check_denies(tmp_path, roles_bundle, po
 # ---------------------------------------------------------------------------
 # schema version + bundle hashes
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression(
     pr="dislovelhl/govern-zone#4",
@@ -120,6 +121,7 @@ def test_decision_record_carries_role_bundle_hash(tmp_path, roles_bundle, policy
 # ---------------------------------------------------------------------------
 # effective_tool_input
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression(
     pr="dislovelhl/govern-zone#4",
@@ -186,6 +188,7 @@ def test_action_request_from_dict_derives_inputs_hash_from_tool_input():
 # ---------------------------------------------------------------------------
 # guard() TOCTOU defense
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression(
     pr="dislovelhl/govern-zone#4",
@@ -273,6 +276,7 @@ def test_guard_does_not_execute_fn_when_decision_denies(tmp_path, roles_bundle, 
 # ---------------------------------------------------------------------------
 # replay drift detection
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.regression(
     pr="dislovelhl/govern-zone#4",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Any
 
 from governance.models import ActionRequest, GateResult
 

@@ -6,6 +6,12 @@
 
 # Dependencies
 node_modules/
+# This is a pnpm workspace — pnpm-lock.yaml is the only JS lockfile that
+# should ever land in the parent. package-lock.json (npm) and yarn.lock
+# slip in when someone runs `npm install` inside a workspace member; they
+# split resolution and break `pnpm install --frozen-lockfile`. Ignore both.
+package-lock.json
+yarn.lock
 __pycache__/
 *.pyc
 *.pyo
@@ -39,6 +45,12 @@ Makefile.cmake
 
 # Large asset directories
 separated_32_images/
+
+# Hardening sprint evidence — generated per-run, not checked in.
+artifacts/
+
+# Turborepo cache
+.turbo/
 
 # Secrets / credentials
 *.pem

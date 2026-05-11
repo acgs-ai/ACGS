@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from governance.audit import AuditStore
 from governance.models import (
@@ -15,7 +16,6 @@ from governance.models import (
 
 from .governance_wrapper import GovernedDSPyModule
 from .models import ClaimLedgerEntry, DSPyProgramRecord, Verdict
-
 
 DSPY_CLAIM_MAPPING_ACTION_TYPE = "dspy.claim_mapping"
 KNOWN_VERDICTS: set[str] = {"supported", "partial", "invalidated", "undecidable"}
@@ -51,7 +51,7 @@ class EvidenceToClaimMapper:
         program_record: DSPyProgramRecord,
         audit_store: AuditStore,
         lm: Any = None,
-    ) -> "EvidenceToClaimMapper":
+    ) -> EvidenceToClaimMapper:
         import dspy
 
         class ClaimMappingSignature(dspy.Signature):  # type: ignore[name-defined]

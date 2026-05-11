@@ -1,0 +1,48 @@
+# Constitutional-hash drift detector.
+#
+# Runs on every PR + push to master. Fails if any file with a
+# `# Constitutional Hash: <hash>` marker has drifted from the inventory
+# pinned in docs/constitutional-hashes.lock.
+#
+# Today the inventory is empty (no markers in the parent-tracked tree).
+# Once Phase 2 of docs/PLAN-MONOREPO.md registers submodules, the script
+# will automatically discover markers inside packages/* and the lock
+# regenerates with `python scripts/verify_constitutional_hashes.py --update`.
+
+name: constitutional-hash
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: constitutional-hash-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Cross-repo submodule clones need a token that can read every
+          # submodule's repo. Default github.token is scoped to this repo
+          # only, so private submodules (e.g. clinicalguard) 404 the clone
+          # step. Configure SUBMODULE_TOKEN as a fine-grained PAT or App
+          # token with read:contents on each submodule repo; falls back to
+          # github.token so public-only forks still work.
+          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify constitutional-hash inventory
+        run: python scripts/verify_constitutional_hashes.py

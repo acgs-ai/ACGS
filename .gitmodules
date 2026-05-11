@@ -1,0 +1,12 @@
+[submodule "packages/acgs-lite"]
+	path = packages/acgs-lite
+	url = https://github.com/dislovelhl/acgs-lite.git
+	branch = main
+[submodule "packages/clinicalguard"]
+	path = packages/clinicalguard
+	url = https://github.com/dislovelhl/clinicalguard.git
+	branch = main
+[submodule "packages/Acgs-Swarm"]
+	path = packages/Acgs-Swarm
+	url = https://github.com/dislovelhl/Acgs-Swarm.git
+	branch = langgraph-runtime/unit-10-coordinator

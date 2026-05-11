@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
-
 
 # 5-state decision domain. Today only "allow" and "deny" are produced by the
 # runtime; "require_human", "rewrite", and "redact" are reserved for
@@ -19,7 +18,7 @@ DECISION_SCHEMA_VERSION = "v1"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def stable_json(value: Any) -> str:
@@ -39,7 +38,7 @@ class Principal:
     attributes: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Principal":
+    def from_dict(cls, data: dict[str, Any]) -> Principal:
         return cls(
             id=str(data["id"]),
             role=str(data["role"]),
@@ -66,7 +65,7 @@ class ActionRequest:
     tool_input: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ActionRequest":
+    def from_dict(cls, data: dict[str, Any]) -> ActionRequest:
         actor = data.get("actor")
         if isinstance(actor, Principal):
             principal = actor
@@ -164,6 +163,6 @@ class DecisionRecord:
 class GovernanceDeniedError(PermissionError):
     """Raised by GovernedToolAdapter.guard() when a decision denies. Carries the full DecisionRecord."""
 
-    def __init__(self, decision: "DecisionRecord"):
+    def __init__(self, decision: DecisionRecord):
         super().__init__("; ".join(decision.reasons))
         self.decision = decision

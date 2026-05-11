@@ -24,7 +24,8 @@ the node's error, which the graph can route to a remediation node.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.models import ActionRequest, Principal

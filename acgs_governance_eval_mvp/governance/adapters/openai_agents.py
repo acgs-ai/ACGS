@@ -24,7 +24,8 @@ to the SDK so the agent sees a tool-call failure and can react.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.models import ActionRequest, Principal

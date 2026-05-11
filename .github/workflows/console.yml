@@ -71,8 +71,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        # No `version:` here — read it from root package.json's
+        # `packageManager` field. action-setup@v4 errors on duplicate
+        # version declarations now that the monorepo root pins pnpm.
 
       - uses: actions/setup-node@v4
         with:
@@ -80,7 +81,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: acgi-ai/pnpm-lock.yaml
 
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-workspace` keeps acgi-ai installed against its own
+      # pnpm-lock.yaml. Without this, pnpm walks up to the monorepo root,
+      # finds pnpm-workspace.yaml + root package.json, treats the whole
+      # workspace as installable, and demands a non-existent root
+      # pnpm-lock.yaml — failing with ERR_PNPM_NO_LOCKFILE.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Lint
         run: pnpm lint
@@ -88,20 +94,30 @@ jobs:
       - name: Build (verify TS / Vite before docker)
         run: pnpm build
 
+      # ---- Image build + push: master pushes only ----
+      # PRs run Lint + Build above as verification; only pushes to master
+      # authenticate to GCP and push an image. This keeps PRs unblocked
+      # when GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT secrets
+      # aren't yet configured (which causes the auth action to abort with
+      # "must specify exactly one of workload_identity_provider or
+      # credentials_json").
       - id: auth
         name: Auth to GCP via WIF
+        if: github.event_name == 'push'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Configure docker auth
+        if: github.event_name == 'push'
         run: |
           gcloud auth configure-docker \
             "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
 
       - name: Compute image URI
         id: image
+        if: github.event_name == 'push'
         run: |
           SHA="${GITHUB_SHA::12}"
           URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/acgi-console:${SHA}"
@@ -109,8 +125,10 @@ jobs:
           echo "Image URI: $URI"
 
       - uses: docker/setup-buildx-action@v3
+        if: github.event_name == 'push'
 
       - name: Build & push image
+        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           # Dockerfile uses `COPY package.json pnpm-lock.yaml ./` and
