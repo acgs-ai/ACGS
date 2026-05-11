@@ -105,6 +105,16 @@ def test_pnpm_workspace_lists_acgi_ai():
     assert "acgi-ai" in ws["packages"]
 
 
+def test_pnpm_workspace_lists_enterprise_frontend():
+    """The enterprise frontend has package metadata and must join JS installs."""
+    ws = _load_yaml("pnpm-workspace.yaml")
+    member = "acgs-enterprise-ai-manager/frontend"
+    assert member in ws["packages"]
+    pkg = _load_json(f"{member}/package.json")
+    assert pkg["name"] == "acgs-enterprise-manager-frontend"
+    assert "build" in pkg["scripts"]
+
+
 # ---------------------------------------------------------------------------
 # Workflow path filters — CI triggers must match real directories
 # ---------------------------------------------------------------------------
