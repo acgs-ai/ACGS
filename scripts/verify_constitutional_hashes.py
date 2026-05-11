@@ -29,7 +29,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = REPO_ROOT / "docs" / "constitutional-hashes.lock"
-MARKER_RE = re.compile(r"Constitutional Hash:\s*([0-9a-fA-F]+)")
+# Marker forms tolerated across packages/acgs-lite/ — placeholders below
+# (literal hex omitted so this regex doesn't match its own documentation):
+#   <prefix> <hash>                  (bare)
+#   <prefix> `<hash>`                (backticked)
+#   > <prefix> `<hash>`              (blockquote)
+#   "...<prefix> `<hash>`*"          (inside a string literal)
+# Optional whitespace, backticks, or quotes are tolerated between colon and hex.
+MARKER_RE = re.compile(r"Constitutional Hash:[\s`'\"]*([0-9a-fA-F]+)")
 
 # File extensions worth scanning. Binary formats and large vendored trees
 # are excluded for performance — markers belong in source / config / docs.
