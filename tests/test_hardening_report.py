@@ -75,13 +75,27 @@ def test_build_checklist_returns_10_items():
     assert sorted(i.number for i in items) == list(range(1, 11))
 
 
-def test_phase_2_item_is_pending_without_gitmodules():
-    drills = hr.run_drills(ROOT)
-    items = hr.build_checklist(ROOT, drills)
+def test_phase_2_item_reflects_gitmodules_presence(tmp_path: Path):
+    """Item 10 is dynamic: pending without .gitmodules, pass with it."""
+    # Minimal repo skeleton — only the file under test matters.
+    fake_root = tmp_path / "repo"
+    fake_root.mkdir()
+
+    # Without .gitmodules → pending.
+    items = hr.build_checklist(fake_root, [])
     phase_2 = next(i for i in items if i.number == 10)
-    # .gitmodules does not exist in this branch yet → pending.
     assert phase_2.status == "pending"
-    assert "submodule" in phase_2.description.lower()
+    assert "deferred" in phase_2.description.lower()
+
+    # With .gitmodules → pass; evidence cites submodule count.
+    (fake_root / ".gitmodules").write_text(
+        "[submodule \"packages/x\"]\n\tpath = packages/x\n\turl = https://example.com/x.git\n"
+    )
+    items = hr.build_checklist(fake_root, [])
+    phase_2 = next(i for i in items if i.number == 10)
+    assert phase_2.status == "pass"
+    assert "landed" in phase_2.description.lower()
+    assert "1 submodule" in phase_2.evidence
 
 
 def test_phase_1_root_files_pass():

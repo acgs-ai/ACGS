@@ -315,14 +315,23 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         evidence=f"size_kb={(repo_root / 'docs/PLAN-MONOREPO.md').stat().st_size // 1024 if (repo_root / 'docs/PLAN-MONOREPO.md').is_file() else 0}",
     ))
 
-    # 10. Phase 2 deferred — pending per user decision
-    has_gitmodules = (repo_root / ".gitmodules").is_file()
-    items.append(ChecklistItem(
-        number=10,
-        description="Phase 2 (submodule registration) — deferred",
-        status="pending" if not has_gitmodules else "pass",
-        evidence=".gitmodules absent — packages/* tracked as nested repos invisible to parent",
-    ))
+    # 10. Phase 2 — submodule registration
+    gitmodules = repo_root / ".gitmodules"
+    if gitmodules.is_file():
+        sm_lines = [l for l in gitmodules.read_text().splitlines() if l.strip().startswith("path = ")]
+        items.append(ChecklistItem(
+            number=10,
+            description="Phase 2 (submodule registration) — landed",
+            status="pass",
+            evidence=f".gitmodules present — {len(sm_lines)} submodule(s) registered",
+        ))
+    else:
+        items.append(ChecklistItem(
+            number=10,
+            description="Phase 2 (submodule registration) — deferred",
+            status="pending",
+            evidence=".gitmodules absent — packages/* tracked as nested repos invisible to parent",
+        ))
 
     return items
 
@@ -340,7 +349,7 @@ def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
     lines = [
         f"# Monorepo Hardening Report — {now.strftime('%Y-%m-%d %H:%M UTC')}",
         "",
-        f"**Scope:** docs/PLAN-MONOREPO.md Phase 1 + 4 + 5 (Phase 2 deferred).",
+        f"**Scope:** docs/PLAN-MONOREPO.md Phase 1 + 2 + 4 + 5.",
         "",
         f"**Result:** {passes}/{len(items)} pass · {fails} fail · {pending} pending",
         "",

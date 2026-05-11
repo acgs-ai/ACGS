@@ -52,6 +52,16 @@ SKIP_PREFIXES = (
     ".ruff_cache/", "site-packages/",
 )
 
+# Exact file paths to skip. These files embed marker strings as test fixtures
+# or drill payloads — they are not governance declarations. Without this skip
+# list, regenerating the lock would bake synthetic hashes (e.g. the drill's
+# `deadbeefcafebabe`) into the inventory, and any future edit to the fixture
+# would trip a false drift alert.
+SKIP_FILES = frozenset({
+    "scripts/hardening_report.py",        # drill harness — synthetic `deadbeefcafebabe`
+    "tests/test_verify_constitutional_hashes.py",  # verifier's own test fixtures
+})
+
 
 def _list_files() -> Iterable[Path]:
     """Enumerate files git knows about, including submodules when present."""
@@ -74,6 +84,8 @@ def _list_files() -> Iterable[Path]:
         )
     for line in result.stdout.splitlines():
         path = Path(line)
+        if line in SKIP_FILES:
+            continue
         if any(line.startswith(p) for p in SKIP_PREFIXES):
             continue
         if path.suffix and path.suffix not in SCAN_EXTENSIONS:
