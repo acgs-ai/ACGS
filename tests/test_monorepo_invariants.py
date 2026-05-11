@@ -150,6 +150,37 @@ def test_existing_console_and_marketing_workflows_untouched():
             assert "working-directory: acgi-ai" in text
 
 
+def test_archon_harness_lessons_keep_acgs_boundary():
+    """Archon lessons must preserve ACGS as governance, not orchestration."""
+    text = (ROOT / "docs/design/acgs-archon-workflow-harness-lessons.md").read_text()
+
+    required_phrases = [
+        "docs/adr/0001-in-context-procedure-execution-external-runtime-governance.md",
+        "docs/design/acgs-phoenix-observability.md",
+        "tests/test_monorepo_invariants.py",
+        "packages/enhanced_agent_bus` is not present",
+        "YAML DAG workflow definitions",
+        "Worktree isolation",
+        "Workflow run persistence",
+        "Provider capability flags",
+        "fail-closed runtime gates",
+        "tamper-evident evidence",
+        "not as a product positioning template",
+    ]
+    missing = [phrase for phrase in required_phrases if phrase not in text]
+    assert not missing, f"Archon lessons missing concrete adoption anchors: {missing}"
+
+    forbidden_claims = [
+        "ACGS is an Archon replacement",
+        "compliance-certified",
+        "regulator-ready",
+        "full on-chain",
+    ]
+    assert not any(claim in text for claim in forbidden_claims), (
+        "Archon lessons must not drift into certification or replacement claims."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Constitutional-hash lock file shape
 # ---------------------------------------------------------------------------
