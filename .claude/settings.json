@@ -40,10 +40,6 @@
       "Bash(gh workflow run:*)",
       "Bash(gcloud:*)",
       "Bash(vercel:*)",
-      "Bash(npm publish:*)",
-      "Bash(pnpm publish:*)",
-      "Bash(twine:*)",
-      "Bash(uv publish:*)",
       "Read(.env)",
       "Read(.env.*)",
       "Read(**/.env)",
@@ -55,15 +51,7 @@
       "Write(.env)",
       "Write(.env.*)",
       "Write(**/.env)",
-      "Write(**/.env.*)",
-      "Read(**/*credentials*.json)",
-      "Edit(**/*credentials*.json)",
-      "Read(**/*service-account*.json)",
-      "Edit(**/*service-account*.json)",
-      "Read(**/*.pem)",
-      "Read(**/*.p12)",
-      "Read(**/*TOKEN*.txt)",
-      "Read(**/*token*.txt)"
+      "Write(**/.env.*)"
     ]
   },
   "hooks": {

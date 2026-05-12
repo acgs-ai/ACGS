@@ -85,13 +85,6 @@ credentials/
 !/.claude/settings.json
 !/.claude/hooks/
 !/.claude/hooks/**
-!/.claude/agents/
-!/.claude/agents/**
-!/.claude/skills/
-!/.claude/skills/**
-!/.claude/templates/
-!/.claude/templates/**
-/.claude/settings.local.json
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on

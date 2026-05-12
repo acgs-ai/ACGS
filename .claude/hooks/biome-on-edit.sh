@@ -39,22 +39,11 @@ case "$file_path" in
   *) exit 0 ;;
 esac
 
-# Locate the acgi-ai package root by walking up from the file.
-pkg_root=""
-candidate="$(dirname "$file_path")"
-while [ "$candidate" != "/" ] && [ "$candidate" != "." ]; do
-  if [ -d "$candidate/acgi-ai/node_modules" ] && [ -f "$candidate/acgi-ai/package.json" ]; then
-    pkg_root="$candidate"
-    break
-  fi
-  candidate="$(dirname "$candidate")"
-done
-
-# Couldn't find an installed acgi-ai — skip silently.
-[ -z "$pkg_root" ] && exit 0
+[ -n "${CLAUDE_PROJECT_DIR:-}" ] || exit 0
+[ -d "$CLAUDE_PROJECT_DIR/acgi-ai/node_modules" ] || exit 0
 
 (
-  cd "$pkg_root" || exit 0
+  cd "$CLAUDE_PROJECT_DIR" || exit 0
   pnpm -F acgi-ai exec biome check --no-errors-on-unmatched "$file_path" >&2 2>&1 || true
 )
 

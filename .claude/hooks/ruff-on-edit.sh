@@ -46,22 +46,9 @@ case "$file_path" in
     ;;
 esac
 
-# Find the closest pyproject.toml that declares a [tool.ruff] section by
-# walking up from the file. Fall back to current working dir if not found.
-ruff_root=""
-candidate="$(dirname "$file_path")"
-while [ "$candidate" != "/" ] && [ "$candidate" != "." ]; do
-  if [ -f "$candidate/pyproject.toml" ] && grep -q '^\[tool\.ruff' "$candidate/pyproject.toml" 2>/dev/null; then
-    ruff_root="$candidate"
-    break
-  fi
-  candidate="$(dirname "$candidate")"
-done
+[ -n "${CLAUDE_PROJECT_DIR:-}" ] || exit 0
+[ -f "$CLAUDE_PROJECT_DIR/pyproject.toml" ] || exit 0
 
-if [ -z "$ruff_root" ]; then
-  uv run ruff check "$file_path" >&2 2>&1 || true
-else
-  (cd "$ruff_root" && uv run ruff check "$file_path" >&2 2>&1) || true
-fi
+(cd "$CLAUDE_PROJECT_DIR" && uv run ruff check "$file_path" >&2 2>&1) || true
 
 exit 0
