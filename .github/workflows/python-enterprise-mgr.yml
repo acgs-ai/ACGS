@@ -83,12 +83,19 @@ jobs:
       # doesn't cover all 96 backend modules and isn't intended to).
       - name: Test
         env:
-          # Test suite has its own SECRET_KEY setup per module via
-          # os.environ.setdefault; this is just a CI-side belt-and-braces
-          # so backend.auth.dependencies._load_secret_key() never raises
-          # during import on a stray collection path.
+          # SECRET_KEY: test suite has its own setup per module, but
+          # backend.auth.dependencies._load_secret_key() runs at import
+          # time, so set it CI-side too.
           SECRET_KEY: 'ci-test-secret-not-for-production-use-32+chars'
           ACGS_BOOTSTRAP_DEV_AUTH: '0'
+          # DATABASE_URL: backend/database.py creates the async engine at
+          # module import time. The default targets postgres+asyncpg,
+          # which (a) we don't install and (b) wouldn't be reachable from
+          # the runner anyway. Point it at an in-memory aiosqlite URL so
+          # SQLAlchemy can wire the engine without hitting a real DB.
+          # The targeted unit suite mocks AsyncSession; the engine is
+          # never actually exercised.
+          DATABASE_URL: 'sqlite+aiosqlite:///:memory:'
         run: |
           # No --strict-markers: pre-existing tests use 'unit', 'e2e',
           # 'governance', 'integration', 'slow', 'requires_db' markers
