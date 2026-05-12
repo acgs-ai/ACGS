@@ -55,7 +55,7 @@ done
 
 (
   cd "$pkg_root" || exit 0
-  pnpm -F acgi-ai exec biome check --no-errors-on-unmatched "$file_path" 2>&1 >&2 || true
+  pnpm -F acgi-ai exec biome check --no-errors-on-unmatched "$file_path" >&2 2>&1 || true
 )
 
 exit 0

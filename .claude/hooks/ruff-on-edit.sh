@@ -59,9 +59,9 @@ while [ "$candidate" != "/" ] && [ "$candidate" != "." ]; do
 done
 
 if [ -z "$ruff_root" ]; then
-  uv run ruff check "$file_path" 2>&1 >&2 || true
+  uv run ruff check "$file_path" >&2 2>&1 || true
 else
-  (cd "$ruff_root" && uv run ruff check "$file_path" 2>&1 >&2) || true
+  (cd "$ruff_root" && uv run ruff check "$file_path" >&2 2>&1) || true
 fi
 
 exit 0
