@@ -48,9 +48,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # No enable-cache + no cache-dependency-glob: this package doesn't
+      # have a uv.lock (it currently ships requirements*.txt instead), and
+      # setup-uv@v3 errors on the default '**/uv.lock' glob when no match
+      # exists. Install is fast enough that caching isn't worth the
+      # plumbing.
       - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
 
       # Dependencies declared inline (rather than reading the package's
       # requirements*.txt files) because the existing requirements-test.txt
