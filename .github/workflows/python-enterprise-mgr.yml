@@ -1,0 +1,94 @@
+# Path-filtered CI for acgs-enterprise-ai-manager/ — enterprise AI manager backend.
+# Triggers only when files under this package change.
+#
+# Targets both master and feat/monorepo-unification so PRs against the
+# integration branch (where this package currently lives in the unification
+# work) also get gated.
+
+name: python-enterprise-mgr
+
+on:
+  pull_request:
+    branches: [master, feat/monorepo-unification]
+    paths:
+      - 'acgs-enterprise-ai-manager/backend/**'
+      - 'acgs-enterprise-ai-manager/tests/**'
+      - 'acgs-enterprise-ai-manager/conftest.py'
+      - '.github/workflows/python-enterprise-mgr.yml'
+  push:
+    branches: [master, feat/monorepo-unification]
+    paths:
+      - 'acgs-enterprise-ai-manager/backend/**'
+      - 'acgs-enterprise-ai-manager/tests/**'
+      - 'acgs-enterprise-ai-manager/conftest.py'
+      - '.github/workflows/python-enterprise-mgr.yml'
+
+concurrency:
+  group: python-enterprise-mgr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: acgs-enterprise-ai-manager
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      # Dependencies declared inline (rather than reading the package's
+      # requirements*.txt files) because the existing requirements-test.txt
+      # is missing email-validator / bcrypt / python-jose and pins an old
+      # httpx (0.25) that conflicts with the test suite's use of
+      # ASGITransport (httpx 0.28+).
+      - name: Install dependencies
+        run: |
+          uv pip install --system \
+            'fastapi>=0.104' \
+            'uvicorn>=0.24' \
+            'pydantic[email]>=2.5' \
+            'sqlalchemy>=2.0' \
+            'aiosqlite>=0.19' \
+            'bcrypt>=4.0' \
+            'python-jose[cryptography]>=3.3' \
+            'httpx>=0.28' \
+            'pyyaml>=6.0' \
+            'python-dateutil>=2.8' \
+            'pytest>=7.4' \
+            'pytest-asyncio>=0.21' \
+            'pytest-mock>=3.12'
+
+      # Run pytest with explicit args rather than inheriting the package's
+      # pytest.ini, which sets --cov-fail-under=80 (the targeted unit suite
+      # doesn't cover all 96 backend modules and isn't intended to).
+      - name: Test
+        env:
+          # Test suite has its own SECRET_KEY setup per module via
+          # os.environ.setdefault; this is just a CI-side belt-and-braces
+          # so backend.auth.dependencies._load_secret_key() never raises
+          # during import on a stray collection path.
+          SECRET_KEY: 'ci-test-secret-not-for-production-use-32+chars'
+          ACGS_BOOTSTRAP_DEV_AUTH: '0'
+        run: |
+          python -m pytest tests/ \
+            -v \
+            --tb=short \
+            --strict-markers \
+            -o "addopts=" \
+            -p no:cacheprovider
