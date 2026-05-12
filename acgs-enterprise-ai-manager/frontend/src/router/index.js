@@ -55,11 +55,15 @@ const router = createRouter({
 })
 
 // Navigation guard for authentication
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
+  if (authStore.hasToken && !authStore.isAuthenticated) {
+    await authStore.restoreSession()
+  }
+
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
-    next('/login')
+    next({ path: '/login', query: { redirect: to.fullPath } })
   } else if (to.path === '/login' && authStore.isAuthenticated) {
     next('/')
   } else {
