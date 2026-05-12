@@ -41,8 +41,7 @@ class GovernanceStorageError(RuntimeError):
 
 
 class PolicyEngine(Protocol):
-    def evaluate(self, action_id: str, args: dict[str, Any], targets: "RuntimeTargets") -> "AdmissionDecision":
-        ...
+    def evaluate(self, action_id: str, args: dict[str, Any], targets: "RuntimeTargets") -> "AdmissionDecision": ...
 
 
 @dataclass(frozen=True)
@@ -194,7 +193,9 @@ class DeterministicPolicyEngine:
     def evaluate(self, action_id: str, args: dict[str, Any], targets: RuntimeTargets) -> AdmissionDecision:
         raise NotImplementedError("use evaluate_policy for normalized policy output")
 
-    def evaluate_policy(self, action_id: str, args: dict[str, Any], targets: RuntimeTargets) -> tuple[str, str, list[str]]:
+    def evaluate_policy(
+        self, action_id: str, args: dict[str, Any], targets: RuntimeTargets
+    ) -> tuple[str, str, list[str]]:
         policy_ids = ["governed-mcp-v0-side-effect-policy"]
         if action_id not in GUARDED_ACTIONS:
             return "deny", f"unknown guarded action: {action_id}", policy_ids
@@ -206,7 +207,11 @@ class DeterministicPolicyEngine:
             try:
                 _resolve_fixture_path(targets.fs_dir, raw_path)
             except ValueError:
-                return "deny", "filesystem writes are limited to fixtures/fs", policy_ids
+                return (
+                    "deny",
+                    "filesystem writes are limited to fixtures/fs",
+                    policy_ids,
+                )
             return "allow", "sandbox file write allowed", policy_ids
 
         if action_id == "database.execute_sql_mutation":
@@ -215,9 +220,17 @@ class DeterministicPolicyEngine:
                 return "deny", "sql mutation requires a string statement", policy_ids
             first = sql.strip().split(None, 1)[0].upper() if sql.strip() else ""
             if first in {"DELETE", "DROP", "ALTER", "TRUNCATE", "CREATE"}:
-                return "deny", f"sql mutation verb {first or '<empty>'} is denied", policy_ids
+                return (
+                    "deny",
+                    f"sql mutation verb {first or '<empty>'} is denied",
+                    policy_ids,
+                )
             if first not in {"INSERT", "UPDATE"}:
-                return "deny", "only INSERT and UPDATE fixture mutations are allowed", policy_ids
+                return (
+                    "deny",
+                    "only INSERT and UPDATE fixture mutations are allowed",
+                    policy_ids,
+                )
             return "allow", "fixture sql mutation allowed", policy_ids
 
         if action_id == "email.send":
@@ -225,21 +238,36 @@ class DeterministicPolicyEngine:
             if not isinstance(recipient, str):
                 return "deny", "email recipient must be a string", policy_ids
             if not recipient.endswith("@example.test"):
-                return "deny", "email sends are limited to example.test fixture recipients", policy_ids
+                return (
+                    "deny",
+                    "email sends are limited to example.test fixture recipients",
+                    policy_ids,
+                )
             return "allow", "fixture email send allowed", policy_ids
 
         if action_id == "deploy.restart_service":
             service = args.get("service")
             environment = args.get("environment")
             if service != "sandbox-api" or environment != "sandbox":
-                return "deny", "deploy restarts are limited to sandbox-api in sandbox", policy_ids
+                return (
+                    "deny",
+                    "deploy restarts are limited to sandbox-api in sandbox",
+                    policy_ids,
+                )
             return "allow", "sandbox deploy restart allowed", policy_ids
 
         if action_id == "github.mutate_repo":
             repo = args.get("repo")
             mutation = args.get("mutation")
-            if repo != "sandbox/repo" or mutation not in {"label_issue", "comment_issue"}:
-                return "deny", "github mutations are limited to sandbox/repo issue metadata", policy_ids
+            if repo != "sandbox/repo" or mutation not in {
+                "label_issue",
+                "comment_issue",
+            }:
+                return (
+                    "deny",
+                    "github mutations are limited to sandbox/repo issue metadata",
+                    policy_ids,
+                )
             return "allow", "sandbox github mutation allowed", policy_ids
 
         command = args.get("command")
@@ -266,7 +294,14 @@ class GovernedMCPServer:
             raise GovernanceDenied(recorded.reason)
         expected_action = GUARDED_TOOLS.get(tool_name)
         if expected_action is None:
-            recorded = self._record_decision(action_id, tool_name, args, "deny", f"unknown tool: {tool_name}", ["fail-closed"])
+            recorded = self._record_decision(
+                action_id,
+                tool_name,
+                args,
+                "deny",
+                f"unknown tool: {tool_name}",
+                ["fail-closed"],
+            )
             raise GovernanceDenied(recorded.reason)
         if expected_action != action_id:
             recorded = self._record_decision(
@@ -287,9 +322,15 @@ class GovernedMCPServer:
                 raw = self.policy_engine.evaluate(action_id, args, self.targets)
                 decision, reason, policy_ids = raw.decision, raw.reason, raw.policy_ids
         except Exception as exc:
-            normalized_args_hash = sha256_json({"args": args}) if isinstance(args, dict) else sha256_json({"malformed": True})
+            normalized_args_hash = (
+                sha256_json({"args": args}) if isinstance(args, dict) else sha256_json({"malformed": True})
+            )
             constitution_hash = _constitution_hash_or_missing(self.targets)
-            decision, reason, policy_ids = "deny", f"fail closed: {exc.__class__.__name__}", ["fail-closed"]
+            decision, reason, policy_ids = (
+                "deny",
+                f"fail closed: {exc.__class__.__name__}",
+                ["fail-closed"],
+            )
         recorded = self._record_decision(
             action_id,
             tool_name,
@@ -368,10 +409,18 @@ class GovernedMCPServer:
     def github_read_issue(self, repo: str, issue_number: int) -> dict[str, Any]:
         state = _read_json(self.targets.github_state_path)
         issues = state.get("issues", {})
-        return dict(issues.get(f"{repo}#{issue_number}", {"repo": repo, "issue_number": issue_number, "title": "fixture"}))
+        return dict(
+            issues.get(
+                f"{repo}#{issue_number}",
+                {"repo": repo, "issue_number": issue_number, "title": "fixture"},
+            )
+        )
 
     def write_file(self, path: str, content: str) -> Path:
-        args = {"path": path, "content_hash": sha256(content.encode("utf-8")).hexdigest()}
+        args = {
+            "path": path,
+            "content_hash": sha256(content.encode("utf-8")).hexdigest(),
+        }
         self.admit("filesystem.write_file", "write_file", args)
         target = _resolve_fixture_path(self.targets.fs_dir, path)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -386,15 +435,34 @@ class GovernedMCPServer:
             return int(cursor.rowcount)
 
     def send_email(self, to: str, subject: str, body: str) -> None:
-        self.admit("email.send", "send_email", {"to": to, "subject": subject, "body_hash": sha256(body.encode()).hexdigest()})
+        self.admit(
+            "email.send",
+            "send_email",
+            {
+                "to": to,
+                "subject": subject,
+                "body_hash": sha256(body.encode()).hexdigest(),
+            },
+        )
         _append_jsonl(self.targets.outbox_path, {"to": to, "subject": subject, "body": body})
 
     def deploy_service(self, service: str, environment: str) -> None:
-        self.admit("deploy.restart_service", "deploy_service", {"service": service, "environment": environment})
-        _write_json(self.targets.deploy_state_path, {"service": service, "environment": environment, "status": "restarted"})
+        self.admit(
+            "deploy.restart_service",
+            "deploy_service",
+            {"service": service, "environment": environment},
+        )
+        _write_json(
+            self.targets.deploy_state_path,
+            {"service": service, "environment": environment, "status": "restarted"},
+        )
 
     def mutate_github(self, repo: str, mutation: str, payload: dict[str, Any]) -> None:
-        self.admit("github.mutate_repo", "mutate_github", {"repo": repo, "mutation": mutation, "payload_hash": sha256_json(payload)})
+        self.admit(
+            "github.mutate_repo",
+            "mutate_github",
+            {"repo": repo, "mutation": mutation, "payload_hash": sha256_json(payload)},
+        )
         state = _read_json(self.targets.github_state_path)
         state.setdefault("mutations", []).append({"repo": repo, "mutation": mutation, "payload": payload})
         _write_json(self.targets.github_state_path, state)
@@ -441,8 +509,14 @@ def create_fixture_environment(root: Path) -> RuntimeTargets:
         connection.execute("CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
         connection.execute("INSERT OR IGNORE INTO records (id, value) VALUES (1, 'fixture')")
         connection.commit()
-    _write_json(targets.deploy_state_path, {"service": "sandbox-api", "environment": "sandbox", "status": "ready"})
-    _write_json(targets.github_state_path, {"issues": {"sandbox/repo#1": {"title": "fixture issue"}}, "mutations": []})
+    _write_json(
+        targets.deploy_state_path,
+        {"service": "sandbox-api", "environment": "sandbox", "status": "ready"},
+    )
+    _write_json(
+        targets.github_state_path,
+        {"issues": {"sandbox/repo#1": {"title": "fixture issue"}}, "mutations": []},
+    )
     return targets
 
 
@@ -460,7 +534,12 @@ def _iter_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _verify_allowed_effect(targets: RuntimeTargets, receipt: dict[str, Any], line_number: int, failures: list[str]) -> None:
+def _verify_allowed_effect(
+    targets: RuntimeTargets,
+    receipt: dict[str, Any],
+    line_number: int,
+    failures: list[str],
+) -> None:
     if receipt.get("decision") != "allow":
         return
     action_id = receipt.get("action_id")
@@ -512,7 +591,11 @@ def _verify_allowed_effect(targets: RuntimeTargets, receipt: dict[str, Any], lin
         except Exception:
             failures.append(f"audit line {line_number}: deploy_effect_malformed")
             return
-        if state != {"service": args.get("service"), "environment": args.get("environment"), "status": "restarted"}:
+        if state != {
+            "service": args.get("service"),
+            "environment": args.get("environment"),
+            "status": "restarted",
+        }:
             failures.append(f"audit line {line_number}: deploy_effect_mismatch")
         return
 

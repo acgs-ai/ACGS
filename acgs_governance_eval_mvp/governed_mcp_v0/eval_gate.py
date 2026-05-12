@@ -81,7 +81,9 @@ def deny_github_mutation(tmp_path: Path) -> None:
 
 
 class _ExplodingPolicyEngine(DeterministicPolicyEngine):
-    def evaluate_policy(self, action_id: str, args: dict[str, object], targets: RuntimeTargets) -> tuple[str, str, list[str]]:
+    def evaluate_policy(
+        self, action_id: str, args: dict[str, object], targets: RuntimeTargets
+    ) -> tuple[str, str, list[str]]:
         raise RuntimeError("policy engine unavailable")
 
 
@@ -136,7 +138,11 @@ def mcp_server_import_has_no_runtime_side_effect() -> None:
 
 def loop_safe_read_file(tmp_path: Path) -> None:
     server = _server(tmp_path, "loop_safe_read_file")
-    state = GovernedGraphState(tool_name="read_file", action_id="filesystem.read_file", tool_args={"path": "readme.txt"})
+    state = GovernedGraphState(
+        tool_name="read_file",
+        action_id="filesystem.read_file",
+        tool_args={"path": "readme.txt"},
+    )
     updated = execute_governed_tool_call(state, server)
     assert updated.approved is True
     assert updated.messages[-1]["status"] == "allow"
@@ -177,7 +183,11 @@ def loop_deny_path_escape_write(tmp_path: Path) -> None:
 
 def loop_unknown_tool_fails_closed(tmp_path: Path) -> None:
     server = _server(tmp_path, "loop_unknown_tool_fails_closed")
-    state = GovernedGraphState(tool_name="erase_world", action_id="unknown.action", tool_args={"target": "fixture"})
+    state = GovernedGraphState(
+        tool_name="erase_world",
+        action_id="unknown.action",
+        tool_args={"target": "fixture"},
+    )
     updated = execute_governed_tool_call(state, server)
     assert updated.approved is False
     assert updated.messages[-1]["status"] == "deny"

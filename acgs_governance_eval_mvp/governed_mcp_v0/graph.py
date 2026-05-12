@@ -226,7 +226,11 @@ def _fail_closed(
                     ["fail-closed"],
                 )
             else:
-                server.admit(action_id or "unknown.action", tool_name or "unknown", args if isinstance(args, dict) else args)
+                server.admit(
+                    action_id or "unknown.action",
+                    tool_name or "unknown",
+                    args if isinstance(args, dict) else args,
+                )
         except Exception as exc:
             reason = str(exc) or reason
     receipt = _latest_receipt(server)
@@ -285,7 +289,13 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
                 state,
                 allowed=True,
                 reason=reason,
-                message=_message(tool_name=tool_name, action_id=action_id, status="allow", reason=reason, result=result),
+                message=_message(
+                    tool_name=tool_name,
+                    action_id=action_id,
+                    status="allow",
+                    reason=reason,
+                    result=result,
+                ),
             )
 
         if tool_name == "list_files":
@@ -295,7 +305,13 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
                 state,
                 allowed=True,
                 reason=reason,
-                message=_message(tool_name=tool_name, action_id=action_id, status="allow", reason=reason, result=result),
+                message=_message(
+                    tool_name=tool_name,
+                    action_id=action_id,
+                    status="allow",
+                    reason=reason,
+                    result=result,
+                ),
             )
 
         if tool_name == "query_sql_select":
@@ -308,7 +324,13 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
                 state,
                 allowed=True,
                 reason=reason,
-                message=_message(tool_name=tool_name, action_id=action_id, status="allow", reason=reason, result=result),
+                message=_message(
+                    tool_name=tool_name,
+                    action_id=action_id,
+                    status="allow",
+                    reason=reason,
+                    result=result,
+                ),
             )
 
         if tool_name == "github_read_issue":
@@ -321,7 +343,13 @@ def execute_governed_tool_call(state: GovernedGraphState, server: Any) -> Govern
                 state,
                 allowed=True,
                 reason=reason,
-                message=_message(tool_name=tool_name, action_id=action_id, status="allow", reason=reason, result=result),
+                message=_message(
+                    tool_name=tool_name,
+                    action_id=action_id,
+                    status="allow",
+                    reason=reason,
+                    result=result,
+                ),
             )
 
         approval_request = interrupt_for_approval(state)
