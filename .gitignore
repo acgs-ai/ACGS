@@ -75,7 +75,16 @@ credentials/
 !/.omc/skills/**
 .remember
 .omx
-.claude
+
+# Claude Code: per-user state ignored, shared team config tracked at root.
+# Sub-package .claude/ dirs stay fully ignored — each package owns its own
+# setup if needed. Mirrors the .omc/ whitelist pattern above.
+**/.claude/
+!/.claude/
+/.claude/*
+!/.claude/settings.json
+!/.claude/hooks/
+!/.claude/hooks/**
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on
