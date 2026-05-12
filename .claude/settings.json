@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make:*)",
+      "Bash(pnpm:*)",
+      "Bash(uv:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(biome:*)",
+      "Bash(python scripts/verify_constitutional_hashes.py:*)",
+      "Bash(python scripts/hardening_report.py:*)",
+      "Bash(python3 scripts/verify_constitutional_hashes.py:*)",
+      "Bash(python3 scripts/hardening_report.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(git submodule status:*)",
+      "Bash(git -C packages/acgs-lite:*)",
+      "Bash(git -C packages/Acgs-Swarm:*)",
+      "Bash(git -C packages/clinicalguard:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git add -A:*)",
+      "Bash(git add .:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -f:*)",
+      "Bash(git checkout master:*)",
+      "Bash(git checkout main:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh release:*)",
+      "Bash(gh secret:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(gcloud:*)",
+      "Bash(vercel:*)",
+      "Bash(npm publish:*)",
+      "Bash(pnpm publish:*)",
+      "Bash(twine:*)",
+      "Bash(uv publish:*)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
+      "Write(.env)",
+      "Write(.env.*)",
+      "Write(**/.env)",
+      "Write(**/.env.*)",
+      "Read(**/*credentials*.json)",
+      "Edit(**/*credentials*.json)",
+      "Read(**/*service-account*.json)",
+      "Edit(**/*service-account*.json)",
+      "Read(**/*.pem)",
+      "Read(**/*.p12)",
+      "Read(**/*TOKEN*.txt)",
+      "Read(**/*token*.txt)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/seal-block.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/submodule-warn.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/biome-on-edit.sh"
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/ruff-on-edit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
