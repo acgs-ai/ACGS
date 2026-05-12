@@ -1,0 +1,110 @@
+# Path-filtered CI for acgs-enterprise-ai-manager/ — enterprise AI manager backend.
+# Triggers only when files under this package change.
+#
+# Targets both master and feat/monorepo-unification so PRs against the
+# integration branch (where this package currently lives in the unification
+# work) also get gated.
+
+name: python-enterprise-mgr
+
+on:
+  pull_request:
+    branches: [master, feat/monorepo-unification]
+    paths:
+      - 'acgs-enterprise-ai-manager/backend/**'
+      - 'acgs-enterprise-ai-manager/tests/**'
+      - 'acgs-enterprise-ai-manager/frontend/src/**'
+      - 'acgs-enterprise-ai-manager/conftest.py'
+      - '.github/workflows/python-enterprise-mgr.yml'
+  push:
+    branches: [master, feat/monorepo-unification]
+    paths:
+      - 'acgs-enterprise-ai-manager/backend/**'
+      - 'acgs-enterprise-ai-manager/tests/**'
+      - 'acgs-enterprise-ai-manager/frontend/src/**'
+      - 'acgs-enterprise-ai-manager/conftest.py'
+      - '.github/workflows/python-enterprise-mgr.yml'
+
+concurrency:
+  group: python-enterprise-mgr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: acgs-enterprise-ai-manager
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # No enable-cache + no cache-dependency-glob: this package doesn't
+      # have a uv.lock (it currently ships requirements*.txt instead), and
+      # setup-uv@v3 errors on the default '**/uv.lock' glob when no match
+      # exists. Install is fast enough that caching isn't worth the
+      # plumbing.
+      - uses: astral-sh/setup-uv@v3
+
+      # Dependencies declared inline (rather than reading the package's
+      # requirements*.txt files) because the existing requirements-test.txt
+      # is missing email-validator / bcrypt / python-jose and pins an old
+      # httpx (0.25) that conflicts with the test suite's use of
+      # ASGITransport (httpx 0.28+).
+      - name: Install dependencies
+        run: |
+          uv pip install --system \
+            'fastapi>=0.104' \
+            'uvicorn>=0.24' \
+            'pydantic[email]>=2.5' \
+            'sqlalchemy>=2.0' \
+            'aiosqlite>=0.19' \
+            'bcrypt>=4.0' \
+            'python-jose[cryptography]>=3.3' \
+            'httpx>=0.28' \
+            'pyyaml>=6.0' \
+            'python-dateutil>=2.8' \
+            'python-dotenv>=1.0' \
+            'pytest>=7.4' \
+            'pytest-asyncio>=0.21' \
+            'pytest-mock>=3.12'
+
+      # Run pytest with explicit args rather than inheriting the package's
+      # pytest.ini, which sets --cov-fail-under=80 (the targeted unit suite
+      # doesn't cover all 96 backend modules and isn't intended to).
+      - name: Test
+        env:
+          # SECRET_KEY: test suite has its own setup per module, but
+          # backend.auth.dependencies._load_secret_key() runs at import
+          # time, so set it CI-side too.
+          SECRET_KEY: 'ci-test-secret-not-for-production-use-32+chars'
+          ACGS_BOOTSTRAP_DEV_AUTH: '0'
+          # DATABASE_URL: backend/database.py creates the async engine at
+          # module import time. The default targets postgres+asyncpg,
+          # which (a) we don't install and (b) wouldn't be reachable from
+          # the runner anyway. Point it at an in-memory aiosqlite URL so
+          # SQLAlchemy can wire the engine without hitting a real DB.
+          # The targeted unit suite mocks AsyncSession; the engine is
+          # never actually exercised.
+          DATABASE_URL: 'sqlite+aiosqlite:///:memory:'
+        run: |
+          # No --strict-markers: pre-existing tests use 'unit', 'e2e',
+          # 'governance', 'integration', 'slow', 'requires_db' markers
+          # registered in pytest.ini (not committed). Local runs reach
+          # 101 passed + 15 self-skipped with this same `tests/` scope.
+          python -m pytest tests/ \
+            -v \
+            --tb=short \
+            -o "addopts=" \
+            -p no:cacheprovider
