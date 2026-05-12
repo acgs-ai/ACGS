@@ -1,0 +1,6 @@
+.env
+audit.log
+node_modules/
+config.json
+*.png
+.omc/

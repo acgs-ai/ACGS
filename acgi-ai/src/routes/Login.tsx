@@ -1,7 +1,7 @@
 import { ArrowRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
-import { createSession, hasSession } from '../lib/session'
+import { hasSession } from '../lib/session'
 import { CONSTITUTION_HASH } from './console/shared'
 
 type Provider = {
@@ -25,6 +25,7 @@ function nextConsolePath(fallback: string | undefined): string {
 
 export function Login({ nextPath }: { nextPath?: string }) {
   const [pending, setPending] = useState<Provider['id'] | null>(null)
+  const [ssoError, setSsoError] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [magicQueued, setMagicQueued] = useState(false)
   const timeoutRef = useRef<number | null>(null)
@@ -48,13 +49,18 @@ export function Login({ nextPath }: { nextPath?: string }) {
   }, [])
 
   function go(p: Provider) {
+    // SSO redirect URLs are not yet wired. Do NOT grant access here —
+    // createSession() must only be called after a real IdP callback confirms
+    // identity. Show a clear error instead of fake-granting privilege.
+    setSsoError(null)
+    setMagicQueued(false)
     setPending(p.id)
-    // No real handler yet — wire to your IdP redirect URL when SSO lands.
-    // For now, simulate a brief lag and route into the console.
     timeoutRef.current = window.setTimeout(() => {
       timeoutRef.current = null
-      createSession()
-      navigate(nextConsolePath(nextPath))
+      setPending(null)
+      setSsoError(
+        `${p.label} is not yet configured. Contact your administrator to provision SSO access.`,
+      )
     }, 600)
   }
 
@@ -144,6 +150,11 @@ export function Login({ nextPath }: { nextPath?: string }) {
         {pending && (
           <p className="login-pending">
             Redirecting to <strong>{pending}</strong>…
+          </p>
+        )}
+        {ssoError && (
+          <p className="login-error" role="alert">
+            {ssoError}
           </p>
         )}
         {magicQueued && (

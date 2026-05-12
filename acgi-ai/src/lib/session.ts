@@ -28,6 +28,11 @@ function emitSessionChange(): void {
 }
 
 export function createSession(): void {
+  // Development-only escape hatch. Production auth must be owned by the real
+  // IdP callback and server session, never by client-side session minting.
+  if (import.meta.env.PROD) {
+    throw new Error('createSession is development-only; production auth requires IdP callback.')
+  }
   const storage = getSessionStorage()
   if (!storage) return
   const session: ConsoleSession = {

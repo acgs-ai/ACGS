@@ -943,6 +943,10 @@
   background: currentColor;
 }
 
+.c-heartbeat-live.mock {
+  color: var(--risk-mid);
+}
+
 .c-heartbeat-item {
   display: grid;
   align-content: center;
