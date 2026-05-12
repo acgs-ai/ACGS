@@ -7,6 +7,14 @@ dependencies = [
   "pyyaml>=6.0"
 ]
 
+# Setuptools auto-discovery refuses to proceed when multiple top-level
+# packages exist in a flat-layout. This project now has two
+# (`governance` and `governed_mcp_v0`), so list them explicitly. The
+# `*` wildcards include subpackages without enumerating every one.
+[tool.setuptools.packages.find]
+include = ["governance*", "governed_mcp_v0*"]
+namespaces = false
+
 [project.optional-dependencies]
 api = [
   "fastapi>=0.111",
