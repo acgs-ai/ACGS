@@ -38,12 +38,26 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
+      # clinicalguard is one of the private repos that motivates the PAT.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          # See SUBMODULE_TOKEN note in constitutional-hash.yml.
-          # clinicalguard is the actual private repo that motivates this token.
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+          submodules: false
+
+      - name: Init submodules
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          # Init only this workflow's submodule. NOTE: currently expected to
+          # FAIL until SUBMODULE_TOKEN is rotated to add Contents: Read on
+          # dislovelhl/clinicalguard. Other workflows are insulated by the
+          # selective init — see constitutional-hash.yml for rationale.
+          git submodule sync -- packages/clinicalguard
+          git submodule update --init --recursive -- packages/clinicalguard
 
       - uses: actions/setup-python@v5
         with:

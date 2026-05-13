@@ -38,11 +38,23 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          # See SUBMODULE_TOKEN note in constitutional-hash.yml.
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+          submodules: false
+
+      - name: Init submodules
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          # Init only this workflow's submodule — avoids tripping on
+          # other submodules' PAT-scope gaps (notably clinicalguard).
+          git submodule sync -- packages/Acgs-Swarm
+          git submodule update --init --recursive -- packages/Acgs-Swarm
 
       - uses: actions/setup-python@v5
         with:
