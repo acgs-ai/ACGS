@@ -79,13 +79,29 @@ Components 1–3.
 
 **Deferred pending:** `api_gateway` + WorkOS source landing in ACGS master.
 
-**Rationale:** Stage 0 empirical investigation (commit `94f570a` on ACGS
-`master`) found zero matches for `WorkOSConfig`, `SAMLConfig`, and an
-`api_gateway` directory. The AUTHZ surface referenced in prior planning
-documents does not exist in the repository. Evidence is documented in
-`.omc/state/team/govern-zone-phase-b3/stage-0-findings.md` (artifact to be
-committed by Stage 0a' — file absent from working tree at time of authoring;
-see Phase B/3 PR #stage-1a description for the inline empirical note).
+**Rationale:** Stage 0 empirical investigation (ACGS master @ `94f570a`) found
+zero matches for all AUTHZ anchor symbols. Full findings artifact at workspace
+path: `/home/martin/Downloads/govern-zone/.omc/state/team/govern-zone-phase-b3/stage-0-findings.md`
+(workspace-scoped state; outside ACGS git tree — intentionally not committed
+to ACGS).
+
+**Inlined empirical evidence** (from `stage-0-findings.md §2`, reproduced here
+so reviewers do not need to access workspace-state outside this repo):
+
+| Search | Result |
+|---|---|
+| `test -f src/core/services/api_gateway/routes/sso/workos.py` | MISSING |
+| `test -f src/core/services/api_gateway/routes/admin_workos.py` | MISSING |
+| `test -f src/core/shared/auth/workos.py` | MISSING |
+| `test -f src/core/shared/auth/saml_config.py` | MISSING |
+| `git grep -lE 'WorkOSConfig\|WorkOSClient\|workos_settings'` | empty |
+| `git grep -lE 'SAMLConfig\|SamlConfig\|saml_settings'` | empty |
+| `find . -type d -name 'api_gateway'` (incl. submodules) | empty |
+| `grep -rlI WorkOS --include='*.py' --include='*.ts'` | `PLAN.md` only (acgi-ai-scoped, out of scope) |
+
+**Conclusion:** The AUTHZ symbols do not exist anywhere in ACGS master — not
+relocated, not present. The bail condition from the plan's Stage 1a step 4.c
+is met.
 
 When the AUTHZ surface lands, the roadmap should cover:
 - WorkOS / SAML authentication integration points
