@@ -97,3 +97,8 @@ credentials/
 /eab-production-hardening/
 /scheduled-todos-backup-2026-04-30/
 /swarm-mesh-refactors-backup-2026-04-30/
+
+# Scratch / debug artifacts at workspace root (per-developer, never tracked).
+/ACGS-pr52-review/
+/atomic-agents-playground/
+/request.json
