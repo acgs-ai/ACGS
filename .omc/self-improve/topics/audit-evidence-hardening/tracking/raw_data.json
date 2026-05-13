@@ -1,0 +1,35 @@
+[
+  {
+    "round": 0,
+    "label": "phase_b_baseline_on_improve_tip",
+    "regression_coverage_score": 1.228571,
+    "regression_coverage_points": 86,
+    "phase_b_new_points": 16,
+    "pass_rate": 1.0,
+    "total": 58,
+    "regression_marked_tests": 49,
+    "commit": "e97b70e",
+    "note": "Baseline captured from improve/eval-regression-coverage-hardening tip before adding evidence-hardening tests. Includes Round 1 CRIT tests from prior topic."
+  },
+  {
+    "round": 1,
+    "label": "round_1_evidence_hardening",
+    "regression_coverage_score": 1.342857,
+    "regression_coverage_points": 94,
+    "phase_b_new_points": 24,
+    "pass_rate": 1.0,
+    "total": 62,
+    "regression_marked_tests": 53,
+    "commit": "feat/eval-r2-topic (pending commit)",
+    "approach_family": "evidence_hardening",
+    "new_points_this_topic": 8,
+    "accepted": true,
+    "test_file": "tests/test_evidence_hardening.py",
+    "coverage_angles_added": [
+      "audit_chain_reconstructible_after_concurrent_writes",
+      "audit_guard_refusal_carries_evidence_message",
+      "spoof_attempt_produces_persisted_audit_evidence",
+      "auth_denial_is_hash_linked_into_audit_chain"
+    ]
+  }
+]

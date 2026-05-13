@@ -1,0 +1,20 @@
+{
+  "topic_slug": "audit-evidence-hardening",
+  "benchmark_command": "bash scripts/bench-coverage.sh",
+  "primary_metric": "regression_coverage_score",
+  "target_value": 1.30,
+  "approach_family": "evidence_hardening",
+  "auto_push": false,
+  "auto_pr": false,
+  "h002_prohibited_families": ["regression_proofing"],
+  "sealed_files": [
+    "scripts/bench-coverage.sh",
+    "scripts/check-scope.sh",
+    "tests/regression_seed.json",
+    ".omc/self-improve/topics/eval-regression-coverage-hardening/state/phase_a_nodeids.json"
+  ],
+  "shared_denominator": {
+    "seed_baseline_points": 70,
+    "source_topic": "eval-regression-coverage-hardening"
+  }
+}

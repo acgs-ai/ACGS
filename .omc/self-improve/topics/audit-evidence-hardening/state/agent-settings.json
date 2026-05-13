@@ -1,0 +1,37 @@
+{
+  "si_setting_goal": true,
+  "si_setting_benchmark": true,
+  "si_setting_harness": true,
+  "trust_confirmed": true,
+  "status": "round_1_complete",
+  "iterations": 1,
+  "best_score": 1.342857,
+  "baseline_score": 1.228571,
+  "plateau_consecutive_count": 0,
+  "circuit_breaker_count": 0,
+  "goal_slug": "audit-evidence-hardening",
+  "topic_slug": "audit-evidence-hardening",
+  "phase": "B",
+  "phase_b_baseline": {
+    "regression_coverage_score": 1.228571,
+    "regression_coverage_points": 86,
+    "phase_b_new_points": 16,
+    "pass_rate": 1.0,
+    "total": 58,
+    "commit": "e97b70e",
+    "note": "Inherited from improve/eval-regression-coverage-hardening tip"
+  },
+  "phase_b_target": {
+    "regression_coverage_score": 1.30,
+    "min_phase_b_new_points": 8
+  },
+  "phase_b_actual": {
+    "regression_coverage_score": 1.342857,
+    "regression_coverage_points": 94,
+    "phase_b_new_points": 24,
+    "new_points_this_topic": 8,
+    "pass_rate": 1.0,
+    "total": 62,
+    "branch_tip": "feat/eval-r2-topic"
+  }
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "ts": "2026-05-12T00:00:00Z",
+    "event": "topic_scaffolded",
+    "branch": "feat/eval-r2-topic",
+    "base_branch": "improve/eval-regression-coverage-hardening",
+    "base_commit": "e97b70e",
+    "approach_family": "evidence_hardening",
+    "note": "Branched off improve/ (not main) because sealed harness (bench-coverage.sh, regression_seed.json, phase_a_nodeids.json) lives on that branch. Denominator shared with eval-regression-coverage-hardening topic."
+  },
+  {
+    "ts": "2026-05-12T00:00:00Z",
+    "event": "round_1_complete",
+    "score_before": 1.228571,
+    "score_after": 1.342857,
+    "phase_b_new_points_before": 16,
+    "phase_b_new_points_after": 24,
+    "new_points_this_topic": 8,
+    "tests_added": 4,
+    "pass_rate": 1.0,
+    "approach_family": "evidence_hardening",
+    "test_file": "tests/test_evidence_hardening.py"
+  }
+]
