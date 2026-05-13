@@ -62,7 +62,10 @@ def load_design_colors() -> dict[str, str]:
 
 def load_css_vars() -> dict[str, str]:
     css = (ROOT / 'src/index.css').read_text(encoding='utf-8')
-    return {name: value.lower() for name, value in re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})', css)}
+    return {
+        name: value.lower()
+        for name, value in re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})', css)
+    }
 
 
 def main() -> int:

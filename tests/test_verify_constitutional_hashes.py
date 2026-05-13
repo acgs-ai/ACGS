@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 import verify_constitutional_hashes as verifier
 
 ROOT = Path(__file__).resolve().parent.parent

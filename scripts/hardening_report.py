@@ -76,7 +76,7 @@ class DrillRecord:
 def drill_drift_detection(repo_root: Path) -> DrillRecord:
     """Inject a marker into a temp file inside a synthetic git tree and
     confirm the verifier detects the resulting added/changed marker."""
-    started = dt.datetime.now(dt.timezone.utc).isoformat()
+    started = dt.datetime.now(dt.UTC).isoformat()
     drill_id = uuid.uuid4().hex[:12]
     events: list[dict] = []
 
@@ -103,8 +103,8 @@ def drill_drift_detection(repo_root: Path) -> DrillRecord:
         events.append({"step": "baseline_pin", "exit": result.returncode})
         if result.returncode != 0:
             return DrillRecord("drift-detection", drill_id, "failed",
-                               started, dt.datetime.now(dt.timezone.utc).isoformat(),
-                               events + [{"step": "abort", "reason": result.stderr}])
+                               started, dt.datetime.now(dt.UTC).isoformat(),
+                               [*events, {"step": "abort", "reason": result.stderr}])
 
         # Inject a synthetic marker.
         (td_path / "policy.py").write_text(
@@ -124,9 +124,13 @@ def drill_drift_detection(repo_root: Path) -> DrillRecord:
             "exit": result.returncode,
             "stdout_contains_ADDED": "ADDED" in result.stdout,
         })
-        passed = result.returncode == 1 and "ADDED" in result.stdout and "policy.py" in result.stdout
+        passed = (
+            result.returncode == 1
+            and "ADDED" in result.stdout
+            and "policy.py" in result.stdout
+        )
 
-    finished = dt.datetime.now(dt.timezone.utc).isoformat()
+    finished = dt.datetime.now(dt.UTC).isoformat()
     return DrillRecord(
         "drift-detection", drill_id,
         "passed" if passed else "failed",
@@ -136,7 +140,7 @@ def drill_drift_detection(repo_root: Path) -> DrillRecord:
 
 def drill_workflow_schema(repo_root: Path) -> DrillRecord:
     """Every workflow under .github/workflows/ must parse and declare on/jobs."""
-    started = dt.datetime.now(dt.timezone.utc).isoformat()
+    started = dt.datetime.now(dt.UTC).isoformat()
     drill_id = uuid.uuid4().hex[:12]
     events: list[dict] = []
     all_pass = True
@@ -162,7 +166,7 @@ def drill_workflow_schema(repo_root: Path) -> DrillRecord:
         if not ok:
             all_pass = False
 
-    finished = dt.datetime.now(dt.timezone.utc).isoformat()
+    finished = dt.datetime.now(dt.UTC).isoformat()
     return DrillRecord(
         "workflow-schema", drill_id,
         "passed" if all_pass else "failed",
@@ -172,14 +176,14 @@ def drill_workflow_schema(repo_root: Path) -> DrillRecord:
 
 def drill_lock_integrity(repo_root: Path) -> DrillRecord:
     """docs/constitutional-hashes.lock must parse and conform to schema."""
-    started = dt.datetime.now(dt.timezone.utc).isoformat()
+    started = dt.datetime.now(dt.UTC).isoformat()
     drill_id = uuid.uuid4().hex[:12]
     events: list[dict] = []
     lock_path = repo_root / "docs" / "constitutional-hashes.lock"
 
     if not lock_path.exists():
         events.append({"step": "exists", "result": False})
-        finished = dt.datetime.now(dt.timezone.utc).isoformat()
+        finished = dt.datetime.now(dt.UTC).isoformat()
         return DrillRecord("lock-integrity", drill_id, "failed", started, finished, events)
 
     try:
@@ -187,7 +191,7 @@ def drill_lock_integrity(repo_root: Path) -> DrillRecord:
         events.append({"step": "parse", "result": "ok"})
     except json.JSONDecodeError as e:
         events.append({"step": "parse", "result": "fail", "error": str(e)})
-        finished = dt.datetime.now(dt.timezone.utc).isoformat()
+        finished = dt.datetime.now(dt.UTC).isoformat()
         return DrillRecord("lock-integrity", drill_id, "failed", started, finished, events)
 
     has_key = "hashes" in data and isinstance(data["hashes"], dict)
@@ -195,11 +199,19 @@ def drill_lock_integrity(repo_root: Path) -> DrillRecord:
 
     bad_entries = []
     for path, h in data.get("hashes", {}).items():
-        if not isinstance(h, str) or len(h) != 16 or not all(c in "0123456789abcdefABCDEF" for c in h):
+        if (
+            not isinstance(h, str)
+            or len(h) != 16
+            or not all(c in "0123456789abcdefABCDEF" for c in h)
+        ):
             bad_entries.append({"path": path, "hash": h})
-    events.append({"step": "entry_validation", "bad_entries": bad_entries, "count": len(data.get("hashes", {}))})
+    events.append({
+        "step": "entry_validation",
+        "bad_entries": bad_entries,
+        "count": len(data.get("hashes", {})),
+    })
 
-    finished = dt.datetime.now(dt.timezone.utc).isoformat()
+    finished = dt.datetime.now(dt.UTC).isoformat()
     passed = has_key and not bad_entries
     return DrillRecord("lock-integrity", drill_id, "passed" if passed else "failed",
                        started, finished, events)
@@ -230,7 +242,10 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
     all_present = has_makefile and has_turbo and has_pnpm_ws and has_pyproject
     items.append(ChecklistItem(
         number=2,
-        description="Build orchestration installed (Makefile + turbo.json + pnpm-workspace.yaml + pyproject.toml)",
+        description=(
+            "Build orchestration installed (Makefile + turbo.json + "
+            "pnpm-workspace.yaml + pyproject.toml)"
+        ),
         status="pass" if all_present else "fail",
         evidence=(f"Makefile={has_makefile}, turbo.json={has_turbo}, "
                   f"pnpm-workspace.yaml={has_pnpm_ws}, pyproject.toml={has_pyproject}"),
@@ -269,7 +284,10 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
     missing = [w for w in expected_workflows if not (repo_root / ".github/workflows" / w).is_file()]
     items.append(ChecklistItem(
         number=4,
-        description=f"Path-filtered CI for parent-tracked surfaces ({len(expected_workflows)} workflows)",
+        description=(
+            f"Path-filtered CI for parent-tracked surfaces "
+            f"({len(expected_workflows)} workflows)"
+        ),
         status="pass" if not missing else "fail",
         evidence=f"missing={missing}" if missing else "all present",
     ))
@@ -299,7 +317,10 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         number=7,
         description="Drift drill: synthetic marker injection detected by verifier",
         status="pass" if drift and drift.status == "passed" else "fail",
-        evidence=f"drill={drift.drill_id if drift else 'not-run'}, status={drift.status if drift else 'n/a'}",
+        evidence=(
+            f"drill={drift.drill_id if drift else 'not-run'}, "
+            f"status={drift.status if drift else 'n/a'}"
+        ),
     ))
 
     # 8. Workflow schema drill
@@ -308,21 +329,30 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         number=8,
         description="All workflows parse and declare on:/jobs:",
         status="pass" if schema and schema.status == "passed" else "fail",
-        evidence=f"drill={schema.drill_id if schema else 'not-run'}, status={schema.status if schema else 'n/a'}",
+        evidence=(
+            f"drill={schema.drill_id if schema else 'not-run'}, "
+            f"status={schema.status if schema else 'n/a'}"
+        ),
     ))
 
     # 9. Plan recorded
+    _plan_path = repo_root / "docs/PLAN-MONOREPO.md"
+    _plan_size_kb = _plan_path.stat().st_size // 1024 if _plan_path.is_file() else 0
     items.append(ChecklistItem(
         number=9,
         description="docs/PLAN-MONOREPO.md exists and records the multi-phase plan",
-        status="pass" if (repo_root / "docs/PLAN-MONOREPO.md").is_file() else "fail",
-        evidence=f"size_kb={(repo_root / 'docs/PLAN-MONOREPO.md').stat().st_size // 1024 if (repo_root / 'docs/PLAN-MONOREPO.md').is_file() else 0}",
+        status="pass" if _plan_path.is_file() else "fail",
+        evidence=f"size_kb={_plan_size_kb}",
     ))
 
     # 10. Phase 2 — submodule registration
     gitmodules = repo_root / ".gitmodules"
     if gitmodules.is_file():
-        sm_lines = [l for l in gitmodules.read_text().splitlines() if l.strip().startswith("path = ")]
+        sm_lines = [
+            line
+            for line in gitmodules.read_text().splitlines()
+            if line.strip().startswith("path = ")
+        ]
         items.append(ChecklistItem(
             number=10,
             description="Phase 2 (submodule registration) — landed",
@@ -345,7 +375,7 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
 # ---------------------------------------------------------------------------
 
 def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     passes = sum(1 for i in items if i.status == "pass")
     fails = sum(1 for i in items if i.status == "fail")
     pending = sum(1 for i in items if i.status == "pending")
@@ -353,7 +383,7 @@ def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
     lines = [
         f"# Monorepo Hardening Report — {now.strftime('%Y-%m-%d %H:%M UTC')}",
         "",
-        f"**Scope:** docs/PLAN-MONOREPO.md Phase 1 + 2 + 4 + 5.",
+        "**Scope:** docs/PLAN-MONOREPO.md Phase 1 + 2 + 4 + 5.",
         "",
         f"**Result:** {passes}/{len(items)} pass · {fails} fail · {pending} pending",
         "",
@@ -363,7 +393,10 @@ def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
         "|---|---|---|---|",
     ]
     for item in items:
-        lines.append(f"| {item.number} | {item.icon} {item.status} | {item.description} | `{item.evidence}` |")
+        lines.append(
+            f"| {item.number} | {item.icon} {item.status} | "
+            f"{item.description} | `{item.evidence}` |"
+        )
 
     lines += ["", "## Drill Records", ""]
     for d in drills:
@@ -413,7 +446,7 @@ def persist_drills(drills: list[DrillRecord], drills_dir: Path) -> list[Path]:
 
 def persist_report(text: str, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
-    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
     path = reports_dir / f"hardening-{ts}.md"
     path.write_text(text)
     return path

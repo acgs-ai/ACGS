@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 try:
     from .evidence_writer import ChainEvidenceWriter
@@ -120,13 +121,19 @@ DEFAULT_CONSTITUTION: dict[str, Any] = {
     "pii_patterns": [
         {
             "id": "PARAM_PII_GUARD",
-            "regex": r"(?i)\b(ssn|sin|social security|password|secret[_-]?key|api[_-]?key|private[_-]?key)\b",
+            "regex": (
+                r"(?i)\b(ssn|sin|social security|password|secret[_-]?key"
+                r"|api[_-]?key|private[_-]?key)\b"
+            ),
         }
     ],
     "redaction_patterns": [
         {
             "id": "OUTPUT_REDACT_API_KEY_ASSIGNMENT",
-            "regex": r"(?i)(api[_-]?key|secret[_-]?key|password)\s*[:=]\s*[\"']?[A-Za-z0-9_\-]{8,}[\"']?",
+            "regex": (
+                r"(?i)(api[_-]?key|secret[_-]?key|password)"
+                r"\s*[:=]\s*[\"']?[A-Za-z0-9_\-]{8,}[\"']?"
+            ),
             "replacement": "[REDACTED:SECRET]",
         },
         {
@@ -150,7 +157,11 @@ DEFAULT_CONSTITUTION: dict[str, Any] = {
             },
         ],
         "post_tool": [
-            {"id": "OUTPUT_REDACT", "action": "REDACT", "when": "raw_result matches redaction_patterns"}
+            {
+                "id": "OUTPUT_REDACT",
+                "action": "REDACT",
+                "when": "raw_result matches redaction_patterns",
+            }
         ],
         "final_check": [
             {
@@ -214,7 +225,9 @@ def _jsonable_text(value: Any) -> str:
         return str(value)
 
 
-def _compile_patterns(patterns: list[dict[str, str]] | None) -> list[tuple[str, re.Pattern[str], str]]:
+def _compile_patterns(
+    patterns: list[dict[str, str]] | None,
+) -> list[tuple[str, re.Pattern[str], str]]:
     compiled: list[tuple[str, re.Pattern[str], str]] = []
     for index, item in enumerate(patterns or []):
         pattern_id = item.get("id") or f"PATTERN_{index}"
@@ -249,10 +262,16 @@ class HermesACGSMiddleware:
         )
         self.agent_id = agent_id
         self.fail_closed = fail_closed
-        self.evidence = ChainEvidenceWriter(evidence_path, session_id=session_id) if evidence_path else None
+        self.evidence = (
+            ChainEvidenceWriter(evidence_path, session_id=session_id)
+            if evidence_path
+            else None
+        )
 
         self._pii_patterns = _compile_patterns(self.constitution.get("pii_patterns", []))
-        self._redaction_patterns = _compile_patterns(self.constitution.get("redaction_patterns", []))
+        self._redaction_patterns = _compile_patterns(
+            self.constitution.get("redaction_patterns", [])
+        )
 
     def check_pre_tool(
         self,
@@ -302,7 +321,11 @@ class HermesACGSMiddleware:
             )
 
         args_text = _jsonable_text(args)
-        pii_hits = [pattern_id for pattern_id, pattern, _ in self._pii_patterns if pattern.search(args_text)]
+        pii_hits = [
+            pattern_id
+            for pattern_id, pattern, _ in self._pii_patterns
+            if pattern.search(args_text)
+        ]
         if pii_hits:
             return GovernanceDecision(
                 action=DENY,
@@ -313,7 +336,9 @@ class HermesACGSMiddleware:
 
         operation = str(context.get("operation", "")).lower()
         write_tools = set(self.constitution.get("write_tools", []))
-        sensitive_ops = {str(op).lower() for op in self.constitution.get("sensitive_operations", [])}
+        sensitive_ops = {
+            str(op).lower() for op in self.constitution.get("sensitive_operations", [])
+        }
         if tool_name in write_tools or operation in sensitive_ops:
             return GovernanceDecision(
                 action=REQUIRE_HUMAN,
@@ -456,7 +481,10 @@ class HermesACGSMiddleware:
             return prefix
 
         if decision.action == SOFT_BLOCK_WITH_EXPLANATION:
-            reason_text = "; ".join(decision.reasons) or "Governance policy blocked the final answer."
+            reason_text = (
+                "; ".join(decision.reasons)
+                or "Governance policy blocked the final answer."
+            )
             return f"I cannot release this answer as written. Reason: {reason_text}"
 
         if decision.action == DENY:
@@ -505,7 +533,10 @@ class HermesACGSMiddleware:
     def user_friendly_explain(self, decision: GovernanceDecision) -> str:
         reasons = "; ".join(decision.reasons) if decision.reasons else "No reason provided."
         policies = ", ".join(decision.policy_ids) if decision.policy_ids else "unclassified_policy"
-        return f"ACGS blocked or paused this action. Decision={decision.action}. Policies={policies}. Reason={reasons}"
+        return (
+            f"ACGS blocked or paused this action. Decision={decision.action}. "
+            f"Policies={policies}. Reason={reasons}"
+        )
 
     def _audit(
         self,

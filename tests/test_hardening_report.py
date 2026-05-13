@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 import hardening_report as hr
 
 ROOT = Path(__file__).resolve().parent.parent
