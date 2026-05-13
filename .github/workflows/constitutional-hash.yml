@@ -29,16 +29,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Two-step checkout: parent uses the default github.token (always
+      # has contents:read on this repo), then submodules are initialized
+      # separately with SUBMODULE_TOKEN via `git url.insteadOf` rewrite.
+      # Avoids the truthy-fallback trap where an invalid-but-set
+      # SUBMODULE_TOKEN beats `|| github.token` and silently breaks the
+      # parent-repo fetch. SUBMODULE_TOKEN needs `Contents: Read` on each
+      # submodule repo (public submodules ignore the auth header).
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          # Cross-repo submodule clones need a token that can read every
-          # submodule's repo. Default github.token is scoped to this repo
-          # only, so private submodules (e.g. clinicalguard) 404 the clone
-          # step. Configure SUBMODULE_TOKEN as a fine-grained PAT or App
-          # token with read:contents on each submodule repo; falls back to
-          # github.token so public-only forks still work.
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+          submodules: false
+
+      - name: Init submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - uses: actions/setup-python@v5
         with:

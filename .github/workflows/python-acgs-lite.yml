@@ -43,11 +43,21 @@ jobs:
         # honest about what PyPI consumers actually experience.
         python-version: ['3.10', '3.11', '3.12']
     steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-          # See SUBMODULE_TOKEN note in constitutional-hash.yml.
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
+          submodules: false
+
+      - name: Init submodules
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - uses: actions/setup-python@v5
         with:
