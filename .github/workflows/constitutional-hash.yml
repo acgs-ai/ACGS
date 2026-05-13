@@ -29,16 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # No submodule checkout needed yet: the hash inventory is empty in the
+      # parent-tracked tree. The script falls back to `git ls-files` (no
+      # submodules) so SUBMODULE_TOKEN is not required here.
+      # When Phase 2 (docs/PLAN-MONOREPO.md) registers markers inside
+      # packages/*, re-enable:  submodules: recursive + token: ${{ secrets.SUBMODULE_TOKEN }}
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          # Cross-repo submodule clones need a token that can read every
-          # submodule's repo. Default github.token is scoped to this repo
-          # only, so private submodules (e.g. clinicalguard) 404 the clone
-          # step. Configure SUBMODULE_TOKEN as a fine-grained PAT or App
-          # token with read:contents on each submodule repo; falls back to
-          # github.token so public-only forks still work.
-          token: ${{ secrets.SUBMODULE_TOKEN || github.token }}
 
       - uses: actions/setup-python@v5
         with:
