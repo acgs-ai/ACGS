@@ -10,3 +10,12 @@
 	path = packages/Acgs-Swarm
 	url = https://github.com/dislovelhl/Acgs-Swarm.git
 	branch = langgraph-runtime/unit-10-coordinator
+[submodule "external/natural_language_autoencoders"]
+	path = external/natural_language_autoencoders
+	url = https://github.com/kitft/natural_language_autoencoders.git
+[submodule "external/UI-TARS-desktop"]
+	path = external/UI-TARS-desktop
+	url = https://github.com/bytedance/UI-TARS-desktop
+[submodule "external/everything-claude-code"]
+	path = external/everything-claude-code
+	url = https://github.com/affaan-m/everything-claude-code.git
