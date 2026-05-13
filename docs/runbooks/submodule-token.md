@@ -115,6 +115,13 @@ See §Failure Modes.
 | `python-acgs-swarm` | `25689767873` | `master` | failure | Submodule clone failed — clinicalguard 404; also baseline ruff red (Stage 0a) |
 | `python-clinicalguard` | `25689767986` | `master` | failure | Submodule clone failed — clinicalguard 404 |
 
+> **Critical finding:** 3 of 4 workflows currently fail at the **checkout step**
+> with `fatal: repository 'dislovelhl/clinicalguard.git/' not found`. The root
+> cause is `SUBMODULE_TOKEN` lacking `contents: read` scope on the private
+> `dislovelhl/clinicalguard` repo — **not the code under test**. No lint,
+> type-check, or test step has been reached in these workflows. Fixing the
+> token will unblock all three without any code changes.
+
 **Interpretation:** `constitutional-hash` passed because it does not depend on
 `packages/clinicalguard` content beyond the submodule pointer. The three
 package-specific workflows failed because SUBMODULE_TOKEN lacks `contents: read`
