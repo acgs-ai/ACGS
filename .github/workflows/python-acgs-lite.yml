@@ -56,8 +56,10 @@ jobs:
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          # Init only this workflow's submodule — avoids tripping on
+          # other submodules' PAT-scope gaps (notably clinicalguard).
+          git submodule sync -- packages/acgs-lite
+          git submodule update --init --recursive -- packages/acgs-lite
 
       - uses: actions/setup-python@v5
         with:

@@ -52,8 +52,12 @@ jobs:
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          # Init only this workflow's submodule. NOTE: currently expected to
+          # FAIL until SUBMODULE_TOKEN is rotated to add Contents: Read on
+          # dislovelhl/clinicalguard. Other workflows are insulated by the
+          # selective init — see constitutional-hash.yml for rationale.
+          git submodule sync -- packages/clinicalguard
+          git submodule update --init --recursive -- packages/clinicalguard
 
       - uses: actions/setup-python@v5
         with:

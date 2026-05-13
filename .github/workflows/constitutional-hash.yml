@@ -47,8 +47,14 @@ jobs:
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          # Init only the submodules this workflow needs. Today the lock at
+          # docs/constitutional-hashes.lock only references packages/acgs-lite/
+          # paths (verified 2026-05-13). Initing others would gratuitously
+          # consume PAT scopes we don't need (notably clinicalguard, which
+          # the PAT doesn't cover) and slow CI. Add to this list if the lock
+          # grows to reference more submodules.
+          git submodule sync -- packages/acgs-lite
+          git submodule update --init --recursive -- packages/acgs-lite
 
       - uses: actions/setup-python@v5
         with:
