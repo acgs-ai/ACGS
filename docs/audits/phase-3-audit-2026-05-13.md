@@ -12,17 +12,20 @@
 
 ## Summary
 
-| Check | Name | Verdict |
-|-------|------|---------|
-| 1 | AGENTS.md / CLAUDE.md accuracy | PARTIAL |
-| 2 | Generated index accuracy | FAIL |
-| 3 | Per-subproject gate green | FAIL |
-| 4 | Cross-subproject dependency drift | PASS |
-| 5 | ADR coverage for monorepo decisions | FAIL |
-| 6 | Security/permissions on SUBMODULE_TOKEN workflows | PARTIAL |
-| 7 | Sealed-file integrity | PARTIAL |
+| Check | Name | Initial Verdict | Re-Run Verdict (post PR #24) |
+|-------|------|-----------------|------------------------------|
+| 1 | AGENTS.md / CLAUDE.md accuracy | PARTIAL | PARTIAL |
+| 2 | Generated index accuracy | FAIL | FAIL |
+| 3 | Per-subproject gate green | FAIL | FAIL |
+| 4 | Cross-subproject dependency drift | PASS | PASS |
+| 5 | ADR coverage for monorepo decisions | FAIL | **PARTIAL** ↑ |
+| 6 | Security/permissions on SUBMODULE_TOKEN workflows | PARTIAL | PARTIAL |
+| 7 | Sealed-file integrity | PARTIAL | PARTIAL |
 
-**PASS: 1 / FAIL: 3 / PARTIAL: 3**
+**Initial: PASS 1 / FAIL 3 / PARTIAL 3**
+**Re-Run: PASS 1 / FAIL 2 / PARTIAL 4** (Check 5 flipped FAIL → PARTIAL after Stage 1a merge)
+
+See [Re-Run Results — Post PR #24 Merge](#re-run-results--post-pr-24-merge-d6d1793) at end of document.
 
 ---
 
@@ -407,3 +410,110 @@ merge." Running the audit before Stage 1a merges explains the FAIL verdicts on C
 The two CRIT-class deferred findings should be resolved by merging Stage 1a (adds the deliverables)
 and adding a `verify:` Makefile target. A re-run of Checks 3 and 5 after Stage 1a merges would
 likely flip those to PASS.
+
+---
+
+## Re-Run Results — Post PR #24 Merge (d6d1793)
+
+**Re-run date:** 2026-05-13 (post Stage 1a merge)
+**Master commit:** `d6d1793` (Merge pull request #24 from dislovelhl/feat/roadmap-duo)
+**Trigger:** initial audit Check 5 was deferred pending Stage 1a merge; PR #24 merged 2026-05-13T09:59:38Z.
+
+### Re-evaluation commands
+
+```bash
+cd '/home/martin/finished work/govern-zone'
+git fetch origin --prune
+git log --oneline -3 origin/master
+# Check 3 — verify target on new master
+git show origin/master:ACGS/Makefile | grep -E '^verify:'
+git ls-tree origin/master:pi
+# Check 5 — Stage 1a deliverables
+git show origin/master:MACI-ROADMAP.md | head -5
+git show origin/master:docs/workspace-PLAN.md | head -5
+git show origin/master:ACGS/MACI-ROADMAP.md       # path the original audit checked
+git show origin/master:ACGS/docs/workspace-PLAN.md
+git ls-tree origin/master:docs/adr
+# Check 6 — plan-named workflows
+git ls-tree origin/master:.github/workflows
+# Check 7 — sealed-file lock
+git show origin/master:docs/constitutional-hashes.lock | head -3
+```
+
+### Re-evaluation findings
+
+#### Check 3 — UNCHANGED (FAIL)
+
+- `ACGS/Makefile` on `origin/master` still has **no `verify:` target** (`grep -E '^verify:'` exits with 0 matches).
+- `pi/` still absent at `origin/master` (`git ls-tree origin/master:pi` → `fatal: Not a valid object name`).
+- PR #24 only added MACI-ROADMAP.md + workspace-PLAN.md; it did not touch ACGS/Makefile or create `pi/`.
+- **Verdict: FAIL (unchanged).** Resolution still requires a separate `make verify` PR scoped to ACGS submodule.
+
+#### Check 5 — FLIPPED (FAIL → PARTIAL)
+
+Stage 1a deliverables are now present, but **at workspace root** (not under `ACGS/` as the original audit's command checked):
+
+| Path | Initial audit expected | PR #24 placed | Status |
+|---|---|---|---|
+| MACI roadmap | `ACGS/MACI-ROADMAP.md` | `MACI-ROADMAP.md` (workspace root) | PRESENT at different path |
+| Workspace plan | `ACGS/docs/workspace-PLAN.md` | `docs/workspace-PLAN.md` (workspace root) | PRESENT at different path |
+| ADR-019 | `ACGS/docs/adr/ADR-019-evoskills.md` | unchanged | PRESENT |
+| ADR-0001 | (n/a in initial audit) | `docs/adr/0001-in-context-procedure-execution-external-runtime-governance.md` | NEWLY discovered at workspace root |
+
+The workspace-PLAN.md preamble explicitly states: *"Canonical location: `ACGS/govern-zone/docs/workspace-PLAN.md`. Workspace-root readers: see `/home/martin/Downloads/govern-zone/PLAN.md` for a pointer."* — so the workspace-root copy is intentional, with the canonical version expected to land inside ACGS later.
+
+**ADR gap inventory (re-evaluated):**
+
+| Decision area | Expected ADR | Status |
+|---|---|---|
+| MACI 4-role architecture | ADR for MACI separation of powers | **STILL MISSING** |
+| Workspace-level monorepo split | ADR for monorepo topology | **STILL MISSING** |
+| SUBMODULE_TOKEN PAT strategy | ADR for token rotation | **STILL MISSING** |
+| External runtime governance | `docs/adr/0001-in-context-procedure-execution-external-runtime-governance.md` | NEW (workspace root) |
+| EvoSkills skill evolution | `ACGS/docs/adr/ADR-019-evoskills.md` | EXISTS |
+
+- **Verdict: PARTIAL (was FAIL).** Stage 1a deliverables exist (at workspace root); ADR coverage still incomplete for MACI/monorepo/SUBMODULE_TOKEN. Cannot flip to PASS until those 3 ADRs land.
+
+#### Check 6 — UNCHANGED (PARTIAL), with scope-cite clarification
+
+The 4 plan-named workflows DO exist — but at **workspace-root** `.github/workflows/`, not at `ACGS/.github/workflows/` (which the initial audit checked):
+
+| Workflow | `ACGS/.github/workflows/` (initial audit) | workspace-root `.github/workflows/` (re-run) |
+|---|---|---|
+| `constitutional-hash.yml` | absent | **EXISTS** |
+| `python-acgs-lite.yml` | absent | **EXISTS** |
+| `python-acgs-swarm.yml` | absent | **EXISTS** |
+| `python-clinicalguard.yml` | absent | **EXISTS** |
+
+The initial audit's scope (look inside `ACGS/`) was different from where the workflows actually live (workspace root). The plan's intent (per `.omc/plans/govern-zone-phase-b3-revised.md`) appears to refer to workspace-root workflows. **Permissions on these workflows have NOT been re-inspected as part of this re-run** — defer to a Check 6 amendment or follow-up.
+
+- **Verdict: PARTIAL (unchanged).** Permissions inspection of the now-located workflows is deferred.
+
+#### Check 7 — UNCHANGED (PARTIAL), with scope-cite clarification
+
+`docs/constitutional-hashes.lock` exists at **workspace root** (the initial audit checked `ACGS/docs/constitutional-hashes.lock`, which is still absent). Same scope-cite pattern as Checks 5 and 6: the audit's expectation that all governance artifacts live inside `ACGS/` does not match how the workspace actually organizes them.
+
+- The workspace-root `docs/constitutional-hashes.lock` exists and could be used as the canonical baseline; the ACGS-internal hash recomputation procedure remains undocumented.
+- **Verdict: PARTIAL (unchanged).**
+
+### Summary of re-run
+
+- 1 check flipped: **Check 5 FAIL → PARTIAL** (because Stage 1a deliverables now exist, even if at the workspace-root pattern).
+- 3 checks (5, 6, 7) revealed the **same scope-cite ambiguity**: the audit expected paths inside `ACGS/`, but PR #24 (and prior workspace-level commits) placed governance artifacts at workspace root with explicit pointers to the canonical-inside-ACGS location. This is a **plan-vs-implementation scope mismatch**, not a defect.
+- 2 CRIT-class blockers from initial audit:
+  1. ✅ Stage 1a deliverables now present (at workspace root); Check 5 unblocked partially.
+  2. ❌ `make verify` target still missing from `ACGS/Makefile`; Check 3 still blocked.
+
+### New deferred findings (re-run only)
+
+| Finding | Source | Severity |
+|---|---|---|
+| Scope-cite mismatch: plan refers to artifacts at `ACGS/` but they live at workspace root | Checks 5, 6, 7 | LOW (interpretive, not a defect) |
+| `docs/adr/0001-in-context-procedure-execution-external-runtime-governance.md` at workspace root is a previously-uninventoried ADR | Check 5 | INFO |
+| Workflow permissions on `constitutional-hash.yml`, `python-acgs-lite.yml`, `python-acgs-swarm.yml`, `python-clinicalguard.yml` at workspace root not yet inspected | Check 6 | LOW (defer to Check 6 amendment) |
+
+### Recommendation
+
+- **Do NOT merge this PR as PASS-gate.** Two FAIL verdicts remain (Checks 2 and 3). Check 3 requires adding a `verify:` Makefile target inside the ACGS submodule.
+- **Do consider merging this PR for archival value** — the audit captures the workspace's current state, identifies a structural scope-cite ambiguity worth raising at plan level, and provides a clean baseline for a Phase 3.5 re-audit after Check 3 is unblocked.
+- **Next blocker:** Add `verify:` target to `ACGS/Makefile` in a separate PR scoped to the ACGS submodule, then re-run Check 3. (User-action: SUBMODULE_TOKEN PAT rotation is unrelated to this audit but blocks PRs #25/#26/#27.)
