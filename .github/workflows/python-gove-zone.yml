@@ -1,0 +1,66 @@
+# Path-filtered CI for packages/gove-zone/ — minimal governed agent runtime.
+# Triggers only when the kernel package, the workspace pyproject, or this
+# workflow change. No submodule init needed: gove-zone is a first-class
+# in-tree package, not a gitlink.
+
+name: python-gove-zone
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/gove-zone/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-gove-zone.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/gove-zone/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-gove-zone.yml'
+
+concurrency:
+  group: python-gove-zone-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/gove-zone
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+
+      - name: Install (dev + schema extras)
+        # Standalone CI: no parent uv workspace context. The package
+        # declares zero runtime deps and an optional pydantic via
+        # [project.optional-dependencies].schema.
+        run: uv pip install --system --no-config --editable '.[dev,schema]'
+
+      - name: Lint
+        run: |
+          python -m ruff check src tests examples
+          python -m ruff format --check src tests examples
+
+      - name: Test
+        # `--import-mode=importlib` matches the package's pytest config and
+        # keeps tests insulated from sys.path leakage from sibling packages.
+        run: python -m pytest tests/ -v
