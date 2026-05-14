@@ -21,9 +21,7 @@ class DeniedError(GoveZoneError):
     def __init__(self, record: DecisionRecord, audit_hash: str) -> None:
         self.record = record
         self.audit_hash = audit_hash
-        super().__init__(
-            f"denied by policy {record.policy_version!r}: {record.reason}"
-        )
+        super().__init__(f"denied by policy {record.policy_version!r}: {record.reason}")
 
 
 class EscalateError(GoveZoneError):
@@ -32,9 +30,7 @@ class EscalateError(GoveZoneError):
     def __init__(self, record: DecisionRecord, audit_hash: str) -> None:
         self.record = record
         self.audit_hash = audit_hash
-        super().__init__(
-            f"escalated by policy {record.policy_version!r}: {record.reason}"
-        )
+        super().__init__(f"escalated by policy {record.policy_version!r}: {record.reason}")
 
 
 class PolicyError(GoveZoneError):

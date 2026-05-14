@@ -66,9 +66,7 @@ class Kernel:
         self.registry = registry or ToolRegistry()
         self.actor = actor
 
-    def tool(
-        self, name: str
-    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator to register a tool under *name*.
 
         ::
@@ -135,9 +133,7 @@ class Kernel:
         )
         return result, receipt
 
-    def _evaluate_and_record(
-        self, call: ToolCall
-    ) -> tuple[DecisionRecord, str]:
+    def _evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
         """Evaluate policy + append to audit. Fail-closed on both steps.
 
         - If policy.evaluate raises, synthesize a DENY record with the
@@ -161,10 +157,7 @@ class Kernel:
             # Inject the goal into the policy's record so callers don't have
             # to thread it through every policy implementation.
             record = dataclasses.replace(record, goal=call.goal)
-            if (
-                record.decision is Decision.TRANSFORM
-                and record.transformed_args is None
-            ):
+            if record.decision is Decision.TRANSFORM and record.transformed_args is None:
                 record = dataclasses.replace(
                     record,
                     decision=Decision.DENY,
@@ -172,20 +165,14 @@ class Kernel:
                         *record.matched_rules,
                         "POLICY_ERROR:MALFORMED_TRANSFORM",
                     ),
-                    reason=(
-                        f"{record.reason}; "
-                        if record.reason
-                        else ""
-                    )
+                    reason=(f"{record.reason}; " if record.reason else "")
                     + "transform decision missing transformed_args",
                 )
 
         try:
             payload = self.audit.append(record)
         except Exception as exc:
-            raise AuditError(
-                f"audit append failed for {record.event_id}: {exc}"
-            ) from exc
+            raise AuditError(f"audit append failed for {record.event_id}: {exc}") from exc
 
         return record, str(payload["event_hash"])
 

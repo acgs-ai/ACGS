@@ -79,10 +79,7 @@ def record_to_governed_action(
         "receiptId": record.event_id,
         "receiptHash": audit_hash,
         "traceId": record.event_id,
-        "replayCommand": (
-            f"gove-zone replay --event {record.event_id} "
-            f"--audit-hash {audit_hash}"
-        ),
+        "replayCommand": (f"gove-zone replay --event {record.event_id} --audit-hash {audit_hash}"),
         "auditEventId": record.event_id,
         "checks": [
             {

@@ -108,14 +108,10 @@ class BoundaryPolicy(Policy):
         only_tools: Sequence[str] | None = None,
     ) -> None:
         self._keywords = tuple(k.lower() for k in forbidden_keywords)
-        self._patterns = tuple(
-            re.compile(p, re.IGNORECASE) for p in forbidden_patterns
-        )
+        self._patterns = tuple(re.compile(p, re.IGNORECASE) for p in forbidden_patterns)
         self._raw_patterns = tuple(forbidden_patterns)
         self._rule_id = rule_id
-        self._only_tools = (
-            None if only_tools is None else frozenset(only_tools)
-        )
+        self._only_tools = None if only_tools is None else frozenset(only_tools)
         self._version = self._compute_version()
 
     def _compute_version(self) -> str:
@@ -163,11 +159,7 @@ class BoundaryPolicy(Policy):
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=tuple(matched),
-            reason=(
-                f"matched {len(matched)} boundary rule(s)"
-                if matched
-                else "no boundary match"
-            ),
+            reason=(f"matched {len(matched)} boundary rule(s)" if matched else "no boundary match"),
         )
 
 
