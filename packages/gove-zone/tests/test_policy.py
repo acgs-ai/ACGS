@@ -90,9 +90,7 @@ def test_composite_policy_first_non_allow_wins() -> None:
 
 
 def test_composite_policy_allows_when_all_members_allow() -> None:
-    composite = CompositePolicy(
-        [AllowAllPolicy(), BoundaryPolicy(forbidden_keywords=["~/.ssh"])]
-    )
+    composite = CompositePolicy([AllowAllPolicy(), BoundaryPolicy(forbidden_keywords=["~/.ssh"])])
     record = composite.evaluate(_call(path="/tmp/ok"))
     assert record.decision is Decision.ALLOW
     assert record.policy_version.startswith("composite[")

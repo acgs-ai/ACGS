@@ -22,11 +22,11 @@ class ReplayResult:
     """Outcome of replaying a recorded decision."""
 
     event_id: str
-    matches: bool                       # original decision == replayed decision
+    matches: bool  # original decision == replayed decision
     original_decision: Decision
     replayed_decision: Decision
-    policy_version_match: bool          # exact version string match
-    argument_hash_match: bool           # original argument_hash == replayed
+    policy_version_match: bool  # exact version string match
+    argument_hash_match: bool  # original argument_hash == replayed
     reason: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,16 +75,9 @@ def replay_call(
     from the original receipt.
     """
     record = policy.evaluate(call)
-    pv_match = (
-        expected_policy_version is None
-        or record.policy_version == expected_policy_version
-    )
+    pv_match = expected_policy_version is None or record.policy_version == expected_policy_version
     arg_hash = sha256_json(dict(call.args))
-    matches = (
-        record.decision is expected_decision
-        and pv_match
-        and record.argument_hash == arg_hash
-    )
+    matches = record.decision is expected_decision and pv_match and record.argument_hash == arg_hash
     return ReplayResult(
         event_id=record.event_id,
         matches=matches,

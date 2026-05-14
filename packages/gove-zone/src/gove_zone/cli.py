@@ -61,9 +61,7 @@ def _replay(args: argparse.Namespace) -> int:
             "event_found": event is not None,
             "actual_audit_hash": actual_hash,
             "decision": event.get("decision") if event is not None else None,
-            "policy_version": (
-                event.get("policy_version") if event is not None else None
-            ),
+            "policy_version": (event.get("policy_version") if event is not None else None),
             "failures": chain["failures"],
         }
     )

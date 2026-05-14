@@ -86,9 +86,7 @@ def test_chain_detects_tampered_event_hash(tmp_path: Path) -> None:
     lines = path.read_text().splitlines()
     event = json.loads(lines[2])
     event["event_hash"] = "0" * 64
-    lines[2] = json.dumps(
-        event, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[2] = json.dumps(event, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     path.write_text("\n".join(lines) + "\n")
 
     result = ChainHashAuditStore(path).verify_chain()
@@ -104,9 +102,7 @@ def test_chain_detects_tampered_previous_hash(tmp_path: Path) -> None:
     lines = path.read_text().splitlines()
     event = json.loads(lines[2])
     event["previous_hash"] = "0" * 64
-    lines[2] = json.dumps(
-        event, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[2] = json.dumps(event, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     path.write_text("\n".join(lines) + "\n")
 
     result = ChainHashAuditStore(path).verify_chain()
@@ -118,9 +114,7 @@ def test_chain_detects_tampered_previous_hash(tmp_path: Path) -> None:
 def test_query_filter_predicate(tmp_path: Path) -> None:
     store = ChainHashAuditStore(tmp_path / "audit.jsonl")
     for i in range(10):
-        store.append(
-            _record(f"e{i}", tool="write_file" if i % 2 == 0 else "http_post")
-        )
+        store.append(_record(f"e{i}", tool="write_file" if i % 2 == 0 else "http_post"))
     writes = store.query(where=lambda e: e["tool"] == "write_file", limit=100)
     assert len(writes) == 5
     assert all(w["tool"] == "write_file" for w in writes)

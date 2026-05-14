@@ -84,10 +84,7 @@ def test_policy_raised_synthesizes_deny_and_records(tmp_path: Path) -> None:
     assert executed == []
     assert exc_info.value.record.decision is Decision.DENY
     # The synthetic record names the underlying exception class
-    assert any(
-        "POLICY_ERROR:RuntimeError" in r
-        for r in exc_info.value.record.matched_rules
-    )
+    assert any("POLICY_ERROR:RuntimeError" in r for r in exc_info.value.record.matched_rules)
     # The audit chain holds the DENY record
     events = list(audit.iter_events())
     assert len(events) == 1
@@ -126,9 +123,7 @@ def test_execution_failure_propagates_and_records_failure(tmp_path: Path) -> Non
     assert len(events) == 2
     assert events[0]["decision"] == "allow"
     assert events[1]["decision"] == "deny"
-    assert any(
-        "EXEC_FAILURE:ValueError" in r for r in events[1]["matched_rules"]
-    )
+    assert any("EXEC_FAILURE:ValueError" in r for r in events[1]["matched_rules"])
     assert audit.verify_chain()["valid"] is True
 
 
@@ -147,16 +142,12 @@ def test_transform_without_args_is_treated_as_deny(tmp_path: Path) -> None:
     assert executed == []
     assert exc_info.value.record.decision is Decision.DENY
     assert any(
-        "POLICY_ERROR:MALFORMED_TRANSFORM" in rule
-        for rule in exc_info.value.record.matched_rules
+        "POLICY_ERROR:MALFORMED_TRANSFORM" in rule for rule in exc_info.value.record.matched_rules
     )
     events = list(audit.iter_events())
     assert len(events) == 1
     assert events[0]["decision"] == "deny"
-    assert any(
-        "POLICY_ERROR:MALFORMED_TRANSFORM" in rule
-        for rule in events[0]["matched_rules"]
-    )
+    assert any("POLICY_ERROR:MALFORMED_TRANSFORM" in rule for rule in events[0]["matched_rules"])
 
 
 def test_audit_chain_holds_under_mixed_outcomes(tmp_path: Path) -> None:
