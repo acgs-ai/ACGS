@@ -77,6 +77,40 @@ export type ActionReceipt = {
   meta: string
 }
 
+export type DecisionOutcome = 'allowed' | 'denied' | 'transformed' | 'escalated'
+
+export type GovernanceCheck = {
+  id: string
+  label: string
+  posture: Posture
+  reason: string
+}
+
+export type GovernedAction = {
+  id: string
+  agent: string
+  action: string
+  target: string
+  attemptedAt: string
+  outcome: DecisionOutcome
+  plainReason: string
+  receiptId: string
+  receiptHash: string
+  traceId: string
+  replayCommand: string
+  auditEventId: string
+  checks: GovernanceCheck[]
+  before: string
+  after: string
+}
+
+export type ActionTestRequest = {
+  actionId: string
+  payload: string
+}
+
+export type ActionTestReceipt = ActionReceipt
+
 // ─── Overview ─────────────────────────────────────────────────────────────
 
 export type OverviewStat = { label: string; value: string; sub: string }
