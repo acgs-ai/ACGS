@@ -71,7 +71,7 @@ jobs:
           cache-dependency-glob: 'packages/acgs-lite/pyproject.toml'
 
       - name: Install (dev extras)
-        run: uv pip install --system --editable '.[dev]'
+        run: uv pip install --system --no-config --editable '.[dev,mcp]'
 
       - name: Lint
         run: make lint

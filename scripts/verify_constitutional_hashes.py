@@ -16,6 +16,7 @@ Usage:
     python scripts/verify_constitutional_hashes.py            # verify (CI)
     python scripts/verify_constitutional_hashes.py --update   # regenerate lock
     python scripts/verify_constitutional_hashes.py --print    # print inventory
+    python scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
 """
 from __future__ import annotations
 
@@ -159,6 +160,27 @@ def diff_inventories(
     return added, removed, changed
 
 
+def _filter_ignored_removed(
+    removed: list[str], ignored_prefixes: list[str]
+) -> tuple[list[str], list[str]]:
+    """Split removed paths into enforced and explicitly ignored groups."""
+    if not ignored_prefixes:
+        return removed, []
+
+    normalized = [
+        prefix if prefix.endswith("/") else f"{prefix}/"
+        for prefix in ignored_prefixes
+    ]
+    enforced: list[str] = []
+    ignored: list[str] = []
+    for path in removed:
+        if any(path.startswith(prefix) for prefix in normalized):
+            ignored.append(path)
+        else:
+            enforced.append(path)
+    return enforced, ignored
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -170,6 +192,18 @@ def main() -> int:
         "--print",
         action="store_true",
         help="Print the current inventory and exit 0.",
+    )
+    parser.add_argument(
+        "--ignore-missing-prefix",
+        action="append",
+        default=[],
+        metavar="PATH_PREFIX",
+        help=(
+            "Treat removed lock entries under PATH_PREFIX as explicitly "
+            "unavailable. Intended for CI jobs where a credential-gated "
+            "submodule cannot be initialized; strict verification remains "
+            "the default."
+        ),
     )
     args = parser.parse_args()
 
@@ -186,12 +220,26 @@ def main() -> int:
 
     pinned = load_lock()
     added, removed, changed = diff_inventories(pinned, inventory)
+    removed, ignored_removed = _filter_ignored_removed(
+        removed, args.ignore_missing_prefix
+    )
 
     if not (added or removed or changed):
+        if ignored_removed:
+            print(
+                "WARNING — ignored removed constitutional-hash lock entries "
+                "under unavailable prefixes:"
+            )
+            for path in ignored_removed:
+                print(f"    ! {path}  ({pinned[path]})")
         print(f"OK — {len(inventory)} constitutional hash markers verified clean.")
         return 0
 
     print("FAIL — constitutional-hash drift detected:\n")
+    if ignored_removed:
+        print(f"  IGNORED REMOVED ({len(ignored_removed)}):")
+        for path in ignored_removed:
+            print(f"    ! {path}  ({pinned[path]})")
     if added:
         print(f"  ADDED ({len(added)}):")
         for path in added:

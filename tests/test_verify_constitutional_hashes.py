@@ -20,7 +20,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 import verify_constitutional_hashes as verifier
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -227,6 +226,15 @@ def test_diff_handles_mixed_delta():
     assert changed == [("rotate", "r1", "r2")]
 
 
+def test_filter_ignored_removed_splits_by_prefix():
+    enforced, ignored = verifier._filter_ignored_removed(
+        ["packages/acgs-lite/a.py", "packages/clinicalguard/b.py"],
+        ["packages/clinicalguard"],
+    )
+    assert enforced == ["packages/acgs-lite/a.py"]
+    assert ignored == ["packages/clinicalguard/b.py"]
+
+
 # ---------------------------------------------------------------------------
 # CLI behavior — exit codes + output shape
 # ---------------------------------------------------------------------------
@@ -310,6 +318,25 @@ def test_cli_detects_removed_marker(tmp_path):
     result = _run_cli(cwd=repo)
     assert result.returncode == 1
     assert "REMOVED" in result.stdout
+
+
+def test_cli_can_explicitly_ignore_removed_prefix(tmp_path):
+    repo = _isolated_tree(tmp_path)
+    clinical = repo / "packages" / "clinicalguard"
+    clinical.mkdir(parents=True)
+    policy = clinical / "policy.py"
+    policy.write_text(f"# Constitutional Hash: {SAMPLE_HASH}\n")
+    subprocess.run(["git", "add", "packages/clinicalguard/policy.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "clinical"], cwd=repo, check=True)
+    _run_cli("--update", cwd=repo)
+
+    subprocess.run(["git", "rm", "-q", "packages/clinicalguard/policy.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "remove clinical"], cwd=repo, check=True)
+
+    result = _run_cli("--ignore-missing-prefix", "packages/clinicalguard/", cwd=repo)
+    assert result.returncode == 0
+    assert "WARNING" in result.stdout
+    assert "packages/clinicalguard/policy.py" in result.stdout
 
 
 def test_cli_detects_newly_added_marker(tmp_path):
