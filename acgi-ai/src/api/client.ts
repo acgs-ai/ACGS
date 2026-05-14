@@ -10,12 +10,15 @@
 import type {
   AccountView,
   ActionReceipt,
+  ActionTestReceipt,
+  ActionTestRequest,
   Agent,
   AuditEvent,
   CompileActionRequest,
   CompileDraft,
   ConsoleSummary,
   Deliberation,
+  GovernedAction,
   Incident,
   MaciLanes,
   OverviewSummary,
@@ -62,6 +65,11 @@ export const api = {
   },
   agents: {
     list: () => http<Agent[]>('/agents'),
+  },
+  actions: {
+    list: () => http<GovernedAction[]>('/actions'),
+    test: (body: ActionTestRequest) =>
+      http<ActionTestReceipt>('/actions/test', { method: 'POST', body: JSON.stringify(body) }),
   },
   overview: {
     get: () => http<OverviewSummary>('/overview'),

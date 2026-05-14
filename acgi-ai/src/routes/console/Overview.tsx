@@ -1,4 +1,5 @@
 import { useOverview } from '../../api/hooks'
+import { navigate } from '../../lib/navigate'
 
 export function Overview() {
   const { data, isLoading, isError, refetch } = useOverview()
@@ -38,6 +39,32 @@ export function Overview() {
           <Stat key={s.label} label={s.label} value={s.value} sub={s.sub} />
         ))}
       </div>
+
+      <section className="overview-section action-entry" aria-labelledby="verify-agent-action">
+        <div>
+          <h2 className="overview-section-title" id="verify-agent-action">
+            Verify an agent action
+          </h2>
+          <p>
+            Start here when a non-technical reviewer asks whether an agent action was safe. The
+            action control room shows the attempted tool call, decision, reason, receipt, replay
+            command, and audit anchor in one path.
+          </p>
+        </div>
+        <ol>
+          <li>See what the agent tried to do.</li>
+          <li>Read whether it was allowed, denied, transformed, or escalated.</li>
+          <li>Check the receipt, trace, and replay command.</li>
+          <li>Confirm that unsafe actions did not execute silently.</li>
+        </ol>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => navigate('/console/actions')}
+        >
+          Open action control
+        </button>
+      </section>
 
       <section className="overview-section" aria-labelledby="active-governance-cases">
         <div className="c-toolbar">

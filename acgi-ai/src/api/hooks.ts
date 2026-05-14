@@ -5,6 +5,9 @@ const LIVE = { staleTime: 5_000, refetchInterval: 10_000 }
 const SLOW = { staleTime: 30_000, refetchInterval: 60_000 }
 
 function canUseFixtureFallback(): boolean {
+  if (import.meta.env.PROD) {
+    return false
+  }
   return import.meta.env.VITE_USE_MOCKS === 'true'
 }
 
@@ -46,6 +49,25 @@ export function useConsoleSummary() {
           )
       : api.consoleSummary.get,
     ...LIVE,
+  })
+}
+
+export function useGovernedActions() {
+  return useQuery({
+    queryKey: ['governed-actions'],
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.actions.list, () =>
+            import('../mocks/data/actions').then((m) => m.GOVERNED_ACTIONS),
+          )
+      : api.actions.list,
+    ...LIVE,
+  })
+}
+
+export function useTestAction() {
+  return useMutation({
+    mutationFn: api.actions.test,
   })
 }
 
