@@ -1,0 +1,14 @@
+# Test/lint caches — regenerated per run, never tracked.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Python bytecode.
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts.
+dist/
+build/
+*.egg-info/
