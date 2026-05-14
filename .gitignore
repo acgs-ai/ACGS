@@ -97,3 +97,30 @@ credentials/
 /eab-production-hardening/
 /scheduled-todos-backup-2026-04-30/
 /swarm-mesh-refactors-backup-2026-04-30/
+/ACGS-pr52-review/
+/atomic-agents-playground/
+
+# IDE / editor / browser-tooling scratch
+/.cursor/
+/.obsidian/
+/.gitnexus/
+/.playwright-mcp/
+
+# Out-of-band exploration clones in external/ that are NOT registered as
+# submodules in .gitmodules. Promote to a real submodule before tracking.
+/external/openswarm/
+
+# Per-session ad-hoc snapshot artifacts (Playwright captures, request bodies).
+# Belong in PR descriptions or evidence bundles, not the repo.
+/gove-zone-actions-*.md
+/request.json
+
+# Pytest / ruff caches anywhere in the tree.
+.pytest_cache/
+.ruff_cache/
+
+# Workspace-level lockfiles are intentionally NOT committed yet — until the
+# canonical install policy lands. acgi-ai/pnpm-lock.yaml stays tracked.
+# Remove these two lines once root-level reproducibility is decided.
+/pnpm-lock.yaml
+/uv.lock
