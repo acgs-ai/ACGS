@@ -3142,3 +3142,207 @@
     justify-content: flex-start;
   }
 }
+
+/* Bus traces — agent-bus-analyzer console page */
+.bus-trace-row {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line-softer);
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 16px;
+  grid-template-columns: 200px 110px 110px 1fr 200px;
+  padding: 14px var(--space-sm);
+  text-align: left;
+  align-items: center;
+  width: 100%;
+}
+.bus-trace-row:hover {
+  background: var(--paper-2, var(--paper));
+}
+.bus-trace-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.bus-trace-row[aria-current="true"] {
+  background: var(--paper-3, var(--accent-soft));
+}
+.bus-trace-row .ts {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bus-trace-row .ev {
+  font-weight: 500;
+  font-size: 14px;
+}
+.bus-trace-row .ev .src {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.bus-trace-row .bus-trace-corr {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.bus-trace-row .hash-col {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bus-trace-row .hash-col strong {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.bus-back {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  margin-bottom: var(--space-lg);
+  padding: 0;
+  text-decoration: underline;
+}
+.bus-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.bus-inspector-header {
+  align-items: baseline;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  gap: var(--space-2xl, 24px);
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+  padding-bottom: var(--space-md);
+}
+.bus-inspector-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.bus-inspector-meta {
+  align-items: center;
+  display: flex;
+  gap: var(--space-md);
+}
+
+.bus-inspector-banner {
+  border-left: 3px solid var(--line);
+  background: var(--paper-2, var(--paper));
+  color: var(--ink);
+  font-family: var(--font-runtime);
+  font-size: 13px;
+  margin-bottom: var(--space-lg);
+  padding: var(--space-md) var(--space-lg);
+}
+.bus-inspector-banner.confirmed {
+  border-left-color: var(--risk-lo);
+}
+.bus-inspector-banner.partial {
+  border-left-color: var(--risk-mid);
+}
+.bus-inspector-banner.blocked {
+  background: var(--accent-soft);
+  border-left-color: var(--risk-hi);
+  color: var(--ink);
+}
+.bus-inspector-banner strong {
+  font-weight: 600;
+}
+
+.bus-event-list {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-soft);
+}
+.bus-event-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line-softer);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 60px 130px 90px 1fr 200px;
+  padding: 12px var(--space-sm);
+}
+.bus-event-causal {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.bus-event-kind {
+  font-family: var(--font-runtime);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bus-event-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: 13.5px;
+}
+.bus-event-summary strong {
+  font-weight: 500;
+}
+.bus-event-summary .src {
+  display: block;
+  flex-basis: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.bus-event-decision {
+  text-transform: uppercase;
+}
+.bus-event-rule {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.bus-event-row .hash-col {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bus-event-row .hash-col strong {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+@media (max-width: 900px) {
+  .bus-trace-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-xs);
+  }
+  .bus-event-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-xs);
+  }
+  .bus-inspector-header {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+}

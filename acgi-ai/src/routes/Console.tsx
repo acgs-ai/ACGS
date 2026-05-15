@@ -17,6 +17,7 @@ import { Account } from './console/Account'
 import { Actions } from './console/Actions'
 import { Agents } from './console/Agents'
 import { Audit } from './console/Audit'
+import { BusAnalysis } from './console/BusAnalysis'
 import { Compile } from './console/Compile'
 import { Deliberations } from './console/Deliberations'
 import { Incidents } from './console/Incidents'
@@ -100,8 +101,16 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
       </>
     ),
   },
+  '/console/bus': {
+    crumb: 'II.IV · Govern / Bus traces',
+    title: (
+      <>
+        Bus <em>traces</em>
+      </>
+    ),
+  },
   '/console/settings': {
-    crumb: 'II.IV · Govern / Settings',
+    crumb: 'II.V · Govern / Settings',
     title: (
       <>
         Operating <em>parameters</em>
@@ -109,7 +118,7 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
     ),
   },
   '/console/tenants': {
-    crumb: 'II.V · Govern / Tenants',
+    crumb: 'II.VI · Govern / Tenants',
     title: (
       <>
         Active <em>tenancies</em>
@@ -146,6 +155,8 @@ function PageBody({ path }: { path: string }) {
       return <Compile />
     case '/console/audit':
       return <Audit />
+    case '/console/bus':
+      return <BusAnalysis />
     case '/console/settings':
       return <Settings />
     case '/console/tenants':
@@ -254,6 +265,7 @@ export function Console({ path }: { path: string }) {
         { path: '/console/policies', label: 'Policies', count: String(policyCount) },
         { path: '/console/compile', label: 'Compile', count: String(compileCount) },
         { path: '/console/audit', label: 'Audit trail' },
+        { path: '/console/bus', label: 'Bus traces' },
         { path: '/console/settings', label: 'Settings' },
         { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
       ],
