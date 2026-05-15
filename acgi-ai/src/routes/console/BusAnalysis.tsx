@@ -1,79 +1,19 @@
-import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import {
-  BusApiError,
-  busAnalysis,
-  type EventStatus,
-  type Expired,
-  type IntegrityStatus,
-  type SingleTrace,
-  type TraceEvent,
-  type TraceListItem,
-} from '../../lib/bus-analysis-client'
+import { useBusTraceList, useSingleTrace } from '../../api/hooks'
+import type {
+  BusEventStatus,
+  BusExpired,
+  BusIntegrityStatus,
+  BusSingleTrace,
+  BusTraceEvent,
+  BusTraceListItem,
+  Posture,
+} from '../../api/types'
 import { ConsoleError, ConsoleLoading, EmptyState, SearchToolbar, useTextFilter } from './shared'
 
-const LIVE = { staleTime: 5_000, refetchInterval: 10_000 } as const
+type RowPosture = Extract<Posture, 'confirmed' | 'partial' | 'blocked'>
 
-function canUseFixtureFallback(): boolean {
-  if (import.meta.env.PROD) return false
-  return import.meta.env.VITE_USE_MOCKS === 'true'
-}
-
-async function withBusFixtureFallback<T>(
-  request: () => Promise<T>,
-  fallback: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await request()
-  } catch (error) {
-    if (error instanceof BusApiError || !canUseFixtureFallback()) {
-      throw error
-    }
-    console.warn('Bus analyzer unavailable; rendering fixture-backed traces.', error)
-    return fallback()
-  }
-}
-
-export function useBusTraceList() {
-  return useQuery({
-    queryKey: ['bus-traces'],
-    queryFn: import.meta.env.DEV
-      ? () =>
-          withBusFixtureFallback(
-            () => busAnalysis.listTraces(),
-            () => import('../../mocks/data/bus-analysis').then((m) => m.BUS_TRACE_LIST),
-          )
-      : () => busAnalysis.listTraces(),
-    ...LIVE,
-  })
-}
-
-export function useSingleTrace(correlationId: string | null) {
-  return useQuery({
-    queryKey: ['bus-trace', correlationId],
-    enabled: correlationId !== null,
-    queryFn: () => {
-      if (correlationId === null) {
-        // enabled guards the call; keeps the type narrow.
-        return Promise.reject(new Error('useSingleTrace called with null correlation_id'))
-      }
-      const live = () => busAnalysis.getTrace(correlationId)
-      const fallback = () =>
-        import('../../mocks/data/bus-analysis').then((m) => {
-          const found = m.getSingleTraceFixture(correlationId)
-          if (found) return found as SingleTrace | Expired
-          throw new BusApiError(404, `/api/bus/traces/${correlationId}`, 'trace not in fixture set')
-        })
-      return import.meta.env.DEV ? withBusFixtureFallback(live, fallback) : live()
-    },
-    ...LIVE,
-  })
-}
-
-// EventStatus → posture pill semantics. Posture vocabulary lives in
-// DESIGN.md §3.2 — risk-confirmed for clean, risk-blocked for hard
-// failures, risk-partial for ambiguity / observability gaps.
-const STATUS_POSTURE: Record<EventStatus, 'confirmed' | 'partial' | 'blocked'> = {
+const STATUS_POSTURE: Record<BusEventStatus, RowPosture> = {
   completed: 'confirmed',
   'policy-violation': 'blocked',
   'dispatch-failure': 'blocked',
@@ -83,13 +23,13 @@ const STATUS_POSTURE: Record<EventStatus, 'confirmed' | 'partial' | 'blocked'> =
   'ingest-gap': 'partial',
 }
 
-const INTEGRITY_POSTURE: Record<IntegrityStatus, 'confirmed' | 'partial' | 'blocked'> = {
+const INTEGRITY_POSTURE: Record<BusIntegrityStatus, RowPosture> = {
   intact: 'confirmed',
   tampered: 'blocked',
   unknown: 'partial',
 }
 
-const STATUS_LABEL: Record<EventStatus, string> = {
+const STATUS_LABEL: Record<BusEventStatus, string> = {
   completed: 'Completed',
   'policy-violation': 'Policy violation',
   'dispatch-failure': 'Dispatch failure',
@@ -99,13 +39,13 @@ const STATUS_LABEL: Record<EventStatus, string> = {
   'ingest-gap': 'Ingest gap',
 }
 
-const INTEGRITY_LABEL: Record<IntegrityStatus, string> = {
+const INTEGRITY_LABEL: Record<BusIntegrityStatus, string> = {
   intact: 'Intact',
   tampered: 'Tampered',
   unknown: 'Unknown',
 }
 
-const KIND_LABEL: Record<TraceEvent['kind'], string> = {
+const KIND_LABEL: Record<BusTraceEvent['kind'], string> = {
   dispatch: 'Dispatch',
   response: 'Response',
   decision: 'Decision',
@@ -120,7 +60,7 @@ function shortId(uuid: string): string {
   return head.length > 8 ? `${head.slice(0, 8)}…` : head
 }
 
-const listFields = (t: TraceListItem) => [
+const listFields = (t: BusTraceListItem) => [
   t.correlation_id,
   t.constitutional_hash,
   t.worst_event_status,
@@ -129,7 +69,7 @@ const listFields = (t: TraceListItem) => [
   INTEGRITY_LABEL[t.integrity_status],
 ]
 
-function decisionPostureFor(decision: TraceEvent['decision']): 'confirmed' | 'partial' | 'blocked' {
+function decisionPostureFor(decision: BusTraceEvent['decision']): RowPosture {
   switch (decision) {
     case 'allow':
       return 'confirmed'
@@ -137,8 +77,7 @@ function decisionPostureFor(decision: TraceEvent['decision']): 'confirmed' | 'pa
       return 'blocked'
     case 'transform':
     case 'escalate':
-      return 'partial'
-    default:
+    case null:
       return 'partial'
   }
 }
@@ -148,7 +87,7 @@ function TraceRowList({
   selectedId,
   onSelect,
 }: {
-  items: readonly TraceListItem[]
+  items: readonly BusTraceListItem[]
   selectedId: string | null
   onSelect: (id: string) => void
 }) {
@@ -186,7 +125,7 @@ function TraceRowList({
   )
 }
 
-function EventRow({ event }: { event: TraceEvent }) {
+function EventRow({ event }: { event: BusTraceEvent }) {
   const isIngestGap = event.status === 'ingest-gap'
   return (
     <div className="bus-event-row">
@@ -231,7 +170,13 @@ function EventRow({ event }: { event: TraceEvent }) {
   )
 }
 
-function TraceInspector({ data, onBack }: { data: SingleTrace | Expired; onBack: () => void }) {
+function TraceInspector({
+  data,
+  onBack,
+}: {
+  data: BusSingleTrace | BusExpired
+  onBack: () => void
+}) {
   if (data.kind === 'expired') {
     return (
       <div>

@@ -6,19 +6,14 @@
 // values are illustrative and would not pass the analyzer's chain
 // verifier. Production must never serve this module.
 
-import type {
-  SingleTrace,
-  TraceEvent,
-  TraceList,
-  TraceListItem,
-} from '../../lib/bus-analysis-client'
+import type { BusSingleTrace, BusTraceEvent, BusTraceList, BusTraceListItem } from '../../api/types'
 
 const CONST_HASH = '608508a9bd224290'
 
 function mkEvent(
-  overrides: Partial<TraceEvent> &
-    Pick<TraceEvent, 'event_id' | 'correlation_id' | 'causal_index' | 'kind'>,
-): TraceEvent {
+  overrides: Partial<BusTraceEvent> &
+    Pick<BusTraceEvent, 'event_id' | 'correlation_id' | 'causal_index' | 'kind'>,
+): BusTraceEvent {
   return {
     recorded_at: '2026-05-14T13:51:09.000Z',
     source_agent: 'claude:worker-03',
@@ -42,7 +37,7 @@ const TRACE_A_ID = '11111111-1111-7111-8111-111111111111'
 const TRACE_B_ID = '22222222-2222-7222-8222-222222222222'
 const TRACE_C_ID = '33333333-3333-7333-8333-333333333333'
 
-const TRACE_A_EVENTS: TraceEvent[] = [
+const TRACE_A_EVENTS: BusTraceEvent[] = [
   mkEvent({
     event_id: 'aaaaaaa1-0000-7000-8000-000000000001',
     correlation_id: TRACE_A_ID,
@@ -86,7 +81,7 @@ const TRACE_A_EVENTS: TraceEvent[] = [
   }),
 ]
 
-const TRACE_B_EVENTS: TraceEvent[] = [
+const TRACE_B_EVENTS: BusTraceEvent[] = [
   mkEvent({
     event_id: 'bbbbbbb2-0000-7000-8000-000000000001',
     correlation_id: TRACE_B_ID,
@@ -117,7 +112,7 @@ const TRACE_B_EVENTS: TraceEvent[] = [
   }),
 ]
 
-const TRACE_C_EVENTS: TraceEvent[] = [
+const TRACE_C_EVENTS: BusTraceEvent[] = [
   mkEvent({
     event_id: 'ccccccc3-0000-7000-8000-000000000001',
     correlation_id: TRACE_C_ID,
@@ -132,7 +127,7 @@ const TRACE_C_EVENTS: TraceEvent[] = [
   }),
 ]
 
-const TRACE_LIST_ITEMS: TraceListItem[] = [
+const TRACE_LIST_ITEMS: BusTraceListItem[] = [
   {
     correlation_id: TRACE_A_ID,
     started_at: '2026-05-14T13:51:09.000Z',
@@ -162,13 +157,13 @@ const TRACE_LIST_ITEMS: TraceListItem[] = [
   },
 ]
 
-export const BUS_TRACE_LIST: TraceList = {
+export const BUS_TRACE_LIST: BusTraceList = {
   kind: 'trace-list',
   items: TRACE_LIST_ITEMS,
   next_cursor: null,
 }
 
-const SINGLE_TRACE_BY_ID: Record<string, SingleTrace> = {
+const SINGLE_TRACE_BY_ID: Record<string, BusSingleTrace> = {
   [TRACE_A_ID]: {
     kind: 'single-trace',
     trace: TRACE_LIST_ITEMS[0],
@@ -192,6 +187,6 @@ const SINGLE_TRACE_BY_ID: Record<string, SingleTrace> = {
   },
 }
 
-export function getSingleTraceFixture(correlationId: string): SingleTrace | null {
+export function getSingleTraceFixture(correlationId: string): BusSingleTrace | null {
   return SINGLE_TRACE_BY_ID[correlationId] ?? null
 }
