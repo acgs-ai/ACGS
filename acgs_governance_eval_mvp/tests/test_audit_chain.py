@@ -172,9 +172,9 @@ def test_audit_append_does_not_reread_chain_after_warmup(tmp_path, roles_bundle,
     for i in range(20):
         adapter.validate({**base_payload, "resource": f"contracts/hot-{i}"})
 
-    assert (
-        counter["n"] == 0
-    ), f"hot-path appends triggered {counter['n']} disk reads; O(n^2) regression: cached _last_hash was not reused"
+    assert counter["n"] == 0, (
+        f"hot-path appends triggered {counter['n']} disk reads; O(n^2) regression: cached _last_hash was not reused"
+    )
 
 
 @pytest.mark.regression(
@@ -315,10 +315,10 @@ def test_audit_append_writes_one_line_no_rewrite(tmp_path, roles_bundle, policy_
 
     content = audit_path.read_text(encoding="utf-8")
     line_count = content.count("\n")
-    assert (
-        line_count == n_appends
-    ), f"file has {line_count} newlines for {n_appends} appends; append produced unexpected line count"
+    assert line_count == n_appends, (
+        f"file has {line_count} newlines for {n_appends} appends; append produced unexpected line count"
+    )
 
-    assert sizes[-1] == sum(
-        deltas
-    ), f"final size {sizes[-1]} != sum of deltas {sum(deltas)}; append rewrote prior content"
+    assert sizes[-1] == sum(deltas), (
+        f"final size {sizes[-1]} != sum of deltas {sum(deltas)}; append rewrote prior content"
+    )
