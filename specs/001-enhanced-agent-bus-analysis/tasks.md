@@ -46,8 +46,9 @@ This is a web feature: Python backend package at `packages/agent-bus-analyzer/` 
 - [ ] T012 Implement config loader in `packages/agent-bus-analyzer/src/agent_bus_analyzer/config.py` — reads `bus_endpoint`, `audit_file`, `store_dir`, `queue_capacity`, `dispatch_timeout_seconds`, `registry_poll_seconds`, `retention_days` from env + CLI overrides; resolves `CONSTITUTIONAL_HASH` via env → `ACGS.src.core.shared.constants.CONSTITUTIONAL_HASH` → fail-closed
 - [ ] T013 [P] Verify Pydantic models export JSON Schemas that match `contracts/trace-event.schema.json` and `trace-query.schema.json` byte-equivalent (add `tests/test_schema_export.py` — fails if Pydantic→JSON Schema drifts from the checked-in contract)
 - [ ] T014 [P] Implement bounded in-process `CaptureQueue` (asyncio.Queue wrapper with drop-on-full + ingest-gap window tracking) in `packages/agent-bus-analyzer/src/agent_bus_analyzer/capture.py`
+- [ ] T069 Bootstrap FastAPI app skeleton in `packages/agent-bus-analyzer/src/agent_bus_analyzer/api.py` — `create_app()` factory mounted at `/api/bus`, `GET /healthz` endpoint, JSON error handler, structured-logging middleware. No business endpoints yet (mounted per-story). Add `serve` subcommand in `cli.py` that runs `uvicorn agent_bus_analyzer.api:create_app --factory`
 
-**Checkpoint**: Models, hashing, config, errors, and capture queue all importable. No I/O or subscription yet.
+**Checkpoint**: Models, hashing, config, errors, capture queue, and HTTP app skeleton all importable. No I/O or subscription yet.
 
 ---
 
@@ -74,8 +75,10 @@ This is a web feature: Python backend package at `packages/agent-bus-analyzer/` 
 - [ ] T024 [US1] Implement SQLite derived index in `packages/agent-bus-analyzer/src/agent_bus_analyzer/store.py` — keyed by `(correlation_id, causal_index)`; rebuildable from JSONL via `store.reindex()`; explicit comment that the SQLite file is NOT on the integrity path
 - [ ] T025 [US1] Implement basic classifier in `packages/agent-bus-analyzer/src/agent_bus_analyzer/classifier.py` — assigns `completed` to a dispatch+response pair, `policy-violation` when a paired `decision="deny"` or escalate-with-deny is observed (sets `flagged_rule` from `matched_rules[0]`)
 - [ ] T026 [US1] Implement writer task (`store.writer_loop()`) in `packages/agent-bus-analyzer/src/agent_bus_analyzer/store.py` — consumes from `CaptureQueue`, writes to JSONL + SQLite index in batches; emits `ingest-gap` markers when queue drops are detected
+- [ ] T072 [US1] Implement `observer` CLI subcommand in `packages/agent-bus-analyzer/src/agent_bus_analyzer/cli.py` — `python -m agent_bus_analyzer observer --bus-endpoint=... --audit-file=... --store-dir=... [--registry-poll-seconds=30] [--queue-capacity=10000]`; wires `Observer.attach(bus)` + audit-tail follower + `store.writer_loop()`; exits 1 with `IntegrityStoreUnavailable` if `--audit-file` is missing or unreadable on boot (FR-008); prints the one-line-per-second status format documented in `quickstart.md` §2
 - [ ] T027 [US1] Implement query API in `packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py` — `list_traces(cursor, limit) -> TraceList`, `get_trace(correlation_id) -> SingleTrace | Expired`; returns shapes matching `trace-query.schema.json`
-- [ ] T028 [US1] Implement RBAC guard on query API in `packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py` — rejects unauthenticated reads, records the rejection as an audit event (FR-011); reuses existing console identity layer per research §R7
+- [ ] T028 [US1] Implement RBAC FastAPI dependency `require_reviewer_role()` in `packages/agent-bus-analyzer/src/agent_bus_analyzer/auth.py` — rejects unauthenticated reads with 401, authenticated-but-unauthorized with 403; every rejection is appended to the analyzer's trace store as an event with `kind="decision", decision="deny", source_agent="api:query"` (FR-011); validates the bearer token against the existing console identity layer per research §R7
+- [ ] T070 [US1] Mount `GET /api/bus/traces` and `GET /api/bus/traces/{correlation_id}` in `packages/agent-bus-analyzer/src/agent_bus_analyzer/api.py` — thin handlers wrapping `query.list_traces()` and `query.get_trace()`; apply RBAC `Depends(require_reviewer_role)` from T028; responses validated against `contracts/trace-query.schema.json` via Pydantic response models
 - [ ] T029 [US1] Implement typed client in `acgi-ai/src/lib/bus-analysis-client.ts` — typed wrappers around `GET /api/bus/traces` (TraceList) and `GET /api/bus/traces/:correlation_id` (SingleTrace | Expired); mirrors `trace-query.schema.json`
 - [ ] T030 [US1] Implement `useBusAnalysis()` hook in `acgi-ai/src/routes/console/BusAnalysis.tsx` — mirrors the existing `useAudit()` pattern from `acgi-ai/src/routes/console/Audit.tsx`; no new query library
 - [ ] T031 [US1] Implement `<BusAnalysis />` page component in `acgi-ai/src/routes/console/BusAnalysis.tsx` — trace list + inspector pane; renders constitutional-hash header per trace; shows governance verdict per step; CSP-compliant (no inline styles, no CDN fonts)
@@ -106,7 +109,7 @@ This is a web feature: Python backend package at `packages/agent-bus-analyzer/` 
 - [ ] T040 [US2] Extend classifier in `packages/agent-bus-analyzer/src/agent_bus_analyzer/classifier.py` — add rules for `dispatch-failure` (timeout exceeded), `unwired-handler` (declared but no registry entry), `orphan-response` (response with no prior dispatch), `incomplete-pair` (dispatch with no response, observer crashed)
 - [ ] T041 [US2] Implement `wiring.compute_findings()` in `packages/agent-bus-analyzer/src/agent_bus_analyzer/wiring.py` — joins `HandlerRegistrySnapshot` against recent events, produces `WiringDefectFinding` records keyed idempotently on `(kind, handler_name)`; refresh window matches SC-003 (60s)
 - [ ] T042 [US2] Extend query API in `packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py` — add `get_wiring_defects() -> WiringDefectSummary` matching `trace-query.schema.json#/$defs/WiringDefectSummary`; refreshed ≤60s
-- [ ] T043 [US2] Implement `/api/bus/defects` endpoint wiring (alongside the existing trace endpoints from US1) — same RBAC gate as T028
+- [ ] T043 [US2] Mount `GET /api/bus/defects` in `packages/agent-bus-analyzer/src/agent_bus_analyzer/api.py` wrapping `query.get_wiring_defects()`; apply `Depends(require_reviewer_role)` from T028; cache-control headers reflect the 60s refresh window per SC-003
 - [ ] T044 [US2] Extend `acgi-ai/src/lib/bus-analysis-client.ts` with `getWiringDefects()` returning `WiringDefectSummary` shape
 - [ ] T045 [US2] Extend `<BusAnalysis />` in `acgi-ai/src/routes/console/BusAnalysis.tsx` — add wiring-defect panel showing `kind`, `handler_name`, `example_event_ids`, `detected_at`; refreshes every 60s while page is open
 - [ ] T046 [US2] Surface `worst_event_status` badge on the trace list (`unwired-handler`, `dispatch-failure`, etc.) in `acgi-ai/src/routes/console/BusAnalysis.tsx` so reviewers can spot defective runs without opening each trace
@@ -176,6 +179,8 @@ This is a web feature: Python backend package at `packages/agent-bus-analyzer/` 
 - Tests written and FAILING before the matching implementation lands.
 - Models / primitives before services; services before endpoints; endpoints before page wiring.
 - Console route plumbing (T032) MUST land in the same commit as `<BusAnalysis />` (Principle V.3).
+- HTTP endpoint mounting (T070, T043) depends on T069 (app factory), the matching `query.py` function (T027, T042), and the RBAC dependency (T028).
+- `observer` CLI (T072) depends on T021, T022, T026; the deeper integrity-store fail-closed check (T053, US3) extends — does not replace — T072's basic readability check.
 
 ### Parallel Opportunities
 
