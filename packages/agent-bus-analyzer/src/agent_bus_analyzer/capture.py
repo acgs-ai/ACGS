@@ -57,6 +57,18 @@ class CaptureQueue:
             self._gap_start = datetime.now(UTC)
         self._dropped_in_gap += 1
 
+    def peek_gap(self) -> tuple[datetime, datetime, int] | None:
+        """Return the current gap window WITHOUT clearing counters.
+
+        Caller must invoke ``close_gap`` only after the gap marker has
+        durably landed on disk — otherwise a crash between peek + close
+        could lose the gap (FR-013 says backpressure surfaces as a marker,
+        never as a silent drop).
+        """
+        if self._gap_start is None:
+            return None
+        return self._gap_start, datetime.now(UTC), self._dropped_in_gap
+
     def close_gap(self) -> tuple[datetime, datetime, int] | None:
         """Close the current gap window, if open.
 

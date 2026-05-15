@@ -23,14 +23,16 @@ import asyncio
 import fcntl
 import json
 import os
+import re
 import sqlite3
+import threading
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agent_bus_analyzer.capture import CaptureQueue
-from agent_bus_analyzer.errors import IntegrityStoreUnavailable
+from agent_bus_analyzer.errors import IntegrityStoreUnavailable, ReadOnlyViolation
 from agent_bus_analyzer.hashing import canonical_json, compute_event_hash
 from agent_bus_analyzer.models import (
     Event,
@@ -41,9 +43,35 @@ from agent_bus_analyzer.models import (
     TraceListItem,
 )
 
+# Strict allow-list for correlation_id. Refuses path-traversal payloads
+# (../, /, NUL, whitespace) before any Path concatenation. The 1-128 range
+# accommodates UUIDv7 hex forms while staying short of filesystem limits.
+_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _safe_correlation_id(correlation_id: str) -> str:
+    """Validate or raise. The ONLY path-component sanitizer in the codebase."""
+    if (
+        not isinstance(correlation_id, str)
+        or not _CORRELATION_ID_RE.match(correlation_id)
+        or correlation_id in {".", ".."}
+        or correlation_id.startswith(".")  # reject hidden-file conventions
+    ):
+        raise ReadOnlyViolation(
+            f"correlation_id rejected (path-safety): {correlation_id!r}"
+        )
+    return correlation_id
+
 
 def _trace_path(store_dir: Path, correlation_id: str) -> Path:
-    return store_dir / "traces" / f"{correlation_id}.jsonl"
+    cid = _safe_correlation_id(correlation_id)
+    resolved = (store_dir / "traces" / f"{cid}.jsonl").resolve()
+    traces_root = (store_dir / "traces").resolve()
+    if not resolved.is_relative_to(traces_root):
+        raise ReadOnlyViolation(
+            f"trace path escapes store dir: {resolved} not under {traces_root}"
+        )
+    return resolved
 
 
 def _index_path(store_dir: Path) -> Path:
@@ -89,11 +117,12 @@ class TraceStore:
         self._db = sqlite3.connect(
             _index_path(self.store_dir),
             isolation_level=None,
-            # FastAPI dispatches handlers across threads; the analyzer owns
-            # a single store per process and serializes appends via fcntl
-            # flock on the trace file, so this relaxation is safe.
+            # FastAPI dispatches handlers across threads; we serialize all
+            # SQLite access via _db_lock below. flock alone is insufficient
+            # because flock is per-file and the SQLite index is global.
             check_same_thread=False,
         )
+        self._db_lock = threading.Lock()
         self._db.executescript(_SCHEMA)
 
     def close(self) -> None:
@@ -162,47 +191,57 @@ class TraceStore:
         recorded_at = event["recorded_at"]
         constitutional_hash = event["constitutional_hash"]
         status: EventStatus = event["status"]
-        row = self._db.execute(
-            "SELECT started_at, event_count, worst_event_status FROM traces WHERE correlation_id=?",
-            (cid,),
-        ).fetchone()
-        if row is None:
-            self._db.execute(
-                "INSERT INTO traces "
-                "(correlation_id, started_at, completed_at, constitutional_hash, "
-                "event_count, worst_event_status, integrity_status, status) "
-                "VALUES (?, ?, ?, ?, 1, ?, 'unknown', 'open')",
-                (cid, recorded_at, recorded_at, constitutional_hash, status),
-            )
-        else:
-            _started_at, count, worst = row
-            self._db.execute(
-                "UPDATE traces SET completed_at=?, event_count=?, worst_event_status=? "
-                "WHERE correlation_id=?",
-                (recorded_at, count + 1, _worst(worst, status), cid),
-            )
+        with self._db_lock:
+            row = self._db.execute(
+                "SELECT started_at, event_count, worst_event_status "
+                "FROM traces WHERE correlation_id=?",
+                (cid,),
+            ).fetchone()
+            if row is None:
+                self._db.execute(
+                    "INSERT INTO traces "
+                    "(correlation_id, started_at, completed_at, constitutional_hash, "
+                    "event_count, worst_event_status, integrity_status, status) "
+                    "VALUES (?, ?, ?, ?, 1, ?, 'unknown', 'open')",
+                    (cid, recorded_at, recorded_at, constitutional_hash, status),
+                )
+            else:
+                _started_at, count, worst = row
+                self._db.execute(
+                    "UPDATE traces SET completed_at=?, event_count=?, worst_event_status=? "
+                    "WHERE correlation_id=?",
+                    (recorded_at, count + 1, _worst(worst, status), cid),
+                )
 
     # ---- read path --------------------------------------------------------
 
     def list_traces(self, limit: int = 50) -> TraceList:
-        rows = self._db.execute(
-            "SELECT correlation_id, started_at, completed_at, constitutional_hash, "
-            "event_count, worst_event_status, integrity_status "
-            "FROM traces ORDER BY started_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        items = [
-            TraceListItem(
-                correlation_id=cid,
-                started_at=datetime.fromisoformat(started_at),
-                completed_at=datetime.fromisoformat(completed_at) if completed_at else None,
-                event_count=count,
-                worst_event_status=worst,
-                integrity_status=integrity,
-                constitutional_hash=cons_hash,
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT correlation_id, started_at, completed_at, constitutional_hash, "
+                "event_count, worst_event_status "
+                "FROM traces ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        # Compute integrity_status fresh per row so the list view never
+        # shows a stale "unknown" — Architect blocker #1. We hash a max of
+        # N events per trace; for 10K events/day floor this stays cheap.
+        items: list[TraceListItem] = []
+        for cid, started_at, completed_at, cons_hash, count, worst in rows:
+            path = _trace_path(self.store_dir, cid)
+            raw_events = list(self._iter_file(path)) if path.exists() else []
+            integrity = self._verify_chain(raw_events) if raw_events else "unknown"
+            items.append(
+                TraceListItem(
+                    correlation_id=cid,
+                    started_at=datetime.fromisoformat(started_at),
+                    completed_at=datetime.fromisoformat(completed_at) if completed_at else None,
+                    event_count=count,
+                    worst_event_status=worst,
+                    integrity_status=integrity,
+                    constitutional_hash=cons_hash,
+                )
             )
-            for (cid, started_at, completed_at, cons_hash, count, worst, integrity) in rows
-        ]
         return TraceList(items=items, next_cursor=None)
 
     def get_trace(self, correlation_id: str) -> SingleTrace | None:
@@ -268,40 +307,76 @@ class TraceStore:
 
     # ---- writer loop ------------------------------------------------------
 
-    async def writer_loop(self, queue: CaptureQueue, *, drain_on_idle: bool = False) -> None:
+    async def writer_loop(
+        self,
+        queue: CaptureQueue,
+        *,
+        drain_on_idle: bool = False,
+        last_correlation_id: str | None = None,
+    ) -> None:
         """Consume from *queue* and append to disk.
 
-        On every successful append, if a gap was open it is closed and an
-        `ingest-gap` synthetic event is emitted to the same trace (FR-013).
+        If a gap is open AND we have a trace context (either a fresh event
+        or a remembered last_correlation_id), flush a gap marker BEFORE
+        clearing in-memory gap counters — so a crash between flush and
+        clear leaves the gap recoverable (Architect blocker #2 / Code
+        reviewer HIGH #3).
+
         ``drain_on_idle=True`` makes the loop exit when the queue empties —
         useful for tests; production callers pass False (or omit).
         """
+        recent_cid = last_correlation_id
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=0.5)
             except TimeoutError:
+                # Idle path: still flush a pending gap if we have a target
+                # trace. Without a target we can't pick the file — defer.
+                if queue.gap_open() and recent_cid is not None:
+                    self._flush_gap_marker(queue, recent_cid)
                 if drain_on_idle:
                     return
                 continue
-            gap = queue.close_gap()
-            if gap is not None:
-                started, ended, _count = gap
-                # Synthesize a gap marker that sits at the next causal index
-                # for this trace. The marker is NOT in the chain (prev_hash
-                # is null) but it shares a strictly-monotonic causal_index
-                # with the rest of the trace so the reader can order it.
-                marker_path = _trace_path(self.store_dir, event["correlation_id"])
-                _last_hash, last_index = self._tail_state(marker_path)
-                marker = dict(event)
-                marker["status"] = "ingest-gap"
-                marker["causal_index"] = last_index + 1
-                marker["gap_started_at"] = started.isoformat()
-                marker["gap_ended_at"] = ended.isoformat()
-                marker["prev_hash"] = None
-                marker.pop("event_hash", None)
-                marker["event_hash"] = compute_event_hash(marker)
-                self._append_raw(marker)
+            recent_cid = event["correlation_id"]
+            if queue.gap_open():
+                self._flush_gap_marker(queue, recent_cid)
             self.append(event)
+
+    def _flush_gap_marker(self, queue: CaptureQueue, correlation_id: str) -> None:
+        """Peek → write durably → only THEN clear in-memory gap counters.
+
+        If the write raises before close_gap runs, the in-memory counters
+        are preserved and the next loop iteration retries — no silent
+        gap loss on crash between peek and fsync.
+        """
+        gap = queue.peek_gap()
+        if gap is None:
+            return
+        started, ended, _count = gap
+        path = _trace_path(self.store_dir, correlation_id)
+        _last_hash, last_index = self._tail_state(path)
+        marker: dict[str, Any] = {
+            "event_id": f"gap-{started.isoformat()}",
+            "correlation_id": correlation_id,
+            "causal_index": last_index + 1,
+            "recorded_at": ended.isoformat(),
+            "source_agent": "analyzer:capture-queue",
+            "target_handler_declared": None,
+            "target_handler_resolved": None,
+            "payload_ref": "ingest-gap",
+            "kind": "dispatch",
+            "decision": None,
+            "flagged_rule": None,
+            "audit_receipt_hash": None,
+            "constitutional_hash": "0" * 16,
+            "status": "ingest-gap",
+            "gap_started_at": started.isoformat(),
+            "gap_ended_at": ended.isoformat(),
+            "prev_hash": None,
+        }
+        marker["event_hash"] = compute_event_hash(marker)
+        self._append_raw(marker)
+        queue.close_gap()
 
 
     def _append_raw(self, payload: dict[str, Any]) -> None:
