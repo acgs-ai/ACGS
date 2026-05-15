@@ -86,3 +86,11 @@ This repo has nested git repos (`packages/*`). Before any commit:
 ## OMC and agent invocation
 
 Repo uses oh-my-claudecode (`.omc/`). Use `/team`, `/autopilot`, `/ultrawork` only when explicitly requested. For trivial single-file edits, work directly. State lives under `.omc/state/`.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan at
+`specs/001-enhanced-agent-bus-analysis/plan.md` (feature: Enhanced Agent Bus
+Analysis — observability layer over the existing `EnhancedAgentBus` +
+gove-zone audit chain; read-only on the bus, fail-closed against tampering).
+<!-- SPECKIT END -->
