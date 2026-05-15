@@ -27,8 +27,9 @@ def test_openapi_doc_advertises_title() -> None:
     assert response.json()["info"]["title"] == "agent-bus-analyzer"
 
 
-def test_no_business_endpoints_yet() -> None:
+def test_traces_endpoint_requires_store_or_auth() -> None:
+    # US1 mounted the traces endpoint with RBAC. Without a token, 401.
+    # The Foundational invariant kept here: the app still boots without a store.
     client = TestClient(create_app())
-    # US1/US2 endpoints land later; Foundational scope is healthz + openapi only.
-    assert client.get("/api/bus/traces").status_code == 404
-    assert client.get("/api/bus/defects").status_code == 404
+    response = client.get("/api/bus/traces")
+    assert response.status_code == 401
