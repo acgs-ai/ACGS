@@ -15,9 +15,15 @@ def test_parser_lists_planned_subcommands() -> None:
     assert args.port == 1234
 
 
-@pytest.mark.parametrize("name", ["observer", "verify", "dev-traffic"])
+@pytest.mark.parametrize("name", ["verify", "dev-traffic"])
 def test_planned_subcommand_exits_with_non_zero(name: str) -> None:
+    # `observer` is implemented in US1 (T072); only verify/dev-traffic remain stubs.
     assert main([name]) == 2
+
+
+def test_observer_subcommand_requires_args() -> None:
+    with pytest.raises(SystemExit):
+        main(["observer"])
 
 
 def test_no_subcommand_errors() -> None:
