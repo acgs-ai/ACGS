@@ -19,7 +19,7 @@ Primary surfaces delivered:
 **Language/Version**: Python 3.11 (workspace floor; matches `gove-zone`, ACGS bus); TypeScript 5.x via Vite + React 19 for the console (matches `acgi-ai/`).
 
 **Primary Dependencies**:
-- Python: `pydantic>=2` (already in `acgs-lite`), `gove_zone.audit.ChainHashAuditStore` (reuse — do not fork the chain logic), `enhanced_agent_bus` (subscribe via its existing observer/handler registration surface; no fork).
+- Python: `pydantic>=2` (already in `acgs-lite`), `fastapi>=0.110` + `uvicorn>=0.30` (HTTP server for the query API — matches `packages/acgs-lite`'s framework choice; no new framework introduced into the workspace), `gove_zone.audit.ChainHashAuditStore` (reuse — do not fork the chain logic), `enhanced_agent_bus` (subscribe via its existing observer/handler registration surface; no fork).
 - Frontend: React 19, Tailwind 4, the existing console data-fetching pattern used by `acgi-ai/src/routes/console/Audit.tsx` (extend, do not introduce a new client).
 
 **Storage**:
