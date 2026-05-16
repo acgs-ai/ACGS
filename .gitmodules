@@ -19,3 +19,6 @@
 [submodule "external/everything-claude-code"]
 	path = external/everything-claude-code
 	url = https://github.com/affaan-m/everything-claude-code.git
+[submodule "external/openswarm"]
+	path = external/openswarm
+	url = https://github.com/VRSEN/OpenSwarm.git
