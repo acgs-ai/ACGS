@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://govern-zone.dev/agent-bus-analyzer/trace-query.schema.json",
+  "title": "TraceQueryResponse",
+  "description": "Console-facing response shape for the two console reads: trace list + single-trace inspector. Source of truth: packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/TraceList" },
+    { "$ref": "#/$defs/SingleTrace" },
+    { "$ref": "#/$defs/WiringDefectSummary" },
+    { "$ref": "#/$defs/Expired" }
+  ],
+  "$defs": {
+    "TraceListItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correlation_id",
+        "started_at",
+        "event_count",
+        "worst_event_status",
+        "integrity_status",
+        "constitutional_hash"
+      ],
+      "properties": {
+        "correlation_id": { "type": "string", "format": "uuid" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "event_count": { "type": "integer", "minimum": 0 },
+        "worst_event_status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "policy-violation",
+            "dispatch-failure",
+            "unwired-handler",
+            "orphan-response",
+            "incomplete-pair",
+            "ingest-gap"
+          ]
+        },
+        "integrity_status": {
+          "type": "string",
+          "enum": ["intact", "tampered", "unknown"]
+        },
+        "constitutional_hash": { "type": "string", "pattern": "^[a-f0-9]{16}$" }
+      }
+    },
+    "TraceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "items"],
+      "properties": {
+        "kind": { "const": "trace-list" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TraceListItem" }
+        },
+        "next_cursor": {
+          "type": ["string", "null"],
+          "description": "Opaque pagination cursor. Null = no more results."
+        }
+      }
+    },
+    "SingleTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "trace", "events", "integrity_status"],
+      "properties": {
+        "kind": { "const": "single-trace" },
+        "trace": { "$ref": "#/$defs/TraceListItem" },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "trace-event.schema.json" }
+        },
+        "integrity_status": {
+          "type": "string",
+          "enum": ["intact", "tampered", "unknown"]
+        },
+        "rotation_at_index": {
+          "type": ["integer", "null"],
+          "description": "Causal index at which constitutional_hash changed mid-trace, or null."
+        }
+      }
+    },
+    "WiringDefectFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "detected_at", "kind", "handler_name", "example_event_ids"],
+      "properties": {
+        "finding_id": { "type": "string", "format": "uuid" },
+        "detected_at": { "type": "string", "format": "date-time" },
+        "kind": {
+          "type": "string",
+          "enum": ["unwired_dispatch", "declared_but_unrouted"]
+        },
+        "handler_name": { "type": "string" },
+        "expected_role": { "type": ["string", "null"] },
+        "example_event_ids": {
+          "type": "array",
+          "items": { "type": "string", "format": "uuid" },
+          "maxItems": 5
+        }
+      }
+    },
+    "WiringDefectSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "findings", "refreshed_at"],
+      "properties": {
+        "kind": { "const": "wiring-defect-summary" },
+        "refreshed_at": { "type": "string", "format": "date-time" },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/WiringDefectFinding" }
+        }
+      }
+    },
+    "Expired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "correlation_id", "retention_policy"],
+      "properties": {
+        "kind": { "const": "expired" },
+        "correlation_id": { "type": "string", "format": "uuid" },
+        "retention_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_age_days", "purged_at"],
+          "properties": {
+            "max_age_days": { "type": "integer", "minimum": 1 },
+            "purged_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    }
+  }
+}

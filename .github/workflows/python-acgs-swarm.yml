@@ -66,7 +66,7 @@ jobs:
           cache-dependency-glob: 'packages/Acgs-Swarm/pyproject.toml'
 
       - name: Install (dev extras)
-        run: uv pip install --system --editable '.[dev]'
+        run: uv pip install --system --no-config --no-sources --editable '.[dev]'
 
       - name: Lint
         run: python -m ruff check src/

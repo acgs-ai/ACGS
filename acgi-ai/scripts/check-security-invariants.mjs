@@ -68,8 +68,8 @@ check(
 )
 check(
   packageJson.scripts?.['test:all'] ===
-    'pnpm run lint && pnpm run build && pnpm run test:security',
-  'package.json test:all must run lint, build, and test:security.',
+    'pnpm run lint && pnpm run build && pnpm run test:security && pnpm run test:mvp',
+  'package.json test:all must run lint, build, test:security, and test:mvp.',
 )
 
 const distAssets = resolve(root, 'dist/assets')

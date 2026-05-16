@@ -77,6 +77,40 @@ export type ActionReceipt = {
   meta: string
 }
 
+export type DecisionOutcome = 'allowed' | 'denied' | 'transformed' | 'escalated'
+
+export type GovernanceCheck = {
+  id: string
+  label: string
+  posture: Posture
+  reason: string
+}
+
+export type GovernedAction = {
+  id: string
+  agent: string
+  action: string
+  target: string
+  attemptedAt: string
+  outcome: DecisionOutcome
+  plainReason: string
+  receiptId: string
+  receiptHash: string
+  traceId: string
+  replayCommand: string
+  auditEventId: string
+  checks: GovernanceCheck[]
+  before: string
+  after: string
+}
+
+export type ActionTestRequest = {
+  actionId: string
+  payload: string
+}
+
+export type ActionTestReceipt = ActionReceipt
+
 // ─── Overview ─────────────────────────────────────────────────────────────
 
 export type OverviewStat = { label: string; value: string; sub: string }
@@ -278,4 +312,79 @@ export type OperatorSession = {
   roles: OperatorRole[]
   permittedLanes: MaciLane[]
   expiresAt: string
+}
+
+// ─── Bus traces ───────────────────────────────────────────────────────────
+//
+// Snake_case mirrors the analyzer JSON schemas literally
+// (packages/agent-bus-analyzer/contracts/trace-query.schema.json
+//  + trace-event.schema.json) so the page renders with no transform layer.
+
+export type BusEventStatus =
+  | 'completed'
+  | 'policy-violation'
+  | 'dispatch-failure'
+  | 'unwired-handler'
+  | 'orphan-response'
+  | 'incomplete-pair'
+  | 'ingest-gap'
+
+export type BusIntegrityStatus = 'intact' | 'tampered' | 'unknown'
+
+export type BusEventKind = 'dispatch' | 'response' | 'decision'
+
+export type BusDecisionVerdict = 'allow' | 'deny' | 'transform' | 'escalate'
+
+export type BusTraceEvent = {
+  event_id: string
+  correlation_id: string
+  causal_index: number
+  recorded_at: string
+  source_agent: string
+  target_handler_declared: string | null
+  target_handler_resolved: string | null
+  payload_ref: string
+  kind: BusEventKind
+  decision: BusDecisionVerdict | null
+  flagged_rule: string | null
+  audit_receipt_hash: string | null
+  constitutional_hash: string
+  event_hash: string
+  prev_hash: string | null
+  status: BusEventStatus
+  gap_started_at: string | null
+  gap_ended_at: string | null
+}
+
+export type BusTraceListItem = {
+  correlation_id: string
+  started_at: string
+  completed_at: string | null
+  event_count: number
+  worst_event_status: BusEventStatus
+  integrity_status: BusIntegrityStatus
+  constitutional_hash: string
+}
+
+export type BusTraceList = {
+  kind: 'trace-list'
+  items: BusTraceListItem[]
+  next_cursor?: string | null
+}
+
+export type BusSingleTrace = {
+  kind: 'single-trace'
+  trace: BusTraceListItem
+  events: BusTraceEvent[]
+  integrity_status: BusIntegrityStatus
+  rotation_at_index?: number | null
+}
+
+export type BusExpired = {
+  kind: 'expired'
+  correlation_id: string
+  retention_policy: {
+    max_age_days: number
+    purged_at: string
+  }
 }

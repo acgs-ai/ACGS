@@ -5,6 +5,7 @@ import {
   useCompileDraft,
   useConsoleSummary,
   useDeliberations,
+  useGovernedActions,
   useIncidents,
   useOverview,
   usePolicies,
@@ -13,8 +14,10 @@ import {
 import { navigate } from '../lib/navigate'
 import { clearSession } from '../lib/session'
 import { Account } from './console/Account'
+import { Actions } from './console/Actions'
 import { Agents } from './console/Agents'
 import { Audit } from './console/Audit'
+import { BusAnalysis } from './console/BusAnalysis'
 import { Compile } from './console/Compile'
 import { Deliberations } from './console/Deliberations'
 import { Incidents } from './console/Incidents'
@@ -42,8 +45,16 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
       </>
     ),
   },
+  '/console/actions': {
+    crumb: 'I.III · Operate / Actions',
+    title: (
+      <>
+        Action <em>control</em>
+      </>
+    ),
+  },
   '/console/maci': {
-    crumb: 'I.III · Operate / MACI lanes',
+    crumb: 'I.IV · Operate / MACI lanes',
     title: (
       <>
         MACI <em>separation</em>
@@ -51,7 +62,7 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
     ),
   },
   '/console/deliberations': {
-    crumb: 'I.IV · Operate / Deliberations',
+    crumb: 'I.V · Operate / Deliberations',
     title: (
       <>
         Human <em>deliberations</em>
@@ -59,7 +70,7 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
     ),
   },
   '/console/incidents': {
-    crumb: 'I.V · Operate / Incidents',
+    crumb: 'I.VI · Operate / Incidents',
     title: (
       <>
         Active <em>escalations</em>
@@ -90,8 +101,16 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
       </>
     ),
   },
+  '/console/bus': {
+    crumb: 'II.IV · Govern / Bus traces',
+    title: (
+      <>
+        Bus <em>traces</em>
+      </>
+    ),
+  },
   '/console/settings': {
-    crumb: 'II.IV · Govern / Settings',
+    crumb: 'II.V · Govern / Settings',
     title: (
       <>
         Operating <em>parameters</em>
@@ -99,7 +118,7 @@ const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
     ),
   },
   '/console/tenants': {
-    crumb: 'II.V · Govern / Tenants',
+    crumb: 'II.VI · Govern / Tenants',
     title: (
       <>
         Active <em>tenancies</em>
@@ -122,6 +141,8 @@ function PageBody({ path }: { path: string }) {
       return <Overview />
     case '/console/agents':
       return <Agents />
+    case '/console/actions':
+      return <Actions />
     case '/console/maci':
       return <Maci />
     case '/console/deliberations':
@@ -134,6 +155,8 @@ function PageBody({ path }: { path: string }) {
       return <Compile />
     case '/console/audit':
       return <Audit />
+    case '/console/bus':
+      return <BusAnalysis />
     case '/console/settings':
       return <Settings />
     case '/console/tenants':
@@ -190,6 +213,7 @@ export function Console({ path }: { path: string }) {
   const previousPath = useRef(path)
   const agents = useAgents()
   const deliberations = useDeliberations()
+  const actions = useGovernedActions()
   const incidents = useIncidents()
   const policies = usePolicies()
   const compileDraft = useCompileDraft()
@@ -203,6 +227,7 @@ export function Console({ path }: { path: string }) {
   const compileCount = compileDraft.data?.changes.length ?? 7
   const deliberationCount = summary.data?.humanReview ?? deliberations.data?.length ?? 3
   const incidentCount = incidents.data?.length ?? 5
+  const actionCount = actions.data?.length ?? 0
   const tenantCount = tenants.data?.length ?? 4
   const refusals24h =
     summary.data?.refusals24h ??
@@ -224,6 +249,7 @@ export function Console({ path }: { path: string }) {
       items: [
         { path: '/console', label: 'Overview' },
         { path: '/console/agents', label: 'Agents', count: String(agentsOnline) },
+        { path: '/console/actions', label: 'Actions', count: String(actionCount) },
         { path: '/console/maci', label: 'MACI lanes', count: '4' },
         {
           path: '/console/deliberations',
@@ -239,6 +265,7 @@ export function Console({ path }: { path: string }) {
         { path: '/console/policies', label: 'Policies', count: String(policyCount) },
         { path: '/console/compile', label: 'Compile', count: String(compileCount) },
         { path: '/console/audit', label: 'Audit trail' },
+        { path: '/console/bus', label: 'Bus traces' },
         { path: '/console/settings', label: 'Settings' },
         { path: '/console/tenants', label: 'Tenants', count: String(tenantCount) },
       ],

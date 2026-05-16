@@ -3,8 +3,15 @@ import { ApiError, api } from './client'
 
 const LIVE = { staleTime: 5_000, refetchInterval: 10_000 }
 const SLOW = { staleTime: 30_000, refetchInterval: 60_000 }
+// Single-trace inspector: trace is effectively immutable for a reader's
+// session (append-only, but the user clicks away to refresh the list view).
+// No polling — keep just enough staleness to dedupe re-mounts.
+const SNAPSHOT = { staleTime: 5_000 }
 
 function canUseFixtureFallback(): boolean {
+  if (import.meta.env.PROD) {
+    return false
+  }
   return import.meta.env.VITE_USE_MOCKS === 'true'
 }
 
@@ -46,6 +53,25 @@ export function useConsoleSummary() {
           )
       : api.consoleSummary.get,
     ...LIVE,
+  })
+}
+
+export function useGovernedActions() {
+  return useQuery({
+    queryKey: ['governed-actions'],
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(api.actions.list, () =>
+            import('../mocks/data/actions').then((m) => m.GOVERNED_ACTIONS),
+          )
+      : api.actions.list,
+    ...LIVE,
+  })
+}
+
+export function useTestAction() {
+  return useMutation({
+    mutationFn: api.actions.test,
   })
 }
 
@@ -198,5 +224,38 @@ export function useAccount() {
           )
       : api.account.get,
     ...SLOW,
+  })
+}
+
+export function useBusTraceList() {
+  return useQuery({
+    queryKey: ['bus-traces'],
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(
+            () => api.bus.listTraces(),
+            () => import('../mocks/data/bus-analysis').then((m) => m.BUS_TRACE_LIST),
+          )
+      : () => api.bus.listTraces(),
+    ...LIVE,
+  })
+}
+
+export function useSingleTrace(correlationId: string | null) {
+  return useQuery({
+    queryKey: ['bus-trace', correlationId],
+    enabled: correlationId !== null,
+    queryFn: () => {
+      const id = correlationId as string
+      const live = () => api.bus.getTrace(id)
+      const fallback = () =>
+        import('../mocks/data/bus-analysis').then((m) => {
+          const found = m.getSingleTraceFixture(id)
+          if (found) return found
+          throw new ApiError(404, `/api/bus/traces/${id}`, 'trace not in fixture set')
+        })
+      return import.meta.env.DEV ? withFixtureFallback(live, fallback) : live()
+    },
+    ...SNAPSHOT,
   })
 }

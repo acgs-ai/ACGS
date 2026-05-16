@@ -12,8 +12,10 @@ if (import.meta.env.VITE_USE_MOCKS !== 'true') {
 
 import { HttpResponse, http } from 'msw'
 import { ACCOUNT_VIEW } from './data/account'
+import { GOVERNED_ACTIONS } from './data/actions'
 import { AGENTS } from './data/agents'
 import { AUDIT_EVENTS } from './data/audit'
+import { BUS_TRACE_LIST, getSingleTraceFixture } from './data/bus-analysis'
 import { COMPILE_DRAFT } from './data/compile'
 import { CONSOLE_SUMMARY } from './data/console-summary'
 import { DELIBERATIONS } from './data/deliberations'
@@ -27,6 +29,16 @@ import { TENANTS } from './data/tenants'
 export const handlers = [
   http.get('/api/v1/console-summary', () => HttpResponse.json(CONSOLE_SUMMARY)),
   http.get('/api/v1/agents', () => HttpResponse.json(AGENTS)),
+  http.get('/api/v1/actions', () => HttpResponse.json(GOVERNED_ACTIONS)),
+  http.post('/api/v1/actions/test', async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { actionId?: string; payload?: string }
+    const action = GOVERNED_ACTIONS.find((item) => item.id === body.actionId) ?? GOVERNED_ACTIONS[0]
+    return HttpResponse.json({
+      title: 'Pre-execution test receipt',
+      body: `Fixture policy check predicts ${action.outcome.toUpperCase()} for ${action.agent} → ${action.action}. No production tool was executed.`,
+      meta: `${action.receiptId} · ${action.traceId} · ${new Date().toISOString()}`,
+    })
+  }),
   http.get('/api/v1/overview', () => HttpResponse.json(OVERVIEW_SUMMARY)),
   http.get('/api/v1/maci', () => HttpResponse.json(MACI_LANES)),
   http.get('/api/v1/deliberations', () => HttpResponse.json(DELIBERATIONS)),
@@ -51,4 +63,13 @@ export const handlers = [
   http.get('/api/v1/settings', () => HttpResponse.json(SETTING_SECTIONS)),
   http.get('/api/v1/tenants', () => HttpResponse.json(TENANTS)),
   http.get('/api/v1/account', () => HttpResponse.json(ACCOUNT_VIEW)),
+  http.get('/api/bus/traces', () => HttpResponse.json(BUS_TRACE_LIST)),
+  http.get('/api/bus/traces/:correlationId', ({ params }) => {
+    const id = String(params.correlationId)
+    const trace = getSingleTraceFixture(id)
+    if (!trace) {
+      return HttpResponse.json({ detail: 'trace not found' }, { status: 404 })
+    }
+    return HttpResponse.json(trace)
+  }),
 ]

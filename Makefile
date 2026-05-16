@@ -78,16 +78,20 @@ build-py:
 	done
 
 test-py:
-	@for pkg in $(PYTHON_PACKAGES); do \
-		if [ -f "$$pkg/pyproject.toml" ]; then \
-			echo "==> test $$pkg"; \
-			(cd "$$pkg" && $(UV) run pytest --import-mode=importlib) || exit 1; \
-		fi; \
+	@set -e; \
+	$(MAKE) -C packages/acgs-lite test; \
+	for pkg in packages/Acgs-Swarm packages/clinicalguard acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	  echo "==> test $$pkg"; \
+	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
-	$(UV) run ruff check $(PYTHON_PACKAGES)
-	$(UV) run ruff format --check $(PYTHON_PACKAGES)
+	@set -e; \
+	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(MAKE) -C packages/acgs-lite lint; \
+	(cd packages/Acgs-Swarm && $(UV) run ruff check src/ && $(UV) run ruff format --check src/); \
+	(cd packages/clinicalguard && $(UV) run ruff check . && $(UV) run ruff format --check .)
 
 typecheck-py:
 	@for pkg in $(PYTHON_PACKAGES); do \

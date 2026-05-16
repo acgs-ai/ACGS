@@ -7,6 +7,7 @@ matches the plan; that is the entire point.
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -26,6 +27,17 @@ def _load_json(rel: str) -> dict:
 
 def _load_yaml(rel: str) -> dict:
     return yaml.safe_load((ROOT / rel).read_text())
+
+
+def _is_gitlink(rel: str) -> bool:
+    result = subprocess.run(
+        ["git", "ls-tree", "HEAD", rel],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.startswith("160000 commit ")
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +73,7 @@ EXPECTED_UV_MEMBERS = {
     "packages/acgs-lite",
     "packages/Acgs-Swarm",
     "packages/clinicalguard",
+    "packages/gove-zone",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
 }
@@ -75,10 +88,14 @@ def test_uv_workspace_members_match_plan():
 
 
 def test_every_uv_member_has_pyproject_on_disk():
-    """A workspace member without pyproject.toml is a broken declaration."""
+    """Initialized workspace members need pyproject.toml; gitlinks may be lazy."""
     root = _load_toml("pyproject.toml")
     members = root["tool"]["uv"]["workspace"]["members"]
-    missing = [m for m in members if not (ROOT / m / "pyproject.toml").is_file()]
+    missing = [
+        m
+        for m in members
+        if not (ROOT / m / "pyproject.toml").is_file() and not _is_gitlink(m)
+    ]
     assert not missing, f"Members missing pyproject.toml: {missing}"
 
 
@@ -142,11 +159,15 @@ def test_workflow_path_filters_point_at_real_dirs():
 
 
 def test_constitutional_hash_workflow_pulls_submodules():
-    """Hash inventory must traverse submodules once they land — PRD §5."""
-    doc = yaml.safe_load((ROOT / ".github/workflows/constitutional-hash.yml").read_text())
+    """Hash inventory verifies initialized submodules and reports credential gaps."""
+    path = ROOT / ".github/workflows/constitutional-hash.yml"
+    doc = yaml.safe_load(path.read_text())
+    text = path.read_text()
     steps = doc["jobs"]["verify"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout"))
-    assert checkout["with"]["submodules"] == "recursive"
+    assert checkout["with"]["submodules"] is False
+    assert "git submodule update --init --recursive -- packages/acgs-lite" in text
+    assert "--ignore-missing-prefix packages/clinicalguard/" in text
 
 
 def test_existing_console_and_marketing_workflows_untouched():
