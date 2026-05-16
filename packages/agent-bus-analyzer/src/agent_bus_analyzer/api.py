@@ -14,7 +14,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from typing import Annotated
 
 from agent_bus_analyzer.auth import require_reviewer_role
 from agent_bus_analyzer.models import SingleTrace, TraceList
@@ -69,7 +70,10 @@ def create_app(store: TraceStore | None = None) -> FastAPI:
         response_model=TraceList,
         dependencies=[Depends(require_reviewer_role)],
     )
-    async def list_traces(request: Request, limit: int = 50) -> TraceList:
+    async def list_traces(
+        request: Request,
+        limit: Annotated[int, Query(gt=0, le=1000)] = 50,
+    ) -> TraceList:
         return _get_store(request).list_traces(limit=limit)
 
     @app.get(
