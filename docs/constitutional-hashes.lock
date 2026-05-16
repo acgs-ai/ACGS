@@ -189,18 +189,6 @@
     "packages/acgs-lite/tests/test_synthesis_engine.py": "608508a9bd224290",
     "packages/acgs-lite/tests/test_validate_strict_per_call.py": "608508a9bd224290",
     "packages/acgs-lite/tests/test_workflow_action.py": "608508a9bd224290",
-    "packages/acgs-lite/tests/test_workflow_compiler.py": "608508a9bd224290",
-    "packages/clinicalguard/__init__.py": "608508a9bd224290",
-    "packages/clinicalguard/agent.py": "608508a9bd224290",
-    "packages/clinicalguard/main.py": "608508a9bd224290",
-    "packages/clinicalguard/skills/audit_query.py": "608508a9bd224290",
-    "packages/clinicalguard/skills/healthcare_validators.py": "608508a9bd224290",
-    "packages/clinicalguard/skills/hipaa_checker.py": "608508a9bd224290",
-    "packages/clinicalguard/skills/validate_clinical.py": "608508a9bd224290",
-    "packages/clinicalguard/tests/test_a2a_protocol.py": "608508a9bd224290",
-    "packages/clinicalguard/tests/test_adversarial.py": "608508a9bd224290",
-    "packages/clinicalguard/tests/test_demo_scenarios.py": "608508a9bd224290",
-    "packages/clinicalguard/tests/test_healthcare_validators.py": "608508a9bd224290",
-    "packages/clinicalguard/tests/test_validate_clinical.py": "608508a9bd224290"
+    "packages/acgs-lite/tests/test_workflow_compiler.py": "608508a9bd224290"
   }
 }
