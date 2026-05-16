@@ -76,6 +76,12 @@ credentials/
 .remember
 .omx
 
+# Editor / tool caches — per-developer state, never tracked.
+.cursor/
+.gitnexus/
+.obsidian/
+.playwright-mcp/
+
 # Claude Code: per-user state ignored, shared team config tracked at root.
 # Sub-package .claude/ dirs stay fully ignored — each package owns its own
 # setup if needed. Mirrors the .omc/ whitelist pattern above.
