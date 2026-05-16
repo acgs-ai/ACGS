@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_LOG_PATH = Path("automation/logs/audit.jsonl")
 
 

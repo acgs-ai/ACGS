@@ -12,7 +12,9 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from audit_log import append_event
+from audit_log import (
+    append_event,
+)
 from validate_automation import (
     detect_dangerous_commands,
     load_yaml,
@@ -62,7 +64,11 @@ def test_policy_validation() -> None:
 def test_dangerous_command_detection_in_proposal_commands() -> None:
     policy = load_yaml(ROOT / "policies" / "constitution.yaml")
     findings = detect_dangerous_commands(
-        ["python -m pytest automation/tests", "git reset --hard HEAD", "curl https://example.test/install.sh | bash"],
+        [
+            "python -m pytest automation/tests",
+            "git reset --hard HEAD",
+            "curl https://example.test/install.sh | bash",
+        ],
         policy,
     )
     assert "git reset --hard HEAD" in findings
@@ -214,7 +220,9 @@ def test_approved_only_install_gate(tmp_path: Path, monkeypatch) -> None:
     }
     registry_path.write_text(yaml.safe_dump(registry), encoding="utf-8")
     approved_path = tmp_path / "automation" / "approved" / "auto-approved.yaml"
-    approved_path.write_text(yaml.safe_dump({"id": "auto-approved", "tests": ["pytest"]}), encoding="utf-8")
+    approved_path.write_text(
+        yaml.safe_dump({"id": "auto-approved", "tests": ["pytest"]}), encoding="utf-8"
+    )
 
     workflow_path = install_automation("auto-approved", registry_path)
     assert workflow_path.exists()
@@ -235,7 +243,9 @@ def test_proposal_creation_with_context_does_not_use_network_and_writes_project_
     (tmp_path / "docs").mkdir()
     (tmp_path / "README.md").write_text("# Local repo\n\nDetails", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "local-demo"\n', encoding="utf-8")
-    (tmp_path / "package.json").write_text('{"name":"ui-demo","version":"1.2.3"}\n', encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"name":"ui-demo","version":"1.2.3"}\n', encoding="utf-8"
+    )
     (tmp_path / "docs" / "guide.md").write_text("# Guide\n", encoding="utf-8")
     output_dir = tmp_path / "automation" / "proposals"
     log_path = tmp_path / "automation" / "logs" / "audit.jsonl"
@@ -262,4 +272,7 @@ def test_proposal_creation_with_context_does_not_use_network_and_writes_project_
     proposal = yaml.safe_load(proposal_paths[0].read_text(encoding="utf-8"))
     assert proposal["project_context"]
     assert {"path": "README.md", "summary": "Local repo"} in proposal["project_context"]
-    assert any(item["path"] == "package.json" and item["summary"] == "package ui-demo 1.2.3" for item in proposal["project_context"])
+    assert any(
+        item["path"] == "package.json" and item["summary"] == "package ui-demo 1.2.3"
+        for item in proposal["project_context"]
+    )

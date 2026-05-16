@@ -11,7 +11,6 @@ from typing import Any
 
 import yaml
 
-
 REGISTRY_REQUIRED_FIELDS = {
     "id",
     "name",
@@ -170,7 +169,9 @@ def validate_proposal(proposal: dict[str, Any], policy: dict[str, Any]) -> list[
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate automation registry, policy, and proposal files.")
+    parser = argparse.ArgumentParser(
+        description="Validate automation registry, policy, and proposal files."
+    )
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--proposal", type=Path)

@@ -5,7 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from evidence_writer import ChainEvidenceWriter
+from evidence_writer import (
+    ChainEvidenceWriter,
+)
 from hermes_acgs_middleware import (
     DEFAULT_CONSTITUTION,
     DENY,
