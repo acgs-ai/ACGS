@@ -13,9 +13,9 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from typing import Annotated
 
 from agent_bus_analyzer.auth import require_reviewer_role
 from agent_bus_analyzer.models import SingleTrace, TraceList
