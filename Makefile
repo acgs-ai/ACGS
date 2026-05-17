@@ -19,6 +19,7 @@ PYTHON_PACKAGES := \
 	packages/acgs-lite \
 	packages/Acgs-Swarm \
 	packages/clinicalguard \
+	packages/agent-bus-analyzer \
 	acgs_governance_eval_mvp \
 	acgs-cft-governance-pack
 
@@ -80,15 +81,15 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/clinicalguard acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/clinicalguard packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack; \
-	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests; \
+	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests; \
 	$(MAKE) -C packages/acgs-lite lint; \
 	(cd packages/Acgs-Swarm && $(UV) run ruff check src/ && $(UV) run ruff format --check src/); \
 	(cd packages/clinicalguard && $(UV) run ruff check . && $(UV) run ruff format --check .)
