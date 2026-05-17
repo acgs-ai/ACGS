@@ -14,7 +14,7 @@ on:
 
 jobs:
   governed-mcp-v0:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       PYTHONPATH: acgs_governance_eval_mvp
     steps:
