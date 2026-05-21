@@ -28,6 +28,13 @@ SCHEMA_VERSION = "admission_gate/0.1"
 
 _PRECEDENCE = {"deny": 3, "require_review": 2, "transform": 1, "allow": 0}
 
+_ENUMS: dict[str, tuple[str, ...]] = {
+    "phase": ("workflow_admission", "step_admission", "final_output"),
+    "risk_class": ("low", "medium", "high", "critical"),
+    "actor_role": ("agent", "human", "system"),
+    "environment": ("local", "ci", "hosted", "production"),
+}
+
 
 def decide(
     request: dict[str, Any],
@@ -63,18 +70,9 @@ def decide(
             fired.append(rule)
 
     if not fired:
-        return _build_decision(
+        return _no_match_decision(
             request=request,
             policy_bundle=policy_bundle,
-            decision="allow",
-            reason_code="allowed_with_constraints",
-            reason="no policy rule matched; default allow inside declared boundary",
-            matched_constraints=[],
-            transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
-            review={"required": False, "reviewer_role": None, "reason": None},
-            effective_permissions=list(request.get("requested_capabilities", [])),
-            required_controls=[],
-            blocked_capabilities=[],
             now=now,
             decision_id=decision_id,
             receipt_id=receipt_id,
@@ -88,7 +86,16 @@ def decide(
     transform = {"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None}
     review = {"required": False, "reviewer_role": None, "reason": None}
     effective_permissions = list(request.get("requested_capabilities", []))
+    # Union of required_controls across every fired rule — secondary obligations
+    # from lower-precedence rules (e.g. citation requirements from a require_review
+    # rule that lost to a deny rule) must not silently drop.
     required_controls: list[str] = []
+    seen_controls: set[str] = set()
+    for r in fired:
+        for c in r.get("required_controls", []) or []:
+            if c not in seen_controls:
+                required_controls.append(c)
+                seen_controls.add(c)
     blocked_capabilities: list[str] = []
 
     if action == "deny":
@@ -105,7 +112,6 @@ def decide(
                 "disallowed_outputs": list(tb.get("disallowed_outputs", [])),
             },
         }
-        required_controls = list(top.get("required_controls", []))
         blocked_capabilities = list(top.get("blocked_capabilities", []))
     elif action == "require_review":
         review = {
@@ -113,7 +119,6 @@ def decide(
             "reviewer_role": top.get("reviewer_role", "compliance_officer"),
             "reason": top.get("review_reason", top.get("description", "review_required")),
         }
-        required_controls = list(top.get("required_controls", []))
 
     return _build_decision(
         request=request,
@@ -194,6 +199,25 @@ def _require_request_shape(request: dict[str, Any]) -> None:
             f"unsupported admission request schema_version: {request['schema_version']!r}; expected {SCHEMA_VERSION!r}"
         )
 
+    # Fail closed on out-of-enum values. Without this an unknown risk_class
+    # (e.g. "potato") matches no rule and would route to the no-match path.
+    if request["phase"] not in _ENUMS["phase"]:
+        raise ValueError(f"admission request.phase invalid: {request['phase']!r}")
+    if request["risk_class"] not in _ENUMS["risk_class"]:
+        raise ValueError(f"admission request.risk_class invalid: {request['risk_class']!r}")
+    actor = request["actor"]
+    if not isinstance(actor, dict) or "role" not in actor:
+        raise ValueError("admission request.actor missing required 'role'")
+    if actor["role"] not in _ENUMS["actor_role"]:
+        raise ValueError(f"admission request.actor.role invalid: {actor['role']!r}")
+    eb = request["execution_boundary"]
+    if not isinstance(eb, dict) or "environment" not in eb:
+        raise ValueError("admission request.execution_boundary missing required 'environment'")
+    if eb["environment"] not in _ENUMS["environment"]:
+        raise ValueError(f"admission request.execution_boundary.environment invalid: {eb['environment']!r}")
+    if not isinstance(request.get("requested_capabilities"), list):
+        raise ValueError("admission request.requested_capabilities must be a list")
+
 
 def _rule_matches(when: dict[str, Any], request: dict[str, Any]) -> bool:
     """Tiny matcher for v0.1. Supported keys:
@@ -202,6 +226,9 @@ def _rule_matches(when: dict[str, Any], request: dict[str, Any]) -> bool:
     - ``phase``: list of phases; ANY match
     - ``requested_capabilities_any``: list; match if any present
     - ``requested_capabilities_all``: list; match only if all present
+    - ``requested_capabilities_subset_of``: list; match only if request's
+      capabilities are entirely contained in the safelist (use this to mark
+      a request as obviously-safe and exempt from the fail-closed default)
     - ``disallowed_outputs_contains_any``: list; match against request execution_boundary.disallowed_outputs
     - ``allowed_outputs_contains_any``: list; match against request execution_boundary.allowed_outputs
     - ``environment``: list of environments; ANY match
@@ -222,6 +249,9 @@ def _rule_matches(when: dict[str, Any], request: dict[str, Any]) -> bool:
             return False
     if "requested_capabilities_all" in when:
         if not set(when["requested_capabilities_all"]).issubset(caps):
+            return False
+    if "requested_capabilities_subset_of" in when:
+        if not caps.issubset(set(when["requested_capabilities_subset_of"])):
             return False
     if "allowed_outputs_contains_any" in when:
         allowed = set(request.get("execution_boundary", {}).get("allowed_outputs", []))
@@ -251,6 +281,79 @@ def _deny(
         reason_code=reason_code,
         reason=reason,
         matched_constraints=["bundle_mismatch"],
+        transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
+        review={"required": False, "reviewer_role": None, "reason": None},
+        effective_permissions=[],
+        required_controls=[],
+        blocked_capabilities=list(request.get("requested_capabilities", [])),
+        now=now,
+        decision_id=decision_id,
+        receipt_id=receipt_id,
+    )
+
+
+def _no_match_decision(
+    *,
+    request: dict[str, Any],
+    policy_bundle: PolicyBundle,
+    now: str | None,
+    decision_id: str | None,
+    receipt_id: str | None,
+) -> dict[str, Any]:
+    """Build the decision used when no rule matches.
+
+    The action comes from ``policy_bundle.default_action`` (defaulting to
+    ``deny``). The previous v0.1 prototype hard-coded ``allow`` here, which
+    was a fail-OPEN default; the bundle now controls this explicitly and the
+    receipt hash captures the choice.
+    """
+    action = policy_bundle.default_action
+    if action == "allow":
+        return _build_decision(
+            request=request,
+            policy_bundle=policy_bundle,
+            decision="allow",
+            reason_code="allowed_with_constraints",
+            reason="no rule matched; bundle.default_action='allow'",
+            matched_constraints=[],
+            transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
+            review={"required": False, "reviewer_role": None, "reason": None},
+            effective_permissions=list(request.get("requested_capabilities", [])),
+            required_controls=[],
+            blocked_capabilities=[],
+            now=now,
+            decision_id=decision_id,
+            receipt_id=receipt_id,
+        )
+    if action == "require_review":
+        return _build_decision(
+            request=request,
+            policy_bundle=policy_bundle,
+            decision="require_review",
+            reason_code="no_matching_policy",
+            reason="no rule matched; bundle.default_action='require_review'",
+            matched_constraints=["no_matching_policy"],
+            transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
+            review={
+                "required": True,
+                "reviewer_role": "compliance_officer",
+                "reason": "no_matching_policy",
+            },
+            effective_permissions=list(request.get("requested_capabilities", [])),
+            required_controls=[],
+            blocked_capabilities=[],
+            now=now,
+            decision_id=decision_id,
+            receipt_id=receipt_id,
+        )
+    # Default (and only safe default): deny.
+    return _build_decision(
+        request=request,
+        policy_bundle=policy_bundle,
+        decision="deny",
+        reason_code="no_matching_policy",
+        reason="no rule matched; bundle.default_action='deny' (fail-closed)",
+        matched_constraints=["no_matching_policy"],
         transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
         review={"required": False, "reviewer_role": None, "reason": None},
         effective_permissions=[],

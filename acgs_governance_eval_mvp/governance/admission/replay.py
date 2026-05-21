@@ -158,15 +158,22 @@ def verify_decision_with_execution(
                     f"event[{i}] boundary != transform.transformed_boundary",
                 )
     elif action == "require_review":
+        required_role = (decision.get("review") or {}).get("reviewer_role")
         matching = [
-            r for r in reviews if r.get("request_id") == request.get("request_id") and r.get("approved") is True
+            r
+            for r in reviews
+            if r.get("request_id") == request.get("request_id")
+            and r.get("approved") is True
+            and (required_role is None or r.get("reviewer_role") == required_role)
         ]
         if events and not matching:
             raise ReplayError(
                 "missing_human_review_receipt",
-                "require_review decision has execution events without an approved human-review receipt",
+                "require_review decision has execution events without an approved human-review "
+                f"receipt from reviewer_role={required_role!r}",
             )
         report["human_review_satisfied"] = bool(matching)
+        report["required_reviewer_role"] = required_role
     elif action == "allow":
         pass
     else:

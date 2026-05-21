@@ -29,6 +29,7 @@
       "enum": [
         "allowed_with_constraints",
         "missing_authority",
+        "no_matching_policy",
         "prohibited_output",
         "review_required",
         "risk_threshold_exceeded",
@@ -90,7 +91,7 @@
   "additionalProperties": false,
   "allOf": [
     {
-      "if": {"properties": {"decision": {"const": "transform"}}},
+      "if": {"properties": {"decision": {"const": "transform"}}, "required": ["decision"]},
       "then": {
         "properties": {
           "transform": {
@@ -101,10 +102,17 @@
             "required": ["applied", "transformed_boundary"]
           }
         }
+      },
+      "else": {
+        "properties": {
+          "transform": {
+            "properties": {"applied": {"const": false}}
+          }
+        }
       }
     },
     {
-      "if": {"properties": {"decision": {"const": "require_review"}}},
+      "if": {"properties": {"decision": {"const": "require_review"}}, "required": ["decision"]},
       "then": {
         "properties": {
           "review": {
@@ -113,6 +121,13 @@
               "reviewer_role": {"type": "string"}
             },
             "required": ["required", "reviewer_role"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "review": {
+            "properties": {"required": {"const": false}}
           }
         }
       }

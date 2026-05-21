@@ -1,7 +1,19 @@
 {
   "bundle_id": "legalguard_ca",
   "version": "1.2.0",
+  "default_action": "deny",
   "rules": [
+    {
+      "id": "safe_read_and_summarize",
+      "description": "low-risk read+summarize over already-uploaded inputs is explicitly safe",
+      "when": {
+        "risk_class": ["low"],
+        "requested_capabilities_subset_of": ["read_file", "summarize"]
+      },
+      "action": "allow",
+      "reason_code": "allowed_with_constraints",
+      "matched_constraint": "safe_read_and_summarize"
+    },
     {
       "id": "prohibited_client_facing_advice",
       "description": "client-facing legal advice is never produced by an autonomous agent",

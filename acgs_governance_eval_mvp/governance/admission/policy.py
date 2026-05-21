@@ -5,6 +5,7 @@ A bundle is a JSON document::
     {
       "bundle_id": "legalguard_ca",
       "version": "1.2.0",
+      "default_action": "deny",
       "rules": [
         {
           "id": "prohibited_client_facing_advice",
@@ -17,9 +18,14 @@ A bundle is a JSON document::
     }
 
 Rule precedence applied by :func:`governance.admission.gate.decide`:
-``deny`` > ``require_review`` > ``transform`` > ``allow``. The bundle hash
-covers every byte of the canonical-JSON representation of the bundle dict,
-so any edit produces a different ``policy_bundle_hash``.
+``deny`` > ``require_review`` > ``transform`` > ``allow``. When no rule
+matches, the gate falls back to ``default_action`` (defaulting to ``deny``
+— fail closed). Bundles that want a permissive default must opt in
+explicitly by setting ``default_action: "allow"``.
+
+The bundle hash covers every byte of the canonical-JSON representation of
+the bundle dict, so any edit (including ``default_action``) produces a
+different ``policy_bundle_hash``.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ class PolicyBundle:
     bundle_id: str
     version: str
     rules: list[dict[str, Any]] = field(default_factory=list)
+    default_action: str = "deny"
     raw: dict[str, Any] = field(default_factory=dict)
 
     def hash(self) -> str:
@@ -75,9 +82,13 @@ def _from_dict(raw: dict[str, Any]) -> PolicyBundle:
                 raise ValueError(f"rule[{i}] missing required key: {key}")
         if rule["action"] not in _ACTIONS:
             raise ValueError(f"rule[{i}].action must be one of {sorted(_ACTIONS)}, got {rule['action']!r}")
+    default_action = raw.get("default_action", "deny")
+    if default_action not in _ACTIONS:
+        raise ValueError(f"policy bundle default_action must be one of {sorted(_ACTIONS)}, got {default_action!r}")
     return PolicyBundle(
         bundle_id=str(raw["bundle_id"]),
         version=str(raw["version"]),
         rules=list(rules),
+        default_action=str(default_action),
         raw=raw,
     )
