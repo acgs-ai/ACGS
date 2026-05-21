@@ -55,7 +55,8 @@ jobs:
         # with EACCES writing into /usr/local/lib/python3.14/site-packages.
         # `--python <path>` makes the choice explicit and works on both
         # ubuntu-latest and self-hosted runners.
-        run: uv pip install --python "${pythonLocation}/bin/python" --editable '.[test]'
+        run: |
+          uv pip install --python "${pythonLocation}/bin/python" --editable '.[test]'
 
       - name: Lint
         run: |
@@ -63,4 +64,5 @@ jobs:
           uvx ruff@0.8 format --check .
 
       - name: Test
-        run: "${pythonLocation}/bin/python" -m pytest tests/ -v --import-mode=importlib
+        run: |
+          "${pythonLocation}/bin/python" -m pytest tests/ -v --import-mode=importlib
