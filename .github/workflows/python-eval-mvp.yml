@@ -48,15 +48,15 @@ jobs:
           cache-dependency-glob: 'acgs_governance_eval_mvp/pyproject.toml'
 
       - name: Install
-        # Pin to the interpreter setup-python resolved (the matrix version,
-        # exposed via ${pythonLocation}). Plain `uv pip install --system`
-        # resolves Python via PATH, which on self-hosted Fedora picks up
-        # /usr/bin/python3 (3.14) instead of the matrix version, then fails
-        # with EACCES writing into /usr/local/lib/python3.14/site-packages.
-        # `--python <path>` makes the choice explicit and works on both
-        # ubuntu-latest and self-hosted runners.
+        # Create a per-matrix venv off the setup-python interpreter and
+        # install into that. Plain `uv pip install --system` resolves Python
+        # via PATH (picks /usr/bin/python3 on Fedora self-hosted = wrong
+        # version, EACCES), and `--python <managed>` is rejected by uv as
+        # externally-managed. The venv path works on both ubuntu-latest and
+        # self-hosted Fedora.
         run: |
-          uv pip install --python "${pythonLocation}/bin/python" --editable '.[test]'
+          uv venv --python "${pythonLocation}/bin/python" .venv
+          uv pip install --python .venv/bin/python --editable '.[test]'
 
       - name: Lint
         run: |
@@ -65,4 +65,4 @@ jobs:
 
       - name: Test
         run: |
-          "${pythonLocation}/bin/python" -m pytest tests/ -v --import-mode=importlib
+          .venv/bin/python -m pytest tests/ -v --import-mode=importlib
