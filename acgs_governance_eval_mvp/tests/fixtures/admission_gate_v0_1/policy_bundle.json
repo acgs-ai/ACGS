@@ -1,0 +1,47 @@
+{
+  "bundle_id": "legalguard_ca",
+  "version": "1.2.0",
+  "rules": [
+    {
+      "id": "prohibited_client_facing_advice",
+      "description": "client-facing legal advice is never produced by an autonomous agent",
+      "when": {
+        "requested_capabilities_any": ["client_facing_legal_advice", "final_legal_advice"]
+      },
+      "action": "deny",
+      "reason_code": "prohibited_output",
+      "matched_constraint": "no_client_facing_legal_advice"
+    },
+    {
+      "id": "lawyer_supervision_required",
+      "description": "high/critical legal_analysis requires licensed_lawyer review",
+      "when": {
+        "risk_class": ["high", "critical"],
+        "requested_capabilities_any": ["legal_analysis"]
+      },
+      "action": "require_review",
+      "reason_code": "review_required",
+      "matched_constraint": "lawyer_supervision_required",
+      "reviewer_role": "licensed_lawyer",
+      "review_reason": "high_risk_legal_output",
+      "required_controls": ["source_citation_required", "jurisdiction_match_required"]
+    },
+    {
+      "id": "rewrite_to_internal_draft",
+      "description": "medium-risk legal_analysis is allowed only as internal_draft",
+      "when": {
+        "risk_class": ["medium"],
+        "requested_capabilities_any": ["legal_analysis"]
+      },
+      "action": "transform",
+      "reason_code": "transformed_to_safe_boundary",
+      "matched_constraint": "rewrite_to_internal_draft",
+      "transformed_method": "produce_internal_draft_only",
+      "transformed_boundary": {
+        "allowed_outputs": ["internal_draft"],
+        "disallowed_outputs": ["client_facing_legal_advice", "final_legal_advice"]
+      },
+      "required_controls": ["source_citation_required"]
+    }
+  ]
+}

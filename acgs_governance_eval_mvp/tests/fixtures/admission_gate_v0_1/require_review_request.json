@@ -1,0 +1,30 @@
+{
+  "schema_version": "admission_gate/0.1",
+  "request_id": "req_review_001",
+  "workflow_id": "legalguard_high_risk_review",
+  "run_id": "run_review_001",
+  "phase": "workflow_admission",
+  "actor": {"id": "legal_assistant_agent", "role": "agent", "tenant": "demo"},
+  "declared_goal": "produce a high-risk legal analysis memo for licensed-lawyer review",
+  "proposed_method": "research statutes, cite sources, draft memo for lawyer review",
+  "risk_class": "high",
+  "requested_capabilities": ["legal_analysis", "external_send"],
+  "execution_boundary": {
+    "environment": "hosted",
+    "allowed_outputs": ["internal_draft"],
+    "disallowed_outputs": ["client_facing_legal_advice"]
+  },
+  "policy_context": {
+    "policy_bundle_id": "legalguard_ca",
+    "policy_version": "1.2.0",
+    "jurisdiction": "CA-ON"
+  },
+  "inputs_manifest": {
+    "hash_alg": "sha256",
+    "items": [
+      {"kind": "matter_brief", "ref": "matter_42.md",
+       "hash": "0000000000000000000000000000000000000000000000000000000000000004"}
+    ]
+  },
+  "timestamp": "2026-05-21T00:00:00Z"
+}
