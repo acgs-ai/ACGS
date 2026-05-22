@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/decision_receipt.schema.json",
+  "title": "ACGS Admission Gate v0.1 Decision Receipt",
+  "type": "object",
+  "required": [
+    "receipt_id",
+    "hash_alg",
+    "request_hash",
+    "decision_hash",
+    "policy_bundle_hash",
+    "policy_version",
+    "created_at"
+  ],
+  "properties": {
+    "receipt_id": {"type": "string", "pattern": "^rcpt_[A-Za-z0-9_-]+$"},
+    "hash_alg": {"type": "string", "enum": ["sha256"]},
+    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy_bundle_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "policy_version": {"type": "string"},
+    "created_at": {"type": "string"},
+    "previous_receipt_hash": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      ]
+    }
+  },
+  "additionalProperties": false
+}

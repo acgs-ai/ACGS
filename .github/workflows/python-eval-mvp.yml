@@ -48,10 +48,15 @@ jobs:
           cache-dependency-glob: 'acgs_governance_eval_mvp/pyproject.toml'
 
       - name: Install
-        # `--system` targets the active Python from setup-python above
-        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
-        # externally-managed on current ubuntu-latest runners.
-        run: uv pip install --system --editable '.[test]'
+        # Create a per-matrix venv off the setup-python interpreter and
+        # install into that. Plain `uv pip install --system` resolves Python
+        # via PATH (picks /usr/bin/python3 on Fedora self-hosted = wrong
+        # version, EACCES), and `--python <managed>` is rejected by uv as
+        # externally-managed. The venv path works on both ubuntu-latest and
+        # self-hosted Fedora.
+        run: |
+          uv venv --python "${pythonLocation}/bin/python" .venv
+          uv pip install --python .venv/bin/python --editable '.[test]'
 
       - name: Lint
         run: |
@@ -59,4 +64,5 @@ jobs:
           uvx ruff@0.8 format --check .
 
       - name: Test
-        run: python -m pytest tests/ -v --import-mode=importlib
+        run: |
+          .venv/bin/python -m pytest tests/ -v --import-mode=importlib

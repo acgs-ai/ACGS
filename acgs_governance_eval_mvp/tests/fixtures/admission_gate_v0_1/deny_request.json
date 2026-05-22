@@ -1,0 +1,30 @@
+{
+  "schema_version": "admission_gate/0.1",
+  "request_id": "req_deny_001",
+  "workflow_id": "legalguard_advice_attempt",
+  "run_id": "run_deny_001",
+  "phase": "final_output",
+  "actor": {"id": "advice_agent", "role": "agent", "tenant": "demo"},
+  "declared_goal": "produce final legal advice for a client",
+  "proposed_method": "summarize a statute and emit a client-facing recommendation",
+  "risk_class": "critical",
+  "requested_capabilities": ["legal_analysis", "client_facing_legal_advice"],
+  "execution_boundary": {
+    "environment": "production",
+    "allowed_outputs": ["client_facing_legal_advice"],
+    "disallowed_outputs": []
+  },
+  "policy_context": {
+    "policy_bundle_id": "legalguard_ca",
+    "policy_version": "1.2.0",
+    "jurisdiction": "CA-ON"
+  },
+  "inputs_manifest": {
+    "hash_alg": "sha256",
+    "items": [
+      {"kind": "statute_ref", "ref": "ON_Act_2024_s12",
+       "hash": "0000000000000000000000000000000000000000000000000000000000000002"}
+    ]
+  },
+  "timestamp": "2026-05-21T00:00:00Z"
+}
