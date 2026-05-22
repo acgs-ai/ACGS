@@ -54,22 +54,12 @@ class PolicyBundle:
 
 def load_policy_bundle(path: str | Path) -> PolicyBundle:
     """Load + validate a v0.1 policy bundle from JSON on disk."""
-    p = Path(path)
-    raw = json.loads(p.read_text(encoding="utf-8"))
-    return _from_dict(raw)
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    return policy_bundle_from_dict(raw)
 
 
 def policy_bundle_from_dict(raw: dict[str, Any]) -> PolicyBundle:
-    return _from_dict(raw)
-
-
-def policy_bundle_hash(bundle: PolicyBundle | dict[str, Any]) -> str:
-    if isinstance(bundle, PolicyBundle):
-        return bundle.hash()
-    return sha256_json(bundle)
-
-
-def _from_dict(raw: dict[str, Any]) -> PolicyBundle:
+    """Validate a raw policy-bundle dict and wrap it in :class:`PolicyBundle`."""
     missing = [k for k in ("bundle_id", "version", "rules") if k not in raw]
     if missing:
         raise ValueError(f"policy bundle missing required keys: {missing}")
@@ -92,3 +82,9 @@ def _from_dict(raw: dict[str, Any]) -> PolicyBundle:
         default_action=str(default_action),
         raw=raw,
     )
+
+
+def policy_bundle_hash(bundle: PolicyBundle | dict[str, Any]) -> str:
+    if isinstance(bundle, PolicyBundle):
+        return bundle.hash()
+    return sha256_json(bundle)

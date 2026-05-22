@@ -16,8 +16,6 @@ policy-bundle bytes. Any drift in any of these is detectable at replay.
 
 from __future__ import annotations
 
-import os
-import secrets
 import uuid
 from typing import Any
 
@@ -51,24 +49,27 @@ def decide(
     _require_request_shape(request)
     if request["policy_context"]["policy_bundle_id"] != policy_bundle.bundle_id:
         # Fail closed: request asked for a different bundle than we loaded.
-        return _deny(
-            request,
-            policy_bundle,
+        return _build_decision(
+            request=request,
+            policy_bundle=policy_bundle,
+            decision="deny",
             reason_code="policy_violation",
             reason=(
                 f"requested policy_bundle_id={request['policy_context']['policy_bundle_id']!r} "
                 f"!= loaded bundle_id={policy_bundle.bundle_id!r}"
             ),
+            matched_constraints=["bundle_mismatch"],
+            transform=_empty_transform(),
+            review=_empty_review(),
+            effective_permissions=[],
+            required_controls=[],
+            blocked_capabilities=list(request.get("requested_capabilities", [])),
             now=now,
             decision_id=decision_id,
             receipt_id=receipt_id,
         )
 
-    fired: list[dict[str, Any]] = []
-    for rule in policy_bundle.rules:
-        if _rule_matches(rule.get("when", {}), request):
-            fired.append(rule)
-
+    fired = [rule for rule in policy_bundle.rules if _rule_matches(rule.get("when", {}), request)]
     if not fired:
         return _no_match_decision(
             request=request,
@@ -83,12 +84,9 @@ def decide(
     action = top["action"]
     matched = [r.get("matched_constraint", r["id"]) for r in fired]
 
-    transform = {"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None}
-    review = {"required": False, "reviewer_role": None, "reason": None}
-    effective_permissions = list(request.get("requested_capabilities", []))
-    # Union of required_controls across every fired rule — secondary obligations
-    # from lower-precedence rules (e.g. citation requirements from a require_review
-    # rule that lost to a deny rule) must not silently drop.
+    # Union required_controls across every fired rule — secondary obligations
+    # from lower-precedence rules (e.g. citation requirements from a
+    # require_review rule that lost to a deny rule) must not silently drop.
     required_controls: list[str] = []
     seen_controls: set[str] = set()
     for r in fired:
@@ -96,6 +94,10 @@ def decide(
             if c not in seen_controls:
                 required_controls.append(c)
                 seen_controls.add(c)
+
+    transform = _empty_transform()
+    review = _empty_review()
+    effective_permissions = list(request.get("requested_capabilities", []))
     blocked_capabilities: list[str] = []
 
     if action == "deny":
@@ -145,7 +147,6 @@ def make_receipt(
     policy_bundle: PolicyBundle | dict[str, Any],
     now: str | None = None,
     receipt_id: str | None = None,
-    previous_receipt_hash: str | None = None,
 ) -> dict[str, Any]:
     """Build a canonical receipt for an already-constructed decision body.
 
@@ -154,7 +155,6 @@ def make_receipt(
     """
     if "receipt" in decision_body:
         raise ValueError("make_receipt: decision_body must not contain a 'receipt' field")
-    pol_hash = policy_bundle_hash(policy_bundle)
     pol_version = (
         policy_bundle.version if isinstance(policy_bundle, PolicyBundle) else str(policy_bundle.get("version", ""))
     )
@@ -163,16 +163,28 @@ def make_receipt(
         "hash_alg": "sha256",
         "request_hash": sha256_json(request),
         "decision_hash": sha256_json(decision_body),
-        "policy_bundle_hash": pol_hash,
+        "policy_bundle_hash": policy_bundle_hash(policy_bundle),
         "policy_version": pol_version,
         "created_at": now or utc_now_iso(),
-        "previous_receipt_hash": previous_receipt_hash,
     }
 
 
 # ---------------------------------------------------------------------------
 # internals
 # ---------------------------------------------------------------------------
+
+
+def _empty_transform() -> dict[str, Any]:
+    return {
+        "applied": False,
+        "description": None,
+        "transformed_method": None,
+        "transformed_boundary": None,
+    }
+
+
+def _empty_review() -> dict[str, Any]:
+    return {"required": False, "reviewer_role": None, "reason": None}
 
 
 def _require_request_shape(request: dict[str, Any]) -> None:
@@ -233,26 +245,21 @@ def _rule_matches(when: dict[str, Any], request: dict[str, Any]) -> bool:
     - ``allowed_outputs_contains_any``: list; match against request execution_boundary.allowed_outputs
     - ``environment``: list of environments; ANY match
     """
-    if "risk_class" in when:
-        if request.get("risk_class") not in when["risk_class"]:
-            return False
-    if "phase" in when:
-        if request.get("phase") not in when["phase"]:
-            return False
+    if "risk_class" in when and request.get("risk_class") not in when["risk_class"]:
+        return False
+    if "phase" in when and request.get("phase") not in when["phase"]:
+        return False
     if "environment" in when:
         env = request.get("execution_boundary", {}).get("environment")
         if env not in when["environment"]:
             return False
     caps = set(request.get("requested_capabilities", []))
-    if "requested_capabilities_any" in when:
-        if not (caps & set(when["requested_capabilities_any"])):
-            return False
-    if "requested_capabilities_all" in when:
-        if not set(when["requested_capabilities_all"]).issubset(caps):
-            return False
-    if "requested_capabilities_subset_of" in when:
-        if not caps.issubset(set(when["requested_capabilities_subset_of"])):
-            return False
+    if "requested_capabilities_any" in when and not (caps & set(when["requested_capabilities_any"])):
+        return False
+    if "requested_capabilities_all" in when and not set(when["requested_capabilities_all"]).issubset(caps):
+        return False
+    if "requested_capabilities_subset_of" in when and not caps.issubset(set(when["requested_capabilities_subset_of"])):
+        return False
     if "allowed_outputs_contains_any" in when:
         allowed = set(request.get("execution_boundary", {}).get("allowed_outputs", []))
         if not (allowed & set(when["allowed_outputs_contains_any"])):
@@ -262,34 +269,6 @@ def _rule_matches(when: dict[str, Any], request: dict[str, Any]) -> bool:
         if not (disallowed & set(when["disallowed_outputs_contains_any"])):
             return False
     return True
-
-
-def _deny(
-    request: dict[str, Any],
-    policy_bundle: PolicyBundle,
-    *,
-    reason_code: str,
-    reason: str,
-    now: str | None,
-    decision_id: str | None,
-    receipt_id: str | None,
-) -> dict[str, Any]:
-    return _build_decision(
-        request=request,
-        policy_bundle=policy_bundle,
-        decision="deny",
-        reason_code=reason_code,
-        reason=reason,
-        matched_constraints=["bundle_mismatch"],
-        transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
-        review={"required": False, "reviewer_role": None, "reason": None},
-        effective_permissions=[],
-        required_controls=[],
-        blocked_capabilities=list(request.get("requested_capabilities", [])),
-        now=now,
-        decision_id=decision_id,
-        receipt_id=receipt_id,
-    )
 
 
 def _no_match_decision(
@@ -308,57 +287,48 @@ def _no_match_decision(
     receipt hash captures the choice.
     """
     action = policy_bundle.default_action
+    review = _empty_review()
+    requested = list(request.get("requested_capabilities", []))
+
     if action == "allow":
-        return _build_decision(
-            request=request,
-            policy_bundle=policy_bundle,
-            decision="allow",
-            reason_code="allowed_with_constraints",
-            reason="no rule matched; bundle.default_action='allow'",
-            matched_constraints=[],
-            transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
-            review={"required": False, "reviewer_role": None, "reason": None},
-            effective_permissions=list(request.get("requested_capabilities", [])),
-            required_controls=[],
-            blocked_capabilities=[],
-            now=now,
-            decision_id=decision_id,
-            receipt_id=receipt_id,
-        )
-    if action == "require_review":
-        return _build_decision(
-            request=request,
-            policy_bundle=policy_bundle,
-            decision="require_review",
-            reason_code="no_matching_policy",
-            reason="no rule matched; bundle.default_action='require_review'",
-            matched_constraints=["no_matching_policy"],
-            transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
-            review={
-                "required": True,
-                "reviewer_role": "compliance_officer",
-                "reason": "no_matching_policy",
-            },
-            effective_permissions=list(request.get("requested_capabilities", [])),
-            required_controls=[],
-            blocked_capabilities=[],
-            now=now,
-            decision_id=decision_id,
-            receipt_id=receipt_id,
-        )
-    # Default (and only safe default): deny.
+        decision = "allow"
+        reason_code = "allowed_with_constraints"
+        reason = "no rule matched; bundle.default_action='allow'"
+        matched: list[str] = []
+        effective = requested
+        blocked: list[str] = []
+    elif action == "require_review":
+        decision = "require_review"
+        reason_code = "no_matching_policy"
+        reason = "no rule matched; bundle.default_action='require_review'"
+        matched = ["no_matching_policy"]
+        effective = requested
+        blocked = []
+        review = {
+            "required": True,
+            "reviewer_role": "compliance_officer",
+            "reason": "no_matching_policy",
+        }
+    else:  # "deny" — the safe default
+        decision = "deny"
+        reason_code = "no_matching_policy"
+        reason = "no rule matched; bundle.default_action='deny' (fail-closed)"
+        matched = ["no_matching_policy"]
+        effective = []
+        blocked = requested
+
     return _build_decision(
         request=request,
         policy_bundle=policy_bundle,
-        decision="deny",
-        reason_code="no_matching_policy",
-        reason="no rule matched; bundle.default_action='deny' (fail-closed)",
-        matched_constraints=["no_matching_policy"],
-        transform={"applied": False, "description": None, "transformed_method": None, "transformed_boundary": None},
-        review={"required": False, "reviewer_role": None, "reason": None},
-        effective_permissions=[],
+        decision=decision,
+        reason_code=reason_code,
+        reason=reason,
+        matched_constraints=matched,
+        transform=_empty_transform(),
+        review=review,
+        effective_permissions=effective,
         required_controls=[],
-        blocked_capabilities=list(request.get("requested_capabilities", [])),
+        blocked_capabilities=blocked,
         now=now,
         decision_id=decision_id,
         receipt_id=receipt_id,
@@ -400,30 +370,19 @@ def _build_decision(
     }
     if reason is not None:
         body["reason"] = reason
-    receipt = make_receipt(
+    body["receipt"] = make_receipt(
         request=request,
         decision_body=body,
         policy_bundle=policy_bundle,
         now=now,
         receipt_id=receipt_id,
     )
-    body["receipt"] = receipt
     return body
 
 
 def _new_decision_id() -> str:
-    return "dec_" + _short_id()
+    return "dec_" + uuid.uuid4().hex[:16]
 
 
 def _new_receipt_id() -> str:
-    return "rcpt_" + _short_id()
-
-
-def _short_id() -> str:
-    # Deterministic if the caller passes their own id; otherwise uuid4 short form.
-    rand = os.environ.get("ACGS_ADMISSION_TEST_ID_SEED")
-    if rand:
-        # Allow tests to inject a reproducible counter via env var.
-        token = secrets.token_hex(4)
-        return f"{rand}_{token}"
-    return uuid.uuid4().hex[:16]
+    return "rcpt_" + uuid.uuid4().hex[:16]
