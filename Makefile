@@ -98,7 +98,11 @@ typecheck-py:
 	@for pkg in $(PYTHON_PACKAGES); do \
 		if [ -f "$$pkg/pyproject.toml" ]; then \
 			echo "==> typecheck $$pkg"; \
-			(cd "$$pkg" && $(UV) run mypy . 2>/dev/null || echo "    (mypy skipped — not configured for $$pkg)"); \
+			if grep -q '^\[tool\.mypy\]' "$$pkg/pyproject.toml" || [ -f "$$pkg/mypy.ini" ] || grep -q '^\[mypy\]' "$$pkg/setup.cfg" 2>/dev/null; then \
+				(cd "$$pkg" && $(UV) run mypy) || exit $$?; \
+			else \
+				echo "    (mypy skipped — not configured for $$pkg)"; \
+			fi; \
 		fi; \
 	done
 
