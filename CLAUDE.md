@@ -29,6 +29,11 @@ make build        # Produce all artifacts
 Per-package gates remain authoritative. Run them from inside the package; prefer
 package-local `CLAUDE.md` / `AGENTS.md` / `README.md` where present.
 
+Local runtime and agent state such as `.acgs-swarm/`, `.omc/`, `.omx/`,
+`.remember/`, `.coverage`, `htmlcov/`, `__pycache__/`, virtualenvs, and build
+outputs is not source architecture. Keep it ignored and do not stage it from the
+parent repo.
+
 ## Hard constraints
 
 1. **Constitutional hashes are sealed.** Files with `# Constitutional Hash:` markers must not change without recomputing the hash. CI verifies on every PR (Phase 5 of `docs/PLAN-MONOREPO.md`).
