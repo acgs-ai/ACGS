@@ -26,26 +26,43 @@ Accept authorization propagation as the Phase 2 direction for this roadmap. The
 benchmark artifact is committed at `.benchmarks/propagation-gate-week2.json` with
 verdict `PASS`.
 
-Measured values:
+Measured values (after the per-chain timing fix — see "Methodology
+correction" below):
 
 | Metric | Threshold | Measured |
 |---|---:|---:|
-| Mean latency overhead | <= 15% | 4.211% |
-| p95 latency overhead | <= 25% | 4.211% |
+| Mean latency overhead | <= 15% | 0.746% |
+| p95 latency overhead | <= 25% | -9.269% |
 | Token-consumption overhead | <= 10% | 0.571% |
-| Heap growth | <= 5MB | 1.529MB |
-| Timeout fail-closed latency | <= 500ms | 451.193ms |
+| Heap growth | <= 5MB | 1.546MB |
+| Timeout fail-closed latency | <= 500ms | 451.277ms |
 
 Additional benchmark context from the artifact:
 
 | Metric | Measured |
 |---|---:|
-| Propagation mean latency | 11.996ms |
-| Token baseline mean latency | 11.511ms |
-| Propagation p95 latency | 11.996ms |
-| Token baseline p95 latency | 11.511ms |
+| Propagation mean latency | 89.032ms |
+| Token baseline mean latency | 88.372ms |
+| Propagation p95 latency | 101.189ms |
+| Token baseline p95 latency | 111.526ms |
 | Propagation token units | 427710 |
 | Token baseline token units | 425280 |
+
+A negative p95 overhead means propagation was faster than the token
+baseline at the 95th percentile in this run. With N=10 samples the p95
+is sensitive to the single tail observation, so the figure is a real
+measurement but should not be over-interpreted; the threshold (<=25%)
+holds trivially either way.
+
+## Methodology correction
+
+The initial benchmark used `latencies = [elapsed_total / CONCURRENCY] * CONCURRENCY`,
+which made mean and p95 mathematically identical and silently disabled
+the 25% p95 threshold. The artifact in that run reported
+`propagation_mean_ms == propagation_p95_ms == 11.996ms`. The numbers
+above are from the corrected `_run_arm` that self-times each chain
+through a `ThreadPoolExecutor.map` of a `_timed_run_one` helper,
+producing a real per-chain distribution.
 
 ## Consequences
 
