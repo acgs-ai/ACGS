@@ -1,0 +1,28 @@
+{
+  "gate": "propagation-overhead-week2",
+  "verdict": "PASS",
+  "thresholds": {
+    "mean_latency_overhead_pct": 15.0,
+    "p95_latency_overhead_pct": 25.0,
+    "token_consumption_overhead_pct": 10.0,
+    "heap_growth_mb": 5.0,
+    "timeout_fail_closed_ms": 500.0
+  },
+  "measured": {
+    "mean_latency_overhead_pct": 4.211,
+    "p95_latency_overhead_pct": 4.211,
+    "token_consumption_overhead_pct": 0.571,
+    "heap_growth_mb": 1.529,
+    "timeout_fail_closed_ms": 451.193,
+    "propagation_mean_ms": 11.996,
+    "propagation_p95_ms": 11.996,
+    "propagation_token_units": 427710,
+    "token_baseline_mean_ms": 11.511,
+    "token_baseline_p95_ms": 11.511,
+    "token_baseline_token_units": 425280,
+    "concurrency": 10,
+    "payload_kb": 50
+  },
+  "ran_at": "2026-05-22T22:59:02.757859Z",
+  "kernel_sha": "23b5a3d1ac95cf2891995736f308b073c6401050"
+}
