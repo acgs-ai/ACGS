@@ -9,20 +9,20 @@
     "timeout_fail_closed_ms": 500.0
   },
   "measured": {
-    "mean_latency_overhead_pct": 4.211,
-    "p95_latency_overhead_pct": 4.211,
+    "mean_latency_overhead_pct": 0.746,
+    "p95_latency_overhead_pct": -9.269,
     "token_consumption_overhead_pct": 0.571,
-    "heap_growth_mb": 1.529,
-    "timeout_fail_closed_ms": 451.193,
-    "propagation_mean_ms": 11.996,
-    "propagation_p95_ms": 11.996,
+    "heap_growth_mb": 1.546,
+    "timeout_fail_closed_ms": 451.277,
+    "propagation_mean_ms": 89.032,
+    "propagation_p95_ms": 101.189,
     "propagation_token_units": 427710,
-    "token_baseline_mean_ms": 11.511,
-    "token_baseline_p95_ms": 11.511,
+    "token_baseline_mean_ms": 88.372,
+    "token_baseline_p95_ms": 111.526,
     "token_baseline_token_units": 425280,
     "concurrency": 10,
     "payload_kb": 50
   },
-  "ran_at": "2026-05-22T22:59:02.757859Z",
-  "kernel_sha": "23b5a3d1ac95cf2891995736f308b073c6401050"
+  "ran_at": "2026-05-22T23:44:48.990968Z",
+  "kernel_sha": "4a150958f9f979b4ed857eb35e39206cb1f44a2e"
 }

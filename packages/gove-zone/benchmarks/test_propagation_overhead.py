@@ -5,12 +5,13 @@ from __future__ import annotations
 import statistics
 import time
 import tracemalloc
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from benchmarks.agent_chain import AgentChainRunner
+from benchmarks.agent_chain import AgentChainRunner, ChainRunResult
 from benchmarks.authz_propagation import PropagationAuthzStrategy
 from benchmarks.authz_token_baseline import TokenBaselineAuthzStrategy
 from gove_zone import DeniedError
@@ -104,19 +105,30 @@ def test_propagation_gate_thresholds() -> None:
 
 
 def _run_arm(strategy: Any) -> tuple[list[float], int]:
-    latencies: list[float] = []
+    """Run CONCURRENCY chains in parallel, returning REAL per-chain latencies.
+
+    Each chain self-times its full Orchestrator -> Planner -> Executor walk
+    so that ``p95`` and ``mean`` operate on a genuine distribution. The
+    earlier wall-clock-total / N approach made p95 mathematically identical
+    to mean, which silently disabled the 25% p95 threshold.
+    """
     runner = AgentChainRunner(strategy, tool_work=_tool_work)
     try:
-        started = time.perf_counter()
-        results = runner.run_parallel(concurrency=CONCURRENCY)
-        elapsed = time.perf_counter() - started
-        per_chain = elapsed / CONCURRENCY
-        # Concurrent wall-clock timing gives one suite latency. Expand it to
-        # chain-level observations while preserving deterministic p95 behavior.
-        latencies.extend([per_chain for _ in range(CONCURRENCY)])
-        return latencies, sum(result.token_units for result in results)
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+            timed: list[tuple[float, ChainRunResult]] = list(
+                pool.map(lambda i: _timed_run_one(runner, i), range(CONCURRENCY))
+            )
+        latencies = [elapsed for elapsed, _ in timed]
+        chain_results = [r for _, r in timed]
+        return latencies, sum(r.token_units for r in chain_results)
     finally:
         runner.close()
+
+
+def _timed_run_one(runner: AgentChainRunner, chain_id: int) -> tuple[float, ChainRunResult]:
+    started = time.perf_counter()
+    result = runner.run_one(chain_id)
+    return time.perf_counter() - started, result
 
 
 def _tool_work(payload: Any) -> None:
