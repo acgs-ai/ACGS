@@ -14,9 +14,6 @@ dependencies = [
     "enhanced-agent-bus",
 ]
 
-[tool.uv.sources]
-enhanced-agent-bus = { path = "../../ACGS/packages/enhanced_agent_bus", editable = true }
-
 [dependency-groups]
 dev = [
     "pytest>=8.0",

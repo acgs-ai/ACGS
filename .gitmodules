@@ -9,7 +9,7 @@
 [submodule "packages/Acgs-Swarm"]
 	path = packages/Acgs-Swarm
 	url = https://github.com/dislovelhl/Acgs-Swarm.git
-	branch = langgraph-runtime/unit-10-coordinator
+	branch = main
 [submodule "external/natural_language_autoencoders"]
 	path = external/natural_language_autoencoders
 	url = https://github.com/kitft/natural_language_autoencoders.git
