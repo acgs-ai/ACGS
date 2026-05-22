@@ -26,7 +26,6 @@ from gove_zone import (
     DeniedError,
     Kernel,
     Policy,
-    sha256_json,
 )
 from gove_zone.tool import ToolCall
 
@@ -101,10 +100,7 @@ def test_watchdog_timeout_fails_closed(tmp_path: Path) -> None:
     assert any(
         "TIMEOUT" in rule or "POLICY_ERROR:TIMEOUT" in rule
         for rule in exc_info.value.record.matched_rules
-    ), (
-        f"expected a TIMEOUT marker in matched_rules, got "
-        f"{exc_info.value.record.matched_rules!r}"
-    )
+    ), f"expected a TIMEOUT marker in matched_rules, got {exc_info.value.record.matched_rules!r}"
 
     # Audit chain holds exactly one event (the synthesized DENY).
     events = list(audit.iter_events())

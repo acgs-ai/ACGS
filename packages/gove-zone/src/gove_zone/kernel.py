@@ -21,7 +21,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
@@ -156,10 +157,7 @@ class Kernel:
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
-                reason=(
-                    f"policy evaluation exceeded watchdog timeout of "
-                    f"{self.policy_timeout}s"
-                ),
+                reason=(f"policy evaluation exceeded watchdog timeout of {self.policy_timeout}s"),
                 goal=call.goal,
             )
         except Exception as exc:
