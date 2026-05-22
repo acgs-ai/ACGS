@@ -303,3 +303,79 @@ def test_decision_schema_else_clauses_present() -> None:
     # In the else branch, transform.applied / review.required must be const false.
     assert transform_clause["else"]["properties"]["transform"]["properties"]["applied"]["const"] is False
     assert review_clause["else"]["properties"]["review"]["properties"]["required"]["const"] is False
+
+
+# ---------------------------------------------------------------------------
+# Matcher coverage — requested_capabilities_subset_of
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "request_caps, safelist, expect_match",
+    [
+        # Subset of safelist → match (request safely contained in allow-list)
+        (["read_file"], ["read_file", "summarize"], True),
+        (["read_file", "summarize"], ["read_file", "summarize"], True),
+        (["summarize"], ["read_file", "summarize"], True),
+        # Empty request capabilities → trivially a subset → match
+        ([], ["read_file", "summarize"], True),
+        # Capability outside safelist → no match (the canonical fail-closed case)
+        (["read_file", "legal_analysis"], ["read_file", "summarize"], False),
+        # Entirely disjoint → no match
+        (["legal_analysis"], ["read_file", "summarize"], False),
+    ],
+)
+def test_requested_capabilities_subset_of_matcher(request_caps, safelist, expect_match) -> None:
+    """The subset_of matcher is what lets a bundle carve out an obviously-safe
+    allow path on top of an otherwise fail-closed default. Cover it directly
+    (the fixture bundle only exercises the True path)."""
+    bundle = policy_bundle_from_dict(
+        {
+            "bundle_id": "legalguard_ca",
+            "version": "1.2.0",
+            "default_action": "deny",
+            "rules": [
+                {
+                    "id": "safelist_only",
+                    "when": {
+                        "risk_class": ["low"],
+                        "requested_capabilities_subset_of": safelist,
+                    },
+                    "action": "allow",
+                    "reason_code": "allowed_with_constraints",
+                }
+            ],
+        }
+    )
+    req = _load("allow_request.json")
+    req = {**req, "requested_capabilities": request_caps, "risk_class": "low"}
+    dec = decide(req, policy_bundle=bundle)
+    if expect_match:
+        assert dec["decision"] == "allow"
+        assert dec["reason_code"] == "allowed_with_constraints"
+    else:
+        # No rule matches → fail-closed default fires
+        assert dec["decision"] == "deny"
+        assert dec["reason_code"] == "no_matching_policy"
+
+
+# ---------------------------------------------------------------------------
+# Cleanup invariants — dead-code removal must not regress behavior
+# ---------------------------------------------------------------------------
+
+
+def test_receipt_has_no_previous_receipt_hash_field() -> None:
+    """v0.1 ships a single-event receipt only. ``previous_receipt_hash``
+    (chained-receipt placeholder) was removed in cleanup because it was
+    never set by ``decide()``. v0.2 may re-add it when receipt-chaining
+    actually lands."""
+    bundle = load_policy_bundle(FIXTURES / "policy_bundle.json")
+    dec = decide(_load("allow_request.json"), policy_bundle=bundle)
+    assert "previous_receipt_hash" not in dec["receipt"]
+
+
+def test_receipt_schema_has_no_previous_receipt_hash() -> None:
+    schema = json.loads(
+        (REPO_ROOT / "governance" / "schema" / "decision_receipt.schema.json").read_text(encoding="utf-8")
+    )
+    assert "previous_receipt_hash" not in schema["properties"]

@@ -19,13 +19,7 @@
     "decision_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "policy_bundle_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "policy_version": {"type": "string"},
-    "created_at": {"type": "string"},
-    "previous_receipt_hash": {
-      "anyOf": [
-        {"type": "null"},
-        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      ]
-    }
+    "created_at": {"type": "string"}
   },
   "additionalProperties": false
 }
