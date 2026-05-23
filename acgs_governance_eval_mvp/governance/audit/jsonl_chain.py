@@ -178,6 +178,18 @@ class ChainHashAuditStore:
         return out
 
     def verify_chain(self) -> dict[str, Any]:
+        # Acquire a shared lock for the duration of the scan so concurrent
+        # appenders (which hold LOCK_EX) cannot interleave a partial line
+        # underneath the reader and trigger JSONDecodeError.
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        with lock_path.open("a+") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_SH)
+            try:
+                return self._verify_chain_locked()
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+    def _verify_chain_locked(self) -> dict[str, Any]:
         previous = GENESIS_HASH
         checked = 0
         failures: list[dict[str, Any]] = []

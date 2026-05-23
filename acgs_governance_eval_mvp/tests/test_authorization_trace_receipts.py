@@ -332,6 +332,73 @@ def test_authorization_trace_round_trip_from_to_dict():
     assert AuthorizationTrace.from_dict(trace.to_dict()) == trace
 
 
+def _append_loop_process(path: str, index: int, count: int, barrier: Barrier) -> None:
+    store = ChainHashAuditStore(path)
+    barrier.wait(timeout=10)
+    for i in range(count):
+        decision = DecisionRecord(
+            event_id=f"event-loop-{index}-{i}",
+            tenant="default",
+            allow=True,
+            reasons=[],
+            reason_codes=[],
+            rule_ids=[],
+            checks=[],
+            request=ActionRequest(
+                action_type="governance.receipt.verify",
+                resource=f"workflow-loop-{index}-{i}",
+                actor=Principal(id="codex:gpt-5", role="implementation-agent", tenant="default"),
+                intent="Verify authorization trace receipt",
+                inputs_hash=f"sha256:trace-loop-{index}-{i}",
+            ),
+            policy_version="policy-test/v1",
+            role_version="roles-test/v1",
+            decision_state="allow",
+        )
+        store.append(decision)
+
+
+def _verify_loop_process(path: str, iterations: int, barrier: Barrier, result_path: str) -> None:
+    store = ChainHashAuditStore(path)
+    barrier.wait(timeout=10)
+    errors: list[str] = []
+    for _ in range(iterations):
+        try:
+            store.verify_chain()
+        except Exception as exc:  # noqa: BLE001 - record any read-side crash
+            errors.append(f"{type(exc).__name__}: {exc}")
+            break
+    Path(result_path).write_text(json.dumps(errors), encoding="utf-8")
+
+
+def test_verify_chain_safe_during_concurrent_appends(tmp_path):
+    path = tmp_path / "audit.jsonl"
+    result_paths = [tmp_path / f"verify-{i}.json" for i in range(2)]
+    barrier = Barrier(4)
+
+    writers = [Process(target=_append_loop_process, args=(str(path), i, 20, barrier)) for i in range(2)]
+    verifiers = [
+        Process(
+            target=_verify_loop_process,
+            args=(str(path), 40, barrier, str(result_paths[i])),
+        )
+        for i in range(2)
+    ]
+
+    for proc in writers + verifiers:
+        proc.start()
+    for proc in writers + verifiers:
+        proc.join(timeout=20)
+
+    assert all(proc.exitcode == 0 for proc in writers + verifiers)
+    for result_path in result_paths:
+        assert json.loads(result_path.read_text(encoding="utf-8")) == []
+
+    final = ChainHashAuditStore(path).verify_chain()
+    assert final["valid"] is True, final["failures"]
+    assert final["checked"] == 40
+
+
 def test_multiprocess_concurrent_appends_preserve_chain(tmp_path):
     path = tmp_path / "audit.jsonl"
     barrier = Barrier(4)
