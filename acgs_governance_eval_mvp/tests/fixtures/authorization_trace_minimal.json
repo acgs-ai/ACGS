@@ -1,0 +1,22 @@
+{
+  "workflow_scope": {
+    "workflow_id": "workflow-2026-05-22-r5-r6",
+    "parent_workflow_id": null,
+    "principal_chain": [
+      {
+        "principal_id": "codex:gpt-5",
+        "role": "implementation-agent",
+        "tenant": "default",
+        "delegated_at": "2026-05-22T00:00:00+00:00",
+        "delegation_evidence_hash": "sha256:delegation-evidence"
+      }
+    ]
+  },
+  "evaluation_policy": "access-time",
+  "receipt": {
+    "receipt_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+    "audit_event_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+    "trace_id": "trace-2026-05-22-r5-r6",
+    "schema_version": "v1"
+  }
+}
