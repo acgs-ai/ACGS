@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from multiprocessing import Barrier, Process
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,51 @@ def _decision() -> DecisionRecord:
         role_version="roles-test/v1",
         decision_state="allow",
     )
+
+
+def _append_decision_process(path: str, index: int, barrier: Barrier) -> None:
+    store = ChainHashAuditStore(path)
+    decision = DecisionRecord(
+        event_id=f"event-r5-r6-{index}",
+        tenant="default",
+        allow=True,
+        reasons=[],
+        reason_codes=[],
+        rule_ids=[],
+        checks=[],
+        request=ActionRequest(
+            action_type="governance.receipt.verify",
+            resource=f"workflow-r5-r6-{index}",
+            actor=Principal(id="codex:gpt-5", role="implementation-agent", tenant="default"),
+            intent="Verify authorization trace receipt",
+            inputs_hash=f"sha256:trace-test-{index}",
+        ),
+        policy_version="policy-test/v1",
+        role_version="roles-test/v1",
+        decision_state="allow",
+    )
+    store.append(decision)
+    barrier.wait(timeout=10)
+    second = DecisionRecord(
+        event_id=f"event-r5-r6-{index}-second",
+        tenant="default",
+        allow=True,
+        reasons=[],
+        reason_codes=[],
+        rule_ids=[],
+        checks=[],
+        request=ActionRequest(
+            action_type="governance.receipt.verify",
+            resource=f"workflow-r5-r6-{index}-second",
+            actor=Principal(id="codex:gpt-5", role="implementation-agent", tenant="default"),
+            intent="Verify authorization trace receipt",
+            inputs_hash=f"sha256:trace-test-{index}-second",
+        ),
+        policy_version="policy-test/v1",
+        role_version="roles-test/v1",
+        decision_state="allow",
+    )
+    store.append(second)
 
 
 def _read_event(path: Path) -> dict[str, object]:
@@ -199,3 +245,22 @@ def test_authorization_trace_round_trip_from_to_dict():
     trace = _trace()
 
     assert AuthorizationTrace.from_dict(trace.to_dict()) == trace
+
+
+def test_multiprocess_concurrent_appends_preserve_chain(tmp_path):
+    path = tmp_path / "audit.jsonl"
+    barrier = Barrier(4)
+    processes = [Process(target=_append_decision_process, args=(str(path), i, barrier)) for i in range(4)]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+
+    assert all(process.exitcode == 0 for process in processes)
+
+    verification = ChainHashAuditStore(path).verify_chain()
+    assert verification["valid"] is True, verification["failures"]
+    assert verification["checked"] == 8
+    previous_hashes = [event["previous_hash"] for event in ChainHashAuditStore(path).iter_events()]
+    assert len(previous_hashes) == len(set(previous_hashes))

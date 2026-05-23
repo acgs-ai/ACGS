@@ -50,7 +50,6 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._last_hash: str | None = None
 
     def append(
         self,
@@ -66,9 +65,7 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                if self._last_hash is None:
-                    self._last_hash = self._read_last_hash_from_disk()
-                previous_hash = self._last_hash
+                previous_hash = self._read_last_hash_from_disk()
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
                 if trace_payload is not None:
@@ -82,14 +79,11 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
-                self._last_hash = str(payload["event_hash"])
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
 
     def last_hash(self) -> str:
-        if self._last_hash is not None:
-            return self._last_hash
         return self._read_last_hash_from_disk()
 
     def _read_last_hash_from_disk(self) -> str:
