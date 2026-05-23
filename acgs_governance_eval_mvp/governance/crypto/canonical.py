@@ -43,39 +43,25 @@ def _validate(value: Any, *, path: str = "$") -> None:
         return
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
-            raise CanonicalizationError(
-                f"non-finite float at {path}: {value!r}"
-            )
-        raise CanonicalizationError(
-            f"floats are not canonicalizable at {path}: use a string"
-        )
+            raise CanonicalizationError(f"non-finite float at {path}: {value!r}")
+        raise CanonicalizationError(f"floats are not canonicalizable at {path}: use a string")
     if isinstance(value, str):
         if "\x00" in value:
-            raise CanonicalizationError(
-                f"embedded NUL byte in string at {path}"
-            )
+            raise CanonicalizationError(f"embedded NUL byte in string at {path}")
         if unicodedata.normalize("NFC", value) != value:
-            raise CanonicalizationError(
-                f"string at {path} is not NFC-normalized"
-            )
+            raise CanonicalizationError(f"string at {path} is not NFC-normalized")
         return
     if isinstance(value, (bytes, bytearray)):
-        raise CanonicalizationError(
-            f"bytes are not canonicalizable at {path}: encode upstream"
-        )
+        raise CanonicalizationError(f"bytes are not canonicalizable at {path}: encode upstream")
     if isinstance(value, dict):
         seen: set[str] = set()
         for key in value.keys():
             if not isinstance(key, str):
-                raise CanonicalizationError(
-                    f"dict key at {path} is not a string: {key!r}"
-                )
+                raise CanonicalizationError(f"dict key at {path} is not a string: {key!r}")
             if key in seen:
                 # plain dicts can't carry duplicates, but defend
                 # against custom mappings that might.
-                raise CanonicalizationError(
-                    f"duplicate dict key at {path}: {key!r}"
-                )
+                raise CanonicalizationError(f"duplicate dict key at {path}: {key!r}")
             seen.add(key)
             _validate(value[key], path=f"{path}.{key}")
         return
@@ -84,9 +70,7 @@ def _validate(value: Any, *, path: str = "$") -> None:
             _validate(item, path=f"{path}[{i}]")
         return
     # Decimal, datetime, date, sets, custom objects all land here.
-    raise CanonicalizationError(
-        f"value of type {type(value).__name__} at {path} is not canonicalizable"
-    )
+    raise CanonicalizationError(f"value of type {type(value).__name__} at {path} is not canonicalizable")
 
 
 def canonical_bytes(value: Any) -> bytes:
