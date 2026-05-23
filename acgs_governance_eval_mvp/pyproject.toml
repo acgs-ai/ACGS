@@ -23,9 +23,6 @@ api = [
 dspy = [
   "dspy-ai>=2.5"
 ]
-dev = [
-  "jsonschema>=4.0"
-]
 otel = [
   "opentelemetry-api>=1.24"
 ]

@@ -5,7 +5,6 @@ from multiprocessing import Barrier, Process
 from pathlib import Path
 
 import pytest
-from jsonschema import Draft7Validator
 
 from governance.audit import AuthorizationTraceIntegrityError, ChainHashAuditStore, extract_trace
 from governance.models import (
@@ -127,6 +126,12 @@ def _rehash_event(event: dict[str, object]) -> None:
     event["event_hash"] = sha256_json(payload)
 
 
+def _draft7_validator():
+    """Skip schema-validation coverage when optional jsonschema is absent from the sealed package deps."""
+    jsonschema = pytest.importorskip("jsonschema")
+    return jsonschema.Draft7Validator
+
+
 def test_trace_is_anchored_in_chain(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
@@ -227,18 +232,20 @@ def test_schema_fixture_validates():
     root = Path(__file__).resolve().parents[1]
     schema = json.loads((root / "governance/schema/authorization_trace.schema.json").read_text(encoding="utf-8"))
     fixture = json.loads((root / "tests/fixtures/authorization_trace_minimal.json").read_text(encoding="utf-8"))
+    draft7_validator = _draft7_validator()
 
-    Draft7Validator.check_schema(schema)
-    Draft7Validator(schema).validate(fixture)
+    draft7_validator.check_schema(schema)
+    draft7_validator(schema).validate(fixture)
     assert AuthorizationTrace.from_dict(fixture).trace_id == "trace-2026-05-22-r5-r6"
 
 
 def test_authorization_trace_to_dict_validates_against_schema():
     root = Path(__file__).resolve().parents[1]
     schema = json.loads((root / "governance/schema/authorization_trace.schema.json").read_text(encoding="utf-8"))
+    draft7_validator = _draft7_validator()
 
-    Draft7Validator.check_schema(schema)
-    Draft7Validator(schema).validate(_trace().to_dict())
+    draft7_validator.check_schema(schema)
+    draft7_validator(schema).validate(_trace().to_dict())
 
 
 def test_authorization_trace_round_trip_from_to_dict():
