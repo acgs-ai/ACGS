@@ -56,12 +56,16 @@ jobs:
         # self-hosted Fedora.
         run: |
           uv venv --python "${pythonLocation}/bin/python" .venv
-          uv pip install --python .venv/bin/python --editable '.[test]'
+          uv pip install --python .venv/bin/python --editable '.[test,dev]'
 
       - name: Lint
         run: |
           uvx ruff@0.8 check .
           uvx ruff@0.8 format --check .
+
+      - name: Authorization trace receipt tests
+        run: |
+          .venv/bin/python -m pytest tests/test_authorization_trace_receipts.py -q
 
       - name: Test
         run: |
