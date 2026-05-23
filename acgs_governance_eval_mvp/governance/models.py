@@ -153,11 +153,22 @@ class DecisionRecord:
     policy_bundle_hash: str = ""
     role_bundle_hash: str = ""
     decision_schema_version: str = DECISION_SCHEMA_VERSION
+    # Phase 2: embedded nonce tombstone. When set, the audit event for
+    # this DecisionRecord burns (trace_id, session_nonce) — a successful
+    # allow-path commit consumes the nonce that the AuthorizationTrace's
+    # action_binding issued. See docs/design/phase2-trace-crypto.md
+    # §nonce-store contract. Covered by event_hash because asdict()
+    # serializes it inside to_dict().
+    nonce_consumed: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["checks"] = [check.to_dict() if isinstance(check, GateResult) else check for check in self.checks]
         data["request"] = self.request.to_dict() if isinstance(self.request, ActionRequest) else self.request
+        if self.nonce_consumed is None:
+            data.pop("nonce_consumed", None)
+        else:
+            data["nonce_consumed"] = dict(self.nonce_consumed)
         return data
 
     def canonical_payload_for_hash(self) -> dict[str, Any]:
