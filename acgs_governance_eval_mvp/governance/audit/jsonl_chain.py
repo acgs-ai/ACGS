@@ -28,6 +28,10 @@ def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
     except Exception as exc:
         raise AuthorizationTraceIntegrityError("authorization_trace is invalid") from exc
 
+    receipt = trace_payload.get("receipt")
+    if isinstance(receipt, dict) and receipt.get("receipt_hash") != trace.trace_hash():
+        raise AuthorizationTraceIntegrityError("authorization_trace receipt_hash does not match trace payload")
+
     actor = event_dict.get("request", {}).get("actor") if isinstance(event_dict.get("request"), dict) else None
     actor_id = actor.get("id") if isinstance(actor, dict) else None
     if actor_id and actor_id not in {entry["principal_id"] for entry in trace.principal_chain}:

@@ -102,7 +102,9 @@ def test_missing_trace_hash_fails_closed(tmp_path):
     store.append(_decision(), authorization_trace=_trace())
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
-    trace_payload["trace_hash"] = "0" * 64
+    receipt = dict(trace_payload["receipt"])
+    receipt["receipt_hash"] = "0" * 64
+    trace_payload["receipt"] = receipt
     event["authorization_trace"] = trace_payload
     _rehash_event(event)
     _write_event(path, event)
@@ -117,12 +119,23 @@ def test_mismatched_trace_principal_chain_fails_closed(tmp_path):
     store.append(_decision(), authorization_trace=_trace())
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
-    principal_chain = [dict(entry) for entry in trace_payload["principal_chain"]]
+    workflow_scope = dict(trace_payload["workflow_scope"])
+    principal_chain = [dict(entry) for entry in workflow_scope["principal_chain"]]
     principal_chain[0]["principal_id"] = "different-agent"
-    trace_payload["principal_chain"] = principal_chain
-    trace_payload["trace_hash"] = sha256_json(
-        {key: value for key, value in trace_payload.items() if key != "trace_hash"}
+    workflow_scope["principal_chain"] = principal_chain
+    trace_payload["workflow_scope"] = workflow_scope
+    receipt = dict(trace_payload["receipt"])
+    receipt["receipt_hash"] = sha256_json(
+        {
+            "workflow_scope": workflow_scope,
+            "evaluation_policy": trace_payload["evaluation_policy"],
+            "receipt": {
+                "trace_id": receipt["trace_id"],
+                "schema_version": receipt["schema_version"],
+            },
+        }
     )
+    trace_payload["receipt"] = receipt
     event["authorization_trace"] = trace_payload
     _rehash_event(event)
     _write_event(path, event)
@@ -171,3 +184,18 @@ def test_schema_fixture_validates():
 
     Draft7Validator.check_schema(schema)
     Draft7Validator(schema).validate(fixture)
+    assert AuthorizationTrace.from_dict(fixture).trace_id == "trace-2026-05-22-r5-r6"
+
+
+def test_authorization_trace_to_dict_validates_against_schema():
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / "governance/schema/authorization_trace.schema.json").read_text(encoding="utf-8"))
+
+    Draft7Validator.check_schema(schema)
+    Draft7Validator(schema).validate(_trace().to_dict())
+
+
+def test_authorization_trace_round_trip_from_to_dict():
+    trace = _trace()
+
+    assert AuthorizationTrace.from_dict(trace.to_dict()) == trace
