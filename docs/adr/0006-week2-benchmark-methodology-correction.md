@@ -1,12 +1,12 @@
-# ADR 0002: Week 2 Benchmark Methodology Correction
+# ADR 0006: Week 2 Benchmark Methodology Correction
 
 ## Status
 
-Accepted. Supersedes ADR-0001 measurement methodology.
+Accepted. Supersedes ADR-0005 measurement methodology.
 
 ## Context
 
-ADR-0001 accepted the Week-2 authorization-propagation gate with a PASS verdict,
+ADR-0005 accepted the Week-2 authorization-propagation gate with a PASS verdict,
 but its benchmark timing method duplicated one aggregate wall-clock value across
 all chains:
 
@@ -54,8 +54,8 @@ the corrected per-chain method.
 
 ## Consequences
 
-ADR-0001 remains the historical acceptance record, including the first-run
+ADR-0005 remains the historical acceptance record, including the first-run
 numbers and their degenerate p95 value.
 
-Future benchmark gates must reference this ADR-0002 method and compute latency
+Future benchmark gates must reference this ADR-0006 method and compute latency
 statistics from per-chain timings, not duplicated aggregate wall-clock values.

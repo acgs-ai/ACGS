@@ -1,4 +1,4 @@
-# ADR 0001: Accept Authz Propagation for Phase 1 Week 2
+# ADR 0005: Accept Authz Propagation for Phase 1 Week 2
 
 ## Status
 
@@ -58,4 +58,4 @@ integrity.
 The token-based fallback remains a contingency, but this ADR does not activate
 the three-week token alternative because the gate passed.
 
-Status: methodology correction recorded in ADR-0002.
+Status: methodology correction recorded in ADR-0006.

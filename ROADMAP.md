@@ -79,8 +79,8 @@ Anything on the tight serial path must wait for upstream phase completion.
   - Network resilience: under simulated 500ms timeout, lookup must abort + fail closed
     within 500ms (no hang)
 - **Gate verdict**:
-  - PASS → ADR `docs/adr/0001-authz-propagation-accepted.md`, proceed with R5/R6
-  - FAIL → ADR `docs/adr/0001-authz-propagation-rejected.md`, switch to token-based
+  - PASS → ADR `docs/adr/0005-authz-propagation-accepted.md`, proceed with R5/R6
+  - FAIL → ADR `docs/adr/0005-authz-propagation-rejected.md`, switch to token-based
     fallback (JWT-style capability tokens signed by Orchestrator with localized path +
     capability caveats; verification in PreToolUse hooks)
 - Benchmark output committed under `.benchmarks/propagation-gate-week2.json`
@@ -160,7 +160,7 @@ make verify \
   && cd ../../packages/Acgs-Swarm && python -m pytest tests/ --import-mode=importlib \
   && cd ../../acgs_governance_eval_mvp && python -m pytest -q \
   && cd .. && test -f .benchmarks/propagation-gate-week2.json \
-  && test -f docs/adr/0001-authz-propagation-{accepted,rejected}.md
+  && test -f docs/adr/0005-authz-propagation-{accepted,rejected}.md
 ```
 
 Exit 0 = quarter done.
@@ -232,7 +232,7 @@ hold AND the file-specific gate below passes:
 | Doc | Concrete gate before archive is allowed |
 |---|---|
 | `docs/PLAN-GOVE-ZONE-KERNEL.md` | `tests/test_fail_closed.py` + any gap-fill test reach 100% statement coverage; all pass |
-| `AUTHZ-ROADMAP.md` | Week-2 benchmark results committed at `.benchmarks/propagation-gate-week2.json` AND ADR `docs/adr/0001-authz-propagation-{accepted,rejected}.md` merged |
+| `AUTHZ-ROADMAP.md` | Week-2 benchmark results committed at `.benchmarks/propagation-gate-week2.json` AND ADR `docs/adr/0005-authz-propagation-{accepted,rejected}.md` merged |
 | `docs/PLAN-MONOREPO.md` | `docs/constitutional-hashes.lock` integrated into pre-commit; `python-constitutional-hash.yml` green on a PR that intentionally modifies a sealed file |
 | `docs/workspace-PLAN.md` | All non-duplicate tasks migrated; final diff with `ROADMAP.md` shows zero unmigrated items |
 | `MACI-ROADMAP.md` | R1/R2 identity AND R4 aggregation implemented (verified by Phase 4 test fan-out) |
