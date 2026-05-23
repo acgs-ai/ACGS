@@ -38,24 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'acgs_governance_eval_mvp/pyproject.toml'
 
       - name: Install
-        # Create a per-matrix venv off the setup-python interpreter and
-        # install into that. Plain `uv pip install --system` resolves Python
-        # via PATH (picks /usr/bin/python3 on Fedora self-hosted = wrong
-        # version, EACCES), and `--python <managed>` is rejected by uv as
-        # externally-managed. The venv path works on both ubuntu-latest and
-        # self-hosted Fedora.
+        # Provision the matrix Python via uv's python-build-standalone toolchain
+        # instead of actions/setup-python — the latter has no prebuilds for
+        # Ubuntu 25.10 on the self-hosted runner. uv resolves the interpreter
+        # against a portable distribution and creates the venv directly.
         run: |
-          uv venv --python "${pythonLocation}/bin/python" .venv
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
           uv pip install --python .venv/bin/python --editable '.[test,dev]'
 
       - name: Lint

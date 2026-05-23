@@ -63,14 +63,16 @@ jobs:
             echo "::warning::packages/clinicalguard could not be initialized; verifier will ignore removed entries under that prefix for this CI run"
           fi
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v3
 
       - name: Verify constitutional-hash inventory
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
         run: |
+          uv python install 3.11
+          PY="$(uv python find 3.11)"
           if [ "${{ steps.submodules.outputs.clinicalguard_available }}" = "true" ]; then
-            python scripts/verify_constitutional_hashes.py
+            "$PY" scripts/verify_constitutional_hashes.py
           else
-            python scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
+            "$PY" scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
           fi
