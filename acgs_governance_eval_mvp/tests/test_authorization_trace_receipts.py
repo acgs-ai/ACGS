@@ -132,19 +132,23 @@ def _draft7_validator():
     return jsonschema.Draft7Validator
 
 
-def test_trace_is_anchored_in_chain(tmp_path):
+def test_trace_tamper_detected_on_disk(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
-    payload = store.append(_decision(), authorization_trace=_trace())
+    store.append(_decision(), authorization_trace=_trace())
+    event = _read_event(path)
+    trace_payload = dict(event["authorization_trace"])
+    workflow_scope = dict(trace_payload["workflow_scope"])
+    principal_chain = [dict(entry) for entry in workflow_scope["principal_chain"]]
+    principal_chain[0]["principal_id"] = "different-agent"
+    workflow_scope["principal_chain"] = principal_chain
+    trace_payload["workflow_scope"] = workflow_scope
+    event["authorization_trace"] = trace_payload
+    _write_event(path, event)
 
-    trace_payload = dict(payload["authorization_trace"])
-    trace_payload["evaluation_policy"] = "completion-time"
-    mutated = dict(payload)
-    mutated["authorization_trace"] = trace_payload
-    mutated.pop("event_hash", None)
-
-    assert sha256_json(mutated) != payload["event_hash"]
-    assert store.verify_chain()["valid"] is True
+    mutated_event = _read_event(path)
+    with pytest.raises(AuthorizationTraceIntegrityError):
+        extract_trace(mutated_event)
 
 
 def test_missing_trace_hash_fails_closed(tmp_path):
