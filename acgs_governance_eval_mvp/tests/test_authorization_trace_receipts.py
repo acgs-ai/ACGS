@@ -151,6 +151,22 @@ def test_trace_tamper_detected_on_disk(tmp_path):
         extract_trace(mutated_event)
 
 
+def test_extract_trace_strict_false_returns_none_on_integrity_failure(tmp_path):
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+    store.append(_decision(), authorization_trace=_trace())
+    event = _read_event(path)
+    trace_payload = dict(event["authorization_trace"])
+    receipt = dict(trace_payload["receipt"])
+    receipt["receipt_hash"] = "0" * 64
+    trace_payload["receipt"] = receipt
+    event["authorization_trace"] = trace_payload
+
+    with pytest.raises(AuthorizationTraceIntegrityError):
+        extract_trace(event)
+    assert extract_trace(event, strict=False) is None
+
+
 def test_missing_trace_hash_fails_closed(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)

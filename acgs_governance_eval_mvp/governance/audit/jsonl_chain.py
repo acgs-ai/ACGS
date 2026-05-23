@@ -16,7 +16,29 @@ class AuthorizationTraceIntegrityError(ValueError):
     """Raised when a trace-bearing audit event fails receipt or hash validation."""
 
 
-def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
+def extract_trace(event_dict: dict[str, Any], *, strict: bool = True) -> AuthorizationTrace | None:
+    """Extract and validate an authorization trace from an audit event.
+
+    Verification behavior:
+
+    | Path | Integrity failure behavior |
+    | --- | --- |
+    | ``extract_trace(..., strict=True)`` | raises ``AuthorizationTraceIntegrityError`` |
+    | ``extract_trace(..., strict=False)`` | returns ``None`` |
+    | ``ChainHashAuditStore.verify_chain()`` without trace | returns ``{"valid": False, ...}`` |
+    | ``ChainHashAuditStore.verify_chain()`` with trace | raises ``AuthorizationTraceIntegrityError`` |
+    """
+    return _extract_trace_strict(event_dict) if strict else _extract_trace_or_none(event_dict)
+
+
+def _extract_trace_or_none(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
+    try:
+        return _extract_trace_strict(event_dict)
+    except AuthorizationTraceIntegrityError:
+        return None
+
+
+def _extract_trace_strict(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
     trace_payload = event_dict.get("authorization_trace")
     if trace_payload is None:
         return None
@@ -45,6 +67,15 @@ class ChainHashAuditStore:
 
     Each event hash covers the canonical event payload excluding event_hash.
     previous_hash links to the prior event_hash.
+
+    Verification behavior:
+
+    | Path | Integrity failure behavior |
+    | --- | --- |
+    | ``verify_chain()`` without trace | returns ``{"valid": False, ...}`` |
+    | ``verify_chain()`` with trace | raises ``AuthorizationTraceIntegrityError`` |
+    | ``extract_trace(..., strict=True)`` | raises ``AuthorizationTraceIntegrityError`` |
+    | ``extract_trace(..., strict=False)`` | returns ``None`` |
     """
 
     def __init__(self, path: str | Path):
