@@ -13,8 +13,10 @@ from uuid import uuid4
 # DecisionRecord.decision_state holds this; DecisionRecord.allow stays as a
 # back-compat boolean = (decision_state == "allow").
 DecisionState = Literal["allow", "deny", "require_human", "rewrite", "redact"]
+EvaluationPolicy = Literal["initiation-time", "access-time", "completion-time"]
 
 DECISION_SCHEMA_VERSION = "v1"
+AUTHORIZATION_TRACE_SCHEMA_VERSION = "v1"
 
 
 def utc_now_iso() -> str:
@@ -166,3 +168,132 @@ class GovernanceDeniedError(PermissionError):
     def __init__(self, decision: DecisionRecord):
         super().__init__("; ".join(decision.reasons))
         self.decision = decision
+
+
+class AuthorizationTraceIntegrityError(ValueError):
+    """Raised when an authorization trace fails receipt or hash validation."""
+
+
+@dataclass(frozen=True)
+class AuthorizationTrace:
+    trace_id: str
+    workflow_id: str
+    parent_workflow_id: str | None
+    principal_chain: tuple[dict[str, str], ...]
+    evaluation_policy: EvaluationPolicy
+    schema_version: str = AUTHORIZATION_TRACE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != AUTHORIZATION_TRACE_SCHEMA_VERSION:
+            raise ValueError("AuthorizationTrace.schema_version must be v1")
+        if self.evaluation_policy not in ("initiation-time", "access-time", "completion-time"):
+            raise ValueError("AuthorizationTrace.evaluation_policy is not supported")
+        if not self.trace_id:
+            raise ValueError("AuthorizationTrace.trace_id is required")
+        if not self.workflow_id:
+            raise ValueError("AuthorizationTrace.workflow_id is required")
+        if self.parent_workflow_id is not None and not self.parent_workflow_id:
+            raise ValueError("AuthorizationTrace.parent_workflow_id must be non-empty or None")
+        if not self.principal_chain:
+            raise ValueError("AuthorizationTrace.principal_chain must not be empty")
+
+        normalized: list[dict[str, str]] = []
+        required = ("principal_id", "role", "tenant", "delegated_at", "delegation_evidence_hash")
+        for entry in self.principal_chain:
+            item = {key: str(entry[key]) for key in required}
+            if any(not item[key] for key in required):
+                raise ValueError("AuthorizationTrace.principal_chain entries must be non-empty")
+            normalized.append(item)
+        object.__setattr__(self, "principal_chain", tuple(normalized))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AuthorizationTrace:
+        workflow_scope = data.get("workflow_scope")
+        receipt = data.get("receipt")
+        if not isinstance(workflow_scope, dict) or not isinstance(receipt, dict):
+            raise ValueError("AuthorizationTrace wire format requires workflow_scope and receipt objects")
+
+        workflow_id = workflow_scope.get("workflow_id")
+        parent_workflow_id = workflow_scope.get("parent_workflow_id")
+        principal_chain = workflow_scope.get("principal_chain")
+        trace_id = receipt.get("trace_id")
+        schema_version = receipt.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)
+        persisted_trace_hash = receipt.get("trace_hash")
+        if persisted_trace_hash is None:
+            raise AuthorizationTraceIntegrityError("AuthorizationTrace.receipt.trace_hash is required")
+
+        if not isinstance(principal_chain, list | tuple):
+            raise ValueError("AuthorizationTrace.principal_chain must be a list")
+
+        trace = cls(
+            trace_id=str(trace_id),
+            workflow_id=str(workflow_id),
+            parent_workflow_id=None if parent_workflow_id is None else str(parent_workflow_id),
+            principal_chain=tuple(dict(item) for item in principal_chain),
+            evaluation_policy=data["evaluation_policy"],
+            schema_version=str(schema_version),
+        )
+        if str(persisted_trace_hash) != trace.trace_hash():
+            raise AuthorizationTraceIntegrityError("AuthorizationTrace.receipt.trace_hash does not match trace payload")
+        return trace
+
+    @property
+    def trace_hash_value(self) -> str:
+        return self.trace_hash()
+
+    def payload_for_hash(self) -> dict[str, Any]:
+        return {
+            "workflow_scope": {
+                "workflow_id": self.workflow_id,
+                "parent_workflow_id": self.parent_workflow_id,
+                "principal_chain": [dict(entry) for entry in self.principal_chain],
+            },
+            "evaluation_policy": self.evaluation_policy,
+            "receipt": {
+                "trace_id": self.trace_id,
+                "schema_version": self.schema_version,
+            },
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self.payload_for_hash()
+        payload["receipt"] = {
+            "trace_hash": self.trace_hash(),
+            "audit_event_hash": "0" * 64,
+            "trace_id": self.trace_id,
+            "schema_version": self.schema_version,
+        }
+        return payload
+
+    def canonical_json(self) -> str:
+        return stable_json(self.payload_for_hash())
+
+    def trace_hash(self) -> str:
+        return sha256_json(self.payload_for_hash())
+
+
+@dataclass(frozen=True)
+class DecisionReceiptRef:
+    receipt_hash: str
+    audit_event_hash: str
+    trace_id: str
+    schema_version: str = AUTHORIZATION_TRACE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != AUTHORIZATION_TRACE_SCHEMA_VERSION:
+            raise ValueError("DecisionReceiptRef.schema_version must be v1")
+        for field_name in ("receipt_hash", "audit_event_hash", "trace_id"):
+            if not getattr(self, field_name):
+                raise ValueError(f"DecisionReceiptRef.{field_name} is required")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DecisionReceiptRef:
+        return cls(
+            receipt_hash=str(data["receipt_hash"]),
+            audit_event_hash=str(data["audit_event_hash"]),
+            trace_id=str(data["trace_id"]),
+            schema_version=str(data.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
