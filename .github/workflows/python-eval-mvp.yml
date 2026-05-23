@@ -48,15 +48,21 @@ jobs:
         # instead of actions/setup-python — the latter has no prebuilds for
         # Ubuntu 25.10 on the self-hosted runner. uv resolves the interpreter
         # against a portable distribution and creates the venv directly.
+        # Ruff is installed alongside test deps so CI uses the same minor
+        # version `make lint-py` resolves against the workspace lockfile.
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --editable '.[test,dev]'
+          uv pip install --python .venv/bin/python --editable '.[test]' 'ruff==0.15.12'
 
       - name: Lint
+        # Use the project-pinned ruff from the dev install, not uvx ruff@0.8.
+        # The pin in pyproject is `ruff>=0.8`, but 0.8 formats differently from
+        # current minor versions; pinning CI to 0.8 caused drift with
+        # `make lint-py` (which uses the locked ruff).
         run: |
-          uvx ruff@0.8 check .
-          uvx ruff@0.8 format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Authorization trace receipt tests
         run: |
