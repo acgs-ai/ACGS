@@ -14,34 +14,27 @@ from governance.models import (
     DecisionReceiptRef,
     DecisionRecord,
     EvaluationPolicy,
+    LegacyUnsignedTraceError,
     Principal,
     sha256_json,
 )
 
+from _phase2_helpers import HopSpec, MintedTrace, mint_signed_trace
 
-def _trace(evaluation_policy: EvaluationPolicy = "access-time") -> AuthorizationTrace:
-    return AuthorizationTrace(
-        trace_id="trace-r5-r6",
-        workflow_id="workflow-r5-r6",
-        parent_workflow_id=None,
-        principal_chain=(
-            {
-                "principal_id": "codex:gpt-5",
-                "role": "implementation-agent",
-                "tenant": "default",
-                "delegated_at": "2026-05-22T00:00:00+00:00",
-                "delegation_evidence_hash": "sha256:root-delegation",
-            },
-            {
-                "principal_id": "codex:gpt-5-worker",
-                "role": "receipt-verifier",
-                "tenant": "default",
-                "delegated_at": "2026-05-22T00:01:00+00:00",
-                "delegation_evidence_hash": "sha256:worker-delegation",
-            },
-        ),
+
+def _minted(tmp_path: Path, evaluation_policy: EvaluationPolicy = "access-time") -> MintedTrace:
+    return mint_signed_trace(
+        tmp_path,
         evaluation_policy=evaluation_policy,
+        hops=[
+            HopSpec(principal_id="codex:gpt-5", role="implementation-agent"),
+            HopSpec(principal_id="codex:gpt-5-worker", role="receipt-verifier"),
+        ],
     )
+
+
+def _trace(tmp_path: Path, evaluation_policy: EvaluationPolicy = "access-time") -> AuthorizationTrace:
+    return _minted(tmp_path, evaluation_policy).trace
 
 
 def _decision() -> DecisionRecord:
@@ -127,10 +120,6 @@ def _rehash_event(event: dict[str, object]) -> None:
     event["event_hash"] = sha256_json(payload)
 
 
-def _trace_payload() -> dict[str, object]:
-    return _trace().to_dict()
-
-
 def _draft7_validator():
     """Skip schema-validation coverage when optional jsonschema is absent from the sealed package deps."""
     jsonschema = pytest.importorskip("jsonschema")
@@ -140,7 +129,8 @@ def _draft7_validator():
 def test_trace_tamper_detected_on_disk(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
-    store.append(_decision(), authorization_trace=_trace())
+    trace = _trace(tmp_path)
+    store.append(_decision(), authorization_trace=trace)
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     workflow_scope = dict(trace_payload["workflow_scope"])
@@ -159,7 +149,7 @@ def test_trace_tamper_detected_on_disk(tmp_path):
 def test_extract_trace_integrity_failure_is_handled_by_caller(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
-    store.append(_decision(), authorization_trace=_trace())
+    store.append(_decision(), authorization_trace=_trace(tmp_path))
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     receipt = dict(trace_payload["receipt"])
@@ -187,7 +177,7 @@ def test_extract_trace_has_single_integrity_behavior():
 def test_missing_trace_hash_fails_closed(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
-    store.append(_decision(), authorization_trace=_trace())
+    store.append(_decision(), authorization_trace=_trace(tmp_path))
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     receipt = dict(trace_payload["receipt"])
@@ -204,14 +194,14 @@ def test_missing_trace_hash_fails_closed(tmp_path):
 def test_mismatched_trace_principal_chain_fails_closed(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
-    store.append(_decision(), authorization_trace=_trace())
+    trace = _trace(tmp_path)
+    store.append(_decision(), authorization_trace=trace)
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     workflow_scope = dict(trace_payload["workflow_scope"])
     principal_chain = [dict(entry) for entry in workflow_scope["principal_chain"]]
     principal_chain[0]["principal_id"] = "different-agent"
     workflow_scope["principal_chain"] = principal_chain
-    trace_payload["workflow_scope"] = workflow_scope
     receipt = dict(trace_payload["receipt"])
     receipt["trace_hash"] = sha256_json(
         {
@@ -234,7 +224,7 @@ def test_mismatched_trace_principal_chain_fails_closed(tmp_path):
 
 def test_receipt_round_trip(tmp_path):
     path = tmp_path / "audit.jsonl"
-    original = _trace()
+    original = _trace(tmp_path)
     payload = ChainHashAuditStore(path).append(_decision(), authorization_trace=original)
     event = _read_event(path)
 
@@ -254,14 +244,15 @@ def test_receipt_round_trip(tmp_path):
     assert extract_trace(event) == original
 
 
-def test_authorization_trace_from_valid_nested_wire_payload_passes():
-    payload = _trace_payload()
+def test_authorization_trace_from_valid_nested_wire_payload_passes(tmp_path):
+    minted = _minted(tmp_path)
+    payload = minted.trace.to_dict()
 
-    assert AuthorizationTrace.from_dict(payload) == _trace()
+    assert AuthorizationTrace.from_dict(payload) == minted.trace
 
 
-def test_authorization_trace_missing_trace_hash_raises():
-    payload = _trace_payload()
+def test_authorization_trace_missing_trace_hash_raises(tmp_path):
+    payload = _trace(tmp_path).to_dict()
     receipt = dict(payload["receipt"])
     receipt.pop("trace_hash")
     payload["receipt"] = receipt
@@ -270,8 +261,8 @@ def test_authorization_trace_missing_trace_hash_raises():
         AuthorizationTrace.from_dict(payload)
 
 
-def test_authorization_trace_wrong_trace_hash_raises():
-    payload = _trace_payload()
+def test_authorization_trace_wrong_trace_hash_raises(tmp_path):
+    payload = _trace(tmp_path).to_dict()
     receipt = dict(payload["receipt"])
     receipt["trace_hash"] = "0" * 64
     payload["receipt"] = receipt
@@ -280,25 +271,56 @@ def test_authorization_trace_wrong_trace_hash_raises():
         AuthorizationTrace.from_dict(payload)
 
 
-def test_authorization_trace_legacy_flat_shape_raises_value_error():
+def test_authorization_trace_legacy_flat_shape_raises_value_error(tmp_path):
+    trace = _trace(tmp_path)
     payload = {
-        "trace_id": "trace-r5-r6",
-        "workflow_id": "workflow-r5-r6",
+        "trace_id": trace.trace_id,
+        "workflow_id": trace.workflow_id,
         "parent_workflow_id": None,
-        "principal_chain": list(_trace().principal_chain),
+        "principal_chain": list(trace.principal_chain),
         "evaluation_policy": "access-time",
         "schema_version": "v1",
-        "trace_hash": _trace().trace_hash(),
+        "trace_hash": trace.trace_hash(),
     }
 
     with pytest.raises(ValueError):
         AuthorizationTrace.from_dict(payload)
 
 
+def test_legacy_unsigned_trace_payload_raises(tmp_path):
+    """Phase 1 unsigned wire payload (no signatures, no action_binding,
+    no hop_signatures_version) is rejected with LegacyUnsignedTraceError."""
+    legacy_payload = {
+        "workflow_scope": {
+            "workflow_id": "workflow-legacy",
+            "parent_workflow_id": None,
+            "principal_chain": [
+                {
+                    "principal_id": "codex:gpt-5",
+                    "role": "implementation-agent",
+                    "tenant": "default",
+                    "delegated_at": "2026-05-22T00:00:00+00:00",
+                    "delegation_evidence_hash": "sha256:root-delegation",
+                }
+            ],
+        },
+        "evaluation_policy": "access-time",
+        "receipt": {
+            "trace_hash": "0" * 64,
+            "audit_event_hash": "0" * 64,
+            "trace_id": "trace-legacy",
+            "schema_version": "v1",
+        },
+    }
+
+    with pytest.raises(LegacyUnsignedTraceError):
+        AuthorizationTrace.from_dict(legacy_payload)
+
+
 @pytest.mark.parametrize("evaluation_policy", ["initiation-time", "access-time", "completion-time"])
 def test_evaluation_policy_round_trip(tmp_path, evaluation_policy: EvaluationPolicy):
     path = tmp_path / f"audit-{evaluation_policy}.jsonl"
-    trace = _trace(evaluation_policy)
+    trace = _trace(tmp_path, evaluation_policy)
     ChainHashAuditStore(path).append(_decision(), authorization_trace=trace)
     event = _read_event(path)
 
@@ -317,17 +339,17 @@ def test_schema_fixture_validates():
     assert AuthorizationTrace.from_dict(fixture).trace_id == "trace-2026-05-22-r5-r6"
 
 
-def test_authorization_trace_to_dict_validates_against_schema():
+def test_authorization_trace_to_dict_validates_against_schema(tmp_path):
     root = Path(__file__).resolve().parents[1]
     schema = json.loads((root / "governance/schema/authorization_trace.schema.json").read_text(encoding="utf-8"))
     draft7_validator = _draft7_validator()
 
     draft7_validator.check_schema(schema)
-    draft7_validator(schema).validate(_trace().to_dict())
+    draft7_validator(schema).validate(_trace(tmp_path).to_dict())
 
 
-def test_authorization_trace_round_trip_from_to_dict():
-    trace = _trace()
+def test_authorization_trace_round_trip_from_to_dict(tmp_path):
+    trace = _trace(tmp_path)
 
     assert AuthorizationTrace.from_dict(trace.to_dict()) == trace
 
