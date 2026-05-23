@@ -170,6 +170,10 @@ class GovernanceDeniedError(PermissionError):
         self.decision = decision
 
 
+class AuthorizationTraceIntegrityError(ValueError):
+    """Raised when an authorization trace fails receipt or hash validation."""
+
+
 @dataclass(frozen=True)
 class AuthorizationTrace:
     trace_id: str
@@ -178,7 +182,6 @@ class AuthorizationTrace:
     principal_chain: tuple[dict[str, str], ...]
     evaluation_policy: EvaluationPolicy
     schema_version: str = AUTHORIZATION_TRACE_SCHEMA_VERSION
-    trace_hash_value: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.schema_version != AUTHORIZATION_TRACE_SCHEMA_VERSION:
@@ -203,45 +206,40 @@ class AuthorizationTrace:
             normalized.append(item)
         object.__setattr__(self, "principal_chain", tuple(normalized))
 
-        if self.trace_hash_value is not None and self.trace_hash_value != self.trace_hash():
-            raise ValueError("AuthorizationTrace.trace_hash_value does not match trace payload")
-
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AuthorizationTrace:
         workflow_scope = data.get("workflow_scope")
         receipt = data.get("receipt")
-        if isinstance(workflow_scope, dict):
-            workflow_id = workflow_scope.get("workflow_id")
-            parent_workflow_id = workflow_scope.get("parent_workflow_id")
-            principal_chain = workflow_scope.get("principal_chain")
-        else:
-            workflow_id = data.get("workflow_id")
-            parent_workflow_id = data.get("parent_workflow_id")
-            principal_chain = data.get("principal_chain")
+        if not isinstance(workflow_scope, dict) or not isinstance(receipt, dict):
+            raise ValueError("AuthorizationTrace wire format requires workflow_scope and receipt objects")
 
-        if isinstance(receipt, dict):
-            trace_id = receipt.get("trace_id")
-            schema_version = receipt.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)
-            trace_hash_value = None
-        else:
-            trace_id = data.get("trace_id")
-            schema_version = data.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)
-            trace_hash_value = data.get("trace_hash")
-            if trace_hash_value is None:
-                trace_hash_value = data.get("trace_hash_value")
+        workflow_id = workflow_scope.get("workflow_id")
+        parent_workflow_id = workflow_scope.get("parent_workflow_id")
+        principal_chain = workflow_scope.get("principal_chain")
+        trace_id = receipt.get("trace_id")
+        schema_version = receipt.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)
+        persisted_trace_hash = receipt.get("trace_hash")
+        if persisted_trace_hash is None:
+            raise AuthorizationTraceIntegrityError("AuthorizationTrace.receipt.trace_hash is required")
 
         if not isinstance(principal_chain, list | tuple):
             raise ValueError("AuthorizationTrace.principal_chain must be a list")
 
-        return cls(
+        trace = cls(
             trace_id=str(trace_id),
             workflow_id=str(workflow_id),
             parent_workflow_id=None if parent_workflow_id is None else str(parent_workflow_id),
             principal_chain=tuple(dict(item) for item in principal_chain),
             evaluation_policy=data["evaluation_policy"],
             schema_version=str(schema_version),
-            trace_hash_value=None if trace_hash_value is None else str(trace_hash_value),
         )
+        if str(persisted_trace_hash) != trace.trace_hash():
+            raise AuthorizationTraceIntegrityError("AuthorizationTrace.receipt.trace_hash does not match trace payload")
+        return trace
+
+    @property
+    def trace_hash_value(self) -> str:
+        return self.trace_hash()
 
     def payload_for_hash(self) -> dict[str, Any]:
         return {
@@ -260,7 +258,7 @@ class AuthorizationTrace:
     def to_dict(self) -> dict[str, Any]:
         payload = self.payload_for_hash()
         payload["receipt"] = {
-            "receipt_hash": self.trace_hash(),
+            "trace_hash": self.trace_hash(),
             "audit_event_hash": "0" * 64,
             "trace_id": self.trace_id,
             "schema_version": self.schema_version,

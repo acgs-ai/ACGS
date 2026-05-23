@@ -81,13 +81,13 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "receipt_hash",
+        "trace_hash",
         "audit_event_hash",
         "trace_id",
         "schema_version"
       ],
       "properties": {
-        "receipt_hash": {
+        "trace_hash": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },

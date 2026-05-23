@@ -7,13 +7,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from governance.models import AuthorizationTrace, DecisionRecord, sha256_json
+from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityError, DecisionRecord, sha256_json
 
 GENESIS_HASH = "0" * 64
-
-
-class AuthorizationTraceIntegrityError(ValueError):
-    """Raised when a trace-bearing audit event fails receipt or hash validation."""
 
 
 def extract_trace(event_dict: dict[str, Any], *, strict: bool = True) -> AuthorizationTrace | None:
@@ -51,8 +47,8 @@ def _extract_trace_strict(event_dict: dict[str, Any]) -> AuthorizationTrace | No
         raise AuthorizationTraceIntegrityError("authorization_trace is invalid") from exc
 
     receipt = trace_payload.get("receipt")
-    if isinstance(receipt, dict) and receipt.get("receipt_hash") != trace.trace_hash():
-        raise AuthorizationTraceIntegrityError("authorization_trace receipt_hash does not match trace payload")
+    if isinstance(receipt, dict) and receipt.get("trace_hash") != trace.trace_hash():
+        raise AuthorizationTraceIntegrityError("authorization_trace trace_hash does not match trace payload")
 
     actor = event_dict.get("request", {}).get("actor") if isinstance(event_dict.get("request"), dict) else None
     actor_id = actor.get("id") if isinstance(actor, dict) else None

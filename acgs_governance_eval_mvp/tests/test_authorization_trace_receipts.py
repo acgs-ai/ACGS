@@ -126,6 +126,10 @@ def _rehash_event(event: dict[str, object]) -> None:
     event["event_hash"] = sha256_json(payload)
 
 
+def _trace_payload() -> dict[str, object]:
+    return _trace().to_dict()
+
+
 def _draft7_validator():
     """Skip schema-validation coverage when optional jsonschema is absent from the sealed package deps."""
     jsonschema = pytest.importorskip("jsonschema")
@@ -158,7 +162,7 @@ def test_extract_trace_strict_false_returns_none_on_integrity_failure(tmp_path):
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     receipt = dict(trace_payload["receipt"])
-    receipt["receipt_hash"] = "0" * 64
+    receipt["trace_hash"] = "0" * 64
     trace_payload["receipt"] = receipt
     event["authorization_trace"] = trace_payload
 
@@ -174,7 +178,7 @@ def test_missing_trace_hash_fails_closed(tmp_path):
     event = _read_event(path)
     trace_payload = dict(event["authorization_trace"])
     receipt = dict(trace_payload["receipt"])
-    receipt["receipt_hash"] = "0" * 64
+    receipt.pop("trace_hash")
     trace_payload["receipt"] = receipt
     event["authorization_trace"] = trace_payload
     _rehash_event(event)
@@ -196,7 +200,7 @@ def test_mismatched_trace_principal_chain_fails_closed(tmp_path):
     workflow_scope["principal_chain"] = principal_chain
     trace_payload["workflow_scope"] = workflow_scope
     receipt = dict(trace_payload["receipt"])
-    receipt["receipt_hash"] = sha256_json(
+    receipt["trace_hash"] = sha256_json(
         {
             "workflow_scope": workflow_scope,
             "evaluation_policy": trace_payload["evaluation_policy"],
@@ -235,6 +239,47 @@ def test_receipt_round_trip(tmp_path):
 
     assert DecisionReceiptRef.from_dict(receipt.to_dict()) == receipt
     assert extract_trace(event) == original
+
+
+def test_authorization_trace_from_valid_nested_wire_payload_passes():
+    payload = _trace_payload()
+
+    assert AuthorizationTrace.from_dict(payload) == _trace()
+
+
+def test_authorization_trace_missing_trace_hash_raises():
+    payload = _trace_payload()
+    receipt = dict(payload["receipt"])
+    receipt.pop("trace_hash")
+    payload["receipt"] = receipt
+
+    with pytest.raises(AuthorizationTraceIntegrityError):
+        AuthorizationTrace.from_dict(payload)
+
+
+def test_authorization_trace_wrong_trace_hash_raises():
+    payload = _trace_payload()
+    receipt = dict(payload["receipt"])
+    receipt["trace_hash"] = "0" * 64
+    payload["receipt"] = receipt
+
+    with pytest.raises(AuthorizationTraceIntegrityError):
+        AuthorizationTrace.from_dict(payload)
+
+
+def test_authorization_trace_legacy_flat_shape_raises_value_error():
+    payload = {
+        "trace_id": "trace-r5-r6",
+        "workflow_id": "workflow-r5-r6",
+        "parent_workflow_id": None,
+        "principal_chain": list(_trace().principal_chain),
+        "evaluation_policy": "access-time",
+        "schema_version": "v1",
+        "trace_hash": _trace().trace_hash(),
+    }
+
+    with pytest.raises(ValueError):
+        AuthorizationTrace.from_dict(payload)
 
 
 @pytest.mark.parametrize("evaluation_policy", ["initiation-time", "access-time", "completion-time"])
