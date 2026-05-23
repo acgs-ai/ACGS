@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from multiprocessing import Barrier, Process
 from pathlib import Path
@@ -155,7 +156,7 @@ def test_trace_tamper_detected_on_disk(tmp_path):
         extract_trace(mutated_event)
 
 
-def test_extract_trace_strict_false_returns_none_on_integrity_failure(tmp_path):
+def test_extract_trace_integrity_failure_is_handled_by_caller(tmp_path):
     path = tmp_path / "audit.jsonl"
     store = ChainHashAuditStore(path)
     store.append(_decision(), authorization_trace=_trace())
@@ -168,7 +169,19 @@ def test_extract_trace_strict_false_returns_none_on_integrity_failure(tmp_path):
 
     with pytest.raises(AuthorizationTraceIntegrityError):
         extract_trace(event)
-    assert extract_trace(event, strict=False) is None
+
+    try:
+        extract_trace(event)
+    except AuthorizationTraceIntegrityError:
+        handled = True
+    else:
+        handled = False
+
+    assert handled is True
+
+
+def test_extract_trace_has_single_integrity_behavior():
+    assert "strict" not in inspect.signature(extract_trace).parameters
 
 
 def test_missing_trace_hash_fails_closed(tmp_path):

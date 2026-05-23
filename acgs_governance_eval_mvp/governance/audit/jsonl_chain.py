@@ -12,29 +12,14 @@ from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityErr
 GENESIS_HASH = "0" * 64
 
 
-def extract_trace(event_dict: dict[str, Any], *, strict: bool = True) -> AuthorizationTrace | None:
+def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
     """Extract and validate an authorization trace from an audit event.
 
-    Verification behavior:
-
-    | Path | Integrity failure behavior |
-    | --- | --- |
-    | ``extract_trace(..., strict=True)`` | raises ``AuthorizationTraceIntegrityError`` |
-    | ``extract_trace(..., strict=False)`` | returns ``None`` |
-    | ``ChainHashAuditStore.verify_chain()`` without trace | returns ``{"valid": False, ...}`` |
-    | ``ChainHashAuditStore.verify_chain()`` with trace | raises ``AuthorizationTraceIntegrityError`` |
+    Returns ``None`` only when the event has no authorization_trace field.
+    Malformed or tampered trace payloads always raise
+    ``AuthorizationTraceIntegrityError``; callers that want fallback behavior
+    must catch that exception at the call site.
     """
-    return _extract_trace_strict(event_dict) if strict else _extract_trace_or_none(event_dict)
-
-
-def _extract_trace_or_none(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
-    try:
-        return _extract_trace_strict(event_dict)
-    except AuthorizationTraceIntegrityError:
-        return None
-
-
-def _extract_trace_strict(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
     trace_payload = event_dict.get("authorization_trace")
     if trace_payload is None:
         return None
@@ -64,14 +49,9 @@ class ChainHashAuditStore:
     Each event hash covers the canonical event payload excluding event_hash.
     previous_hash links to the prior event_hash.
 
-    Verification behavior:
-
-    | Path | Integrity failure behavior |
-    | --- | --- |
-    | ``verify_chain()`` without trace | returns ``{"valid": False, ...}`` |
-    | ``verify_chain()`` with trace | raises ``AuthorizationTraceIntegrityError`` |
-    | ``extract_trace(..., strict=True)`` | raises ``AuthorizationTraceIntegrityError`` |
-    | ``extract_trace(..., strict=False)`` | returns ``None`` |
+    ``verify_chain()`` returns structured hash-chain failures for ordinary
+    event hash mismatches. Trace-bearing events are stricter: malformed or
+    tampered authorization traces raise ``AuthorizationTraceIntegrityError``.
     """
 
     def __init__(self, path: str | Path):
