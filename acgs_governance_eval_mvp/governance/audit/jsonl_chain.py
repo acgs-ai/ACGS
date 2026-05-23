@@ -7,9 +7,33 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from governance.models import DecisionRecord, sha256_json
+from governance.models import AuthorizationTrace, DecisionRecord, sha256_json
 
 GENESIS_HASH = "0" * 64
+
+
+class AuthorizationTraceIntegrityError(ValueError):
+    """Raised when a trace-bearing audit event fails receipt or hash validation."""
+
+
+def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
+    trace_payload = event_dict.get("authorization_trace")
+    if trace_payload is None:
+        return None
+    if not isinstance(trace_payload, dict):
+        raise AuthorizationTraceIntegrityError("authorization_trace must be an object")
+
+    try:
+        trace = AuthorizationTrace.from_dict(trace_payload)
+    except Exception as exc:
+        raise AuthorizationTraceIntegrityError("authorization_trace is invalid") from exc
+
+    actor = event_dict.get("request", {}).get("actor") if isinstance(event_dict.get("request"), dict) else None
+    actor_id = actor.get("id") if isinstance(actor, dict) else None
+    if actor_id and actor_id not in {entry["principal_id"] for entry in trace.principal_chain}:
+        raise AuthorizationTraceIntegrityError("authorization_trace principal_chain does not reference request actor")
+
+    return trace
 
 
 class ChainHashAuditStore:
@@ -24,7 +48,12 @@ class ChainHashAuditStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last_hash: str | None = None
 
-    def append(self, decision: DecisionRecord) -> dict[str, Any]:
+    def append(
+        self,
+        decision: DecisionRecord,
+        authorization_trace: AuthorizationTrace | None = None,
+    ) -> dict[str, Any]:
+        trace_payload = authorization_trace.to_dict() if authorization_trace is not None else None
         # Serialize read-then-write under an exclusive lock so concurrent
         # callers do not produce sibling events pointing at the same
         # previous_hash. Without this, verify_chain() reports the chain
@@ -38,6 +67,9 @@ class ChainHashAuditStore:
                 previous_hash = self._last_hash
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
+                if trace_payload is not None:
+                    payload["authorization_trace"] = trace_payload
+                    extract_trace(payload)
                 payload.pop("event_hash", None)
                 payload["event_hash"] = sha256_json(payload)
 
@@ -171,6 +203,13 @@ class ChainHashAuditStore:
                         "actual": claimed_hash,
                     }
                 )
+
+            if event.get("authorization_trace") is not None:
+                if claimed_hash != recomputed:
+                    raise AuthorizationTraceIntegrityError(
+                        f"trace-bearing event hash mismatch for {event.get('event_id')}"
+                    )
+                extract_trace(event)
 
             previous = str(claimed_hash)
 
