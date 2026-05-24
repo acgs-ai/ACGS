@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +145,8 @@ class ChainHashAuditStore:
         decision: DecisionRecord,
         authorization_trace: AuthorizationTrace | None = None,
     ) -> dict[str, Any]:
+        if not decision.allow and decision.nonce_consumed is not None:
+            decision = replace(decision, nonce_consumed=None)
         trace_payload = authorization_trace.to_dict() if authorization_trace is not None else None
         # Serialize read-then-write under an exclusive lock so concurrent
         # callers do not produce sibling events pointing at the same
