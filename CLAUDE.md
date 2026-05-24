@@ -1,6 +1,6 @@
 # govern-zone — Claude Code Guide
 
-Multi-package monorepo: regulated-AI governance platform. Python (uv workspace) + TypeScript (pnpm + Turborepo). This file is the parent that every package's `CLAUDE.md` references via `../../CLAUDE.md`.
+Multi-package monorepo: regulated-AI governance platform. Python (uv workspace) + TypeScript (pnpm + Turborepo). This file is the parent that every package's `CLAUDE.md` references via `../../CLAUDE.md`; Codex/OMX-specific guidance lives in `AGENTS.md` and is cross-referenced rather than symlinked.
 
 ## First steps in any session
 
@@ -16,7 +16,9 @@ Multi-package monorepo: regulated-AI governance platform. Python (uv workspace) 
 | `acgi-ai/` | Frontend — marketing + console; deploys to GCP Cloud Run via WIF | React 19, Vite, Tailwind 4, Biome, pnpm |
 | `packages/acgs-lite/` | Published library on PyPI (v2.10.0) | Python 3.10+, FastAPI, Pydantic, ruff, mypy |
 | `packages/Acgs-Swarm/` | Constitutional swarm research | Python 3.11+, numpy, cryptography, optional torch |
-| `packages/clinicalguard/` | Clinical-domain governance agent | Python |
+| `packages/clinicalguard/` | Clinical-domain governance agent — private submodule, path-filtered CI only until initialized | Python |
+| `packages/gove-zone/` | Governed runtime kernel | Python 3.11+, Pydantic optional |
+| `packages/agent-bus-analyzer/` | Observer-only bus analysis API | Python 3.11+, FastAPI |
 | `packages/legalguard/`, `packages/ca-legal-agent-skills/` | Legal-domain agent + skill bundles | Claude plugin format |
 | `packages/acgs-cft-governance-pack/` | CFT governance pack | Python |
 | `acgs_governance_eval_mvp/` | Eval MVP | Python |
@@ -42,7 +44,9 @@ Per-package gates remain authoritative for their own package:
 | `acgi-ai` | `pnpm -F acgi-ai lint && pnpm -F acgi-ai build && pnpm -F acgi-ai test` |
 | `acgs-lite` | `cd packages/acgs-lite && make lint typecheck test` |
 | `Acgs-Swarm` | `cd packages/Acgs-Swarm && python -m pytest tests/ --import-mode=importlib` |
-| `clinicalguard` | `cd packages/clinicalguard && pytest --import-mode=importlib` |
+| `gove-zone` | `cd packages/gove-zone && pytest -q` |
+| `agent-bus-analyzer` | `cd packages/agent-bus-analyzer && pytest -q && ruff check . && mypy src/` |
+| `clinicalguard` | Path-filtered workflow only unless the private submodule is initialized |
 
 ## Hard constraints
 
@@ -51,7 +55,8 @@ Per-package gates remain authoritative for their own package:
 3. **Stage explicitly.** Never `git add -A` or `git add .`. Use file paths.
 4. **`acgs-lite` is published to PyPI.** Do not break its public API or its `requires-python = ">=3.10"` floor in published metadata. The workspace local floor is 3.11; the package's published floor is 3.10. They are intentionally different.
 5. **Console origin is privileged.** Never extend public-only patterns (CDN fonts, third-party scripts, anonymous endpoints) into `acgi-ai/src/routes/console/**`. See `acgi-ai/CLAUDE.md` and `acgi-ai/DEPLOY.md` §4–§7 for the full CSP rules.
-6. **Two PLAN files exist.** `PLAN.md` is scoped to `acgi-ai/` only. `docs/PLAN-MONOREPO.md` covers monorepo unification. Do not conflate them.
+6. **Plan scopes are explicit.** `acgi-ai/PLAN.md` is scoped to the frontend only. `docs/PLAN-MONOREPO.md` is historical monorepo-unification context; `MONOREPO.md` is the current registry.
+7. **Generated agent guides are not boilerplate by default.** Per-directory `AGENTS.md` files with `<!-- Generated: ... -->` headers may still contain hand-written purpose, key-file, and boundary guidance; delete only stub-only files after content review.
 
 ## Where to look first
 
@@ -59,8 +64,8 @@ Per-package gates remain authoritative for their own package:
 |---|---|
 | Per-package conventions | `<package>/CLAUDE.md` |
 | Workspace registry — what exists + what is gated where | `MONOREPO.md` |
-| Frontend completion plan | `PLAN.md` |
-| Monorepo unification plan | `docs/PLAN-MONOREPO.md` |
+| Frontend completion plan | `acgi-ai/PLAN.md` |
+| Monorepo unification history | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |
 | CI workflows | `.github/workflows/` |
 | Frontend deploy contract | `acgi-ai/DEPLOY.md` |

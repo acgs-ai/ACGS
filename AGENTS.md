@@ -1,6 +1,6 @@
 # govern-zone — AGENTS.md (Codex / OMX)
 
-Canonical agent guide for Codex CLI, OpenAI agents, and any non-Claude AGI tooling. Mirror of `CLAUDE.md` with Codex-specific operational notes. Both files stay in sync — if you update one, update both.
+Canonical agent guide for Codex CLI, OpenAI agents, and any non-Claude AGI tooling. This guide cross-references `CLAUDE.md`; the files are intentionally separate because Codex/OMX and Claude surfaces have different local instructions.
 
 ## Layout
 
@@ -9,9 +9,11 @@ Canonical agent guide for Codex CLI, OpenAI agents, and any non-Claude AGI tooli
 | `acgi-ai/` | Frontend (React 19, Vite, Tailwind 4) — deploys to Cloud Run via WIF |
 | `packages/acgs-lite/` | PyPI library v2.10.0 — FastAPI/Pydantic governance |
 | `packages/Acgs-Swarm/` | Constitutional swarm research — Python ≥3.11 |
-| `packages/clinicalguard/` | Clinical-domain governance agent |
+| `packages/clinicalguard/` | Clinical-domain governance agent — private submodule, path-filtered CI only until initialization is reliable |
+| `packages/gove-zone/` | Governed runtime kernel — Python ≥3.11 |
+| `packages/agent-bus-analyzer/` | Observer-only bus analysis API — Python ≥3.11, FastAPI |
 | `packages/legalguard/`, `packages/ca-legal-agent-skills/` | Legal-domain agent + skill bundles |
-| `packages/acgs-cft-governance-pack/` | CFT governance pack |
+| `acgs-cft-governance-pack/` | CFT governance pack |
 | `acgs_governance_eval_mvp/`, `acgs-cft-governance-pack/`, `hermes_acgs_bundle/` | Python eval / governance tooling |
 | `automation/` | Policies, proposals, workflows, scripts, tests |
 | `docs/` | ADRs, design notes, `PLAN-MONOREPO.md` |
@@ -61,7 +63,8 @@ Codex sandbox respects `.gitignore`. The nested git repos in `packages/` are vis
 3. **Stage explicitly.** Never `git add -A` or `git add .`.
 4. **`acgs-lite` is on PyPI.** Do not break public API or `requires-python = ">=3.10"` floor.
 5. **Console origin is privileged.** No public-only patterns (CDN fonts, third-party scripts) in `acgi-ai/src/routes/console/**`.
-6. **Two PLAN files.** `PLAN.md` is for `acgi-ai/` only. `docs/PLAN-MONOREPO.md` covers monorepo unification.
+6. **Plan scopes.** `acgi-ai/PLAN.md` is for frontend completion only. `docs/PLAN-MONOREPO.md` is historical monorepo-unification context; `MONOREPO.md` is the current registry.
+7. **Generated agent guides are not boilerplate by default.** Per-directory `AGENTS.md` files with `<!-- Generated: ... -->` headers may still contain hand-written purpose, key-file, and boundary guidance; delete only stub-only files after content review.
 
 ## Verification
 
@@ -76,8 +79,13 @@ Codex sandbox respects `.gitignore`. The nested git repos in `packages/` are vis
 |---|---|
 | Per-package conventions | `<package>/AGENTS.md` or `<package>/CLAUDE.md` |
 | Workspace registry — what exists + what is gated where | `MONOREPO.md` |
-| Frontend plan | `PLAN.md` |
-| Monorepo plan | `docs/PLAN-MONOREPO.md` |
+| Frontend plan | `acgi-ai/PLAN.md` |
+| Monorepo history | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |
 | Deploy contract | `acgi-ai/DEPLOY.md` |
 | Design contract | `acgi-ai/DESIGN.md` |
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
