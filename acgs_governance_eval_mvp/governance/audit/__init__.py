@@ -6,7 +6,12 @@ from typing import Any, Protocol, runtime_checkable
 from governance.models import DecisionRecord
 
 from .in_memory import InMemoryAuditStore
-from .jsonl_chain import AuthorizationTraceIntegrityError, ChainHashAuditStore, extract_trace
+from .jsonl_chain import (
+    AuthorizationTraceIntegrityError,
+    ChainHashAuditStore,
+    NonceReplayError,
+    extract_trace,
+)
 
 
 @runtime_checkable
@@ -36,5 +41,6 @@ __all__ = [
     "AuthorizationTraceIntegrityError",
     "ChainHashAuditStore",
     "InMemoryAuditStore",
+    "NonceReplayError",
     "extract_trace",
 ]

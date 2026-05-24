@@ -12,6 +12,15 @@ from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityErr
 GENESIS_HASH = "0" * 64
 
 
+class NonceReplayError(ValueError):
+    """Raised when (trace_id, session_nonce) was already consumed by a prior
+    audit-chain commit. See docs/design/phase2-trace-crypto.md §verifier flow.
+    The pair is single-use the instant its DecisionRecord is appended; any
+    subsequent commit attempt with the same pair fails closed — regardless
+    of whether the prior commit was made by this process or another.
+    """
+
+
 def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
     """Extract and validate an authorization trace from an audit event.
 
@@ -57,6 +66,14 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Phase 2 nonce index: (trace_id, session_nonce) pairs already
+        # observed on disk, plus the byte offset up to which the chain
+        # has been merged. The in-memory index is a fast-path cache;
+        # the in-lock tail-scan from this offset is what guarantees a
+        # second process cannot replay a nonce committed by the first
+        # while this process held no lock. See design §verifier flow.
+        self._nonce_index: set[tuple[str, str]] = set()
+        self._index_offset: int = 0
 
     def append(
         self,
@@ -72,6 +89,25 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
+                # Phase 2: merge any events appended by other processes
+                # between our last touch and now, BEFORE the nonce check.
+                self._merge_tail_into_index()
+
+                new_nonce_key: tuple[str, str] | None = None
+                if decision.nonce_consumed is not None:
+                    consumed = decision.nonce_consumed
+                    if (
+                        not isinstance(consumed, dict)
+                        or not consumed.get("trace_id")
+                        or not consumed.get("session_nonce")
+                    ):
+                        raise ValueError(
+                            "DecisionRecord.nonce_consumed must contain non-empty trace_id and session_nonce"
+                        )
+                    new_nonce_key = (consumed["trace_id"], consumed["session_nonce"])
+                    if new_nonce_key in self._nonce_index:
+                        raise NonceReplayError(f"session_nonce already consumed for trace_id={consumed['trace_id']!r}")
+
                 previous_hash = self._read_last_hash_from_disk()
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
@@ -86,9 +122,48 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
+
+                if new_nonce_key is not None:
+                    self._nonce_index.add(new_nonce_key)
+                    self._index_offset += len(line.encode("utf-8"))
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
+
+    def _merge_tail_into_index(self) -> None:
+        """Read events appended since the last merge and absorb their
+        nonces into the in-memory index. MUST be called while holding
+        LOCK_EX so partial writes by other processes are impossible.
+        Only complete lines (ending in newline) are absorbed; a partial
+        trailing record leaves the offset where it is so the next call
+        re-reads it once it's complete.
+        """
+        if not self.path.exists():
+            return
+        with self.path.open("rb") as fh:
+            fh.seek(self._index_offset)
+            chunk = fh.read()
+        if not chunk:
+            return
+        last_nl = chunk.rfind(b"\n")
+        if last_nl == -1:
+            return
+        complete = chunk[: last_nl + 1]
+        for raw in complete.splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            consumed = event.get("nonce_consumed") if isinstance(event, dict) else None
+            if isinstance(consumed, dict):
+                trace_id = consumed.get("trace_id")
+                session_nonce = consumed.get("session_nonce")
+                if isinstance(trace_id, str) and trace_id and isinstance(session_nonce, str) and session_nonce:
+                    self._nonce_index.add((trace_id, session_nonce))
+        self._index_offset += len(complete)
 
     def last_hash(self) -> str:
         return self._read_last_hash_from_disk()
