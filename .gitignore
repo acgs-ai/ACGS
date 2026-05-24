@@ -105,6 +105,10 @@ credentials/
 /.obsidian/
 /.gitnexus/
 /.playwright-mcp/
+/.antigravitycli/
+/.codegraph/
+/.plugin-eval/
+/.understand-anything/
 
 # Out-of-band exploration clones in external/ that are NOT registered as
 # submodules in .gitmodules. Promote to a real submodule before tracking.
@@ -114,6 +118,10 @@ credentials/
 # Belong in PR descriptions or evidence bundles, not the repo.
 /gove-zone-actions-*.md
 /request.json
+
+# Runtime governance audit chain written by .claude/hooks/acgs-emit-receipt.py
+# via gove_zone.integration. Per-worktree, never committed.
+/.gove-zone/
 
 # Pytest / ruff caches anywhere in the tree.
 .pytest_cache/
