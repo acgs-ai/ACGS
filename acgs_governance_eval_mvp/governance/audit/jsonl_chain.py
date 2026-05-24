@@ -189,10 +189,17 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
+                    # Re-anchor _index_offset to true EOF rather than
+                    # incrementing by len(line). If any partial trailing
+                    # bytes existed before this append (legacy data,
+                    # prior-process crash), incrementing would drift
+                    # the offset off real EOF and the next merge would
+                    # mis-frame. tell() in append mode returns EOF.
+                    new_offset = fh.tell()
 
                 if new_nonce_key is not None:
                     self._nonce_index.add(new_nonce_key)
-                    self._index_offset += len(line.encode("utf-8"))
+                self._index_offset = new_offset
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
@@ -222,8 +229,16 @@ class ChainHashAuditStore:
                 continue
             try:
                 event = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                # Complete lines (we already trimmed past the last \n)
+                # that are not valid JSON are not partial-write artifacts —
+                # they are integrity violations. Fail closed rather than
+                # silently skipping, so a corrupt middle line cannot let
+                # a duplicate nonce slip through the in-memory replay
+                # check on its second observation.
+                raise AuthorizationTraceIntegrityError(
+                    f"audit chain contains malformed JSON line at offset >= {self._index_offset}"
+                ) from exc
             consumed = event.get("nonce_consumed") if isinstance(event, dict) else None
             if isinstance(consumed, dict):
                 trace_id = consumed.get("trace_id")
