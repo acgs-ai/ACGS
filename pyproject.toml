@@ -24,7 +24,6 @@ package = false
 members = [
     "packages/acgs-lite",
     "packages/Acgs-Swarm",
-    "packages/clinicalguard",
     "packages/gove-zone",
     "packages/agent-bus-analyzer",
     "acgs_governance_eval_mvp",

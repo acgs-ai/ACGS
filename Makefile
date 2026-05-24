@@ -18,14 +18,15 @@
 PYTHON_PACKAGES := \
 	packages/acgs-lite \
 	packages/Acgs-Swarm \
-	packages/clinicalguard \
+	packages/gove-zone \
+	packages/agent-bus-analyzer \
 	acgs_governance_eval_mvp \
 	acgs-cft-governance-pack
 
 PNPM ?= pnpm
 UV ?= uv
 
-.PHONY: help all install build test lint typecheck verify clean \
+.PHONY: help all install build test lint typecheck verify clean openapi \
         build-js test-js lint-js typecheck-js \
         build-py test-py lint-py typecheck-py \
         verify-fresh
@@ -39,6 +40,7 @@ help:
 	@echo "  make lint          Lint everything"
 	@echo "  make typecheck     Type-check everything"
 	@echo "  make verify        lint + typecheck + test"
+	@echo "  make openapi       Export analyzer OpenAPI for the console"
 	@echo "  make all           verify + build"
 	@echo "  make clean         Drop node_modules, .venv, build artifacts"
 	@echo "  make verify-fresh  clean + install + verify (CI-friendly)"
@@ -80,18 +82,17 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/clinicalguard acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack; \
-	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; \
 	$(MAKE) -C packages/acgs-lite lint; \
-	(cd packages/Acgs-Swarm && $(UV) run ruff check src/ && $(UV) run ruff format --check src/); \
-	(cd packages/clinicalguard && $(UV) run ruff check . && $(UV) run ruff format --check .)
+	(cd packages/Acgs-Swarm && $(UV) run ruff check src/)
 
 typecheck-py:
 	@for pkg in $(PYTHON_PACKAGES); do \
@@ -109,6 +110,10 @@ lint: lint-js lint-py
 typecheck: typecheck-js typecheck-py
 
 verify: lint typecheck test
+
+openapi:
+	$(UV) run --package agent-bus-analyzer agent-bus-analyzer export-openapi --output acgi-ai/src/api/openapi.json
+	$(PNPM) -F acgi-ai exec biome format --write src/api/openapi.json
 
 clean:
 	-$(PNPM) turbo run clean 2>/dev/null

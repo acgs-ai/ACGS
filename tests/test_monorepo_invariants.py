@@ -72,8 +72,8 @@ def test_acgs_swarm_floor_drives_workspace_floor():
 EXPECTED_UV_MEMBERS = {
     "packages/acgs-lite",
     "packages/Acgs-Swarm",
-    "packages/clinicalguard",
     "packages/gove-zone",
+    "packages/agent-bus-analyzer",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
 }
@@ -140,6 +140,7 @@ WORKFLOW_PATH_PREFIXES = {
     "python-eval-mvp.yml": "acgs_governance_eval_mvp",
     "python-cft-pack.yml": "acgs-cft-governance-pack",
     "python-hermes-bundle.yml": "hermes_acgs_bundle",
+    "python-agent-bus-analyzer.yml": "packages/agent-bus-analyzer",
 }
 
 

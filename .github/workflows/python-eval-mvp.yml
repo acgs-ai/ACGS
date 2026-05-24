@@ -60,3 +60,6 @@ jobs:
 
       - name: Test
         run: python -m pytest tests/ -v --import-mode=importlib
+
+      - name: Governed MCP deterministic gate
+        run: python -m pytest tests/test_governed_mcp_v0.py -q
