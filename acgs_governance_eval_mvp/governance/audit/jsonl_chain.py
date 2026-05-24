@@ -11,6 +11,69 @@ from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityErr
 
 GENESIS_HASH = "0" * 64
 
+# Filesystems where fcntl LOCK_EX is silently advisory across hosts or
+# where lock state is not coherent with the data plane. The chain-hash
+# audit store relies on LOCK_EX for serialization and on the tail-scan
+# observing committed bytes from peers; both guarantees break on these
+# mounts, so we refuse to open the store rather than silently corrupt.
+_UNRELIABLE_FS: frozenset[str] = frozenset(
+    {"nfs", "nfs3", "nfs4", "smb", "smb2", "smb3", "cifs", "fuse", "glusterfs", "ceph", "cephfs"}
+)
+
+
+class UnsafeAuditStorageError(RuntimeError):
+    """Raised when the audit store path resolves to a filesystem whose
+    fcntl LOCK_EX semantics are unreliable (NFS, CIFS, FUSE-overlay,
+    Gluster, Ceph). Closes design test #15.
+    """
+
+
+def _detect_fs_type(path: Path) -> str | None:
+    """Best-effort lookup of the filesystem type backing ``path``.
+
+    Linux-only: parses ``/proc/self/mounts`` and picks the longest mount
+    point that is a prefix of the resolved path. Returns ``None`` when
+    the lookup is unavailable (non-Linux host, /proc not mounted, file
+    unreadable) so the guard defaults to permissive on platforms whose
+    fcntl semantics we cannot probe from userspace.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    try:
+        with open("/proc/self/mounts", encoding="utf-8") as fh:
+            entries = fh.readlines()
+    except OSError:
+        return None
+    best_match: tuple[int, str] | None = None
+    for line in entries:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mount_point, fs_type = parts[1], parts[2]
+        try:
+            mp = Path(mount_point)
+        except ValueError:
+            continue
+        try:
+            resolved.relative_to(mp)
+        except ValueError:
+            continue
+        depth = len(mp.parts)
+        if best_match is None or depth > best_match[0]:
+            best_match = (depth, fs_type)
+    return best_match[1] if best_match is not None else None
+
+
+def _refuse_unreliable_fs(path: Path) -> None:
+    fs_type = _detect_fs_type(path)
+    if fs_type is not None and fs_type.lower() in _UNRELIABLE_FS:
+        raise UnsafeAuditStorageError(
+            f"audit store path {path} resides on '{fs_type}', whose fcntl LOCK_EX "
+            "semantics are unreliable; use a local filesystem (ext4, xfs, btrfs, apfs)"
+        )
+
 
 class NonceReplayError(ValueError):
     """Raised when (trace_id, session_nonce) was already consumed by a prior
@@ -66,6 +129,7 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        _refuse_unreliable_fs(self.path.parent)
         # Phase 2 nonce index: (trace_id, session_nonce) pairs already
         # observed on disk, plus the byte offset up to which the chain
         # has been merged. The in-memory index is a fast-path cache;

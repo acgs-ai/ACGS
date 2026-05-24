@@ -10,6 +10,7 @@ from .jsonl_chain import (
     AuthorizationTraceIntegrityError,
     ChainHashAuditStore,
     NonceReplayError,
+    UnsafeAuditStorageError,
     extract_trace,
 )
 
@@ -42,5 +43,6 @@ __all__ = [
     "ChainHashAuditStore",
     "InMemoryAuditStore",
     "NonceReplayError",
+    "UnsafeAuditStorageError",
     "extract_trace",
 ]
