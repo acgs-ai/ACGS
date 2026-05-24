@@ -31,6 +31,7 @@ def _decision(
     trace_id: str = "trace-G001",
     session_nonce: str = "nonce-G001-AAA",
     embed_nonce: bool = True,
+    allow: bool = True,
     resource: str = "workflow-G001",
     inputs_hash: str = "sha256:G001-test",
 ) -> DecisionRecord:
@@ -45,15 +46,15 @@ def _decision(
     return DecisionRecord(
         event_id=event_id,
         tenant="default",
-        allow=True,
-        reasons=[],
-        reason_codes=[],
+        allow=allow,
+        reasons=[] if allow else ["policy denied"],
+        reason_codes=[] if allow else ["POLICY_DENY"],
         rule_ids=[],
         checks=[],
         request=request,
         policy_version="policy-test/v1",
         role_version="roles-test/v1",
-        decision_state="allow",
+        decision_state="allow" if allow else "deny",
         nonce_consumed={"trace_id": trace_id, "session_nonce": session_nonce} if embed_nonce else None,
     )
 
@@ -290,6 +291,52 @@ def test_decisions_without_nonce_do_not_touch_index(tmp_path: Path) -> None:
     store.append(_decision(event_id="e2", embed_nonce=False, resource="workflow-no-nonce-2"))
 
     assert store._nonce_index == set()
+    verify = store.verify_chain()
+    assert verify["valid"] is True
+    assert verify["checked"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Design test #26 — deny-path decisions must not burn session_nonce.
+# ---------------------------------------------------------------------------
+
+
+def test_denied_action_does_not_burn_nonce(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+
+    denied = store.append(_decision(event_id="deny-1", allow=False, session_nonce="N26"))
+    assert "nonce_consumed" not in denied
+
+    allowed = store.append(_decision(event_id="allow-1", allow=True, session_nonce="N26"))
+    assert allowed["nonce_consumed"] == {"trace_id": "trace-G001", "session_nonce": "N26"}
+
+    with pytest.raises(NonceReplayError):
+        store.append(_decision(event_id="allow-2", allow=True, session_nonce="N26", resource="workflow-G003-retry"))
+
+    verify = store.verify_chain()
+    assert verify["valid"] is True
+    assert verify["checked"] == 2
+
+
+def test_repeated_denied_actions_do_not_burn_nonce(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+
+    first = store.append(_decision(event_id="deny-1", allow=False, session_nonce="N26-repeat"))
+    second = store.append(
+        _decision(
+            event_id="deny-2",
+            allow=False,
+            session_nonce="N26-repeat",
+            resource="workflow-G003-denied-retry",
+        )
+    )
+
+    assert "nonce_consumed" not in first
+    assert "nonce_consumed" not in second
+    assert store._nonce_index == set()
+
     verify = store.verify_chain()
     assert verify["valid"] is True
     assert verify["checked"] == 2
