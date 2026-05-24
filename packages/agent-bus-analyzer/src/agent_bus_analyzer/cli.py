@@ -1,15 +1,10 @@
-"""CLI entry point: ``python -m agent_bus_analyzer <subcommand>``.
-
-- ``serve`` (T069): run the FastAPI HTTP server via uvicorn.
-- ``observer`` (T072): boot the bus subscriber + audit-tail + writer loop.
-- ``verify`` (T055, US3): hash-chain verification — stub until US3.
-- ``dev-traffic`` (T061): canned traffic generator — stub until Polish.
-"""
+"""CLI entry point: ``python -m agent_bus_analyzer <subcommand>``."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -34,6 +29,20 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         port=args.port,
         log_level=args.log_level,
     )
+    return 0
+
+
+def _cmd_export_openapi(args: argparse.Namespace) -> int:
+    from agent_bus_analyzer.api import create_app
+
+    payload = json.dumps(create_app().openapi(), indent=2, sort_keys=True) + "\n"
+    if args.output == "-":
+        sys.stdout.write(payload)
+        return 0
+
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(payload, encoding="utf-8")
     return 0
 
 
@@ -108,14 +117,6 @@ def _cmd_observer(args: argparse.Namespace) -> int:
         return 1
 
 
-def _cmd_not_implemented(args: argparse.Namespace) -> int:
-    print(
-        f"agent_bus_analyzer: subcommand '{args.cmd}' is not implemented in this build",
-        file=sys.stderr,
-    )
-    return 2
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_bus_analyzer")
     subs = parser.add_subparsers(dest="cmd", required=True)
@@ -126,6 +127,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--log-level", default="info")
     p_serve.set_defaults(func=_cmd_serve)
 
+    p_openapi = subs.add_parser("export-openapi", help="Export the FastAPI OpenAPI document")
+    p_openapi.add_argument("--output", required=True, help="Output path, or '-' for stdout")
+    p_openapi.set_defaults(func=_cmd_export_openapi)
+
     p_obs = subs.add_parser("observer", help="Run the bus observer + audit-tail follower")
     p_obs.add_argument("--bus-endpoint", required=True)
     p_obs.add_argument("--audit-file", required=True, type=Path)
@@ -133,10 +138,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_obs.add_argument("--queue-capacity", type=int, default=10_000)
     p_obs.add_argument("--registry-poll-seconds", type=int, default=30)
     p_obs.set_defaults(func=_cmd_observer)
-
-    for name in ("verify", "dev-traffic"):
-        sub = subs.add_parser(name, help=f"(planned) {name} — not yet implemented")
-        sub.set_defaults(func=_cmd_not_implemented)
 
     return parser
 

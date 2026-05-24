@@ -57,9 +57,7 @@ def _safe_correlation_id(correlation_id: str) -> str:
         or correlation_id in {".", ".."}
         or correlation_id.startswith(".")  # reject hidden-file conventions
     ):
-        raise ReadOnlyViolation(
-            f"correlation_id rejected (path-safety): {correlation_id!r}"
-        )
+        raise ReadOnlyViolation(f"correlation_id rejected (path-safety): {correlation_id!r}")
     return correlation_id
 
 
@@ -68,9 +66,7 @@ def _trace_path(store_dir: Path, correlation_id: str) -> Path:
     resolved = (store_dir / "traces" / f"{cid}.jsonl").resolve()
     traces_root = (store_dir / "traces").resolve()
     if not resolved.is_relative_to(traces_root):
-        raise ReadOnlyViolation(
-            f"trace path escapes store dir: {resolved} not under {traces_root}"
-        )
+        raise ReadOnlyViolation(f"trace path escapes store dir: {resolved} not under {traces_root}")
     return resolved
 
 
@@ -377,7 +373,6 @@ class TraceStore:
         marker["event_hash"] = compute_event_hash(marker)
         self._append_raw(marker)
         queue.close_gap()
-
 
     def _append_raw(self, payload: dict[str, Any]) -> None:
         """Internal raw append (used for ingest-gap markers)."""

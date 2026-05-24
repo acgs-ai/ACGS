@@ -11,11 +11,7 @@ dependencies = [
     "anyio>=4.4",
     "fastapi>=0.110",
     "uvicorn>=0.30",
-    "enhanced-agent-bus",
 ]
-
-[tool.uv.sources]
-enhanced-agent-bus = { path = "../../ACGS/packages/enhanced_agent_bus", editable = true }
 
 [dependency-groups]
 dev = [
@@ -50,3 +46,6 @@ asyncio_mode = "auto"
 python_version = "3.11"
 strict = true
 files = ["src/agent_bus_analyzer"]
+
+[project.scripts]
+agent-bus-analyzer = "agent_bus_analyzer.cli:main"

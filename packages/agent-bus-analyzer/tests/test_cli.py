@@ -1,4 +1,4 @@
-"""Tests for the CLI surface (T069 — serve only; others stubbed)."""
+"""Tests for the implemented CLI surface."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pytest
 from agent_bus_analyzer.cli import build_parser, main
 
 
-def test_parser_lists_planned_subcommands() -> None:
+def test_parser_lists_implemented_subcommands() -> None:
     parser = build_parser()
     args = parser.parse_args(["serve", "--host", "0.0.0.0", "--port", "1234"])
     assert args.cmd == "serve"
@@ -15,10 +15,18 @@ def test_parser_lists_planned_subcommands() -> None:
     assert args.port == 1234
 
 
+def test_export_openapi_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["export-openapi", "--output", "-"]) == 0
+    body = capsys.readouterr().out
+    assert '"title": "agent-bus-analyzer"' in body
+    assert '"/api/bus/traces"' in body
+
+
 @pytest.mark.parametrize("name", ["verify", "dev-traffic"])
-def test_planned_subcommand_exits_with_non_zero(name: str) -> None:
-    # `observer` is implemented in US1 (T072); only verify/dev-traffic remain stubs.
-    assert main([name]) == 2
+def test_unimplemented_subcommands_are_not_advertised(name: str) -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args([name])
 
 
 def test_observer_subcommand_requires_args() -> None:
