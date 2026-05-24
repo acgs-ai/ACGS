@@ -9,6 +9,7 @@
 import type { BusSingleTrace, BusTraceEvent, BusTraceList, BusTraceListItem } from '../../api/types'
 
 const CONST_HASH = '608508a9bd224290'
+const HASH_SUFFIX = '0'.repeat(62)
 
 function mkEvent(
   overrides: Partial<BusTraceEvent> &
@@ -47,7 +48,7 @@ const TRACE_A_EVENTS: BusTraceEvent[] = [
     target_handler_declared: 'analyst.policy_check',
     payload_ref: 'sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
     recorded_at: '2026-05-14T13:51:09.011Z',
-    event_hash: 'a1' + '0'.repeat(62),
+    event_hash: `a1${HASH_SUFFIX}`,
     status: 'completed',
   }),
   mkEvent({
@@ -60,8 +61,8 @@ const TRACE_A_EVENTS: BusTraceEvent[] = [
     target_handler_resolved: 'analyst.policy_check',
     payload_ref: 'sha256:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3',
     recorded_at: '2026-05-14T13:51:09.042Z',
-    event_hash: 'a2' + '0'.repeat(62),
-    prev_hash: 'a1' + '0'.repeat(62),
+    event_hash: `a2${HASH_SUFFIX}`,
+    prev_hash: `a1${HASH_SUFFIX}`,
     status: 'completed',
   }),
   mkEvent({
@@ -73,8 +74,8 @@ const TRACE_A_EVENTS: BusTraceEvent[] = [
     target_handler_resolved: 'analyst.policy_check',
     payload_ref: 'sha256:c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4',
     recorded_at: '2026-05-14T13:51:09.064Z',
-    event_hash: 'a3' + '0'.repeat(62),
-    prev_hash: 'a2' + '0'.repeat(62),
+    event_hash: `a3${HASH_SUFFIX}`,
+    prev_hash: `a2${HASH_SUFFIX}`,
     decision: 'allow',
     audit_receipt_hash: 'sha256:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
     status: 'completed',
@@ -91,7 +92,7 @@ const TRACE_B_EVENTS: BusTraceEvent[] = [
     target_handler_declared: 'matter.fetch',
     payload_ref: 'sha256:d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5',
     recorded_at: '2026-05-14T14:08:22.011Z',
-    event_hash: 'b1' + '0'.repeat(62),
+    event_hash: `b1${HASH_SUFFIX}`,
     status: 'completed',
   }),
   mkEvent({
@@ -103,8 +104,8 @@ const TRACE_B_EVENTS: BusTraceEvent[] = [
     target_handler_resolved: 'matter.fetch',
     payload_ref: 'sha256:e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6',
     recorded_at: '2026-05-14T14:08:22.038Z',
-    event_hash: 'b2' + '0'.repeat(62),
-    prev_hash: 'b1' + '0'.repeat(62),
+    event_hash: `b2${HASH_SUFFIX}`,
+    prev_hash: `b1${HASH_SUFFIX}`,
     decision: 'deny',
     flagged_rule: 'hipaa.164.502.b',
     audit_receipt_hash: 'sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff',
@@ -122,7 +123,7 @@ const TRACE_C_EVENTS: BusTraceEvent[] = [
     target_handler_declared: 'reasoner.evaluate',
     payload_ref: 'sha256:f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7',
     recorded_at: '2026-05-14T13:32:41.011Z',
-    event_hash: 'c1' + '0'.repeat(62),
+    event_hash: `c1${HASH_SUFFIX}`,
     status: 'unwired-handler',
   }),
 ]

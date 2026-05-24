@@ -1,0 +1,501 @@
+{
+  "components": {
+    "schemas": {
+      "Event": {
+        "additionalProperties": false,
+        "description": "One captured event. data-model.md \u00a7Event.",
+        "properties": {
+          "audit_receipt_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Receipt Hash"
+          },
+          "causal_index": {
+            "minimum": 0.0,
+            "title": "Causal Index",
+            "type": "integer"
+          },
+          "constitutional_hash": {
+            "description": "16-char hex form",
+            "pattern": "^[a-f0-9]{16}$",
+            "title": "Constitutional Hash",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "enum": ["allow", "deny", "transform", "escalate"],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "event_hash": {
+            "description": "SHA-256 hex digest",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Event Hash",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "flagged_rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flagged Rule"
+          },
+          "gap_ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Ended At"
+          },
+          "gap_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Started At"
+          },
+          "kind": {
+            "enum": ["dispatch", "response", "decision"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload_ref": {
+            "title": "Payload Ref",
+            "type": "string"
+          },
+          "prev_hash": {
+            "anyOf": [
+              {
+                "description": "SHA-256 hex digest",
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Hash"
+          },
+          "recorded_at": {
+            "format": "date-time",
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "source_agent": {
+            "title": "Source Agent",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "policy-violation",
+              "dispatch-failure",
+              "unwired-handler",
+              "orphan-response",
+              "incomplete-pair",
+              "ingest-gap"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target_handler_declared": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Handler Declared"
+          },
+          "target_handler_resolved": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Handler Resolved"
+          }
+        },
+        "required": [
+          "event_id",
+          "correlation_id",
+          "causal_index",
+          "recorded_at",
+          "source_agent",
+          "payload_ref",
+          "kind",
+          "constitutional_hash",
+          "event_hash",
+          "status"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "SingleTrace": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "integrity_status": {
+            "enum": ["intact", "tampered", "unknown"],
+            "title": "Integrity Status",
+            "type": "string"
+          },
+          "kind": {
+            "const": "single-trace",
+            "default": "single-trace",
+            "title": "Kind",
+            "type": "string"
+          },
+          "rotation_at_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation At Index"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceListItem"
+          }
+        },
+        "required": ["trace", "integrity_status"],
+        "title": "SingleTrace",
+        "type": "object"
+      },
+      "TraceList": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TraceListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "const": "trace-list",
+            "default": "trace-list",
+            "title": "Kind",
+            "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "title": "TraceList",
+        "type": "object"
+      },
+      "TraceListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "constitutional_hash": {
+            "description": "16-char hex form",
+            "pattern": "^[a-f0-9]{16}$",
+            "title": "Constitutional Hash",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "event_count": {
+            "minimum": 0.0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "integrity_status": {
+            "enum": ["intact", "tampered", "unknown"],
+            "title": "Integrity Status",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "worst_event_status": {
+            "enum": [
+              "completed",
+              "policy-violation",
+              "dispatch-failure",
+              "unwired-handler",
+              "orphan-response",
+              "incomplete-pair",
+              "ingest-gap"
+            ],
+            "title": "Worst Event Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "correlation_id",
+          "started_at",
+          "event_count",
+          "worst_event_status",
+          "integrity_status",
+          "constitutional_hash"
+        ],
+        "title": "TraceListItem",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": ["loc", "msg", "type"],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Observer-only analysis layer for the Enhanced Agent Bus.",
+    "title": "agent-bus-analyzer",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/bus/healthz": {
+      "get": {
+        "operationId": "healthz_api_bus_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Api Bus Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/api/bus/traces": {
+      "get": {
+        "operationId": "list_traces_api_bus_traces_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Traces"
+      }
+    },
+    "/api/bus/traces/{correlation_id}": {
+      "get": {
+        "operationId": "get_trace_api_bus_traces__correlation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "correlation_id",
+            "required": true,
+            "schema": {
+              "title": "Correlation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SingleTrace"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trace"
+      }
+    }
+  }
+}

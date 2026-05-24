@@ -9,6 +9,8 @@
 // depends on these shapes lining up with what the MSW handlers return today
 // and what the FastAPI services will return tomorrow.
 
+import type { components as BusApiComponents } from './bus.generated'
+
 export type MaciLane = 'Proposer' | 'Validator' | 'Executor' | 'Custodian'
 
 export type Posture = 'confirmed' | 'partial' | 'blocked' | 'privileged'
@@ -316,68 +318,25 @@ export type OperatorSession = {
 
 // ─── Bus traces ───────────────────────────────────────────────────────────
 //
-// Snake_case mirrors the analyzer JSON schemas literally
-// (packages/agent-bus-analyzer/contracts/trace-query.schema.json
-//  + trace-event.schema.json) so the page renders with no transform layer.
+// Snake_case mirrors the analyzer OpenAPI contract literally. Only the
+// /api/bus/* surface is generated; /api/v1 console contracts stay hand-written.
 
-export type BusEventStatus =
-  | 'completed'
-  | 'policy-violation'
-  | 'dispatch-failure'
-  | 'unwired-handler'
-  | 'orphan-response'
-  | 'incomplete-pair'
-  | 'ingest-gap'
+type BusSchemas = BusApiComponents['schemas']
+type BusEventSchema = Required<BusSchemas['Event']>
+type BusTraceListSchema = Required<BusSchemas['TraceList']>
+type BusSingleTraceSchema = Required<BusSchemas['SingleTrace']>
 
-export type BusIntegrityStatus = 'intact' | 'tampered' | 'unknown'
-
-export type BusEventKind = 'dispatch' | 'response' | 'decision'
-
-export type BusDecisionVerdict = 'allow' | 'deny' | 'transform' | 'escalate'
-
-export type BusTraceEvent = {
-  event_id: string
-  correlation_id: string
-  causal_index: number
-  recorded_at: string
-  source_agent: string
-  target_handler_declared: string | null
-  target_handler_resolved: string | null
-  payload_ref: string
-  kind: BusEventKind
-  decision: BusDecisionVerdict | null
-  flagged_rule: string | null
-  audit_receipt_hash: string | null
-  constitutional_hash: string
-  event_hash: string
-  prev_hash: string | null
-  status: BusEventStatus
-  gap_started_at: string | null
-  gap_ended_at: string | null
-}
-
-export type BusTraceListItem = {
-  correlation_id: string
-  started_at: string
-  completed_at: string | null
-  event_count: number
-  worst_event_status: BusEventStatus
-  integrity_status: BusIntegrityStatus
-  constitutional_hash: string
-}
-
-export type BusTraceList = {
-  kind: 'trace-list'
+export type BusEventStatus = BusEventSchema['status']
+export type BusIntegrityStatus = BusSchemas['TraceListItem']['integrity_status']
+export type BusEventKind = BusEventSchema['kind']
+export type BusDecisionVerdict = NonNullable<BusEventSchema['decision']>
+export type BusTraceEvent = BusEventSchema
+export type BusTraceListItem = BusSchemas['TraceListItem']
+export type BusTraceList = Omit<BusTraceListSchema, 'items'> & {
   items: BusTraceListItem[]
-  next_cursor?: string | null
 }
-
-export type BusSingleTrace = {
-  kind: 'single-trace'
-  trace: BusTraceListItem
+export type BusSingleTrace = Omit<BusSingleTraceSchema, 'events'> & {
   events: BusTraceEvent[]
-  integrity_status: BusIntegrityStatus
-  rotation_at_index?: number | null
 }
 
 export type BusExpired = {
