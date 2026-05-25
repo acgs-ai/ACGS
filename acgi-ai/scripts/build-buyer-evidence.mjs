@@ -60,6 +60,29 @@ const evidenceStories = [
     sourceFiles: ['claim-matrix.json', 'src/routes/Trust.tsx', 'src/routes/Security.tsx'],
   },
   {
+    id: 'visual-governance-workbench',
+    title: 'Visual governance workbench',
+    route: '/console/workbench',
+    buyerQuestion: 'Can an operator understand the next safe action without reading raw traces?',
+    proof: [
+      'The console workbench turns queue, trace, evaluation, release, and evidence steps into one visual path.',
+      'Each stage links back to an existing console route instead of creating hidden side effects.',
+      'The claim boundary keeps the workbench as local UX evidence, not production assurance.',
+    ],
+    localGates: [
+      'pnpm run test:platform-blueprint',
+      'pnpm run test:wire-decisions',
+      'pnpm run test:e2e-http',
+      'pnpm run test:a11y',
+    ],
+    sourceFiles: [
+      'src/routes/console/Workbench.tsx',
+      'src/routes/Console.tsx',
+      'src/routes/console/wire-decisions.ts',
+      'src/App.css',
+    ],
+  },
+  {
     id: 'deploy-readiness-boundary',
     title: 'Deploy readiness boundary',
     route: 'Cloud Run + Vercel deploy contracts',

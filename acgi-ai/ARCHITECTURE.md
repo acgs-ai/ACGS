@@ -107,8 +107,9 @@ The local static accessibility foundation is guarded by `pnpm test:a11y`. It ver
 `pnpm evidence:build` writes a dependency-free local buyer-evidence gallery to
 `dist-buyer-evidence/`; `pnpm test:buyer-evidence` rebuilds it in a scratch
 directory and verifies the receipt proof journey, bus-owned proof source,
-claim-safe trust surface, deploy-readiness boundary, package scripts, docs, and
-conservative claim language. The console workflow uploads the generated gallery
+visual governance workbench, claim-safe trust surface, deploy-readiness
+boundary, package scripts, docs, and conservative claim language. The console
+workflow uploads the generated gallery
 as the `buyer-evidence-gallery` artifact before credentialed deploy steps so PR
 reviewers can inspect the proof bundle without live domains. `pnpm
 storybook:build` is currently a compatibility alias to the local gallery

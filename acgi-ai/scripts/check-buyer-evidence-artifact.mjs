@@ -55,6 +55,7 @@ for (const needle of [
   'Receipt proof journey',
   'Bus-owned proof source',
   'Claim-safe trust surface',
+  'Visual governance workbench',
   'Deploy readiness boundary',
   '.nojekyll',
   'hostedProofRequirements',
@@ -110,6 +111,8 @@ try {
     for (const needle of [
       'ACGS buyer evidence gallery',
       'Receipt proof journey',
+      'Visual governance workbench',
+      'next safe action',
       'signed evidence packet',
       'not the hosted',
       'not live Cloud Run/Vercel proof',
@@ -135,8 +138,12 @@ try {
       'manifest must preserve the production-proof boundary.',
     )
     check(
-      Array.isArray(manifest.stories) && manifest.stories.length >= 4,
-      'manifest must include at least four buyer-evidence stories.',
+      Array.isArray(manifest.stories) && manifest.stories.length >= 5,
+      'manifest must include at least five buyer-evidence stories.',
+    )
+    check(
+      JSON.stringify(manifest.stories).includes('visual-governance-workbench'),
+      'manifest must include the visual governance workbench story.',
     )
     check(
       manifest.publication?.requiredFiles?.includes('.nojekyll'),

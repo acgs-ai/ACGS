@@ -1750,6 +1750,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "local buyer-evidence",
             "evidence:build",
             "test:buyer-evidence",
+            "visual governance workbench",
             ".nojekyll",
             "hostedProofRequirements",
         ],
@@ -1760,7 +1761,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Local buyer-evidence gallery artifact is buildable and claim-safe",
             buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok,
             (
-                "dependency-free local buyer-evidence gallery builder and verifier are wired"
+                "dependency-free local buyer-evidence gallery builder, visual "
+                "workbench story, and verifier are wired"
                 if buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok
                 else (
                     f"missing_files={buyer_evidence_missing}, "

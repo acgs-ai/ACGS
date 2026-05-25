@@ -107,7 +107,8 @@ receipt-emission failures block the tool call.
   are safe, bounded setup/verify/dev/cleanup hooks.
 - `pnpm -F acgi-ai run evidence:build` creates the dependency-free local buyer-evidence
   gallery, and `pnpm -F acgi-ai run test:buyer-evidence` verifies
-  its receipt-proof, bus-source, claim-safety, and deploy-boundary story cards.
+  its receipt-proof, bus-source, visual workbench, claim-safety, and
+  deploy-boundary story cards.
   Console CI now uploads that gallery as the `buyer-evidence-gallery` artifact
   before any credentialed deploy step.
 - `pnpm -F acgi-ai run test:storybook-publication` verifies the gated

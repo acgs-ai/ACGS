@@ -88,6 +88,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["release-evidence-bundle"].status == "pass"
     assert by_id["node24-local-toolchain"].status == "pass"
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
+    assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
     assert by_id["runtime-framework-bridge-local"].status == "pass"
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence

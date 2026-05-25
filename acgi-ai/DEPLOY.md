@@ -795,8 +795,9 @@ launch claims.
 **Buyer evidence gallery gate.** `pnpm run evidence:build` produces the
 dependency-free local buyer-evidence gallery under `dist-buyer-evidence/`.
 `pnpm run test:buyer-evidence` rebuilds it in a scratch directory and verifies
-the proof-story manifest, conservative claim boundary, package-script wiring,
-and documentation links. `pnpm run storybook:build` currently aliases this
+the proof-story manifest, visual governance workbench story, conservative claim
+boundary, package-script wiring, and documentation links. `pnpm run
+storybook:build` currently aliases this
 local gallery build so the planned Storybook proof command has a local
 artifact. `pnpm run test:storybook-runtime-plan` verifies the
 `storybook-runtime.plan.json` dependency plan and keeps official Storybook

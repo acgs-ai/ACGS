@@ -56,8 +56,8 @@ pnpm -F acgi-ai run test:storybook-publication
 `evidence:build` creates a dependency-free local buyer-evidence gallery at
 `acgi-ai/dist-buyer-evidence/`. `test:buyer-evidence` verifies that the
 artifact covers the receipt proof journey, bus-owned proof source, claim-safe
-trust surface, and deploy-readiness boundary without unsupported production
-claims. Console CI uploads the same gallery as the `buyer-evidence-gallery`
+trust surface, visual governance workbench, and deploy-readiness boundary
+without unsupported production claims. Console CI uploads the same gallery as the `buyer-evidence-gallery`
 artifact before credentialed deploy steps. `storybook:build` is a local
 compatibility alias for this gallery. `test:storybook-publication` verifies the
 gated Pages scaffold that can publish the claim-safe artifact to
