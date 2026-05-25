@@ -24,6 +24,10 @@ function mustContain(source, needle, label) {
 
 const marketing = read('src/routes/Marketing.tsx')
 const marketingText = marketing.replace(/\s+/g, ' ')
+const consoleShell = read('src/routes/Console.tsx')
+const consoleWorkbench = read('src/routes/console/Workbench.tsx')
+const consoleWorkbenchText = consoleWorkbench.replace(/\s+/g, ' ')
+const consoleWireDecisions = read('src/routes/console/wire-decisions.ts')
 const design = read('DESIGN.md')
 const packageJson = JSON.parse(read('package.json'))
 const researchPath = resolve(workspaceRoot, 'docs/platform-ui-ux-research.md')
@@ -46,6 +50,22 @@ mustContain(
   'product blueprint, not certification or live assurance',
   'Marketing claim boundary',
 )
+mustContain(consoleShell, "case '/console/workbench'", 'Console workbench route')
+mustContain(consoleShell, "label: 'Workbench'", 'Console workbench navigation')
+mustContain(consoleWireDecisions, "path: '/console/workbench'", 'Console workbench wire decision')
+mustContain(consoleWorkbench, 'workbench-console-map', 'Console workbench visual map')
+mustContain(consoleWorkbench, 'workbench-board', 'Console workbench board')
+mustContain(consoleWorkbench, 'Work queue', 'Console workbench stages')
+mustContain(consoleWorkbench, 'Trace graph', 'Console workbench stages')
+mustContain(consoleWorkbench, 'Evaluation panel', 'Console workbench stages')
+mustContain(consoleWorkbench, 'Human release gate', 'Console workbench stages')
+mustContain(consoleWorkbench, 'Evidence room', 'Console workbench stages')
+mustContain(
+  consoleWorkbenchText,
+  'local console blueprint for easier use, not production assurance',
+  'Console workbench claim boundary',
+)
+mustContain(consoleWorkbench, 'Local UX blueprint only', 'Console workbench claim boundary')
 
 mustContain(design, '## Platform UX blueprint', 'Design source of truth')
 mustContain(
@@ -76,6 +96,12 @@ check(
     blueprintSource,
   ),
   'Marketing workbench blueprint must avoid assurance and production overclaims.',
+)
+check(
+  !/\b(certified|guaranteed|production-ready|auditor-ready|fully compliant)\b/i.test(
+    consoleWorkbench,
+  ),
+  'Console workbench blueprint must avoid assurance and production overclaims.',
 )
 check(
   packageJson.scripts?.['test:platform-blueprint'] === 'node scripts/check-platform-blueprint.mjs',

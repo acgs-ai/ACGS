@@ -1312,6 +1312,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "docs/platform-ui-ux-research.md",
             "acgi-ai/DESIGN.md",
             "acgi-ai/src/routes/Marketing.tsx",
+            "acgi-ai/src/routes/Console.tsx",
+            "acgi-ai/src/routes/console/Workbench.tsx",
+            "acgi-ai/src/routes/console/wire-decisions.ts",
             "acgi-ai/src/App.css",
             "acgi-ai/scripts/check-platform-blueprint.mjs",
         ],
@@ -1321,6 +1324,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             _maybe_read(repo_root, "docs/platform-ui-ux-research.md"),
             _maybe_read(repo_root, "acgi-ai/DESIGN.md"),
             _maybe_read(repo_root, "acgi-ai/src/routes/Marketing.tsx"),
+            _maybe_read(repo_root, "acgi-ai/src/routes/Console.tsx"),
+            _maybe_read(repo_root, "acgi-ai/src/routes/console/Workbench.tsx"),
+            _maybe_read(repo_root, "acgi-ai/src/routes/console/wire-decisions.ts"),
             _maybe_read(repo_root, "acgi-ai/src/App.css"),
             _maybe_read(repo_root, "acgi-ai/scripts/check-platform-blueprint.mjs"),
         ]
@@ -1346,6 +1352,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Evidence room",
             "m-workbench",
             "product blueprint, not certification or live assurance",
+            "/console/workbench",
+            "workbench-console-map",
+            "workbench-board",
+            "Local UX blueprint only",
+            "not production assurance",
         ],
     )
     platform_blueprint_scripts_ok = (
@@ -1362,8 +1373,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and platform_blueprint_ok
             and platform_blueprint_scripts_ok,
             (
-                "platform UI/UX research, DESIGN.md, same-style marketing workbench, "
-                "and test:platform-blueprint keep the visual easy-use roadmap "
+                "platform UI/UX research, DESIGN.md, same-style marketing workbench "
+                "and console workbench, and test:platform-blueprint keep the visual "
+                "easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
                 and platform_blueprint_ok

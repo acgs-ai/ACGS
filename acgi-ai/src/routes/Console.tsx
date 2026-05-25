@@ -30,6 +30,7 @@ import { Policies } from './console/Policies'
 import { Settings } from './console/Settings'
 import { ConsoleError, EnvIndicator, type EnvIndicatorMode } from './console/shared'
 import { Tenants } from './console/Tenants'
+import { Workbench } from './console/Workbench'
 import { type ConsoleWireDecision, getConsoleWireDecision } from './console/wire-decisions'
 import { NotFound } from './NotFound'
 
@@ -52,6 +53,8 @@ function PageBody({ path }: { path: string }) {
   switch (path) {
     case '/console':
       return <Overview />
+    case '/console/workbench':
+      return <Workbench />
     case '/console/agents':
       return <Agents />
     case '/console/actions':
@@ -185,6 +188,7 @@ export function Console({ path }: { path: string }) {
       section: 'Operate',
       items: [
         { path: '/console', label: 'Overview' },
+        { path: '/console/workbench', label: 'Workbench' },
         { path: '/console/agents', label: 'Agents', count: String(agentsOnline) },
         { path: '/console/actions', label: 'Actions', count: String(actionCount) },
         { path: '/console/maci', label: 'MACI lanes', count: '4' },

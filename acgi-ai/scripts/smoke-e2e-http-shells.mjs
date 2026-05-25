@@ -16,6 +16,7 @@ export const E2E_HTTP_SHELL_ROUTES = [
 
 export const CONSOLE_SIDEBAR_ROUTES = [
   '/console',
+  '/console/workbench',
   '/console/agents',
   '/console/actions',
   '/console/maci',

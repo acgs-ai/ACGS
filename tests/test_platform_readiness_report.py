@@ -81,6 +81,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["claim-safety"].status == "pass"
     assert by_id["platform-blueprint-ui-local"].status == "pass"
     assert "same-style marketing workbench" in by_id["platform-blueprint-ui-local"].evidence
+    assert "console workbench" in by_id["platform-blueprint-ui-local"].evidence
     assert "test:platform-blueprint" in by_id["platform-blueprint-ui-local"].command
     assert by_id["local-verification-fanout"].status == "pass"
     assert "configured pyproject mypy fan-out" in by_id["local-verification-fanout"].evidence

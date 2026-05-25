@@ -40,6 +40,29 @@ export const CONSOLE_WIRE_DECISIONS = [
     destructiveConfirmation: 'No destructive actions on overview.',
   },
   {
+    path: '/console/workbench',
+    navSection: 'Operate',
+    navLabel: 'Workbench',
+    crumb: 'I.I · Operate / Workbench',
+    titleLead: 'Visualized',
+    titleEmphasis: 'work',
+    titleTail: 'queue',
+    headerAnatomy:
+      'Shell title plus operator map, work queue cards, trace sketch, and evidence panel.',
+    primaryAction: 'Open the next safe evidence route from each workbench stage.',
+    secondaryActions:
+      'Inspect actions, bus traces, policies, deliberations, and audit without local mutation.',
+    density: 'Visual flow map over a three column workbench board with compact evidence rows.',
+    filterPlacement:
+      'No free text filter; staged map and case cards act as the visual scan controls.',
+    pagination: 'No pagination; local blueprint is capped to three cases and five stages.',
+    rightRailPurpose:
+      'Keep ledger and route contract visible while the workbench explains the operator path.',
+    receiptLifetime:
+      'Workbench mints no local receipts and only points to persisted or route-local evidence.',
+    destructiveConfirmation: 'No destructive actions on the local workbench blueprint.',
+  },
+  {
     path: '/console/agents',
     navSection: 'Operate',
     navLabel: 'Agents',

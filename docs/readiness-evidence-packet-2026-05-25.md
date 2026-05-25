@@ -36,7 +36,7 @@ conformance.
 | `make platform-readiness` | Pass with pending external item | `34/35 pass`, `0 fail`, `1 pending`; pending item is `hosted-storybook-buyer-evidence` |
 | `make release-evidence` | Pass with pending external item | Bundle written to `dist-release-evidence`; `34/35 pass`, `0 fail`, `1 pending` |
 | `make production-launch-preflight` | Blocked as expected | Current clean commit; readiness `34/35 pass`, `0 fail`, `1 pending`; live verifier still fail; external proof blockers remain |
-| `pnpm -F acgi-ai run test:platform-blueprint` | Pass | `Platform blueprint check passed.`; visual workbench research, DESIGN.md, same-style marketing UI, and overclaim guard remain wired |
+| `pnpm -F acgi-ai run test:platform-blueprint` | Pass | `Platform blueprint check passed.`; visual workbench research, DESIGN.md, same-style marketing UI, `/console/workbench`, and overclaim guard remain wired |
 | `make verify` | Pass | Full root JS/Python lint/type/test fan-out completed after the Acgs-Swarm strict core mypy change |
 | `uv run python -m pytest tests/test_root_typecheck_gate.py -q` | Pass | `4 passed`; includes Acgs-Swarm strict core mypy gate check |
 | `cd packages/Acgs-Swarm && uv run mypy` | Pass | `Success: no issues found in 16 source files` |
@@ -52,7 +52,7 @@ conformance.
 | Area | Current state |
 |---|---|
 | Release evidence | Local evidence bundle now reports `34/35 pass`, `0 fail`, `1 pending` |
-| Platform UI/UX | Research-backed visual workbench blueprint is represented in the same marketing UI and guarded by `test:platform-blueprint`; it remains a product blueprint, not production assurance |
+| Platform UI/UX | Research-backed visual workbench blueprint is represented in the same marketing UI and `/console/workbench`, then guarded by `test:platform-blueprint`; it remains a product blueprint, not production assurance |
 | Typecheck fan-out | Every registered Python package has a configured mypy gate; Acgs-Swarm now contributes a strict core-primitives source scope |
 | Production preflight | Local preflight reports clean/stale status, readiness summary, live verifier status, evidence-chain consistency, and external blocker IDs |
 | Console deployment/auth | Static fail-closed Cloud Run, Caddy, and auth-boundary contracts exist; `/auth/status` now gives the production SPA route guard a same-origin forward-auth session bridge; live auth behavior remains unproven |
@@ -85,7 +85,7 @@ conformance.
 - The current root checkout was clean before this packet refresh.
 - Initialized registered submodules were clean before this packet refresh; `packages/clinicalguard` remained uninitialized.
 - Local readiness evidence regenerated successfully: `34/35 pass`, `0 fail`, `1 pending`.
-- The visualized platform workbench direction is locally inspectable through the research memo, DESIGN.md, same-style marketing UI, and `test:platform-blueprint`; it is not live product assurance.
+- The visualized platform workbench direction is locally inspectable through the research memo, DESIGN.md, same-style marketing UI, `/console/workbench`, and `test:platform-blueprint`; it is not live product assurance.
 - Full local verification passed after the Acgs-Swarm strict core mypy update.
 - The production console SPA no longer depends on demo `hasSession()` after edge auth; it awaits `/auth/status`, which Caddy serves only after `AUTH_UPSTREAM` accepts the request.
 - Production launch preflight correctly remains blocked until live deploy, auth, assurance, accessibility, and hosted Storybook proof are attached.

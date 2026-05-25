@@ -33,6 +33,7 @@ function recordSlice(source, path) {
 
 const expectedRoutes = [
   '/console',
+  '/console/workbench',
   '/console/agents',
   '/console/actions',
   '/console/maci',
