@@ -40,6 +40,11 @@ mustContain(marketing, 'Trace graph', 'Marketing workbench stages')
 mustContain(marketing, 'Evaluation panel', 'Marketing workbench stages')
 mustContain(marketing, 'Human release gate', 'Marketing workbench stages')
 mustContain(marketing, 'Evidence room', 'Marketing workbench stages')
+mustContain(marketing, 'm-workbench-checklist', 'Marketing operator quick start')
+mustContain(marketing, 'Operator quick start', 'Marketing operator quick start')
+mustContain(marketing, 'Start here', 'Marketing operator quick start')
+mustContain(marketing, 'Hold release', 'Marketing operator quick start')
+mustContain(marketing, 'Export proof', 'Marketing operator quick start')
 mustContain(marketing, 'NIST AI RMF', 'Marketing research inputs')
 mustContain(marketing, 'OWASP GenAI Security Project', 'Marketing research inputs')
 mustContain(marketing, 'OpenAI Agents SDK', 'Marketing research inputs')
@@ -60,6 +65,10 @@ mustContain(consoleWorkbench, 'Trace graph', 'Console workbench stages')
 mustContain(consoleWorkbench, 'Evaluation panel', 'Console workbench stages')
 mustContain(consoleWorkbench, 'Human release gate', 'Console workbench stages')
 mustContain(consoleWorkbench, 'Evidence room', 'Console workbench stages')
+mustContain(consoleWorkbench, 'workbench-checklist', 'Console operator quick start')
+mustContain(consoleWorkbench, 'Operator quick start', 'Console operator quick start')
+mustContain(consoleWorkbench, 'Open queue', 'Console operator quick start')
+mustContain(consoleWorkbench, 'Export packet', 'Console operator quick start')
 mustContain(
   consoleWorkbenchText,
   'local console blueprint for easier use, not production assurance',
@@ -73,6 +82,11 @@ mustContain(
   'work queue → trace graph → evaluation panel → human release gate → evidence room',
   'Design source of truth',
 )
+mustContain(
+  design,
+  'Start here → Hold release → Export proof',
+  'Design source of truth',
+)
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
 check(existsSync(researchPath), 'docs/platform-ui-ux-research.md must exist.')
@@ -83,6 +97,8 @@ mustContain(research, 'OpenAI Agents SDK tracing', 'Research memo')
 mustContain(research, 'LangSmith observability', 'Research memo')
 mustContain(research, 'Arize Phoenix overview', 'Research memo')
 mustContain(research, 'Humanloop evaluators', 'Research memo')
+mustContain(research, 'Operator quick-start path', 'Research memo')
+mustContain(research, 'Start here, Hold release, and Export proof', 'Research memo')
 
 const blueprintStart = marketing.indexOf('const workflowStages')
 const blueprintEnd = marketing.indexOf('const coverage')

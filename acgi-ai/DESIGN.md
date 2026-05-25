@@ -211,6 +211,7 @@ Design requirements:
 - Show work as a short, ordered path before exposing dense tables. Operators should understand the next safe action in one scan.
 - Keep trace, evaluation, guardrail, release, and evidence concepts visually adjacent so risk is not split across disconnected tabs.
 - Treat NIST AI RMF-style governance, OWASP GenAI risk controls, agent tracing, guardrails, evaluation, and human judgment as visible product objects.
+- Add an operator quick-start checklist that stays in the same workbench UI: **Start here → Hold release → Export proof**. It should explain the next safe action, the reason to block, and the proof that can leave the product.
 - Use existing editorial primitives only: paper layers, black rules, mono stage labels, rust arrows/checks, and serif explanations. Do not add a dashboard color palette, heavy icons, shadows, or animation.
 - Keep copy claim-safe. This is a research-backed product blueprint until deployment proof, legal signoff, and external assurance evidence exist.
 

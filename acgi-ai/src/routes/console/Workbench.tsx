@@ -56,6 +56,30 @@ const evidenceRows = [
   ['Release', 'operator approval', 'not production proof'],
 ] as const
 
+const decisionChecklist = [
+  {
+    title: 'Start here',
+    body: 'Open the highest-risk case and confirm owner, source route, and next reversible action.',
+    proof: 'owner + reversible action',
+    route: '/console/actions',
+    cta: 'Open queue',
+  },
+  {
+    title: 'Hold release',
+    body: 'Keep promotion blocked when trace, evaluation, authority, or claim-boundary proof is missing.',
+    proof: 'blocked reason + reviewer lane',
+    route: '/console/deliberations',
+    cta: 'Open reviews',
+  },
+  {
+    title: 'Export proof',
+    body: 'Package receipts, hashes, snapshots, and replay refs only after the claim boundary is attached.',
+    proof: 'receipt hash + export boundary',
+    route: '/console/audit',
+    cta: 'Export packet',
+  },
+] as const
+
 export function Workbench() {
   return (
     <div>
@@ -152,6 +176,34 @@ export function Workbench() {
               <code>platform-blueprint-ui-local</code>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="overview-section" aria-labelledby="workbench-checklist-h">
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-checklist-h">
+            Operator quick start
+          </h2>
+          <span className="c-meta">Start here → Hold release → Export proof</span>
+        </div>
+
+        <div className="workbench-checklist">
+          {decisionChecklist.map((item) => (
+            <article className="workbench-check" key={item.title}>
+              <div>
+                <span className="c-meta">{item.title}</span>
+                <code>{item.proof}</code>
+              </div>
+              <p>{item.body}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(item.route)}
+              >
+                {item.cta}
+              </button>
+            </article>
+          ))}
         </div>
       </section>
     </div>

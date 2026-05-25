@@ -84,6 +84,21 @@ const researchInputs = [
   ],
 ]
 
+const operatorChecklist = [
+  [
+    'Start here',
+    'Open the highest-risk case first and make the owner plus next reversible action visible.',
+  ],
+  [
+    'Hold release',
+    'Block promotion when trace, evaluation, authority, or claim-boundary evidence is missing.',
+  ],
+  [
+    'Export proof',
+    'Package receipts, hashes, snapshots, and replay refs only after the boundary is attached.',
+  ],
+]
+
 const coverage = [
   ['EU AI Act', 'Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy', 'v1.0'],
   ['SR 11-7', '§V model risk · §VII validation · §VIII development', 'v2011'],
@@ -362,6 +377,22 @@ export function Marketing() {
                     </li>
                   ))}
                 </ul>
+                <section
+                  className="m-workbench-checklist"
+                  aria-labelledby="marketing-operator-start-h"
+                >
+                  <span className="folio-no" id="marketing-operator-start-h">
+                    Operator quick start
+                  </span>
+                  <ol>
+                    {operatorChecklist.map(([label, cue]) => (
+                      <li key={label}>
+                        <strong>{label}</strong>
+                        <span>{cue}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
               </aside>
             </div>
           </section>

@@ -11,12 +11,14 @@ Status: research-backed product blueprint, not deployment proof or certification
 4. **Evaluation and monitoring beside the trace.** LangSmith, Phoenix, and Humanloop document evaluation workflows, online monitoring, offline regression tests, code/AI/human evaluators, annotations, dashboards, and alerts. A leading platform should let teams compare versions and investigate failures without leaving the governed case.
 5. **Human release with enough context to reject.** Human-in-the-loop should not be a signature checkbox. The reviewer needs source context, trace evidence, eval deltas, policy citations, and authority status in one release view.
 6. **Exportable evidence and claim boundaries.** GovernZone should keep its differentiator: receipts, hashes, replay references, policy/model/prompt snapshots, and explicit claim boundaries that can leave the product without overstating live assurance.
+7. **Operator quick-start path.** The interface should not force new users to infer the operating model from dense tables. It should expose three plain actions in the same visual workbench: Start here, Hold release, and Export proof.
 
 ## UI/UX direction for this repo
 
 - Use the existing editorial constitutional UI: warm paper, black rules, mono labels, rust only for emphasis and controlled path markers.
 - Add a public workbench blueprint to the marketing surface so buyers see how work becomes inspectable.
 - Keep the console direction simple: one queue, one visual trace, one evaluation panel, one release gate, one evidence room.
+- Add a same-style quick-start checklist so a first-time operator can choose the next safe action, know when to hold release, and export bounded proof without leaving the workbench.
 - Avoid new dependencies, icon systems, dashboard colors, heavy animation, or generic SaaS gradients.
 - Phrase everything as a target product blueprint until live deployment proof, legal review, SOC 2 evidence, WCAG manual evidence, and penetration-test evidence are attached.
 
