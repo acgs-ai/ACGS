@@ -53,10 +53,12 @@ pnpm -F acgi-ai run evidence:browser-workbench
 ```
 
 `test:browser-evidence` verifies the browser-evidence command and a dry-run
-manifest. `evidence:browser-workbench` starts the mock Vite server and uses a
-local Chrome/Chromium binary to capture screenshots for the marketing
-workbench, `/console/workbench`, and `/console/workbench#launch-proof-ladder`
-at the five visual baseline viewports. It writes local browser evidence under
+manifest. `evidence:browser-workbench` launches the marketing and console Vite
+surfaces separately, uses a local Chrome/Chromium binary, checks expected DOM
+text, scrolls hash targets into view, rejects likely blank screenshots, and
+captures the marketing workbench, `/console/workbench`, and
+`/console/workbench#launch-proof-ladder` at the five visual baseline viewports.
+It writes local browser evidence under
 `acgi-ai/dist-browser-evidence/`; this is not production deployment proof, not
 hosted Storybook proof, not WCAG conformance proof, and not legal/security
 assurance.

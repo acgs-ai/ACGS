@@ -795,14 +795,17 @@ scans, and visual diff proof remain external Phase 2 evidence before stronger
 launch claims.
 
 **Local browser workbench evidence.** `pnpm run evidence:browser-workbench`
-starts the mock Vite server and captures Chrome/Chromium headless screenshots
-for the marketing workbench, `/console/workbench`, and
+launches the marketing and console Vite surfaces separately, uses
+Chrome/Chromium headless, checks expected DOM text, scrolls hash targets into
+view before capture, rejects likely blank screenshots, and captures the
+marketing workbench, `/console/workbench`, and
 `/console/workbench#launch-proof-ladder` at the five visual baseline viewports.
 It writes a `local-browser-workbench-evidence` manifest and screenshots under
 `dist-browser-evidence/`; `pnpm run test:browser-evidence` verifies the command
-contract, dry-run manifest shape, docs, and readiness wiring. This local browser evidence
-is not production deployment proof, not hosted Storybook proof, not
-WCAG conformance proof, and not legal/security assurance.
+contract, dry-run manifest shape, target-visible screenshot guards, docs, and
+readiness wiring. This local browser evidence is not production deployment
+proof, not hosted Storybook proof, not WCAG conformance proof, and not
+legal/security assurance.
 
 **Buyer evidence gallery gate.** `pnpm run evidence:build` produces the
 dependency-free local buyer-evidence gallery under `dist-buyer-evidence/`.

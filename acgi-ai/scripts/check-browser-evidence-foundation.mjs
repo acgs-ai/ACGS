@@ -54,9 +54,18 @@ for (const needle of [
   '/#workbench',
   '/console/workbench',
   '/console/workbench#launch-proof-ladder',
-  'google-chrome --headless=new --screenshot',
+  '--headless=new',
+  '--dump-dom',
+  'Page.captureScreenshot',
+  'scrollIntoView',
+  'targetVisibleHash',
   'VITE_BYPASS_SESSION',
   'VITE_USE_MOCKS',
+  'VITE_ACGI_SURFACE',
+  'expectedText',
+  'assertRenderedDom',
+  'assertScreenshotContent',
+  'sameViewportHashDiversity',
   'not production deployment proof',
   'not WCAG conformance proof',
 ]) {
@@ -103,12 +112,22 @@ try {
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
     check(manifest.targets?.length === 3, 'manifest must include three browser targets.')
+    check(
+      manifest.targets?.some((target) => target.surface === 'marketing') === true &&
+        manifest.targets?.some((target) => target.surface === 'console') === true,
+      'manifest targets must cover both marketing and console surfaces.',
+    )
     check(manifest.viewports?.length === 5, 'manifest must include five visual viewports.')
+    check(
+      manifest.screenshotGuard?.minimumBytes >= 12000,
+      'manifest must record a minimum screenshot byte guard.',
+    )
     check(
       manifest.screenshots?.length === 15,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), '35/36 local pass', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not production deployment proof', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not WCAG conformance proof', 'dry-run manifest')
   }

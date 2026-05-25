@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_USE_MOCKS?: 'true' | 'false'
+  readonly VITE_BYPASS_SESSION?: 'true' | 'false'
   readonly VITE_API_PROXY_TARGET?: string
   readonly VITE_EVAL_MODE?: 'true' | 'false'
   readonly VITE_LOG_LEVEL?: 'debug' | 'info' | 'warn' | 'error'

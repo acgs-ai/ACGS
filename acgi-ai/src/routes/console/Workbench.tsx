@@ -1,113 +1,16 @@
+import { useHashScroll } from '../../lib/hashScroll'
 import { navigate } from '../../lib/navigate'
-
-const workbenchStages = [
-  {
-    step: '01',
-    title: 'Work queue',
-    signal: 'Owner, risk, and next reversible action are visible first.',
-    posture: 'partial',
-    route: '/console/actions',
-    cta: 'Open actions',
-  },
-  {
-    step: '02',
-    title: 'Trace graph',
-    signal: 'Model calls, tools, handoffs, and guardrails read as one path.',
-    posture: 'confirmed',
-    route: '/console/bus',
-    cta: 'Inspect traces',
-  },
-  {
-    step: '03',
-    title: 'Evaluation panel',
-    signal: 'Dataset checks, AI review, and human labels sit beside the trace.',
-    posture: 'partial',
-    route: '/console/policies',
-    cta: 'Review policy',
-  },
-  {
-    step: '04',
-    title: 'Human release gate',
-    signal: 'Reviewer sees policy citations and gaps before privilege moves.',
-    posture: 'blocked',
-    route: '/console/deliberations',
-    cta: 'Open reviews',
-  },
-  {
-    step: '05',
-    title: 'Evidence room',
-    signal: 'Receipts, hashes, snapshots, and replay refs export with boundaries.',
-    posture: 'confirmed',
-    route: '/console/audit',
-    cta: 'Open audit',
-  },
-] as const
-
-const caseCards = [
-  ['GOV-214', 'Claim launch copy', 'Needs legal claim matrix', 'blocked'],
-  ['BUS-087', 'Trace regression', 'One orphan response under review', 'partial'],
-  ['REL-031', 'Buyer proof packet', 'Hosted Storybook proof pending', 'partial'],
-] as const
-
-const evidenceRows = [
-  ['Receipt', 'rcpt_608508a9', 'hash-chained'],
-  ['Policy', 'EU AI Act Art. 14', 'human oversight'],
-  ['Eval', 'offline regression set', '2 failures held'],
-  ['Release', 'operator approval', 'not production proof'],
-] as const
-
-const decisionChecklist = [
-  {
-    title: 'Start here',
-    body: 'Open the highest-risk case and confirm owner, source route, and next reversible action.',
-    proof: 'owner + reversible action',
-    route: '/console/actions',
-    cta: 'Open queue',
-  },
-  {
-    title: 'Hold release',
-    body: 'Keep promotion blocked when trace, evaluation, authority, or claim-boundary proof is missing.',
-    proof: 'blocked reason + reviewer lane',
-    route: '/console/deliberations',
-    cta: 'Open reviews',
-  },
-  {
-    title: 'Export proof',
-    body: 'Package receipts, hashes, snapshots, and replay refs only after the claim boundary is attached.',
-    proof: 'receipt hash + export boundary',
-    route: '/console/audit',
-    cta: 'Export packet',
-  },
-] as const
-
-const launchProofLanes = [
-  {
-    title: 'Local readiness',
-    state: '34/35 local pass · 1 pending',
-    proof: 'make verify + platform-readiness',
-    body: 'Use this only as local readiness evidence for the workbench and release packet.',
-    route: '/console/actions',
-    cta: 'Review queue',
-  },
-  {
-    title: 'Live verifier',
-    state: 'blocked until deploy',
-    proof: 'verify:production-live',
-    body: 'Attach DNS, HTTPS, health, headers, asset, and auth evidence after credentialed deploy.',
-    route: '/console/settings',
-    cta: 'Open settings',
-  },
-  {
-    title: 'Assurance packet',
-    state: 'external proof required',
-    proof: 'legal + pentest + WCAG + Storybook',
-    body: 'Replace pending blockers with legal, security, accessibility, and hosted buyer evidence.',
-    route: '/console/audit',
-    cta: 'Open audit',
-  },
-] as const
+import {
+  CASE_CARDS,
+  EVIDENCE_ROWS,
+  LAUNCH_PROOF_LANES,
+  OPERATOR_CHECKLIST,
+  WORKBENCH_STAGES,
+} from '../workbench-content'
 
 export function Workbench() {
+  useHashScroll()
+
   return (
     <div>
       <p className="overview-intro">
@@ -125,7 +28,7 @@ export function Workbench() {
         </div>
 
         <ol className="workbench-console-map" aria-label="Governed agent workbench flow">
-          {workbenchStages.map((stage) => (
+          {WORKBENCH_STAGES.map((stage) => (
             <li className="workbench-console-stage" key={stage.step}>
               <div className="workbench-console-step">
                 <span className="c-meta">{stage.step}</span>
@@ -155,7 +58,7 @@ export function Workbench() {
         <div className="workbench-board">
           <div className="workbench-board-column">
             <span className="c-meta">Work queue</span>
-            {caseCards.map(([id, title, detail, posture]) => (
+            {CASE_CARDS.map(({ id, title, detail, posture }) => (
               <article className="workbench-case" key={id}>
                 <div>
                   <strong>{id}</strong>
@@ -185,7 +88,7 @@ export function Workbench() {
             <span className="c-meta">Evidence panel</span>
             <table className="c-table c-table-dense workbench-evidence">
               <tbody>
-                {evidenceRows.map(([label, value, state]) => (
+                {EVIDENCE_ROWS.map(({ label, value, state }) => (
                   <tr key={label}>
                     <th>{label}</th>
                     <td className="mono">{value}</td>
@@ -215,10 +118,10 @@ export function Workbench() {
         </div>
 
         <div className="workbench-checklist">
-          {decisionChecklist.map((item) => (
-            <article className="workbench-check" key={item.title}>
+          {OPERATOR_CHECKLIST.map((item) => (
+            <article className="workbench-check" key={item.label}>
               <div>
-                <span className="c-meta">{item.title}</span>
+                <span className="c-meta">{item.label}</span>
                 <code>{item.proof}</code>
               </div>
               <p>{item.body}</p>
@@ -247,7 +150,7 @@ export function Workbench() {
         </div>
 
         <div className="workbench-proof-ladder">
-          {launchProofLanes.map((lane) => (
+          {LAUNCH_PROOF_LANES.map((lane) => (
             <article className="workbench-proof" key={lane.title}>
               <div>
                 <span className="c-meta">{lane.title}</span>

@@ -1,6 +1,13 @@
 import { ArrowRight, Menu, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
+import {
+  LAUNCH_PROOF_LANES,
+  OPERATOR_CHECKLIST,
+  RESEARCH_INPUTS,
+  WORKBENCH_STAGES,
+} from './workbench-content'
 
 const ASTERISM = '⁂'
 
@@ -29,92 +36,6 @@ const capabilities = [
       'There is no fail-open branch in the bus, the gateway, or the worker. ' +
       'Every refusal is recorded with a citation and a hash.',
   },
-]
-
-const workflowStages = [
-  {
-    step: '01',
-    title: 'Work queue',
-    signal: 'Who owns the next safe action?',
-    body: 'Intake every agent run as a case with owner, risk class, source system, and the next reversible operator action visible before drill-down.',
-  },
-  {
-    step: '02',
-    title: 'Trace graph',
-    signal: 'What did the agent actually do?',
-    body: 'Render model calls, tool calls, handoffs, guardrails, and custom events as a navigable run path instead of a flat log stream.',
-  },
-  {
-    step: '03',
-    title: 'Evaluation panel',
-    signal: 'Did quality regress?',
-    body: 'Keep dataset tests, code checks, AI judgments, and human labels beside the trace so teams can compare versions before promotion.',
-  },
-  {
-    step: '04',
-    title: 'Human release gate',
-    signal: 'Can a reviewer reject with context?',
-    body: 'Show policy citations, risk deltas, evidence gaps, and release authority in one pane before any privileged action proceeds.',
-  },
-  {
-    step: '05',
-    title: 'Evidence room',
-    signal: 'What proof can leave the product?',
-    body: 'Export receipts, hashes, snapshots, and replay references as buyer-readable packets with claim boundaries attached.',
-  },
-]
-
-const researchInputs = [
-  ['NIST AI RMF', 'Govern · Map · Measure · Manage translated into the work queue.'],
-  [
-    'OWASP GenAI Security Project',
-    'Prompt injection, excessive agency, leakage, and overreliance as visible controls.',
-  ],
-  [
-    'OpenAI Agents SDK',
-    'Tracing and guardrails as first-class workflow objects, not hidden developer logs.',
-  ],
-  [
-    'LangSmith + Phoenix',
-    'Trace search, dashboards, evaluations, and annotations for failure investigation.',
-  ],
-  [
-    'Humanloop evaluators',
-    'Code, AI, and human judgment lanes for offline regression and live monitoring.',
-  ],
-]
-
-const operatorChecklist = [
-  [
-    'Start here',
-    'Open the highest-risk case first and make the owner plus next reversible action visible.',
-  ],
-  [
-    'Hold release',
-    'Block promotion when trace, evaluation, authority, or claim-boundary evidence is missing.',
-  ],
-  [
-    'Export proof',
-    'Package receipts, hashes, snapshots, and replay refs only after the boundary is attached.',
-  ],
-]
-
-const launchProofLanes = [
-  [
-    'Local readiness',
-    'make verify + platform-readiness',
-    'Safe for internal blueprint review; not deployment or assurance proof.',
-  ],
-  [
-    'Live verifier',
-    'verify:production-live',
-    'DNS, HTTPS, health, headers, assets, and auth must pass after deploy.',
-  ],
-  [
-    'Assurance packet',
-    'legal · pentest · WCAG · Storybook',
-    'External proof replaces blockers before any production or compliance claim.',
-  ],
 ]
 
 const coverage = [
@@ -177,6 +98,8 @@ const tiers = [
 export function Marketing() {
   const [navOpen, setNavOpen] = useState(false)
   const closeNav = () => setNavOpen(false)
+
+  useHashScroll()
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -369,7 +292,7 @@ export function Marketing() {
             </div>
             <div className="m-workbench">
               <ol className="m-workbench-map" aria-label="Visualized operator workflow">
-                {workflowStages.map((stage) => (
+                {WORKBENCH_STAGES.map((stage) => (
                   <li className="m-workbench-stage" key={stage.step}>
                     <span className="stage-step">{stage.step}</span>
                     <h3>{stage.title}</h3>
@@ -388,7 +311,7 @@ export function Marketing() {
                   assurance.
                 </p>
                 <ul>
-                  {researchInputs.map(([source, cue]) => (
+                  {RESEARCH_INPUTS.map(({ source, cue }) => (
                     <li key={source}>
                       <strong>{source}</strong>
                       <span>{cue}</span>
@@ -403,7 +326,7 @@ export function Marketing() {
                     Operator quick start
                   </span>
                   <ol>
-                    {operatorChecklist.map(([label, cue]) => (
+                    {OPERATOR_CHECKLIST.map(({ label, cue }) => (
                       <li key={label}>
                         <strong>{label}</strong>
                         <span>{cue}</span>
@@ -416,10 +339,11 @@ export function Marketing() {
                     Launch proof ladder
                   </span>
                   <ol>
-                    {launchProofLanes.map(([label, proof, cue]) => (
-                      <li key={label}>
-                        <strong>{label}</strong>
+                    {LAUNCH_PROOF_LANES.map(({ title, state, proof, cue }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
                         <code>{proof}</code>
+                        <span>{state}</span>
                         <span>{cue}</span>
                       </li>
                     ))}

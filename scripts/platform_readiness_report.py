@@ -1314,6 +1314,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "acgi-ai/src/routes/Marketing.tsx",
             "acgi-ai/src/routes/Console.tsx",
             "acgi-ai/src/routes/console/Workbench.tsx",
+            "acgi-ai/src/routes/workbench-content.ts",
             "acgi-ai/src/routes/console/wire-decisions.ts",
             "acgi-ai/src/App.css",
             "acgi-ai/scripts/check-platform-blueprint.mjs",
@@ -1326,6 +1327,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             _maybe_read(repo_root, "acgi-ai/src/routes/Marketing.tsx"),
             _maybe_read(repo_root, "acgi-ai/src/routes/Console.tsx"),
             _maybe_read(repo_root, "acgi-ai/src/routes/console/Workbench.tsx"),
+            _maybe_read(repo_root, "acgi-ai/src/routes/workbench-content.ts"),
             _maybe_read(repo_root, "acgi-ai/src/routes/console/wire-decisions.ts"),
             _maybe_read(repo_root, "acgi-ai/src/App.css"),
             _maybe_read(repo_root, "acgi-ai/scripts/check-platform-blueprint.mjs"),
@@ -1346,6 +1348,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "## Platform UX blueprint",
             "work queue → trace graph → evaluation panel → human release gate → evidence room",
             "text-first and keyboard-reviewable",
+            "WORKBENCH_READINESS_SUMMARY",
+            "35/36 local pass · 1 hosted proof pending",
+            "from './workbench-content'",
+            "from '../workbench-content'",
             'id="workbench"',
             "Visualized <em>work</em>",
             "Work queue",
@@ -1374,8 +1380,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         ],
     )
     platform_blueprint_scripts_ok = (
-        deploy_scripts.get("test:platform-blueprint")
-        == "node scripts/check-platform-blueprint.mjs"
+        deploy_scripts.get("test:platform-blueprint") == "node scripts/check-platform-blueprint.mjs"
         and "pnpm run test:platform-blueprint" in deploy_scripts.get("test:all", "")
         and "pnpm run test:platform-blueprint" in deploy_scripts.get("audit:eval", "")
     )
@@ -1383,13 +1388,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         _item(
             "platform-blueprint-ui-local",
             "Research-backed visual workbench blueprint is locally guarded",
-            platform_blueprint_files_ok
-            and platform_blueprint_ok
-            and platform_blueprint_scripts_ok,
+            platform_blueprint_files_ok and platform_blueprint_ok and platform_blueprint_scripts_ok,
             (
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
-                "and console workbench, service-design/accessibility anchors, "
-                "launch proof ladder, and "
+                "and console workbench share one workbench content contract, "
+                "service-design/accessibility anchors, launch proof ladder, "
+                "current 35/36 local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1839,6 +1843,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "not production deployment proof",
             "not WCAG conformance proof",
             "Chrome/Chromium",
+            "VITE_ACGI_SURFACE",
+            "expectedText",
+            "assertRenderedDom",
+            "assertScreenshotContent",
+            "targetVisibleHash",
+            "sameViewportHashDiversity",
         ],
     )
     items.append(
@@ -1847,9 +1857,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Local browser screenshot evidence command is reproducible",
             browser_evidence_files_ok and browser_evidence_scripts_ok and browser_evidence_docs_ok,
             (
-                "Chrome/Chromium screenshot command and dry-run verifier cover the "
-                "marketing workbench, console workbench, launch proof ladder, and "
-                "five visual baseline viewports without claiming production assurance"
+                "Chrome/Chromium screenshot command, DOM text guard, target-visible "
+                "hash guard, non-blank screenshot guard, per-surface marketing/console "
+                "launches, and dry-run verifier cover the marketing workbench, console "
+                "workbench, launch proof ladder, and five visual baseline viewports "
+                "without claiming production assurance"
                 if browser_evidence_files_ok
                 and browser_evidence_scripts_ok
                 and browser_evidence_docs_ok

@@ -32,6 +32,10 @@ function isProductionBuild(): boolean {
   return import.meta.env.PROD
 }
 
+function isSyntheticSessionBypassEnabled(): boolean {
+  return isDemoSessionEnabled() && import.meta.env.VITE_BYPASS_SESSION === 'true'
+}
+
 function getDemoSessionKey(): string {
   return ['acgs', 'console', 'session'].join('.')
 }
@@ -190,6 +194,7 @@ export function clearSession(): void {
 
 export function hasSession(): boolean {
   if (!isDemoSessionEnabled()) return false
+  if (isSyntheticSessionBypassEnabled()) return true
   const storage = getSessionStorage()
   if (!storage) return false
   try {
