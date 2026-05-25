@@ -31,9 +31,9 @@ def test_manifest_is_conservative_and_tracks_readiness():
     assert "pnpm -F acgi-ai run test:cloudrun-renderer" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:production-deploy-contract" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:production-launch-handoff" in manifest["verificationCommands"]
-    assert "pnpm -F acgi-ai run test:production-authority-packet" in manifest[
-        "verificationCommands"
-    ]
+    assert (
+        "pnpm -F acgi-ai run test:production-authority-packet" in manifest["verificationCommands"]
+    )
     assert (
         "pnpm -F acgi-ai run test:production-evidence-template" in manifest["verificationCommands"]
     )
@@ -55,9 +55,7 @@ def test_manifest_is_conservative_and_tracks_readiness():
     )
     assert policy_gate_command in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:storybook-publication" in manifest["verificationCommands"]
-    assert "pnpm -F acgi-ai run test:storybook-runtime-plan" in manifest[
-        "verificationCommands"
-    ]
+    assert "pnpm -F acgi-ai run test:storybook-runtime-plan" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:hosted-storybook-handoff" in manifest["verificationCommands"]
     assert "make production-launch-preflight" in manifest["verificationCommands"]
 
@@ -129,6 +127,11 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         production_live["liveProofCommand"]
         == "pnpm -F acgi-ai run verify:production-live -- --json"
     )
+    assert (
+        production_live["savedOutputCommand"]
+        == "pnpm -F acgi-ai run verify:production-live -- --json --out "
+        "../dist-release-evidence/production-live-verification.json"
+    )
     assert "https://console.acgs.ai" in production_live["targets"]
     assert "blockers" in production_live["outputFields"]
     assert "blockedUntil" in production_live["outputFields"]
@@ -165,8 +168,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "not live production proof" in production_cutover["latestPlanSnapshot"]["claimBoundary"]
     assert "not live production proof" in production_cutover["claimBoundary"]
     assert (
-        production_evidence_draft["script"]
-        == "acgi-ai/scripts/build-production-evidence-draft.mjs"
+        production_evidence_draft["script"] == "acgi-ai/scripts/build-production-evidence-draft.mjs"
     )
     assert (
         production_evidence_draft["proofCommand"]
@@ -226,10 +228,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "LangChain-style" in runtime_policy_gate["coveredPayloadShapes"][1]
     assert "not live third-party deployment proof" in runtime_policy_gate["claimBoundary"]
     assert storybook_runtime["planPath"] == "acgi-ai/storybook-runtime.plan.json"
-    assert (
-        storybook_runtime["proofCommand"]
-        == "pnpm -F acgi-ai run test:storybook-runtime-plan"
-    )
+    assert storybook_runtime["proofCommand"] == "pnpm -F acgi-ai run test:storybook-runtime-plan"
     assert storybook_runtime["status"] == "pending-dependency-authority"
     assert "dependency-owner-approval" in storybook_runtime["requiredApprovalIds"]
     assert storybook_runtime["proposedRuntime"]["frameworkPackage"] == "@storybook/react-vite"

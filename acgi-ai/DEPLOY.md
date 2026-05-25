@@ -478,9 +478,11 @@ evidence is attached.
 
 `pnpm run test:production-live-verifier` verifies that the live verifier itself
 is wired without executing external network checks in `test:all`. After a
-credentialed deploy, operators run `pnpm -F acgi-ai run verify:production-live -- --json`
-to collect DNS, HTTPS, `/healthz`, security-header, and `storybook.acgs.ai`
-manifest evidence. The hosted Storybook proof includes
+credentialed deploy, operators run
+`pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json`
+to save uncontaminated DNS, HTTPS, `/healthz`, security-header, and
+`storybook.acgs.ai` manifest evidence even when the command exits non-zero for
+remaining blockers. The hosted Storybook proof includes
 `storybook-manifest-live`, which fetches `/manifest.json` and requires the
 expected buyer-evidence story ids, `publishTarget`, and conservative claim
 boundary so a bare 200 response cannot satisfy buyer-evidence proof. That live

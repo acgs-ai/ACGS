@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -304,6 +304,7 @@ for (const needle of [
   'production-evidence-validation',
   '--manifest',
   '--live-output',
+  '--out',
   '--require-pass',
   'production-evidence',
   'deployment-blocked',
@@ -434,6 +435,7 @@ const help = runValidator(['--help'])
 check(help.status === 0, 'validate-production-evidence --help must exit zero.')
 check(help.stdout.includes('--manifest'), '--help must document --manifest.')
 check(help.stdout.includes('--live-output'), '--help must document --live-output.')
+check(help.stdout.includes('--out'), '--help must document --out.')
 check(help.stdout.includes('--require-pass'), '--help must document --require-pass.')
 
 const tempDir = mkdtempSync(join(tmpdir(), 'production-evidence-validator-'))
@@ -446,6 +448,7 @@ try {
   const blockedPendingExternalManifest = join(tempDir, 'blocked-pending-external-manifest.json')
   const blockedMismatchManifest = join(tempDir, 'blocked-mismatch-manifest.json')
   const failLive = join(tempDir, 'fail-live.json')
+  const validationOut = join(tempDir, 'production-evidence-validation.json')
 
   writeJson(passManifest, makeManifest({ status: 'live-verified', productionLiveStatus: 'pass' }))
   writeJson(passLive, makeLiveOutput('pass'))
@@ -500,6 +503,35 @@ try {
     blockedResult.status === 0,
     `deployment-blocked manifest with failing live output must pass validation: ${blockedResult.stderr || blockedResult.stdout}`,
   )
+
+  const savedBlockedResult = runValidator([
+    '--manifest',
+    blockedManifest,
+    '--live-output',
+    blockedLive,
+    '--out',
+    validationOut,
+    '--json',
+  ])
+  check(
+    savedBlockedResult.status === 0,
+    `validator --out must save a passing deployment-blocked validation artifact: ${savedBlockedResult.stderr || savedBlockedResult.stdout}`,
+  )
+  check(existsSync(validationOut), 'validate-production-evidence --out must write JSON.')
+  if (existsSync(validationOut)) {
+    const savedPayload = JSON.parse(readFileSync(validationOut, 'utf8'))
+    const printedPayload = JSON.parse(savedBlockedResult.stdout)
+    check(
+      savedPayload.artifactKind === 'production-evidence-validation' &&
+        savedPayload.status === 'pass',
+      'validator --out artifact must be a passing production-evidence-validation payload.',
+    )
+    check(
+      printedPayload.generatedAt === savedPayload.generatedAt &&
+        savedPayload.liveOutputPath === blockedLive,
+      'validator --json stdout and --out artifact must describe the same validation run.',
+    )
+  }
 
   const missingBlockersResult = runValidator([
     '--manifest',

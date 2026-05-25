@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { lookup } from 'node:dns/promises'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULTS = {
   marketingUrl: 'https://acgs.ai',
@@ -7,6 +10,7 @@ const DEFAULTS = {
   storybookUrl: 'https://storybook.acgs.ai',
   timeoutMs: 10_000,
 }
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const EXPECTED_SERVED_HASH = process.env.EXPECTED_SERVED_HASH ?? '608508a9bd224290'
 const EXPECTED_BUILD_ID = process.env.EXPECTED_BUILD_ID ?? ''
@@ -69,6 +73,7 @@ This command performs network I/O and is intentionally not part of pnpm test:all
 
 Options:
   --json                         Print machine-readable JSON only
+  --out <path>                   Save machine-readable JSON to a file, even when live checks fail
   --timeout-ms <ms>              Per-request timeout (default: ${DEFAULTS.timeoutMs})
   --marketing-url <url>          Marketing origin (default: ${DEFAULTS.marketingUrl})
   --console-url <url>            Console origin (default: ${DEFAULTS.consoleUrl})
@@ -89,6 +94,7 @@ function parseArgs(argv) {
     json: false,
     expectedBuildId: EXPECTED_BUILD_ID,
     allowStorybookPending: false,
+    outPath: null,
     help: false,
   }
 
@@ -102,6 +108,7 @@ function parseArgs(argv) {
 
     if (arg === '--') continue
     else if (arg === '--json') options.json = true
+    else if (arg === '--out') options.outPath = next()
     else if (arg === '--help' || arg === '-h') options.help = true
     else if (arg === '--timeout-ms') options.timeoutMs = Number.parseInt(next(), 10)
     else if (arg === '--marketing-url') options.marketingUrl = next()
@@ -122,6 +129,13 @@ function parseArgs(argv) {
   }
 
   return options
+}
+
+function writeJsonOutput(result, outPath) {
+  if (!outPath) return
+  const outputPath = resolve(root, outPath)
+  mkdirSync(dirname(outputPath), { recursive: true })
+  writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`)
 }
 
 function pass(id, evidence = {}) {
@@ -425,8 +439,12 @@ try {
     process.exit(0)
   }
   const result = await run(options)
+  writeJsonOutput(result, options.outPath)
   if (options.json) console.log(JSON.stringify(result, null, 2))
-  else console.log(renderHuman(result))
+  else {
+    console.log(renderHuman(result))
+    if (options.outPath) console.log(`Wrote ${options.outPath}`)
+  }
   process.exit(result.status === 'pass' ? 0 : 1)
 } catch (error) {
   if (process.argv.includes('--json')) {

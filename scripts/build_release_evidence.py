@@ -337,11 +337,15 @@ def hosted_storybook_handoff_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, 
         data.get("liveVerification") if isinstance(data.get("liveVerification"), dict) else {}
     )
     blockers = live_verification.get("storybookBlockers")
-    blocker_ids = [
-        blocker.get("blockerId")
-        for blocker in blockers
-        if isinstance(blocker, dict) and blocker.get("blockerId")
-    ] if isinstance(blockers, list) else []
+    blocker_ids = (
+        [
+            blocker.get("blockerId")
+            for blocker in blockers
+            if isinstance(blocker, dict) and blocker.get("blockerId")
+        ]
+        if isinstance(blockers, list)
+        else []
+    )
     snapshot.update(
         {
             "artifactKind": data.get("artifactKind"),
@@ -597,9 +601,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "templateStatus": (production_authority_packet or {}).get("status"),
                 "requiredApprovalIds": [
                     approval.get("id")
-                    for approval in (production_authority_packet or {}).get(
-                        "requiredApprovals", []
-                    )
+                    for approval in (production_authority_packet or {}).get("requiredApprovals", [])
                     if isinstance(approval, dict)
                 ],
                 "claimBoundary": (
@@ -623,6 +625,10 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "script": "acgi-ai/scripts/verify-production-live.mjs",
                 "proofCommand": "pnpm -F acgi-ai run test:production-live-verifier",
                 "liveProofCommand": "pnpm -F acgi-ai run verify:production-live -- --json",
+                "savedOutputCommand": (
+                    "pnpm -F acgi-ai run verify:production-live -- --json --out "
+                    "../dist-release-evidence/production-live-verification.json"
+                ),
                 "latestOutputSnapshot": production_live_snapshot(repo_root),
                 "targets": [
                     "https://acgs.ai",
@@ -1048,6 +1054,9 @@ live production proof.
   `pnpm -F acgi-ai run test:production-live-verifier` checks local wiring, while
   `pnpm -F acgi-ai run verify:production-live -- --json` is the credentialed
   live proof command that may fail until production DNS and hosted deploys exist.
+  Prefer the `--out ../dist-release-evidence/production-live-verification.json`
+  form when saving the artifact so package-manager warnings cannot contaminate
+  JSON.
   Its JSON includes `blockedUntil` and `blockers` so failed live checks can be
   copied into `productionLiveBlockers` in the completed production evidence
   manifest.

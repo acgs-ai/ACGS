@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -151,6 +152,7 @@ for (const needle of [
   'claim-safe-trust-surface',
   'deploy-readiness-boundary',
   '--json',
+  '--out',
   '--timeout-ms',
   '--allow-storybook-pending',
 ]) {
@@ -163,10 +165,55 @@ const help = spawnSync(process.execPath, [verifierPath, '--help'], {
 })
 check(help.status === 0, 'verify-production-live --help must exit zero.')
 check(help.stdout.includes('--json'), 'verify-production-live --help must document --json.')
+check(help.stdout.includes('--out'), 'verify-production-live --help must document --out.')
 check(
   help.stdout.includes('not part of pnpm test:all'),
   'verify-production-live --help must state the live network command is not part of test:all.',
 )
+
+const tempDir = mkdtempSync(join(tmpdir(), 'production-live-verifier-'))
+try {
+  const outPath = join(tempDir, 'verify-production-live.json')
+  const savedOutput = spawnSync(
+    process.execPath,
+    [
+      verifierPath,
+      '--json',
+      '--out',
+      outPath,
+      '--timeout-ms',
+      '50',
+      '--marketing-url',
+      'https://127.0.0.1',
+      '--console-url',
+      'https://127.0.0.1',
+      '--storybook-url',
+      'https://127.0.0.1',
+    ],
+    {
+      cwd: root,
+      encoding: 'utf8',
+    },
+  )
+  check(savedOutput.status !== 0, 'loopback live verifier run should fail but still save JSON.')
+  check(existsSync(outPath), 'verify-production-live --out must write a JSON artifact on fail.')
+  if (existsSync(outPath)) {
+    const saved = JSON.parse(readFileSync(outPath, 'utf8'))
+    const printed = JSON.parse(savedOutput.stdout)
+    check(
+      saved.artifactKind === 'production-live-verification' && saved.status === 'fail',
+      '--out artifact must be a failing production-live-verification payload for blocked runs.',
+    )
+    check(
+      printed.generatedAt === saved.generatedAt &&
+        Array.isArray(saved.blockers) &&
+        saved.blockers.length > 0,
+      '--json stdout and --out artifact must describe the same blocked live verifier run.',
+    )
+  }
+} finally {
+  rmSync(tempDir, { recursive: true, force: true })
+}
 
 check(
   productionEvidence.verification?.productionLiveCommand ===
@@ -282,6 +329,25 @@ for (const [label, source] of [
   mustContain(source, 'storybook.acgs.ai', label)
   mustContain(source, 'pending-external', label)
 }
+
+for (const [label, source] of [
+  ['DEPLOY.md', deploy],
+  ['PRODUCTION-LAUNCH.md', handoff],
+  ['production live verifier checker', checker],
+]) {
+  mustContain(
+    source,
+    '--out ../dist-release-evidence/production-live-verification.json',
+    label,
+  )
+}
+mustContain(releaseEvidence, 'savedOutputCommand', 'release evidence builder')
+mustContain(releaseEvidence, '--out', 'release evidence builder')
+mustContain(
+  releaseEvidence,
+  '../dist-release-evidence/production-live-verification.json',
+  'release evidence builder',
+)
 
 if (failures.length > 0) {
   console.error('Production live verifier check failed:')

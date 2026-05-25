@@ -522,7 +522,6 @@ class TraceStore:
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
-
     # ---- retention (T059) ------------------------------------------------
 
     def expire_older_than(self, days: int) -> list[str]:

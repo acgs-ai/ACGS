@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 const CLAIM_BOUNDARY =
   'Production evidence validation only checks operator-supplied artifacts; it is not legal signoff, not SOC2 proof, not WCAG conformance evidence, not pentest completion, and not regulatory compliance proof.'
@@ -14,6 +14,7 @@ This command performs local file validation only; it does not deploy, fetch live
 Options:
   --manifest <path>              Completed production evidence manifest JSON
   --live-output <path>           JSON output from pnpm -F acgi-ai run verify:production-live -- --json
+  --out <path>                   Save machine-readable validation JSON to a file
   --require-pass                 Require manifest and live verifier statuses to be pass/live-verified
   --json                         Print machine-readable JSON only
   --help                         Show this help
@@ -24,6 +25,7 @@ function parseArgs(argv) {
   const options = {
     manifestPath: null,
     liveOutputPath: null,
+    outPath: null,
     json: false,
     requirePass: false,
     help: false,
@@ -40,6 +42,7 @@ function parseArgs(argv) {
     if (arg === '--') continue
     else if (arg === '--manifest') options.manifestPath = next()
     else if (arg === '--live-output') options.liveOutputPath = next()
+    else if (arg === '--out') options.outPath = next()
     else if (arg === '--json') options.json = true
     else if (arg === '--require-pass') options.requirePass = true
     else if (arg === '--help' || arg === '-h') options.help = true
@@ -49,6 +52,13 @@ function parseArgs(argv) {
 
   if (!options.help && !options.manifestPath) throw new Error('--manifest is required')
   return options
+}
+
+function writeJsonOutput(result, outPath) {
+  if (!outPath) return
+  const outputPath = resolve(outPath)
+  mkdirSync(dirname(outputPath), { recursive: true })
+  writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`)
 }
 
 function readJson(path) {
@@ -507,8 +517,12 @@ try {
   const manifest = readJson(options.manifestPath)
   const liveOutput = options.liveOutputPath ? readJson(options.liveOutputPath) : null
   const result = validateManifest(manifest, options, liveOutput)
+  writeJsonOutput(result, options.outPath)
   if (options.json) console.log(JSON.stringify(result, null, 2))
-  else console.log(renderHuman(result))
+  else {
+    console.log(renderHuman(result))
+    if (options.outPath) console.log(`Wrote ${options.outPath}`)
+  }
   process.exit(result.status === 'pass' ? 0 : 1)
 } catch (error) {
   const result = {

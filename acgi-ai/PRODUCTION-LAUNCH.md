@@ -72,6 +72,9 @@ hosted Storybook item as pending, and `make production-launch-preflight` should
 report `blocked` until the release-evidence manifest points at the current
 clean commit, pending local items, live verifier blockers, evidence validation,
 and external blocker ids are replaced by attached proof.
+The preflight JSON/Markdown output must keep `requiredActions` and
+`externalBlockerIds` visible so launch blockers cannot be hidden by a green
+local build.
 `storybook-runtime.plan.json` is a local operator plan only, not official
 Storybook runtime proof. That pending item blocks stronger hosted Storybook
 claims but does not weaken the production deploy fail-closed contract.
@@ -115,8 +118,13 @@ pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai
    the completed manifest:
 
 ```bash
-pnpm -F acgi-ai run verify:production-live -- --json
+pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json
 ```
+
+The base live verifier command is
+`pnpm -F acgi-ai run verify:production-live -- --json`; use the `--out` form
+above when saving the evidence artifact so package-manager warnings cannot
+contaminate the JSON file.
 
 10. Build the local hosted Storybook handoff from the Pages-ready buyer-evidence
    manifest and live verifier JSON. The `hosted-storybook-handoff` captures
@@ -197,6 +205,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - Cloud Run revision URL for `console.acgs.ai`
 - Output from `scripts/postdeploy-verify.sh`
 - JSON output from `pnpm -F acgi-ai run verify:production-live -- --json`
+- JSON output from `pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json`
 - JSON output from `pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-production-live.json> --out <production-blocker-report.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>`
