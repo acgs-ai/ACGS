@@ -43,7 +43,7 @@ pnpm -F acgi-ai run hello:world:local
 pnpm -F acgi-ai run test:e2e-http
 ```
 
-`test:e2e-http` starts the mock Vite dev server and fetches the marketing landing, product slugs, login handoff URL, and every in-scope console sidebar path. It proves those paths return the Vite root shell locally; it does not replace Playwright navigation, axe, screenshot, or deployed-browser evidence.
+`test:e2e-http` starts the mock Vite dev server and fetches the marketing landing, product slugs including `/products/gove-zone`, login handoff URL, and every in-scope console sidebar path. It proves those paths return the Vite root shell locally; it does not replace Playwright navigation, axe, screenshot, or deployed-browser evidence.
 
 ## Buyer evidence gallery
 

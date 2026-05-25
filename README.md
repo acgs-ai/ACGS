@@ -63,7 +63,8 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"README.md","new_string":"
 `gove-zone smoke` is the fastest local proof that the runtime can allow a safe
 tool call, deny a blocked one before side effects, and verify the audit chain.
 Pass `--audit <path>` when that smoke audit JSONL should be retained as release
-evidence.
+evidence. The marketing product atlas exposes the same adoption path at
+`/products/gove-zone` with local framework-bridge scope and proof boundaries.
 
 The adapter also exposes `tool_call_from_hook_payload` and
 `tool_calls_from_hook_payload` for dependency-free

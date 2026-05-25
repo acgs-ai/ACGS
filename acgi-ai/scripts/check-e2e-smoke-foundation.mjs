@@ -121,7 +121,7 @@ for (const viewport of E2E_VIEWPORTS) {
 }
 check(E2E_VIEWPORTS.length === 5, 'E2E smoke manifest must keep the five PLAN.md viewports.')
 
-for (const path of ['/products/legalguard', '/products/governance-eval']) {
+for (const path of ['/products/legalguard', '/products/governance-eval', '/products/gove-zone']) {
   const slug = path.replace('/products/', '')
   check(productSurfaces.includes(`slug: '${slug}'`), `ProductSurfaces.tsx must define ${path}.`)
 }

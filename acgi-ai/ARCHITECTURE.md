@@ -125,7 +125,7 @@ claims.
 
 ## E2E HTTP shell smoke
 
-`pnpm test:e2e-http` runs `scripts/smoke-e2e-http-shells.mjs`, starts the mock Vite dev server with `VITE_USE_MOCKS=true` and `VITE_BYPASS_SESSION=true`, and fetches the marketing landing, product slugs, login handoff URL, and every in-scope console sidebar route to confirm each path returns the Vite root shell instead of an HTTP/server-error shell. This is local runtime evidence for route availability only; browser Playwright execution remains Phase 2 work before any navigation, rendering, accessibility, or screenshot claims are upgraded.
+`pnpm test:e2e-http` runs `scripts/smoke-e2e-http-shells.mjs`, starts the mock Vite dev server with `VITE_USE_MOCKS=true` and `VITE_BYPASS_SESSION=true`, and fetches the marketing landing, product slugs including `/products/gove-zone`, login handoff URL, and every in-scope console sidebar route to confirm each path returns the Vite root shell instead of an HTTP/server-error shell. This is local runtime evidence for route availability only; browser Playwright execution remains Phase 2 work before any navigation, rendering, accessibility, or screenshot claims are upgraded.
 
 ## MSW node-mode foundation
 

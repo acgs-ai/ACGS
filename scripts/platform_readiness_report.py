@@ -1560,6 +1560,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "packages/gove-zone/tests/test_integration_hook.py",
             "packages/gove-zone/tests/test_setup.py",
             "packages/gove-zone/README.md",
+            "acgi-ai/src/routes/ProductSurfaces.tsx",
         ],
     )
     runtime_bridge_ok, runtime_bridge_missing_parts = _contains_all(
@@ -1569,6 +1570,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "packages/gove-zone/tests/test_integration_hook.py"),
                 _maybe_read(repo_root, "packages/gove-zone/tests/test_setup.py"),
                 _maybe_read(repo_root, "packages/gove-zone/README.md"),
+                _maybe_read(repo_root, "acgi-ai/src/routes/ProductSurfaces.tsx"),
             ]
         ),
         [
@@ -1585,6 +1587,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "MCP-style",
             "receipt_count",
             "runtime.malformed_batch",
+            "slug: 'gove-zone'",
+            "Governance before every",
+            "uv run --package gove-zone gove-zone smoke",
         ],
     )
     items.append(
@@ -1597,7 +1602,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "OpenAI Responses output function_call items, OpenAI Chat tool_calls, "
                 "LangChain-style tool_calls, generic payloads, and batched tool-call "
                 "events without letting one denied child or malformed recognized batch "
-                "hide inside a batch"
+                "hide inside a batch; the routeable /products/gove-zone surface exposes "
+                "the adoption path"
                 if runtime_bridge_files_ok and runtime_bridge_ok
                 else (
                     f"missing_files={runtime_bridge_missing}, "

@@ -166,8 +166,57 @@ const products: ProductRoute[] = [
     ],
   },
   {
-    slug: 'hermes',
+    slug: 'gove-zone',
     folio: 'IV',
+    eyebrow: 'gove-zone · Runtime bridge',
+    title: 'Governance before every',
+    emphasis: 'tool call',
+    deck: 'A local runtime kernel that normalizes agent-framework tool-call shapes into pre-execution decisions, receipts, and replayable audit chains.',
+    source:
+      'packages/gove-zone/src/gove_zone/integration.py · smoke.py · tests/test_integration_hook.py',
+    status: 'CONFIRMED',
+    primaryCta: 'Review runtime bridge',
+    secondaryCta: 'Open local smoke proof',
+    cards: [
+      {
+        label: 'Shapes',
+        value: '7',
+        note: 'Claude/Codex, MCP, function_call, Responses, Chat, LangChain, generic',
+      },
+      { label: 'Gate modes', value: '2', note: 'observe by default, enforce fail-closed' },
+      { label: 'Proof', value: 'smoke', note: 'allow, deny, and audit-chain verification' },
+    ],
+    sections: [
+      {
+        heading: 'Frameworks meet one policy seam.',
+        body: 'The adapter accepts Claude/Codex-style hooks, MCP tools/call payloads, function-call events, OpenAI Responses output items, OpenAI Chat tool_calls, LangChain-style tool_calls, and generic bridge payloads without importing those SDKs.',
+        bullets: [
+          'One normalized ToolCall before side effects',
+          'Batch expansion so one denied child cannot hide in a multi-call event',
+          'Malformed recognized batches fail closed as runtime.malformed_batch',
+        ],
+      },
+      {
+        heading: 'The first proof is local and repeatable.',
+        body: 'New adopters can run gove-zone smoke from the monorepo to see one safe write allowed, one secret-path write denied, and the resulting audit chain verified without a live agent host.',
+        bullets: [
+          'uv run --package gove-zone gove-zone smoke',
+          'Optional retained JSONL audit evidence',
+          'Local runtime evidence only, not hosted or third-party assurance proof',
+        ],
+      },
+    ],
+    evidence: [
+      'OpenAI Responses',
+      'OpenAI Chat tool_calls',
+      'LangChain tool_calls',
+      'MCP tools/call',
+      'Fail-closed audit chain',
+    ],
+  },
+  {
+    slug: 'hermes',
+    folio: 'V',
     eyebrow: 'Hermes · Governed evidence panel',
     title: 'Evidence, not',
     emphasis: 'logs',
@@ -204,7 +253,7 @@ const products: ProductRoute[] = [
   },
   {
     slug: 'eu-ai-act',
-    folio: 'V',
+    folio: 'VI',
     eyebrow: 'EU AI Act · Countdown',
     title: 'Compliance before the',
     emphasis: 'deadline',
@@ -247,7 +296,7 @@ const products: ProductRoute[] = [
   },
   {
     slug: 'vault-demo',
-    folio: 'VI',
+    folio: 'VII',
     eyebrow: 'Hackathon demo · Auth0 Token Vault',
     title: 'No token before the',
     emphasis: 'constitution',
@@ -336,8 +385,8 @@ export function ProductIndex() {
             </h1>
             <p>
               This atlas turns the LegalGuard, governance-evaluation, ACGS Lite, Hermes, EU AI Act,
-              and Auth0 vault references into routeable product pages without iframe drops or new
-              dependencies.
+              gove-zone runtime bridge, and Auth0 vault references into routeable product pages
+              without iframe drops or new dependencies.
             </p>
           </header>
 
