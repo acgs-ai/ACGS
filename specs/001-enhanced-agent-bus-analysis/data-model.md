@@ -57,7 +57,10 @@ A single dispatch-or-response observation on the bus, or a `Decision` receipt fr
 | `constitutional_hash` | `str` | Hash active at capture time. Repeated per-event to detect mid-run rotation. |
 | `event_hash` | `str` | SHA-256(canonical_json(this event minus event_hash) + prev_hash). |
 | `prev_hash` | `str \| None` | Predecessor event_hash in the same trace; None for the trace's first event. |
-| `status` | `EventStatus` | See enum below. |
+| `status` | `EventStatus \| None` | See enum below. None when `marker_kind` is set (markers are not classifiable bus events). |
+| `marker_kind` | `Literal["ingest-gap"] \| None` | Set when the row is a synthetic capture marker rather than an observed bus event. Mutually exclusive with `status`. |
+| `gap_started_at` | `datetime \| None` | Populated only when `marker_kind="ingest-gap"`. |
+| `gap_ended_at` | `datetime \| None` | Populated only when `marker_kind="ingest-gap"`. |
 
 ### EventStatus
 
@@ -68,14 +71,17 @@ dispatch-failure  — no response within timeout; exception or rejection capture
 unwired-handler   — dispatch targeted a handler with no live registry entry
 orphan-response   — response with no prior dispatch (correlation_id known but causal_index has no producer)
 incomplete-pair   — dispatch recorded but observer crashed before response landed
-ingest-gap        — synthetic marker; carries `gap_started_at` / `gap_ended_at` instead of normal payload fields
 ```
+
+Note: `ingest-gap` is NOT an `EventStatus`. Capture gaps are recorded via the separate `marker_kind` field so that markers are excluded from classification metrics (SC-002) and from the hash chain.
 
 **Validation rules**:
 - `causal_index` MUST be strictly monotonic per `correlation_id`; non-monotonic insert flips trace `integrity_status` to `tampered`.
 - `event_hash` MUST verify against re-computed canonical JSON; any mismatch flips integrity to `tampered`.
 - An event with `kind="dispatch"` and no matching response within `dispatch_timeout_seconds` (config, default 30) MUST be classified `dispatch-failure` or `unwired-handler`. The two are distinguished by whether `target_handler_declared` is present in the `HandlerRegistrySnapshot` at the time of dispatch.
-- `ingest-gap` events MUST NOT participate in the hash chain — they describe gaps in capture, so chaining them would mean we lied about what we captured. Instead, the prev_hash of the event immediately after a gap references the prev_hash of the event immediately before the gap, and the gap marker is recorded as a separate row in SQLite with a `recovered_at_hash` field.
+- Exactly one of `status` or `marker_kind` MUST be set on every row.
+- Rows with `marker_kind="ingest-gap"` MUST NOT participate in the hash chain — they describe gaps in capture, so chaining them would mean we lied about what we captured. Instead, the `prev_hash` of the event immediately after a gap references the `event_hash` of the event immediately before the gap, and the gap marker is recorded as a separate row in SQLite with a `recovered_at_hash` field pointing to the post-gap event that re-anchors the chain.
+- Classification accuracy metrics (SC-002) are computed against rows where `status IS NOT NULL`; marker rows are excluded from the denominator.
 
 ---
 

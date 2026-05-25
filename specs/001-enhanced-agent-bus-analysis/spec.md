@@ -71,18 +71,18 @@ A compliance reviewer needs to attest that the trace history they are reviewing 
 
 ### Functional Requirements
 
-- **FR-001**: System MUST capture every dispatch and every response that flows across the inter-agent bus, with no sampling, for runs the operator has marked as governance-relevant.
+- **FR-001**: System MUST capture every dispatch and every response that flows across the inter-agent bus, with no sampling, for runs the operator has marked as governance-relevant. The "governance-relevant marking" mechanism is controlled by the `BUS_ANALYZER_CAPTURE_MODE` env var: `all` (default — capture every event without per-run opt-in) or `marked-only` (capture only events whose `correlation_id` is registered via the operator-marking API). Precedence: env var > deployment config file > per-tenant override. Unset = `all`.
 - **FR-002**: System MUST record, for each captured event: the source agent identity, the target handler identity (declared and resolved), the event payload reference, a causal-order index, the wall-clock timestamp, and the constitutional-hash version active at capture time.
 - **FR-003**: System MUST be read-only with respect to the inter-agent bus. The act of capturing an event MUST NOT alter the event, delay its delivery beyond an agreed budget, or change the response any handler would have produced.
 - **FR-004**: System MUST persist captured events to a tamper-evident store, where every event references the hash of its predecessor in the same trace so any after-the-fact modification is detectable.
 - **FR-005**: System MUST provide a query surface where an operator can retrieve all events belonging to a single run by correlation identifier, ordered by causal index.
-- **FR-006**: System MUST automatically classify each recorded event into at least the following statuses: completed, policy-violation, dispatch-failure, unwired-handler, orphan-response, or incomplete-pair.
+- **FR-006**: System MUST automatically classify each recorded event into one of the following statuses: completed, policy-violation, dispatch-failure, unwired-handler, orphan-response, or incomplete-pair. Ingest-gap markers are NOT a status — they are recorded via a separate `marker_kind` field (see data-model.md) and never participate in the hash chain.
 - **FR-007**: System MUST detect "unwired handler" conditions by comparing the set of declared handlers (from the runtime registry) against the set of events that were dispatched without any responder, and surface unresolved entries in a wiring-defect summary refreshed at least every 60 seconds.
 - **FR-008**: System MUST fail closed if its own integrity store is unavailable: new events MUST NOT be recorded in a non-hash-chained form, and the operator surface MUST display the degraded state.
 - **FR-009**: System MUST display, for any trace, the constitutional-hash version under which it was recorded, and an integrity status of intact, tampered, or unknown.
 - **FR-010**: System MUST NOT weaken any existing governance gate. Capture and analysis paths MUST run on the read side of bus events and MUST NOT be in the authorization path for any action.
 - **FR-011**: System MUST enforce role-based access on the query surface so that only authorized reviewers (governance reviewers, operators, compliance) can read traces. Unauthorized reads MUST be rejected and themselves recorded as audit events.
-- **FR-012**: System MUST retain captured traces for at least 90 days from run completion (see Assumptions for retention rationale); expired traces MUST return an explicit "expired" status on query, not a generic not-found.
+- **FR-012**: System MUST retain captured traces for a configurable retention window; the default is 90 days from run completion, with no hard minimum floor — deployments may tighten or extend retention to satisfy tenant or regulatory requirements (confirm against `packages/clinicalguard/` tenant requirements before onboarding any clinical tenant). Expired traces MUST return an explicit "expired" status on query, not a generic not-found.
 - **FR-013**: System MUST handle ingest backpressure by recording explicit "ingest gap" markers covering the affected time window, rather than silently dropping events or blocking the bus.
 
 ### Key Entities

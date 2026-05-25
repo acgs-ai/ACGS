@@ -24,7 +24,7 @@ This is a web feature: Python backend package at `packages/agent-bus-analyzer/` 
 **Purpose**: Scaffold the new workspace package and console-side plumbing. No business logic yet.
 
 - [ ] T001 Create new workspace package skeleton at `packages/agent-bus-analyzer/` with `src/agent_bus_analyzer/` and `tests/` directories
-- [ ] T002 Author `packages/agent-bus-analyzer/pyproject.toml` (Python 3.11 floor, dependencies: pydantic>=2, anyio; dev: pytest, ruff, mypy) and register the package in the root `uv` workspace
+- [ ] T002 Author `packages/agent-bus-analyzer/pyproject.toml` (Python 3.11 floor, dependencies: pydantic>=2, anyio, fastapi>=0.110, uvicorn>=0.30; dev: pytest, ruff, mypy) and register the package in the root `uv` workspace
 - [ ] T003 [P] Add `packages/agent-bus-analyzer/README.md` (one-paragraph purpose statement + link to spec.md/plan.md)
 - [ ] T004 [P] Add `packages/agent-bus-analyzer/CLAUDE.md` declaring local conventions, sealed-file rules, and the local verify gate (`pytest -q && ruff check . && mypy src/`)
 - [ ] T005 [P] Add `packages/agent-bus-analyzer/Makefile` with `lint`, `typecheck`, `test` targets matching the workspace conventions
