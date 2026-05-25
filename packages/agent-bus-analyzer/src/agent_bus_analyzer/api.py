@@ -17,7 +17,8 @@ from collections.abc import Awaitable, Callable
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 
 from agent_bus_analyzer.auth import require_reviewer_role
-from agent_bus_analyzer.models import ReceiptProof, SingleTrace, TraceList
+from agent_bus_analyzer.models import ReceiptProof, SingleTrace, TraceList, WiringDefectSummary
+from agent_bus_analyzer.query import get_wiring_defects
 from agent_bus_analyzer.store import TraceStore
 
 log = logging.getLogger("agent_bus_analyzer.api")
@@ -99,5 +100,19 @@ def create_app(store: TraceStore | None = None) -> FastAPI:
                 detail=f"Receipt proof not found: {receipt_id}",
             )
         return result
+
+    @app.get(
+        "/api/bus/defects",
+        response_model=WiringDefectSummary,
+        dependencies=[Depends(require_reviewer_role)],
+    )
+    async def get_defects(request: Request, window_seconds: int = 60) -> Response:
+        store = _get_store(request)
+        summary = get_wiring_defects(store, window_seconds=window_seconds)
+        return Response(
+            content=summary.model_dump_json(),
+            media_type="application/json",
+            headers={"Cache-Control": f"max-age={window_seconds}"},
+        )
 
     return app
