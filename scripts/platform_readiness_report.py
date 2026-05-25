@@ -1777,6 +1777,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "evidence:build",
             "test:buyer-evidence",
             "visual governance workbench",
+            "operator decision rail",
             "launch proof ladder",
             "Local readiness",
             "Live verifier",
@@ -1793,7 +1794,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok,
             (
                 "dependency-free local buyer-evidence gallery builder, visual "
-                "workbench story, launch proof ladder story, and verifier are wired"
+                "workbench story, operator decision rail story, launch proof ladder "
+                "story, and verifier are wired"
                 if buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok
                 else (
                     f"missing_files={buyer_evidence_missing}, "
@@ -1943,6 +1945,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "storybook build --output-dir storybook-static",
             "@storybook/react-vite",
             "visual-governance-workbench",
+            "operator-decision-rail",
             "launch-proof-ladder",
         ],
     )
@@ -1960,7 +1963,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "storybook-runtime.plan.json keeps official Storybook dependency/runtime "
                 "work behind pending-external dependency approval while preserving the "
-                "dependency-free buyer-evidence publication shim and all six "
+                "dependency-free buyer-evidence publication shim and all seven "
                 "buyer-evidence story ids"
                 if storybook_runtime_files_ok
                 and storybook_runtime_ok
@@ -2150,6 +2153,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "live-storybook-manifest",
             "browserEvidence",
             "visual-governance-workbench",
+            "operator-decision-rail",
             "launch-proof-ladder",
             "automatedA11yReportRefs",
             "visualDiffRefs",
@@ -2181,7 +2185,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "hosted-storybook-proof.example.json requires Pages run, DNS, "
                 "hosted manifest, passing storybook-manifest-live, absent "
                 "live-storybook blockers, hosted browser screenshot, automated "
-                "accessibility, and visual-diff evidence for all six "
+                "accessibility, and visual-diff evidence for all seven "
                 "buyer-evidence stories, "
                 "copyIntoProductionEvidence.hostedStorybook, "
                 "and validate:hosted-storybook-proof completed-proof checks saved as "
@@ -2228,7 +2232,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 else (
                     "storybook.acgs.ai publication workflow exists; official Storybook "
                     "runtime dependency and live storybook-manifest-live proof for all "
-                    "six story ids remain pending"
+                    "seven story ids remain pending"
                 )
             ),
             "add official Storybook runtime and verify live storybook.acgs.ai",

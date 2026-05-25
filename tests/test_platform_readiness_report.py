@@ -94,6 +94,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["node24-local-toolchain"].status == "pass"
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
+    assert "operator decision rail story" in by_id["buyer-evidence-gallery-local"].evidence
     assert "launch proof ladder story" in by_id["buyer-evidence-gallery-local"].evidence
     assert by_id["browser-workbench-evidence-local"].status == "pass"
     assert (
@@ -126,6 +127,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "not official Storybook runtime proof" in storybook_runtime_plan
     assert "storybook build --output-dir storybook-static" in storybook_runtime_plan
     assert "visual-governance-workbench" in storybook_runtime_plan
+    assert "operator-decision-rail" in storybook_runtime_plan
     assert "launch-proof-ladder" in storybook_runtime_plan
     assert by_id["storybook-publication-workflow-local"].status == "pass"
     assert (
@@ -155,7 +157,10 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         in by_id["hosted-storybook-proof-intake-local"].evidence
     )
     assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
-    assert "all six buyer-evidence stories" in by_id["hosted-storybook-proof-intake-local"].evidence
+    assert (
+        "all seven buyer-evidence stories"
+        in by_id["hosted-storybook-proof-intake-local"].evidence
+    )
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
     assert (

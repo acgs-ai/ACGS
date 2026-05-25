@@ -13,6 +13,7 @@
       "bus-owned-proof-source",
       "claim-safe-trust-surface",
       "visual-governance-workbench",
+      "operator-decision-rail",
       "launch-proof-ladder",
       "deploy-readiness-boundary"
     ],
@@ -57,6 +58,7 @@
       "bus-owned-proof-source",
       "claim-safe-trust-surface",
       "visual-governance-workbench",
+      "operator-decision-rail",
       "launch-proof-ladder",
       "deploy-readiness-boundary"
     ],
@@ -98,6 +100,7 @@
       "bus-owned-proof-source",
       "claim-safe-trust-surface",
       "visual-governance-workbench",
+      "operator-decision-rail",
       "launch-proof-ladder",
       "deploy-readiness-boundary"
     ],
@@ -113,6 +116,7 @@
       "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_SCREENSHOT_REF",
       "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_SCREENSHOT_REF",
       "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_SCREENSHOT_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_SCREENSHOT_REF",
       "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_SCREENSHOT_REF",
       "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_SCREENSHOT_REF"
     },
@@ -121,6 +125,7 @@
       "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_AUTOMATED_A11Y_REPORT_REF",
       "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_AUTOMATED_A11Y_REPORT_REF",
       "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_AUTOMATED_A11Y_REPORT_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_AUTOMATED_A11Y_REPORT_REF",
       "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_AUTOMATED_A11Y_REPORT_REF",
       "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_AUTOMATED_A11Y_REPORT_REF"
     },
@@ -129,6 +134,7 @@
       "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_VISUAL_DIFF_REF",
       "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_VISUAL_DIFF_REF",
       "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_VISUAL_DIFF_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_VISUAL_DIFF_REF",
       "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_VISUAL_DIFF_REF",
       "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_VISUAL_DIFF_REF"
     },

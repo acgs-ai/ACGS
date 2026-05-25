@@ -84,6 +84,28 @@ const evidenceStories = [
     ],
   },
   {
+    id: 'operator-decision-rail',
+    title: 'Operator decision rail',
+    route: '/console/workbench#operator-decision-rail',
+    buyerQuestion:
+      'Can a first-time reviewer pick the next safe action without reading a full dashboard?',
+    proof: [
+      'The rail shows Pick the case, Inspect the path, and Decide and export in the same workbench UI.',
+      'Each step carries text proof labels for owner/source/risk, trace/eval/policy, and hold/review/receipt.',
+      'The rail links to existing console routes and preserves the local UX claim boundary.',
+    ],
+    localGates: [
+      'pnpm run test:platform-blueprint',
+      'pnpm run test:browser-evidence',
+      'pnpm run evidence:browser-workbench',
+    ],
+    sourceFiles: [
+      'src/routes/console/Workbench.tsx',
+      'src/routes/workbench-content.ts',
+      'scripts/capture-workbench-browser-evidence.mjs',
+    ],
+  },
+  {
     id: 'launch-proof-ladder',
     title: 'Launch proof ladder',
     route: '/console/workbench#launch-proof-ladder',

@@ -316,6 +316,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert storybook_runtime["proposedRuntime"]["initCommand"] == "npx storybook@latest init"
     runtime_plan = json.loads((ROOT / "acgi-ai/storybook-runtime.plan.json").read_text())
     assert "visual-governance-workbench" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
+    assert "operator-decision-rail" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
     assert "launch-proof-ladder" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
     assert any(
         "storybook build --output-dir storybook-static" in doc["evidence"]
@@ -369,10 +370,15 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert hosted_storybook_proof["browserEvidence"]["targetUrl"] == "https://storybook.acgs.ai"
     assert hosted_storybook_proof["browserEvidence"]["viewportSet"] == [360, 768, 834, 1024, 1440]
     assert "visual-governance-workbench" in hosted_storybook_proof["browserEvidence"]["storyIds"]
+    assert "operator-decision-rail" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert (
         "visual-governance-workbench"
         in hosted_storybook_proof["browserEvidence"]["screenshotRefs"]
+    )
+    assert (
+        "operator-decision-rail"
+        in hosted_storybook_proof["browserEvidence"]["automatedA11yReportRefs"]
     )
     assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["visualDiffRefs"]
     assert "screenshotRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]

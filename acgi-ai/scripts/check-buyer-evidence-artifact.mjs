@@ -56,8 +56,13 @@ for (const needle of [
   'Bus-owned proof source',
   'Claim-safe trust surface',
   'Visual governance workbench',
+  'Operator decision rail',
   'Launch proof ladder',
   'Deploy readiness boundary',
+  'operator-decision-rail',
+  'Pick the case',
+  'Inspect the path',
+  'Decide and export',
   'Operator quick start',
   'Start here',
   'Hold release',
@@ -121,8 +126,12 @@ try {
       'ACGS buyer evidence gallery',
       'Receipt proof journey',
       'Visual governance workbench',
+      'Operator decision rail',
       'Launch proof ladder',
       'next safe action',
+      'Pick the case',
+      'Inspect the path',
+      'Decide and export',
       'Operator quick start',
       'Start here',
       'Hold release',
@@ -156,8 +165,12 @@ try {
       'manifest must preserve the production-proof boundary.',
     )
     check(
-      Array.isArray(manifest.stories) && manifest.stories.length >= 6,
-      'manifest must include at least six buyer-evidence stories.',
+      Array.isArray(manifest.stories) && manifest.stories.length >= 7,
+      'manifest must include at least seven buyer-evidence stories.',
+    )
+    check(
+      JSON.stringify(manifest.stories).includes('operator-decision-rail'),
+      'manifest must include the operator decision rail story.',
     )
     check(
       JSON.stringify(manifest.stories).includes('visual-governance-workbench'),

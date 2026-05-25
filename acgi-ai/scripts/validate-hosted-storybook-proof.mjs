@@ -9,6 +9,7 @@ const EXPECTED_STORY_IDS = [
   'bus-owned-proof-source',
   'claim-safe-trust-surface',
   'visual-governance-workbench',
+  'operator-decision-rail',
   'launch-proof-ladder',
   'deploy-readiness-boundary',
 ]

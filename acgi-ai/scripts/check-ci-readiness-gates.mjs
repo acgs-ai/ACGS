@@ -465,6 +465,7 @@ check(
     /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
     /browserEvidence/.test(hostedStorybookProofTemplate) &&
     /visual-governance-workbench/.test(hostedStorybookProofTemplate) &&
+    /operator-decision-rail/.test(hostedStorybookProofTemplate) &&
     /launch-proof-ladder/.test(hostedStorybookProofTemplate) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofTemplate) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplate) &&
@@ -485,6 +486,7 @@ check(
     /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
     /browserEvidence/.test(hostedStorybookProofTemplateCheck) &&
     /visual-governance-workbench/.test(hostedStorybookProofTemplateCheck) &&
+    /operator-decision-rail/.test(hostedStorybookProofTemplateCheck) &&
     /launch-proof-ladder/.test(hostedStorybookProofTemplateCheck) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
@@ -501,6 +503,7 @@ check(
     /live-storybook-manifest/.test(hostedStorybookProofValidator) &&
     /browserEvidence/.test(hostedStorybookProofValidator) &&
     /visual-governance-workbench/.test(hostedStorybookProofValidator) &&
+    /operator-decision-rail/.test(hostedStorybookProofValidator) &&
     /launch-proof-ladder/.test(hostedStorybookProofValidator) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofValidator) &&
     /visualDiffRefs/.test(hostedStorybookProofValidator) &&
@@ -517,6 +520,7 @@ check(
     /npx storybook@latest init/.test(storybookRuntimePlan) &&
     /storybook build --output-dir storybook-static/.test(storybookRuntimePlan) &&
     /visual-governance-workbench/.test(storybookRuntimePlan) &&
+    /operator-decision-rail/.test(storybookRuntimePlan) &&
     /launch-proof-ladder/.test(storybookRuntimePlan) &&
     /not official Storybook runtime proof/.test(storybookRuntimePlan),
   'storybook-runtime.plan.json must keep a claim-safe pending official Storybook runtime dependency plan.',

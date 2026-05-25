@@ -80,6 +80,7 @@ for (const needle of [
   'bus-owned-proof-source',
   'claim-safe-trust-surface',
   'visual-governance-workbench',
+  'operator-decision-rail',
   'launch-proof-ladder',
   'deploy-readiness-boundary',
   'storybook:build',
