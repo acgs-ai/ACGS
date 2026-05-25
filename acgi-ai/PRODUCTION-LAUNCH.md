@@ -184,8 +184,8 @@ pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest 
    `hosted-storybook-proof.example.json` derivative beside the handoff. That
    packet records the Storybook Pages run, DNS proof, hosted manifest proof,
    required absent `live-storybook-*` blockers, hosted browser screenshot,
-   automated accessibility, visual-diff refs, and the
-   `copyIntoProductionEvidence.hostedStorybook` fields needed to remove
+   automated accessibility, and visual-diff refs for all six buyer-evidence
+   stories, plus the `copyIntoProductionEvidence.hostedStorybook` fields needed to remove
    `hosted-storybook-buyer-evidence`.
 
 13. If the live verifier is blocked, build a local blocker handoff report and

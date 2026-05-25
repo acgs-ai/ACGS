@@ -590,8 +590,9 @@ Storybook proof, or create live production proof.
 
 `pnpm run test:storybook-runtime-plan` verifies
 `storybook-runtime.plan.json`, the pending official Storybook runtime dependency
-plan. It keeps `@storybook/react-vite`, `npx storybook@latest init`, lockfile
-updates, and shim replacement behind `pending-external:dependency-owner-approval`;
+plan. It keeps `@storybook/react-vite`, current official Storybook install/build
+references, lockfile updates, all six buyer-evidence story ids, and shim
+replacement behind `pending-external:dependency-owner-approval`;
 the plan is not official Storybook runtime proof, not hosted Storybook proof, and
 not production deployment proof.
 
@@ -613,7 +614,8 @@ external Storybook Pages, DNS, manifest, and passing `verify:production-live`
 evidence needed to remove `hosted-storybook-buyer-evidence`. It records the
 required `storybook-manifest-live` checks, `pending-external:storybook-pages-proof`
 placeholder, `pending-external:hosted-browser-qa-proof`, hosted browser
-screenshot, automated accessibility, visual-diff refs,
+screenshot, automated accessibility, and visual-diff refs for all six
+buyer-evidence stories,
 `build:hosted-storybook-handoff --require-live-clear`, and
 `copyIntoProductionEvidence.hostedStorybook` fields. The template is not hosted
 Storybook proof, not official Storybook runtime proof, not production
@@ -834,7 +836,8 @@ evidence without overclaiming. `pnpm run test:hosted-storybook-proof-template`
 guards `hosted-storybook-proof.example.json`, the external proof intake template
 for the Pages run URL, DNS evidence, hosted `/manifest.json` evidence, absent
 `live-storybook-*` blockers, hosted browser screenshot, automated
-accessibility, visual-diff refs, and the `hosted-storybook-buyer-evidence`
+accessibility, and visual-diff refs for all six buyer-evidence stories, plus
+the `hosted-storybook-buyer-evidence`
 blocker removal handoff. This is still not the official Storybook runtime; `storybook-runtime.plan.json`
 is only a pending dependency plan and not official Storybook runtime proof,
 not live `storybook.acgs.ai` proof, not live production proof, and not

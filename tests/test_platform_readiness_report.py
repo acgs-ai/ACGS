@@ -120,6 +120,9 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     storybook_runtime_plan = pr._maybe_read(ROOT, "acgi-ai/storybook-runtime.plan.json")
     assert "pending-external:dependency-owner-approval" in storybook_runtime_plan
     assert "not official Storybook runtime proof" in storybook_runtime_plan
+    assert "storybook build --output-dir storybook-static" in storybook_runtime_plan
+    assert "visual-governance-workbench" in storybook_runtime_plan
+    assert "launch-proof-ladder" in storybook_runtime_plan
     assert by_id["storybook-publication-workflow-local"].status == "pass"
     assert (
         "hosted handoff/proof-template checks"
@@ -148,6 +151,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         in by_id["hosted-storybook-proof-intake-local"].evidence
     )
     assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
+    assert "all six buyer-evidence stories" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
     assert (

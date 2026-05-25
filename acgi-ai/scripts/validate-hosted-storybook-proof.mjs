@@ -8,6 +8,8 @@ const EXPECTED_STORY_IDS = [
   'receipt-proof-journey',
   'bus-owned-proof-source',
   'claim-safe-trust-surface',
+  'visual-governance-workbench',
+  'launch-proof-ladder',
   'deploy-readiness-boundary',
 ]
 const REQUIRED_BROWSER_VIEWPORTS = [360, 768, 834, 1024, 1440]

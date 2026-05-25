@@ -87,7 +87,14 @@ function makeLiveOutput(status = 'fail') {
               url: 'https://storybook.acgs.ai/manifest.json',
               artifactKind: 'local-buyer-evidence-gallery',
               publishTarget: 'https://storybook.acgs.ai',
-              storyIds: ['receipt-proof-journey', 'deploy-readiness-boundary'],
+              storyIds: [
+                'receipt-proof-journey',
+                'bus-owned-proof-source',
+                'claim-safe-trust-surface',
+                'visual-governance-workbench',
+                'launch-proof-ladder',
+                'deploy-readiness-boundary',
+              ],
             }
           : { url: 'https://storybook.acgs.ai/manifest.json' },
       },
@@ -262,6 +269,8 @@ try {
   check(payload.localPublication.publishTargetReady === true, 'publication manifest must target Storybook.')
   check(
     payload.localPublication.storyIds.includes('receipt-proof-journey') &&
+      payload.localPublication.storyIds.includes('visual-governance-workbench') &&
+      payload.localPublication.storyIds.includes('launch-proof-ladder') &&
       payload.localPublication.storyIds.includes('deploy-readiness-boundary'),
     'handoff must include expected buyer-evidence story ids.',
   )

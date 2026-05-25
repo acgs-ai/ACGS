@@ -170,6 +170,8 @@ for (const needle of [
   'receipt-proof-journey',
   'bus-owned-proof-source',
   'claim-safe-trust-surface',
+  'visual-governance-workbench',
+  'launch-proof-ladder',
   'deploy-readiness-boundary',
   '--json',
   '--out',

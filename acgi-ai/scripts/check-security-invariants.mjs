@@ -1474,7 +1474,11 @@ check(
     /pending-dependency-authority/.test(storybookRuntimePlan) &&
     /pending-external:dependency-owner-approval/.test(storybookRuntimePlan) &&
     /@storybook\/react-vite/.test(storybookRuntimePlan) &&
+    /npm create storybook@latest/.test(storybookRuntimePlan) &&
     /npx storybook@latest init/.test(storybookRuntimePlan) &&
+    /storybook build --output-dir storybook-static/.test(storybookRuntimePlan) &&
+    /visual-governance-workbench/.test(storybookRuntimePlan) &&
+    /launch-proof-ladder/.test(storybookRuntimePlan) &&
     /not official Storybook runtime proof/.test(storybookRuntimePlan) &&
     /not hosted Storybook proof/.test(storybookRuntimePlan) &&
     /not production deployment proof/.test(storybookRuntimePlan),
@@ -1509,6 +1513,8 @@ check(
     /storybook-manifest-live/.test(hostedStorybookProofTemplate) &&
     /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
     /browserEvidence/.test(hostedStorybookProofTemplate) &&
+    /visual-governance-workbench/.test(hostedStorybookProofTemplate) &&
+    /launch-proof-ladder/.test(hostedStorybookProofTemplate) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofTemplate) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplate) &&
     /copyIntoProductionEvidence/.test(hostedStorybookProofTemplate) &&
@@ -1527,6 +1533,8 @@ check(
     /hosted-storybook-proof\.example\.json/.test(hostedStorybookProofTemplateCheck) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
     /browserEvidence/.test(hostedStorybookProofTemplateCheck) &&
+    /visual-governance-workbench/.test(hostedStorybookProofTemplateCheck) &&
+    /launch-proof-ladder/.test(hostedStorybookProofTemplateCheck) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
     /not hosted Storybook proof/.test(hostedStorybookProofTemplateCheck),
@@ -1541,6 +1549,8 @@ check(
     /storybook-manifest-live/.test(hostedStorybookProofValidator) &&
     /live-storybook-manifest/.test(hostedStorybookProofValidator) &&
     /browserEvidence/.test(hostedStorybookProofValidator) &&
+    /visual-governance-workbench/.test(hostedStorybookProofValidator) &&
+    /launch-proof-ladder/.test(hostedStorybookProofValidator) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofValidator) &&
     /visualDiffRefs/.test(hostedStorybookProofValidator) &&
     /not WCAG conformance proof/.test(hostedStorybookProofValidator) &&

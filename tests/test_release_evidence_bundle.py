@@ -314,6 +314,13 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "dependency-owner-approval" in storybook_runtime["requiredApprovalIds"]
     assert storybook_runtime["proposedRuntime"]["frameworkPackage"] == "@storybook/react-vite"
     assert storybook_runtime["proposedRuntime"]["initCommand"] == "npx storybook@latest init"
+    runtime_plan = json.loads((ROOT / "acgi-ai/storybook-runtime.plan.json").read_text())
+    assert "visual-governance-workbench" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
+    assert "launch-proof-ladder" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
+    assert any(
+        "storybook build --output-dir storybook-static" in doc["evidence"]
+        for doc in runtime_plan["sourceDocs"]
+    )
     assert "not official Storybook runtime proof" in storybook_runtime["claimBoundary"]
     assert "pending-external" in storybook_runtime["claimBoundary"]
     assert "pending-external:dependency-owner-approval" in json.dumps(storybook_runtime)
@@ -361,6 +368,13 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "live-storybook-manifest" in hosted_storybook_proof["requiredAbsentBlockerIds"]
     assert hosted_storybook_proof["browserEvidence"]["targetUrl"] == "https://storybook.acgs.ai"
     assert hosted_storybook_proof["browserEvidence"]["viewportSet"] == [360, 768, 834, 1024, 1440]
+    assert "visual-governance-workbench" in hosted_storybook_proof["browserEvidence"]["storyIds"]
+    assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["storyIds"]
+    assert (
+        "visual-governance-workbench"
+        in hosted_storybook_proof["browserEvidence"]["screenshotRefs"]
+    )
+    assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["visualDiffRefs"]
     assert "screenshotRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
     assert "automatedA11yReportRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
     assert "visualDiffRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]

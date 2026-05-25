@@ -304,6 +304,8 @@ async function storybookManifestCheck(targetUrl, options) {
       'receipt-proof-journey',
       'bus-owned-proof-source',
       'claim-safe-trust-surface',
+      'visual-governance-workbench',
+      'launch-proof-ladder',
       'deploy-readiness-boundary',
     ]
     const storyIds = Array.isArray(json.stories)

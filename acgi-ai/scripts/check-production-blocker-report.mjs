@@ -119,7 +119,14 @@ function makeLiveOutput(status) {
               url: 'https://storybook.acgs.ai/manifest.json',
               artifactKind: 'local-buyer-evidence-gallery',
               publishTarget: 'https://storybook.acgs.ai',
-              storyIds: ['receipt-proof-journey', 'deploy-readiness-boundary'],
+              storyIds: [
+                'receipt-proof-journey',
+                'bus-owned-proof-source',
+                'claim-safe-trust-surface',
+                'visual-governance-workbench',
+                'launch-proof-ladder',
+                'deploy-readiness-boundary',
+              ],
             }
           : { url: 'https://storybook.acgs.ai/manifest.json' },
       },
