@@ -881,6 +881,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "runtimeFrameworkBridge": {
                 "module": "packages/gove-zone/src/gove_zone/integration.py",
                 "publicHelper": "tool_call_from_hook_payload",
+                "batchHelper": "tool_calls_from_hook_payload",
                 "proofCommand": (
                     "uv run --package gove-zone python -m pytest "
                     "packages/gove-zone/tests/test_integration_hook.py "
@@ -893,11 +894,17 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "OpenAI Responses output [{type: function_call, name, arguments}]",
                     "OpenAI Chat tool_calls [{function: {name, arguments}}]",
                     "LangChain-style tool_calls [{name, args}]",
+                    "batched OpenAI Responses/OpenAI Chat/LangChain tool calls",
                     "generic {name, arguments|args|input}",
                 ],
                 "cliProofCommand": (
                     "uv run --package gove-zone python -m pytest "
                     "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q"
+                ),
+                "batchGateBehavior": (
+                    "gove-zone gate expands recognized multi-call events into one "
+                    "receipt per child call; any deny/escalate child blocks the "
+                    "whole event and is surfaced as the primary receipt"
                 ),
                 "claimBoundary": (
                     "dependency-free local adapter normalization only; not a claim "
@@ -918,6 +925,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "OpenAI Responses output [{type: function_call, name, arguments}]",
                     "OpenAI Chat tool_calls [{function: {name, arguments}}]",
                     "LangChain-style tool_calls [{name, args}]",
+                    "batched tool calls with receipt_count and receipts[] output",
                 ],
                 "claimBoundary": (
                     "local CLI hook-gate contract only; policy effectiveness depends "
@@ -1323,14 +1331,16 @@ live production proof.
   guard this boundary so API errors or contract drift cannot silently render
   fixture data.
 - `packages/gove-zone/src/gove_zone/integration.py` exposes
-  `tool_call_from_hook_payload` so agent-framework bridges can normalize
-  Claude/Codex-style, MCP-style, function-call-style, OpenAI Responses-style
-  output items, OpenAI Chat/LangChain-style tool calls, and generic payloads
-  before emitting governed receipts. This is local adapter evidence, not
-  certification of every third-party framework integration.
+  `tool_call_from_hook_payload` and `tool_calls_from_hook_payload` so
+  agent-framework bridges can normalize Claude/Codex-style, MCP-style,
+  function-call-style, OpenAI Responses-style output items, OpenAI
+  Chat/LangChain-style tool calls, generic payloads, and recognized batched
+  tool-call events before emitting governed receipts. This is local adapter
+  evidence, not certification of every third-party framework integration.
 - `gove-zone gate --policy-bundle <policy.bundle.json> < event.json` loads a
-  reviewed `RuleSetPolicy`, emits a receipt, and exits non-zero for deny /
-  escalate decisions so hook hosts can block the side effect before it runs.
+  reviewed `RuleSetPolicy`, emits one receipt per recognized child call in a
+  batched event, and exits non-zero when any child returns deny / escalate so
+  hook hosts can block the side effect before it runs.
   This is a local hook-gate contract, not live third-party deployment proof.
 - `.github/workflows/storybook.yml` is the gated buyer-evidence Storybook
   publication scaffold for `storybook.acgs.ai`; its artifact contract includes

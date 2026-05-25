@@ -255,6 +255,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "not proof that the live governed bus is deployed" in fixture_fallback["claimBoundary"]
     assert runtime_bridge["module"] == "packages/gove-zone/src/gove_zone/integration.py"
     assert runtime_bridge["publicHelper"] == "tool_call_from_hook_payload"
+    assert runtime_bridge["batchHelper"] == "tool_calls_from_hook_payload"
     assert "test_integration_hook.py" in runtime_bridge["proofCommand"]
     assert "test_setup.py" in runtime_bridge["cliProofCommand"]
     assert "MCP-style" in runtime_bridge["supportedLocalShapes"][1]
@@ -264,6 +265,8 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "OpenAI Chat" in runtime_bridge["supportedLocalShapes"][4]
     assert "tool_calls" in runtime_bridge["supportedLocalShapes"][5]
     assert "LangChain-style" in runtime_bridge["supportedLocalShapes"][5]
+    assert "batched" in runtime_bridge["supportedLocalShapes"][6]
+    assert "one receipt per child call" in runtime_bridge["batchGateBehavior"]
     assert "not a claim" in runtime_bridge["claimBoundary"]
     assert "gove-zone gate --policy-bundle" in runtime_policy_gate["cli"]
     assert runtime_policy_gate["policyType"] == "RuleSetPolicy"
@@ -272,6 +275,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "OpenAI Responses" in runtime_policy_gate["coveredPayloadShapes"][0]
     assert "OpenAI Chat" in runtime_policy_gate["coveredPayloadShapes"][1]
     assert "LangChain-style" in runtime_policy_gate["coveredPayloadShapes"][2]
+    assert "receipt_count" in runtime_policy_gate["coveredPayloadShapes"][3]
     assert "not live third-party deployment proof" in runtime_policy_gate["claimBoundary"]
     assert storybook_runtime["planPath"] == "acgi-ai/storybook-runtime.plan.json"
     assert storybook_runtime["proofCommand"] == "pnpm -F acgi-ai run test:storybook-runtime-plan"
@@ -326,8 +330,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "automatedA11yReportRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
     assert "visualDiffRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
     assert (
-        "not WCAG conformance proof"
-        in hosted_storybook_proof["browserEvidence"]["claimBoundary"]
+        "not WCAG conformance proof" in hosted_storybook_proof["browserEvidence"]["claimBoundary"]
     )
     assert (
         hosted_storybook_proof["copyIntoProductionEvidence"]["remainingBlockerToRemove"]
@@ -402,7 +405,9 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "copyIntoProductionEvidence" in readme
     assert "network-unavailable `TypeError`" in readme
     assert "tool_call_from_hook_payload" in readme
+    assert "tool_calls_from_hook_payload" in readme
     assert "gove-zone gate --policy-bundle" in readme
+    assert "one receipt per recognized child call" in readme
     assert "pending-external" in readme
 
 

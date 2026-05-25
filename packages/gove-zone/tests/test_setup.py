@@ -290,6 +290,80 @@ def test_cli_gate_policy_bundle_blocks_openai_responses_output_shape(
     assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
 
 
+def test_cli_gate_policy_bundle_blocks_one_denied_call_inside_openai_batch(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "goal": "Persist deploy artifacts",
+                "state": {"trust_tier": "analyst"},
+                "tool_calls": [
+                    {
+                        "id": "call_safe",
+                        "type": "function",
+                        "function": {
+                            "name": "shell.run",
+                            "arguments": json.dumps(
+                                {
+                                    "path": "scripts/verify.sh",
+                                    "command": "make verify",
+                                }
+                            ),
+                        },
+                    },
+                    {
+                        "id": "call_secret",
+                        "type": "function",
+                        "function": {
+                            "name": "file.write",
+                            "arguments": json.dumps(
+                                {
+                                    "path": "repo/secrets/api-key.txt",
+                                    "content": "secret",
+                                }
+                            ),
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cli.main(
+        [
+            "gate",
+            "--event-file",
+            str(event_path),
+            "--actor",
+            "openai-chat",
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["blocked"] is True
+    assert payload["decision"] == "deny"
+    assert payload["receipt_count"] == 2
+    assert [receipt["tool"] for receipt in payload["receipts"]] == [
+        "runtime.shell.run",
+        "runtime.file.write",
+    ]
+    assert payload["receipt"]["actor"] == "openai-chat"
+    assert payload["receipt"]["tool"] == "runtime.file.write"
+    assert payload["receipt"]["path"] == ["repo", "secrets", "api-key.txt"]
+    assert payload["receipt"]["goal"] == "Persist deploy artifacts"
+    assert payload["receipt"]["state_hash"]
+    assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
+
+
 def test_cli_gate_policy_bundle_allows_langchain_tool_calls_shape(
     in_project: Path,
     tmp_path: Path,

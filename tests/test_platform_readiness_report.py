@@ -36,8 +36,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["production-evidence-template-local"].status == "pass"
     assert "pending-external" in by_id["production-evidence-template-local"].evidence
     assert (
-        "verified assurance detail fields"
-        in by_id["production-evidence-template-local"].evidence
+        "verified assurance detail fields" in by_id["production-evidence-template-local"].evidence
     )
     assert by_id["production-live-verifier-local"].status == "pass"
     assert "verify:production-live" in by_id["production-live-verifier-local"].evidence
@@ -87,9 +86,11 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["runtime-framework-bridge-local"].status == "pass"
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence
+    assert "batched tool-call" in by_id["runtime-framework-bridge-local"].evidence
     assert by_id["runtime-policy-gate-local"].status == "pass"
     assert "RuleSetPolicy" in by_id["runtime-policy-gate-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-policy-gate-local"].evidence
+    assert "batched event" in by_id["runtime-policy-gate-local"].evidence
     assert by_id["buyer-evidence-ci-artifact"].status == "pass"
     assert by_id["storybook-runtime-plan-local"].status == "pass"
     assert "pending-external" in by_id["storybook-runtime-plan-local"].evidence
@@ -113,18 +114,9 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         "test:hosted-storybook-proof-template"
         in by_id["hosted-storybook-proof-intake-local"].command
     )
-    assert (
-        "validate:hosted-storybook-proof"
-        in by_id["hosted-storybook-proof-intake-local"].command
-    )
-    assert (
-        "completed-proof checks"
-        in by_id["hosted-storybook-proof-intake-local"].evidence
-    )
-    assert (
-        "visual-diff evidence"
-        in by_id["hosted-storybook-proof-intake-local"].evidence
-    )
+    assert "validate:hosted-storybook-proof" in by_id["hosted-storybook-proof-intake-local"].command
+    assert "completed-proof checks" in by_id["hosted-storybook-proof-intake-local"].evidence
+    assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
     assert (

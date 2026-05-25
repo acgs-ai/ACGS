@@ -25,6 +25,7 @@ from gove_zone.integration import (
     emit_receipt_for_hook,
     resolve_audit_path,
     tool_call_from_hook_payload,
+    tool_calls_from_hook_payload,
 )
 
 
@@ -280,6 +281,85 @@ def test_tool_call_from_hook_payload_batches_multiple_tool_calls_without_selecti
     summary = call.args["summary"]
     assert summary["tool_call_count"] == 2
     assert summary["tool_call_names"]["type"] == "list"
+
+
+def test_tool_calls_from_hook_payload_expands_batched_tool_calls_for_policy_gate() -> None:
+    calls = tool_calls_from_hook_payload(
+        {
+            "goal": "Persist governed launch artifacts",
+            "state": {"trust_tier": "analyst"},
+            "tool_calls": [
+                {
+                    "id": "call_shell",
+                    "type": "function",
+                    "function": {
+                        "name": "shell.run",
+                        "arguments": json.dumps(
+                            {"path": "scripts/verify.sh", "command": "make verify"}
+                        ),
+                    },
+                },
+                {
+                    "id": "call_file",
+                    "type": "function",
+                    "function": {
+                        "name": "file.write",
+                        "arguments": json.dumps(
+                            {"path": "repo/secrets/api-key.txt", "content": "secret"}
+                        ),
+                    },
+                },
+            ],
+        },
+        action_kind="tool-call-batch",
+        actor="openai-chat",
+    )
+
+    assert [call.name for call in calls] == ["runtime.shell.run", "runtime.file.write"]
+    assert [call.path for call in calls] == [
+        ("scripts", "verify.sh"),
+        ("repo", "secrets", "api-key.txt"),
+    ]
+    assert {call.goal for call in calls} == {"Persist governed launch artifacts"}
+    assert {call.actor for call in calls} == {"openai-chat"}
+    assert all(call.state == {"trust_tier": "analyst"} for call in calls)
+
+
+def test_tool_calls_from_hook_payload_expands_batched_openai_responses_output() -> None:
+    calls = tool_calls_from_hook_payload(
+        {
+            "response": {
+                "intent": "Persist governed launch artifacts",
+                "context": {"trust_tier": "analyst"},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "shell.run",
+                        "arguments": json.dumps(
+                            {"path": "scripts/verify.sh", "command": "make verify"}
+                        ),
+                    },
+                    {
+                        "type": "function_call",
+                        "name": "file.write",
+                        "arguments": json.dumps(
+                            {"path": "repo/secrets/api-key.txt", "content": "secret"}
+                        ),
+                    },
+                ],
+            }
+        },
+        action_kind="responses-output-batch",
+        actor="openai-responses",
+    )
+
+    assert [call.name for call in calls] == ["runtime.shell.run", "runtime.file.write"]
+    assert [call.path for call in calls] == [
+        ("scripts", "verify.sh"),
+        ("repo", "secrets", "api-key.txt"),
+    ]
+    assert {call.goal for call in calls} == {"Persist governed launch artifacts"}
+    assert all(call.state == {"trust_tier": "analyst"} for call in calls)
 
 
 def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> None:

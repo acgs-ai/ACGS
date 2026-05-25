@@ -40,7 +40,9 @@ from gove_zone.integration import (
     GateMode,
     GateModeError,
     emit_receipt_for_hook,
+    emit_receipts_for_hook,
     tool_call_from_hook_payload,
+    tool_calls_from_hook_payload,
 )
 from gove_zone.kernel import Kernel
 from gove_zone.policy import (
@@ -97,6 +99,7 @@ __all__ = [
     "__version__",
     "agentdojo_scenarios_from_fixture",
     "emit_receipt_for_hook",
+    "emit_receipts_for_hook",
     "evaluate_policy_scenarios",
     "injecagent_scenarios_from_fixture",
     "load_benchmark_suite",
@@ -113,4 +116,5 @@ __all__ = [
     "safe_result_hash",
     "sha256_json",
     "tool_call_from_hook_payload",
+    "tool_calls_from_hook_payload",
 ]

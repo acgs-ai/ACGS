@@ -480,9 +480,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             == "REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT"
             and "REPLACE_WITH_NVDA_EVIDENCE"
             in template_payload.get("assurance", {}).get("wcagManual", {}).get("assistiveTech", [])
-            and template_payload.get("assurance", {})
-            .get("browserScreenshots", {})
-            .get("bundleRef")
+            and template_payload.get("assurance", {}).get("browserScreenshots", {}).get("bundleRef")
             == "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH"
             and template_payload.get("verification", {}).get("postdeployCommand")
             == "pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai"
@@ -1486,6 +1484,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         ),
         [
             "tool_call_from_hook_payload",
+            "tool_calls_from_hook_payload",
             'method": "tools/call"',
             "function_call",
             "output",
@@ -1495,6 +1494,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "LangChain-style",
             "Claude/Codex-style",
             "MCP-style",
+            "receipt_count",
         ],
     )
     items.append(
@@ -1505,7 +1505,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "gove-zone bridge normalizes Claude/Codex, MCP, function-call, "
                 "OpenAI Responses output function_call items, OpenAI Chat tool_calls, "
-                "LangChain-style tool_calls, and generic payloads"
+                "LangChain-style tool_calls, generic payloads, and batched tool-call "
+                "events without letting one denied child hide inside a batch"
                 if runtime_bridge_files_ok and runtime_bridge_ok
                 else (
                     f"missing_files={runtime_bridge_missing}, "
@@ -1536,6 +1537,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "OpenAI Responses-style",
             "OpenAI Chat-style",
             "LangChain-style",
+            "receipt_count",
         ],
     )
     items.append(
@@ -1546,7 +1548,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "gove-zone gate loads RuleSetPolicy bundles, covers OpenAI Responses, "
                 "OpenAI Chat, and LangChain tool-call payloads, and exits non-zero "
-                "on deny/escalate"
+                "on deny/escalate, including one denied child inside a batched event"
                 if runtime_policy_gate_ok
                 else f"missing_parts={runtime_policy_gate_missing_parts}"
             ),

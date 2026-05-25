@@ -59,13 +59,16 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"README.md","new_string":"
   | uv run --package gove-zone gove-zone gate --actor smoke
 ```
 
-The adapter also exposes `tool_call_from_hook_payload` for dependency-free
+The adapter also exposes `tool_call_from_hook_payload` and
+`tool_calls_from_hook_payload` for dependency-free
 Claude/Codex-style, MCP-style `tools/call`, function-call-style, OpenAI Chat
-`tool_calls`, LangChain-style `tool_calls`, and generic agent-framework bridge
-payload normalization before receipts are emitted.
+`tool_calls`, OpenAI Responses, LangChain-style `tool_calls`, generic
+agent-framework bridge payload normalization, and batched tool-call expansion
+before receipts are emitted.
 For enforceable hook hosts, run `gove-zone gate --policy-bundle
-policy.bundle.json < event.json`; the gate writes the receipt and exits
-non-zero for `deny` / `escalate` decisions before the side effect runs.
+policy.bundle.json < event.json`; the gate writes receipts and exits non-zero
+when any normalized child call returns `deny` / `escalate` before the side
+effect runs.
 
 The parent `.claude/settings.json` wires `.claude/hooks/acgs-emit-receipt.py` to
 Claude Code `PreToolUse` events for `Edit|Write|MultiEdit` and selected `Bash`

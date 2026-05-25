@@ -17,7 +17,7 @@ from gove_zone.integration import (
     GateMode,
     GateModeError,
     current_gate_mode,
-    emit_receipt_for_hook,
+    emit_receipts_for_hook,
     resolve_gate_mode_path,
 )
 from gove_zone.policy import RuleSetPolicy
@@ -141,7 +141,7 @@ def _gate(args: argparse.Namespace) -> int:
             return 2
 
     try:
-        receipt = emit_receipt_for_hook(
+        receipts = emit_receipts_for_hook(
             payload,
             action_kind=args.action_kind,
             actor=args.actor,
@@ -152,20 +152,29 @@ def _gate(args: argparse.Namespace) -> int:
         print(f"gate (enforce): {exc}", file=sys.stderr)
         return 2
 
-    blocked = receipt is not None and receipt.record.decision in {
-        Decision.DENY,
-        Decision.ESCALATE,
-    }
+    blocking_receipts = [
+        receipt
+        for receipt in (receipts or ())
+        if receipt.record.decision in {Decision.DENY, Decision.ESCALATE}
+    ]
+    primary_receipt = (
+        blocking_receipts[0] if blocking_receipts else (receipts[-1] if receipts else None)
+    )
+    blocked = bool(blocking_receipts)
     _emit(
         {
             "gate_mode": current_gate_mode().value,
             "policy_bundle": str(args.policy_bundle) if args.policy_bundle else None,
-            "decision": receipt.record.decision.value if receipt is not None else None,
+            "decision": (
+                primary_receipt.record.decision.value if primary_receipt is not None else None
+            ),
             "blocked": blocked,
-            "receipt": receipt.to_dict() if receipt is not None else None,
+            "receipt": primary_receipt.to_dict() if primary_receipt is not None else None,
+            "receipts": [receipt.to_dict() for receipt in (receipts or ())],
+            "receipt_count": len(receipts or ()),
         }
     )
-    if receipt is None:
+    if not receipts:
         return 1
     return 1 if blocked else 0
 

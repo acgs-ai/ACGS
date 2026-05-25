@@ -47,7 +47,9 @@ __all__ = [
     "resolve_audit_path",
     "resolve_gate_mode_path",
     "emit_receipt_for_hook",
+    "emit_receipts_for_hook",
     "tool_call_from_hook_payload",
+    "tool_calls_from_hook_payload",
     "GateModeError",
 ]
 
@@ -191,6 +193,57 @@ def _responses_function_call_items(payload: dict[str, Any]) -> list[dict[str, An
         for item in _response_output_items_from_payload(payload)
         if item.get("type") == "function_call" and item.get("name")
     ]
+
+
+def _with_top_level_runtime_context(
+    payload: dict[str, Any],
+    child: dict[str, Any],
+) -> dict[str, Any]:
+    """Carry batch-level goal/state context into one child tool-call item.
+
+    OpenAI Chat, OpenAI Responses, and LangChain-style runtimes can emit
+    multiple tool calls in one assistant turn. The authorization context often
+    lives beside the batch rather than inside each child item, so preserve it
+    before evaluating individual calls.
+    """
+    merged: dict[str, Any] = {}
+    response_value = payload.get("response")
+    response = cast(dict[str, Any], response_value) if isinstance(response_value, dict) else {}
+    for source in (payload, response):
+        for key in ("goal", "intent", "purpose", "state", "context"):
+            if key in source and key not in merged:
+                merged[key] = source[key]
+    merged.update(child)
+    return merged
+
+
+def _individual_tool_payloads_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Expand recognizable multi-call runtime batches into child payloads.
+
+    ``tool_call_from_hook_payload`` intentionally preserves the historical
+    single-call contract by returning a synthetic ``*.batch`` summary for
+    multiple calls. The policy gate, however, must evaluate every proposed
+    side effect. This helper returns the child payloads for known multi-call
+    shapes and falls back to the original payload for single-call or unknown
+    shapes.
+    """
+    responses_function_calls = _responses_function_call_items(payload)
+    if len(responses_function_calls) > 1:
+        return tuple(
+            _with_top_level_runtime_context(payload, item) for item in responses_function_calls
+        )
+
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, list) and len(tool_calls) > 1:
+        children = [
+            _with_top_level_runtime_context(payload, cast(dict[str, Any], item))
+            for item in tool_calls
+            if isinstance(item, dict)
+        ]
+        if children:
+            return tuple(children)
+
+    return (payload,)
 
 
 def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -402,6 +455,25 @@ def tool_call_from_hook_payload(
     )
 
 
+def tool_calls_from_hook_payload(
+    payload: dict[str, Any],
+    *,
+    action_kind: str,
+    actor: str,
+) -> tuple[ToolCall, ...]:
+    """Normalize a runtime event into one or more governed ``ToolCall`` objects.
+
+    Single-call payloads return one call. Recognized multi-call OpenAI
+    Responses/OpenAI Chat/LangChain-style batches return one call per proposed
+    tool invocation so policy-bundle evaluation cannot be bypassed by wrapping
+    a denied operation in a batch.
+    """
+    return tuple(
+        tool_call_from_hook_payload(child, action_kind=action_kind, actor=actor)
+        for child in _individual_tool_payloads_from_payload(payload)
+    )
+
+
 class _ObserverPolicy(Policy):
     """Default policy for runtime-hook adapter: every call ALLOWED.
 
@@ -430,6 +502,81 @@ class _ObserverPolicy(Policy):
         )
 
 
+def _decision_record_for_call(
+    call: ToolCall,
+    *,
+    action_kind: str,
+    active_policy: Policy,
+) -> DecisionRecord:
+    try:
+        record = active_policy.evaluate(call)
+    except Exception as exc:  # noqa: BLE001 — fail-closed on policy error
+        record = DecisionRecord(
+            decision=Decision.DENY,
+            tool=call.name,
+            argument_hash=call.argument_hash(),
+            policy_version=getattr(active_policy, "version", "unknown"),
+            event_id=new_event_id(),
+            matched_rules=(f"action_kind:{action_kind}", "policy_error"),
+            reason=f"policy raised: {type(exc).__name__}: {exc}",
+        )
+    return dataclasses.replace(
+        record,
+        goal=call.goal,
+        actor=call.actor,
+        path=call.path,
+        state_hash=call.state_hash(),
+        decision_request_hash=call.decision_request_hash(),
+    )
+
+
+def emit_receipts_for_hook(
+    payload: dict[str, Any],
+    *,
+    action_kind: str,
+    actor: str,
+    run_id: str | None = None,
+    policy: Policy | None = None,
+) -> tuple[Receipt, ...] | None:
+    """Emit governance receipts for every proposed call in a runtime event.
+
+    This is the batch-aware variant used by CLI gate enforcement. It preserves
+    the same observe/enforce failure semantics as ``emit_receipt_for_hook``.
+    """
+    mode = current_gate_mode()
+    active_policy = policy if policy is not None else _ObserverPolicy(action_kind)
+    try:
+        calls = tool_calls_from_hook_payload(payload, action_kind=action_kind, actor=actor)
+        audit_path = resolve_audit_path()
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        store = ChainHashAuditStore(str(audit_path))
+        receipts: list[Receipt] = []
+        for call in calls:
+            record = _decision_record_for_call(
+                call,
+                action_kind=action_kind,
+                active_policy=active_policy,
+            )
+            event = store.append(record)
+            receipts.append(
+                Receipt(
+                    record=record,
+                    audit_hash=str(event.get("event_hash", "")),
+                    actor=call.actor,
+                    result_hash=None,
+                    error_class=None,
+                )
+            )
+        return tuple(receipts)
+    except Exception as exc:  # noqa: BLE001 — adapter boundary
+        if mode is GateMode.ENFORCE:
+            raise GateModeError(
+                f"receipt emission failed under enforce mode: {exc!r} "
+                f"(action_kind={action_kind}, actor={actor}, run_id={run_id})"
+            ) from exc
+        return None
+
+
 def emit_receipt_for_hook(
     payload: dict[str, Any],
     *,
@@ -438,7 +585,7 @@ def emit_receipt_for_hook(
     run_id: str | None = None,
     policy: Policy | None = None,
 ) -> Receipt | None:
-    """Emit one governance receipt for a runtime-hook event.
+    """Emit the primary governance receipt for a runtime-hook event.
 
     Uses the supplied :class:`~gove_zone.policy.Policy` to produce the
     :class:`Decision`. Default is an observer that always emits
@@ -446,7 +593,8 @@ def emit_receipt_for_hook(
     deny). Pass a custom policy to surface DENY/TRANSFORM/ESCALATE
     decisions in the audit chain.
 
-    Returns the :class:`Receipt` on success.
+    Returns the blocking receipt for batch events when any child is denied or
+    escalated; otherwise returns the final emitted receipt for compatibility.
 
     In :attr:`GateMode.OBSERVE` (default), returns ``None`` on any internal
     failure — preserving existing fail-open behavior.
@@ -455,45 +603,16 @@ def emit_receipt_for_hook(
     that would have been swallowed. Callers must propagate the failure
     (exit non-zero in a hook context).
     """
-    mode = current_gate_mode()
-    active_policy = policy if policy is not None else _ObserverPolicy(action_kind)
-    try:
-        call = tool_call_from_hook_payload(payload, action_kind=action_kind, actor=actor)
-        try:
-            record = active_policy.evaluate(call)
-        except Exception as exc:  # noqa: BLE001 — fail-closed on policy error
-            record = DecisionRecord(
-                decision=Decision.DENY,
-                tool=call.name,
-                argument_hash=call.argument_hash(),
-                policy_version=getattr(active_policy, "version", "unknown"),
-                event_id=new_event_id(),
-                matched_rules=(f"action_kind:{action_kind}", "policy_error"),
-                reason=f"policy raised: {type(exc).__name__}: {exc}",
-            )
-        record = dataclasses.replace(
-            record,
-            goal=call.goal,
-            actor=call.actor,
-            path=call.path,
-            state_hash=call.state_hash(),
-            decision_request_hash=call.decision_request_hash(),
-        )
-        audit_path = resolve_audit_path()
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        store = ChainHashAuditStore(str(audit_path))
-        event = store.append(record)
-        return Receipt(
-            record=record,
-            audit_hash=str(event.get("event_hash", "")),
-            actor=actor,
-            result_hash=None,
-            error_class=None,
-        )
-    except Exception as exc:  # noqa: BLE001 — adapter boundary
-        if mode is GateMode.ENFORCE:
-            raise GateModeError(
-                f"receipt emission failed under enforce mode: {exc!r} "
-                f"(action_kind={action_kind}, actor={actor}, run_id={run_id})"
-            ) from exc
+    receipts = emit_receipts_for_hook(
+        payload,
+        action_kind=action_kind,
+        actor=actor,
+        run_id=run_id,
+        policy=policy,
+    )
+    if not receipts:
         return None
+    for receipt in receipts:
+        if receipt.record.decision in {Decision.DENY, Decision.ESCALATE}:
+            return receipt
+    return receipts[-1]

@@ -241,8 +241,8 @@ The adapter:
   `{type: "function_call", name, arguments}`, OpenAI Responses-style
   `{output: [{type: "function_call", name, arguments}]}`, OpenAI Chat-style
   `{tool_calls: [{function: {name, arguments}}]}`, LangChain-style
-  `{tool_calls: [{name, args}]}`, and generic `{name, arguments|args|input}`
-  bridges.
+  `{tool_calls: [{name, args}]}`, multi-call batches for those shapes, and
+  generic `{name, arguments|args|input}` bridges.
 - Appends a `DecisionRecord` to the audit JSONL chain at the resolved path.
 - Returns a `Receipt` carrying the audit anchor hash.
 
@@ -258,6 +258,10 @@ call = tool_call_from_hook_payload(
     actor="my-framework",
 )
 ```
+
+For runtime events that contain multiple proposed tool calls, use
+`tool_calls_from_hook_payload(...)` to expand the batch into one
+`ToolCall` per side effect before policy evaluation.
 
 **Decisions.** The adapter is observer-by-default: it emits an
 `Decision.ALLOW` receipt because the host runtime (Claude Code, Codex)
@@ -298,15 +302,16 @@ gove-zone gate < event.json   # run one hook payload through the adapter
 gove-zone gate --policy-bundle policy.bundle.json < event.json
 ```
 
-`gove-zone gate --policy-bundle ...` loads a `RuleSetPolicy`, writes the
-receipt, and exits non-zero for `deny` / `escalate` decisions so hook hosts can
-block the proposed side effect before it runs. The gate accepts the same
-normalized hook payloads as the adapter, including OpenAI Responses-style
+`gove-zone gate --policy-bundle ...` loads a `RuleSetPolicy`, writes receipts,
+and exits non-zero for any `deny` / `escalate` decision so hook hosts can block
+the proposed side effect before it runs. The gate accepts the same normalized
+hook payloads as the adapter, including batched OpenAI Responses-style
 `output[]` function-call items, OpenAI Chat `tool_calls` with JSON-string
-`function.arguments`, and LangChain-style `tool_calls` with `args`, so framework
-bridges can test the exact pre-execution policy path from the CLI. Invalid
-policy bundles also exit non-zero; this is a hook configuration failure, not an
-allow.
+`function.arguments`, and LangChain-style `tool_calls` with `args`. Batched
+events are expanded into one governed receipt per child tool call; a single
+denied child blocks the whole event and is surfaced as the primary `receipt`
+alongside `receipts[]` and `receipt_count`. Invalid policy bundles also exit
+non-zero; this is a hook configuration failure, not an allow.
 
 ## End-to-end demo
 
