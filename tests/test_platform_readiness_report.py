@@ -68,6 +68,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["production-launch-preflight-local"].status == "pass"
     assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence
     assert "clean commit" in by_id["production-launch-preflight-local"].evidence
+    assert "proof-intake artifacts" in by_id["production-launch-preflight-local"].evidence
     assert "not production deployment proof" in by_id["production-launch-preflight-local"].evidence
     assert by_id["fixture-fallback-fail-closed-local"].status == "pass"
     assert "network-unavailable" in by_id["fixture-fallback-fail-closed-local"].evidence

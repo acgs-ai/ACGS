@@ -110,7 +110,10 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "requiredActions" in production_launch_preflight["outputFields"]
     assert "repository" in production_launch_preflight["outputFields"]
     assert "externalBlockerIds" in production_launch_preflight["outputFields"]
+    assert "externalBlockers" in production_launch_preflight["outputFields"]
+    assert "proofIntakeArtifacts" in production_launch_preflight["outputFields"]
     assert "current clean commit" in production_launch_preflight["claimBoundary"]
+    assert "proof-intake artifacts" in production_launch_preflight["claimBoundary"]
     assert "does not deploy" in production_launch_preflight["claimBoundary"]
     assert production_authority["templatePath"] == "acgi-ai/production-authority.example.json"
     assert (
@@ -331,6 +334,7 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "production evidence chain" in readme
     assert "production_launch_preflight.py" in readme
     assert "make production-launch-preflight" in readme
+    assert "proofIntakeArtifacts" in readme
     assert "make production-blocker-evidence" in readme
     assert "build_production_blocker_evidence.py" in readme
     assert "production-launch-preflight.json" in readme

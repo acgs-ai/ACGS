@@ -1090,6 +1090,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "requiredActions",
             "refresh-release-evidence-clean-commit",
             "externalBlockerIds",
+            "externalBlockers",
+            "proofIntakeArtifacts",
+            "productionAuthorityPacket",
+            "hostedStorybookProofTemplate",
             "repository",
             "not production deployment proof",
             "does not deploy",
@@ -1105,7 +1109,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "production launch preflight converts the release-evidence manifest "
                 "into a ready/blocked decision with requiredActions, live verifier, "
-                "evidence-chain, clean commit freshness, and externalBlockerIds while "
+                "evidence-chain, clean commit freshness, externalBlockerIds, "
+                "external blocker details, and proof-intake artifacts while "
                 "preserving the not production deployment proof boundary"
                 if production_launch_preflight_files_ok and production_launch_preflight_ok
                 else (

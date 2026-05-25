@@ -549,11 +549,14 @@ runs `scripts/production_launch_preflight.py` against
 `dist-release-evidence/manifest.json`. The preflight emits a conservative
 `production-launch-preflight` ready/blocked decision with `requiredActions`,
 repository freshness, live verifier state, production evidence chain state,
-validation state, and `externalBlockerIds`. Current local output is expected to
-stay `blocked` until the release-evidence manifest was generated from the
-current clean commit and external deploy authority, DNS/auth proof, hosted
-Storybook proof, and assurance evidence are attached. The preflight does not
-deploy, mutate DNS, approve release authority, or create live production proof.
+validation state, `externalBlockerIds`, full `externalBlockers`, and
+`proofIntakeArtifacts` that point each external blocker at the local proof
+template or command to replace with signed/live evidence. Current local output
+is expected to stay `blocked` until the release-evidence manifest was generated
+from the current clean commit and external deploy authority, DNS/auth proof,
+hosted Storybook proof, and assurance evidence are attached. The preflight does
+not deploy, mutate DNS, approve release authority, or create live production
+proof.
 
 `make production-blocker-evidence` runs
 `scripts/build_production_blocker_evidence.py`, the one-command operator wrapper

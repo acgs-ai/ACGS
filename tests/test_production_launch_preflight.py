@@ -24,10 +24,33 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
     assert "not production deployment proof" in preflight["claimBoundary"]
     assert "hosted-storybook-buyer-evidence" in preflight["pendingItemIds"]
     assert "hosted-storybook-buyer-evidence" in preflight["externalBlockerIds"]
+    assert "productionEvidenceTemplate" in preflight["proofIntakeArtifacts"]
+    assert (
+        preflight["proofIntakeArtifacts"]["productionEvidenceTemplate"]["templatePath"]
+        == "acgi-ai/production-evidence.example.json"
+    )
+    storybook_blocker = next(
+        blocker
+        for blocker in preflight["externalBlockers"]
+        if blocker["blockerId"] == "hosted-storybook-buyer-evidence"
+    )
+    assert "hostedStorybookProofTemplate" in storybook_blocker["proofIntakeArtifactIds"]
     assert preflight["productionEvidenceChain"]["status"] in {"consistent", "needs-refresh"}
     action_ids = {action["id"] for action in preflight["requiredActions"]}
     assert "clear-local-readiness-pending-items" in action_ids
     assert "replace-external-blockers-with-proof" in action_ids
+    external_action = next(
+        action
+        for action in preflight["requiredActions"]
+        if action["id"] == "replace-external-blockers-with-proof"
+    )
+    assert "externalBlockers" in external_action["evidence"]
+    assert (
+        external_action["evidence"]["proofIntakeArtifacts"]["productionAuthorityPacket"][
+            "templatePath"
+        ]
+        == "acgi-ai/production-authority.example.json"
+    )
 
 
 def _mark_manifest_locally_ready(manifest: dict) -> dict:
@@ -69,6 +92,7 @@ def test_ready_manifest_requires_no_pending_live_chain_validation_or_external_bl
     assert preflight["status"] == "ready"
     assert preflight["requiredActions"] == []
     assert preflight["externalBlockerIds"] == []
+    assert preflight["externalBlockers"] == []
 
 
 def test_preflight_blocks_stale_or_dirty_release_evidence_snapshot():

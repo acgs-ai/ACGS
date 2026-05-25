@@ -590,10 +590,13 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "productionLive",
                     "productionEvidenceChain",
                     "externalBlockerIds",
+                    "externalBlockers",
+                    "proofIntakeArtifacts",
                 ],
                 "claimBoundary": (
                     "local release-evidence preflight only; reports ready/blocked "
                     "state and requires a current clean commit evidence snapshot, "
+                    "carries proof-intake artifacts for every external blocker, "
                     "but does not deploy, mutate DNS, approve release authority, "
                     "or create live production proof"
                 ),
@@ -1120,8 +1123,11 @@ live production proof.
   and emits a conservative ready/blocked production launch preflight. `make
   production-launch-preflight` refreshes the release evidence first and reports
   the current blocked state without deploying, mutating DNS, or creating live
-  production proof. Use `--require-ready` only after external deploy, authority,
-  hosted Storybook, and assurance evidence is attached.
+  production proof. Its JSON includes `externalBlockers` and
+  `proofIntakeArtifacts` so each deploy, authority, hosted Storybook, and
+  assurance blocker points at the local template or command that must be
+  replaced by external proof. Use `--require-ready` only after external deploy,
+  authority, hosted Storybook, and assurance evidence is attached.
 - `scripts/build_production_blocker_evidence.py` is the operator wrapper for
   refreshing a deployment-blocked evidence packet. `make production-blocker-evidence`
   builds the buyer-evidence gallery, runs or copies `verify:production-live`

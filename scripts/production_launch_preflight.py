@@ -41,6 +41,75 @@ def _blocker(action_id: str, title: str, evidence: Any) -> dict[str, Any]:
     return {"id": action_id, "title": title, "evidence": evidence}
 
 
+def _compact_artifact(artifact: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    return {key: artifact[key] for key in keys if key in artifact and artifact[key] is not None}
+
+
+def _proof_intake_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Return the local templates/operators that can replace external blockers."""
+
+    return {
+        "productionLaunchHandoff": _compact_artifact(
+            _dict(artifacts.get("productionLaunchHandoff")),
+            ["handoff", "proofCommand", "claimBoundary"],
+        ),
+        "productionAuthorityPacket": _compact_artifact(
+            _dict(artifacts.get("productionAuthorityPacket")),
+            [
+                "templatePath",
+                "proofCommand",
+                "templateStatus",
+                "requiredApprovalIds",
+                "claimBoundary",
+            ],
+        ),
+        "productionEvidenceTemplate": _compact_artifact(
+            _dict(artifacts.get("productionEvidenceTemplate")),
+            ["templatePath", "proofCommand", "templateStatus", "claimBoundary"],
+        ),
+        "productionLiveVerifier": _compact_artifact(
+            _dict(artifacts.get("productionLiveVerifier")),
+            ["liveProofCommand", "savedOutputCommand", "targets", "claimBoundary"],
+        ),
+        "hostedStorybookProofTemplate": _compact_artifact(
+            _dict(artifacts.get("hostedStorybookProofTemplate")),
+            [
+                "templatePath",
+                "proofCommand",
+                "templateStatus",
+                "requiredPassingCheckIds",
+                "requiredAbsentBlockerIds",
+                "claimBoundary",
+            ],
+        ),
+    }
+
+
+def _proof_intake_ids_for_blocker(blocker_id: str) -> list[str]:
+    mapping = {
+        "production-deployment": [
+            "productionLaunchHandoff",
+            "productionAuthorityPacket",
+            "productionEvidenceTemplate",
+            "productionLiveVerifier",
+        ],
+        "frontend-production-auth": [
+            "productionAuthorityPacket",
+            "productionEvidenceTemplate",
+            "productionLiveVerifier",
+        ],
+        "legal-review-of-claim-matrix": ["productionEvidenceTemplate"],
+        "third-party-penetration-test": ["productionEvidenceTemplate"],
+        "full-wcag-manual-screen-reader-evidence": ["productionEvidenceTemplate"],
+        "hosted-storybook-buyer-evidence": [
+            "hostedStorybookProofTemplate",
+            "productionEvidenceTemplate",
+            "productionLiveVerifier",
+        ],
+    }
+    return mapping.get(blocker_id, ["productionEvidenceTemplate"])
+
+
 def _git(args: list[str], repo_root: Path = REPO_ROOT) -> str | None:
     try:
         return subprocess.check_output(
@@ -92,9 +161,7 @@ def build_preflight(
 
     manifest_repository = _dict(manifest.get("repository"))
     current_repository = (
-        _current_repository_snapshot()
-        if current_repository is None
-        else _dict(current_repository)
+        _current_repository_snapshot() if current_repository is None else _dict(current_repository)
     )
     repository_issues = _repository_freshness_issues(
         manifest_repository,
@@ -117,11 +184,19 @@ def build_preflight(
         _dict(artifacts.get("productionEvidenceValidation")).get("latestValidationSnapshot")
     )
 
-    external_blockers = [
-        blocker
-        for blocker in manifest.get("externalBlockers", [])
-        if isinstance(blocker, dict) and blocker.get("blockerId")
-    ]
+    proof_intake_artifacts = _proof_intake_artifacts(artifacts)
+    external_blockers = []
+    for blocker in manifest.get("externalBlockers", []):
+        if not isinstance(blocker, dict) or not blocker.get("blockerId"):
+            continue
+        blocker_id = str(blocker["blockerId"])
+        external_blockers.append(
+            {
+                **blocker,
+                "blockerId": blocker_id,
+                "proofIntakeArtifactIds": _proof_intake_ids_for_blocker(blocker_id),
+            }
+        )
     external_blocker_ids = [str(blocker["blockerId"]) for blocker in external_blockers]
     live_blockers = _strings(live_snapshot.get("blockers"))
     chain_issues = _strings(chain_snapshot.get("issues"))
@@ -201,7 +276,11 @@ def build_preflight(
             _blocker(
                 "replace-external-blockers-with-proof",
                 "Attach external deployment, authority, assurance, and hosted proof before launch.",
-                {"externalBlockerIds": external_blocker_ids},
+                {
+                    "externalBlockerIds": external_blocker_ids,
+                    "externalBlockers": external_blockers,
+                    "proofIntakeArtifacts": proof_intake_artifacts,
+                },
             )
         )
 
@@ -240,6 +319,8 @@ def build_preflight(
             "failingCheckIds": validation_failures,
         },
         "externalBlockerIds": external_blocker_ids,
+        "externalBlockers": external_blockers,
+        "proofIntakeArtifacts": proof_intake_artifacts,
         "requiredActions": required_actions,
     }
 
@@ -250,25 +331,37 @@ def render_markdown(preflight: dict[str, Any]) -> str:
         if isinstance(preflight.get("requiredActions"), list)
         else []
     )
-    action_lines = "\n".join(
-        f"- `{action['id']}` — {action['title']}"
-        for action in actions
-        if isinstance(action, dict) and action.get("id")
-    ) or "- None. Verify live launch authority before deployment."
+    action_lines = (
+        "\n".join(
+            f"- `{action['id']}` — {action['title']}"
+            for action in actions
+            if isinstance(action, dict) and action.get("id")
+        )
+        or "- None. Verify live launch authority before deployment."
+    )
     blockers = ", ".join(preflight.get("externalBlockerIds", [])) or "none"
+    proof_intakes = _dict(preflight.get("proofIntakeArtifacts"))
+    proof_intake_refs = ", ".join(
+        str(meta.get("templatePath") or meta.get("handoff") or meta.get("liveProofCommand"))
+        for meta in proof_intakes.values()
+        if isinstance(meta, dict)
+        and (meta.get("templatePath") or meta.get("handoff") or meta.get("liveProofCommand"))
+    )
+    proof_intake_refs = proof_intake_refs or "none"
     return f"""# Production launch preflight
 
-Status: `{preflight['status']}`
+Status: `{preflight["status"]}`
 
-{preflight['claimBoundary']}
+{preflight["claimBoundary"]}
 
-- Manifest: `{preflight['manifestPath']}`
-- Repository freshness: `{preflight['repository'].get('issues') or 'current clean commit'}`
-- Readiness: `{preflight['readinessSummary']}`
-- Pending items: `{', '.join(preflight['pendingItemIds']) or 'none'}`
-- Live verifier status: `{preflight['productionLive'].get('status')}`
-- Production evidence chain: `{preflight['productionEvidenceChain'].get('status')}`
+- Manifest: `{preflight["manifestPath"]}`
+- Repository freshness: `{preflight["repository"].get("issues") or "current clean commit"}`
+- Readiness: `{preflight["readinessSummary"]}`
+- Pending items: `{", ".join(preflight["pendingItemIds"]) or "none"}`
+- Live verifier status: `{preflight["productionLive"].get("status")}`
+- Production evidence chain: `{preflight["productionEvidenceChain"].get("status")}`
 - External blockers: `{blockers}`
+- Proof intake artifacts: `{proof_intake_refs}`
 
 ## Required actions
 
