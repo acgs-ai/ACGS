@@ -55,3 +55,13 @@ def test_current_readiness_evidence_docs_track_live_summary() -> None:
     assert current_summary in matrix
     assert "30/31 pass" not in packet
     assert "30/31 pass" not in matrix
+
+
+def test_integration_readiness_task_map_uses_generated_branch_proof() -> None:
+    readiness = (ROOT / "docs" / "integration-readiness-task-map.md").read_text()
+
+    assert "make release-evidence" in readiness
+    assert "make production-launch-preflight" in readiness
+    assert "branch or deployment proof" in readiness
+    assert "feat/acgs-conductor-adapter-spike" not in readiness
+    assert "Scope: current checkout at" not in readiness

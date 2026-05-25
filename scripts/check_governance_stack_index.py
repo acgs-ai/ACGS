@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "docs" / "governance-stack-index.md"
+INTEGRATION_MAP = ROOT / "docs" / "integration-readiness-task-map.md"
 
 REQUIRED_PATHS = (
     "packages/gove-zone/",
@@ -48,6 +49,22 @@ FORBIDDEN_CLAIMS = (
     "TBD package-local gate",
 )
 
+INTEGRATION_MAP_REQUIRED_CONCEPTS = (
+    "make release-evidence",
+    "make platform-readiness",
+    "make production-launch-preflight",
+    "branch or deployment proof",
+    "Valid deferrals / external blockers",
+    "Hosted Storybook buyer evidence",
+    "Node 22 warning is not readiness evidence",
+    "make production-blocker-evidence",
+)
+
+INTEGRATION_MAP_FORBIDDEN_STALE_SCOPE = (
+    "feat/acgs-conductor-adapter-spike",
+    "Scope: current checkout at",
+)
+
 MAIN_TABLE_HEADER = (
     "| Layer | Package/path | Policy/evidence contract | "
     "Primary local gate | Live/deploy proof status |"
@@ -58,12 +75,27 @@ def main() -> int:
     if not INDEX.exists():
         print(f"missing {INDEX.relative_to(ROOT)}")
         return 1
+    if not INTEGRATION_MAP.exists():
+        print(f"missing {INTEGRATION_MAP.relative_to(ROOT)}")
+        return 1
 
     text = INDEX.read_text(encoding="utf-8")
+    readiness_map = INTEGRATION_MAP.read_text(encoding="utf-8")
     failures: list[str] = []
 
     if not text.startswith("# Governance stack index"):
         failures.append("index must start with the expected H1")
+
+    if not readiness_map.startswith("# Integration readiness task map"):
+        failures.append("integration readiness map must start with the expected H1")
+
+    for concept in INTEGRATION_MAP_REQUIRED_CONCEPTS:
+        if concept not in readiness_map:
+            failures.append(f"integration readiness map missing required concept: {concept}")
+
+    for stale_scope in INTEGRATION_MAP_FORBIDDEN_STALE_SCOPE:
+        if stale_scope in readiness_map:
+            failures.append(f"integration readiness map has stale scope wording: {stale_scope}")
 
     for path in REQUIRED_PATHS:
         if f"`{path}`" not in text:

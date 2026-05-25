@@ -1,12 +1,15 @@
-# Integration readiness task map — 2026-05-24
+# Integration readiness task map — maintained through 2026-05-25
 
-Scope: current checkout at `/home/martin/finished work/govern-zone`, branch
-`feat/acgs-conductor-adapter-spike`.
+Scope: local readiness map for `/home/martin/finished work/govern-zone`.
+Current branch, commit, cleanliness, and readiness counts are generated evidence
+owned by `make release-evidence`, `make platform-readiness`, and
+`make production-launch-preflight`; do not treat this static map header as
+branch or deployment proof.
 
-This file records the discovered gap map for the current completion pass. It
-separates local integration/deployment readiness (can be verified in this
-checkout) from external-production work that requires credentials, live domains,
-legal review, or third-party services.
+This file records the discovered gap map for the completion pass. It separates
+local integration/deployment readiness (can be verified in this checkout) from
+external-production work that requires credentials, live domains, legal review,
+or third-party services.
 
 ## Completed in this pass
 
