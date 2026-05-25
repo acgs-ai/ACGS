@@ -41,6 +41,9 @@ select = ["E", "F", "I", "B", "UP", "RUF"]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
+markers = [
+    "benchmark: latency / throughput benchmarks (skippable with -m 'not benchmark')",
+]
 
 [tool.mypy]
 python_version = "3.11"
