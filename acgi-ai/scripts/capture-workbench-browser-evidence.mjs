@@ -53,6 +53,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'One screen for the next safe action',
   },
   {
+    id: 'console-decision-rail',
+    surface: 'console',
+    route: '/console/workbench#operator-decision-rail',
+    title: 'Console operator decision rail',
+    expectation:
+      'Operator can pick the case, inspect the path, and choose the bounded next action.',
+    expectedText: 'Pick the case',
+  },
+  {
     id: 'console-launch-proof-ladder',
     surface: 'console',
     route: '/console/workbench#launch-proof-ladder',

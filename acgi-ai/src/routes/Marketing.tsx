@@ -6,6 +6,7 @@ import {
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
   RESEARCH_INPUTS,
+  WORKBENCH_DECISION_RAIL,
   WORKBENCH_STAGES,
 } from './workbench-content'
 
@@ -318,6 +319,24 @@ export function Marketing() {
                     </li>
                   ))}
                 </ul>
+                <section
+                  className="m-workbench-decision"
+                  aria-labelledby="marketing-decision-rail-h"
+                >
+                  <span className="folio-no" id="marketing-decision-rail-h">
+                    Operator decision rail
+                  </span>
+                  <ol>
+                    {WORKBENCH_DECISION_RAIL.map(({ step, title, prompt, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <p>{prompt}</p>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
                 <section
                   className="m-workbench-checklist"
                   aria-labelledby="marketing-operator-start-h"

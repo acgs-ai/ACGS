@@ -5,6 +5,7 @@ import {
   EVIDENCE_ROWS,
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
+  WORKBENCH_DECISION_RAIL,
   WORKBENCH_STAGES,
 } from '../workbench-content'
 
@@ -106,6 +107,39 @@ export function Workbench() {
               <code>platform-blueprint-ui-local</code>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section
+        className="overview-section"
+        id="operator-decision-rail"
+        aria-labelledby="workbench-decision-h"
+      >
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-decision-h">
+            Operator decision rail
+          </h2>
+          <span className="c-meta">Pick → Inspect → Decide</span>
+        </div>
+
+        <div className="workbench-decision-rail">
+          {WORKBENCH_DECISION_RAIL.map((item) => (
+            <article className="workbench-decision" key={item.title}>
+              <div>
+                <span className="workbench-decision-step">{item.step}</span>
+                <span className="c-meta">{item.proof}</span>
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.prompt}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(item.route)}
+              >
+                {item.cta}
+              </button>
+            </article>
+          ))}
         </div>
       </section>
 

@@ -84,6 +84,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "console workbench" in by_id["platform-blueprint-ui-local"].evidence
     assert "one workbench content contract" in by_id["platform-blueprint-ui-local"].evidence
     assert "service-design/accessibility anchors" in by_id["platform-blueprint-ui-local"].evidence
+    assert "operator decision rail" in by_id["platform-blueprint-ui-local"].evidence
     assert "launch proof ladder" in by_id["platform-blueprint-ui-local"].evidence
     assert "35/36 local readiness copy" in by_id["platform-blueprint-ui-local"].evidence
     assert "test:platform-blueprint" in by_id["platform-blueprint-ui-local"].command
@@ -99,6 +100,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         "Chrome/Chromium screenshot command" in by_id["browser-workbench-evidence-local"].evidence
     )
     assert "target-visible hash guard" in by_id["browser-workbench-evidence-local"].evidence
+    assert "operator decision rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "five visual baseline viewports" in by_id["browser-workbench-evidence-local"].evidence
     assert "test:browser-evidence" in by_id["browser-workbench-evidence-local"].command
     assert "evidence:browser-workbench" in by_id["browser-workbench-evidence-local"].command

@@ -53,6 +53,7 @@ for (const needle of [
   'BROWSER_EVIDENCE_VIEWPORTS',
   '/#workbench',
   '/console/workbench',
+  '/console/workbench#operator-decision-rail',
   '/console/workbench#launch-proof-ladder',
   '--headless=new',
   '--dump-dom',
@@ -90,6 +91,11 @@ mustContain(
   'scripts/platform_readiness_report.py',
 )
 mustContain(readinessReport, 'evidence:browser-workbench', 'scripts/platform_readiness_report.py')
+mustContain(
+  readinessReport,
+  '/console/workbench#operator-decision-rail',
+  'scripts/platform_readiness_report.py',
+)
 
 const outRelative = `.browser-evidence-check-${process.pid}`
 const outDir = resolve(root, outRelative)
@@ -111,7 +117,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 3, 'manifest must include three browser targets.')
+    check(manifest.targets?.length === 4, 'manifest must include four browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -123,9 +129,11 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 15,
+      manifest.screenshots?.length === 20,
       'manifest must plan one screenshot per target/viewport.',
     )
+    mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'Pick the case', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), '35/36 local pass', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not production deployment proof', 'dry-run manifest')

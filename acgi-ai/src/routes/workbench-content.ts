@@ -98,6 +98,33 @@ export const OPERATOR_CHECKLIST = [
   },
 ] as const
 
+export const WORKBENCH_DECISION_RAIL = [
+  {
+    step: '01',
+    title: 'Pick the case',
+    prompt: 'Start with the riskiest blocked or partial work item before opening dense tables.',
+    proof: 'owner · source · risk',
+    route: '/console/actions',
+    cta: 'Open queue',
+  },
+  {
+    step: '02',
+    title: 'Inspect the path',
+    prompt: 'Read trace, guardrail, evaluation, and policy evidence beside the work item.',
+    proof: 'trace · eval · policy',
+    route: '/console/bus',
+    cta: 'Inspect trace',
+  },
+  {
+    step: '03',
+    title: 'Decide and export',
+    prompt: 'Hold, route review, or export bounded proof with the claim boundary attached.',
+    proof: 'hold · review · receipt',
+    route: '/console/audit',
+    cta: 'Open proof',
+  },
+] as const
+
 export const LAUNCH_PROOF_LANES = [
   {
     title: 'Local readiness',

@@ -565,6 +565,64 @@
   color: var(--ink-3);
 }
 
+.m-workbench-decision {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-workbench-decision ol {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-workbench-decision li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.m-workbench-decision strong {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-workbench-decision p {
+  grid-column: 2;
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.m-workbench-decision code {
+  grid-column: 2;
+  width: fit-content;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--accent);
+  white-space: normal;
+}
+
 .m-workbench-checklist {
   margin-top: 22px;
   padding-top: 18px;
@@ -1658,6 +1716,69 @@
   width: 92px;
 }
 
+.workbench-decision-rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--line-softer);
+}
+
+.workbench-decision {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 210px;
+  padding: 18px;
+  background: var(--paper-2);
+}
+
+.workbench-decision div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-decision-step {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workbench-decision h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.workbench-decision p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-decision .btn {
+  align-self: end;
+  justify-self: start;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
 .workbench-checklist {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2562,6 +2683,7 @@
     content: "✓";
   }
   .workbench-console-map,
+  .workbench-decision-rail,
   .workbench-checklist,
   .workbench-proof-ladder,
   .workbench-board {
