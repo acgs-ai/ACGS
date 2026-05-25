@@ -532,6 +532,15 @@ that copies `productionLiveStatus`, `productionLiveBlockers`,
 external proof. The builder performs local file I/O only; it does not deploy,
 fetch live origins, mutate DNS, or create live production proof.
 
+`make release-evidence` now includes a `productionEvidenceChain` snapshot in
+`dist-release-evidence/manifest.json`. It compares the saved live verifier,
+`production-blocker-report`, `production-cutover-plan`,
+`production-evidence.deployment-blocked.json`,
+`production-evidence-validation.deployment-blocked.json`, and
+`hostedStorybookHandoff` blocker sets so stale `productionLiveBlockers` copying
+is visible before operators attach external proof. This chain check is local
+file comparison only; it is not live production proof.
+
 `pnpm run test:storybook-runtime-plan` verifies
 `storybook-runtime.plan.json`, the pending official Storybook runtime dependency
 plan. It keeps `@storybook/react-vite`, `npx storybook@latest init`, lockfile

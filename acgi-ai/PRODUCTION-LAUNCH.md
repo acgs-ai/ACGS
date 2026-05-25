@@ -196,6 +196,11 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - JSON output from `pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-production-live.json> --out <production-blocker-report.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-evidence-draft -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --cutover-plan <production-cutover-plan.json> --out <production-evidence.deployment-blocked.json>`
+- `productionEvidenceChain` from `dist-release-evidence/manifest.json`, which
+  compares the saved live verifier, blocker report, cutover plan,
+  deployment-blocked draft, `production-evidence-validation.deployment-blocked.json`,
+  and `hostedStorybookHandoff` blocker sets for local drift. This is not live
+  production proof.
 - `productionLiveBlockers` copied from the live verifier `blockers[].blockerId`
 - JSON output from `pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json>`
 - `/healthz` served_hash and build_id values from the live console origin
