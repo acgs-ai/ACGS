@@ -985,6 +985,14 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     .get("liveVerification", {})
                     .get("requiredAbsentBlockerIds", [])
                 ),
+                "browserEvidence": (
+                    (hosted_storybook_proof_template or {}).get("browserEvidence", {})
+                ),
+                "requiredBrowserEvidenceFields": [
+                    "screenshotRefs",
+                    "automatedA11yReportRefs",
+                    "visualDiffRefs",
+                ],
                 "copyIntoProductionEvidence": (
                     (hosted_storybook_proof_template or {}).get("copyIntoProductionEvidence", {})
                 ),
@@ -992,8 +1000,9 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "template-only hosted Storybook proof intake; not hosted "
                     "Storybook proof, not official Storybook runtime proof, not "
                     "production deployment proof, and pending-external refs must be "
-                    "replaced with Storybook Pages, DNS, hosted manifest, and passing "
-                    "verify:production-live evidence before removing the blocker"
+                    "replaced with Storybook Pages, DNS, hosted manifest, hosted "
+                    "browser screenshot, automated accessibility, visual-diff, and "
+                    "passing verify:production-live evidence before removing the blocker"
                 ),
             },
             "buyerEvidenceGallery": {
@@ -1012,6 +1021,10 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     (
                         "passing storybook-dns-live, storybook-https-live, "
                         "and storybook-manifest-live checks"
+                    ),
+                    (
+                        "hosted browser screenshots, automated accessibility reports, "
+                        "and visual-diff evidence for every buyer-evidence story"
                     ),
                 ],
                 "manifestPresent": buyer_manifest is not None,
@@ -1239,6 +1252,7 @@ live production proof.
   run test:hosted-storybook-proof-template` verifies the required Storybook
   Pages run, DNS proof, hosted `/manifest.json` proof, passing
   `storybook-manifest-live`, absent `live-storybook-*` blockers, and
+  hosted browser screenshot, automated accessibility, visual-diff, and
   `copyIntoProductionEvidence.hostedStorybook` fields. After external evidence
   is attached, `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof
   <hosted-storybook-proof.json> --live-output <verify-production-live.json>

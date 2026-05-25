@@ -1875,6 +1875,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "live-storybook-dns",
             "live-storybook-https",
             "live-storybook-manifest",
+            "browserEvidence",
+            "automatedA11yReportRefs",
+            "visualDiffRefs",
+            "not WCAG conformance proof",
             "copyIntoProductionEvidence.hostedStorybook",
             "remainingBlockerToRemove",
             "not hosted Storybook proof",
@@ -1901,7 +1905,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "hosted-storybook-proof.example.json requires Pages run, DNS, "
                 "hosted manifest, passing storybook-manifest-live, absent "
-                "live-storybook blockers, copyIntoProductionEvidence.hostedStorybook, "
+                "live-storybook blockers, hosted browser screenshot, automated "
+                "accessibility, and visual-diff evidence, "
+                "copyIntoProductionEvidence.hostedStorybook, "
                 "and validate:hosted-storybook-proof completed-proof checks before "
                 "hosted-storybook-buyer-evidence can be removed"
                 if hosted_storybook_proof_files_ok

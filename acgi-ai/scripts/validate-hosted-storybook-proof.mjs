@@ -10,6 +10,12 @@ const EXPECTED_STORY_IDS = [
   'claim-safe-trust-surface',
   'deploy-readiness-boundary',
 ]
+const REQUIRED_BROWSER_VIEWPORTS = [360, 768, 834, 1024, 1440]
+const BROWSER_EVIDENCE_REF_FIELDS = [
+  ['screenshotRefs', 'screenshot refs'],
+  ['automatedA11yReportRefs', 'automated accessibility report refs'],
+  ['visualDiffRefs', 'visual-diff refs'],
+]
 const REQUIRED_STORYBOOK_CHECK_IDS = [
   'storybook-dns-live',
   'storybook-https-live',
@@ -114,6 +120,12 @@ function includesAll(source, required) {
   return required.filter((entry) => !entries.includes(entry))
 }
 
+function missingBrowserEvidenceRefs(browserEvidence, field) {
+  const refs = browserEvidence?.[field]
+  if (!refs || typeof refs !== 'object' || Array.isArray(refs)) return EXPECTED_STORY_IDS
+  return EXPECTED_STORY_IDS.filter((storyId) => !isNonEmptyString(refs[storyId]))
+}
+
 function findCheck(liveOutput, id) {
   return Array.isArray(liveOutput?.checks)
     ? liveOutput.checks.find((check) => check?.id === id)
@@ -149,6 +161,7 @@ function validateProof(proof, liveOutput, options) {
   const dns = proof.dns ?? {}
   const liveVerification = proof.liveVerification ?? {}
   const manifestEvidence = proof.manifestEvidence ?? {}
+  const browserEvidence = proof.browserEvidence ?? {}
   const copyIntoProductionEvidence = proof.copyIntoProductionEvidence ?? {}
   const hostedStorybook = copyIntoProductionEvidence.hostedStorybook ?? {}
   const liveBlockerIds = Array.isArray(liveOutput?.blockers)
@@ -326,6 +339,57 @@ function validateProof(proof, liveOutput, options) {
     isNonEmptyString(manifestEvidence.claimBoundaryRef),
     'manifest-claim-boundary-ref',
     'manifestEvidence.claimBoundaryRef must reference the hosted manifest claim boundary evidence',
+  )
+
+  pushCheck(
+    checks,
+    browserEvidence.status === 'pass',
+    'browser-evidence-status',
+    'browserEvidence.status must be pass for completed hosted proof',
+    { actual: browserEvidence.status ?? null },
+  )
+  pushCheck(
+    checks,
+    browserEvidence.targetUrl === STORYBOOK_TARGET,
+    'browser-evidence-target',
+    'browserEvidence.targetUrl must match the hosted Storybook target',
+    { actual: browserEvidence.targetUrl ?? null },
+  )
+  pushCheck(
+    checks,
+    includesAll(browserEvidence.storyIds, EXPECTED_STORY_IDS).length === 0,
+    'browser-evidence-story-ids',
+    'browserEvidence.storyIds must include every expected buyer-evidence story',
+    { missingStoryIds: includesAll(browserEvidence.storyIds, EXPECTED_STORY_IDS) },
+  )
+  pushCheck(
+    checks,
+    includesAll(browserEvidence.viewportSet, REQUIRED_BROWSER_VIEWPORTS).length === 0,
+    'browser-evidence-viewports',
+    'browserEvidence.viewportSet must include the visual baseline viewport set',
+    { missingViewports: includesAll(browserEvidence.viewportSet, REQUIRED_BROWSER_VIEWPORTS) },
+  )
+  for (const [field, label] of BROWSER_EVIDENCE_REF_FIELDS) {
+    const missingRefs = missingBrowserEvidenceRefs(browserEvidence, field)
+    pushCheck(
+      checks,
+      missingRefs.length === 0,
+      `browser-evidence-${field}`,
+      `browserEvidence.${field} must include ${label} for every expected story`,
+      { missingStoryIds: missingRefs },
+    )
+  }
+  pushCheck(
+    checks,
+    String(browserEvidence.claimBoundary ?? '').includes('not production deployment proof') &&
+      String(browserEvidence.claimBoundary ?? '').includes('not WCAG conformance proof') &&
+      String(browserEvidence.claimBoundary ?? '').includes('not manual screen-reader evidence') &&
+      String(browserEvidence.claimBoundary ?? '').includes('not legal signoff') &&
+      String(browserEvidence.claimBoundary ?? '').includes('not SOC2 proof') &&
+      String(browserEvidence.claimBoundary ?? '').includes('not pentest completion'),
+    'browser-evidence-claim-boundary',
+    'browserEvidence.claimBoundary must preserve production/legal/SOC2/WCAG/manual/pentest limits',
+    { claimBoundary: browserEvidence.claimBoundary ?? null },
   )
 
   pushCheck(

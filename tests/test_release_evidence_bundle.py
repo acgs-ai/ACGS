@@ -305,6 +305,15 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert hosted_storybook_proof["templateStatus"] == "template-only"
     assert "storybook-manifest-live" in hosted_storybook_proof["requiredPassingCheckIds"]
     assert "live-storybook-manifest" in hosted_storybook_proof["requiredAbsentBlockerIds"]
+    assert hosted_storybook_proof["browserEvidence"]["targetUrl"] == "https://storybook.acgs.ai"
+    assert hosted_storybook_proof["browserEvidence"]["viewportSet"] == [360, 768, 834, 1024, 1440]
+    assert "screenshotRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
+    assert "automatedA11yReportRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
+    assert "visualDiffRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
+    assert (
+        "not WCAG conformance proof"
+        in hosted_storybook_proof["browserEvidence"]["claimBoundary"]
+    )
     assert (
         hosted_storybook_proof["copyIntoProductionEvidence"]["remainingBlockerToRemove"]
         == "hosted-storybook-buyer-evidence"
@@ -316,6 +325,9 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "CNAME" in buyer["requiredPublicationFiles"]
     assert any(
         "storybook-manifest-live" in requirement for requirement in buyer["hostedProofRequirements"]
+    )
+    assert any(
+        "visual-diff evidence" in requirement for requirement in buyer["hostedProofRequirements"]
     )
 
 

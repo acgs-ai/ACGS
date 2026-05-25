@@ -442,6 +442,9 @@ check(
     /hosted-storybook-proof/.test(hostedStorybookProofTemplate) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplate) &&
     /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
+    /browserEvidence/.test(hostedStorybookProofTemplate) &&
+    /automatedA11yReportRefs/.test(hostedStorybookProofTemplate) &&
+    /visualDiffRefs/.test(hostedStorybookProofTemplate) &&
     /copyIntoProductionEvidence/.test(hostedStorybookProofTemplate) &&
     /copyIntoProductionEvidence.hostedStorybook/.test(hostedStorybookProofTemplate) &&
     /remainingBlockerToRemove/.test(hostedStorybookProofTemplate) &&
@@ -457,6 +460,8 @@ check(
     /validate-hosted-storybook-proof/.test(hostedStorybookProofTemplateCheck) &&
     /hosted-storybook-proof\.example\.json/.test(hostedStorybookProofTemplateCheck) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
+    /browserEvidence/.test(hostedStorybookProofTemplateCheck) &&
+    /visualDiffRefs/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
     /not hosted Storybook proof/.test(hostedStorybookProofTemplateCheck),
   'check-hosted-storybook-proof-template.mjs must guard hosted Storybook proof template wiring and claim boundary.',
@@ -469,6 +474,10 @@ check(
     /--require-pass/.test(hostedStorybookProofValidator) &&
     /storybook-manifest-live/.test(hostedStorybookProofValidator) &&
     /live-storybook-manifest/.test(hostedStorybookProofValidator) &&
+    /browserEvidence/.test(hostedStorybookProofValidator) &&
+    /automatedA11yReportRefs/.test(hostedStorybookProofValidator) &&
+    /visualDiffRefs/.test(hostedStorybookProofValidator) &&
+    /not WCAG conformance proof/.test(hostedStorybookProofValidator) &&
     /not production deployment proof/.test(hostedStorybookProofValidator),
   'validate-hosted-storybook-proof.mjs must verify completed hosted proof packets without side effects or overclaims.',
 )

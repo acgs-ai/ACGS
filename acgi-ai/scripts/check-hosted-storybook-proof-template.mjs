@@ -102,6 +102,37 @@ function makeCompletedProof() {
       ],
       claimBoundaryRef: 'sha256:hosted-storybook-manifest-claim-boundary',
     },
+    browserEvidence: {
+      status: 'pass',
+      targetUrl: 'https://storybook.acgs.ai',
+      storyIds: [
+        'receipt-proof-journey',
+        'bus-owned-proof-source',
+        'claim-safe-trust-surface',
+        'deploy-readiness-boundary',
+      ],
+      viewportSet: [360, 768, 834, 1024, 1440],
+      screenshotRefs: {
+        'receipt-proof-journey': 'sha256:receipt-proof-journey-screenshot',
+        'bus-owned-proof-source': 'sha256:bus-owned-proof-source-screenshot',
+        'claim-safe-trust-surface': 'sha256:claim-safe-trust-surface-screenshot',
+        'deploy-readiness-boundary': 'sha256:deploy-readiness-boundary-screenshot',
+      },
+      automatedA11yReportRefs: {
+        'receipt-proof-journey': 'sha256:receipt-proof-journey-automated-a11y',
+        'bus-owned-proof-source': 'sha256:bus-owned-proof-source-automated-a11y',
+        'claim-safe-trust-surface': 'sha256:claim-safe-trust-surface-automated-a11y',
+        'deploy-readiness-boundary': 'sha256:deploy-readiness-boundary-automated-a11y',
+      },
+      visualDiffRefs: {
+        'receipt-proof-journey': 'sha256:receipt-proof-journey-visual-diff',
+        'bus-owned-proof-source': 'sha256:bus-owned-proof-source-visual-diff',
+        'claim-safe-trust-surface': 'sha256:claim-safe-trust-surface-visual-diff',
+        'deploy-readiness-boundary': 'sha256:deploy-readiness-boundary-visual-diff',
+      },
+      claimBoundary:
+        'Hosted browser QA evidence is rendering, automated accessibility, and visual-diff proof only; not production deployment proof, not WCAG conformance proof, not manual screen-reader evidence, not legal signoff, not SOC2 proof, and not pentest completion.',
+    },
     validation: {
       localTemplateCheckCommand: 'pnpm -F acgi-ai run test:hosted-storybook-proof-template',
       completedProofValidationCommand:
@@ -318,6 +349,46 @@ for (const key of ['manifestJsonRef', 'claimBoundaryRef']) {
 }
 
 check(
+  template.browserEvidence?.status === 'REPLACE_WITH_PASS_FROM_HOSTED_BROWSER_QA',
+  'browserEvidence.status must require hosted browser QA pass evidence.',
+)
+check(
+  template.browserEvidence?.targetUrl === 'https://storybook.acgs.ai',
+  'browserEvidence.targetUrl must match hosted Storybook.',
+)
+check(
+  JSON.stringify(template.browserEvidence?.viewportSet) === JSON.stringify([360, 768, 834, 1024, 1440]),
+  'browserEvidence.viewportSet must match the visual baseline viewport set.',
+)
+for (const storyId of [
+  'receipt-proof-journey',
+  'bus-owned-proof-source',
+  'claim-safe-trust-surface',
+  'deploy-readiness-boundary',
+]) {
+  check(
+    template.browserEvidence?.storyIds?.includes(storyId),
+    `browserEvidence.storyIds must include ${storyId}.`,
+  )
+  for (const key of ['screenshotRefs', 'automatedA11yReportRefs', 'visualDiffRefs']) {
+    check(
+      String(template.browserEvidence?.[key]?.[storyId] ?? '').startsWith('REPLACE_WITH_'),
+      `browserEvidence.${key}.${storyId} must stay an operator-supplied placeholder.`,
+    )
+  }
+}
+for (const needle of [
+  'not production deployment proof',
+  'not WCAG conformance proof',
+  'not manual screen-reader evidence',
+  'not legal signoff',
+  'not SOC2 proof',
+  'not pentest completion',
+]) {
+  mustContain(template.browserEvidence?.claimBoundary ?? '', needle, 'browserEvidence.claimBoundary')
+}
+
+check(
   template.validation?.localTemplateCheckCommand ===
     'pnpm -F acgi-ai run test:hosted-storybook-proof-template',
   'validation.localTemplateCheckCommand must capture the local proof-template test.',
@@ -439,6 +510,9 @@ for (const needle of [
   'validate-hosted-storybook-proof',
   'REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL',
   'requiredAbsentBlockerIds',
+  'browserEvidence',
+  'automatedA11yReportRefs',
+  'visualDiffRefs',
   'remainingBlockerToRemove',
 ]) {
   mustContain(checker, needle, checkerPath)
@@ -453,6 +527,10 @@ for (const needle of [
   '--require-pass',
   'storybook-manifest-live',
   'live-storybook-manifest',
+  'browserEvidence',
+  'automatedA11yReportRefs',
+  'visualDiffRefs',
+  'not WCAG conformance proof',
   'copyIntoProductionEvidence.hostedStorybook',
   'not production deployment proof',
 ]) {
@@ -471,10 +549,14 @@ try {
   const livePath = join(tempDir, 'production-live.json')
   const failingLivePath = join(tempDir, 'production-live-fail.json')
   const templateAsProofPath = join(tempDir, 'template-as-proof.json')
+  const missingBrowserEvidencePath = join(tempDir, 'missing-browser-evidence.json')
   writeJson(proofPath, makeCompletedProof())
   writeJson(livePath, makeLiveOutput('pass'))
   writeJson(failingLivePath, makeLiveOutput('fail'))
   writeJson(templateAsProofPath, template)
+  const missingBrowserEvidence = makeCompletedProof()
+  delete missingBrowserEvidence.browserEvidence.visualDiffRefs['claim-safe-trust-surface']
+  writeJson(missingBrowserEvidencePath, missingBrowserEvidence)
 
   const passing = runValidator([
     '--proof',
@@ -520,6 +602,24 @@ try {
   check(
     templatePayload.checks.some((entry) => entry.id === 'artifact-kind'),
     'template-only rejection must include artifact-kind check.',
+  )
+
+  const missingBrowserResult = runValidator([
+    '--proof',
+    missingBrowserEvidencePath,
+    '--live-output',
+    livePath,
+    '--require-pass',
+    '--json',
+  ])
+  check(
+    missingBrowserResult.status !== 0,
+    'validator must reject completed proof missing hosted browser QA refs.',
+  )
+  const missingBrowserPayload = JSON.parse(missingBrowserResult.stdout)
+  check(
+    missingBrowserPayload.checks.some((entry) => entry.id === 'browser-evidence-visualDiffRefs'),
+    'missing browser QA rejection must include browser-evidence-visualDiffRefs check.',
   )
 } finally {
   rmSync(tempDir, { recursive: true, force: true })
