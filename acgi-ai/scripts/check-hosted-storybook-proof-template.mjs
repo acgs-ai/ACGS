@@ -136,7 +136,7 @@ function makeCompletedProof() {
     validation: {
       localTemplateCheckCommand: 'pnpm -F acgi-ai run test:hosted-storybook-proof-template',
       completedProofValidationCommand:
-        'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass',
+        'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --out ../dist-release-evidence/hosted-storybook-proof-validation.json --require-pass',
       completedProofValidationOutputRef: 'sha256:hosted-storybook-proof-validation',
       productionEvidenceValidationCommand:
         'pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass',

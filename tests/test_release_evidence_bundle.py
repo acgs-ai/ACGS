@@ -92,6 +92,9 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     publication = manifest["evidenceArtifacts"]["storybookPublication"]
     hosted_storybook = manifest["evidenceArtifacts"]["hostedStorybookHandoff"]
     hosted_storybook_proof = manifest["evidenceArtifacts"]["hostedStorybookProofTemplate"]
+    hosted_storybook_validation = manifest["evidenceArtifacts"][
+        "hostedStorybookProofValidation"
+    ]
     buyer = manifest["evidenceArtifacts"]["buyerEvidenceGallery"]
 
     assert renderer["script"] == "acgi-ai/scripts/render-cloudrun-service.mjs"
@@ -239,13 +242,19 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_chain["proofCommand"] == "make release-evidence"
     assert production_chain["latestChainSnapshot"]["status"] in {"consistent", "needs-refresh"}
     assert "productionEvidenceValidation" in production_chain["latestChainSnapshot"]["artifacts"]
+    assert "hostedStorybookProofValidation" in production_chain["latestChainSnapshot"]["artifacts"]
     assert "not live production proof" in production_chain["claimBoundary"]
     assert blocker_runbook["script"] == "scripts/build_production_blocker_evidence.py"
     assert blocker_runbook["proofCommand"].endswith("--dry-run --json")
     assert blocker_runbook["operatorCommand"] == "make production-blocker-evidence"
+    assert "--hosted-storybook-proof" in blocker_runbook["optionalHostedStorybookProofCommand"]
     assert blocker_runbook["nodeToolchainGuard"] == "scripts/run_acgi_node24_gate.sh"
     assert (
         "dist-release-evidence/production-launch-preflight.json"
+        in blocker_runbook["outputArtifacts"]
+    )
+    assert (
+        "dist-release-evidence/hosted-storybook-proof-validation.json"
         in blocker_runbook["outputArtifacts"]
     )
     live_intake = blocker_runbook["suppliedLiveOutputIntake"]
@@ -254,6 +263,15 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     )
     assert "wrapper-captured transcript" in live_intake["accepts"][1]
     assert "zero or multiple" in live_intake["rejects"]
+    hosted_proof_intake = blocker_runbook["hostedStorybookProofIntake"]
+    assert hosted_proof_intake["optionalArgument"] == (
+        "--hosted-storybook-proof <hosted-storybook-proof.json>"
+    )
+    assert hosted_proof_intake["canonicalizesTo"] == (
+        "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert "validate:hosted-storybook-proof" in hosted_proof_intake["claimBoundary"]
+    assert "does not deploy" in blocker_runbook["claimBoundary"]
     assert "not live production proof" in blocker_runbook["claimBoundary"]
     assert "does not deploy" in blocker_runbook["claimBoundary"]
     assert fixture_fallback["module"] == "acgi-ai/src/api/hooks.ts"
@@ -331,6 +349,10 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         "validate:hosted-storybook-proof"
         in hosted_storybook_proof["completedProofValidationCommand"]
     )
+    assert (
+        "--out ../dist-release-evidence/hosted-storybook-proof-validation.json"
+        in hosted_storybook_proof["completedProofValidationCommand"]
+    )
     assert "--require-pass" in hosted_storybook_proof["completedProofValidationCommand"]
     assert hosted_storybook_proof["completedArtifactKind"] == "hosted-storybook-proof"
     assert hosted_storybook_proof["templatePresent"] is True
@@ -350,6 +372,23 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         == "hosted-storybook-buyer-evidence"
     )
     assert "not hosted Storybook proof" in hosted_storybook_proof["claimBoundary"]
+    assert (
+        hosted_storybook_validation["latestValidationSnapshot"]["path"]
+        == "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert (
+        "validate:hosted-storybook-proof"
+        in hosted_storybook_validation["operatorCommand"]
+    )
+    assert (
+        "--out ../dist-release-evidence/hosted-storybook-proof-validation.json"
+        in hosted_storybook_validation["operatorCommand"]
+    )
+    assert hosted_storybook_validation["outputArtifact"] == (
+        "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert "failingCheckIds" in hosted_storybook_validation["outputFields"]
+    assert "not hosted Storybook proof" in hosted_storybook_validation["claimBoundary"]
     assert buyer["expectedPath"] == "acgi-ai/dist-buyer-evidence/"
     assert buyer["ciArtifactName"] == "buyer-evidence-gallery"
     assert ".nojekyll" in buyer["requiredPublicationFiles"]
@@ -410,8 +449,11 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "hosted-storybook-handoff.json" in readme
     assert "test:hosted-storybook-handoff" in readme
     assert "hosted-storybook-proof.example.json" in readme
+    assert "hosted-storybook-proof-validation.json" in readme
     assert "test:hosted-storybook-proof-template" in readme
     assert "validate:hosted-storybook-proof" in readme
+    assert "--hosted-storybook-proof <hosted-storybook-proof.json>" in readme
+    assert "--out ../dist-release-evidence/hosted-storybook-proof-validation.json" in readme
     assert ".nojekyll" in readme
     assert "pending-external:storybook-pages-proof" in readme
     assert "productionLiveBlockers" in readme
@@ -594,6 +636,23 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
         )
         + "\n"
     )
+    (evidence_dir / "hosted-storybook-proof-validation.json").write_text(
+        json.dumps(
+            {
+                "artifactKind": "hosted-storybook-proof-validation",
+                "generatedAt": "2026-05-25T00:00:06Z",
+                "status": "pass",
+                "claimBoundary": "source hosted Storybook proof validation boundary",
+                "proofPath": "../dist-release-evidence/hosted-storybook-proof.json",
+                "liveOutputPath": "../dist-release-evidence/production-live-verification.json",
+                "checks": [
+                    {"id": "artifact-kind", "status": "pass"},
+                    {"id": "live-output-storybook-manifest-live", "status": "pass"},
+                ],
+            }
+        )
+        + "\n"
+    )
 
     live = bre.production_live_snapshot(tmp_path)
     blockers = bre.production_blocker_report_snapshot(tmp_path)
@@ -602,6 +661,7 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
     validation = bre.production_evidence_validation_snapshot(tmp_path)
     chain = bre.production_evidence_chain_snapshot(tmp_path)
     hosted_storybook = bre.hosted_storybook_handoff_snapshot(tmp_path)
+    hosted_storybook_validation = bre.hosted_storybook_proof_validation_snapshot(tmp_path)
 
     assert live["present"] is True
     assert live["status"] == "fail"
@@ -671,8 +731,43 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
     assert hosted_storybook["targetUrl"] == "https://storybook.acgs.ai"
     assert hosted_storybook["storybookBlockers"] == ["live-storybook-dns"]
     assert "not live production proof" in hosted_storybook["claimBoundary"]
+    assert hosted_storybook_validation["present"] is True
+    assert hosted_storybook_validation["status"] == "pass"
+    assert hosted_storybook_validation["checkCount"] == 2
+    assert hosted_storybook_validation["failingCheckIds"] == []
+    assert "not hosted Storybook proof" in hosted_storybook_validation["claimBoundary"]
+    assert chain["hostedStorybookProofValidation"]["status"] == "pass"
+    assert chain["hostedStorybookProofValidation"]["failingCheckIds"] == []
     assert bre.production_live_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_draft_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_validation_snapshot(tmp_path / "missing")["present"] is False
+    assert bre.hosted_storybook_proof_validation_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_chain_snapshot(tmp_path / "missing")["status"] == "needs-refresh"
     assert bre.hosted_storybook_handoff_snapshot(tmp_path / "missing")["present"] is False
+
+
+def test_hosted_storybook_proof_validation_failure_marks_chain_stale(tmp_path: Path):
+    evidence_dir = tmp_path / "dist-release-evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "hosted-storybook-proof-validation.json").write_text(
+        json.dumps(
+            {
+                "artifactKind": "hosted-storybook-proof-validation",
+                "status": "fail",
+                "proofPath": "../dist-release-evidence/hosted-storybook-proof.json",
+                "liveOutputPath": "../dist-release-evidence/production-live-verification.json",
+                "checks": [
+                    {"id": "live-output-storybook-manifest-live", "status": "fail"},
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    validation = bre.hosted_storybook_proof_validation_snapshot(tmp_path)
+    chain = bre.production_evidence_chain_snapshot(tmp_path)
+
+    assert validation["status"] == "fail"
+    assert validation["failingCheckIds"] == ["live-output-storybook-manifest-live"]
+    assert chain["status"] == "needs-refresh"
+    assert "hosted-storybook-proof-validation-not-passing" in chain["issues"]

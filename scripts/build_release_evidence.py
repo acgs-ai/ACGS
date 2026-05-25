@@ -42,6 +42,9 @@ PRODUCTION_EVIDENCE_VALIDATION_SNAPSHOT = Path(
     "dist-release-evidence/production-evidence-validation.deployment-blocked.json"
 )
 HOSTED_STORYBOOK_HANDOFF_SNAPSHOT = Path("dist-release-evidence/hosted-storybook-handoff.json")
+HOSTED_STORYBOOK_PROOF_VALIDATION_SNAPSHOT = Path(
+    "dist-release-evidence/hosted-storybook-proof-validation.json"
+)
 
 ASSURANCE_PROOF_REQUIREMENTS = [
     {
@@ -437,6 +440,45 @@ def hosted_storybook_handoff_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, 
     return snapshot
 
 
+def hosted_storybook_proof_validation_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Return a compact optional snapshot of saved hosted Storybook proof validation."""
+
+    data = _read_json_if_present(repo_root / HOSTED_STORYBOOK_PROOF_VALIDATION_SNAPSHOT)
+    snapshot: dict[str, Any] = {
+        "path": HOSTED_STORYBOOK_PROOF_VALIDATION_SNAPSHOT.as_posix(),
+        "present": data is not None,
+        "claimBoundary": (
+            "Saved hosted-storybook-proof-validation output only proves local "
+            "consistency between an operator-supplied hosted Storybook proof packet "
+            "and attached live-verifier JSON; it is not hosted Storybook proof, "
+            "official Storybook runtime proof, live production proof, WCAG "
+            "conformance proof, or release authority."
+        ),
+    }
+    if data is None:
+        return snapshot
+
+    checks = data.get("checks") if isinstance(data.get("checks"), list) else []
+    failing_check_ids = [
+        check.get("id")
+        for check in checks
+        if isinstance(check, dict) and check.get("status") != "pass" and check.get("id")
+    ]
+    snapshot.update(
+        {
+            "artifactKind": data.get("artifactKind"),
+            "generatedAt": data.get("generatedAt"),
+            "status": data.get("status"),
+            "proofPath": data.get("proofPath"),
+            "liveOutputPath": data.get("liveOutputPath"),
+            "checkCount": len(checks),
+            "failingCheckIds": failing_check_ids,
+            "sourceClaimBoundary": data.get("claimBoundary"),
+        }
+    )
+    return snapshot
+
+
 def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Summarize whether saved production handoff artifacts agree with each other."""
 
@@ -446,6 +488,7 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
     evidence_draft = production_evidence_draft_snapshot(repo_root)
     validation = production_evidence_validation_snapshot(repo_root)
     hosted_storybook = hosted_storybook_handoff_snapshot(repo_root)
+    hosted_storybook_proof_validation = hosted_storybook_proof_validation_snapshot(repo_root)
 
     missing_artifacts = [
         artifact["path"]
@@ -491,6 +534,11 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
         issues.append("hosted-storybook-blocker-not-in-live-output")
     if validation.get("present") is True and validation.get("status") != "pass":
         issues.append("production-evidence-validation-not-passing")
+    if (
+        hosted_storybook_proof_validation.get("present") is True
+        and hosted_storybook_proof_validation.get("status") != "pass"
+    ):
+        issues.append("hosted-storybook-proof-validation-not-passing")
     if validation.get("present") is True:
         manifest_path = str(validation.get("manifestPath") or "")
         live_output_path = str(validation.get("liveOutputPath") or "")
@@ -514,6 +562,7 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
             "productionEvidenceDraft": evidence_draft["path"],
             "productionEvidenceValidation": validation["path"],
             "hostedStorybookHandoff": hosted_storybook["path"],
+            "hostedStorybookProofValidation": hosted_storybook_proof_validation["path"],
         },
         "missingArtifacts": missing_artifacts,
         "blockerSets": blocker_sets,
@@ -524,6 +573,12 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
             "failingCheckIds": validation.get("failingCheckIds", []),
             "manifestPath": validation.get("manifestPath"),
             "liveOutputPath": validation.get("liveOutputPath"),
+        },
+        "hostedStorybookProofValidation": {
+            "status": hosted_storybook_proof_validation.get("status"),
+            "failingCheckIds": hosted_storybook_proof_validation.get("failingCheckIds", []),
+            "proofPath": hosted_storybook_proof_validation.get("proofPath"),
+            "liveOutputPath": hosted_storybook_proof_validation.get("liveOutputPath"),
         },
     }
 
@@ -863,12 +918,17 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
                 ),
                 "operatorCommand": "make production-blocker-evidence",
+                "optionalHostedStorybookProofCommand": (
+                    "uv run python scripts/build_production_blocker_evidence.py "
+                    "--hosted-storybook-proof <hosted-storybook-proof.json>"
+                ),
                 "nodeToolchainGuard": "scripts/run_acgi_node24_gate.sh",
                 "outputArtifacts": [
                     "dist-release-evidence/production-live-verification.json",
                     "dist-release-evidence/production-blocker-report.json",
                     "dist-release-evidence/production-cutover-plan.json",
                     "dist-release-evidence/hosted-storybook-handoff.json",
+                    "dist-release-evidence/hosted-storybook-proof-validation.json",
                     "dist-release-evidence/production-evidence.deployment-blocked.json",
                     "dist-release-evidence/production-evidence-validation.deployment-blocked.json",
                     "dist-release-evidence/production-launch-preflight.json",
@@ -887,6 +947,21 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "claimBoundary": (
                         "canonicalization removes package-manager wrapper noise only; "
                         "it does not make a failing verifier pass or create live proof"
+                    ),
+                },
+                "hostedStorybookProofIntake": {
+                    "optionalArgument": "--hosted-storybook-proof <hosted-storybook-proof.json>",
+                    "canonicalizesTo": (
+                        "dist-release-evidence/hosted-storybook-proof-validation.json"
+                    ),
+                    "requires": [
+                        "operator-supplied hosted-storybook-proof JSON",
+                        "production-live-verification JSON with passing Storybook live checks",
+                    ],
+                    "claimBoundary": (
+                        "runs validate:hosted-storybook-proof with --require-pass and "
+                        "saves validator output only; it does not deploy, mutate DNS, "
+                        "install the official Storybook runtime, or create hosted proof"
                     ),
                 },
                 "claimBoundary": (
@@ -1059,7 +1134,9 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "completedProofValidationCommand": (
                     "pnpm -F acgi-ai run validate:hosted-storybook-proof -- "
                     "--proof <hosted-storybook-proof.json> "
-                    "--live-output <verify-production-live.json> --require-pass"
+                    "--live-output <verify-production-live.json> --out "
+                    "../dist-release-evidence/hosted-storybook-proof-validation.json "
+                    "--require-pass"
                 ),
                 "templatePresent": hosted_storybook_proof_template is not None,
                 "templateStatus": (hosted_storybook_proof_template or {}).get("status"),
@@ -1096,6 +1173,33 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "replaced with Storybook Pages, DNS, hosted manifest, hosted "
                     "browser screenshot, automated accessibility, visual-diff, and "
                     "passing verify:production-live evidence before removing the blocker"
+                ),
+            },
+            "hostedStorybookProofValidation": {
+                "latestValidationSnapshot": hosted_storybook_proof_validation_snapshot(repo_root),
+                "operatorCommand": (
+                    "pnpm -F acgi-ai run validate:hosted-storybook-proof -- "
+                    "--proof <hosted-storybook-proof.json> "
+                    "--live-output <verify-production-live.json> --out "
+                    "../dist-release-evidence/hosted-storybook-proof-validation.json "
+                    "--require-pass"
+                ),
+                "outputArtifact": (
+                    "dist-release-evidence/hosted-storybook-proof-validation.json"
+                ),
+                "outputFields": [
+                    "status",
+                    "proofPath",
+                    "liveOutputPath",
+                    "checks",
+                    "failingCheckIds",
+                ],
+                "claimBoundary": (
+                    "saved validator output only proves the completed hosted proof "
+                    "packet is internally consistent with attached live verifier JSON; "
+                    "it is not hosted Storybook proof, official Storybook runtime "
+                    "proof, production deployment proof, WCAG conformance proof, "
+                    "or release authority"
                 ),
             },
             "buyerEvidenceGallery": {
@@ -1165,6 +1269,9 @@ def render_readme(manifest: dict[str, Any]) -> str:
     hosted_storybook_handoff = manifest["evidenceArtifacts"]["hostedStorybookHandoff"][
         "latestHandoffSnapshot"
     ]
+    hosted_storybook_proof_validation = manifest["evidenceArtifacts"][
+        "hostedStorybookProofValidation"
+    ]["latestValidationSnapshot"]
     blocker_evidence_runbook = manifest["evidenceArtifacts"]["productionBlockerEvidenceRunbook"]
     live_snapshot_line = (
         f"- `{production_live['path']}` captured status "
@@ -1212,6 +1319,13 @@ def render_readme(manifest: dict[str, Any]) -> str:
         if hosted_storybook_handoff["present"]
         else f"- `{hosted_storybook_handoff['path']}` is not present in this bundle."
     )
+    hosted_storybook_validation_line = (
+        f"- `{hosted_storybook_proof_validation['path']}` captured status "
+        f"`{hosted_storybook_proof_validation.get('status')}` with "
+        f"`{hosted_storybook_proof_validation.get('checkCount')}` checks."
+        if hosted_storybook_proof_validation["present"]
+        else f"- `{hosted_storybook_proof_validation['path']}` is not present in this bundle."
+    )
 
     return f"""# Local release-readiness evidence bundle
 
@@ -1241,6 +1355,7 @@ def render_readme(manifest: dict[str, Any]) -> str:
 {validation_snapshot_line}
 {chain_snapshot_line}
 {hosted_storybook_snapshot_line}
+{hosted_storybook_validation_line}
 
 These snapshots are operator handoff evidence only. They are not live production
 proof unless the saved live verifier status is `pass` and every required live
@@ -1276,7 +1391,9 @@ live production proof.
   exactly one `production-live-verification` object, packages
   blocker/cutover/hosted-Storybook handoffs, writes the
   deployment-blocked production-evidence draft and validator output when live
-  blockers remain, refreshes release evidence, and saves
+  blockers remain, optionally saves `hosted-storybook-proof-validation.json`
+  when `--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied,
+  refreshes release evidence, and saves
   `production-launch-preflight.json`. Its dry-run proof command is
   `{blocker_evidence_runbook["proofCommand"]}`; the wrapper may perform network
   live checks but does not deploy, mutate DNS, approve release authority, install
@@ -1357,7 +1474,9 @@ live production proof.
   `copyIntoProductionEvidence.hostedStorybook` fields. After external evidence
   is attached, `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof
   <hosted-storybook-proof.json> --live-output <verify-production-live.json>
-  --require-pass` checks the completed proof packet against passing live JSON.
+  --out ../dist-release-evidence/hosted-storybook-proof-validation.json
+  --require-pass` checks the completed proof packet against passing live JSON
+  and saves the local validation snapshot for the release evidence chain.
   The template is not hosted Storybook proof, not official Storybook runtime
   proof, and not production deployment proof.
 - `acgi-ai/storybook-runtime.plan.json` is the pending official Storybook

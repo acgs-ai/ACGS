@@ -156,10 +156,13 @@ That wrapper builds the buyer-evidence gallery, runs or copies the live verifier
 JSON, canonicalizes a wrapper-captured verifier transcript when unambiguous,
 packages blocker/cutover/hosted-Storybook handoffs, writes the
 validator-ready deployment-blocked evidence draft and validator output when live
-blockers remain, refreshes release evidence, and saves
+blockers remain, optionally saves
+`dist-release-evidence/hosted-storybook-proof-validation.json` when
+`--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied, refreshes
+release evidence, and saves
 `dist-release-evidence/production-launch-preflight.json`. Once Storybook Pages,
 DNS, hosted manifest, and passing live-verifier evidence exist, validate the
-completed hosted proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass` before removing `hosted-storybook-buyer-evidence`. It may perform live
+completed hosted proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --out ../dist-release-evidence/hosted-storybook-proof-validation.json --require-pass` before removing `hosted-storybook-buyer-evidence`. It may perform live
 network checks, but it does not deploy, mutate DNS, approve release authority,
 install dependencies, create hosted Storybook proof, or create live production
 proof.

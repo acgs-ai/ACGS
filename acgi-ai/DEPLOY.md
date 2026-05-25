@@ -576,10 +576,12 @@ through the exact Node 24 gate in `scripts/run_acgi_node24_gate.sh`,
 canonicalizes unambiguous wrapper-captured verifier transcripts, builds the
 blocker report, cutover plan, hosted Storybook handoff, deployment-blocked
 production-evidence draft and validator output when live blockers remain,
+optionally writes `dist-release-evidence/hosted-storybook-proof-validation.json`
+when `--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied,
 refreshes `make release-evidence`,
 and writes `dist-release-evidence/production-launch-preflight.json`. After
 external Pages/DNS evidence is attached, operators validate the completed hosted
-proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass`. Its safe
+proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --out ../dist-release-evidence/hosted-storybook-proof-validation.json --require-pass`. Its safe
 local proof command is
 `uv run python scripts/build_production_blocker_evidence.py --dry-run --json`;
 the real operator command may perform live network checks but does not deploy,

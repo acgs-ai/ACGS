@@ -1062,7 +1062,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "make production-blocker-evidence orchestrates live verifier JSON, "
                 "blocker report, cutover plan, hosted Storybook handoff, deployment-blocked "
-                "evidence draft, validator output, release evidence, and preflight JSON; "
+                "evidence draft, validator output, optional hosted Storybook proof "
+                "validation, release evidence, and preflight JSON; "
                 "acgi-ai commands run through the exact Node 24 gate; unit tests lock "
                 "copy-live-output transcript canonicalization and the non-deploying "
                 "dry-run plan without claiming live production proof"
@@ -1984,7 +1985,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "live-storybook blockers, hosted browser screenshot, automated "
                 "accessibility, and visual-diff evidence, "
                 "copyIntoProductionEvidence.hostedStorybook, "
-                "and validate:hosted-storybook-proof completed-proof checks before "
+                "and validate:hosted-storybook-proof completed-proof checks saved as "
+                "dist-release-evidence/hosted-storybook-proof-validation.json before "
                 "hosted-storybook-buyer-evidence can be removed"
                 if hosted_storybook_proof_files_ok
                 and hosted_storybook_proof_ok
@@ -1999,6 +2001,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "pnpm -F acgi-ai run test:hosted-storybook-proof-template "
                 "&& pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof "
                 "<hosted-storybook-proof.json> --live-output <verify-production-live.json> "
+                "--out ../dist-release-evidence/hosted-storybook-proof-validation.json "
                 "--require-pass"
             ),
         )

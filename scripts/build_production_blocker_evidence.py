@@ -37,6 +37,7 @@ OUTPUTS = {
     "blockerReport": EVIDENCE_DIR / "production-blocker-report.json",
     "cutoverPlan": EVIDENCE_DIR / "production-cutover-plan.json",
     "hostedStorybookHandoff": EVIDENCE_DIR / "hosted-storybook-handoff.json",
+    "hostedStorybookProofValidation": EVIDENCE_DIR / "hosted-storybook-proof-validation.json",
     "evidenceDraft": EVIDENCE_DIR / "production-evidence.deployment-blocked.json",
     "evidenceValidation": EVIDENCE_DIR / "production-evidence-validation.deployment-blocked.json",
     "releaseManifest": EVIDENCE_DIR / "manifest.json",
@@ -84,6 +85,9 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
     blocker_report_for_acgi = _rel_for_acgi(OUTPUTS["blockerReport"])
     cutover_plan_for_acgi = _rel_for_acgi(OUTPUTS["cutoverPlan"])
     hosted_handoff_for_acgi = _rel_for_acgi(OUTPUTS["hostedStorybookHandoff"])
+    hosted_proof_validation_for_acgi = _rel_for_acgi(
+        OUTPUTS["hostedStorybookProofValidation"]
+    )
     evidence_draft_for_acgi = _rel_for_acgi(OUTPUTS["evidenceDraft"])
     validation_for_repo = _rel_for_repo(OUTPUTS["evidenceValidation"])
 
@@ -170,6 +174,25 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
             ),
         ]
     )
+
+    if args.hosted_storybook_proof:
+        commands.append(
+            _command_entry(
+                "validate-hosted-storybook-proof",
+                _acgi_command(
+                    "run",
+                    "validate:hosted-storybook-proof",
+                    "--",
+                    "--proof",
+                    str(Path(args.hosted_storybook_proof).expanduser().resolve()),
+                    "--live-output",
+                    live_out_for_acgi,
+                    "--out",
+                    hosted_proof_validation_for_acgi,
+                    "--require-pass",
+                ),
+            )
+        )
 
     if not args.dry_run:
         live = _read_json(OUTPUTS["live"], "live verifier output")
@@ -460,6 +483,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--timeout-ms", type=int, default=10_000)
+    parser.add_argument(
+        "--hosted-storybook-proof",
+        help=(
+            "Optional completed hosted-storybook-proof JSON to validate against "
+            "the canonical production-live-verification JSON and save as "
+            "dist-release-evidence/hosted-storybook-proof-validation.json. "
+            "This requires --require-pass and does not create hosted proof."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the planned commands only.")
     parser.add_argument("--json", action="store_true", help="Print JSON output.")
     parser.add_argument(

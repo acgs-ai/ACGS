@@ -107,6 +107,7 @@ def test_dry_run_plan_has_no_duplicate_single_value_options():
         "--cutover-plan",
         "--manifest",
         "--out",
+        "--proof",
         "--validation-output-ref",
     }
 
@@ -131,6 +132,32 @@ def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_ver
     assert "--internal-copy-live-output" in copy_command["cmd"]
     assert copy_command["cmd"][-1].endswith(
         "dist-release-evidence/production-live-verification.json"
+    )
+
+
+def test_dry_run_with_hosted_storybook_proof_saves_validation_artifact():
+    payload = _dry_run("--hosted-storybook-proof", "tmp-hosted-storybook-proof.json")
+    commands = {entry["id"]: entry for entry in payload["commands"]}
+
+    assert "validate-hosted-storybook-proof" in commands
+    validate_command = commands["validate-hosted-storybook-proof"]["cmd"]
+    joined = " ".join(validate_command)
+    assert "validate:hosted-storybook-proof" in joined
+    assert "--proof" in validate_command
+    assert validate_command[validate_command.index("--proof") + 1].endswith(
+        "tmp-hosted-storybook-proof.json"
+    )
+    assert "--live-output" in validate_command
+    assert validate_command[validate_command.index("--live-output") + 1] == (
+        "../dist-release-evidence/production-live-verification.json"
+    )
+    assert "--out" in validate_command
+    assert validate_command[validate_command.index("--out") + 1] == (
+        "../dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert "--require-pass" in validate_command
+    assert payload["outputs"]["hostedStorybookProofValidation"] == (
+        "dist-release-evidence/hosted-storybook-proof-validation.json"
     )
 
 
