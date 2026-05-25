@@ -134,7 +134,7 @@ const products: ProductRoute[] = [
         value: '23',
         note: 'provider, framework, protocol, DevOps surfaces',
       },
-      { label: 'Ready', value: '21', note: 'production-ready entries in the snapshot' },
+      { label: 'Ready', value: '21', note: 'locally verified entries in the snapshot' },
       { label: 'Tests', value: '~3,630', note: 'fixture-reported test functions' },
     ],
     sections: [
@@ -208,7 +208,7 @@ const products: ProductRoute[] = [
     eyebrow: 'EU AI Act · Countdown',
     title: 'Compliance before the',
     emphasis: 'deadline',
-    deck: 'A public countdown and command-line compliance scan narrative for high-risk AI provisions, auditor-ready reports, and framework coverage.',
+    deck: 'A public countdown and command-line compliance scan narrative for high-risk AI provisions, auditor-oriented evidence reports, and framework coverage.',
     source: 'ACGS/docs/eu-ai-act-countdown/index.html',
     status: 'PARTIAL',
     primaryCta: 'Review compliance scan',
@@ -233,7 +233,7 @@ const products: ProductRoute[] = [
         bullets: [
           'Framework count surfaced as a product metric',
           'Nanosecond latency claim retained as reference copy',
-          'PDF reporting described as auditor-ready output',
+          'PDF reporting described as auditor-facing draft output',
         ],
       },
     ],
@@ -320,43 +320,48 @@ function ProductNav({ current }: { current?: string }) {
 
 export function ProductIndex() {
   return (
-    <main className="product-surface">
-      <div className="product-shell">
-        <ProductNav />
-        <header className="product-hero">
-          <p className="product-eyebrow">
-            <span>{ASTERISM}</span> Product reference atlas
-          </p>
-          <h1>
-            Standalone HTML, rebuilt as <em>native</em> React surfaces.
-          </h1>
-          <p>
-            This atlas turns the LegalGuard, governance-evaluation, ACGS Lite, Hermes, EU AI Act,
-            and Auth0 vault references into routeable product pages without iframe drops or new
-            dependencies.
-          </p>
-        </header>
+    <>
+      <a className="skip-link" href="#main-content">
+        Skip to product content
+      </a>
+      <main id="main-content" className="product-surface" tabIndex={-1}>
+        <div className="product-shell">
+          <ProductNav />
+          <header className="product-hero">
+            <p className="product-eyebrow">
+              <span>{ASTERISM}</span> Product reference atlas
+            </p>
+            <h1>
+              Standalone HTML, rebuilt as <em>native</em> React surfaces.
+            </h1>
+            <p>
+              This atlas turns the LegalGuard, governance-evaluation, ACGS Lite, Hermes, EU AI Act,
+              and Auth0 vault references into routeable product pages without iframe drops or new
+              dependencies.
+            </p>
+          </header>
 
-        <section className="product-grid" aria-label="Product routes">
-          {products.map((product) => (
-            <article className="product-card" key={product.slug}>
-              <span className="product-folio">Vol. {product.folio}</span>
-              <h2>
-                {product.title} <em>{product.emphasis}</em>.
-              </h2>
-              <p>{product.deck}</p>
-              <button
-                type="button"
-                className="product-link"
-                onClick={() => navigate(`/products/${product.slug}`)}
-              >
-                Read reference <ArrowRight size={14} strokeWidth={1.7} />
-              </button>
-            </article>
-          ))}
-        </section>
-      </div>
-    </main>
+          <section className="product-grid" aria-label="Product routes">
+            {products.map((product) => (
+              <article className="product-card" key={product.slug}>
+                <span className="product-folio">Vol. {product.folio}</span>
+                <h2>
+                  {product.title} <em>{product.emphasis}</em>.
+                </h2>
+                <p>{product.deck}</p>
+                <button
+                  type="button"
+                  className="product-link"
+                  onClick={() => navigate(`/products/${product.slug}`)}
+                >
+                  Read reference <ArrowRight size={14} strokeWidth={1.7} />
+                </button>
+              </article>
+            ))}
+          </section>
+        </div>
+      </main>
+    </>
   )
 }
 
@@ -366,93 +371,98 @@ export function ProductSurface({ path }: { path: string }) {
   if (!product) return <ProductIndex />
 
   return (
-    <main className="product-surface">
-      <div className="product-shell">
-        <ProductNav current={product.slug} />
-        <header className="product-hero product-hero-detail">
-          <div>
-            <p className="product-eyebrow">
-              <span>{ASTERISM}</span> {product.eyebrow}
-            </p>
-            <h1>
-              {product.title} <em>{product.emphasis}</em>.
-            </h1>
-            <p>{product.deck}</p>
-            <div className="product-actions">
-              <a className="btn btn-primary" href="#evidence">
-                {product.primaryCta} <ArrowRight size={16} strokeWidth={1.8} />
-              </a>
-              {product.secondaryCta && (
-                <a className="btn btn-secondary" href="#reference">
-                  {product.secondaryCta}
+    <>
+      <a className="skip-link" href="#main-content">
+        Skip to product content
+      </a>
+      <main id="main-content" className="product-surface" tabIndex={-1}>
+        <div className="product-shell">
+          <ProductNav current={product.slug} />
+          <header className="product-hero product-hero-detail">
+            <div>
+              <p className="product-eyebrow">
+                <span>{ASTERISM}</span> {product.eyebrow}
+              </p>
+              <h1>
+                {product.title} <em>{product.emphasis}</em>.
+              </h1>
+              <p>{product.deck}</p>
+              <div className="product-actions">
+                <a className="btn btn-primary" href="#evidence">
+                  {product.primaryCta} <ArrowRight size={16} strokeWidth={1.8} />
                 </a>
-              )}
+                {product.secondaryCta && (
+                  <a className="btn btn-secondary" href="#reference">
+                    {product.secondaryCta}
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
-          <aside className="product-docket" aria-label="Reference docket">
-            <span className={`pill ${product.status.toLowerCase()}`}>{product.status}</span>
-            <dl>
-              <div>
-                <dt>Reference</dt>
-                <dd>{product.source}</dd>
-              </div>
-              <div>
-                <dt>Hash</dt>
-                <dd>608508a9bd224290</dd>
-              </div>
-              <div>
-                <dt>Route</dt>
-                <dd>/products/{product.slug}</dd>
-              </div>
-            </dl>
-          </aside>
-        </header>
+            <aside className="product-docket" aria-label="Reference docket">
+              <span className={`pill ${product.status.toLowerCase()}`}>{product.status}</span>
+              <dl>
+                <div>
+                  <dt>Reference</dt>
+                  <dd>{product.source}</dd>
+                </div>
+                <div>
+                  <dt>Hash</dt>
+                  <dd>608508a9bd224290</dd>
+                </div>
+                <div>
+                  <dt>Route</dt>
+                  <dd>/products/{product.slug}</dd>
+                </div>
+              </dl>
+            </aside>
+          </header>
 
-        <section className="product-stat-grid" aria-label={`${product.eyebrow} product signals`}>
-          {product.cards.map((card) => (
-            <article className="product-stat" key={card.label}>
-              <span>{card.label}</span>
-              <strong>{card.value}</strong>
-              <p>{card.note}</p>
-            </article>
-          ))}
-        </section>
-
-        <div className="m-break" aria-hidden>
-          {ASTERISM} {ASTERISM} {ASTERISM}
-        </div>
-
-        <section className="product-brief" id="reference" aria-label="Reference interpretation">
-          {product.sections.map((section) => (
-            <article key={section.heading}>
-              <h2>{section.heading}</h2>
-              <p>{section.body}</p>
-              <ul>
-                {section.bullets.map((bullet) => (
-                  <li key={bullet}>{bullet}</li>
-                ))}
-              </ul>
-            </article>
-          ))}
-        </section>
-
-        <section className="product-evidence" id="evidence" aria-labelledby="evidence-h">
-          <div className="m-sec-head">
-            <span className="num">Vol. {product.folio} · Evidence</span>
-            <h2 id="evidence-h">
-              Product cues preserved as <em>routeable</em> evidence.
-            </h2>
-          </div>
-          <div className="product-evidence-list">
-            {product.evidence.map((item, index) => (
-              <article key={item}>
-                <span>0{index + 1}</span>
-                <p>{item}</p>
+          <section className="product-stat-grid" aria-label={`${product.eyebrow} product signals`}>
+            {product.cards.map((card) => (
+              <article className="product-stat" key={card.label}>
+                <span>{card.label}</span>
+                <strong>{card.value}</strong>
+                <p>{card.note}</p>
               </article>
             ))}
+          </section>
+
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
-        </section>
-      </div>
-    </main>
+
+          <section className="product-brief" id="reference" aria-label="Reference interpretation">
+            {product.sections.map((section) => (
+              <article key={section.heading}>
+                <h2>{section.heading}</h2>
+                <p>{section.body}</p>
+                <ul>
+                  {section.bullets.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </section>
+
+          <section className="product-evidence" id="evidence" aria-labelledby="evidence-h">
+            <div className="m-sec-head">
+              <span className="num">Vol. {product.folio} · Evidence</span>
+              <h2 id="evidence-h">
+                Product cues preserved as <em>routeable</em> evidence.
+              </h2>
+            </div>
+            <div className="product-evidence-list">
+              {product.evidence.map((item, index) => (
+                <article key={item}>
+                  <span>0{index + 1}</span>
+                  <p>{item}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+      </main>
+    </>
   )
 }

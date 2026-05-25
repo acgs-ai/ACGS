@@ -1,17 +1,10 @@
-# Cloud Run service for the console origin — DEPLOY.md §4.
+# Cloud Run service template for the console origin — DEPLOY.md §7.
+# Environment: render-target preview default
+# Preview keeps minScale=0 so ephemeral revisions do not reserve always-on capacity.
 #
-# Apply via:
-#   gcloud run services replace infra/cloudrun/service.yaml \
-#     --region=$REGION --project=$PROJECT_ID
-#
-# Production override:
-#   - Set autoscaling.knative.dev/minScale to "1" so the privileged surface
-#     never serves a cold-start blank page (DESIGN.md §4.3 forbids gating
-#     the banner; cold start would visually do that).
-#   - Bind the custom domain console.acgs.ai (DEPLOY.md §9).
-#
-# Image must be pre-pushed to Artifact Registry by the GHA workflow at
-# .github/workflows/console.yml.
+# Rendered by scripts/render-cloudrun-service.mjs into infra/cloudrun/service.yaml.
+# Keep REPLACE_* placeholders; the deploy job substitutes image, build id,
+# auth upstream and same-origin bus upstream at deploy time.
 
 apiVersion: serving.knative.dev/v1
 kind: Service
@@ -26,23 +19,29 @@ spec:
   template:
     metadata:
       annotations:
-        # ─ Scaling. minScale=1 in production; staging may use 0.
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "10"
-        # ─ Concurrency. Caddy + static files = high per-instance.
         run.googleapis.com/execution-environment: gen2
     spec:
       containerConcurrency: 80
       timeoutSeconds: 30
       containers:
         - name: console
-          image: REPLACE_AT_DEPLOY_TIME  # set by .github/workflows/console.yml
+          image: REPLACE_AT_DEPLOY_TIME
           ports:
             - name: http1
               containerPort: 8080
           env:
             - name: PORT
               value: "8080"
+            - name: ACGI_BUILD_ID
+              value: "REPLACE_BUILD_ID_AT_DEPLOY_TIME"
+            - name: AUTH_UPSTREAM
+              value: "REPLACE_AUTH_UPSTREAM_AT_DEPLOY_TIME"
+            - name: BUS_UPSTREAM
+              value: "REPLACE_BUS_UPSTREAM_AT_DEPLOY_TIME"
+            - name: ACGS_SCHEMA_VERSION
+              value: "v1"
           resources:
             limits:
               cpu: "1"

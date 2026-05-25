@@ -1,8 +1,10 @@
 # govern-zone monorepo registry
 
 Single source of truth for "what's in this monorepo and how it's gated."
-Companion to `docs/PLAN-MONOREPO.md` (historical unification plan) and the hardening
-report at `artifacts/hardening_reports/` (the most recent verification run).
+Companion to `docs/PLAN-MONOREPO.md` (historical unification plan),
+`docs/governance-stack-index.md` (current policy/evidence ownership map), and
+the hardening report at `artifacts/hardening_reports/` (the most recent
+verification run).
 
 For per-package conventions see each package's own `CLAUDE.md` / `AGENTS.md`.
 
@@ -14,7 +16,7 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | Package | Tracking | Toolchain | Parent CI | Maintainer / notes |
 |---|---|---|---|---|
 | `acgi-ai/` | parent files | Node 24, pnpm 9.15.4, Vite 5, Tailwind 4, Biome | `.github/workflows/console.yml`, `marketing.yml` | Frontend — deploys to GCP Cloud Run via WIF; CSP rules in `acgi-ai/DEPLOY.md` §4–§7; generated bus API types cover only `/api/bus/*` |
-| `acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5, npm package metadata | TBD | Enterprise manager frontend — included in pnpm workspace so dependency installs and Turbo package discovery see it |
+| `acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5, npm package metadata | JS Turbo fan-out/build discovery; no deploy workflow | Enterprise manager frontend — included in pnpm workspace so dependency installs and Turbo package discovery see it |
 | `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**` |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
 | `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
@@ -34,13 +36,10 @@ pinned SHA in a follow-up parent commit.
 | `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `langgraph-runtime/unit-10-coordinator` (in-flight feature) | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | inactive until submodule init is reliable | `python-clinicalguard.yml` (path-filtered, skips when private checkout is unavailable) |
-| `packages/legalguard/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
-| `packages/ca-legal-agent-skills/` | **plain dir** (no own git) | no | n/a | TBD — joins workspace, no submodule needed |
-
-`legalguard/` and `ca-legal-agent-skills/` were unknown in the original plan
-(`docs/PLAN-MONOREPO.md` §6 listed them as "Medium" risk pending inspection);
-confirmed here as plain directories — no submodule conversion required for
-either.
+There is no current root-tracked `packages/legalguard/` directory in this
+checkout. Legal-domain surfaces that exist locally are ignored adjacent
+checkouts, listed below, so root `make verify` is not evidence that those
+packages are release-ready.
 
 `packages/clinicalguard/` remains in `.gitmodules`, but is deliberately absent
 from root `Makefile` and uv workspace fan-out while local and CI initialization
@@ -54,6 +53,17 @@ The duplicate root `acgs-lite/` checkout and the standalone
 `local-chatgpt-bridge/` package were extracted from this repo to the scratch
 archive recorded in `~/scratch/govern-zone-experiments/`; `packages/acgs-lite/`
 remains authoritative.
+
+## Ignored adjacent checkouts present locally
+
+These paths are excluded by `.gitignore` and are not parent-tracked workspace
+members. Use their package-local gates when they are in scope; do not treat
+root CI as deploy proof for them.
+
+| Path | Status | Package-local gate |
+|---|---|---|
+| `ACGS/packages/legalguard/` | LegalGuard product lane inside the ignored `ACGS/` checkout | `(cd ACGS/packages/legalguard && python -m pytest tests/ -v --import-mode=importlib)` |
+| `ca-legal-agent-skills/` | Canadian legal skill bundle and runtime checkout ignored by the root repo | `(cd ca-legal-agent-skills && python3 scripts/validate_skill_bundle.py && python3 scripts/lint_skill_content.py && python3 scripts/diff_skill_references.py && pytest runtime/ -v)` |
 
 ## Cross-cutting CI
 
@@ -87,6 +97,7 @@ python3 scripts/hardening_report.py
 | File | Scope |
 |---|---|
 | `acgi-ai/PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
+| `docs/governance-stack-index.md` | Current package-to-contract map for policy/evidence ownership, local gates, and claim-safe deploy-proof caveats |
 | `docs/PLAN-MONOREPO.md` | Historical multi-phase plan for unifying the workspace; use this for context, not current registry truth |
 | `MONOREPO.md` (this file) | Read-only registry — the truthful map of what exists and what is gated where |
 

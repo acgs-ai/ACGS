@@ -1,5 +1,5 @@
 import { ArrowRight } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
 import { hasSession } from '../lib/session'
 import { CONSTITUTION_HASH } from './console/shared'
@@ -10,17 +10,42 @@ type Provider = {
   hint: string
 }
 
+type LoginInterstitial = {
+  provider: Provider
+  matter: string
+  startedAt: number
+  ready: boolean
+  queuedDismiss: boolean
+}
+
 const PROVIDERS: Provider[] = [
   { id: 'google', label: 'Continue with Google Workspace', hint: 'sso.google.com' },
   { id: 'entra', label: 'Continue with Microsoft Entra', hint: 'login.microsoftonline.com' },
   { id: 'okta', label: 'Continue with Okta', hint: 'sso.okta.com' },
 ]
 
+const LOGIN_INTERSTITIAL_MIN_MS = 800
+const LOGIN_OPERATOR = 'custodian-01'
+
+function isConsolePath(path: string): boolean {
+  return path === '/console' || path.startsWith('/console/') || path.startsWith('/console?')
+}
+
 function nextConsolePath(fallback: string | undefined): string {
-  const safeFallback = fallback?.startsWith('/console') ? fallback : '/console'
+  const safeFallback = fallback && isConsolePath(fallback) ? fallback : '/console'
   if (typeof window === 'undefined') return safeFallback
   const next = new URLSearchParams(window.location.search).get('next')
-  return next?.startsWith('/console') ? next : safeFallback
+  return next && isConsolePath(next) ? next : safeFallback
+}
+
+function describeConsoleMatter(path: string): string {
+  const routeOnly = path.split(/[?#]/)[0] ?? '/console'
+  const section = routeOnly
+    .replace(/^\/console\/?/, '')
+    .split('/')
+    .filter(Boolean)
+    .join(' / ')
+  return section ? `console ${section} matter` : 'console overview matter'
 }
 
 export function Login({ nextPath }: { nextPath?: string }) {
@@ -28,7 +53,11 @@ export function Login({ nextPath }: { nextPath?: string }) {
   const [ssoError, setSsoError] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [magicQueued, setMagicQueued] = useState(false)
+  const [loginInterstitial, setLoginInterstitial] = useState<LoginInterstitial | null>(null)
+  const loginInterstitialRef = useRef<LoginInterstitial | null>(null)
+  const dismissButtonRef = useRef<HTMLButtonElement | null>(null)
   const timeoutRef = useRef<number | null>(null)
+  const isBusy = pending !== null || loginInterstitial !== null
 
   // Authenticated users do not need to see the entrance ritual again.
   useEffect(() => {
@@ -37,9 +66,13 @@ export function Login({ nextPath }: { nextPath?: string }) {
     }
   }, [nextPath])
 
+  useEffect(() => {
+    loginInterstitialRef.current = loginInterstitial
+  }, [loginInterstitial])
+
   // Clear the pending timeout if the user navigates away or unmounts.
-  // Otherwise the deferred navigate('/console') would yank a user who
-  // clicked the brand or pressed the back button mid-redirect.
+  // Otherwise a deferred auth-status update could yank a user who clicked the
+  // brand or pressed the back button mid-redirect.
   useEffect(() => {
     return () => {
       if (timeoutRef.current !== null) {
@@ -48,30 +81,91 @@ export function Login({ nextPath }: { nextPath?: string }) {
     }
   }, [])
 
-  function go(p: Provider) {
-    // SSO redirect URLs are not yet wired. Do NOT grant access here —
-    // createSession() must only be called after a real IdP callback confirms
-    // identity. Show a clear error instead of fake-granting privilege.
-    setSsoError(null)
-    setMagicQueued(false)
-    setPending(p.id)
+  useEffect(() => {
+    if (!loginInterstitial) return
+    dismissButtonRef.current?.focus()
+  }, [loginInterstitial])
+
+  const finishSsoAttempt = useCallback((provider: Provider) => {
+    setPending(provider.id)
     timeoutRef.current = window.setTimeout(() => {
       timeoutRef.current = null
       setPending(null)
       setSsoError(
-        `${p.label} is not yet configured. Contact your administrator to provision SSO access.`,
+        `${provider.label} is not yet configured. Contact your administrator to provision SSO access.`,
       )
-    }, 600)
+    }, 150)
+  }, [])
+
+  const completeInterstitial = useCallback(
+    function completeInterstitial() {
+      const current = loginInterstitialRef.current
+      if (!current) return
+      if (!current.ready) {
+        setLoginInterstitial({ ...current, queuedDismiss: true })
+        return
+      }
+      setLoginInterstitial(null)
+      finishSsoAttempt(current.provider)
+    },
+    [finishSsoAttempt],
+  )
+
+  useEffect(() => {
+    if (!loginInterstitial) return
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        completeInterstitial()
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [loginInterstitial, completeInterstitial])
+
+  useEffect(() => {
+    if (loginInterstitial?.ready && loginInterstitial.queuedDismiss) {
+      completeInterstitial()
+    }
+  }, [loginInterstitial, completeInterstitial])
+
+  function go(p: Provider) {
+    // SSO redirect URLs are not yet wired. Do NOT grant access here; production
+    // admission belongs to a real IdP callback or server-issued console cookie.
+    if (timeoutRef.current !== null) {
+      window.clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+    setSsoError(null)
+    setMagicQueued(false)
+    setPending(null)
+    const matter = describeConsoleMatter(nextConsolePath(nextPath))
+    setLoginInterstitial({
+      provider: p,
+      matter,
+      startedAt: Date.now(),
+      ready: false,
+      queuedDismiss: false,
+    })
+    timeoutRef.current = window.setTimeout(() => {
+      timeoutRef.current = null
+      setLoginInterstitial((current) => (current ? { ...current, ready: true } : current))
+    }, LOGIN_INTERSTITIAL_MIN_MS)
   }
 
   return (
     <div className="login">
+      <a className="skip-link" href="#main-content">
+        Skip to sign-in content
+      </a>
       <div className="login-banner" role="note">
         <span>⁂ Privilege boundary · authentication is the entrance</span>
-        <span>608508a9bd224290</span>
+        <span>{CONSTITUTION_HASH}</span>
       </div>
 
-      <main className="login-shell">
+      <main id="main-content" className="login-shell" tabIndex={-1}>
         <a
           className="login-brand"
           href="/"
@@ -105,7 +199,7 @@ export function Login({ nextPath }: { nextPath?: string }) {
               type="button"
               className="login-provider"
               onClick={() => go(p)}
-              disabled={pending !== null}
+              disabled={isBusy}
             >
               <span className="login-provider-mark">{p.id.charAt(0).toUpperCase()}</span>
               <span className="login-provider-label">{p.label}</span>
@@ -114,6 +208,49 @@ export function Login({ nextPath }: { nextPath?: string }) {
             </button>
           ))}
         </div>
+
+        {loginInterstitial && (
+          <section className="login-interstitial" role="status" aria-live="polite">
+            <div className="login-interstitial-eyebrow">Parchment handoff</div>
+            <h2>Entering the governed console</h2>
+            <dl className="login-interstitial-grid">
+              <div>
+                <dt>Operator</dt>
+                <dd>{LOGIN_OPERATOR}</dd>
+              </div>
+              <div>
+                <dt>Matter</dt>
+                <dd>{loginInterstitial.matter}</dd>
+              </div>
+              <div>
+                <dt>Constitution</dt>
+                <dd>{CONSTITUTION_HASH}</dd>
+              </div>
+              <div>
+                <dt>Provider</dt>
+                <dd>{loginInterstitial.provider.label}</dd>
+              </div>
+            </dl>
+            <p>
+              This minimum {LOGIN_INTERSTITIAL_MIN_MS}ms pause makes the privilege boundary visible
+              before any identity-provider handoff. Production entry still requires the external SSO
+              callback.
+            </p>
+            <time dateTime={new Date(loginInterstitial.startedAt).toISOString()}>
+              Handoff recorded locally for this browser route.
+            </time>
+            <button
+              ref={dismissButtonRef}
+              type="button"
+              className="m-text-link login-interstitial-dismiss"
+              onClick={completeInterstitial}
+            >
+              {loginInterstitial.ready
+                ? 'continue to provider status'
+                : 'continue after parchment hold'}
+            </button>
+          </section>
+        )}
 
         <div className="login-fallback">
           <span>or</span>
@@ -134,21 +271,17 @@ export function Login({ nextPath }: { nextPath?: string }) {
               }}
               placeholder="verified@example.com"
               aria-label="Verified email address"
-              disabled={pending !== null}
+              disabled={isBusy}
               required
             />
-            <button
-              type="submit"
-              className="m-text-link"
-              disabled={pending !== null || email.trim() === ''}
-            >
+            <button type="submit" className="m-text-link" disabled={isBusy || email.trim() === ''}>
               send a magic link
             </button>
           </form>
         </div>
 
         {pending && (
-          <p className="login-pending">
+          <p className="login-pending" role="status" aria-live="polite">
             Redirecting to <strong>{pending}</strong>…
           </p>
         )}
@@ -165,7 +298,7 @@ export function Login({ nextPath }: { nextPath?: string }) {
 
         <div className="login-foot">
           <span>v3.1.0 · Vol. I · MMXXVI</span>
-          <span className="hash">608508a9bd224290</span>
+          <span className="hash">{CONSTITUTION_HASH}</span>
         </div>
       </main>
     </div>

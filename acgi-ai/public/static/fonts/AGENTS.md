@@ -29,8 +29,8 @@ This directory stores self-hosted WOFF2 font subsets for both the marketing and 
 - Preserve license coverage when adding or replacing font families.
 
 ### Testing Requirements
-- Run `pnpm build` after changing font file names or paths.
-- Verify `src/fonts.css` has matching `@font-face` entries for every runtime font dependency.
+- Run `pnpm test:font-manifest` after changing font file names, paths, bytes, or `src/fonts.css` references.
+- Run `pnpm build` after font changes; build verifies `fonts.sha256` before emitting artifacts.
 
 ### Common Patterns
 - File names encode family, weight, style, and subset.

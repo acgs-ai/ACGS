@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 
 from agent_bus_analyzer.auth import require_reviewer_role
-from agent_bus_analyzer.models import SingleTrace, TraceList
+from agent_bus_analyzer.models import ReceiptProof, SingleTrace, TraceList
 from agent_bus_analyzer.store import TraceStore
 
 log = logging.getLogger("agent_bus_analyzer.api")
@@ -83,6 +83,20 @@ def create_app(store: TraceStore | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trace not found: {correlation_id}",
+            )
+        return result
+
+    @app.get(
+        "/api/bus/receipts/{receipt_id}",
+        response_model=ReceiptProof,
+        dependencies=[Depends(require_reviewer_role)],
+    )
+    async def get_receipt_proof(receipt_id: str, request: Request) -> ReceiptProof:
+        result = _get_store(request).get_receipt_proof(receipt_id)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Receipt proof not found: {receipt_id}",
             )
         return result
 

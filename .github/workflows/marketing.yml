@@ -5,8 +5,9 @@
 #   VERCEL_ORG_ID         — `vercel project ls` reveals it
 #   VERCEL_PROJECT_ID     — same
 #
-# PR runs do a preview deploy and the URL is posted as a check; pushes to
-# master do a production deploy.
+# PRs run readiness/lint/build only. Pushes to master do a production deploy
+# and fail closed when required Vercel secrets are absent, so a green push run
+# cannot imply a skipped production deployment.
 #
 # Workflow lives at repo root (.github/workflows/) — GitHub Actions only
 # discovers workflows from there. The acgi-ai app is in a subdirectory, so
@@ -21,13 +22,11 @@ on:
     paths-ignore:
       - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'acgi-ai/DEPLOY.md'
   push:
     branches: [master]
     paths-ignore:
       - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'acgi-ai/DEPLOY.md'
 
 concurrency:
   group: marketing-${{ github.ref }}
@@ -66,24 +65,19 @@ jobs:
       # pnpm-lock.yaml. See console.yml for the full rationale.
       - run: pnpm install --frozen-lockfile --ignore-workspace
 
+      - name: Readiness gate
+        run: pnpm test:all
+
       - name: Lint
         run: pnpm lint
 
       - name: Build (sanity check before Vercel takes over)
-        run: pnpm build
+        run: pnpm build:marketing
 
       # ---- Vercel deploy: master pushes only ----
-      # Originally this pipeline did a preview deploy on PRs too. That
-      # requires VERCEL_TOKEN + VERCEL_ORG_ID + VERCEL_PROJECT_ID secrets;
-      # when any are missing, vercel pull aborts with "No existing
-      # credentials found." Gating to push events keeps PRs unblocked.
-      # To re-enable PR previews, configure the three secrets and drop
-      # the `if:` gates on every deploy step below.
-
-      # Skip the Vercel deploy entirely if any of the three secrets is
-      # absent (e.g. fresh fork, secrets not yet rotated). Without this
-      # the master push pipeline goes red on `vercel pull` even though
-      # lint + build above already succeeded.
+      # PRs stop after readiness/lint/build. On pushes, missing Vercel
+      # credentials are a production-deploy blocker and must fail closed rather
+      # than warning and returning green.
       - name: Check Vercel secrets present
         id: vercel_auth
         if: github.event_name == 'push'
@@ -95,8 +89,8 @@ jobs:
           if [ "$HAVE_TOKEN" = "true" ] && [ "$HAVE_ORG" = "true" ] && [ "$HAVE_PROJECT" = "true" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Vercel deploy skipped: set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable. Lint+build above already verified the bundle compiles."
+            echo "::error::Vercel production deploy blocked: set VERCEL_TOKEN, VERCEL_ORG_ID, and VERCEL_PROJECT_ID secrets. Lint+build above are local readiness only, not production deployment proof."
+            exit 1
           fi
 
       - name: Install Vercel CLI

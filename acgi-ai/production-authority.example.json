@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "production-authority-packet",
+  "status": "pending-external-authority",
+  "claimBoundary": "Template-only production authority packet; not production deployment proof, not deploy approval, not DNS proof, not legal signoff, and not hosted Storybook proof until every pending-external proofRef is replaced by signed operator evidence.",
+  "requiredApprovals": [
+    {
+      "id": "deploy-owner-approval",
+      "owner": "release/deploy owner",
+      "proofRef": "pending-external:deploy-owner-approval",
+      "requiredBefore": ["push-or-merge-to-master", "claim-production-deployment"]
+    },
+    {
+      "id": "dns-owner-approval",
+      "owner": "DNS/domain owner",
+      "proofRef": "pending-external:dns-owner-approval",
+      "requiredBefore": ["change-acgs-ai-dns", "claim-live-domains"]
+    },
+    {
+      "id": "auth-owner-approval",
+      "owner": "production auth owner",
+      "proofRef": "pending-external:auth-owner-approval",
+      "requiredBefore": ["set-console-auth-upstream", "claim-console-auth-boundary"]
+    },
+    {
+      "id": "claims-owner-approval",
+      "owner": "claim/legal owner",
+      "proofRef": "pending-external:claims-owner-approval",
+      "requiredBefore": ["publish-stronger-claims", "claim-legal-or-compliance-review"]
+    }
+  ],
+  "requiredGitHubSecrets": [
+    "VERCEL_TOKEN",
+    "VERCEL_ORG_ID",
+    "VERCEL_PROJECT_ID",
+    "GCP_PROJECT_ID",
+    "GCP_REGION",
+    "GCP_WORKLOAD_IDENTITY_PROVIDER",
+    "GCP_SERVICE_ACCOUNT",
+    "GCP_ARTIFACT_REGISTRY",
+    "CONSOLE_AUTH_UPSTREAM",
+    "CONSOLE_BUS_UPSTREAM"
+  ],
+  "requiredGitHubVariables": [
+    {
+      "name": "STORYBOOK_PAGES_ENABLED",
+      "expectedValue": "true",
+      "proofRef": "pending-external:github-variable-storybook-pages-enabled"
+    }
+  ],
+  "dnsAuthority": [
+    {
+      "host": "acgs.ai",
+      "ownerProofRef": "pending-external:acgs-ai-dns-owner-proof",
+      "plannedTargetRef": "pending-external:vercel-production-target"
+    },
+    {
+      "host": "console.acgs.ai",
+      "ownerProofRef": "pending-external:console-acgs-ai-dns-owner-proof",
+      "plannedTargetRef": "pending-external:cloud-run-domain-target"
+    },
+    {
+      "host": "storybook.acgs.ai",
+      "ownerProofRef": "pending-external:storybook-acgs-ai-dns-owner-proof",
+      "plannedTargetRef": "pending-external:github-pages-cname-target"
+    }
+  ],
+  "productionRunRefs": {
+    "marketingWorkflowRunUrl": "pending-external:marketing-workflow-run-url",
+    "consoleWorkflowRunUrl": "pending-external:console-workflow-run-url",
+    "storybookWorkflowRunUrl": "pending-external:storybook-workflow-run-url",
+    "vercelDeploymentUrl": "pending-external:vercel-deployment-url",
+    "cloudRunRevisionUrl": "pending-external:cloud-run-revision-url"
+  },
+  "rollbackAuthority": {
+    "owner": "release/deploy owner",
+    "proofRef": "pending-external:rollback-authority-approval",
+    "triggers": [
+      "postdeploy-verify-fails",
+      "verify-production-live-fails-after-cutover",
+      "auth-or-bus-upstream-misconfigured",
+      "claim-boundary-regression-detected"
+    ]
+  },
+  "operatorAssertion": "Do not deploy, mutate DNS, enable Storybook Pages, or claim production launch until this packet is completed with signed external authority evidence and the production evidence manifest validates against live verifier output."
+}

@@ -11,6 +11,8 @@
 #        GCP_WORKLOAD_IDENTITY_PROVIDER  (full resource path)
 #        GCP_SERVICE_ACCOUNT         (deploy SA email)
 #        GCP_ARTIFACT_REGISTRY       (e.g. us-central1-docker.pkg.dev/<project>/acgi)
+#        CONSOLE_AUTH_UPSTREAM       (edge auth/forward-auth upstream for /console*)
+#        CONSOLE_BUS_UPSTREAM        (same-origin governed bus/gateway upstream)
 #
 # The console image is built and pushed on every PR (so previews can run
 # against a real revision) but only deployed to production on push-to-master.
@@ -31,9 +33,21 @@ on:
       - 'acgi-ai/index.html'
       - 'acgi-ai/package.json'
       - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/scripts/**'
+      - 'acgi-ai/contracts/**'
       - 'acgi-ai/vite.config.ts'
       - 'acgi-ai/tsconfig*.json'
       - 'acgi-ai/infra/**'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/PRODUCTION-LAUNCH.md'
+      - 'acgi-ai/production-authority.example.json'
+      - 'acgi-ai/production-evidence.example.json'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/A11Y.md'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/INTEGRATING.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'docs/integration-readiness-task-map.md'
       - '.github/workflows/console.yml'
   push:
     branches: [master]
@@ -43,9 +57,21 @@ on:
       - 'acgi-ai/index.html'
       - 'acgi-ai/package.json'
       - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/scripts/**'
+      - 'acgi-ai/contracts/**'
       - 'acgi-ai/vite.config.ts'
       - 'acgi-ai/tsconfig*.json'
       - 'acgi-ai/infra/**'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/PRODUCTION-LAUNCH.md'
+      - 'acgi-ai/production-authority.example.json'
+      - 'acgi-ai/production-evidence.example.json'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/A11Y.md'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/INTEGRATING.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'docs/integration-readiness-task-map.md'
       - '.github/workflows/console.yml'
 
 concurrency:
@@ -88,11 +114,32 @@ jobs:
       # pnpm-lock.yaml — failing with ERR_PNPM_NO_LOCKFILE.
       - run: pnpm install --frozen-lockfile --ignore-workspace
 
+      - name: Readiness gate
+        run: pnpm test:all
+
       - name: Lint
         run: pnpm lint
 
       - name: Build (verify TS / Vite before docker)
-        run: pnpm build
+        run: pnpm build:console
+
+      - name: Build buyer evidence gallery artifact
+        run: pnpm evidence:build
+
+      - name: Upload buyer evidence gallery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: buyer-evidence-gallery
+          path: acgi-ai/dist-buyer-evidence
+          if-no-files-found: error
+
+      - name: Upload built console artifact for post-deploy verification
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+          if-no-files-found: error
 
       # ---- Image build + push: master pushes only ----
       # PRs run Lint + Build above as verification; only pushes to master
@@ -148,6 +195,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download built console artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:
@@ -157,14 +210,20 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Render service.yaml
+        env:
+          DEPLOY_ENV: production
+          AUTH_UPSTREAM: ${{ secrets.CONSOLE_AUTH_UPSTREAM }}
+          BUS_UPSTREAM: ${{ secrets.CONSOLE_BUS_UPSTREAM }}
         run: |
-          sed -i "s|REPLACE_AT_DEPLOY_TIME|${{ needs.build.outputs.image }}|" \
-            infra/cloudrun/service.yaml
-          # Production override: keep at least one warm instance so the
-          # privilege banner (DESIGN.md §4.3) is never visually pause-gated
-          # by a cold start.
-          sed -i 's|autoscaling.knative.dev/minScale: "0"|autoscaling.knative.dev/minScale: "1"|' \
-            infra/cloudrun/service.yaml
+          BUILD_ID="${GITHUB_SHA::12}"
+          IMAGE_URI="${{ needs.build.outputs.image }}"
+          node scripts/render-cloudrun-service.mjs \
+            --env "${DEPLOY_ENV}" \
+            --image "${IMAGE_URI}" \
+            --build-id "${BUILD_ID}" \
+            --auth-upstream "${AUTH_UPSTREAM}" \
+            --bus-upstream "${BUS_UPSTREAM}" \
+            --out infra/cloudrun/service.yaml
 
       - name: Deploy to Cloud Run
         run: |
@@ -172,21 +231,12 @@ jobs:
             --region=${{ secrets.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Smoke-test the new revision
+      - name: Post-deploy verification
         run: |
+          BUILD_ID="${GITHUB_SHA::12}"
           URL=$(gcloud run services describe acgi-console \
             --region=${{ secrets.GCP_REGION }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
             --format='value(status.url)')
           echo "Deployed: $URL"
-          # /healthz must return ok=true and the served constitutional hash.
-          for i in 1 2 3 4 5; do
-            if curl -fsS "$URL/healthz" | grep -q '"ok":true'; then
-              echo "Health check OK"
-              exit 0
-            fi
-            echo "Health check attempt $i failed; retrying"
-            sleep 5
-          done
-          echo "Health check failed after 5 attempts" >&2
-          exit 1
+          EXPECTED_BUILD_ID="$BUILD_ID" bash scripts/postdeploy-verify.sh "$URL"

@@ -2,13 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://govern-zone.dev/agent-bus-analyzer/trace-query.schema.json",
   "title": "TraceQueryResponse",
-  "description": "Console-facing response shape for the two console reads: trace list + single-trace inspector. Source of truth: packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py.",
+  "description": "Console-facing response shape for the console reads: trace list, single-trace inspector, and receipt proof inspector. Source of truth: packages/agent-bus-analyzer/src/agent_bus_analyzer/query.py.",
   "type": "object",
   "oneOf": [
-    { "$ref": "#/$defs/TraceList" },
-    { "$ref": "#/$defs/SingleTrace" },
-    { "$ref": "#/$defs/WiringDefectSummary" },
-    { "$ref": "#/$defs/Expired" }
+    {
+      "$ref": "#/$defs/TraceList"
+    },
+    {
+      "$ref": "#/$defs/SingleTrace"
+    },
+    {
+      "$ref": "#/$defs/ReceiptProof"
+    },
+    {
+      "$ref": "#/$defs/WiringDefectSummary"
+    },
+    {
+      "$ref": "#/$defs/Expired"
+    }
   ],
   "$defs": {
     "TraceListItem": {
@@ -23,10 +34,25 @@
         "constitutional_hash"
       ],
       "properties": {
-        "correlation_id": { "type": "string", "format": "uuid" },
-        "started_at": { "type": "string", "format": "date-time" },
-        "completed_at": { "type": ["string", "null"], "format": "date-time" },
-        "event_count": { "type": "integer", "minimum": 0 },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
         "worst_event_status": {
           "type": "string",
           "enum": [
@@ -41,23 +67,64 @@
         },
         "integrity_status": {
           "type": "string",
-          "enum": ["intact", "tampered", "unknown"]
+          "enum": [
+            "intact",
+            "tampered",
+            "unknown"
+          ]
         },
-        "constitutional_hash": { "type": "string", "pattern": "^[a-f0-9]{16}$" }
+        "constitutional_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16}$"
+        },
+        "phoenix_trace_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{32}$",
+          "description": "Representative OpenTelemetry/Phoenix trace id observed in this trace."
+        },
+        "phoenix_span_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{16}$",
+          "description": "Representative OpenTelemetry/Phoenix span id observed in this trace."
+        },
+        "phoenix_parent_span_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{16}$",
+          "description": "Representative OpenTelemetry parent span id observed in this trace."
+        }
       }
     },
     "TraceList": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "items"],
+      "required": [
+        "kind",
+        "items"
+      ],
       "properties": {
-        "kind": { "const": "trace-list" },
+        "kind": {
+          "const": "trace-list"
+        },
         "items": {
           "type": "array",
-          "items": { "$ref": "#/$defs/TraceListItem" }
+          "items": {
+            "$ref": "#/$defs/TraceListItem"
+          }
         },
         "next_cursor": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "Opaque pagination cursor. Null = no more results."
         }
       }
@@ -65,20 +132,38 @@
     "SingleTrace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "trace", "events", "integrity_status"],
+      "required": [
+        "kind",
+        "trace",
+        "events",
+        "integrity_status"
+      ],
       "properties": {
-        "kind": { "const": "single-trace" },
-        "trace": { "$ref": "#/$defs/TraceListItem" },
+        "kind": {
+          "const": "single-trace"
+        },
+        "trace": {
+          "$ref": "#/$defs/TraceListItem"
+        },
         "events": {
           "type": "array",
-          "items": { "$ref": "trace-event.schema.json" }
+          "items": {
+            "$ref": "trace-event.schema.json"
+          }
         },
         "integrity_status": {
           "type": "string",
-          "enum": ["intact", "tampered", "unknown"]
+          "enum": [
+            "intact",
+            "tampered",
+            "unknown"
+          ]
         },
         "rotation_at_index": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "description": "Causal index at which constitutional_hash changed mid-trace, or null."
         }
       }
@@ -86,19 +171,44 @@
     "WiringDefectFinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["finding_id", "detected_at", "kind", "handler_name", "example_event_ids"],
+      "required": [
+        "finding_id",
+        "detected_at",
+        "kind",
+        "handler_name",
+        "example_event_ids"
+      ],
       "properties": {
-        "finding_id": { "type": "string", "format": "uuid" },
-        "detected_at": { "type": "string", "format": "date-time" },
+        "finding_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "detected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "kind": {
           "type": "string",
-          "enum": ["unwired_dispatch", "declared_but_unrouted"]
+          "enum": [
+            "unwired_dispatch",
+            "declared_but_unrouted"
+          ]
         },
-        "handler_name": { "type": "string" },
-        "expected_role": { "type": ["string", "null"] },
+        "handler_name": {
+          "type": "string"
+        },
+        "expected_role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "example_event_ids": {
           "type": "array",
-          "items": { "type": "string", "format": "uuid" },
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
           "maxItems": 5
         }
       }
@@ -106,31 +216,164 @@
     "WiringDefectSummary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "findings", "refreshed_at"],
+      "required": [
+        "kind",
+        "findings",
+        "refreshed_at"
+      ],
       "properties": {
-        "kind": { "const": "wiring-defect-summary" },
-        "refreshed_at": { "type": "string", "format": "date-time" },
+        "kind": {
+          "const": "wiring-defect-summary"
+        },
+        "refreshed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "findings": {
           "type": "array",
-          "items": { "$ref": "#/$defs/WiringDefectFinding" }
+          "items": {
+            "$ref": "#/$defs/WiringDefectFinding"
+          }
         }
       }
     },
     "Expired": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "correlation_id", "retention_policy"],
+      "required": [
+        "kind",
+        "correlation_id",
+        "retention_policy"
+      ],
       "properties": {
-        "kind": { "const": "expired" },
-        "correlation_id": { "type": "string", "format": "uuid" },
+        "kind": {
+          "const": "expired"
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
         "retention_policy": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["max_age_days", "purged_at"],
+          "required": [
+            "max_age_days",
+            "purged_at"
+          ],
           "properties": {
-            "max_age_days": { "type": "integer", "minimum": 1 },
-            "purged_at": { "type": "string", "format": "date-time" }
+            "max_age_days": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "purged_at": {
+              "type": "string",
+              "format": "date-time"
+            }
           }
+        }
+      }
+    },
+    "ReceiptProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "receipt_id",
+        "receipt_hash",
+        "correlation_id",
+        "trace",
+        "events",
+        "integrity_status",
+        "hash_chain_verified",
+        "policy_path",
+        "decision",
+        "flagged_rules",
+        "signed_evidence_packet"
+      ],
+      "properties": {
+        "kind": {
+          "const": "receipt-proof"
+        },
+        "receipt_id": {
+          "type": "string"
+        },
+        "receipt_hash": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "trace": {
+          "$ref": "#/$defs/TraceListItem"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "trace-event.schema.json"
+          }
+        },
+        "integrity_status": {
+          "type": "string",
+          "enum": [
+            "intact",
+            "tampered",
+            "unknown"
+          ]
+        },
+        "hash_chain_verified": {
+          "type": "boolean"
+        },
+        "policy_path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "allow",
+            "deny",
+            "transform",
+            "escalate",
+            null
+          ]
+        },
+        "flagged_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "signed_evidence_packet": {
+          "type": "string"
+        },
+        "phoenix_trace_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{32}$",
+          "description": "OpenTelemetry/Phoenix trace id copied into the signed evidence packet when observed."
+        },
+        "phoenix_span_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{16}$",
+          "description": "OpenTelemetry/Phoenix span id copied into the signed evidence packet when observed."
+        },
+        "phoenix_parent_span_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{16}$",
+          "description": "OpenTelemetry parent span id copied into the signed evidence packet when observed."
         }
       }
     }

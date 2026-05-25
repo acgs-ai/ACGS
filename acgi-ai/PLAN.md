@@ -243,8 +243,8 @@ from 1w to 1.5w to reflect expanded scope.
 5. **Polling hygiene (A10):** every `useQuery` invocation uses jittered intervals (LIVE: 5-10s ± 30%, SLOW: 30-60s ± 30%); `refetchIntervalInBackground: false`; visibility-API gate at the shell level; bus-health adaptive backoff via a single `useBusHealth()` hook all consumers depend on.
 6. **AppError integration (A13):** every `throw` in `src/routes/**` resolves through `AppError`; CI fails on any `throw new Error(string)` in routes. Snapshot test enforces taxonomy completeness (every `AppError` case has non-empty `{title, cause, fix}`).
 7. **Login interstitial (A6):** `/login → /console?next=…` handoff renders a parchment moment (≥ 800ms, dismissible via Enter) naming the operator, the matter being entered, and the constitutional hash `608508a9bd224290`. This is the privilege bar's first impression; without it the banner is just chrome.
-8. **Banner z-index protection (A8):** no `position: fixed` or `position: sticky` element renders above the privilege banner. No toasts, modals, or FABs occlude it on `/console/*`. Receipts render in the right rail or inline only. Add a Playwright assertion that the banner's bounding box is never intersected by another fixed element after a synthetic mutation.
-9. **Per-route wire-level UI decisions (A7):** for each in-scope console route, document and implement: header anatomy, primary/secondary actions, table/card density rules, filter placement, pagination/virtualization, right-rail purpose, receipt lifetime, destructive-action confirmation pattern. Write decisions into `DESIGN.md` route-by-route appendix.
+8. **Banner z-index protection (A8):** no `position: fixed` or `position: sticky` element renders above the privilege banner. No toasts, modals, or FABs occlude it on `/console/*`. Receipts render in the right rail or inline only. Local static foundation: `pnpm run test:privilege-banner`; full visual QA still adds a Playwright assertion that the banner's bounding box is never intersected by another fixed element after a synthetic mutation.
+9. **Per-route wire-level UI decisions (A7):** for each in-scope console route, document and implement: header anatomy, primary/secondary actions, table/card density rules, filter placement, pagination/virtualization, right-rail purpose, receipt lifetime, destructive-action confirmation pattern. Write decisions into `DESIGN.md` route-by-route appendix. Local static foundation: `pnpm run test:wire-decisions`; full browser/layout validation remains a Phase 2/visual QA gate.
 10. **Cross-tab session sync (A18):** session changes broadcast via `localStorage` + `storage` event listener. Sign-out in tab A propagates to tab B within one event loop. `hasSession()` re-checks on every `useQuery` retry.
 
 **Gate:** manual smoke through every in-scope console page with the API
@@ -271,15 +271,15 @@ Estimate raised from 1w to 1.5w to reflect scenario + visual + Storybook scope.
    - Privilege banner invariants: `aria-hidden="false"`, no animation classes, computed `display: block`, no occluding fixed element after mutation
    - `AppError` taxonomy: every case renders non-empty `{title, cause, fix}`; `throw new Error(string)` in `src/routes/**` fails build
    - Cross-tab session sync via `storage` event
-2. Add **MSW node-mode** test setup so hook tests exercise the same handlers as the dev server. In test/eval mode, MSW uses `onUnhandledRequest: 'error'` (not `bypass`) so silent fall-through is impossible.
-3. Add **Playwright** smoke pack: marketing landing loads at 360/768/834/1024/1440; `/products/<slug>` resolves for the 2 ICP-aligned hero slugs; `/console` redirects to `/login` without session; `/console` loads with synthetic session in dev (`VITE_BYPASS_SESSION=true`) and with real OIDC token in staging; every in-scope sidebar link navigates without throwing.
+2. Add **MSW node-mode** test setup so hook tests exercise the same handlers as the dev server. In test/eval mode, MSW uses `onUnhandledRequest: 'error'` (not `bypass`) so silent fall-through is impossible. Local static foundation: `pnpm run test:msw-node`; actual hook tests remain Phase 2 work until the test runner lands.
+3. Add **Playwright** smoke pack: marketing landing loads at 360/768/834/1024/1440; `/products/<slug>` resolves for the 2 ICP-aligned hero slugs; `/console` redirects to `/login` without session; `/console` loads with synthetic session in dev (`VITE_BYPASS_SESSION=true`) and with real OIDC token in staging; every in-scope sidebar link navigates without throwing. Local HTTP shell smoke: `pnpm run test:e2e-http`; browser Playwright execution remains Phase 2 work.
 4. **CSP harness (A19):** Playwright captures `securitypolicyviolation` events on `document` for every `/console/*` route load + every mutation. Build fails on any event. Includes Tailwind v4 `<style>`-injection regression test.
 5. **Contract tests (UC7):** record real (or stubbed) bus responses; assert `types.ts` codegen matches schema; assert unknown-fields, missing-fields, version-skew, and error envelope cases all parse cleanly.
 6. Add **axe-core** via `@axe-core/playwright` on every smoke route. Fail on any serious or critical violation; fail also on touch-target-size violations (24/44px per UC5).
-7. Add standardized scripts (per A15): `pnpm test`, `pnpm test:e2e`, `pnpm test:a11y`, `pnpm test:csp`, `pnpm test:contract`, `pnpm test:visual`, `pnpm test:all`. Wire into both workflows.
+7. Add standardized scripts (per A15): `pnpm test`, `pnpm test:e2e`, `pnpm test:a11y`, `pnpm test:csp`, `pnpm test:contract`, `pnpm test:visual`, `pnpm test:all`. Wire into both workflows. Local static foundation: `pnpm run test:test-surface`; it verifies package, docs, and manifest wiring for `pnpm run test:e2e` and `pnpm run test:visual`, while browser Playwright and visual-diff execution remains Phase 2 work.
 8. Add a **visual-diff** baseline pass — Playwright screenshots at all 5 viewports (360, 768, 834, 1024, 1440) for: marketing hero, marketing 2 hero slugs, login, login interstitial, console overview, console agents (filled + empty + error + stale + permission-denied + long-content), compile receipt (success + failure). Diff threshold 0.1% per existing precision norms.
 9. **Storybook publish (T4 / Open Q4):** `pnpm storybook:build` + GitHub Pages or `storybook.acgs.ai` deploy in CI. Components from `console/shared.tsx` + key console pages published as buyer-evidence artifact. Includes axe + visual-diff at component level. Estimate: ½ day.
-10. **TTHW measurement gate (A4):** `scripts/hello-world.sh` (clean install + `pnpm dev` + first-render headless) wallclock budget; CI runs nightly on a fresh runner; fail if total > 5 minutes.
+10. **TTHW measurement gate (A4):** `scripts/hello-world.sh` clean install + mock dev-server HTTP shell wallclock budget; CI runs the clean-runner scheduled TTHW on a fresh runner; fail if total > 5 minutes. Local static foundation: `pnpm run test:tthw`; headless first-render proof remains Phase 2 Playwright work.
 
 **Gate:** CI runs lint, build, unit+integration, e2e+a11y, CSP harness,
 contract tests, visual-regression, hello-world TTHW — all green required.
@@ -683,10 +683,10 @@ DX (6 dimensions): 0/6 confirmed — TTHW (NO→A4), naming (NO→A15), errors (
 | A1 | Tree-shake `withFixtureFallback` from PROD; narrow catch to network errors only; fail-closed when `BUS_UPSTREAM` unset | new Ph 5 | P1, P5 |
 | A2 | Migrate to TanStack Router in Phase 0 (already in deps; current router fails `?next=` and `/products/*` per file:line evidence) | Phase 0 | P5, P3 |
 | A3 | Expand `console/shared.tsx` with Stale, RetryInFlight, PermissionDenied, RateLimited, Conflict, OptimisticPending; state matrix per page in §6 | Phase 1 | P1 |
-| A4 | Add `pnpm hello` script + CI gate (clean install + first render < 5 min) | Phase 0 | P1 |
+| A4 | Add `pnpm hello` / `hello:world` script + CI gate (clean install + first render < 5 min); Local static foundation: `pnpm run test:tthw`; clean-runner scheduled TTHW measures the HTTP shell budget while browser first-render proof remains Phase 2 | Phase 0 | P1 |
 | A5 | Add `VITE_EVAL_MODE` (fixed clock, fixed seed, fail-on-MSW-miss, animations off) | Phase 0/1 | P1 |
 | A6 | Login interstitial (parchment moment naming operator + matter + constitutional hash `608508a9bd224290`) | Phase 1 | P5 |
-| A7 | Per-route wire-level UI decisions (header anatomy, action grouping, table/filter behavior, destructive-action pattern) | Phase 1 | P5 |
+| A7 | Per-route wire-level UI decisions (header anatomy, action grouping, table/filter behavior, destructive-action pattern); local static gate `pnpm run test:wire-decisions` | Phase 1 | P5 |
 | A8 | Ban toasts/modals/FABs floating above privilege banner z-index; receipts render in right rail or inline only | Phase 1/3 | P5 |
 | A9 | Replace 80%-coverage target with required scenario tests (origin split, auth enforcement, prod no-mocks, CSP, partial bus, headers) | Phase 2 | P1 |
 | A10 | Jittered polling intervals + visibility-aware refetch + bus-health adaptive backoff | Phase 1 | P1 |
@@ -694,7 +694,7 @@ DX (6 dimensions): 0/6 confirmed — TTHW (NO→A4), naming (NO→A15), errors (
 | A12 | Pin Docker images, GH actions, vercel CLI version; align Node 24; commit font hash manifest checked at build | Phase 0 | P3, P5 |
 | A13 | `src/lib/errors.ts` `AppError` taxonomy (Auth/Network/Parse/RetryExhausted/CSP/Permission/RateLimit) | Phase 1 | P1, P5 |
 | A14 | Cloud Run `service.yaml` templated per env; cost estimate + p99 cold-start SLO test | new Ph 5 | P1 |
-| A15 | Standardize pnpm scripts: `dev`, `dev:mock`, `dev:live`, `hello`, `test`, `test:e2e`, `test:a11y`, `test:all`, `design:export`, `audit:eval` | Phase 0 | P5 |
+| A15 | Standardize pnpm scripts: `dev`, `dev:mock`, `dev:live`, `hello`, `test`, `test:e2e`, `test:visual`, `test:a11y`, `test:all`, `design:export`, `audit:eval`; local static foundation: `pnpm run test:test-surface` | Phase 0 | P5 |
 | A16 | Move ARCHITECTURE.md + INTEGRATING.md skeletons from Phase 6 to Phase 0 | Phase 0 | P5 |
 | A17 | Objective TanStack Router triggers (route params, route-level guards, loaders, nested layouts, search-param state) | §3 | P5 |
 | A18 | Cross-tab session sync via `localStorage` + `storage` event listener | Phase 1 | P1 |

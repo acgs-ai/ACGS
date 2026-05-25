@@ -1,0 +1,206 @@
+"""Tests for gove_zone.integration — the runtime-hook adapter.
+
+Covers the slice-1 contract:
+
+* Observe-mode (default) returns a Receipt on success and ``None`` on
+  internal failure — preserving existing fail-open hook behavior.
+* Enforce-mode raises :class:`GateModeError` instead of swallowing failures.
+* The receipt anchors into the on-disk audit chain and that chain verifies.
+* Audit path resolution honors override > CLAUDE_PROJECT_DIR > cwd.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gove_zone.audit import ChainHashAuditStore
+from gove_zone.integration import (
+    GateMode,
+    GateModeError,
+    current_gate_mode,
+    emit_receipt_for_hook,
+    resolve_audit_path,
+    tool_call_from_hook_payload,
+)
+
+
+@pytest.fixture
+def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    monkeypatch.delenv("GOVE_ZONE_AUDIT_PATH", raising=False)
+    monkeypatch.delenv("GOVE_ZONE_GATE_MODE", raising=False)
+    return tmp_path
+
+
+def _edit_payload() -> dict[str, Any]:
+    return {
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": "/repo/README.md",
+            "old_string": "hello",
+            "new_string": "hello world",
+        },
+    }
+
+
+def test_tool_call_from_hook_payload_accepts_mcp_tool_call_shape() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "file.write",
+                "arguments": {
+                    "path": "repo/policy.bundle.json",
+                    "content": "deny secrets",
+                },
+                "state": {"trust_tier": "analyst"},
+                "goal": "Publish policy bundle",
+            },
+        },
+        action_kind="mcp",
+        actor="mcp-host",
+    )
+
+    assert call.name == "runtime.file.write"
+    assert call.actor == "mcp-host"
+    assert call.path == ("repo", "policy.bundle.json")
+    assert call.goal == "Publish policy bundle"
+    assert call.state == {"trust_tier": "analyst"}
+    assert call.args["action_kind"] == "mcp"
+    summary = call.args["summary"]
+    assert summary["path"]["type"] == "str"
+    assert summary["content"]["len"] == len("deny secrets")
+    assert isinstance(summary["content"]["sha256"], str)
+
+
+def test_tool_call_from_hook_payload_accepts_function_call_json_arguments() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "type": "function_call",
+            "name": "email.send",
+            "arguments": json.dumps(
+                {
+                    "to": "review@example.com",
+                    "body": "please review the evidence bundle",
+                }
+            ),
+        },
+        action_kind="function-call",
+        actor="agent-framework",
+    )
+
+    assert call.name == "runtime.email.send"
+    assert call.actor == "agent-framework"
+    assert call.path == ()
+    assert call.args["action_kind"] == "function-call"
+    summary = call.args["summary"]
+    assert summary["to"]["type"] == "str"
+    assert summary["body"]["len"] == len("please review the evidence bundle")
+
+
+def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> None:
+    receipt = emit_receipt_for_hook(
+        _edit_payload(),
+        action_kind="edit",
+        actor="test-actor",
+    )
+
+    assert receipt is not None
+    assert receipt.actor == "test-actor"
+    assert receipt.record.tool == "runtime.Edit"
+    assert receipt.audit_hash and receipt.audit_hash != "0" * 64
+
+    audit_path = project_dir / ".gove-zone" / "audit.jsonl"
+    assert audit_path.exists()
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["decision"] == "allow"
+    assert event["matched_rules"] == ["action_kind:edit"]
+    assert event["actor"] == "test-actor"
+    assert event["path"] == ["repo", "README.md"]
+    assert event["decision_request_hash"]
+
+    store = ChainHashAuditStore(str(audit_path))
+    verdict = store.verify_chain()
+    assert verdict["valid"] is True
+
+
+def test_observe_mode_swallows_internal_failure(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Force resolve_audit_path -> directory that cannot be created.
+    bad = project_dir / "audit-blocker"
+    bad.write_text("not a directory")
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(bad / "child" / "audit.jsonl"))
+
+    assert current_gate_mode() is GateMode.OBSERVE
+    result = emit_receipt_for_hook(
+        _edit_payload(),
+        action_kind="edit",
+        actor="test-actor",
+    )
+    assert result is None  # fail-open
+
+
+def test_enforce_mode_raises_on_failure(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bad = project_dir / "audit-blocker"
+    bad.write_text("not a directory")
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(bad / "child" / "audit.jsonl"))
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "enforce")
+
+    assert current_gate_mode() is GateMode.ENFORCE
+    with pytest.raises(GateModeError):
+        emit_receipt_for_hook(
+            _edit_payload(),
+            action_kind="edit",
+            actor="test-actor",
+        )
+
+
+def test_audit_path_resolution_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    explicit = tmp_path / "explicit.jsonl"
+    project = tmp_path / "project"
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(explicit))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    assert resolve_audit_path() == explicit
+
+    monkeypatch.delenv("GOVE_ZONE_AUDIT_PATH")
+    assert resolve_audit_path() == project / ".gove-zone" / "audit.jsonl"
+
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR")
+    monkeypatch.chdir(tmp_path)
+    assert resolve_audit_path() == tmp_path / ".gove-zone" / "audit.jsonl"
+
+
+def test_gate_adapter_appends_mcp_payload_receipt(project_dir: Path) -> None:
+    receipt = emit_receipt_for_hook(
+        {
+            "method": "tools/call",
+            "params": {
+                "name": "repo.apply_patch",
+                "arguments": {"path": "src/gove_zone/integration.py"},
+            },
+        },
+        action_kind="mcp",
+        actor="codex-bridge",
+    )
+
+    assert receipt is not None
+    assert receipt.record.tool == "runtime.repo.apply_patch"
+    assert receipt.record.actor == "codex-bridge"
+    assert receipt.record.path == ("src", "gove_zone", "integration.py")
+
+    audit_path = project_dir / ".gove-zone" / "audit.jsonl"
+    events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["tool"] == "runtime.repo.apply_patch"
+    assert events[-1]["path"] == ["src", "gove_zone", "integration.py"]

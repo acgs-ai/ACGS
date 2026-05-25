@@ -6,9 +6,12 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from agent_bus_analyzer.capture import CaptureQueue
 from agent_bus_analyzer.config import load_config
@@ -22,9 +25,18 @@ log = logging.getLogger("agent_bus_analyzer.cli")
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    store_dir = args.store_dir or os.getenv("AGENT_BUS_ANALYZER_STORE_DIR")
+    app_target: Any
+    if store_dir:
+        from agent_bus_analyzer.api import create_app
+
+        app_target = create_app(store=open_store(store_dir))
+    else:
+        app_target = "agent_bus_analyzer.api:create_app"
+
     uvicorn.run(
-        "agent_bus_analyzer.api:create_app",
-        factory=True,
+        app_target,
+        factory=store_dir is None,
         host=args.host,
         port=args.port,
         log_level=args.log_level,
@@ -44,6 +56,139 @@ def _cmd_export_openapi(args: argparse.Namespace) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(payload, encoding="utf-8")
     return 0
+
+
+def _cmd_import_audit(args: argparse.Namespace) -> int:
+    """Backfill a gove-zone audit JSONL into the analyzer trace store.
+
+    This one-shot path complements the long-running ``observer`` tailer. It is
+    useful for deploy smoke checks and historical backfills because it exits
+    after proving canonical gove-zone audit records can produce bus-owned
+    receipt proofs.
+    """
+    audit_file: Path = args.audit_file
+    if not audit_file.exists():
+        print(f"import-audit: fail-closed: audit file not present: {audit_file}", file=sys.stderr)
+        return 1
+
+    store = open_store(args.store_dir)
+    imported = 0
+    try:
+        with audit_file.open("r", encoding="utf-8") as fh:
+            for line_number, line in enumerate(fh, start=1):
+                clean = line.strip()
+                if not clean:
+                    continue
+                try:
+                    record = json.loads(clean)
+                except json.JSONDecodeError as exc:
+                    print(
+                        f"import-audit: fail-closed: malformed JSONL at "
+                        f"{audit_file}:{line_number}: {exc}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                store.append(project_audit_record(record, args.constitutional_hash))
+                imported += 1
+    finally:
+        store.close()
+
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "audit_file": str(audit_file),
+                "store_dir": str(args.store_dir),
+                "imported": imported,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _fetch_json(url: str, *, token: str | None = None, timeout_seconds: float) -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    request = Request(url, headers=headers)
+    with urlopen(request, timeout=timeout_seconds) as response:  # nosec B310
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object from {url}")
+    return payload
+
+
+def _cmd_postdeploy_smoke(args: argparse.Namespace) -> int:
+    """Verify a deployed analyzer API can expose a signed receipt proof.
+
+    This command is deliberately read-only against the deployed API. The
+    import/backfill job owns writes into the mounted trace store; this smoke
+    check proves the running service can read that receipt, verify its chain,
+    and export deployment-managed signature metadata.
+    """
+    token = args.token or os.getenv("ANALYZER_REVIEWER_TOKEN")
+    if not token:
+        print(
+            "postdeploy-smoke: fail-closed: provide --token or ANALYZER_REVIEWER_TOKEN",
+            file=sys.stderr,
+        )
+        return 1
+
+    base_url = args.base_url.rstrip("/")
+    receipt_id = args.receipt_id
+    receipt_url = f"{base_url}/api/bus/receipts/{quote(receipt_id, safe='')}"
+
+    try:
+        health = _fetch_json(
+            f"{base_url}/api/bus/healthz",
+            timeout_seconds=args.timeout_seconds,
+        )
+        if health.get("status") != "ok":
+            raise ValueError(f"health status is not ok: {health.get('status')!r}")
+
+        proof = _fetch_json(
+            receipt_url,
+            token=token,
+            timeout_seconds=args.timeout_seconds,
+        )
+        if proof.get("kind") != "receipt-proof":
+            raise ValueError(f"unexpected proof kind: {proof.get('kind')!r}")
+        if proof.get("hash_chain_verified") is not True:
+            raise ValueError("receipt proof hash chain is not verified")
+
+        packet_raw = proof.get("signed_evidence_packet")
+        if not isinstance(packet_raw, str):
+            raise ValueError("receipt proof is missing signed_evidence_packet JSON")
+        packet = json.loads(packet_raw)
+        if not isinstance(packet, dict):
+            raise ValueError("signed_evidence_packet is not a JSON object")
+        signature = packet.get("export_signature")
+        if not isinstance(signature, dict):
+            raise ValueError("signed_evidence_packet is missing export_signature")
+
+        signature_status = signature.get("status")
+        if not args.allow_unsigned_local and signature_status != "signed":
+            raise ValueError(f"signature status is not deployment signed: {signature_status!r}")
+
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "base_url": base_url,
+                    "receipt_id": receipt_id,
+                    "hash_chain_verified": True,
+                    "signature_status": signature_status,
+                    "signature_key_id": signature.get("key_id"),
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+    except (OSError, ValueError) as exc:
+        print(f"postdeploy-smoke: fail-closed: {exc}", file=sys.stderr)
+        return 1
 
 
 async def _observer_main(args: argparse.Namespace) -> int:
@@ -125,11 +270,49 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8042)
     p_serve.add_argument("--log-level", default="info")
+    p_serve.add_argument(
+        "--store-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Trace store directory to serve. Defaults to "
+            "AGENT_BUS_ANALYZER_STORE_DIR when set; without a store, trace "
+            "endpoints fail closed with 503."
+        ),
+    )
     p_serve.set_defaults(func=_cmd_serve)
 
     p_openapi = subs.add_parser("export-openapi", help="Export the FastAPI OpenAPI document")
     p_openapi.add_argument("--output", required=True, help="Output path, or '-' for stdout")
     p_openapi.set_defaults(func=_cmd_export_openapi)
+
+    p_import = subs.add_parser(
+        "import-audit",
+        help="One-shot import of a gove-zone audit JSONL into the analyzer store",
+    )
+    p_import.add_argument("--audit-file", required=True, type=Path)
+    p_import.add_argument("--store-dir", required=True, type=Path)
+    p_import.add_argument("--constitutional-hash", required=True)
+    p_import.set_defaults(func=_cmd_import_audit)
+
+    p_smoke = subs.add_parser(
+        "postdeploy-smoke",
+        help="Verify deployed health and one signed receipt proof",
+    )
+    p_smoke.add_argument("--base-url", required=True)
+    p_smoke.add_argument("--receipt-id", required=True)
+    p_smoke.add_argument(
+        "--token",
+        default=None,
+        help="Reviewer bearer token; defaults to ANALYZER_REVIEWER_TOKEN",
+    )
+    p_smoke.add_argument("--timeout-seconds", type=float, default=10.0)
+    p_smoke.add_argument(
+        "--allow-unsigned-local",
+        action="store_true",
+        help="Allow unsigned-local-digest packets for local smoke tests only",
+    )
+    p_smoke.set_defaults(func=_cmd_postdeploy_smoke)
 
     p_obs = subs.add_parser("observer", help="Run the bus observer + audit-tail follower")
     p_obs.add_argument("--bus-endpoint", required=True)

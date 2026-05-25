@@ -21,6 +21,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/bus/receipts/{receipt_id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Get Receipt Proof */
+    get: operations['get_receipt_proof_api_bus_receipts__receipt_id__get']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/bus/traces': {
     parameters: {
       query?: never
@@ -97,6 +114,12 @@ export interface components {
       kind: 'dispatch' | 'response' | 'decision'
       /** Payload Ref */
       payload_ref: string
+      /** Phoenix Parent Span Id */
+      phoenix_parent_span_id?: string | null
+      /** Phoenix Span Id */
+      phoenix_span_id?: string | null
+      /** Phoenix Trace Id */
+      phoenix_trace_id?: string | null
       /** Prev Hash */
       prev_hash?: string | null
       /**
@@ -127,6 +150,48 @@ export interface components {
     HTTPValidationError: {
       /** Detail */
       detail?: components['schemas']['ValidationError'][]
+    }
+    /**
+     * ReceiptProof
+     * @description Console-ready proof packet for one receipt or receipt hash.
+     */
+    ReceiptProof: {
+      /** Correlation Id */
+      correlation_id: string
+      /** Decision */
+      decision?: ('allow' | 'deny' | 'transform' | 'escalate') | null
+      /** Events */
+      events: components['schemas']['Event'][]
+      /** Flagged Rules */
+      flagged_rules: string[]
+      /** Hash Chain Verified */
+      hash_chain_verified: boolean
+      /**
+       * Integrity Status
+       * @enum {string}
+       */
+      integrity_status: 'intact' | 'tampered' | 'unknown'
+      /**
+       * Kind
+       * @default receipt-proof
+       * @constant
+       */
+      kind: 'receipt-proof'
+      /** Phoenix Parent Span Id */
+      phoenix_parent_span_id?: string | null
+      /** Phoenix Span Id */
+      phoenix_span_id?: string | null
+      /** Phoenix Trace Id */
+      phoenix_trace_id?: string | null
+      /** Policy Path */
+      policy_path: string[]
+      /** Receipt Hash */
+      receipt_hash: string
+      /** Receipt Id */
+      receipt_id: string
+      /** Signed Evidence Packet */
+      signed_evidence_packet: string
+      trace: components['schemas']['TraceListItem']
     }
     /** SingleTrace */
     SingleTrace: {
@@ -178,6 +243,12 @@ export interface components {
        * @enum {string}
        */
       integrity_status: 'intact' | 'tampered' | 'unknown'
+      /** Phoenix Parent Span Id */
+      phoenix_parent_span_id?: string | null
+      /** Phoenix Span Id */
+      phoenix_span_id?: string | null
+      /** Phoenix Trace Id */
+      phoenix_trace_id?: string | null
       /**
        * Started At
        * Format: date-time
@@ -236,6 +307,39 @@ export interface operations {
           'application/json': {
             [key: string]: string
           }
+        }
+      }
+    }
+  }
+  get_receipt_proof_api_bus_receipts__receipt_id__get: {
+    parameters: {
+      query?: never
+      header?: {
+        authorization?: string | null
+      }
+      path: {
+        receipt_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ReceiptProof']
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['HTTPValidationError']
         }
       }
     }

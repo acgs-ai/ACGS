@@ -83,7 +83,12 @@ export function Tenants() {
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="tenants" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="fresh-tenant"
+          query={query}
+          label="tenants"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <table className="c-table">
           <thead>

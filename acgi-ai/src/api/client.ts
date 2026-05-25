@@ -15,17 +15,22 @@ import type {
   Agent,
   AuditEvent,
   BusExpired,
+  BusReceiptProof,
   BusSingleTrace,
   BusTraceList,
   CompileActionRequest,
   CompileDraft,
   ConsoleSummary,
   Deliberation,
+  EvaluationEvidence,
+  EvaluationEvidenceApi,
+  EvaluationEvidenceStatus,
   GovernedAction,
   Incident,
   MaciLanes,
   OverviewSummary,
   PolicyRule,
+  ReceiptProofPacket,
   SettingSection,
   Tenant,
 } from './types'
@@ -65,6 +70,33 @@ export function makeHttp(prefix: string) {
 const http = makeHttp('/api/v1')
 const busHttp = makeHttp('/api/bus')
 
+function evaluationEvidenceQuery(status?: EvaluationEvidenceStatus): string {
+  return status ? `?status=${encodeURIComponent(status)}` : ''
+}
+
+function normalizeEvaluationEvidence(item: EvaluationEvidenceApi): EvaluationEvidence {
+  return {
+    source: item.source,
+    dataset: item.dataset,
+    status: item.status,
+    reportHash: item.report_hash,
+    policyVersion: item.policy_version,
+    scenarioCount: item.scenario_count,
+    passed: item.passed,
+    failed: item.failed,
+    attackSuccessRate: item.attack_success_rate,
+    utilityRetentionRate: item.utility_retention_rate,
+    p95LatencyMs: item.p95_latency_ms,
+    eventId: item.event_id,
+    tenant: item.tenant,
+    allow: item.allow,
+    previousHash: item.previous_hash,
+    eventHash: item.event_hash,
+    claimSafe: item.claim_safe,
+    ingestedAt: item.ingested_at,
+  }
+}
+
 export const api = {
   consoleSummary: {
     get: () => http<ConsoleSummary>('/console-summary'),
@@ -74,6 +106,8 @@ export const api = {
   },
   actions: {
     list: () => http<GovernedAction[]>('/actions'),
+    getProof: (receiptId: string) =>
+      http<ReceiptProofPacket>(`/actions/${encodeURIComponent(receiptId)}/proof`),
     test: (body: ActionTestRequest) =>
       http<ActionTestReceipt>('/actions/test', { method: 'POST', body: JSON.stringify(body) }),
   },
@@ -102,6 +136,12 @@ export const api = {
   audit: {
     list: () => http<AuditEvent[]>('/audit'),
   },
+  evaluationEvidence: {
+    list: (status?: EvaluationEvidenceStatus) =>
+      http<EvaluationEvidenceApi[]>(
+        `/evidence/evaluation-reports${evaluationEvidenceQuery(status)}`,
+      ).then((items) => items.map(normalizeEvaluationEvidence)),
+  },
   settings: {
     get: () => http<SettingSection[]>('/settings'),
   },
@@ -122,5 +162,7 @@ export const api = {
     // UUID format independently.
     getTrace: (correlationId: string) =>
       busHttp<BusSingleTrace | BusExpired>(`/traces/${encodeURIComponent(correlationId)}`),
+    getReceiptProof: (receiptId: string) =>
+      busHttp<BusReceiptProof>(`/receipts/${encodeURIComponent(receiptId)}`),
   },
 }

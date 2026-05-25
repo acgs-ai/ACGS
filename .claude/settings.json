@@ -24,7 +24,6 @@
       "Bash(git -C packages/clinicalguard:*)"
     ],
     "deny": [
-      "Bash(git push:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git add -A:*)",
@@ -61,11 +60,24 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/seal-block.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/seal-block.sh\""
           },
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/submodule-warn.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/submodule-warn.sh\""
+          },
+          {
+            "type": "command",
+            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       }
@@ -76,11 +88,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/biome-on-edit.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/biome-on-edit.sh\""
           },
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-on-edit.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-on-edit.sh\""
           }
         ]
       }

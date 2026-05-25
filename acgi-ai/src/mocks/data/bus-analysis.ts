@@ -6,10 +6,23 @@
 // values are illustrative and would not pass the analyzer's chain
 // verifier. Production must never serve this module.
 
-import type { BusSingleTrace, BusTraceEvent, BusTraceList, BusTraceListItem } from '../../api/types'
+import type {
+  BusDecisionVerdict,
+  BusReceiptProof,
+  BusSingleTrace,
+  BusTraceEvent,
+  BusTraceList,
+  BusTraceListItem,
+  DecisionOutcome,
+  GovernedAction,
+} from '../../api/types'
+import { GOVERNED_ACTIONS, getGovernedActionProof } from './actions'
 
 const CONST_HASH = '608508a9bd224290'
 const HASH_SUFFIX = '0'.repeat(62)
+const PHOENIX_TRACE_ID = '4bf92f3577b34da6a3ce929d0e0e4736'
+const PHOENIX_SPAN_ID = '53995c3f42cd8ad8'
+const PHOENIX_PARENT_SPAN_ID = '00f067aa0ba902b7'
 
 function mkEvent(
   overrides: Partial<BusTraceEvent> &
@@ -30,6 +43,9 @@ function mkEvent(
     status: 'completed',
     gap_started_at: null,
     gap_ended_at: null,
+    phoenix_trace_id: null,
+    phoenix_span_id: null,
+    phoenix_parent_span_id: null,
     ...overrides,
   }
 }
@@ -190,4 +206,109 @@ const SINGLE_TRACE_BY_ID: Record<string, BusSingleTrace> = {
 
 export function getSingleTraceFixture(correlationId: string): BusSingleTrace | null {
   return SINGLE_TRACE_BY_ID[correlationId] ?? null
+}
+
+function busDecision(outcome: DecisionOutcome): BusDecisionVerdict {
+  switch (outcome) {
+    case 'allowed':
+      return 'allow'
+    case 'denied':
+      return 'deny'
+    case 'transformed':
+      return 'transform'
+    case 'escalated':
+      return 'escalate'
+  }
+}
+
+function receiptEventHash(action: GovernedAction, index: number): string {
+  const suffix = action.receiptHash
+    .replace(/^sha256:/, '')
+    .padEnd(64, String(index))
+    .slice(0, 64)
+  return suffix
+}
+
+function receiptEvents(action: GovernedAction): BusTraceEvent[] {
+  const dispatchHash = receiptEventHash(action, 0)
+  const decisionHash = receiptEventHash(action, 1)
+  const decision = busDecision(action.outcome)
+  return [
+    mkEvent({
+      event_id: `${action.id}-dispatch`,
+      correlation_id: action.traceId,
+      causal_index: 0,
+      kind: 'dispatch',
+      source_agent: action.agent,
+      target_handler_declared: action.action,
+      payload_ref: `sha256:${action.before}`,
+      recorded_at: '2026-05-14T14:08:22.011Z',
+      event_hash: dispatchHash,
+      phoenix_trace_id: PHOENIX_TRACE_ID,
+      phoenix_span_id: '1111111111111111',
+      phoenix_parent_span_id: PHOENIX_PARENT_SPAN_ID,
+      status: 'completed',
+    }),
+    mkEvent({
+      event_id: action.receiptId,
+      correlation_id: action.traceId,
+      causal_index: 1,
+      kind: 'decision',
+      source_agent: 'gove-zone:kernel',
+      target_handler_declared: action.action,
+      target_handler_resolved: action.action,
+      payload_ref: `sha256:${action.after}`,
+      recorded_at: '2026-05-14T14:08:22.038Z',
+      event_hash: decisionHash,
+      prev_hash: dispatchHash,
+      decision,
+      flagged_rule: action.checks[0]?.id ?? null,
+      audit_receipt_hash: action.receiptHash,
+      phoenix_trace_id: PHOENIX_TRACE_ID,
+      phoenix_span_id: PHOENIX_SPAN_ID,
+      phoenix_parent_span_id: PHOENIX_PARENT_SPAN_ID,
+      status: action.outcome === 'denied' ? 'policy-violation' : 'completed',
+    }),
+  ]
+}
+
+function receiptProofFixture(action: GovernedAction): BusReceiptProof {
+  const events = receiptEvents(action)
+  const proof = getGovernedActionProof(action.receiptId)
+  return {
+    kind: 'receipt-proof',
+    receipt_id: action.receiptId,
+    receipt_hash: action.receiptHash,
+    correlation_id: action.traceId,
+    trace: {
+      correlation_id: action.traceId,
+      started_at: events[0].recorded_at,
+      completed_at: events[events.length - 1]?.recorded_at ?? events[0].recorded_at,
+      event_count: events.length,
+      worst_event_status: action.outcome === 'denied' ? 'policy-violation' : 'completed',
+      integrity_status: 'intact',
+      constitutional_hash: CONST_HASH,
+      phoenix_trace_id: PHOENIX_TRACE_ID,
+      phoenix_span_id: '1111111111111111',
+      phoenix_parent_span_id: PHOENIX_PARENT_SPAN_ID,
+    },
+    events,
+    integrity_status: 'intact',
+    hash_chain_verified: true,
+    policy_path: [action.action, ...action.checks.map((check) => check.id)],
+    decision: busDecision(action.outcome),
+    flagged_rules: action.checks.map((check) => check.id),
+    signed_evidence_packet: proof?.signedEvidencePacket ?? '{}',
+    phoenix_trace_id: PHOENIX_TRACE_ID,
+    phoenix_span_id: '1111111111111111',
+    phoenix_parent_span_id: PHOENIX_PARENT_SPAN_ID,
+  }
+}
+
+const RECEIPT_PROOF_BY_ID: Record<string, BusReceiptProof> = Object.fromEntries(
+  GOVERNED_ACTIONS.map((action) => [action.receiptId, receiptProofFixture(action)]),
+)
+
+export function getReceiptProofFixture(receiptId: string): BusReceiptProof | null {
+  return RECEIPT_PROOF_BY_ID[receiptId] ?? null
 }

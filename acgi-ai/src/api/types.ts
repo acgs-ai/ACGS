@@ -1,13 +1,13 @@
 // API contract types for the ACGS console.
 //
-// Shapes are hand-written to match FastAPI Pydantic models in the upstream
-// monorepo at /home/martin/Downloads/govern-zone/ACGS. When the bus and
-// gateway expose stable list endpoints and we add an OpenAPI codegen step
-// (openapi-typescript or hey-api), this file is the migration target.
+// `/api/v1` shapes are hand-written to match FastAPI Pydantic models in
+// the upstream monorepo at /home/martin/Downloads/govern-zone/ACGS. The
+// `/api/bus/*` shapes are generated from `contracts/bus.openapi.json` into
+// `src/api/bus.generated.ts` and aliased below.
 //
-// Until then, treat every type below as load-bearing — every console hook
-// depends on these shapes lining up with what the MSW handlers return today
-// and what the FastAPI services will return tomorrow.
+// Treat every type below as load-bearing: every console hook depends on these
+// shapes lining up with what the MSW handlers return locally and what the
+// deployed services return through the same-origin proxy.
 
 import type { components as BusApiComponents } from './bus.generated'
 
@@ -104,6 +104,32 @@ export type GovernedAction = {
   checks: GovernanceCheck[]
   before: string
   after: string
+}
+
+export type EvidenceSignatureSummary = {
+  status: 'signed' | 'unsigned-local-digest' | 'missing' | 'malformed'
+  label: string
+  algorithm: string
+  keyId?: string
+  digest?: string
+  reason?: string
+}
+
+export type ReceiptProofPacket = {
+  receiptId: string
+  receiptHash: string
+  traceId: string
+  phoenixTraceId?: string
+  phoenixSpanId?: string
+  phoenixParentSpanId?: string
+  replayCommand: string
+  auditEventId: string
+  signedEvidencePacket: string
+  evidenceSignature: EvidenceSignatureSummary
+  hashChainVerified: boolean
+  policyPath: string
+  toolExecuted: boolean
+  action: GovernedAction
 }
 
 export type ActionTestRequest = {
@@ -230,6 +256,51 @@ export type CompileActionRequest = {
 
 // ─── Audit ────────────────────────────────────────────────────────────────
 
+export type EvaluationEvidenceStatus = 'passed' | 'failed'
+export type EvaluationEvidenceSource = 'gove-zone' | 'agentdojo' | 'injecagent' | 'toolemu'
+
+export type EvaluationEvidenceApi = {
+  source: EvaluationEvidenceSource
+  dataset: string
+  status: EvaluationEvidenceStatus
+  report_hash: string
+  policy_version: string
+  scenario_count: number
+  passed: number
+  failed: number
+  attack_success_rate: number | null
+  utility_retention_rate: number | null
+  p95_latency_ms: number | null
+  event_id?: string | null
+  tenant?: string | null
+  allow?: boolean
+  previous_hash?: string | null
+  event_hash?: string | null
+  claim_safe?: boolean
+  ingested_at?: string
+}
+
+export type EvaluationEvidence = {
+  source: EvaluationEvidenceSource
+  dataset: string
+  status: EvaluationEvidenceStatus
+  reportHash: string
+  policyVersion: string
+  scenarioCount: number
+  passed: number
+  failed: number
+  attackSuccessRate: number | null
+  utilityRetentionRate: number | null
+  p95LatencyMs: number | null
+  eventId?: string | null
+  tenant?: string | null
+  allow?: boolean
+  previousHash?: string | null
+  eventHash?: string | null
+  claimSafe?: boolean
+  ingestedAt?: string
+}
+
 export type AuditEvent = {
   ts: string
   posture: Posture
@@ -237,6 +308,7 @@ export type AuditEvent = {
   src: string
   hash: string
   matter?: string
+  evaluationEvidence?: EvaluationEvidence
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────
@@ -325,6 +397,7 @@ type BusSchemas = BusApiComponents['schemas']
 type BusEventSchema = Required<BusSchemas['Event']>
 type BusTraceListSchema = Required<BusSchemas['TraceList']>
 type BusSingleTraceSchema = Required<BusSchemas['SingleTrace']>
+type BusReceiptProofSchema = Required<BusSchemas['ReceiptProof']>
 
 export type BusEventStatus = BusEventSchema['status']
 export type BusIntegrityStatus = BusSchemas['TraceListItem']['integrity_status']
@@ -337,6 +410,14 @@ export type BusTraceList = Omit<BusTraceListSchema, 'items'> & {
 }
 export type BusSingleTrace = Omit<BusSingleTraceSchema, 'events'> & {
   events: BusTraceEvent[]
+}
+export type BusReceiptProof = Omit<
+  BusReceiptProofSchema,
+  'events' | 'policy_path' | 'flagged_rules'
+> & {
+  events: BusTraceEvent[]
+  policy_path: string[]
+  flagged_rules: string[]
 }
 
 export type BusExpired = {

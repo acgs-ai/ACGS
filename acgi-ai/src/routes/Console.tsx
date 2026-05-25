@@ -1,5 +1,6 @@
 import { ArrowRight, Bell, Menu, X } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { ErrorBoundary, type FallbackProps } from 'react-error-boundary'
 import {
   useAgents,
   useCompileDraft,
@@ -11,12 +12,14 @@ import {
   usePolicies,
   useTenants,
 } from '../api/hooks'
+import { toAppError } from '../lib/errors'
 import { navigate } from '../lib/navigate'
 import { clearSession } from '../lib/session'
 import { Account } from './console/Account'
 import { Actions } from './console/Actions'
 import { Agents } from './console/Agents'
 import { Audit } from './console/Audit'
+import { AuditProof } from './console/AuditProof'
 import { BusAnalysis } from './console/BusAnalysis'
 import { Compile } from './console/Compile'
 import { Deliberations } from './console/Deliberations'
@@ -25,117 +28,27 @@ import { Maci } from './console/Maci'
 import { Overview } from './console/Overview'
 import { Policies } from './console/Policies'
 import { Settings } from './console/Settings'
+import { ConsoleError, EnvIndicator, type EnvIndicatorMode } from './console/shared'
 import { Tenants } from './console/Tenants'
+import { type ConsoleWireDecision, getConsoleWireDecision } from './console/wire-decisions'
 import { NotFound } from './NotFound'
 
-const PAGE_TITLES: Record<string, { crumb: string; title: ReactNode }> = {
-  '/console': {
-    crumb: 'I · Operate / Overview',
-    title: (
-      <>
-        Operating <em>constitution</em>
-      </>
-    ),
-  },
-  '/console/agents': {
-    crumb: 'I.II · Operate / Agents',
-    title: (
-      <>
-        Agent <em>registry</em>
-      </>
-    ),
-  },
-  '/console/actions': {
-    crumb: 'I.III · Operate / Actions',
-    title: (
-      <>
-        Action <em>control</em>
-      </>
-    ),
-  },
-  '/console/maci': {
-    crumb: 'I.IV · Operate / MACI lanes',
-    title: (
-      <>
-        MACI <em>separation</em>
-      </>
-    ),
-  },
-  '/console/deliberations': {
-    crumb: 'I.V · Operate / Deliberations',
-    title: (
-      <>
-        Human <em>deliberations</em>
-      </>
-    ),
-  },
-  '/console/incidents': {
-    crumb: 'I.VI · Operate / Incidents',
-    title: (
-      <>
-        Active <em>escalations</em>
-      </>
-    ),
-  },
-  '/console/policies': {
-    crumb: 'II.I · Govern / Policies',
-    title: (
-      <>
-        Policy <em>register</em>
-      </>
-    ),
-  },
-  '/console/compile': {
-    crumb: 'II.II · Govern / Compile',
-    title: (
-      <>
-        Constitution <em>compile</em>
-      </>
-    ),
-  },
-  '/console/audit': {
-    crumb: 'II.III · Govern / Audit trail',
-    title: (
-      <>
-        Audit <em>trail</em>
-      </>
-    ),
-  },
-  '/console/bus': {
-    crumb: 'II.IV · Govern / Bus traces',
-    title: (
-      <>
-        Bus <em>traces</em>
-      </>
-    ),
-  },
-  '/console/settings': {
-    crumb: 'II.V · Govern / Settings',
-    title: (
-      <>
-        Operating <em>parameters</em>
-      </>
-    ),
-  },
-  '/console/tenants': {
-    crumb: 'II.VI · Govern / Tenants',
-    title: (
-      <>
-        Active <em>tenancies</em>
-      </>
-    ),
-  },
-  '/console/account': {
-    crumb: 'Personal · record',
-    title: (
-      <>
-        Your <em>record</em>
-      </>
-    ),
-  },
+const AUDIT_PROOF_PREFIX = '/console/audit/'
+
+function auditReceiptIdFromPath(path: string): string | null {
+  if (!path.startsWith(AUDIT_PROOF_PREFIX)) return null
+  const receiptId = path.slice(AUDIT_PROOF_PREFIX.length)
+  return receiptId ? decodeURIComponent(receiptId) : null
+}
+
+function wirePathFor(path: string): string {
+  return auditReceiptIdFromPath(path) ? '/console/audit' : path
 }
 
 function PageBody({ path }: { path: string }) {
+  const receiptId = auditReceiptIdFromPath(path)
+  if (receiptId) return <AuditProof receiptId={receiptId} />
+
   switch (path) {
     case '/console':
       return <Overview />
@@ -168,6 +81,11 @@ function PageBody({ path }: { path: string }) {
   }
 }
 
+function ConsolePageErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
+  const appError = toAppError(error)
+  return <ConsoleError appError={appError} onRetry={resetErrorBoundary} />
+}
+
 const NOT_FOUND_META = {
   crumb: '404 · path not enumerated',
   title: (
@@ -175,6 +93,15 @@ const NOT_FOUND_META = {
       Outside the <em>canon</em>
     </>
   ),
+}
+
+function renderWireTitle(wire: ConsoleWireDecision): ReactNode {
+  return (
+    <>
+      {wire.titleLead} <em>{wire.titleEmphasis}</em>
+      {wire.titleTail ? ` ${wire.titleTail}` : null}
+    </>
+  )
 }
 
 const FALLBACK_EVENTS = [
@@ -208,7 +135,8 @@ function formatBytes(bytes: number): string {
 
 export function Console({ path }: { path: string }) {
   const IS_MOCK = import.meta.env.VITE_USE_MOCKS === 'true'
-  const meta = PAGE_TITLES[path] ?? (path === '/console' ? PAGE_TITLES['/console'] : NOT_FOUND_META)
+  const wire = getConsoleWireDecision(wirePathFor(path))
+  const meta = wire ? { crumb: wire.crumb, title: renderWireTitle(wire) } : NOT_FOUND_META
   const [navOpen, setNavOpen] = useState(false)
   const previousPath = useRef(path)
   const agents = useAgents()
@@ -241,6 +169,15 @@ export function Console({ path }: { path: string }) {
   const medianLatencyMs = summary.data?.medianLatencyMs ?? 38
   const appeals = summary.data?.appeals ?? Math.max(1, incidentCount - deliberationCount)
   const retryBackoff = summary.data?.retryBackoff ?? 0
+  const envMode: EnvIndicatorMode = IS_MOCK ? 'Fixture' : summary.data != null ? 'Live' : 'Offline'
+  const envTimestamp =
+    import.meta.env.VITE_EVAL_MODE === 'true'
+      ? '1970-01-01T00:00:00.000Z'
+      : new Date().toISOString()
+  const envModules = [
+    summary.data != null ? 'console-summary' : 'console-summary unavailable',
+    IS_MOCK ? 'fixture fallback visible' : 'bus evidence path',
+  ]
   const recentEvents = summary.data?.recentEvents ?? FALLBACK_EVENTS
   const coverage = summary.data?.coverage ?? FALLBACK_COVERAGE
   const nav = [
@@ -313,6 +250,9 @@ export function Console({ path }: { path: string }) {
 
   return (
     <div className={`console${navOpen ? ' nav-open' : ''}`}>
+      <a className="skip-link" href="#console-main-content">
+        Skip to console content
+      </a>
       {/* Backdrop — visible only at <=720 when the drawer is open */}
       <button
         type="button"
@@ -390,11 +330,16 @@ export function Console({ path }: { path: string }) {
       </aside>
 
       {/* Main */}
-      <main className="c-main">
-        <div className="c-banner" role="note">
+      <main
+        id="console-main-content"
+        className="c-main"
+        tabIndex={-1}
+        data-wire-route={wire?.path ?? 'not-found'}
+      >
+        <section className="c-banner" aria-label="Privilege boundary" data-privilege-banner>
           <span>⁂ Privilege boundary enforced · session attests to no advice</span>
           <span>608508a9bd224290</span>
-        </div>
+        </section>
 
         <div className="c-topbar">
           <button
@@ -431,9 +376,7 @@ export function Console({ path }: { path: string }) {
         </div>
 
         <div className="c-heartbeat">
-          <span className={`c-heartbeat-live${IS_MOCK ? ' mock' : ''}`}>
-            {IS_MOCK ? 'Mock' : summary.data != null ? 'Live' : 'Fallback'}
-          </span>
+          <EnvIndicator mode={envMode} timestamp={envTimestamp} affectedModules={envModules} />
           {heartbeat.map(([label, value]) => (
             <div className="c-heartbeat-item" key={label}>
               <span className="c-heartbeat-label">{label}</span>
@@ -443,12 +386,39 @@ export function Console({ path }: { path: string }) {
         </div>
 
         <div className="c-page">
-          <PageBody path={path} />
+          <ErrorBoundary FallbackComponent={ConsolePageErrorFallback} resetKeys={[path]}>
+            <PageBody path={path} />
+          </ErrorBoundary>
         </div>
       </main>
 
       {/* Right rail */}
-      <aside className="c-rail" aria-label="Status">
+      <aside
+        className="c-rail"
+        aria-label="Status"
+        aria-live="polite"
+        data-receipt-region
+        data-right-rail-purpose={wire?.rightRailPurpose ?? 'Path not enumerated'}
+      >
+        {wire ? (
+          <div className="rail-block" data-wire-decision-card>
+            <h5>Route contract</h5>
+            <div className="rail-stats">
+              <div className="rail-stat rail-stat-stacked">
+                <span className="label">Header</span>
+                <span className="value">{wire.headerAnatomy}</span>
+              </div>
+              <div className="rail-stat rail-stat-stacked">
+                <span className="label">Primary</span>
+                <span className="value">{wire.primaryAction}</span>
+              </div>
+              <div className="rail-stat rail-stat-stacked">
+                <span className="label">Receipts</span>
+                <span className="value">{wire.receiptLifetime}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="rail-block">
           <h5>Live ledger</h5>
           <div className="rail-stats">

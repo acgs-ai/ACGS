@@ -279,7 +279,12 @@ export function BusAnalysis() {
       />
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="traces" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="audit-drift"
+          query={query}
+          label="traces"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <TraceRowList items={filtered} selectedId={selectedId} onSelect={setSelectedId} />
       )}

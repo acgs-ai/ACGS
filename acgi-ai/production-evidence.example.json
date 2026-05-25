@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "production-evidence-template",
+  "status": "template-only",
+  "claimBoundary": "Example template only; not live production proof; do not claim legal, SOC2, WCAG conformance, pentest completion, regulatory compliance, production deployment, or hosted Storybook proof from this file.",
+  "deploy": {
+    "marketingUrl": "https://acgs.ai",
+    "consoleUrl": "https://console.acgs.ai",
+    "cloudRunRevisionUrl": "REPLACE_WITH_CLOUD_RUN_REVISION_URL",
+    "vercelUrl": "REPLACE_WITH_VERCEL_DEPLOYMENT_URL",
+    "githubActionsRunUrls": {
+      "marketing": "REPLACE_WITH_MARKETING_WORKFLOW_RUN_URL",
+      "console": "REPLACE_WITH_CONSOLE_WORKFLOW_RUN_URL",
+      "storybook": "REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL_OR_PENDING"
+    }
+  },
+  "verification": {
+    "expectedBuildId": "REPLACE_WITH_EXPECTED_BUILD_ID_OR_COMMIT_SHA",
+    "healthz": {
+      "url": "https://console.acgs.ai/healthz",
+      "served_hash": "REPLACE_WITH_HEALTHZ_SERVED_HASH",
+      "build_id": "REPLACE_WITH_HEALTHZ_BUILD_ID"
+    },
+    "postdeployCommand": "pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai",
+    "postdeployOutputRef": "REPLACE_WITH_POSTDEPLOY_OUTPUT_ARTIFACT_OR_HASH",
+    "liveCheckedAt": "REPLACE_WITH_ISO8601_TIMESTAMP",
+    "productionLiveCommand": "pnpm -F acgi-ai run verify:production-live -- --json",
+    "productionLiveOutputRef": "REPLACE_WITH_VERIFY_PRODUCTION_LIVE_JSON_ARTIFACT_OR_HASH",
+    "productionLiveStatus": "REPLACE_WITH_PASS_OR_FAIL_FROM_VERIFY_PRODUCTION_LIVE",
+    "productionLiveBlockers": [
+      "REPLACE_WITH_BLOCKER_IDS_FROM_VERIFY_PRODUCTION_LIVE_OR_EMPTY_ARRAY"
+    ],
+    "productionEvidenceValidationCommand": "pnpm -F acgi-ai run validate:production-evidence -- --manifest REPLACE_WITH_COMPLETED_PRODUCTION_EVIDENCE_JSON --live-output REPLACE_WITH_VERIFY_PRODUCTION_LIVE_JSON",
+    "productionEvidenceValidationOutputRef": "REPLACE_WITH_VALIDATE_PRODUCTION_EVIDENCE_JSON_ARTIFACT_OR_HASH"
+  },
+  "hostedStorybook": {
+    "url": "https://storybook.acgs.ai",
+    "manifestUrl": "https://storybook.acgs.ai/manifest.json",
+    "status": "pending",
+    "proofRef": "REPLACE_WITH_STORYBOOK_PAGES_RUN_OR_SCREENSHOT_HASH",
+    "claimBoundary": "pending means this file does not prove hosted Storybook buyer evidence."
+  },
+  "assurance": {
+    "legalClaimMatrix": {
+      "status": "pending-external",
+      "proofRef": "REPLACE_WITH_LEGAL_REVIEW_RECORD"
+    },
+    "pentest": {
+      "status": "pending-external",
+      "proofRef": "REPLACE_WITH_THIRD_PARTY_PENTEST_REPORT"
+    },
+    "wcagManual": {
+      "status": "pending-external",
+      "proofRef": "REPLACE_WITH_MANUAL_SCREEN_READER_AND_WCAG_REPORT"
+    },
+    "browserScreenshots": {
+      "status": "pending-external",
+      "proofRef": "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE"
+    }
+  },
+  "artifacts": {
+    "releaseEvidenceManifest": "dist-release-evidence/manifest.json",
+    "platformReadinessJson": "dist-release-evidence/platform-readiness.json",
+    "buyerEvidenceGallery": "buyer-evidence-gallery",
+    "consoleDist": "console-dist",
+    "postdeployOutput": "REPLACE_WITH_POSTDEPLOY_OUTPUT_ARTIFACT_OR_HASH",
+    "verifyProductionLiveOutput": "REPLACE_WITH_VERIFY_PRODUCTION_LIVE_JSON_ARTIFACT_OR_HASH",
+    "validatedProductionEvidence": "REPLACE_WITH_VALIDATE_PRODUCTION_EVIDENCE_JSON_ARTIFACT_OR_HASH"
+  },
+  "remainingBlockers": [
+    "production-deployment",
+    "frontend-production-auth",
+    "legal-review-of-claim-matrix",
+    "third-party-penetration-test",
+    "full-wcag-manual-screen-reader-evidence",
+    "hosted-storybook-buyer-evidence"
+  ]
+}

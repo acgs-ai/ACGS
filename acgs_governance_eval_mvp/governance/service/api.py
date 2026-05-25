@@ -5,6 +5,11 @@ import os
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit.jsonl_chain import ChainHashAuditStore
+from governance.evaluation import (
+    EvaluationStatus,
+    ingest_gove_zone_evaluation_report,
+    list_gove_zone_evaluation_evidence,
+)
 from governance.policy_loader import load_policy_bundle, load_roles
 
 try:
@@ -107,6 +112,45 @@ async def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
         "allow": event.get("allow"),
         "explain": governance_checks[0].get("evidence") if governance_checks else event,
     }
+
+
+@app.post("/evidence/evaluation-report")
+async def ingest_evaluation_report(payload: dict, caller_tenant: str = Depends(verify_caller)):
+    if _adapter.audit_store is None:
+        raise HTTPException(status_code=500, detail="audit store is disabled")
+    requested_tenant = str(payload.get("tenant", caller_tenant))
+    if requested_tenant != caller_tenant and caller_tenant not in _admin_tenants():
+        raise HTTPException(status_code=403, detail="evaluation evidence tenant does not match caller tenant")
+    raw_report = payload.get("report", payload)
+    if not isinstance(raw_report, dict):
+        raise HTTPException(status_code=400, detail="report must be a JSON object")
+    actor_id = str(payload.get("actor_id", "api-evaluation-ingestor"))
+    try:
+        evidence = ingest_gove_zone_evaluation_report(
+            raw_report,
+            audit_store=_adapter.audit_store,
+            tenant=requested_tenant,
+            actor_id=actor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return evidence.to_dict()
+
+
+@app.get("/evidence/evaluation-reports")
+async def evaluation_reports(
+    status: EvaluationStatus | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    caller_tenant: str = Depends(verify_caller),
+):
+    if _adapter.audit_store is None:
+        raise HTTPException(status_code=500, detail="audit store is disabled")
+    return list_gove_zone_evaluation_evidence(
+        _adapter.audit_store,
+        tenant=caller_tenant,
+        status=status,
+        limit=limit,
+    )
 
 
 @app.get("/audit/query")

@@ -23,21 +23,23 @@ Posture = Literal["confirmed", "partial", "blocked", "privileged"]
 
 
 def _outcome(decision: Decision) -> Outcome:
-    return {
+    outcomes: dict[Decision, Outcome] = {
         Decision.ALLOW: "allowed",
         Decision.DENY: "denied",
         Decision.TRANSFORM: "transformed",
         Decision.ESCALATE: "escalated",
-    }[decision]
+    }
+    return outcomes[decision]
 
 
 def _posture(decision: Decision) -> Posture:
-    return {
+    postures: dict[Decision, Posture] = {
         Decision.ALLOW: "confirmed",
         Decision.DENY: "blocked",
         Decision.TRANSFORM: "privileged",
         Decision.ESCALATE: "partial",
-    }[decision]
+    }
+    return postures[decision]
 
 
 def record_to_governed_action(

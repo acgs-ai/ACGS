@@ -25,6 +25,7 @@ class AuditStore(Protocol):
         gate: str | None = None,
         allow: bool | None = None,
         risk_tag: str | None = None,
+        tenant: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]: ...
 

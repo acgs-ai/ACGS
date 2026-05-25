@@ -4,7 +4,7 @@
 # public
 
 ## Purpose
-This directory contains static assets copied directly into the Vite build output. It includes icons, the MSW worker script, and self-hosted font assets required by the console privilege boundary.
+This directory contains static assets copied directly into the Vite build output. It includes icons, the MSW worker script, security disclosure metadata, the subprocessor RSS feed, and self-hosted font assets required by the console privilege boundary.
 
 ## Key Files
 | File | Description |
@@ -12,10 +12,13 @@ This directory contains static assets copied directly into the Vite build output
 | `favicon.svg` | Browser favicon referenced by `index.html`. |
 | `icons.svg` | Shared SVG symbol/icon asset served from the public root. |
 | `mockServiceWorker.js` | Generated MSW service worker used when local mocks are enabled. |
+| `.well-known/security.txt` | Public security contact metadata verified by `pnpm test:trust-surface`. |
+| `subprocessors.xml` | Engineering-draft subprocessor change RSS feed verified by `pnpm test:trust-surface`. |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
+| `.well-known/` | Well-known public metadata paths such as `security.txt`. |
 | `static/` | Static assets under stable URL paths, currently font files (see `static/AGENTS.md`). |
 
 ## For AI Agents
@@ -28,6 +31,7 @@ This directory contains static assets copied directly into the Vite build output
 
 ### Testing Requirements
 - Run `pnpm build` after adding, removing, or renaming public assets referenced by source files.
+- Run `pnpm test:trust-surface` after changing `.well-known/security.txt` or `subprocessors.xml`.
 - Check references in `src/fonts.css`, `index.html`, and relevant components when moving assets.
 
 ### Common Patterns

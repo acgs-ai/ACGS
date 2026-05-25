@@ -9,7 +9,11 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-marketing
+dist-buyer-evidence
 dist-ssr
+.surface-check
+.buyer-evidence-check-*
 *.local
 
 # Editor directories and files

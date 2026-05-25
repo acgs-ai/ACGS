@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -50,6 +51,113 @@ def _truncate_hash16(value: str) -> str:
     """Project a constitutional-hash string to the 16-char form the schema expects."""
     v = value.strip().lower()
     return v[:16]
+
+
+_TRACEPARENT_RE = re.compile(
+    r"^(?P<version>[0-9a-f]{2})-"
+    r"(?P<trace_id>[0-9a-f]{32})-"
+    r"(?P<parent_id>[0-9a-f]{16})-"
+    r"(?P<trace_flags>[0-9a-f]{2})(?:-.*)?$"
+)
+
+_TRACE_ID_KEYS = ("phoenix_trace_id", "otel_trace_id", "trace_id")
+_SPAN_ID_KEYS = ("phoenix_span_id", "otel_span_id", "span_id")
+_PARENT_SPAN_ID_KEYS = (
+    "phoenix_parent_span_id",
+    "otel_parent_span_id",
+    "parent_span_id",
+    "parent_id",
+)
+_TRACEPARENT_KEYS = ("traceparent", "Traceparent")
+_NESTED_CONTEXT_KEYS = ("headers", "metadata", "trace_context", "otel", "context")
+
+
+def _normalize_hex_id(value: Any, *, length: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    if len(candidate) != length:
+        return None
+    if not all(char in "0123456789abcdef" for char in candidate):
+        return None
+    if set(candidate) == {"0"}:
+        return None
+    return candidate
+
+
+def _string_field(record: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _candidate_context_records(*records: Any) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        candidates.append(record)
+        for nested_key in _NESTED_CONTEXT_KEYS:
+            nested = record.get(nested_key)
+            if isinstance(nested, dict):
+                candidates.append(nested)
+    return candidates
+
+
+def _parse_traceparent(value: str | None) -> tuple[str, str] | None:
+    if value is None:
+        return None
+    match = _TRACEPARENT_RE.match(value.strip().lower())
+    if match is None:
+        return None
+    trace_id = _normalize_hex_id(match.group("trace_id"), length=32)
+    parent_id = _normalize_hex_id(match.group("parent_id"), length=16)
+    if trace_id is None or parent_id is None:
+        return None
+    return trace_id, parent_id
+
+
+def _extract_phoenix_trace_context(*records: Any) -> dict[str, str]:
+    """Extract OpenTelemetry/Phoenix ids from known bus/audit carrier fields.
+
+    ``traceparent`` supplies the trace id plus upstream parent span id. Explicit
+    ``span_id``/``phoenix_span_id`` fields win for the current span because the
+    W3C parent-id field names the caller-side span, not a newly-created span.
+    """
+    phoenix_trace_id: str | None = None
+    phoenix_span_id: str | None = None
+    phoenix_parent_span_id: str | None = None
+
+    for candidate in _candidate_context_records(*records):
+        parsed_traceparent = _parse_traceparent(_string_field(candidate, _TRACEPARENT_KEYS))
+        if parsed_traceparent is not None:
+            trace_id, parent_id = parsed_traceparent
+            phoenix_trace_id = phoenix_trace_id or trace_id
+            phoenix_parent_span_id = phoenix_parent_span_id or parent_id
+
+        phoenix_trace_id = phoenix_trace_id or _normalize_hex_id(
+            _string_field(candidate, _TRACE_ID_KEYS),
+            length=32,
+        )
+        phoenix_span_id = phoenix_span_id or _normalize_hex_id(
+            _string_field(candidate, _SPAN_ID_KEYS),
+            length=16,
+        )
+        phoenix_parent_span_id = phoenix_parent_span_id or _normalize_hex_id(
+            _string_field(candidate, _PARENT_SPAN_ID_KEYS),
+            length=16,
+        )
+
+    trace_context: dict[str, str] = {}
+    if phoenix_trace_id:
+        trace_context["phoenix_trace_id"] = phoenix_trace_id
+    if phoenix_span_id:
+        trace_context["phoenix_span_id"] = phoenix_span_id
+    if phoenix_parent_span_id:
+        trace_context["phoenix_parent_span_id"] = phoenix_parent_span_id
+    return trace_context
 
 
 def project_bus_event(msg: dict[str, Any], constitutional_hash: str) -> dict[str, Any]:
@@ -86,12 +194,20 @@ def project_bus_event(msg: dict[str, Any], constitutional_hash: str) -> dict[str
         "audit_receipt_hash": None,
         "constitutional_hash": cons_hash,
     }
+    event.update(_extract_phoenix_trace_context(msg, payload))
     event["status"] = classify(event)
     return event
 
 
 def project_audit_record(record: dict[str, Any], constitutional_hash: str) -> dict[str, Any]:
-    """Project a gove-zone audit Receipt line into our Event shape (kind=decision)."""
+    """Project a gove-zone audit receipt line into our Event shape (kind=decision).
+
+    The live ``gove-zone`` audit chain writes canonical ``DecisionRecord``
+    fields (``tool``, ``argument_hash``, ``timestamp_iso``). Older fixtures used
+    ``tool_name``/``args``. Accept both shapes so the analyzer can backfill or
+    tail deployed audit files without asking the runtime to emit analyzer-native
+    events.
+    """
     correlation_id = str(record.get("conversation_id") or record.get("event_id") or uuid.uuid4())
     event_id = str(record.get("event_id") or uuid.uuid4())
     actor = record.get("actor") or "unknown"
@@ -99,20 +215,36 @@ def project_audit_record(record: dict[str, Any], constitutional_hash: str) -> di
     matched_rules = record.get("matched_rules") or []
     flagged_rule = matched_rules[0] if matched_rules and decision in ("deny", "escalate") else None
     cons_hash = _truncate_hash16(str(record.get("constitutional_hash") or constitutional_hash))
+    tool_name = (
+        record.get("tool_name")
+        or record.get("tool")
+        or record.get("target_handler_resolved")
+        or record.get("target_handler_declared")
+    )
+    argument_hash = record.get("argument_hash")
+    if isinstance(argument_hash, str) and argument_hash:
+        payload_ref = (
+            argument_hash if argument_hash.startswith("sha256:") else f"sha256:{argument_hash}"
+        )
+    else:
+        payload_ref = _payload_ref(record.get("args") or record.get("tool_input") or {})
     event: dict[str, Any] = {
         "event_id": event_id,
         "correlation_id": correlation_id,
-        "recorded_at": datetime.now(UTC).isoformat(),
+        "recorded_at": str(record.get("timestamp_iso") or datetime.now(UTC).isoformat()),
         "source_agent": str(actor),
-        "target_handler_declared": record.get("tool_name"),
-        "target_handler_resolved": record.get("tool_name"),
-        "payload_ref": _payload_ref(record.get("args") or {}),
+        "target_handler_declared": tool_name,
+        "target_handler_resolved": tool_name,
+        "payload_ref": payload_ref,
         "kind": "decision",
         "decision": decision,
         "flagged_rule": flagged_rule,
-        "audit_receipt_hash": record.get("event_hash"),
+        "audit_receipt_hash": record.get("event_hash")
+        or record.get("audit_hash")
+        or record.get("audit_receipt_hash"),
         "constitutional_hash": cons_hash,
     }
+    event.update(_extract_phoenix_trace_context(record))
     event["status"] = classify(event)
     return event
 

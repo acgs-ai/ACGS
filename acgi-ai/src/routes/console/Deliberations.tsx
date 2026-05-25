@@ -63,7 +63,12 @@ export function Deliberations() {
       <Receipt receipt={receipt} />
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="deliberations" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="awaiting-bus"
+          query={query}
+          label="deliberations"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <div className="delib-list">
           {filtered.map((d) => (

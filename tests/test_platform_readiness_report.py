@@ -1,0 +1,139 @@
+"""Tests for scripts/platform_readiness_report.py."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import platform_readiness_report as pr
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts" / "platform_readiness_report.py"
+
+
+def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
+    items = pr.build_items(ROOT)
+    by_id = {item.item_id: item for item in items}
+
+    assert by_id["local-evidence-spine"].status == "pass"
+    assert by_id["bus-contract-regeneration"].status == "pass"
+    assert by_id["deploy-contracts-local"].status == "pass"
+    assert by_id["console-auth-forward-gate"].status == "pass"
+    assert by_id["cloudrun-renderer-local"].status == "pass"
+    assert by_id["production-deploy-fail-closed-local"].status == "pass"
+    assert by_id["production-launch-handoff-local"].status == "pass"
+    assert by_id["production-authority-packet-local"].status == "pass"
+    authority_item = by_id["production-authority-packet-local"]
+    authority_template = pr._maybe_read(ROOT, "acgi-ai/production-authority.example.json")
+    assert "production-authority.example.json" in authority_item.evidence
+    assert "pending-external" in authority_item.evidence
+    assert "pending-external:deploy-owner-approval" in authority_template
+    assert "not production deployment proof" in authority_template
+    assert by_id["production-evidence-template-local"].status == "pass"
+    assert "pending-external" in by_id["production-evidence-template-local"].evidence
+    assert by_id["production-live-verifier-local"].status == "pass"
+    assert "verify:production-live" in by_id["production-live-verifier-local"].evidence
+    assert "blocker ids" in by_id["production-live-verifier-local"].evidence
+    assert by_id["production-blocker-report-local"].status == "pass"
+    assert "copyIntoProductionEvidence" in by_id["production-blocker-report-local"].evidence
+    assert by_id["production-evidence-validator-local"].status == "pass"
+    assert "validate:production-evidence" in by_id["production-evidence-validator-local"].evidence
+    assert "blocker ids" in by_id["production-evidence-validator-local"].evidence
+    assert by_id["production-cutover-plan-local"].status == "pass"
+    assert "DNS cutover" in by_id["production-cutover-plan-local"].evidence
+    assert "copyIntoProductionEvidence" in by_id["production-cutover-plan-local"].evidence
+    assert by_id["production-evidence-draft-local"].status == "pass"
+    assert "deployment-blocked" in by_id["production-evidence-draft-local"].evidence
+    assert "pending-external" in by_id["production-evidence-draft-local"].evidence
+    assert by_id["fixture-fallback-fail-closed-local"].status == "pass"
+    assert "network-unavailable" in by_id["fixture-fallback-fail-closed-local"].evidence
+    assert by_id["claim-safety"].status == "pass"
+    assert by_id["local-verification-fanout"].status == "pass"
+    assert "configured pyproject mypy fan-out" in by_id["local-verification-fanout"].evidence
+    assert by_id["release-evidence-bundle"].status == "pass"
+    assert by_id["node24-local-toolchain"].status == "pass"
+    assert by_id["buyer-evidence-gallery-local"].status == "pass"
+    assert by_id["runtime-framework-bridge-local"].status == "pass"
+    assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
+    assert by_id["runtime-policy-gate-local"].status == "pass"
+    assert "RuleSetPolicy" in by_id["runtime-policy-gate-local"].evidence
+    assert by_id["buyer-evidence-ci-artifact"].status == "pass"
+    assert by_id["storybook-runtime-plan-local"].status == "pass"
+    assert "pending-external" in by_id["storybook-runtime-plan-local"].evidence
+    storybook_runtime_plan = pr._maybe_read(ROOT, "acgi-ai/storybook-runtime.plan.json")
+    assert "pending-external:dependency-owner-approval" in storybook_runtime_plan
+    assert "not official Storybook runtime proof" in storybook_runtime_plan
+    assert by_id["storybook-publication-workflow-local"].status == "pass"
+    assert by_id["hosted-storybook-handoff-local"].status == "pass"
+    assert "pending-external" in by_id["hosted-storybook-handoff-local"].evidence
+    assert "copyIntoProductionEvidence" in by_id["hosted-storybook-handoff-local"].evidence
+    assert by_id["external-blockers-documented"].status == "pass"
+    assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
+    assert (
+        "storybook.acgs.ai publication workflow exists"
+        in by_id["hosted-storybook-buyer-evidence"].evidence
+    )
+
+
+def test_bus_contract_item_locks_root_openapi_wiring():
+    item = next(i for i in pr.build_items(ROOT) if i.item_id == "bus-contract-regeneration")
+    assert item.status == "pass"
+    assert "make openapi" in item.command
+    assert "test:bus-schema" in item.command
+
+
+def test_summary_counts_pending_without_failing():
+    items = pr.build_items(ROOT)
+    summary = pr.summarize(items)
+
+    assert summary["fail"] == 0
+    assert summary["pending"] >= 1
+    assert summary["pass"] + summary["pending"] == summary["total"]
+
+
+def test_render_markdown_keeps_deployment_claim_conservative():
+    report = pr.render_markdown(pr.build_items(ROOT))
+
+    assert "Platform readiness report" in report
+    assert "Production deployment remains unproven" in report
+    assert "release-evidence-bundle" in report
+    assert "console-auth-forward-gate" in report
+    assert "cloudrun-renderer-local" in report
+    assert "production-deploy-fail-closed-local" in report
+    assert "production-launch-handoff-local" in report
+    assert "production-authority-packet-local" in report
+    assert "test:production-authority-packet" in report
+    assert "production-evidence-template-local" in report
+    assert "production-live-verifier-local" in report
+    assert "production-blocker-report-local" in report
+    assert "production-evidence-validator-local" in report
+    assert "production-cutover-plan-local" in report
+    assert "production-evidence-draft-local" in report
+    assert "fixture-fallback-fail-closed-local" in report
+    assert "node24-local-toolchain" in report
+    assert "buyer-evidence-gallery-local" in report
+    assert "runtime-framework-bridge-local" in report
+    assert "runtime-policy-gate-local" in report
+    assert "buyer-evidence-ci-artifact" in report
+    assert "storybook-runtime-plan-local" in report
+    assert "test:storybook-runtime-plan" in report
+    assert "storybook-publication-workflow-local" in report
+    assert "hosted-storybook-handoff-local" in report
+    assert "hosted-storybook-buyer-evidence" in report
+    assert "pending" in report
+
+
+def test_cli_json_exits_zero_with_pending_items():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--json"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["fail"] == 0
+    assert payload["summary"]["pending"] >= 1

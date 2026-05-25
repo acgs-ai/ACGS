@@ -37,6 +37,26 @@
   z-index: 1;
 }
 
+.skip-link {
+  position: absolute;
+  top: var(--space-md);
+  left: var(--space-md);
+  z-index: 1000;
+  transform: translateY(-160%);
+  padding: 10px 14px;
+  border: 1px solid var(--paper);
+  border-radius: var(--radius-sm);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 .shell {
   width: min(1200px, calc(100% - 48px));
   margin: 0 auto;
@@ -732,6 +752,8 @@
 
 /* sidebar */
 .c-side {
+  position: relative;
+  z-index: var(--z-console-nav);
   border-right: 1px solid var(--line-softer);
   background: var(--paper);
   display: flex;
@@ -834,6 +856,8 @@
 
 .c-banner {
   /* always-visible privilege boundary banner — DESIGN.md §4.2 */
+  position: relative;
+  z-index: var(--z-privilege-banner);
   background: var(--boundary);
   color: var(--boundary-ink);
   border-bottom: 1px solid var(--boundary-line);
@@ -888,6 +912,8 @@
    fixed-position .c-side drawer. */
 .c-nav-toggle {
   display: none;
+  position: relative;
+  z-index: var(--z-console-nav-toggle);
   align-items: center;
   justify-content: center;
   width: 36px;
@@ -911,7 +937,7 @@
   border: 0;
   padding: 0;
   cursor: pointer;
-  z-index: 99;
+  z-index: var(--z-console-backdrop);
 }
 
 .c-heartbeat {
@@ -1134,6 +1160,77 @@
   letter-spacing: 0.06em;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.c-state-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-softer);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  color: var(--ink-2);
+}
+
+.c-state-card strong {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.c-state-card p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.c-state-card.warning {
+  border-left-color: var(--risk-med);
+}
+
+.c-state-card.danger {
+  border-left-color: var(--risk-hi);
+}
+
+.c-state-card.success {
+  border-left-color: var(--risk-lo);
+}
+
+.c-state-meta,
+.c-state-footer {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.c-state-action {
+  justify-self: start;
+}
+
+.c-env-indicator {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid var(--boundary-line);
+  border-radius: 999px;
+  background: var(--boundary);
+  color: var(--boundary-ink);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.c-env-indicator strong {
+  font-weight: 700;
 }
 
 .c-empty {
@@ -1466,6 +1563,78 @@
   color: var(--ink-3);
 }
 
+.evaluation-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--line-softer);
+}
+.evaluation-evidence-card {
+  padding: 18px;
+  background: var(--paper-2);
+}
+.evaluation-evidence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.evaluation-evidence-source,
+.evaluation-evidence-policy,
+.evaluation-evidence-claim,
+.evaluation-evidence-source-note,
+.evaluation-evidence-hash span,
+.evaluation-evidence-metrics dt {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.evaluation-evidence-card h3 {
+  margin: 16px 0 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1.1;
+}
+.evaluation-evidence-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 0;
+}
+.evaluation-evidence-metrics div {
+  min-width: 0;
+}
+.evaluation-evidence-metrics dd {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.evaluation-evidence-hash {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0 0;
+}
+.evaluation-evidence-hash code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.evaluation-evidence-policy {
+  margin: 12px 0 0;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 /* audit timeline */
 .audit-list {
   border-top: 1px solid var(--line);
@@ -1658,6 +1827,51 @@
   min-height: 64px;
   word-break: break-word;
 }
+.receipt-proof-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+.action-proof-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+.receipt-proof-packet {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--boundary-line);
+  border-radius: var(--radius-md);
+  background: var(--boundary);
+}
+.receipt-proof-packet h3 {
+  margin-top: 6px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+}
+.receipt-proof-packet p {
+  margin-top: 8px;
+  font-family: var(--font-serif);
+  color: var(--ink-3);
+  line-height: 1.55;
+}
+.receipt-proof-packet pre {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 12px;
+  overflow-x: auto;
+  font-variant-numeric: tabular-nums;
+}
 .action-test-panel {
   display: grid;
   gap: 12px;
@@ -1767,6 +1981,16 @@
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+.rail-stat-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.rail-stat-stacked .value {
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+}
 .rail-stat .value-ok {
   color: var(--risk-lo);
 }
@@ -1860,7 +2084,7 @@
     width: min(82vw, 320px);
     transform: translateX(-100%);
     transition: transform 220ms ease-out;
-    z-index: 100;
+    z-index: var(--z-console-nav);
     overflow-y: auto;
     border-right: 1px solid var(--line);
   }
@@ -1875,8 +2099,6 @@
      visible close target inside the drawer overlap. */
   .c-nav-toggle {
     display: inline-flex;
-    position: relative;
-    z-index: 101;
   }
   .c-topbar {
     align-items: center;
@@ -1983,7 +2205,8 @@
   .action-console,
   .action-explain-grid,
   .action-before-after,
-  .action-proof {
+  .action-proof,
+  .receipt-proof-grid {
     grid-template-columns: 1fr;
   }
   .action-detail-head {
@@ -2621,6 +2844,87 @@
   color: var(--accent);
   font-weight: 500;
 }
+
+.login-interstitial {
+  border: 1px solid var(--boundary-line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--paper-2) 86%, var(--accent) 14%);
+  box-shadow: var(--shadow-soft);
+  padding: 20px 22px;
+  display: grid;
+  gap: 14px;
+}
+.login-interstitial-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.login-interstitial h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(24px, 4vw, 36px);
+  line-height: 1.05;
+  font-weight: 400;
+  color: var(--ink);
+}
+.login-interstitial p,
+.login-interstitial time {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.login-interstitial time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.login-interstitial-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.login-interstitial-grid div {
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: 10px 12px;
+}
+.login-interstitial-grid dt {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.login-interstitial-grid dd {
+  margin: 4px 0 0;
+  font-family: var(--font-runtime);
+  font-size: 13px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.login-interstitial-dismiss {
+  justify-self: start;
+}
+.login-error {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 8%, var(--paper));
+  padding: 10px 12px;
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .login-foot {
   margin-top: 32px;
   padding-top: 18px;
@@ -2780,6 +3084,10 @@
   .login-provider svg {
     grid-column: 2;
     justify-self: end;
+  }
+
+  .login-interstitial-grid {
+    grid-template-columns: 1fr;
   }
   .notfound-trace {
     max-width: 100%;

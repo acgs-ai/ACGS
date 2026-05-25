@@ -16,6 +16,9 @@ export function NotFound({ surface, path }: Props) {
   // because a 404 is not the right place to render the editorial monolith.
   return (
     <div className="marketing">
+      <a className="skip-link" href="#main-content">
+        Skip to not found content
+      </a>
       <div className="shell">
         <nav className="m-nav">
           <a
@@ -42,7 +45,9 @@ export function NotFound({ surface, path }: Props) {
           </div>
         </nav>
 
-        <NotFoundContent surface="marketing" path={path} />
+        <main id="main-content" tabIndex={-1}>
+          <NotFoundContent surface="marketing" path={path} />
+        </main>
       </div>
     </div>
   )

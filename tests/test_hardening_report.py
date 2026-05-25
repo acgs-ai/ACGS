@@ -1,12 +1,11 @@
 """Tests for scripts/hardening_report.py."""
+
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 import hardening_report as hr
 
@@ -18,6 +17,7 @@ SCRIPT = ROOT / "scripts" / "hardening_report.py"
 # ChecklistItem / DrillRecord shape
 # ---------------------------------------------------------------------------
 
+
 def test_checklist_item_icon_for_each_status():
     assert hr.ChecklistItem(1, "x", "pass", "y").icon == "✅"
     assert hr.ChecklistItem(1, "x", "fail", "y").icon == "❌"
@@ -26,7 +26,8 @@ def test_checklist_item_icon_for_each_status():
 
 def test_drill_record_serializes_round_trip():
     rec = hr.DrillRecord(
-        drill_type="t", drill_id="abc",
+        drill_type="t",
+        drill_id="abc",
         status="passed",
         started="2026-05-11T00:00:00+00:00",
         finished="2026-05-11T00:00:01+00:00",
@@ -40,6 +41,7 @@ def test_drill_record_serializes_round_trip():
 # ---------------------------------------------------------------------------
 # Drills against the real repo state
 # ---------------------------------------------------------------------------
+
 
 def test_drill_workflow_schema_passes_against_real_repo():
     rec = hr.drill_workflow_schema(ROOT)
@@ -67,6 +69,7 @@ def test_drill_drift_detection_actually_detects_drift():
 # Checklist composition
 # ---------------------------------------------------------------------------
 
+
 def test_build_checklist_returns_10_items():
     drills = hr.run_drills(ROOT)
     items = hr.build_checklist(ROOT, drills)
@@ -89,7 +92,7 @@ def test_phase_2_item_reflects_gitmodules_presence(tmp_path: Path):
 
     # With .gitmodules → pass; evidence cites submodule count.
     (fake_root / ".gitmodules").write_text(
-        "[submodule \"packages/x\"]\n\tpath = packages/x\n\turl = https://example.com/x.git\n"
+        '[submodule "packages/x"]\n\tpath = packages/x\n\turl = https://example.com/x.git\n'
     )
     items = hr.build_checklist(fake_root, [])
     phase_2 = next(i for i in items if i.number == 10)
@@ -105,9 +108,21 @@ def test_phase_1_root_files_pass():
     assert phase_1.status == "pass"
 
 
+def test_workspace_member_item_tracks_current_registry():
+    drills = hr.run_drills(ROOT)
+    items = hr.build_checklist(ROOT, drills)
+    workspace = next(i for i in items if i.number == 3)
+    assert workspace.status == "pass"
+    assert "6 packages" in workspace.description
+    assert "packages/gove-zone" in workspace.evidence
+    assert "packages/agent-bus-analyzer" in workspace.evidence
+    assert "packages/clinicalguard" not in workspace.evidence
+
+
 # ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
+
 
 def test_render_report_includes_each_item_with_status():
     drills = hr.run_drills(ROOT)
@@ -135,6 +150,7 @@ def test_render_report_summarizes_pass_fail_pending_counts():
 # Persistence
 # ---------------------------------------------------------------------------
 
+
 def test_persist_drills_writes_one_file_per_drill(tmp_path):
     drills = [
         hr.DrillRecord("t1", "aaa", "passed", "s", "f"),
@@ -160,10 +176,13 @@ def test_persist_report_uses_timestamped_filename(tmp_path):
 # CLI exit code
 # ---------------------------------------------------------------------------
 
+
 def test_cli_print_emits_report_and_exits_zero():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--print"],
-        cwd=str(ROOT), capture_output=True, text=True,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     assert "Monorepo Hardening Report" in result.stdout

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "storybook-runtime-plan",
+  "status": "pending-dependency-authority",
+  "claimBoundary": "Template-only official Storybook runtime plan; not official Storybook runtime proof, not hosted Storybook proof, not production deployment proof, and no dependencies are installed by this plan until every pending-external proofRef is replaced by signed dependency and release-owner evidence.",
+  "sourceDocs": [
+    {
+      "name": "Storybook init command",
+      "url": "https://github.com/storybookjs/storybook/blob/v10.2.9/docs/get-started/frameworks/preact-vite.mdx",
+      "evidence": "npx storybook@latest init"
+    },
+    {
+      "name": "Storybook React Vite framework config",
+      "url": "https://github.com/storybookjs/storybook/blob/v10.2.9/docs/_snippets/react-vite-framework-options.md",
+      "evidence": "framework.name = @storybook/react-vite"
+    }
+  ],
+  "requiredApprovals": [
+    {
+      "id": "dependency-owner-approval",
+      "owner": "frontend dependency owner",
+      "proofRef": "pending-external:dependency-owner-approval",
+      "requiredBefore": [
+        "add-storybook-dependencies",
+        "commit-lockfile-diff",
+        "claim-official-storybook-runtime"
+      ]
+    },
+    {
+      "id": "release-owner-approval",
+      "owner": "release/deploy owner",
+      "proofRef": "pending-external:release-owner-storybook-runtime-approval",
+      "requiredBefore": [
+        "replace-storybook-build-shim",
+        "enable-storybook-pages-deploy",
+        "claim-hosted-storybook-proof"
+      ]
+    }
+  ],
+  "proposedRuntime": {
+    "packageManager": "pnpm",
+    "initCommand": "npx storybook@latest init",
+    "frameworkPackage": "@storybook/react-vite",
+    "corePackage": "storybook",
+    "expectedConfigFiles": [
+      ".storybook/main.ts",
+      ".storybook/preview.ts"
+    ],
+    "expectedScriptsAfterApproval": [
+      "storybook",
+      "build-storybook"
+    ],
+    "expectedStoryCoverage": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "deploy-readiness-boundary"
+    ]
+  },
+  "currentPlaceholder": {
+    "script": "storybook:build",
+    "value": "pnpm run evidence:build",
+    "boundary": "Dependency-free buyer-evidence publication scaffold only; not official Storybook runtime proof."
+  },
+  "forbiddenUntilApproved": [
+    "add storybook or @storybook/* dependencies",
+    "replace storybook:build with an official Storybook build command",
+    "enable stronger hosted Storybook claims",
+    "treat buyer-evidence-storybook Pages output as official Storybook runtime proof"
+  ],
+  "operatorNextSteps": [
+    "Replace pending-external:dependency-owner-approval with signed dependency-owner approval before adding Storybook packages.",
+    "Run the official init command under the Node 24 toolchain and preserve the generated package plus lockfile diff for review.",
+    "Map the four buyer-evidence story ids into official Storybook stories while keeping the conservative claim boundary visible in each proof surface.",
+    "Replace or rename the current storybook:build shim only after test:storybook-runtime-plan, test:storybook-publication, and test:hosted-storybook-handoff remain green.",
+    "Claim hosted Storybook proof only after storybook.acgs.ai has a successful Pages deployment and verify:production-live passes storybook-manifest-live."
+  ],
+  "proofRefs": {
+    "dependencyApproval": "pending-external:dependency-owner-approval",
+    "versionPins": "pending-external:storybook-version-pins",
+    "runtimeBuildOutput": "pending-external:official-storybook-build-output",
+    "liveStorybookManifest": "pending-external:storybook-pages-proof"
+  }
+}
