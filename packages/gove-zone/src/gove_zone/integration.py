@@ -160,6 +160,39 @@ def _arguments_to_mapping(value: Any) -> dict[str, Any]:
     return {"arguments": value}
 
 
+def _response_output_items_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return Responses-style output items carried by a runtime payload.
+
+    OpenAI Responses returns function calls as output items instead of Chat
+    Completions ``tool_calls``. Bridges may forward either the whole response
+    object, its ``output`` list, or a streaming ``item`` wrapper. Keep this
+    adapter dependency-free by accepting only plain mapping/list shapes.
+    """
+    response = payload.get("response")
+    candidates: list[Any] = [payload.get("output")]
+    if isinstance(response, dict):
+        candidates.append(response.get("output"))
+    if isinstance(payload.get("item"), dict):
+        candidates.append([payload["item"]])
+
+    output_items: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, list):
+            continue
+        for item in candidate:
+            if isinstance(item, dict):
+                output_items.append(cast(dict[str, Any], item))
+    return output_items
+
+
+def _responses_function_call_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in _response_output_items_from_payload(payload)
+        if item.get("type") == "function_call" and item.get("name")
+    ]
+
+
 def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Return a runtime-neutral tool name and argument mapping.
 
@@ -169,6 +202,9 @@ def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dic
     * MCP JSON-RPC tool calls: ``{method: "tools/call", params: {name, arguments}}``
     * OpenAI/function-call style events: ``{type: "function_call", name, arguments}``
       or ``{function: {name, arguments}}``
+    * OpenAI Responses-style output items:
+      ``{output: [{type: "function_call", name, arguments}]}`` or
+      ``{response: {output: [{type: "function_call", name, arguments}]}}``
     * OpenAI Chat/LangChain-style single tool calls:
       ``{tool_calls: [{function: {name, arguments}}]}`` or
       ``{tool_calls: [{name, args}]}``
@@ -187,6 +223,17 @@ def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dic
         arguments = params.get("arguments", params.get("args", params.get("tool_input")))
         if name:
             return str(name), _arguments_to_mapping(arguments)
+
+    responses_function_calls = _responses_function_call_items(payload)
+    if len(responses_function_calls) == 1:
+        item = responses_function_calls[0]
+        return str(item["name"]), _arguments_to_mapping(item.get("arguments"))
+
+    if len(responses_function_calls) > 1:
+        return "responses.output.batch", {
+            "function_call_count": len(responses_function_calls),
+            "function_call_names": [str(item["name"]) for item in responses_function_calls],
+        }
 
     tool_calls = payload.get("tool_calls")
     if isinstance(tool_calls, list) and len(tool_calls) == 1 and isinstance(tool_calls[0], dict):
@@ -259,6 +306,11 @@ def _runtime_context_from_payload(
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     function = payload.get("function") if isinstance(payload.get("function"), dict) else {}
     tool = payload.get("tool") if isinstance(payload.get("tool"), dict) else {}
+    response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+    responses_function_calls = _responses_function_call_items(payload)
+    single_response_function_call = (
+        responses_function_calls[0] if len(responses_function_calls) == 1 else {}
+    )
     tool_calls = payload.get("tool_calls")
     single_tool_call = (
         tool_calls[0]
@@ -275,8 +327,10 @@ def _runtime_context_from_payload(
     for source in (
         payload,
         params,
+        response,
         function,
         tool,
+        single_response_function_call,
         single_tool_call,
         tool_call_function,
         tool_input,
@@ -296,10 +350,14 @@ def _runtime_context_from_payload(
         payload.get("context"),
         cast(dict[str, Any], params).get("state"),
         cast(dict[str, Any], params).get("context"),
+        cast(dict[str, Any], response).get("state"),
+        cast(dict[str, Any], response).get("context"),
         cast(dict[str, Any], function).get("state"),
         cast(dict[str, Any], function).get("context"),
         cast(dict[str, Any], tool).get("state"),
         cast(dict[str, Any], tool).get("context"),
+        single_response_function_call.get("state"),
+        single_response_function_call.get("context"),
         cast(dict[str, Any], single_tool_call).get("state"),
         cast(dict[str, Any], single_tool_call).get("context"),
         cast(dict[str, Any], tool_call_function).get("state"),

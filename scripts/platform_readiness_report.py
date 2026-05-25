@@ -1469,6 +1469,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "tool_call_from_hook_payload",
             'method": "tools/call"',
             "function_call",
+            "output",
+            "OpenAI Responses",
             "tool_calls",
             "OpenAI Chat",
             "LangChain-style",
@@ -1483,7 +1485,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             runtime_bridge_files_ok and runtime_bridge_ok,
             (
                 "gove-zone bridge normalizes Claude/Codex, MCP, function-call, "
-                "OpenAI Chat tool_calls, LangChain-style tool_calls, and generic payloads"
+                "OpenAI Responses output function_call items, OpenAI Chat tool_calls, "
+                "LangChain-style tool_calls, and generic payloads"
                 if runtime_bridge_files_ok and runtime_bridge_ok
                 else (
                     f"missing_files={runtime_bridge_missing}, "
@@ -1511,6 +1514,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "DENY and ESCALATE decisions exit non-zero",
             "blocked",
             "Runtime policy gate",
+            "OpenAI Responses-style",
             "OpenAI Chat-style",
             "LangChain-style",
         ],
@@ -1521,8 +1525,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Runtime gate can enforce reviewed policy bundles before side effects",
             runtime_policy_gate_ok,
             (
-                "gove-zone gate loads RuleSetPolicy bundles, covers OpenAI/LangChain tool_calls, "
-                "and exits non-zero on deny/escalate"
+                "gove-zone gate loads RuleSetPolicy bundles, covers OpenAI Responses, "
+                "OpenAI Chat, and LangChain tool-call payloads, and exits non-zero "
+                "on deny/escalate"
                 if runtime_policy_gate_ok
                 else f"missing_parts={runtime_policy_gate_missing_parts}"
             ),

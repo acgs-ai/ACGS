@@ -829,6 +829,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "Claude/Codex-style {tool_name, tool_input}",
                     "MCP-style {method: tools/call, params: {name, arguments}}",
                     "function-call-style {type: function_call, name, arguments}",
+                    "OpenAI Responses output [{type: function_call, name, arguments}]",
                     "OpenAI Chat tool_calls [{function: {name, arguments}}]",
                     "LangChain-style tool_calls [{name, args}]",
                     "generic {name, arguments|args|input}",
@@ -853,6 +854,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 ),
                 "blockingDecisions": ["deny", "escalate"],
                 "coveredPayloadShapes": [
+                    "OpenAI Responses output [{type: function_call, name, arguments}]",
                     "OpenAI Chat tool_calls [{function: {name, arguments}}]",
                     "LangChain-style tool_calls [{name, args}]",
                 ],
@@ -1223,7 +1225,8 @@ live production proof.
   fixture data.
 - `packages/gove-zone/src/gove_zone/integration.py` exposes
   `tool_call_from_hook_payload` so agent-framework bridges can normalize
-  Claude/Codex-style, MCP-style, function-call-style, and generic payloads
+  Claude/Codex-style, MCP-style, function-call-style, OpenAI Responses-style
+  output items, OpenAI Chat/LangChain-style tool calls, and generic payloads
   before emitting governed receipts. This is local adapter evidence, not
   certification of every third-party framework integration.
 - `gove-zone gate --policy-bundle <policy.bundle.json> < event.json` loads a

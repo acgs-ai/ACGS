@@ -141,6 +141,97 @@ def test_tool_call_from_hook_payload_accepts_openai_tool_calls_shape() -> None:
     assert len(summary["content"]["sha256"]) == 64
 
 
+def test_tool_call_from_hook_payload_accepts_openai_responses_output_function_call_shape() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "goal": "Persist governed launch evidence",
+            "state": {"trust_tier": "release-operator"},
+            "output": [
+                {
+                    "id": "fc_123",
+                    "call_id": "call_123",
+                    "type": "function_call",
+                    "name": "file.write",
+                    "arguments": json.dumps(
+                        {
+                            "path": "dist-release-evidence/manifest.json",
+                            "content": "proof",
+                        }
+                    ),
+                }
+            ],
+        },
+        action_kind="openai-responses-function-call",
+        actor="openai-responses-bridge",
+    )
+
+    assert call.name == "runtime.file.write"
+    assert call.actor == "openai-responses-bridge"
+    assert call.path == ("dist-release-evidence", "manifest.json")
+    assert call.goal == "Persist governed launch evidence"
+    assert call.state == {"trust_tier": "release-operator"}
+    assert call.args["action_kind"] == "openai-responses-function-call"
+    summary = call.args["summary"]
+    assert summary["path"]["type"] == "str"
+    assert summary["content"]["len"] == len("proof")
+    assert isinstance(summary["content"]["sha256"], str)
+    assert len(summary["content"]["sha256"]) == 64
+
+
+def test_tool_call_from_hook_payload_accepts_nested_openai_response_object() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "response": {
+                "context": {"trust_tier": "reviewer"},
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "planning"}],
+                    },
+                    {
+                        "type": "function_call",
+                        "name": "shell.run",
+                        "arguments": json.dumps(
+                            {"path": "scripts/verify.sh", "command": "make verify"}
+                        ),
+                    },
+                ],
+            }
+        },
+        action_kind="openai-responses-function-call",
+        actor="openai-responses-bridge",
+    )
+
+    assert call.name == "runtime.shell.run"
+    assert call.path == ("scripts", "verify.sh")
+    assert call.state == {"trust_tier": "reviewer"}
+    summary = call.args["summary"]
+    assert summary["command"]["len"] == len("make verify")
+
+
+def test_tool_call_from_hook_payload_batches_multiple_openai_responses_function_calls() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "output": [
+                {"type": "function_call", "name": "file.write", "arguments": {"path": "README.md"}},
+                {
+                    "type": "function_call",
+                    "name": "shell.run",
+                    "arguments": {"command": "make verify"},
+                },
+            ]
+        },
+        action_kind="openai-responses-batch",
+        actor="openai-responses-bridge",
+    )
+
+    assert call.name == "runtime.responses.output.batch"
+    assert call.path == ()
+    summary = call.args["summary"]
+    assert summary["function_call_count"] == 2
+    assert summary["function_call_names"]["type"] == "list"
+
+
 def test_tool_call_from_hook_payload_accepts_langchain_tool_call_shape() -> None:
     call = tool_call_from_hook_payload(
         {

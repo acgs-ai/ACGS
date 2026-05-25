@@ -80,8 +80,10 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert by_id["runtime-framework-bridge-local"].status == "pass"
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
+    assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence
     assert by_id["runtime-policy-gate-local"].status == "pass"
     assert "RuleSetPolicy" in by_id["runtime-policy-gate-local"].evidence
+    assert "OpenAI Responses" in by_id["runtime-policy-gate-local"].evidence
     assert by_id["buyer-evidence-ci-artifact"].status == "pass"
     assert by_id["storybook-runtime-plan-local"].status == "pass"
     assert "pending-external" in by_id["storybook-runtime-plan-local"].evidence

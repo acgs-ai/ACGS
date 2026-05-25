@@ -234,6 +234,62 @@ def test_cli_gate_policy_bundle_blocks_openai_chat_tool_calls_shape(
     assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
 
 
+def test_cli_gate_policy_bundle_blocks_openai_responses_output_shape(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "goal": "Persist deploy secret",
+                "state": {"trust_tier": "analyst"},
+                "output": [
+                    {
+                        "id": "fc_123",
+                        "call_id": "call_123",
+                        "type": "function_call",
+                        "name": "file.write",
+                        "arguments": json.dumps(
+                            {
+                                "path": "repo/secrets/api-key.txt",
+                                "content": "secret",
+                            }
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cli.main(
+        [
+            "gate",
+            "--event-file",
+            str(event_path),
+            "--actor",
+            "openai-responses",
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["blocked"] is True
+    assert payload["decision"] == "deny"
+    assert payload["policy_bundle"] == str(bundle_path)
+    assert payload["receipt"]["actor"] == "openai-responses"
+    assert payload["receipt"]["tool"] == "runtime.file.write"
+    assert payload["receipt"]["path"] == ["repo", "secrets", "api-key.txt"]
+    assert payload["receipt"]["goal"] == "Persist deploy secret"
+    assert payload["receipt"]["state_hash"]
+    assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
+
+
 def test_cli_gate_policy_bundle_allows_langchain_tool_calls_shape(
     in_project: Path,
     tmp_path: Path,

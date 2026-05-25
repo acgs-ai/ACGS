@@ -238,7 +238,8 @@ The adapter:
 - Normalizes multiple dependency-free tool-call shapes before hashing:
   Claude/Codex-style `{tool_name, tool_input}`, MCP-style
   `{method: "tools/call", params: {name, arguments}}`, function-call-style
-  `{type: "function_call", name, arguments}`, OpenAI Chat-style
+  `{type: "function_call", name, arguments}`, OpenAI Responses-style
+  `{output: [{type: "function_call", name, arguments}]}`, OpenAI Chat-style
   `{tool_calls: [{function: {name, arguments}}]}`, LangChain-style
   `{tool_calls: [{name, args}]}`, and generic `{name, arguments|args|input}`
   bridges.
@@ -300,11 +301,12 @@ gove-zone gate --policy-bundle policy.bundle.json < event.json
 `gove-zone gate --policy-bundle ...` loads a `RuleSetPolicy`, writes the
 receipt, and exits non-zero for `deny` / `escalate` decisions so hook hosts can
 block the proposed side effect before it runs. The gate accepts the same
-normalized hook payloads as the adapter, including OpenAI Chat `tool_calls`
-with JSON-string `function.arguments` and LangChain-style `tool_calls` with
-`args`, so framework bridges can test the exact pre-execution policy path from
-the CLI. Invalid policy bundles also exit non-zero; this is a hook configuration
-failure, not an allow.
+normalized hook payloads as the adapter, including OpenAI Responses-style
+`output[]` function-call items, OpenAI Chat `tool_calls` with JSON-string
+`function.arguments`, and LangChain-style `tool_calls` with `args`, so framework
+bridges can test the exact pre-execution policy path from the CLI. Invalid
+policy bundles also exit non-zero; this is a hook configuration failure, not an
+allow.
 
 ## End-to-end demo
 
