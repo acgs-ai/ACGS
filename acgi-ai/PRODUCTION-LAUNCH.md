@@ -66,6 +66,7 @@ pnpm -F acgi-ai run test:production-cutover-plan
 pnpm -F acgi-ai run test:production-evidence-draft
 pnpm -F acgi-ai run test:storybook-runtime-plan
 pnpm -F acgi-ai run test:hosted-storybook-handoff
+pnpm -F acgi-ai run test:hosted-storybook-proof-template
 ```
 
 Expected local state today: `make platform-readiness` may still report the
@@ -89,13 +90,18 @@ claims but does not weaken the production deploy fail-closed contract.
    `pending-external:dependency-owner-approval` and release-owner evidence before
    adding Storybook packages, replacing the current `storybook:build` shim, or
    claiming official Storybook runtime proof.
-3. Confirm the secrets and `STORYBOOK_PAGES_ENABLED` setting above in GitHub.
-4. Push or merge to `master` and record the GitHub Actions run URL.
-5. For marketing, record the Vercel deployment URL and confirm that missing
+3. Copy `hosted-storybook-proof.example.json` to the real release proof packet
+   and keep every `REPLACE_WITH_*` value unresolved until the Storybook Pages
+   run URL, DNS evidence, hosted `/manifest.json` evidence, absent
+   `live-storybook-*` blockers, and passing `storybook-manifest-live` proof are
+   attached. The template is not hosted Storybook proof by itself.
+4. Confirm the secrets and `STORYBOOK_PAGES_ENABLED` setting above in GitHub.
+5. Push or merge to `master` and record the GitHub Actions run URL.
+6. For marketing, record the Vercel deployment URL and confirm that missing
    Vercel secrets would fail closed via `test:production-deploy-contract`.
-6. For console, record the Cloud Run service URL, revision, image digest, and
+7. For console, record the Cloud Run service URL, revision, image digest, and
    `EXPECTED_BUILD_ID` used by `scripts/postdeploy-verify.sh`.
-7. Copy `production-evidence.example.json` to the real release evidence
+8. Copy `production-evidence.example.json` to the real release evidence
    location and replace every `REPLACE_WITH_*` value with the corresponding
    GitHub Actions, Vercel, Cloud Run, `/healthz`, and postdeploy proof. Keep
    legal, pentest, WCAG/manual, browser screenshot, and hosted Storybook fields
@@ -104,13 +110,13 @@ claims but does not weaken the production deploy fail-closed contract.
    `productionLiveBlockers`, `productionEvidenceValidationCommand`,
    `productionEvidenceValidationOutputRef`, and
    `validatedProductionEvidence` from the live verifier and validator artifacts.
-8. Run the live console verification command against the deployed origin:
+9. Run the live console verification command against the deployed origin:
 
 ```bash
 pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai
 ```
 
-9. Run the live production verifier and attach its JSON output. It checks DNS,
+10. Run the live production verifier and attach its JSON output. It checks DNS,
    HTTPS reachability, `/healthz`, console security headers, and the hosted
    `storybook.acgs.ai` target, including the `storybook-manifest-live`
    `/manifest.json` proof-story/claim-boundary check. A failing output remains
@@ -141,7 +147,7 @@ network checks, but it does not deploy, mutate DNS, approve release authority,
 install dependencies, create hosted Storybook proof, or create live production
 proof.
 
-10. Build the local hosted Storybook handoff from the Pages-ready buyer-evidence
+11. Build the local hosted Storybook handoff from the Pages-ready buyer-evidence
    manifest and live verifier JSON. The `hosted-storybook-handoff` captures
    `storybook.acgs.ai`, `storybook-manifest-live`, remaining live Storybook
    blockers, and `copyIntoProductionEvidence.hostedStorybook`. Blocked output
@@ -154,7 +160,14 @@ proof.
 pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json>
 ```
 
-11. If the live verifier is blocked, build a local blocker handoff report and
+12. If Storybook live verification passes, attach the completed
+   `hosted-storybook-proof.example.json` derivative beside the handoff. That
+   packet records the Storybook Pages run, DNS proof, hosted manifest proof,
+   required absent `live-storybook-*` blockers, and the
+   `copyIntoProductionEvidence.hostedStorybook` fields needed to remove
+   `hosted-storybook-buyer-evidence`.
+
+13. If the live verifier is blocked, build a local blocker handoff report and
    attach it to the release record. The `production-blocker-report` includes
    `productionLiveStatus`, `productionLiveBlockers`, `blockedUntil`, and
    `copyIntoProductionEvidence`; it does not deploy, fetch live origins, or
@@ -164,7 +177,7 @@ pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest 
 pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-production-live.json> --out <production-blocker-report.json>
 ```
 
-12. Build the local production cutover plan from the saved live evidence and
+14. Build the local production cutover plan from the saved live evidence and
    blocker report. The `production-cutover-plan` lists required GitHub secrets,
    DNS cutover records, remaining `productionLiveBlockers`, and
    `copyIntoProductionEvidence`; it does not deploy, mutate DNS, fetch live
@@ -174,7 +187,7 @@ pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-pro
 pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>
 ```
 
-13. If the live verifier is still blocked, build a validator-ready
+15. If the live verifier is still blocked, build a validator-ready
    deployment-blocked production evidence draft from the saved local artifacts.
    The `production-evidence-draft` copies `productionLiveStatus`,
    `productionLiveBlockers`, `productionBlockerReport`, `productionCutoverPlan`,
@@ -187,7 +200,7 @@ pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-produ
 pnpm -F acgi-ai run build:production-evidence-draft -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --cutover-plan <production-cutover-plan.json> --out <production-evidence.deployment-blocked.json>
 ```
 
-14. Validate the completed production evidence manifest against the attached live
+16. Validate the completed production evidence manifest against the attached live
    verifier JSON and attach the validator output:
 
 ```bash
@@ -197,8 +210,8 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
    JSON output from `pnpm -F acgi-ai run validate:production-evidence -- --manifest ...`
    is required before stronger deployment evidence claims; it is still not legal,
    SOC2, WCAG, pentest, or regulatory proof.
-15. Attach the release-evidence bundle and CI artifacts listed below.
-16. Update buyer-facing claims only after live evidence exists for the exact
+17. Attach the release-evidence bundle and CI artifacts listed below.
+18. Update buyer-facing claims only after live evidence exists for the exact
    claim. No stronger claims until live proof is attached.
 
 ## Required artifacts to attach
@@ -212,6 +225,9 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - Completed official Storybook runtime approval evidence derived from
   `storybook-runtime.plan.json`, or the unresolved
   `pending-external:dependency-owner-approval` blocker kept visible
+- Completed hosted Storybook proof derived from
+  `hosted-storybook-proof.example.json`, or the unresolved
+  `pending-external:storybook-pages-proof` blocker kept visible
 - `buyer-evidence-gallery` CI artifact
 - `console-dist` CI artifact from the production push run
 - GitHub Actions run URL for `marketing.yml`
@@ -222,6 +238,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - JSON output from `pnpm -F acgi-ai run verify:production-live -- --json`
 - JSON output from `pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json`
 - JSON output from `pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json>`
+- Completed hosted Storybook proof packet with `storybook-manifest-live`, absent `live-storybook-*` blockers, and `copyIntoProductionEvidence.hostedStorybook` copied from the passing handoff
 - JSON output from `pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-production-live.json> --out <production-blocker-report.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-evidence-draft -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --cutover-plan <production-cutover-plan.json> --out <production-evidence.deployment-blocked.json>`

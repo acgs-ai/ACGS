@@ -43,6 +43,8 @@ const productionBlockerReportCheck = read('scripts/check-production-blocker-repo
 const productionEvidenceValidatorCheck = read('scripts/check-production-evidence-validator.mjs')
 const productionLaunchHandoffCheck = read('scripts/check-production-launch-handoff.mjs')
 const hostedStorybookHandoffCheck = read('scripts/check-hosted-storybook-handoff.mjs')
+const hostedStorybookProofTemplate = read('hosted-storybook-proof.example.json')
+const hostedStorybookProofTemplateCheck = read('scripts/check-hosted-storybook-proof-template.mjs')
 
 check(existsSync(resolve(root, verifierPath)), `${verifierPath} must exist.`)
 check(existsSync(resolve(root, checkerPath)), `${checkerPath} must exist.`)
@@ -98,8 +100,17 @@ check(
   'package.json must expose test:hosted-storybook-handoff.',
 )
 check(
+  packageJson.scripts?.['test:hosted-storybook-proof-template'] ===
+    'node scripts/check-hosted-storybook-proof-template.mjs',
+  'package.json must expose test:hosted-storybook-proof-template.',
+)
+check(
   packageJson.scripts?.['test:all']?.includes('pnpm run test:hosted-storybook-handoff'),
   'package.json test:all must include hosted Storybook handoff local wiring.',
+)
+check(
+  packageJson.scripts?.['test:all']?.includes('pnpm run test:hosted-storybook-proof-template'),
+  'package.json test:all must include hosted Storybook proof template local wiring.',
 )
 check(
   !packageJson.scripts?.['test:all']?.includes('pnpm run verify:production-live'),
@@ -309,6 +320,8 @@ for (const [label, source] of [
   ['platform readiness report', platformReadiness],
   ['release evidence builder', releaseEvidence],
   ['hosted Storybook handoff checker', hostedStorybookHandoffCheck],
+  ['hosted Storybook proof template', hostedStorybookProofTemplate],
+  ['hosted Storybook proof template checker', hostedStorybookProofTemplateCheck],
   ['security invariants checker', securityCheck],
   ['CI readiness gate checker', ciReadinessGateCheck],
   ['production live verifier checker', checker],
@@ -317,6 +330,27 @@ for (const [label, source] of [
   mustContain(source, 'test:hosted-storybook-handoff', label)
   mustContain(source, 'hosted-storybook-handoff', label)
   mustContain(source, 'hosted-storybook-handoff.json', label)
+}
+
+for (const [label, source] of [
+  ['DEPLOY.md', deploy],
+  ['PRODUCTION-LAUNCH.md', handoff],
+  ['integration readiness map', readiness],
+  ['platform readiness report', platformReadiness],
+  ['release evidence builder', releaseEvidence],
+  ['hosted Storybook handoff checker', hostedStorybookHandoffCheck],
+  ['hosted Storybook proof template', hostedStorybookProofTemplate],
+  ['hosted Storybook proof template checker', hostedStorybookProofTemplateCheck],
+  ['security invariants checker', securityCheck],
+  ['CI readiness gate checker', ciReadinessGateCheck],
+  ['production live verifier checker', checker],
+]) {
+  mustContain(source, 'hosted-storybook-proof.example.json', label)
+  mustContain(source, 'test:hosted-storybook-proof-template', label)
+  mustContain(source, 'storybook-manifest-live', label)
+  mustContain(source, 'pending-external:storybook-pages-proof', label)
+  mustContain(source, 'copyIntoProductionEvidence.hostedStorybook', label)
+  mustContain(source, 'not hosted Storybook proof', label)
 }
 
 for (const [label, source] of [

@@ -103,6 +103,8 @@ const checker = read(checkerPath)
 const buildBuyerEvidence = read('scripts/build-buyer-evidence.mjs')
 const storybookCheck = read('scripts/check-storybook-publication.mjs')
 const productionLiveVerifierCheck = read('scripts/check-production-live-verifier.mjs')
+const hostedStorybookProofTemplate = read('hosted-storybook-proof.example.json')
+const hostedStorybookProofTemplateCheck = read('scripts/check-hosted-storybook-proof-template.mjs')
 const deploy = read('DEPLOY.md')
 const handoff = read('PRODUCTION-LAUNCH.md')
 const readiness = readRepo('docs/integration-readiness-task-map.md')
@@ -129,6 +131,11 @@ check(
 check(
   !packageJson.scripts?.['test:all']?.includes('pnpm run build:hosted-storybook-handoff'),
   'package.json test:all must not run input-dependent hosted Storybook handoff building.',
+)
+check(
+  packageJson.scripts?.['test:hosted-storybook-proof-template'] ===
+    'node scripts/check-hosted-storybook-proof-template.mjs',
+  'package.json must expose test:hosted-storybook-proof-template.',
 )
 
 for (const needle of [
@@ -176,6 +183,31 @@ for (const needle of [
     ['security invariants checker', securityCheck],
     ['CI readiness gate checker', ciReadinessGateCheck],
     ['storybook publication checker', storybookCheck],
+    ['production live verifier checker', productionLiveVerifierCheck],
+  ]) {
+    mustContain(source, needle, label)
+  }
+}
+
+for (const needle of [
+  'hosted-storybook-proof.example.json',
+  'test:hosted-storybook-proof-template',
+  'hosted-storybook-proof-template',
+  'storybook-manifest-live',
+  'pending-external:storybook-pages-proof',
+  'copyIntoProductionEvidence.hostedStorybook',
+  'not hosted Storybook proof',
+]) {
+  for (const [label, source] of [
+    ['hosted-storybook-proof.example.json', hostedStorybookProofTemplate],
+    ['hosted proof template checker', hostedStorybookProofTemplateCheck],
+    ['DEPLOY.md', deploy],
+    ['PRODUCTION-LAUNCH.md', handoff],
+    ['integration readiness map', readiness],
+    ['platform readiness report', platformReadiness],
+    ['release evidence builder', releaseEvidence],
+    ['security invariants checker', securityCheck],
+    ['CI readiness gate checker', ciReadinessGateCheck],
     ['production live verifier checker', productionLiveVerifierCheck],
   ]) {
     mustContain(source, needle, label)

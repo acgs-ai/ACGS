@@ -389,8 +389,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             authority_payload.get("artifactKind") == "production-authority-packet"
             and authority_payload.get("status") == "pending-external-authority"
             and "pending-external:deploy-owner-approval" in production_authority_packet
-            and "not production deployment proof"
-            in str(authority_payload.get("claimBoundary", ""))
+            and "not production deployment proof" in str(authority_payload.get("claimBoundary", ""))
         )
     production_authority_ok, production_authority_missing_parts = _contains_all(
         "\n".join(
@@ -1030,7 +1029,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
     items.append(
         _item(
             "production-blocker-evidence-runbook-local",
-            "Deployment-blocked production evidence packet can be refreshed by one operator command",
+            (
+                "Deployment-blocked production evidence packet can be refreshed "
+                "by one operator command"
+            ),
             production_blocker_evidence_files_ok and production_blocker_evidence_ok,
             (
                 "make production-blocker-evidence orchestrates live verifier JSON, "
@@ -1047,19 +1049,17 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
-    production_launch_preflight_files_ok, production_launch_preflight_missing = (
-        _all_files_exist(
-            repo_root,
-            [
-                "scripts/production_launch_preflight.py",
-                "tests/test_production_launch_preflight.py",
-                "scripts/build_release_evidence.py",
-                "Makefile",
-                "docs/integration-readiness-task-map.md",
-                "acgi-ai/DEPLOY.md",
-                "acgi-ai/PRODUCTION-LAUNCH.md",
-            ],
-        )
+    production_launch_preflight_files_ok, production_launch_preflight_missing = _all_files_exist(
+        repo_root,
+        [
+            "scripts/production_launch_preflight.py",
+            "tests/test_production_launch_preflight.py",
+            "scripts/build_release_evidence.py",
+            "Makefile",
+            "docs/integration-readiness-task-map.md",
+            "acgi-ai/DEPLOY.md",
+            "acgi-ai/PRODUCTION-LAUNCH.md",
+        ],
     )
     production_launch_preflight_ok, production_launch_preflight_missing_parts = _contains_all(
         "\n".join(
@@ -1800,6 +1800,82 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 )
             ),
             "pnpm -F acgi-ai run test:hosted-storybook-handoff",
+        )
+    )
+
+    hosted_storybook_proof_files_ok, hosted_storybook_proof_missing = _all_files_exist(
+        repo_root,
+        [
+            "acgi-ai/hosted-storybook-proof.example.json",
+            "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs",
+            "acgi-ai/scripts/build-hosted-storybook-handoff.mjs",
+            "acgi-ai/scripts/verify-production-live.mjs",
+            ".github/workflows/storybook.yml",
+            ".github/workflows/console.yml",
+            "acgi-ai/PRODUCTION-LAUNCH.md",
+            "acgi-ai/DEPLOY.md",
+            "docs/integration-readiness-task-map.md",
+        ],
+    )
+    hosted_storybook_proof_ok, hosted_storybook_proof_missing_parts = _contains_all(
+        "\n".join(
+            [
+                _maybe_read(repo_root, "acgi-ai/hosted-storybook-proof.example.json"),
+                _maybe_read(repo_root, "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs"),
+                _maybe_read(repo_root, "acgi-ai/scripts/build-hosted-storybook-handoff.mjs"),
+                _maybe_read(repo_root, "acgi-ai/scripts/verify-production-live.mjs"),
+                _maybe_read(repo_root, ".github/workflows/storybook.yml"),
+                _maybe_read(repo_root, ".github/workflows/console.yml"),
+                _maybe_read(repo_root, "acgi-ai/PRODUCTION-LAUNCH.md"),
+                _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
+                readiness,
+                _maybe_read(repo_root, "scripts/build_release_evidence.py"),
+            ]
+        ),
+        [
+            "hosted-storybook-proof.example.json",
+            "test:hosted-storybook-proof-template",
+            "hosted-storybook-proof-template",
+            "storybook-manifest-live",
+            "pending-external:storybook-pages-proof",
+            "live-storybook-dns",
+            "live-storybook-https",
+            "live-storybook-manifest",
+            "copyIntoProductionEvidence.hostedStorybook",
+            "remainingBlockerToRemove",
+            "not hosted Storybook proof",
+            "not production deployment proof",
+        ],
+    )
+    hosted_storybook_proof_scripts_ok = (
+        deploy_scripts.get("test:hosted-storybook-proof-template")
+        == "node scripts/check-hosted-storybook-proof-template.mjs"
+        and "pnpm run test:hosted-storybook-proof-template" in deploy_scripts.get("test:all", "")
+        and "pnpm run verify:production-live" not in deploy_scripts.get("test:all", "")
+        and "pnpm run build:hosted-storybook-handoff" not in deploy_scripts.get("test:all", "")
+    )
+    items.append(
+        _item(
+            "hosted-storybook-proof-intake-local",
+            "Hosted Storybook proof intake is machine-verifiable before claim",
+            hosted_storybook_proof_files_ok
+            and hosted_storybook_proof_ok
+            and hosted_storybook_proof_scripts_ok,
+            (
+                "hosted-storybook-proof.example.json requires Pages run, DNS, "
+                "hosted manifest, passing storybook-manifest-live, absent "
+                "live-storybook blockers, and copyIntoProductionEvidence.hostedStorybook "
+                "before hosted-storybook-buyer-evidence can be removed"
+                if hosted_storybook_proof_files_ok
+                and hosted_storybook_proof_ok
+                and hosted_storybook_proof_scripts_ok
+                else (
+                    f"missing_files={hosted_storybook_proof_missing}, "
+                    f"missing_parts={hosted_storybook_proof_missing_parts}, "
+                    f"scripts_ok={hosted_storybook_proof_scripts_ok}"
+                )
+            ),
+            "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
         )
     )
 

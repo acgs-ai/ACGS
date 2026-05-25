@@ -57,6 +57,10 @@ def test_manifest_is_conservative_and_tracks_readiness():
     assert "pnpm -F acgi-ai run test:storybook-publication" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:storybook-runtime-plan" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:hosted-storybook-handoff" in manifest["verificationCommands"]
+    assert (
+        "pnpm -F acgi-ai run test:hosted-storybook-proof-template"
+        in manifest["verificationCommands"]
+    )
     assert "make production-launch-preflight" in manifest["verificationCommands"]
     assert (
         "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
@@ -86,6 +90,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     storybook_runtime = manifest["evidenceArtifacts"]["storybookRuntimePlan"]
     publication = manifest["evidenceArtifacts"]["storybookPublication"]
     hosted_storybook = manifest["evidenceArtifacts"]["hostedStorybookHandoff"]
+    hosted_storybook_proof = manifest["evidenceArtifacts"]["hostedStorybookProofTemplate"]
     buyer = manifest["evidenceArtifacts"]["buyerEvidenceGallery"]
 
     assert renderer["script"] == "acgi-ai/scripts/render-cloudrun-service.mjs"
@@ -210,7 +215,10 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert blocker_runbook["script"] == "scripts/build_production_blocker_evidence.py"
     assert blocker_runbook["proofCommand"].endswith("--dry-run --json")
     assert blocker_runbook["operatorCommand"] == "make production-blocker-evidence"
-    assert "dist-release-evidence/production-launch-preflight.json" in blocker_runbook["outputArtifacts"]
+    assert (
+        "dist-release-evidence/production-launch-preflight.json"
+        in blocker_runbook["outputArtifacts"]
+    )
     assert "not live production proof" in blocker_runbook["claimBoundary"]
     assert "does not deploy" in blocker_runbook["claimBoundary"]
     assert fixture_fallback["module"] == "acgi-ai/src/api/hooks.ts"
@@ -262,6 +270,20 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         == "dist-release-evidence/hosted-storybook-handoff.json"
     )
     assert "not live production proof" in hosted_storybook["claimBoundary"]
+    assert hosted_storybook_proof["templatePath"] == "acgi-ai/hosted-storybook-proof.example.json"
+    assert (
+        hosted_storybook_proof["proofCommand"]
+        == "pnpm -F acgi-ai run test:hosted-storybook-proof-template"
+    )
+    assert hosted_storybook_proof["templatePresent"] is True
+    assert hosted_storybook_proof["templateStatus"] == "template-only"
+    assert "storybook-manifest-live" in hosted_storybook_proof["requiredPassingCheckIds"]
+    assert "live-storybook-manifest" in hosted_storybook_proof["requiredAbsentBlockerIds"]
+    assert (
+        hosted_storybook_proof["copyIntoProductionEvidence"]["remainingBlockerToRemove"]
+        == "hosted-storybook-buyer-evidence"
+    )
+    assert "not hosted Storybook proof" in hosted_storybook_proof["claimBoundary"]
     assert buyer["expectedPath"] == "acgi-ai/dist-buyer-evidence/"
     assert buyer["ciArtifactName"] == "buyer-evidence-gallery"
 
@@ -307,6 +329,8 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "build-hosted-storybook-handoff.mjs" in readme
     assert "hosted-storybook-handoff.json" in readme
     assert "test:hosted-storybook-handoff" in readme
+    assert "hosted-storybook-proof.example.json" in readme
+    assert "test:hosted-storybook-proof-template" in readme
     assert "pending-external:storybook-pages-proof" in readme
     assert "productionLiveBlockers" in readme
     assert "copyIntoProductionEvidence" in readme

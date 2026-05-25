@@ -71,6 +71,7 @@ REQUIRED_VERIFICATION_COMMANDS = [
     "pnpm -F acgi-ai run test:storybook-runtime-plan",
     "pnpm -F acgi-ai run test:storybook-publication",
     "pnpm -F acgi-ai run test:hosted-storybook-handoff",
+    "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
     "pnpm -F acgi-ai run test:ci-gates",
     "make production-launch-preflight",
     "uv run python scripts/build_production_blocker_evidence.py --dry-run --json",
@@ -522,6 +523,9 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     production_evidence_template = _read_json_if_present(
         repo_root / "acgi-ai" / "production-evidence.example.json"
     )
+    hosted_storybook_proof_template = _read_json_if_present(
+        repo_root / "acgi-ai" / "hosted-storybook-proof.example.json"
+    )
     production_authority_packet = _read_json_if_present(
         repo_root / "acgi-ai" / "production-authority.example.json"
     )
@@ -772,8 +776,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "productionBlockerEvidenceRunbook": {
                 "script": "scripts/build_production_blocker_evidence.py",
                 "proofCommand": (
-                    "uv run python scripts/build_production_blocker_evidence.py "
-                    "--dry-run --json"
+                    "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
                 ),
                 "operatorCommand": "make production-blocker-evidence",
                 "outputArtifacts": [
@@ -915,6 +918,32 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "production proof; not live production proof"
                 ),
             },
+            "hostedStorybookProofTemplate": {
+                "templatePath": "acgi-ai/hosted-storybook-proof.example.json",
+                "proofCommand": "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+                "templatePresent": hosted_storybook_proof_template is not None,
+                "templateStatus": (hosted_storybook_proof_template or {}).get("status"),
+                "requiredPassingCheckIds": (
+                    (hosted_storybook_proof_template or {})
+                    .get("liveVerification", {})
+                    .get("requiredPassingCheckIds", [])
+                ),
+                "requiredAbsentBlockerIds": (
+                    (hosted_storybook_proof_template or {})
+                    .get("liveVerification", {})
+                    .get("requiredAbsentBlockerIds", [])
+                ),
+                "copyIntoProductionEvidence": (
+                    (hosted_storybook_proof_template or {}).get("copyIntoProductionEvidence", {})
+                ),
+                "claimBoundary": (
+                    "template-only hosted Storybook proof intake; not hosted "
+                    "Storybook proof, not official Storybook runtime proof, not "
+                    "production deployment proof, and pending-external refs must be "
+                    "replaced with Storybook Pages, DNS, hosted manifest, and passing "
+                    "verify:production-live evidence before removing the blocker"
+                ),
+            },
             "buyerEvidenceGallery": {
                 "expectedPath": "acgi-ai/dist-buyer-evidence/",
                 "ciArtifactName": "buyer-evidence-gallery",
@@ -963,9 +992,7 @@ def render_readme(manifest: dict[str, Any]) -> str:
     hosted_storybook_handoff = manifest["evidenceArtifacts"]["hostedStorybookHandoff"][
         "latestHandoffSnapshot"
     ]
-    blocker_evidence_runbook = manifest["evidenceArtifacts"][
-        "productionBlockerEvidenceRunbook"
-    ]
+    blocker_evidence_runbook = manifest["evidenceArtifacts"]["productionBlockerEvidenceRunbook"]
     live_snapshot_line = (
         f"- `{production_live['path']}` captured status "
         f"`{production_live.get('status')}` with blockers "
@@ -1072,7 +1099,7 @@ live production proof.
   deployment-blocked production-evidence draft and validator output when live
   blockers remain, refreshes release evidence, and saves
   `production-launch-preflight.json`. Its dry-run proof command is
-  `{blocker_evidence_runbook['proofCommand']}`; the wrapper may perform network
+  `{blocker_evidence_runbook["proofCommand"]}`; the wrapper may perform network
   live checks but does not deploy, mutate DNS, approve release authority, install
   dependencies, create hosted Storybook proof, or create live production proof.
 - `acgi-ai/production-authority.example.json` is the template-only authority
@@ -1133,6 +1160,14 @@ live production proof.
   `pnpm -F acgi-ai run test:hosted-storybook-handoff` verifies this behavior;
   the builder does not deploy, mutate DNS, fetch live origins, install the
   official Storybook runtime, or create live production proof.
+- `acgi-ai/hosted-storybook-proof.example.json` is the template-only external
+  proof intake for removing `hosted-storybook-buyer-evidence`. `pnpm -F acgi-ai
+  run test:hosted-storybook-proof-template` verifies the required Storybook
+  Pages run, DNS proof, hosted `/manifest.json` proof, passing
+  `storybook-manifest-live`, absent `live-storybook-*` blockers, and
+  `copyIntoProductionEvidence.hostedStorybook` fields. The template is not
+  hosted Storybook proof, not official Storybook runtime proof, and not
+  production deployment proof.
 - `acgi-ai/storybook-runtime.plan.json` is the pending official Storybook
   runtime dependency plan. `pnpm -F acgi-ai run test:storybook-runtime-plan`
   verifies the `pending-external:dependency-owner-approval` boundary, the

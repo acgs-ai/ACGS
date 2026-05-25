@@ -40,6 +40,8 @@ const securityCheck = read('scripts/check-security-invariants.mjs')
 const productionLiveVerifierCheck = read('scripts/check-production-live-verifier.mjs')
 const productionBlockerReportCheck = read('scripts/check-production-blocker-report.mjs')
 const productionEvidenceValidatorCheck = read('scripts/check-production-evidence-validator.mjs')
+const hostedStorybookProofTemplate = read('hosted-storybook-proof.example.json')
+const hostedStorybookProofTemplateCheck = read('scripts/check-hosted-storybook-proof-template.mjs')
 const consoleWorkflow = readRepo('.github/workflows/console.yml')
 
 check(existsSync(resolve(root, templatePath)), `${templatePath} must exist.`)
@@ -295,13 +297,40 @@ for (const [label, source] of [
   ['production live verifier checker', productionLiveVerifierCheck],
   ['production blocker report checker', productionBlockerReportCheck],
   ['production evidence validator checker', productionEvidenceValidatorCheck],
+  ['hosted Storybook proof template', hostedStorybookProofTemplate],
+  ['hosted Storybook proof template checker', hostedStorybookProofTemplateCheck],
 ]) {
   mustContain(source, 'storybook-manifest-live', label)
+}
+
+for (const needle of [
+  'hosted-storybook-proof.example.json',
+  'test:hosted-storybook-proof-template',
+  'build:hosted-storybook-handoff',
+  'pending-external:storybook-pages-proof',
+  'copyIntoProductionEvidence.hostedStorybook',
+  'not hosted Storybook proof',
+]) {
+  for (const [label, source] of [
+    ['DEPLOY.md', deploy],
+    ['PRODUCTION-LAUNCH.md', handoff],
+    ['integration readiness map', readiness],
+    ['platform readiness report', platformReadiness],
+    ['release evidence builder', releaseEvidence],
+    ['hosted Storybook proof template', hostedStorybookProofTemplate],
+    ['hosted Storybook proof template checker', hostedStorybookProofTemplateCheck],
+  ]) {
+    mustContain(source, needle, label)
+  }
 }
 
 check(
   pathFilterCount(consoleWorkflow, 'acgi-ai/production-evidence.example.json') >= 2,
   'console.yml pull_request and push path filters must include acgi-ai/production-evidence.example.json.',
+)
+check(
+  pathFilterCount(consoleWorkflow, 'acgi-ai/hosted-storybook-proof.example.json') >= 2,
+  'console.yml pull_request and push path filters must include acgi-ai/hosted-storybook-proof.example.json.',
 )
 
 if (failures.length > 0) {

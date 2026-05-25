@@ -171,6 +171,17 @@ const hostedStorybookHandoffCheckPath = resolve(root, 'scripts/check-hosted-stor
 const hostedStorybookHandoffCheck = existsSync(hostedStorybookHandoffCheckPath)
   ? readFileSync(hostedStorybookHandoffCheckPath, 'utf8')
   : ''
+const hostedStorybookProofTemplatePath = resolve(root, 'hosted-storybook-proof.example.json')
+const hostedStorybookProofTemplate = existsSync(hostedStorybookProofTemplatePath)
+  ? readFileSync(hostedStorybookProofTemplatePath, 'utf8')
+  : ''
+const hostedStorybookProofTemplateCheckPath = resolve(
+  root,
+  'scripts/check-hosted-storybook-proof-template.mjs',
+)
+const hostedStorybookProofTemplateCheck = existsSync(hostedStorybookProofTemplateCheckPath)
+  ? readFileSync(hostedStorybookProofTemplateCheckPath, 'utf8')
+  : ''
 const storybookRuntimePlanPath = resolve(root, 'storybook-runtime.plan.json')
 const storybookRuntimePlan = existsSync(storybookRuntimePlanPath)
   ? readFileSync(storybookRuntimePlanPath, 'utf8')
@@ -329,8 +340,8 @@ check(
 )
 check(
   packageJson.scripts?.['test:all'] ===
-    'pnpm run lint && pnpm run build:console && pnpm run test:security && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:auth-boundary && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:e2e-http && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:vercel-routes && pnpm run test:ci-gates && pnpm run test:style-bundle && pnpm run test:csp',
-  'package.json test:all must run lint, console build, security, MVP, font-manifest, surface-split, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification while excluding live/operator-specific proof commands.',
+    'pnpm run lint && pnpm run build:console && pnpm run test:security && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:auth-boundary && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:hosted-storybook-proof-template && pnpm run test:e2e-http && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:vercel-routes && pnpm run test:ci-gates && pnpm run test:style-bundle && pnpm run test:csp',
+  'package.json test:all must run lint, console build, security, MVP, font-manifest, surface-split, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification while excluding live/operator-specific proof commands.',
 )
 check(
   packageJson.scripts?.['verify:postdeploy'] === 'bash scripts/postdeploy-verify.sh',
@@ -604,6 +615,11 @@ check(
   'package.json must expose test:hosted-storybook-handoff for local hosted Storybook handoff verification.',
 )
 check(
+  packageJson.scripts?.['test:hosted-storybook-proof-template'] ===
+    'node scripts/check-hosted-storybook-proof-template.mjs',
+  'package.json must expose test:hosted-storybook-proof-template for hosted Storybook proof intake verification.',
+)
+check(
   packageJson.scripts?.['test:storybook-runtime-plan'] ===
     'node scripts/check-storybook-runtime-plan.mjs',
   'package.json must expose test:storybook-runtime-plan for official Storybook runtime dependency plan verification.',
@@ -632,6 +648,7 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:production-cutover-plan') &&
     packageJson.scripts['test:all'].includes('pnpm run test:production-evidence-draft') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-handoff') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
     !packageJson.scripts['test:all'].includes('pnpm run verify:production-live') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:production-blocker-report') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:production-cutover-plan') &&
@@ -655,6 +672,7 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:storybook-runtime-plan') &&
     packageJson.scripts['test:all'].includes('pnpm run test:storybook-publication') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-handoff') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
     packageJson.scripts['test:all'].includes('pnpm run test:e2e-http') &&
     packageJson.scripts['test:all'].includes('pnpm run test:tthw') &&
     packageJson.scripts['test:all'].includes('pnpm run test:msw-node') &&
@@ -667,7 +685,7 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:ci-gates') &&
     packageJson.scripts['test:all'].includes('pnpm run test:style-bundle') &&
     packageJson.scripts['test:all'].includes('pnpm run test:csp'),
-  'package.json test:all must include font-manifest, marketing/console surface, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification.',
+  'package.json test:all must include font-manifest, marketing/console surface, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, hosted Storybook proof template, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification.',
 )
 check(
   /@surface\/App/.test(main) && !/from ['"]\.\/App(?:\.tsx)?['"]/.test(main),
@@ -752,8 +770,9 @@ check(
 check(
   (consoleWorkflow.match(/acgi-ai\/scripts\/\*\*/g) ?? []).length >= 2 &&
     (consoleWorkflow.match(/acgi-ai\/DEPLOY\.md/g) ?? []).length >= 2 &&
+    (consoleWorkflow.match(/acgi-ai\/hosted-storybook-proof\.example\.json/g) ?? []).length >= 2 &&
     (consoleWorkflow.match(/docs\/integration-readiness-task-map\.md/g) ?? []).length >= 2,
-  'console.yml path filters must include readiness scripts and deploy/readiness docs for both PR and push triggers.',
+  'console.yml path filters must include readiness scripts, hosted Storybook proof template, and deploy/readiness docs for both PR and push triggers.',
 )
 check(
   !/paths-ignore:[\s\S]*acgi-ai\/DEPLOY\.md[\s\S]*concurrency:/.test(marketingWorkflow),
@@ -1068,6 +1087,11 @@ check(
   existsSync(productionEvidenceTemplateCheckPath),
   'scripts/check-production-evidence-template.mjs must exist.',
 )
+check(existsSync(hostedStorybookProofTemplatePath), 'hosted-storybook-proof.example.json must exist.')
+check(
+  existsSync(hostedStorybookProofTemplateCheckPath),
+  'scripts/check-hosted-storybook-proof-template.mjs must exist.',
+)
 check(existsSync(productionLiveVerifierPath), 'scripts/verify-production-live.mjs must exist.')
 check(
   existsSync(productionLiveVerifierCheckPath),
@@ -1240,7 +1264,9 @@ check(
     /test:production-evidence-validator/.test(productionEvidenceTemplateCheck) &&
     /productionLiveBlockers/.test(productionEvidenceTemplateCheck) &&
     /validatedProductionEvidence/.test(productionEvidenceTemplateCheck) &&
-    /test:production-evidence-template/.test(productionEvidenceTemplateCheck),
+    /test:production-evidence-template/.test(productionEvidenceTemplateCheck) &&
+    /hosted-storybook-proof\.example\.json/.test(productionEvidenceTemplateCheck) &&
+    /test:hosted-storybook-proof-template/.test(productionEvidenceTemplateCheck),
   'Production evidence template check must guard the example manifest, live-verifier, blocker-report, and validator artifact slots, package wiring, docs wiring, pending-external assurance placeholders, and claim boundary.',
 )
 check(
@@ -1254,7 +1280,9 @@ check(
     /storybook-manifest-live/.test(productionLiveVerifierCheck) &&
     /productionLiveBlockers/.test(productionLiveVerifierCheck) &&
     /not live production proof/.test(productionLiveVerifierCheck) &&
-    /production-evidence\.example\.json/.test(productionLiveVerifierCheck),
+    /production-evidence\.example\.json/.test(productionLiveVerifierCheck) &&
+    /hosted-storybook-proof\.example\.json/.test(productionLiveVerifierCheck) &&
+    /test:hosted-storybook-proof-template/.test(productionLiveVerifierCheck),
   'Production live verifier checker must guard package wiring, docs, production blocker reporting, and production evidence template output slot.',
 )
 check(
@@ -1368,8 +1396,34 @@ check(
     /hosted-storybook-handoff\.json/.test(hostedStorybookHandoffCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookHandoffCheck) &&
     /copyIntoProductionEvidence/.test(hostedStorybookHandoffCheck) &&
-    /not live production proof/.test(hostedStorybookHandoffCheck),
+    /not live production proof/.test(hostedStorybookHandoffCheck) &&
+    /hosted-storybook-proof\.example\.json/.test(hostedStorybookHandoffCheck) &&
+    /test:hosted-storybook-proof-template/.test(hostedStorybookHandoffCheck),
   'check-hosted-storybook-handoff.mjs must guard hosted Storybook handoff wiring, docs, hosted-storybook-handoff.json, and claim boundary.',
+)
+check(
+  /artifactKind"\s*:\s*"hosted-storybook-proof-template/.test(hostedStorybookProofTemplate) &&
+    /template-only/.test(hostedStorybookProofTemplate) &&
+    /REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL/.test(hostedStorybookProofTemplate) &&
+    /storybook-manifest-live/.test(hostedStorybookProofTemplate) &&
+    /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
+    /copyIntoProductionEvidence/.test(hostedStorybookProofTemplate) &&
+    /copyIntoProductionEvidence.hostedStorybook/.test(hostedStorybookProofTemplate) &&
+    /remainingBlockerToRemove/.test(hostedStorybookProofTemplate) &&
+    /hosted-storybook-buyer-evidence/.test(hostedStorybookProofTemplate) &&
+    /not hosted Storybook proof/.test(hostedStorybookProofTemplate) &&
+    /not official Storybook runtime proof/.test(hostedStorybookProofTemplate) &&
+    /not production deployment proof/.test(hostedStorybookProofTemplate),
+  'hosted-storybook-proof.example.json must keep a claim-safe hosted Storybook proof intake template.',
+)
+check(
+  /Hosted Storybook proof template check/.test(hostedStorybookProofTemplateCheck) &&
+    /test:hosted-storybook-proof-template/.test(hostedStorybookProofTemplateCheck) &&
+    /hosted-storybook-proof\.example\.json/.test(hostedStorybookProofTemplateCheck) &&
+    /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
+    /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
+    /not hosted Storybook proof/.test(hostedStorybookProofTemplateCheck),
+  'check-hosted-storybook-proof-template.mjs must guard hosted Storybook proof template wiring and claim boundary.',
 )
 check(
   /production-evidence-validation/.test(productionEvidenceValidator) &&
@@ -1459,8 +1513,11 @@ check(
     /test:storybook-runtime-plan/.test(ciReadinessGateCheck) &&
     /storybook-runtime\.plan\.json/.test(ciReadinessGateCheck) &&
     /test:hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
+    /test:hosted-storybook-proof-template/.test(ciReadinessGateCheck) &&
     /build:hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
     /hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
+    /hosted-storybook-proof\.example\.json/.test(ciReadinessGateCheck) &&
+    /copyIntoProductionEvidence.hostedStorybook/.test(ciReadinessGateCheck) &&
     /verify:production-live/.test(ciReadinessGateCheck) &&
     /build:production-blocker-report/.test(ciReadinessGateCheck) &&
     /build:production-cutover-plan/.test(ciReadinessGateCheck) &&
@@ -1487,7 +1544,7 @@ check(
     /test:e2e/.test(ciReadinessGateCheck) &&
     /test:visual/.test(ciReadinessGateCheck) &&
     /Deploy workflow readiness gate/.test(ciReadinessGateCheck),
-  'CI readiness gate check must guard console/marketing workflow gates, package wiring, A11Y/contract path filters, production evidence template, production live verifier, production blocker report, production cutover plan, and production evidence validator wiring, performance wiring, state-coverage/polling/session-sync/AppError/privilege-banner/wire-decision/test-surface/E2E HTTP/TTHW/MSW node-mode wiring, and readiness-map evidence.',
+  'CI readiness gate check must guard console/marketing workflow gates, package wiring, A11Y/contract path filters, production evidence template, production live verifier, production blocker report, production cutover plan, hosted Storybook proof template, and production evidence validator wiring, performance wiring, state-coverage/polling/session-sync/AppError/privilege-banner/wire-decision/test-surface/E2E HTTP/TTHW/MSW node-mode wiring, and readiness-map evidence.',
 )
 
 const distAssets = resolve(root, 'dist/assets')

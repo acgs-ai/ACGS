@@ -53,14 +53,15 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "blocker drift" in by_id["production-evidence-chain-local"].evidence
     assert "not live production proof" in by_id["production-evidence-chain-local"].evidence
     assert by_id["production-blocker-evidence-runbook-local"].status == "pass"
-    assert "build_production_blocker_evidence.py" in by_id["production-blocker-evidence-runbook-local"].command
+    assert (
+        "build_production_blocker_evidence.py"
+        in by_id["production-blocker-evidence-runbook-local"].command
+    )
     assert "preflight JSON" in by_id["production-blocker-evidence-runbook-local"].evidence
     assert by_id["production-launch-preflight-local"].status == "pass"
     assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence
     assert "clean commit" in by_id["production-launch-preflight-local"].evidence
-    assert "not production deployment proof" in by_id[
-        "production-launch-preflight-local"
-    ].evidence
+    assert "not production deployment proof" in by_id["production-launch-preflight-local"].evidence
     assert by_id["fixture-fallback-fail-closed-local"].status == "pass"
     assert "network-unavailable" in by_id["fixture-fallback-fail-closed-local"].evidence
     assert by_id["claim-safety"].status == "pass"
@@ -83,6 +84,15 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["hosted-storybook-handoff-local"].status == "pass"
     assert "pending-external" in by_id["hosted-storybook-handoff-local"].evidence
     assert "copyIntoProductionEvidence" in by_id["hosted-storybook-handoff-local"].evidence
+    assert by_id["hosted-storybook-proof-intake-local"].status == "pass"
+    assert (
+        "hosted-storybook-proof.example.json"
+        in by_id["hosted-storybook-proof-intake-local"].evidence
+    )
+    assert (
+        "test:hosted-storybook-proof-template"
+        in by_id["hosted-storybook-proof-intake-local"].command
+    )
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
     assert (
@@ -138,6 +148,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "test:storybook-runtime-plan" in report
     assert "storybook-publication-workflow-local" in report
     assert "hosted-storybook-handoff-local" in report
+    assert "hosted-storybook-proof-intake-local" in report
     assert "hosted-storybook-buyer-evidence" in report
     assert "pending" in report
 

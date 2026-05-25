@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "hosted-storybook-proof-template",
+  "status": "template-only",
+  "sourceTemplate": "acgi-ai/hosted-storybook-proof.example.json",
+  "claimBoundary": "Example hosted Storybook proof intake only; not hosted Storybook proof, not official Storybook runtime proof, not production deployment proof, not legal signoff, not SOC2 proof, not WCAG conformance proof, not pentest completion, and not regulatory compliance proof until every REPLACE_WITH_ placeholder and pending-external ref is replaced by operator-supplied evidence and verify:production-live passes.",
+  "target": {
+    "url": "https://storybook.acgs.ai",
+    "manifestUrl": "https://storybook.acgs.ai/manifest.json",
+    "expectedPublishTarget": "https://storybook.acgs.ai",
+    "requiredStoryIds": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "deploy-readiness-boundary"
+    ],
+    "manifestClaimBoundaryMustInclude": "not production deployment proof"
+  },
+  "workflow": {
+    "name": "buyer-evidence-storybook",
+    "file": ".github/workflows/storybook.yml",
+    "artifactName": "buyer-evidence-storybook",
+    "requiredRepoVariable": "STORYBOOK_PAGES_ENABLED=true",
+    "runUrl": "REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL",
+    "pagesDeployUrl": "REPLACE_WITH_STORYBOOK_PAGES_DEPLOY_URL",
+    "buildOutputRef": "REPLACE_WITH_BUYER_EVIDENCE_STORYBOOK_ARTIFACT_OR_HASH"
+  },
+  "dns": {
+    "host": "storybook.acgs.ai",
+    "recordType": "CNAME",
+    "configuredBy": "REPLACE_WITH_DNS_OWNER_OR_CHANGE_RECORD",
+    "evidenceRef": "REPLACE_WITH_DNS_SCREENSHOT_DIG_OR_PROVIDER_RECORD"
+  },
+  "liveVerification": {
+    "command": "pnpm -F acgi-ai run verify:production-live -- --json",
+    "outputRef": "REPLACE_WITH_VERIFY_PRODUCTION_LIVE_JSON_ARTIFACT_OR_HASH",
+    "status": "REPLACE_WITH_PASS_FROM_VERIFY_PRODUCTION_LIVE",
+    "requiredPassingCheckIds": [
+      "storybook-dns-live",
+      "storybook-https-live",
+      "storybook-manifest-live"
+    ],
+    "requiredAbsentBlockerIds": [
+      "live-storybook-dns",
+      "live-storybook-https",
+      "live-storybook-manifest"
+    ]
+  },
+  "manifestEvidence": {
+    "artifactKind": "local-buyer-evidence-gallery",
+    "publishTarget": "https://storybook.acgs.ai",
+    "manifestJsonRef": "REPLACE_WITH_HOSTED_STORYBOOK_MANIFEST_JSON_OR_HASH",
+    "storyIds": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "deploy-readiness-boundary"
+    ],
+    "claimBoundaryRef": "REPLACE_WITH_MANIFEST_CLAIM_BOUNDARY_OR_HASH"
+  },
+  "validation": {
+    "localTemplateCheckCommand": "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+    "localHandoffCheckCommand": "pnpm -F acgi-ai run test:hosted-storybook-handoff",
+    "handoffProofCommand": "pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json> --require-live-clear",
+    "handoffProofOutputRef": "REPLACE_WITH_HOSTED_STORYBOOK_HANDOFF_JSON_OR_HASH",
+    "productionEvidenceValidationCommand": "pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass"
+  },
+  "copyIntoProductionEvidence": {
+    "productionEvidencePointer": "copyIntoProductionEvidence.hostedStorybook",
+    "hostedStorybook": {
+      "url": "https://storybook.acgs.ai",
+      "manifestUrl": "https://storybook.acgs.ai/manifest.json",
+      "status": "verified",
+      "proofRef": "REPLACE_WITH_STORYBOOK_PAGES_RUN_AND_PASSING_LIVE_VERIFIER_REF",
+      "claimBoundary": "verified only by attached Storybook Pages deploy evidence, DNS evidence, hosted manifest evidence, and passing verify:production-live JSON."
+    },
+    "remainingBlockerToRemove": "hosted-storybook-buyer-evidence"
+  },
+  "remainingExternalUntilReplaced": [
+    "pending-external:storybook-pages-proof",
+    "pending-external:storybook-dns-proof",
+    "pending-external:storybook-manifest-live",
+    "pending-external:official-storybook-runtime-approval"
+  ]
+}

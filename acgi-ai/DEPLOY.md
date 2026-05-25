@@ -439,6 +439,7 @@ pnpm run test:production-cutover-plan
 pnpm run test:production-evidence-draft
 pnpm run test:storybook-runtime-plan
 pnpm run test:hosted-storybook-handoff
+pnpm run test:hosted-storybook-proof-template
 pnpm run test:container-pins
 pnpm run test:auth-boundary
 pnpm run smoke:bus-proxy
@@ -586,6 +587,16 @@ Blocked output keeps `pending-external:storybook-pages-proof` and
 performs local file I/O only; it does not deploy, mutate DNS, fetch live
 origins, install the official Storybook runtime, or create live production
 proof.
+
+`pnpm run test:hosted-storybook-proof-template` verifies
+`hosted-storybook-proof.example.json`, the template-only intake packet for the
+external Storybook Pages, DNS, manifest, and passing `verify:production-live`
+evidence needed to remove `hosted-storybook-buyer-evidence`. It records the
+required `storybook-manifest-live` checks, `pending-external:storybook-pages-proof`
+placeholder, `build:hosted-storybook-handoff --require-live-clear`, and
+`copyIntoProductionEvidence.hostedStorybook` fields. The template is not hosted
+Storybook proof, not official Storybook runtime proof, and not production
+deployment proof.
 
 The console image build is pinned to `node:24-alpine` and the runtime image
 is pinned to `caddy:2.10.2-alpine`; `pnpm run test:container-pins` keeps
@@ -784,7 +795,11 @@ step, giving reviewers a CI-retained proof bundle.
 `build:hosted-storybook-handoff` writes `hosted-storybook-handoff.json` from the
 local publication manifest plus saved `verify:production-live` JSON so operators
 can copy `pending-external` or verified Storybook fields into production
-evidence without overclaiming. This is still not the official Storybook runtime; `storybook-runtime.plan.json`
+evidence without overclaiming. `pnpm run test:hosted-storybook-proof-template`
+guards `hosted-storybook-proof.example.json`, the external proof intake template
+for the Pages run URL, DNS evidence, hosted `/manifest.json` evidence, absent
+`live-storybook-*` blockers, and the `hosted-storybook-buyer-evidence` blocker
+removal handoff. This is still not the official Storybook runtime; `storybook-runtime.plan.json`
 is only a pending dependency plan and not official Storybook runtime proof,
 not live `storybook.acgs.ai` proof, not live production proof, and not
 browser/axe/visual-diff evidence.
@@ -799,6 +814,7 @@ the `verify:production-live` proof command slot, the
 `build:production-cutover-plan` DNS/deploy cutover handoff slot, the
 `build:production-evidence-draft` deployment-blocked manifest draft slot, the
 `build:hosted-storybook-handoff` Storybook Pages handoff slot, the
+`hosted-storybook-proof.example.json` external proof intake slot, the
 `validate:production-evidence` validator command slot, and explicit external
 blockers. This is a deploy handoff artifact only: it is not live production
 proof, not legal signoff, not pentest evidence, and not a compliance
@@ -971,6 +987,7 @@ hash-anchored, operator-readable.
 | 2026-05-25 | Deployment-blocked production evidence has a local draft builder | `pnpm run test:production-evidence-draft` guards `build:production-evidence-draft`, which turns saved live verifier, `production-blocker-report`, and `production-cutover-plan` JSON into a validator-ready `production-evidence.deployment-blocked.json` draft while preserving the not live production proof boundary. |
 | 2026-05-25 | Storybook runtime dependency has a local approval plan | `pnpm run test:storybook-runtime-plan` guards `storybook-runtime.plan.json`, keeping `@storybook/react-vite`, `npx storybook@latest init`, lockfile updates, and shim replacement behind `pending-external:dependency-owner-approval`; the plan is not official Storybook runtime proof, not hosted Storybook proof, and not production deployment proof. |
 | 2026-05-25 | Hosted Storybook proof has a local operator handoff | `pnpm run test:hosted-storybook-handoff` guards `build:hosted-storybook-handoff`, which turns a Pages-ready buyer-evidence manifest and saved live verifier JSON into `hosted-storybook-handoff.json` with `pending-external:storybook-pages-proof`, `storybook-manifest-live`, and `copyIntoProductionEvidence.hostedStorybook` fields while preserving the not live production proof boundary. |
+| 2026-05-25 | Hosted Storybook proof intake is machine-verifiable before claim | `pnpm run test:hosted-storybook-proof-template` guards `hosted-storybook-proof.example.json`, keeping Storybook Pages run URL, DNS evidence, hosted manifest evidence, `storybook-manifest-live`, absent `live-storybook-*` blockers, and `copyIntoProductionEvidence.hostedStorybook` requirements explicit while preserving the not hosted Storybook proof boundary. |
 | 2026-05-25 | Fixture fallback is network-only outside production | `withFixtureFallback` is disabled in production, rethrows `ApiError`/4xx/5xx and non-network errors, and only uses fixture data for explicit network-unavailable `TypeError` cases in non-production mock mode; `pnpm run test:security` and `pnpm run test:mvp` guard the boundary. |
 
 ---
