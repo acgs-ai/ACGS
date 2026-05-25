@@ -295,6 +295,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         hosted_storybook_proof["proofCommand"]
         == "pnpm -F acgi-ai run test:hosted-storybook-proof-template"
     )
+    assert (
+        "validate:hosted-storybook-proof"
+        in hosted_storybook_proof["completedProofValidationCommand"]
+    )
+    assert "--require-pass" in hosted_storybook_proof["completedProofValidationCommand"]
+    assert hosted_storybook_proof["completedArtifactKind"] == "hosted-storybook-proof"
     assert hosted_storybook_proof["templatePresent"] is True
     assert hosted_storybook_proof["templateStatus"] == "template-only"
     assert "storybook-manifest-live" in hosted_storybook_proof["requiredPassingCheckIds"]
@@ -359,6 +365,7 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "test:hosted-storybook-handoff" in readme
     assert "hosted-storybook-proof.example.json" in readme
     assert "test:hosted-storybook-proof-template" in readme
+    assert "validate:hosted-storybook-proof" in readme
     assert ".nojekyll" in readme
     assert "pending-external:storybook-pages-proof" in readme
     assert "productionLiveBlockers" in readme

@@ -63,7 +63,10 @@
     "localHandoffCheckCommand": "pnpm -F acgi-ai run test:hosted-storybook-handoff",
     "handoffProofCommand": "pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json> --require-live-clear",
     "handoffProofOutputRef": "REPLACE_WITH_HOSTED_STORYBOOK_HANDOFF_JSON_OR_HASH",
-    "productionEvidenceValidationCommand": "pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass"
+    "productionEvidenceValidationCommand": "pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass",
+    "completedProofValidationCommand": "pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass",
+    "completedProofValidationOutputRef": "REPLACE_WITH_HOSTED_STORYBOOK_PROOF_VALIDATION_JSON_OR_HASH",
+    "completedArtifactKind": "hosted-storybook-proof"
   },
   "copyIntoProductionEvidence": {
     "productionEvidencePointer": "copyIntoProductionEvidence.hostedStorybook",

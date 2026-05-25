@@ -1838,6 +1838,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "acgi-ai/hosted-storybook-proof.example.json",
             "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs",
+            "acgi-ai/scripts/validate-hosted-storybook-proof.mjs",
             "acgi-ai/scripts/build-hosted-storybook-handoff.mjs",
             "acgi-ai/scripts/verify-production-live.mjs",
             ".github/workflows/storybook.yml",
@@ -1852,6 +1853,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             [
                 _maybe_read(repo_root, "acgi-ai/hosted-storybook-proof.example.json"),
                 _maybe_read(repo_root, "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs"),
+                _maybe_read(repo_root, "acgi-ai/scripts/validate-hosted-storybook-proof.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/build-hosted-storybook-handoff.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/verify-production-live.mjs"),
                 _maybe_read(repo_root, ".github/workflows/storybook.yml"),
@@ -1865,6 +1867,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "hosted-storybook-proof.example.json",
             "test:hosted-storybook-proof-template",
+            "validate:hosted-storybook-proof",
+            "hosted-storybook-proof-validation",
             "hosted-storybook-proof-template",
             "storybook-manifest-live",
             "pending-external:storybook-pages-proof",
@@ -1880,7 +1884,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
     hosted_storybook_proof_scripts_ok = (
         deploy_scripts.get("test:hosted-storybook-proof-template")
         == "node scripts/check-hosted-storybook-proof-template.mjs"
+        and deploy_scripts.get("validate:hosted-storybook-proof")
+        == "node scripts/validate-hosted-storybook-proof.mjs"
         and "pnpm run test:hosted-storybook-proof-template" in deploy_scripts.get("test:all", "")
+        and "pnpm run validate:hosted-storybook-proof" not in deploy_scripts.get("test:all", "")
         and "pnpm run verify:production-live" not in deploy_scripts.get("test:all", "")
         and "pnpm run build:hosted-storybook-handoff" not in deploy_scripts.get("test:all", "")
     )
@@ -1894,8 +1901,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "hosted-storybook-proof.example.json requires Pages run, DNS, "
                 "hosted manifest, passing storybook-manifest-live, absent "
-                "live-storybook blockers, and copyIntoProductionEvidence.hostedStorybook "
-                "before hosted-storybook-buyer-evidence can be removed"
+                "live-storybook blockers, copyIntoProductionEvidence.hostedStorybook, "
+                "and validate:hosted-storybook-proof completed-proof checks before "
+                "hosted-storybook-buyer-evidence can be removed"
                 if hosted_storybook_proof_files_ok
                 and hosted_storybook_proof_ok
                 and hosted_storybook_proof_scripts_ok
@@ -1905,7 +1913,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                     f"scripts_ok={hosted_storybook_proof_scripts_ok}"
                 )
             ),
-            "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+            (
+                "pnpm -F acgi-ai run test:hosted-storybook-proof-template "
+                "&& pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof "
+                "<hosted-storybook-proof.json> --live-output <verify-production-live.json> "
+                "--require-pass"
+            ),
         )
     )
 

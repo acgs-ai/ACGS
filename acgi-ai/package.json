@@ -82,6 +82,7 @@
     "verify:production-live": "node scripts/verify-production-live.mjs",
     "test:production-live-verifier": "node scripts/check-production-live-verifier.mjs",
     "validate:production-evidence": "node scripts/validate-production-evidence.mjs",
+    "validate:hosted-storybook-proof": "node scripts/validate-hosted-storybook-proof.mjs",
     "test:production-evidence-validator": "node scripts/check-production-evidence-validator.mjs",
     "build:production-blocker-report": "node scripts/build-production-blocker-report.mjs",
     "test:production-blocker-report": "node scripts/check-production-blocker-report.mjs",

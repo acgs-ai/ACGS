@@ -137,6 +137,11 @@ check(
     'node scripts/check-hosted-storybook-proof-template.mjs',
   'package.json must expose test:hosted-storybook-proof-template.',
 )
+check(
+  packageJson.scripts?.['validate:hosted-storybook-proof'] ===
+    'node scripts/validate-hosted-storybook-proof.mjs',
+  'package.json must expose validate:hosted-storybook-proof.',
+)
 
 for (const needle of [
   'hosted-storybook-handoff',
@@ -192,6 +197,7 @@ for (const needle of [
 for (const needle of [
   'hosted-storybook-proof.example.json',
   'test:hosted-storybook-proof-template',
+  'validate:hosted-storybook-proof',
   'hosted-storybook-proof-template',
   'storybook-manifest-live',
   'pending-external:storybook-pages-proof',

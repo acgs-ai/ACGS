@@ -105,6 +105,11 @@ check(
   'package.json must expose test:hosted-storybook-proof-template.',
 )
 check(
+  packageJson.scripts?.['validate:hosted-storybook-proof'] ===
+    'node scripts/validate-hosted-storybook-proof.mjs',
+  'package.json must expose validate:hosted-storybook-proof.',
+)
+check(
   packageJson.scripts?.['test:all']?.includes('pnpm run test:hosted-storybook-handoff'),
   'package.json test:all must include hosted Storybook handoff local wiring.',
 )
@@ -127,6 +132,10 @@ check(
 check(
   !packageJson.scripts?.['test:all']?.includes('pnpm run validate:production-evidence'),
   'package.json test:all must not run operator-specific production evidence validation.',
+)
+check(
+  !packageJson.scripts?.['test:all']?.includes('pnpm run validate:hosted-storybook-proof'),
+  'package.json test:all must not run operator-specific hosted Storybook proof validation.',
 )
 check(
   packageJson.scripts?.['test:all']?.indexOf('pnpm run test:production-evidence-template') <
@@ -347,6 +356,7 @@ for (const [label, source] of [
 ]) {
   mustContain(source, 'hosted-storybook-proof.example.json', label)
   mustContain(source, 'test:hosted-storybook-proof-template', label)
+  mustContain(source, 'validate:hosted-storybook-proof', label)
   mustContain(source, 'storybook-manifest-live', label)
   mustContain(source, 'pending-external:storybook-pages-proof', label)
   mustContain(source, 'copyIntoProductionEvidence.hostedStorybook', label)

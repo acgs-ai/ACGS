@@ -963,8 +963,18 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "hostedStorybookProofTemplate": {
                 "templatePath": "acgi-ai/hosted-storybook-proof.example.json",
                 "proofCommand": "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+                "completedProofValidationCommand": (
+                    "pnpm -F acgi-ai run validate:hosted-storybook-proof -- "
+                    "--proof <hosted-storybook-proof.json> "
+                    "--live-output <verify-production-live.json> --require-pass"
+                ),
                 "templatePresent": hosted_storybook_proof_template is not None,
                 "templateStatus": (hosted_storybook_proof_template or {}).get("status"),
+                "completedArtifactKind": (
+                    (hosted_storybook_proof_template or {})
+                    .get("validation", {})
+                    .get("completedArtifactKind")
+                ),
                 "requiredPassingCheckIds": (
                     (hosted_storybook_proof_template or {})
                     .get("liveVerification", {})
@@ -1229,9 +1239,12 @@ live production proof.
   run test:hosted-storybook-proof-template` verifies the required Storybook
   Pages run, DNS proof, hosted `/manifest.json` proof, passing
   `storybook-manifest-live`, absent `live-storybook-*` blockers, and
-  `copyIntoProductionEvidence.hostedStorybook` fields. The template is not
-  hosted Storybook proof, not official Storybook runtime proof, and not
-  production deployment proof.
+  `copyIntoProductionEvidence.hostedStorybook` fields. After external evidence
+  is attached, `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof
+  <hosted-storybook-proof.json> --live-output <verify-production-live.json>
+  --require-pass` checks the completed proof packet against passing live JSON.
+  The template is not hosted Storybook proof, not official Storybook runtime
+  proof, and not production deployment proof.
 - `acgi-ai/storybook-runtime.plan.json` is the pending official Storybook
   runtime dependency plan. `pnpm -F acgi-ai run test:storybook-runtime-plan`
   verifies the `pending-external:dependency-owner-approval` boundary, the

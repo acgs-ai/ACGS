@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -27,14 +29,165 @@ function pathFilterCount(workflow, path) {
     .length
 }
 
+function writeJson(path, payload) {
+  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`)
+}
+
+function runValidator(args) {
+  return spawnSync(process.execPath, ['scripts/validate-hosted-storybook-proof.mjs', ...args], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+}
+
+function makeCompletedProof() {
+  return {
+    schemaVersion: 1,
+    artifactKind: 'hosted-storybook-proof',
+    status: 'verified',
+    sourceTemplate: 'acgi-ai/hosted-storybook-proof.example.json',
+    claimBoundary:
+      'Completed hosted Storybook buyer-evidence proof; not production deployment proof, not legal signoff, not SOC2 proof, not WCAG conformance proof, not pentest completion, and not regulatory compliance proof.',
+    target: {
+      url: 'https://storybook.acgs.ai',
+      manifestUrl: 'https://storybook.acgs.ai/manifest.json',
+      expectedPublishTarget: 'https://storybook.acgs.ai',
+      requiredStoryIds: [
+        'receipt-proof-journey',
+        'bus-owned-proof-source',
+        'claim-safe-trust-surface',
+        'deploy-readiness-boundary',
+      ],
+      manifestClaimBoundaryMustInclude: 'not production deployment proof',
+    },
+    workflow: {
+      name: 'buyer-evidence-storybook',
+      file: '.github/workflows/storybook.yml',
+      artifactName: 'buyer-evidence-storybook',
+      requiredRepoVariable: 'STORYBOOK_PAGES_ENABLED=true',
+      runUrl: 'https://github.com/acgs/acgi-ai/actions/runs/1003',
+      pagesDeployUrl: 'https://github.com/acgs/acgi-ai/actions/deployments/1003',
+      buildOutputRef: 'sha256:buyer-evidence-storybook',
+    },
+    dns: {
+      host: 'storybook.acgs.ai',
+      recordType: 'CNAME',
+      configuredBy: 'dns-owner-change-123',
+      evidenceRef: 'sha256:storybook-dns-provider-record',
+    },
+    liveVerification: {
+      command: 'pnpm -F acgi-ai run verify:production-live -- --json',
+      outputRef: 'sha256:verify-production-live-pass',
+      status: 'pass',
+      requiredPassingCheckIds: [
+        'storybook-dns-live',
+        'storybook-https-live',
+        'storybook-manifest-live',
+      ],
+      requiredAbsentBlockerIds: [
+        'live-storybook-dns',
+        'live-storybook-https',
+        'live-storybook-manifest',
+      ],
+    },
+    manifestEvidence: {
+      artifactKind: 'local-buyer-evidence-gallery',
+      publishTarget: 'https://storybook.acgs.ai',
+      manifestJsonRef: 'sha256:hosted-storybook-manifest-json',
+      storyIds: [
+        'receipt-proof-journey',
+        'bus-owned-proof-source',
+        'claim-safe-trust-surface',
+        'deploy-readiness-boundary',
+      ],
+      claimBoundaryRef: 'sha256:hosted-storybook-manifest-claim-boundary',
+    },
+    validation: {
+      localTemplateCheckCommand: 'pnpm -F acgi-ai run test:hosted-storybook-proof-template',
+      completedProofValidationCommand:
+        'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass',
+      completedProofValidationOutputRef: 'sha256:hosted-storybook-proof-validation',
+      productionEvidenceValidationCommand:
+        'pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass',
+    },
+    copyIntoProductionEvidence: {
+      productionEvidencePointer: 'copyIntoProductionEvidence.hostedStorybook',
+      hostedStorybook: {
+        url: 'https://storybook.acgs.ai',
+        manifestUrl: 'https://storybook.acgs.ai/manifest.json',
+        status: 'verified',
+        proofRef: 'sha256:storybook-pages-run-and-passing-live-verifier',
+        claimBoundary:
+          'verified only by attached Storybook Pages deploy evidence, DNS evidence, hosted manifest evidence, and passing verify:production-live JSON.',
+      },
+      remainingBlockerToRemove: 'hosted-storybook-buyer-evidence',
+    },
+  }
+}
+
+function makeLiveOutput(status = 'pass') {
+  const pass = status === 'pass'
+  return {
+    schemaVersion: 1,
+    artifactKind: 'production-live-verification',
+    generatedAt: '2026-05-25T00:00:00.000Z',
+    status,
+    claimBoundary:
+      'Live verifier output is production evidence only when every required live check passes against the deployed origins; failures or pending Storybook checks remain deployment blockers and are not live production proof.',
+    targets: {
+      marketingUrl: 'https://acgs.ai',
+      consoleUrl: 'https://console.acgs.ai',
+      storybookUrl: 'https://storybook.acgs.ai',
+      expectedServedHash: '608508a9bd224290',
+      expectedBuildId: 'commit-abc123',
+      allowStorybookPending: false,
+    },
+    blockedUntil: pass ? null : 'Resolve every listed blocker and rerun verify:production-live.',
+    blockers: pass
+      ? []
+      : [
+          {
+            blockerId: 'live-storybook-manifest',
+            checkId: 'storybook-manifest-live',
+            status: 'fail',
+          },
+        ],
+    checks: [
+      { id: 'storybook-dns-live', status: pass ? 'pass' : 'fail' },
+      { id: 'storybook-https-live', status: pass ? 'pass' : 'fail' },
+      {
+        id: 'storybook-manifest-live',
+        status: pass ? 'pass' : 'fail',
+        evidence: pass
+          ? {
+              url: 'https://storybook.acgs.ai/manifest.json',
+              artifactKind: 'local-buyer-evidence-gallery',
+              publishTarget: 'https://storybook.acgs.ai',
+              storyIds: [
+                'receipt-proof-journey',
+                'bus-owned-proof-source',
+                'claim-safe-trust-surface',
+                'deploy-readiness-boundary',
+              ],
+              claimBoundaryPreserved: true,
+            }
+          : { url: 'https://storybook.acgs.ai/manifest.json' },
+      },
+    ],
+  }
+}
+
 const templatePath = 'hosted-storybook-proof.example.json'
 const checkerPath = 'scripts/check-hosted-storybook-proof-template.mjs'
+const validatorPath = 'scripts/validate-hosted-storybook-proof.mjs'
 check(existsSync(resolve(root, templatePath)), `${templatePath} must exist.`)
 check(existsSync(resolve(root, checkerPath)), `${checkerPath} must exist.`)
+check(existsSync(resolve(root, validatorPath)), `${validatorPath} must exist.`)
 
 const templateText = read(templatePath)
 const template = JSON.parse(templateText)
 const checker = read(checkerPath)
+const validator = read(validatorPath)
 const packageJson = JSON.parse(read('package.json'))
 const storybookWorkflow = readRepo('.github/workflows/storybook.yml')
 const consoleWorkflow = readRepo('.github/workflows/console.yml')
@@ -174,11 +327,23 @@ for (const needle of [
   'test:hosted-storybook-handoff',
   'hosted-storybook-handoff.json',
   '--require-live-clear',
+  'validate:hosted-storybook-proof',
+  'hosted-storybook-proof',
   'validate:production-evidence',
   '--require-pass',
 ]) {
   mustContain(JSON.stringify(template.validation ?? {}), needle, 'validation commands')
 }
+check(
+  template.validation?.completedProofValidationCommand?.includes(
+    'validate:hosted-storybook-proof',
+  ) && template.validation?.completedProofValidationCommand?.includes('--require-pass'),
+  'validation.completedProofValidationCommand must capture the completed proof validator.',
+)
+check(
+  template.validation?.completedArtifactKind === 'hosted-storybook-proof',
+  'validation.completedArtifactKind must document the completed proof artifact kind.',
+)
 check(
   template.copyIntoProductionEvidence?.hostedStorybook?.status === 'verified',
   'copyIntoProductionEvidence.hostedStorybook.status must be verified for completed proof.',
@@ -197,6 +362,11 @@ check(
   packageJson.scripts?.['test:hosted-storybook-proof-template'] ===
     'node scripts/check-hosted-storybook-proof-template.mjs',
   'package.json must expose test:hosted-storybook-proof-template.',
+)
+check(
+  packageJson.scripts?.['validate:hosted-storybook-proof'] ===
+    'node scripts/validate-hosted-storybook-proof.mjs',
+  'package.json must expose validate:hosted-storybook-proof.',
 )
 check(
   packageJson.scripts?.['test:all']?.includes('pnpm run test:hosted-storybook-proof-template'),
@@ -249,15 +419,110 @@ for (const needle of [
   }
 }
 
+for (const [label, source] of [
+  ['DEPLOY.md', deploy],
+  ['PRODUCTION-LAUNCH.md', launch],
+  ['integration readiness map', readiness],
+  ['platform readiness report', platformReadiness],
+  ['release evidence builder', releaseEvidence],
+  ['CI readiness gate checker', ciReadinessGateCheck],
+  ['security invariants checker', securityCheck],
+  ['hosted Storybook handoff checker', hostedHandoffCheck],
+]) {
+  mustContain(source, 'validate:hosted-storybook-proof', label)
+}
+
 for (const needle of [
   'Hosted Storybook proof template check',
   'hosted-storybook-proof.example.json',
   'test:hosted-storybook-proof-template',
+  'validate-hosted-storybook-proof',
   'REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL',
   'requiredAbsentBlockerIds',
   'remainingBlockerToRemove',
 ]) {
   mustContain(checker, needle, checkerPath)
+}
+
+for (const needle of [
+  'Hosted Storybook proof validation',
+  'hosted-storybook-proof-validation',
+  'hosted-storybook-proof',
+  '--proof',
+  '--live-output',
+  '--require-pass',
+  'storybook-manifest-live',
+  'live-storybook-manifest',
+  'copyIntoProductionEvidence.hostedStorybook',
+  'not production deployment proof',
+]) {
+  mustContain(validator, needle, validatorPath)
+}
+
+const help = runValidator(['--help'])
+check(help.status === 0, 'validate-hosted-storybook-proof --help must exit zero.')
+for (const needle of ['--proof', '--live-output', '--require-pass', 'does not deploy']) {
+  mustContain(help.stdout, needle, 'validate-hosted-storybook-proof --help')
+}
+
+const tempDir = mkdtempSync(join(tmpdir(), 'hosted-storybook-proof-'))
+try {
+  const proofPath = join(tempDir, 'hosted-storybook-proof.json')
+  const livePath = join(tempDir, 'production-live.json')
+  const failingLivePath = join(tempDir, 'production-live-fail.json')
+  const templateAsProofPath = join(tempDir, 'template-as-proof.json')
+  writeJson(proofPath, makeCompletedProof())
+  writeJson(livePath, makeLiveOutput('pass'))
+  writeJson(failingLivePath, makeLiveOutput('fail'))
+  writeJson(templateAsProofPath, template)
+
+  const passing = runValidator([
+    '--proof',
+    proofPath,
+    '--live-output',
+    livePath,
+    '--require-pass',
+    '--json',
+  ])
+  check(passing.status === 0, `completed hosted proof fixture must pass: ${passing.stderr}`)
+  const passingPayload = JSON.parse(passing.stdout)
+  check(
+    passingPayload.artifactKind === 'hosted-storybook-proof-validation',
+    'validator output artifact kind must match.',
+  )
+  check(passingPayload.status === 'pass', 'validator must pass the completed proof fixture.')
+
+  const failingLive = runValidator([
+    '--proof',
+    proofPath,
+    '--live-output',
+    failingLivePath,
+    '--require-pass',
+    '--json',
+  ])
+  check(failingLive.status !== 0, 'validator must reject failing Storybook live output.')
+  const failingLivePayload = JSON.parse(failingLive.stdout)
+  check(
+    failingLivePayload.checks.some((entry) => entry.id === 'live-output-status'),
+    'validator failure must include live-output-status check.',
+  )
+
+  const templateResult = runValidator([
+    '--proof',
+    templateAsProofPath,
+    '--live-output',
+    livePath,
+    '--require-pass',
+    '--json',
+  ])
+  check(templateResult.status !== 0, 'validator must reject the template-only proof file.')
+  const templatePayload = JSON.parse(templateResult.stdout)
+  check(
+    templatePayload.checks.some((entry) => entry.id === 'artifact-kind'),
+    'template-only rejection must include artifact-kind check.',
+  )
+} finally {
+  rmSync(tempDir, { recursive: true, force: true })
 }
 
 if (failures.length > 0) {

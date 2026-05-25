@@ -107,6 +107,14 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         "test:hosted-storybook-proof-template"
         in by_id["hosted-storybook-proof-intake-local"].command
     )
+    assert (
+        "validate:hosted-storybook-proof"
+        in by_id["hosted-storybook-proof-intake-local"].command
+    )
+    assert (
+        "completed-proof checks"
+        in by_id["hosted-storybook-proof-intake-local"].evidence
+    )
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"
     assert (

@@ -59,6 +59,7 @@ const hostedStorybookHandoffPath = 'scripts/build-hosted-storybook-handoff.mjs'
 const hostedStorybookHandoffCheckPath = 'scripts/check-hosted-storybook-handoff.mjs'
 const hostedStorybookProofTemplatePath = 'hosted-storybook-proof.example.json'
 const hostedStorybookProofTemplateCheckPath = 'scripts/check-hosted-storybook-proof-template.mjs'
+const hostedStorybookProofValidatorPath = 'scripts/validate-hosted-storybook-proof.mjs'
 const storybookRuntimePlanPath = 'storybook-runtime.plan.json'
 const storybookRuntimePlanCheckPath = 'scripts/check-storybook-runtime-plan.mjs'
 const mswNodeFoundationCheckPath = 'scripts/check-msw-node-foundation.mjs'
@@ -89,6 +90,7 @@ const hostedStorybookHandoff = read(hostedStorybookHandoffPath)
 const hostedStorybookHandoffCheck = read(hostedStorybookHandoffCheckPath)
 const hostedStorybookProofTemplate = read(hostedStorybookProofTemplatePath)
 const hostedStorybookProofTemplateCheck = read(hostedStorybookProofTemplateCheckPath)
+const hostedStorybookProofValidator = read(hostedStorybookProofValidatorPath)
 const storybookRuntimePlan = read(storybookRuntimePlanPath)
 const storybookRuntimePlanCheck = read(storybookRuntimePlanCheckPath)
 const mswNodeFoundationCheck = read(mswNodeFoundationCheckPath)
@@ -185,6 +187,11 @@ check(
   'package.json must expose test:production-evidence-draft.',
 )
 check(
+  packageJson.scripts?.['validate:hosted-storybook-proof'] ===
+    'node scripts/validate-hosted-storybook-proof.mjs',
+  'package.json must expose validate:hosted-storybook-proof.',
+)
+check(
   packageJson.scripts?.['build:hosted-storybook-handoff'] ===
     'node scripts/build-hosted-storybook-handoff.mjs',
   'package.json must expose build:hosted-storybook-handoff.',
@@ -234,6 +241,7 @@ check(
     !packageJson.scripts['test:all'].includes('pnpm run build:production-evidence-draft') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:hosted-storybook-handoff') &&
     !packageJson.scripts['test:all'].includes('pnpm run validate:production-evidence') &&
+    !packageJson.scripts['test:all'].includes('pnpm run validate:hosted-storybook-proof') &&
     packageJson.scripts['test:all'].includes('pnpm run test:performance') &&
     packageJson.scripts['test:all'].includes('pnpm run test:state-coverage') &&
     packageJson.scripts['test:all'].includes('pnpm run test:polling-hygiene') &&
@@ -430,6 +438,8 @@ check(
   /artifactKind"\s*:\s*"hosted-storybook-proof-template/.test(hostedStorybookProofTemplate) &&
     /template-only/.test(hostedStorybookProofTemplate) &&
     /REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL/.test(hostedStorybookProofTemplate) &&
+    /validate:hosted-storybook-proof/.test(hostedStorybookProofTemplate) &&
+    /hosted-storybook-proof/.test(hostedStorybookProofTemplate) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplate) &&
     /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
     /copyIntoProductionEvidence/.test(hostedStorybookProofTemplate) &&
@@ -444,11 +454,23 @@ check(
 check(
   /Hosted Storybook proof template check/.test(hostedStorybookProofTemplateCheck) &&
     /test:hosted-storybook-proof-template/.test(hostedStorybookProofTemplateCheck) &&
+    /validate-hosted-storybook-proof/.test(hostedStorybookProofTemplateCheck) &&
     /hosted-storybook-proof\.example\.json/.test(hostedStorybookProofTemplateCheck) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
     /not hosted Storybook proof/.test(hostedStorybookProofTemplateCheck),
   'check-hosted-storybook-proof-template.mjs must guard hosted Storybook proof template wiring and claim boundary.',
+)
+check(
+  /Hosted Storybook proof validation/.test(hostedStorybookProofValidator) &&
+    /hosted-storybook-proof-validation/.test(hostedStorybookProofValidator) &&
+    /--proof/.test(hostedStorybookProofValidator) &&
+    /--live-output/.test(hostedStorybookProofValidator) &&
+    /--require-pass/.test(hostedStorybookProofValidator) &&
+    /storybook-manifest-live/.test(hostedStorybookProofValidator) &&
+    /live-storybook-manifest/.test(hostedStorybookProofValidator) &&
+    /not production deployment proof/.test(hostedStorybookProofValidator),
+  'validate-hosted-storybook-proof.mjs must verify completed hosted proof packets without side effects or overclaims.',
 )
 check(
   /artifactKind"\s*:\s*"storybook-runtime-plan/.test(storybookRuntimePlan) &&

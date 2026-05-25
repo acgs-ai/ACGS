@@ -182,6 +182,13 @@ const hostedStorybookProofTemplateCheckPath = resolve(
 const hostedStorybookProofTemplateCheck = existsSync(hostedStorybookProofTemplateCheckPath)
   ? readFileSync(hostedStorybookProofTemplateCheckPath, 'utf8')
   : ''
+const hostedStorybookProofValidatorPath = resolve(
+  root,
+  'scripts/validate-hosted-storybook-proof.mjs',
+)
+const hostedStorybookProofValidator = existsSync(hostedStorybookProofValidatorPath)
+  ? readFileSync(hostedStorybookProofValidatorPath, 'utf8')
+  : ''
 const storybookRuntimePlanPath = resolve(root, 'storybook-runtime.plan.json')
 const storybookRuntimePlan = existsSync(storybookRuntimePlanPath)
   ? readFileSync(storybookRuntimePlanPath, 'utf8')
@@ -620,6 +627,11 @@ check(
   'package.json must expose test:hosted-storybook-proof-template for hosted Storybook proof intake verification.',
 )
 check(
+  packageJson.scripts?.['validate:hosted-storybook-proof'] ===
+    'node scripts/validate-hosted-storybook-proof.mjs',
+  'package.json must expose validate:hosted-storybook-proof for completed hosted Storybook proof validation.',
+)
+check(
   packageJson.scripts?.['test:storybook-runtime-plan'] ===
     'node scripts/check-storybook-runtime-plan.mjs',
   'package.json must expose test:storybook-runtime-plan for official Storybook runtime dependency plan verification.',
@@ -655,6 +667,7 @@ check(
     !packageJson.scripts['test:all'].includes('pnpm run build:production-evidence-draft') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:hosted-storybook-handoff') &&
     !packageJson.scripts['test:all'].includes('pnpm run validate:production-evidence') &&
+    !packageJson.scripts['test:all'].includes('pnpm run validate:hosted-storybook-proof') &&
     packageJson.scripts['test:all'].includes('pnpm run test:container-pins') &&
     packageJson.scripts['test:all'].includes('pnpm run test:auth-boundary') &&
     packageJson.scripts['test:all'].includes('pnpm run test:postdeploy-live-assets') &&
@@ -1092,6 +1105,10 @@ check(
   existsSync(hostedStorybookProofTemplateCheckPath),
   'scripts/check-hosted-storybook-proof-template.mjs must exist.',
 )
+check(
+  existsSync(hostedStorybookProofValidatorPath),
+  'scripts/validate-hosted-storybook-proof.mjs must exist.',
+)
 check(existsSync(productionLiveVerifierPath), 'scripts/verify-production-live.mjs must exist.')
 check(
   existsSync(productionLiveVerifierCheckPath),
@@ -1405,6 +1422,8 @@ check(
   /artifactKind"\s*:\s*"hosted-storybook-proof-template/.test(hostedStorybookProofTemplate) &&
     /template-only/.test(hostedStorybookProofTemplate) &&
     /REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL/.test(hostedStorybookProofTemplate) &&
+    /validate:hosted-storybook-proof/.test(hostedStorybookProofTemplate) &&
+    /hosted-storybook-proof/.test(hostedStorybookProofTemplate) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplate) &&
     /live-storybook-manifest/.test(hostedStorybookProofTemplate) &&
     /copyIntoProductionEvidence/.test(hostedStorybookProofTemplate) &&
@@ -1419,11 +1438,24 @@ check(
 check(
   /Hosted Storybook proof template check/.test(hostedStorybookProofTemplateCheck) &&
     /test:hosted-storybook-proof-template/.test(hostedStorybookProofTemplateCheck) &&
+    /validate-hosted-storybook-proof/.test(hostedStorybookProofTemplateCheck) &&
     /hosted-storybook-proof\.example\.json/.test(hostedStorybookProofTemplateCheck) &&
     /storybook-manifest-live/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
     /not hosted Storybook proof/.test(hostedStorybookProofTemplateCheck),
   'check-hosted-storybook-proof-template.mjs must guard hosted Storybook proof template wiring and claim boundary.',
+)
+check(
+  /Hosted Storybook proof validation/.test(hostedStorybookProofValidator) &&
+    /hosted-storybook-proof-validation/.test(hostedStorybookProofValidator) &&
+    /--proof/.test(hostedStorybookProofValidator) &&
+    /--live-output/.test(hostedStorybookProofValidator) &&
+    /--require-pass/.test(hostedStorybookProofValidator) &&
+    /storybook-manifest-live/.test(hostedStorybookProofValidator) &&
+    /live-storybook-manifest/.test(hostedStorybookProofValidator) &&
+    /copyIntoProductionEvidence.hostedStorybook/.test(hostedStorybookProofValidator) &&
+    /not production deployment proof/.test(hostedStorybookProofValidator),
+  'validate-hosted-storybook-proof.mjs must verify completed hosted Storybook proof packets without side effects or overclaims.',
 )
 check(
   /production-evidence-validation/.test(productionEvidenceValidator) &&
@@ -1514,6 +1546,7 @@ check(
     /storybook-runtime\.plan\.json/.test(ciReadinessGateCheck) &&
     /test:hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
     /test:hosted-storybook-proof-template/.test(ciReadinessGateCheck) &&
+    /validate:hosted-storybook-proof/.test(ciReadinessGateCheck) &&
     /build:hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
     /hosted-storybook-handoff/.test(ciReadinessGateCheck) &&
     /hosted-storybook-proof\.example\.json/.test(ciReadinessGateCheck) &&
