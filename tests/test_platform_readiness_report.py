@@ -50,6 +50,8 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "pending-external refs" in by_id["production-evidence-validator-local"].evidence
     assert by_id["production-cutover-plan-local"].status == "pass"
     assert "DNS cutover" in by_id["production-cutover-plan-local"].evidence
+    assert "liveCheckSummary" in by_id["production-cutover-plan-local"].evidence
+    assert "cutoverDelta" in by_id["production-cutover-plan-local"].evidence
     assert "copyIntoProductionEvidence" in by_id["production-cutover-plan-local"].evidence
     assert by_id["production-evidence-draft-local"].status == "pass"
     assert "deployment-blocked" in by_id["production-evidence-draft-local"].evidence

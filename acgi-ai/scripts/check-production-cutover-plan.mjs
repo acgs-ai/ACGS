@@ -94,6 +94,9 @@ for (const needle of [
   'storybook.acgs.ai',
   'STORYBOOK_PAGES_ENABLED=true',
   'productionLiveBlockers',
+  'liveCheckSummary',
+  'cutoverDelta',
+  'safeToClaimProduction',
   'copyIntoProductionEvidence',
   'not live production proof',
   'does not deploy',
@@ -133,6 +136,8 @@ try {
       { blockerId: 'live-storybook-manifest', checkId: 'storybook-manifest-live' },
     ],
     checks: [
+      { id: 'marketing-dns-live', status: 'pass' },
+      { id: 'marketing-https-live', status: 'pass' },
       { id: 'console-dns-live', status: 'fail' },
       { id: 'storybook-manifest-live', status: 'fail' },
     ],
@@ -177,6 +182,46 @@ try {
     'cutover plan must carry productionLiveBlockers.',
   )
   check(
+    plan.liveCheckSummary?.counts?.pass === 2 &&
+      plan.liveCheckSummary?.counts?.fail === 2 &&
+      plan.liveCheckSummary?.passedCheckIds?.includes('marketing-dns-live') &&
+      plan.liveCheckSummary?.failedCheckIds?.includes('storybook-manifest-live'),
+    'cutover plan must summarize saved live check pass/fail state.',
+  )
+  check(
+    plan.liveCheckSummary?.checks?.some(
+      (check) =>
+        check.id === 'console-dns-live' &&
+        check.lane === 'console' &&
+        check.operatorAction.includes('console.acgs.ai DNS'),
+    ),
+    'liveCheckSummary must attach operator action guidance to failed checks.',
+  )
+  check(
+    plan.cutoverDelta?.state === 'blocked-live-cutover' &&
+      plan.cutoverDelta?.safeToClaimProduction === false &&
+      plan.cutoverDelta?.evidenceValidation?.state === 'waiting-for-live-checks',
+    'cutoverDelta must preserve blocked state and evidence-validation guidance.',
+  )
+  check(
+    plan.cutoverDelta?.lanes?.some(
+      (lane) => lane.lane === 'marketing' && lane.state === 'already-live',
+    ) &&
+      plan.cutoverDelta?.lanes?.some(
+        (lane) =>
+          lane.lane === 'console' &&
+          lane.state === 'dns-or-service-blocked' &&
+          lane.blockerIds.includes('live-console-dns'),
+      ) &&
+      plan.cutoverDelta?.lanes?.some(
+        (lane) =>
+          lane.lane === 'storybook' &&
+          lane.state === 'dns-or-pages-blocked' &&
+          lane.blockerIds.includes('live-storybook-manifest'),
+      ),
+    'cutoverDelta must separate marketing, console, and Storybook lane state.',
+  )
+  check(
     plan.requiredGitHubSecrets.includes('CONSOLE_AUTH_UPSTREAM') &&
       plan.requiredGitHubVariables.includes('STORYBOOK_PAGES_ENABLED=true'),
     'cutover plan must list required GitHub production secrets and variables.',
@@ -188,8 +233,10 @@ try {
   )
   check(
     plan.copyIntoProductionEvidence?.artifacts?.productionCutoverPlan ===
-      '<production-cutover-plan.json artifact or hash>',
-    'cutover plan must provide copyIntoProductionEvidence artifact slots.',
+      '<production-cutover-plan.json artifact or hash>' &&
+      plan.copyIntoProductionEvidence?.artifacts?.productionCutoverDelta ===
+        '<production-cutover-plan.cutoverDelta JSON pointer or hash>',
+    'cutover plan must provide copyIntoProductionEvidence artifact and cutoverDelta slots.',
   )
   check(
     plan.claimBoundary.includes('not live production proof') &&

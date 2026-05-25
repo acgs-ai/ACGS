@@ -200,9 +200,10 @@ pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-pro
 
 14. Build the local production cutover plan from the saved live evidence and
    blocker report. The `production-cutover-plan` lists required GitHub secrets,
-   DNS cutover records, remaining `productionLiveBlockers`, and
-   `copyIntoProductionEvidence`; it does not deploy, mutate DNS, fetch live
-   origins, or create live production proof.
+   DNS cutover records, remaining `productionLiveBlockers`,
+   `liveCheckSummary`, `cutoverDelta`, and `copyIntoProductionEvidence`; it
+   does not deploy, mutate DNS, fetch live origins, or create live production
+   proof.
 
 ```bash
 pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>

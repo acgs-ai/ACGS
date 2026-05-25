@@ -69,6 +69,94 @@ const BLOCKER_ACTIONS = {
     'Publish the claim-safe buyer-evidence manifest to storybook.acgs.ai and verify expected story ids, publish target, and claim boundary.',
 }
 
+const CHECK_CUTOVER_GUIDANCE = {
+  'marketing-dns-live': {
+    lane: 'marketing',
+    label: 'Marketing apex DNS',
+    passAction:
+      'acgs.ai DNS already resolves; leave the apex untouched unless replacing the marketing deployment target.',
+    failAction: 'Repair acgs.ai DNS before treating marketing as live.',
+  },
+  'marketing-https-live': {
+    lane: 'marketing',
+    label: 'Marketing HTTPS',
+    passAction:
+      'acgs.ai already answers HTTPS; keep it stable while console and Storybook are cut over.',
+    failAction: 'Restore acgs.ai HTTPS before production launch evidence can pass.',
+  },
+  'console-dns-live': {
+    lane: 'console',
+    label: 'Console DNS',
+    passAction: 'console.acgs.ai resolves; continue to service health and header checks.',
+    failAction: 'Create or repair console.acgs.ai DNS for the deployed console service.',
+  },
+  'console-healthz-live': {
+    lane: 'console',
+    label: 'Console /healthz',
+    passAction: 'Console health endpoint is live; preserve served_hash/build_id evidence.',
+    failAction:
+      'Deploy the console service and verify /healthz returns ok=true plus expected served_hash/build_id.',
+  },
+  'console-security-headers-live': {
+    lane: 'console',
+    label: 'Console security headers',
+    passAction: 'Console security headers are present; preserve the captured header evidence.',
+    failAction: 'Serve console.acgs.ai with HSTS, CSP, X-Frame-Options, and Referrer-Policy.',
+  },
+  'storybook-dns-live': {
+    lane: 'storybook',
+    label: 'Hosted Storybook DNS',
+    passAction: 'storybook.acgs.ai resolves; continue to HTTPS and manifest checks.',
+    failAction: 'Create or repair storybook.acgs.ai DNS for the hosted buyer-evidence origin.',
+  },
+  'storybook-https-live': {
+    lane: 'storybook',
+    label: 'Hosted Storybook HTTPS',
+    passAction: 'Hosted Storybook HTTPS responds; preserve status evidence.',
+    failAction: 'Publish the buyer-evidence artifact and verify storybook.acgs.ai responds over HTTPS.',
+  },
+  'storybook-manifest-live': {
+    lane: 'storybook',
+    label: 'Hosted Storybook manifest',
+    passAction: 'Hosted manifest is present; preserve story ids, publish target, and claim boundary.',
+    failAction:
+      'Publish /manifest.json with every expected buyer-evidence story id and conservative claim boundary.',
+  },
+}
+
+const CUTOVER_LANES = [
+  {
+    id: 'marketing',
+    title: 'Marketing origin',
+    checkIds: ['marketing-dns-live', 'marketing-https-live'],
+    blockedState: 'repair-marketing-origin',
+    passedState: 'already-live',
+    unknownState: 'not-verified',
+    defaultAction:
+      'Keep the passing acgs.ai marketing origin stable while console and Storybook blockers are resolved.',
+  },
+  {
+    id: 'console',
+    title: 'Console origin',
+    checkIds: ['console-dns-live', 'console-healthz-live', 'console-security-headers-live'],
+    blockedState: 'dns-or-service-blocked',
+    passedState: 'live-origin-ready',
+    unknownState: 'not-verified',
+    defaultAction:
+      'Create DNS, deploy the console service, verify /healthz, and capture required security headers.',
+  },
+  {
+    id: 'storybook',
+    title: 'Hosted buyer evidence',
+    checkIds: ['storybook-dns-live', 'storybook-https-live', 'storybook-manifest-live'],
+    blockedState: 'dns-or-pages-blocked',
+    passedState: 'hosted-proof-ready',
+    unknownState: 'not-verified',
+    defaultAction:
+      'Publish the buyer-evidence artifact, configure storybook.acgs.ai, and verify HTTPS plus manifest proof.',
+  },
+]
+
 function usage() {
   return `Usage: node scripts/build-production-cutover-plan.mjs [options]
 
@@ -169,6 +257,135 @@ function unique(values) {
   return [...new Set(values.filter(isNonEmptyString))]
 }
 
+function checksFromLiveOutput(liveOutput) {
+  return Array.isArray(liveOutput?.checks)
+    ? liveOutput.checks.filter((check) => check && typeof check === 'object')
+    : []
+}
+
+function normalizeCheck(check) {
+  const guidance = CHECK_CUTOVER_GUIDANCE[check?.id] ?? {
+    lane: 'unknown',
+    label: check?.id ?? 'unknown live check',
+    passAction: 'Preserve this passing live evidence in the production evidence packet.',
+    failAction: 'Resolve this live verifier failure and rerun verify:production-live.',
+  }
+  const status = isNonEmptyString(check?.status) ? check.status : 'unknown'
+  return {
+    id: check?.id ?? null,
+    status,
+    lane: guidance.lane,
+    label: guidance.label,
+    evidence: check?.evidence ?? null,
+    error: check?.error ?? null,
+    operatorAction: status === 'pass' ? guidance.passAction : guidance.failAction,
+  }
+}
+
+function buildLiveCheckSummary({ liveOutput, fallbackFailedCheckIds }) {
+  const normalizedChecks = checksFromLiveOutput(liveOutput).map(normalizeCheck)
+  const passedCheckIds = normalizedChecks
+    .filter((check) => check.status === 'pass')
+    .map((check) => check.id)
+    .filter(isNonEmptyString)
+  const failedCheckIds = unique([
+    ...normalizedChecks
+      .filter((check) => check.status === 'fail')
+      .map((check) => check.id)
+      .filter(isNonEmptyString),
+    ...fallbackFailedCheckIds,
+  ])
+  const pendingCheckIds = normalizedChecks
+    .filter((check) => check.status !== 'pass' && check.status !== 'fail')
+    .map((check) => check.id)
+    .filter(isNonEmptyString)
+
+  return {
+    claimBoundary:
+      'liveCheckSummary summarizes saved verifier JSON only; it is not live production proof unless every required check passes in the attached verifier output.',
+    counts: {
+      pass: passedCheckIds.length,
+      fail: failedCheckIds.length,
+      pending: pendingCheckIds.length,
+      total: unique([...passedCheckIds, ...failedCheckIds, ...pendingCheckIds]).length,
+    },
+    passedCheckIds,
+    failedCheckIds,
+    pendingCheckIds,
+    checks: normalizedChecks,
+  }
+}
+
+function blockersForChecks(blockers, checkIds) {
+  const checkIdSet = new Set(checkIds)
+  return blockers.filter((blocker) => checkIdSet.has(blocker.checkId))
+}
+
+function buildCutoverDelta({ liveOutput, blockers, liveCheckSummary }) {
+  const checkStatusById = new Map(
+    liveCheckSummary.checks
+      .filter((check) => isNonEmptyString(check.id))
+      .map((check) => [check.id, check.status]),
+  )
+
+  const lanes = CUTOVER_LANES.map((lane) => {
+    const laneBlockers = blockersForChecks(blockers, lane.checkIds)
+    const knownStatuses = lane.checkIds
+      .map((checkId) => checkStatusById.get(checkId))
+      .filter(isNonEmptyString)
+    const allKnown = knownStatuses.length === lane.checkIds.length
+    const allPassed = allKnown && knownStatuses.every((status) => status === 'pass')
+    const hasFailed = knownStatuses.some((status) => status === 'fail') || laneBlockers.length > 0
+    const state = allPassed ? lane.passedState : hasFailed ? lane.blockedState : lane.unknownState
+    const requiredActions = unique([
+      ...laneBlockers.map((blocker) => blocker.requiredAction),
+      ...lane.checkIds
+        .filter((checkId) => checkStatusById.get(checkId) === 'fail')
+        .map((checkId) => CHECK_CUTOVER_GUIDANCE[checkId]?.failAction),
+    ])
+
+    return {
+      lane: lane.id,
+      title: lane.title,
+      state,
+      checkIds: lane.checkIds,
+      blockerIds: laneBlockers.map((blocker) => blocker.blockerId),
+      requiredActions: requiredActions.length > 0 ? requiredActions : [lane.defaultAction],
+      passedCheckIds: lane.checkIds.filter((checkId) => checkStatusById.get(checkId) === 'pass'),
+      failedCheckIds: lane.checkIds.filter((checkId) => checkStatusById.get(checkId) === 'fail'),
+    }
+  })
+
+  const liveStatus = isNonEmptyString(liveOutput?.status) ? liveOutput.status : null
+  const hasBlockers = blockers.length > 0
+  return {
+    claimBoundary:
+      'cutoverDelta is an operator action map from saved checks; it does not mutate DNS, deploy services, validate assurance claims, or prove production launch.',
+    state:
+      hasBlockers || liveStatus === 'fail'
+        ? 'blocked-live-cutover'
+        : liveStatus === 'pass'
+          ? 'ready-for-production-evidence-validation'
+          : 'awaiting-live-verifier-output',
+    lanes,
+    evidenceValidation: {
+      state:
+        hasBlockers || liveStatus === 'fail'
+          ? 'waiting-for-live-checks'
+          : liveStatus === 'pass'
+            ? 'run-validate-production-evidence'
+            : 'waiting-for-saved-live-output',
+      requiredAction:
+        hasBlockers || liveStatus === 'fail'
+          ? 'Resolve live blockers, rerun verify:production-live, then validate completed production evidence.'
+          : liveStatus === 'pass'
+            ? 'Attach the passing verifier JSON and run validate:production-evidence before any production claim.'
+            : 'Run verify:production-live after credentialed deploy and save the JSON output.',
+    },
+    safeToClaimProduction: false,
+  }
+}
+
 function buildPlan({ liveOutput, blockerReport, options }) {
   if (liveOutput && liveOutput.artifactKind !== 'production-live-verification') {
     throw new Error('live output artifactKind must be production-live-verification')
@@ -196,6 +413,12 @@ function buildPlan({ liveOutput, blockerReport, options }) {
       : liveStatus === 'pass'
         ? 'ready-for-evidence-validation'
         : 'operator-preflight'
+  const blockers = productionLiveBlockers.map((id) => normalizeBlocker(id, liveOutput, blockerReport))
+  const liveCheckSummary = buildLiveCheckSummary({
+    liveOutput,
+    fallbackFailedCheckIds: failedCheckIds,
+  })
+  const cutoverDelta = buildCutoverDelta({ liveOutput, blockers, liveCheckSummary })
 
   return {
     schemaVersion: 1,
@@ -212,6 +435,8 @@ function buildPlan({ liveOutput, blockerReport, options }) {
     },
     requiredGitHubSecrets: REQUIRED_GITHUB_SECRETS,
     requiredGitHubVariables: REQUIRED_GITHUB_VARIABLES,
+    liveCheckSummary,
+    cutoverDelta,
     dnsCutover: {
       claimBoundary:
         'DNS records are required operator actions, not proof until verify:production-live passes against the live origins.',
@@ -230,7 +455,7 @@ function buildPlan({ liveOutput, blockerReport, options }) {
     ],
     productionLiveBlockers,
     failedCheckIds,
-    blockers: productionLiveBlockers.map((id) => normalizeBlocker(id, liveOutput, blockerReport)),
+    blockers,
     blockedUntil:
       status === 'blocked'
         ? blockerReport?.blockedUntil || liveOutput?.blockedUntil || BLOCKED_UNTIL
@@ -246,6 +471,9 @@ function buildPlan({ liveOutput, blockerReport, options }) {
         verifyProductionLiveOutput: '<verify-production-live.json artifact or hash>',
         productionBlockerReport: '<production-blocker-report.json artifact or hash>',
         productionCutoverPlan: '<production-cutover-plan.json artifact or hash>',
+        productionCutoverLiveCheckSummary:
+          '<production-cutover-plan.liveCheckSummary JSON pointer or hash>',
+        productionCutoverDelta: '<production-cutover-plan.cutoverDelta JSON pointer or hash>',
         validatedProductionEvidence: '<validate-production-evidence JSON artifact or hash>',
       },
     },

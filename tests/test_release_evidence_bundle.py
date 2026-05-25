@@ -192,6 +192,8 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_cutover["proofCommand"] == "pnpm -F acgi-ai run test:production-cutover-plan"
     assert "build:production-cutover-plan" in production_cutover["operatorCommand"]
     assert "dnsCutover" in production_cutover["outputFields"]
+    assert "liveCheckSummary" in production_cutover["outputFields"]
+    assert "cutoverDelta" in production_cutover["outputFields"]
     assert "copyIntoProductionEvidence" in production_cutover["outputFields"]
     assert (
         production_cutover["latestPlanSnapshot"]["path"]
@@ -583,6 +585,27 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
                     "live-storybook-dns",
                 ],
                 "failedCheckIds": ["console-dns-live"],
+                "liveCheckSummary": {
+                    "counts": {"pass": 2, "fail": 1, "pending": 0, "total": 3},
+                    "passedCheckIds": ["marketing-dns-live", "marketing-https-live"],
+                    "failedCheckIds": ["console-dns-live"],
+                },
+                "cutoverDelta": {
+                    "state": "blocked-live-cutover",
+                    "safeToClaimProduction": False,
+                    "lanes": [
+                        {
+                            "lane": "marketing",
+                            "state": "already-live",
+                            "blockerIds": [],
+                        },
+                        {
+                            "lane": "console",
+                            "state": "dns-or-service-blocked",
+                            "blockerIds": ["live-console-dns"],
+                        },
+                    ],
+                },
                 "blockedUntil": "Fix DNS",
                 "claimBoundary": "source cutover boundary",
             }
@@ -730,6 +753,18 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
         "live-console-dns",
         "live-console-healthz",
         "live-storybook-dns",
+    ]
+    assert cutover["liveCheckSummary"]["counts"]["pass"] == 2
+    assert cutover["liveCheckSummary"]["failedCheckIds"] == ["console-dns-live"]
+    assert cutover["cutoverDelta"]["state"] == "blocked-live-cutover"
+    assert cutover["cutoverDelta"]["safeToClaimProduction"] is False
+    assert cutover["cutoverDelta"]["laneStates"] == [
+        {"lane": "marketing", "state": "already-live", "blockerIds": []},
+        {
+            "lane": "console",
+            "state": "dns-or-service-blocked",
+            "blockerIds": ["live-console-dns"],
+        },
     ]
     assert "not live production proof" in cutover["claimBoundary"]
     assert draft["present"] is True

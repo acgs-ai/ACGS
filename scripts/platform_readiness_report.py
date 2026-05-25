@@ -834,6 +834,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "dnsCutover",
             "requiredGitHubSecrets",
             "productionLiveBlockers",
+            "liveCheckSummary",
+            "cutoverDelta",
             "copyIntoProductionEvidence",
             "not live production proof",
             "does not deploy",
@@ -857,8 +859,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and production_cutover_plan_scripts_ok,
             (
                 "build:production-cutover-plan packages required secrets, DNS cutover "
-                "records, live blockers, and copyIntoProductionEvidence fields while "
-                "preserving the not live production proof boundary"
+                "records, live blockers, liveCheckSummary, cutoverDelta, and "
+                "copyIntoProductionEvidence fields while preserving the not live "
+                "production proof boundary"
                 if production_cutover_plan_files_ok
                 and production_cutover_plan_ok
                 and production_cutover_plan_scripts_ok

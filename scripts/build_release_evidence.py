@@ -292,6 +292,43 @@ def production_blocker_report_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
     return snapshot
 
 
+def _compact_live_check_summary(data: dict[str, Any]) -> dict[str, Any]:
+    summary = data.get("liveCheckSummary")
+    if not isinstance(summary, dict):
+        return {"counts": None, "passedCheckIds": [], "failedCheckIds": []}
+
+    passed_check_ids = summary.get("passedCheckIds")
+    failed_check_ids = summary.get("failedCheckIds")
+    return {
+        "counts": summary.get("counts") if isinstance(summary.get("counts"), dict) else None,
+        "passedCheckIds": passed_check_ids if isinstance(passed_check_ids, list) else [],
+        "failedCheckIds": failed_check_ids if isinstance(failed_check_ids, list) else [],
+    }
+
+
+def _compact_cutover_delta(data: dict[str, Any]) -> dict[str, Any]:
+    delta = data.get("cutoverDelta")
+    if not isinstance(delta, dict):
+        return {"state": None, "safeToClaimProduction": None, "laneStates": []}
+
+    lanes = delta.get("lanes")
+    return {
+        "state": delta.get("state"),
+        "safeToClaimProduction": delta.get("safeToClaimProduction"),
+        "laneStates": [
+            {
+                "lane": lane.get("lane"),
+                "state": lane.get("state"),
+                "blockerIds": lane.get("blockerIds", []),
+            }
+            for lane in lanes
+            if isinstance(lane, dict)
+        ]
+        if isinstance(lanes, list)
+        else [],
+    }
+
+
 def production_cutover_plan_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Return a compact optional snapshot of a saved cutover-plan artifact."""
 
@@ -319,6 +356,8 @@ def production_cutover_plan_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, A
             "failedCheckIds": data.get("failedCheckIds")
             if isinstance(data.get("failedCheckIds"), list)
             else [],
+            "liveCheckSummary": _compact_live_check_summary(data),
+            "cutoverDelta": _compact_cutover_delta(data),
             "blockedUntil": data.get("blockedUntil"),
             "sourceClaimBoundary": data.get("claimBoundary"),
         }
@@ -861,6 +900,8 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "requiredGitHubSecrets",
                     "dnsCutover",
                     "productionLiveBlockers",
+                    "liveCheckSummary",
+                    "cutoverDelta",
                     "copyIntoProductionEvidence",
                 ],
                 "claimBoundary": (
@@ -1463,7 +1504,8 @@ live production proof.
 - `acgi-ai/scripts/build-production-cutover-plan.mjs` combines saved live
   verifier and blocker-report JSON into a local `production-cutover-plan`
   listing required GitHub secrets, DNS cutover records, remaining
-  `productionLiveBlockers`, and `copyIntoProductionEvidence` handoff fields.
+  `productionLiveBlockers`, `liveCheckSummary`, `cutoverDelta`, and
+  `copyIntoProductionEvidence` handoff fields.
   `pnpm -F acgi-ai run test:production-cutover-plan` verifies this behavior;
   the builder does not deploy, mutate DNS, fetch live origins, or create live
   production proof.

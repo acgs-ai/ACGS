@@ -510,9 +510,10 @@ production proof.
 blocker report, operators can run
 `pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>`
 to package required GitHub secrets, DNS cutover records, remaining
-`productionLiveBlockers`, and `copyIntoProductionEvidence` handoff fields. The
-builder performs local file I/O only; it does not deploy, mutate DNS, fetch live
-origins, or create live production proof.
+`productionLiveBlockers`, `liveCheckSummary`, `cutoverDelta`, and
+`copyIntoProductionEvidence` handoff fields. The builder performs local file I/O
+only; it does not deploy, mutate DNS, fetch live origins, or create live
+production proof.
 
 `pnpm run test:production-evidence-validator` verifies the local validator for a
 completed operator manifest. After filling the real production evidence JSON and
@@ -1025,7 +1026,7 @@ hash-anchored, operator-readable.
 | 2026-05-25 | Production live verifier is locally gated but not auto-run | `pnpm run test:production-live-verifier` guards the `verify:production-live` DNS/HTTPS/healthz/header/Storybook checker, emits `blockedUntil`/`blockers`, and keeps it out of `test:all` as a live network proof command. |
 | 2026-05-25 | Production authority has a local proof packet | `pnpm run test:production-authority-packet` guards `production-authority.example.json`, keeping deploy-owner/DNS/auth/claim approvals as `pending-external:deploy-owner-approval` style refs so local readiness is not confused with authority to deploy or claim production launch. |
 | 2026-05-25 | Live verifier blockers have a local handoff report | `pnpm run test:production-blocker-report` guards `build:production-blocker-report`, which turns saved `verify:production-live` JSON into a `production-blocker-report` with `copyIntoProductionEvidence` fields while preserving the not live production proof boundary. |
-| 2026-05-25 | Production cutover plan has a local builder | `pnpm run test:production-cutover-plan` guards `build:production-cutover-plan`, which turns saved live verifier and blocker-report JSON into a `production-cutover-plan` with required GitHub secrets, DNS cutover records, `productionLiveBlockers`, and `copyIntoProductionEvidence` while preserving the not live production proof boundary. |
+| 2026-05-25 | Production cutover plan has a local builder | `pnpm run test:production-cutover-plan` guards `build:production-cutover-plan`, which turns saved live verifier and blocker-report JSON into a `production-cutover-plan` with required GitHub secrets, DNS cutover records, `productionLiveBlockers`, `liveCheckSummary`, `cutoverDelta`, and `copyIntoProductionEvidence` while preserving the not live production proof boundary. |
 | 2026-05-25 | Completed production evidence has a local validator | `pnpm run test:production-evidence-validator` guards `validate:production-evidence`, the completed-manifest validator for `productionLiveStatus`, `productionLiveBlockers`, `productionEvidenceValidationCommand`, `productionEvidenceValidationOutputRef`, and `validatedProductionEvidence` consistency against the attached live verifier JSON, including explicit `pending-external:` refs for deployment-blocked Cloud Run/Vercel/GitHub run URLs and verified legal, pentest, manual WCAG/screen-reader, and browser assurance details before `--require-pass`. |
 | 2026-05-25 | Deployment-blocked production evidence has a local draft builder | `pnpm run test:production-evidence-draft` guards `build:production-evidence-draft`, which turns saved live verifier, `production-blocker-report`, and `production-cutover-plan` JSON into a validator-ready `production-evidence.deployment-blocked.json` draft while preserving the not live production proof boundary. |
 | 2026-05-25 | Storybook runtime dependency has a local approval plan | `pnpm run test:storybook-runtime-plan` guards `storybook-runtime.plan.json`, keeping `@storybook/react-vite`, `npx storybook@latest init`, lockfile updates, and shim replacement behind `pending-external:dependency-owner-approval`; the plan is not official Storybook runtime proof, not hosted Storybook proof, and not production deployment proof. |
