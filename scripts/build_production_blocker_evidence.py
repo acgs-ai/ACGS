@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,8 +37,7 @@ OUTPUTS = {
     "cutoverPlan": EVIDENCE_DIR / "production-cutover-plan.json",
     "hostedStorybookHandoff": EVIDENCE_DIR / "hosted-storybook-handoff.json",
     "evidenceDraft": EVIDENCE_DIR / "production-evidence.deployment-blocked.json",
-    "evidenceValidation": EVIDENCE_DIR
-    / "production-evidence-validation.deployment-blocked.json",
+    "evidenceValidation": EVIDENCE_DIR / "production-evidence-validation.deployment-blocked.json",
     "releaseManifest": EVIDENCE_DIR / "manifest.json",
     "preflight": EVIDENCE_DIR / "production-launch-preflight.json",
 }
@@ -302,11 +300,74 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
         raise RuntimeError(f"Invalid {label} JSON at {path}: {exc}") from exc
 
 
+def _extract_single_json_artifact(
+    text: str,
+    *,
+    label: str,
+    artifact_kind: str,
+) -> dict[str, Any]:
+    """Extract exactly one artifact JSON object from a wrapper-captured transcript.
+
+    Operators should prefer verifier ``--out`` files because they are clean JSON,
+    but package-manager wrappers can print engine warnings before/after stdout
+    when an operator captures ``pnpm ... --json`` output directly. Accept only a
+    single object with the expected ``artifactKind`` so noisy transcripts can be
+    canonicalized without treating arbitrary logs as valid proof.
+    """
+    decoder = json.JSONDecoder()
+    matches: list[dict[str, Any]] = []
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("artifactKind") == artifact_kind:
+            matches.append(parsed)
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Invalid {label} JSON transcript: found {len(matches)} "
+            f"{artifact_kind} artifacts; attach one verifier output"
+        )
+    raise RuntimeError(f"Invalid {label} JSON transcript: no {artifact_kind} artifact found")
+
+
+def _read_json_artifact(path: Path, label: str, artifact_kind: str) -> dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Missing {label}: {path}") from exc
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return _extract_single_json_artifact(
+            text,
+            label=label,
+            artifact_kind=artifact_kind,
+        )
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Invalid {label} JSON at {path}: expected object")
+    return payload
+
+
 def _copy_live_output(source: Path, destination: Path) -> int:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    payload = _read_json(source, "supplied live verifier output")
+    payload = _read_json_artifact(
+        source,
+        "supplied live verifier output",
+        "production-live-verification",
+    )
     if payload.get("artifactKind") != "production-live-verification":
-        print("supplied live output artifactKind must be production-live-verification", file=sys.stderr)
+        print(
+            "supplied live output artifactKind must be production-live-verification",
+            file=sys.stderr,
+        )
         return 2
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Copied live output {source} -> {destination}")
@@ -387,15 +448,18 @@ def render_human(payload: dict[str, Any]) -> str:
     blockers = ", ".join(payload.get("productionLiveBlockers", [])) or "none"
     outputs = payload.get("outputs", {})
     output_lines = "\n".join(
-        f"- {name}: {meta['path']} ({'present' if meta.get('present') else 'missing'}, {meta.get('status')})"
+        (
+            f"- {name}: {meta['path']} "
+            f"({'present' if meta.get('present') else 'missing'}, {meta.get('status')})"
+        )
         for name, meta in outputs.items()
     )
-    return f"""Production blocker evidence run: {payload['status']}
-{payload['claimBoundary']}
+    return f"""Production blocker evidence run: {payload["status"]}
+{payload["claimBoundary"]}
 
-Production live status: {payload.get('productionLiveStatus')}
+Production live status: {payload.get("productionLiveStatus")}
 Production live blockers: {blockers}
-Preflight status: {payload.get('preflightStatus')}
+Preflight status: {payload.get("preflightStatus")}
 
 Outputs:
 {output_lines}
@@ -474,4 +538,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

@@ -134,15 +134,19 @@ pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evide
 The base live verifier command is
 `pnpm -F acgi-ai run verify:production-live -- --json`; use the `--out` form
 above when saving the evidence artifact so package-manager warnings cannot
-contaminate the JSON file. To refresh the complete deployment-blocked handoff
-packet in one local operator step, run:
+contaminate the JSON file. If an operator already captured the pnpm stdout
+transcript, `uv run python scripts/build_production_blocker_evidence.py --live-output <file>` canonicalizes
+it only when the file contains exactly one `production-live-verification` JSON
+object and rejects ambiguous captures. To refresh the complete deployment-blocked
+handoff packet in one local operator step, run:
 
 ```bash
 make production-blocker-evidence
 ```
 
 That wrapper builds the buyer-evidence gallery, runs or copies the live verifier
-JSON, packages blocker/cutover/hosted-Storybook handoffs, writes the
+JSON, canonicalizes a wrapper-captured verifier transcript when unambiguous,
+packages blocker/cutover/hosted-Storybook handoffs, writes the
 validator-ready deployment-blocked evidence draft and validator output when live
 blockers remain, refreshes release evidence, and saves
 `dist-release-evidence/production-launch-preflight.json`. It may perform live

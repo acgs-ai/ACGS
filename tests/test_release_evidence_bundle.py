@@ -222,6 +222,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         "dist-release-evidence/production-launch-preflight.json"
         in blocker_runbook["outputArtifacts"]
     )
+    live_intake = blocker_runbook["suppliedLiveOutputIntake"]
+    assert live_intake["canonicalizesTo"] == (
+        "dist-release-evidence/production-live-verification.json"
+    )
+    assert "wrapper-captured transcript" in live_intake["accepts"][1]
+    assert "zero or multiple" in live_intake["rejects"]
     assert "not live production proof" in blocker_runbook["claimBoundary"]
     assert "does not deploy" in blocker_runbook["claimBoundary"]
     assert fixture_fallback["module"] == "acgi-ai/src/api/hooks.ts"
@@ -344,6 +350,8 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "build_production_blocker_evidence.py" in readme
     assert "production-launch-preflight.json" in readme
     assert "--dry-run --json" in readme
+    assert "wrapper-captured live-verifier transcript" in readme
+    assert "rejects ambiguous captured output" in readme
     assert "--require-ready" in readme
     assert "test:production-evidence-draft" in readme
     assert "build-hosted-storybook-handoff.mjs" in readme

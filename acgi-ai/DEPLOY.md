@@ -483,7 +483,10 @@ credentialed deploy, operators run
 `pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json`
 to save uncontaminated DNS, HTTPS, `/healthz`, security-header, and
 `storybook.acgs.ai` manifest evidence even when the command exits non-zero for
-remaining blockers. The hosted Storybook proof includes
+remaining blockers. If an operator captured pnpm stdout instead of using
+`--out`, the blocker-evidence wrapper canonicalizes the file only when it
+contains exactly one `production-live-verification` object and rejects ambiguous
+captures. The hosted Storybook proof includes
 `storybook-manifest-live`, which fetches `/manifest.json` and requires the
 expected buyer-evidence story ids, `publishTarget`, and conservative claim
 boundary so a bare 200 response cannot satisfy buyer-evidence proof. That live
@@ -562,9 +565,10 @@ proof.
 `scripts/build_production_blocker_evidence.py`, the one-command operator wrapper
 for refreshing a deployment-blocked production evidence packet. It builds the
 buyer-evidence gallery with `storybook.acgs.ai` publication metadata, runs or
-copies `verify:production-live` JSON, builds the blocker report, cutover plan,
-hosted Storybook handoff, deployment-blocked production-evidence draft and
-validator output when live blockers remain, refreshes `make release-evidence`,
+copies `verify:production-live` JSON, canonicalizes unambiguous wrapper-captured
+verifier transcripts, builds the blocker report, cutover plan, hosted Storybook
+handoff, deployment-blocked production-evidence draft and validator output when
+live blockers remain, refreshes `make release-evidence`,
 and writes `dist-release-evidence/production-launch-preflight.json`. Its safe
 local proof command is
 `uv run python scripts/build_production_blocker_evidence.py --dry-run --json`;

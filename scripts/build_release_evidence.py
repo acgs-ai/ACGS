@@ -791,6 +791,22 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "dist-release-evidence/production-evidence-validation.deployment-blocked.json",
                     "dist-release-evidence/production-launch-preflight.json",
                 ],
+                "suppliedLiveOutputIntake": {
+                    "canonicalizesTo": "dist-release-evidence/production-live-verification.json",
+                    "accepts": [
+                        "clean production-live-verification JSON",
+                        "wrapper-captured transcript containing exactly one "
+                        "production-live-verification JSON object",
+                    ],
+                    "rejects": (
+                        "transcripts with zero or multiple "
+                        "production-live-verification JSON objects"
+                    ),
+                    "claimBoundary": (
+                        "canonicalization removes package-manager wrapper noise only; "
+                        "it does not make a failing verifier pass or create live proof"
+                    ),
+                },
                 "claimBoundary": (
                     "operator convenience wrapper only; may run the live verifier, "
                     "but does not deploy, mutate DNS, approve release authority, "
@@ -1139,13 +1155,17 @@ live production proof.
 - `scripts/build_production_blocker_evidence.py` is the operator wrapper for
   refreshing a deployment-blocked evidence packet. `make production-blocker-evidence`
   builds the buyer-evidence gallery, runs or copies `verify:production-live`
-  JSON, packages blocker/cutover/hosted-Storybook handoffs, writes the
+  JSON, canonicalizes a wrapper-captured live-verifier transcript when it
+  contains exactly one `production-live-verification` object, packages
+  blocker/cutover/hosted-Storybook handoffs, writes the
   deployment-blocked production-evidence draft and validator output when live
   blockers remain, refreshes release evidence, and saves
   `production-launch-preflight.json`. Its dry-run proof command is
   `{blocker_evidence_runbook["proofCommand"]}`; the wrapper may perform network
   live checks but does not deploy, mutate DNS, approve release authority, install
-  dependencies, create hosted Storybook proof, or create live production proof.
+  dependencies, create hosted Storybook proof, or create live production proof;
+  transcript canonicalization only removes package-manager wrapper noise and
+  rejects ambiguous captured output.
 - `acgi-ai/production-authority.example.json` is the template-only authority
   packet for deploy-owner, DNS-owner, auth-owner, claim/legal-owner, and rollback
   approvals. `pnpm -F acgi-ai run test:production-authority-packet` verifies it

@@ -100,3 +100,73 @@ def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_ver
     assert copy_command["cmd"][-1].endswith(
         "dist-release-evidence/production-live-verification.json"
     )
+
+
+def test_internal_copy_live_output_canonicalizes_wrapper_captured_json(tmp_path: Path):
+    source = tmp_path / "pnpm-captured-live-output.txt"
+    destination = tmp_path / "production-live-verification.json"
+    source.write_text(
+        ". | WARN Unsupported engine: wanted node>=24\n"
+        "{\n"
+        '  "schemaVersion": 1,\n'
+        '  "artifactKind": "production-live-verification",\n'
+        '  "generatedAt": "2026-05-25T16:45:50.037Z",\n'
+        '  "status": "fail",\n'
+        '  "blockers": [{"blockerId": "live-console-dns"}],\n'
+        '  "checks": []\n'
+        "}\n"
+        "ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL Exit status 1\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--internal-copy-live-output",
+            str(source),
+            str(destination),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    copied = json.loads(destination.read_text(encoding="utf-8"))
+    assert copied["artifactKind"] == "production-live-verification"
+    assert copied["status"] == "fail"
+    assert copied["blockers"] == [{"blockerId": "live-console-dns"}]
+    assert destination.read_text(encoding="utf-8").lstrip().startswith("{")
+    assert "WARN Unsupported engine" not in destination.read_text(encoding="utf-8")
+
+
+def test_internal_copy_live_output_rejects_ambiguous_wrapper_captured_json(tmp_path: Path):
+    first = {
+        "schemaVersion": 1,
+        "artifactKind": "production-live-verification",
+        "status": "fail",
+    }
+    source = tmp_path / "ambiguous-live-output.txt"
+    destination = tmp_path / "production-live-verification.json"
+    source.write_text(
+        f"prefix {json.dumps(first)} middle {json.dumps(first)} suffix",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--internal-copy-live-output",
+            str(source),
+            str(destination),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "found 2 production-live-verification artifacts" in result.stderr
+    assert not destination.exists()

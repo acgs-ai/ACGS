@@ -1019,6 +1019,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "FORBIDDEN_MUTATING_INVOCATIONS",
             "copy-supplied-live-output",
             "continueOnNonzeroWithOutput",
+            "wrapper-captured transcript",
             "production-live-verification.json",
             "production-blocker-report.json",
             "production-cutover-plan.json",
@@ -1043,8 +1044,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "make production-blocker-evidence orchestrates live verifier JSON, "
                 "blocker report, cutover plan, hosted Storybook handoff, deployment-blocked "
                 "evidence draft, validator output, release evidence, and preflight JSON; "
-                "unit tests lock the copy-live-output path and non-deploying dry-run plan "
-                "without claiming live production proof"
+                "unit tests lock copy-live-output transcript canonicalization and the "
+                "non-deploying dry-run plan without claiming live production proof"
                 if production_blocker_evidence_files_ok and production_blocker_evidence_ok
                 else (
                     f"missing_files={production_blocker_evidence_missing}, "
