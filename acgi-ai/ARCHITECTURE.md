@@ -115,9 +115,12 @@ storybook:build` is currently a compatibility alias to the local gallery
 builder, not an official hosted Storybook runtime. `pnpm
 test:storybook-publication` verifies the gated `.github/workflows/storybook.yml`
 publication scaffold for `storybook.acgs.ai`, including CNAME output and Pages
-artifact/deploy wiring guarded by `STORYBOOK_PAGES_ENABLED`. Official Storybook
-runtime, live DNS/Pages proof, browser screenshots, and axe/visual-diff evidence
-remain external work before stronger buyer-evidence claims.
+artifact/deploy wiring guarded by `STORYBOOK_PAGES_ENABLED`. The generated
+artifact also carries `.nojekyll` and manifest-level `hostedProofRequirements`
+so GitHub Pages publication shape is reviewable before live DNS exists.
+Official Storybook runtime, live DNS/Pages proof, browser screenshots, and
+axe/visual-diff evidence remain external work before stronger buyer-evidence
+claims.
 
 ## E2E HTTP shell smoke
 

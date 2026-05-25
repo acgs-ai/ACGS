@@ -259,6 +259,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert publication["target"] == "https://storybook.acgs.ai"
     assert publication["proofCommand"] == "pnpm -F acgi-ai run test:storybook-publication"
     assert publication["deploymentGate"] == "vars.STORYBOOK_PAGES_ENABLED == 'true'"
+    assert ".nojekyll" in publication["requiredPublicationFiles"]
+    assert "CNAME" in publication["requiredPublicationFiles"]
+    assert any(
+        "storybook-manifest-live" in requirement
+        for requirement in publication["hostedProofRequirements"]
+    )
     assert hosted_storybook["script"] == "acgi-ai/scripts/build-hosted-storybook-handoff.mjs"
     assert hosted_storybook["proofCommand"] == "pnpm -F acgi-ai run test:hosted-storybook-handoff"
     assert "build:hosted-storybook-handoff" in hosted_storybook["operatorCommand"]
@@ -286,6 +292,11 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "not hosted Storybook proof" in hosted_storybook_proof["claimBoundary"]
     assert buyer["expectedPath"] == "acgi-ai/dist-buyer-evidence/"
     assert buyer["ciArtifactName"] == "buyer-evidence-gallery"
+    assert ".nojekyll" in buyer["requiredPublicationFiles"]
+    assert "CNAME" in buyer["requiredPublicationFiles"]
+    assert any(
+        "storybook-manifest-live" in requirement for requirement in buyer["hostedProofRequirements"]
+    )
 
 
 def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
@@ -331,6 +342,7 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "test:hosted-storybook-handoff" in readme
     assert "hosted-storybook-proof.example.json" in readme
     assert "test:hosted-storybook-proof-template" in readme
+    assert ".nojekyll" in readme
     assert "pending-external:storybook-pages-proof" in readme
     assert "productionLiveBlockers" in readme
     assert "copyIntoProductionEvidence" in readme

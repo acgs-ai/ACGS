@@ -890,6 +890,21 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "target": "https://storybook.acgs.ai",
                 "proofCommand": "pnpm -F acgi-ai run test:storybook-publication",
                 "deploymentGate": "vars.STORYBOOK_PAGES_ENABLED == 'true'",
+                "requiredPublicationFiles": [
+                    "index.html",
+                    "manifest.json",
+                    ".nojekyll",
+                    "CNAME",
+                ],
+                "hostedProofRequirements": [
+                    "successful buyer-evidence-storybook workflow run",
+                    "GitHub Pages deploy URL for https://storybook.acgs.ai",
+                    "DNS CNAME/provider evidence for storybook.acgs.ai",
+                    (
+                        "passing storybook-dns-live, storybook-https-live, "
+                        "and storybook-manifest-live checks"
+                    ),
+                ],
             },
             "hostedStorybookHandoff": {
                 "script": "acgi-ai/scripts/build-hosted-storybook-handoff.mjs",
@@ -947,6 +962,21 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "buyerEvidenceGallery": {
                 "expectedPath": "acgi-ai/dist-buyer-evidence/",
                 "ciArtifactName": "buyer-evidence-gallery",
+                "requiredPublicationFiles": [
+                    "index.html",
+                    "manifest.json",
+                    ".nojekyll",
+                    "CNAME",
+                ],
+                "hostedProofRequirements": [
+                    "successful buyer-evidence-storybook workflow run",
+                    "GitHub Pages deploy URL for https://storybook.acgs.ai",
+                    "DNS CNAME/provider evidence for storybook.acgs.ai",
+                    (
+                        "passing storybook-dns-live, storybook-https-live, "
+                        "and storybook-manifest-live checks"
+                    ),
+                ],
                 "manifestPresent": buyer_manifest is not None,
                 "manifest": buyer_manifest,
             },
@@ -1189,7 +1219,9 @@ live production proof.
   escalate decisions so hook hosts can block the side effect before it runs.
   This is a local hook-gate contract, not live third-party deployment proof.
 - `.github/workflows/storybook.yml` is the gated buyer-evidence Storybook
-  publication scaffold for `storybook.acgs.ai`.
+  publication scaffold for `storybook.acgs.ai`; its artifact contract includes
+  `index.html`, `manifest.json`, `.nojekyll`, and `CNAME` plus hosted proof
+  requirements for `storybook-manifest-live`.
 - `buyer-evidence-gallery` is the CI artifact name for the local buyer proof gallery.
 - This bundle is a deploy handoff artifact, not live production proof.
 """

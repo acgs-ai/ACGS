@@ -65,7 +65,15 @@ check(
   'package.json test:all must not run the input-dependent hosted Storybook handoff builder.',
 )
 
-for (const needle of ['ACGI_EVIDENCE_CNAME', 'CNAME', 'publishTarget', 'storybook.acgs.ai']) {
+for (const needle of [
+  'ACGI_EVIDENCE_CNAME',
+  'CNAME',
+  '.nojekyll',
+  'github-pages-custom-domain',
+  'hostedProofRequirements',
+  'publishTarget',
+  'storybook.acgs.ai',
+]) {
   mustContain(buildScript, needle, 'scripts/build-buyer-evidence.mjs')
 }
 
@@ -119,8 +127,10 @@ try {
   })
 
   const cnamePath = resolve(outDir, 'CNAME')
+  const nojekyllPath = resolve(outDir, '.nojekyll')
   const manifestPath = resolve(outDir, 'manifest.json')
   check(existsSync(cnamePath), 'published buyer evidence artifact must include a CNAME file.')
+  check(existsSync(nojekyllPath), 'published buyer evidence artifact must include .nojekyll.')
   if (existsSync(cnamePath)) {
     check(
       readFileSync(cnamePath, 'utf8').trim() === 'storybook.acgs.ai',
@@ -132,6 +142,25 @@ try {
     check(
       manifest.publishTarget === 'https://storybook.acgs.ai',
       'manifest publishTarget must identify the hosted buyer-evidence target.',
+    )
+    check(
+      manifest.publication?.mode === 'github-pages-custom-domain',
+      'manifest publication mode must identify GitHub Pages custom-domain publishing.',
+    )
+    check(
+      manifest.publication?.customDomain === 'storybook.acgs.ai',
+      'manifest publication customDomain must match storybook.acgs.ai.',
+    )
+    check(
+      manifest.publication?.requiredFiles?.includes('CNAME') &&
+        manifest.publication?.requiredFiles?.includes('.nojekyll'),
+      'manifest publication requiredFiles must include CNAME and .nojekyll.',
+    )
+    check(
+      JSON.stringify(manifest.publication?.hostedProofRequirements ?? []).includes(
+        'storybook-manifest-live',
+      ),
+      'manifest publication must list the Storybook live manifest proof requirement.',
     )
     check(
       manifest.claimBoundary.includes('not production deployment proof'),

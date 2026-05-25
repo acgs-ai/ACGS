@@ -8,6 +8,8 @@ const publishHost = process.env.ACGI_EVIDENCE_CNAME?.trim()
 const publishTarget = publishHost
   ? `https://${publishHost}`
   : 'storybook.acgs.ai remains pending external deployment work'
+const publicationFiles = ['index.html', 'manifest.json', '.nojekyll']
+if (publishHost) publicationFiles.push('CNAME')
 
 const evidenceStories = [
   {
@@ -113,6 +115,19 @@ const manifest = {
   claimBoundary:
     'Local buyer-evidence artifact only; not hosted Storybook, not production deployment proof.',
   publishTarget,
+  publication: {
+    mode: publishHost ? 'github-pages-custom-domain' : 'local-artifact-only',
+    customDomain: publishHost || null,
+    requiredFiles: publicationFiles,
+    hostedProofRequirements: [
+      'successful buyer-evidence-storybook workflow run',
+      'GitHub Pages deploy URL for https://storybook.acgs.ai',
+      'DNS CNAME/provider evidence for storybook.acgs.ai',
+      'passing storybook-dns-live, storybook-https-live, and storybook-manifest-live checks',
+    ],
+    claimBoundary:
+      'Publication files are local build artifacts only; not hosted Storybook proof until the Pages deploy, DNS evidence, hosted manifest, and verify:production-live pass are attached.',
+  },
   stories: evidenceStories.map(({ id, title, route, localGates, sourceFiles }) => ({
     id,
     title,
@@ -225,6 +240,7 @@ rmSync(outDir, { force: true, recursive: true })
 mkdirSync(outDir, { recursive: true })
 writeFileSync(resolve(outDir, 'index.html'), html)
 writeFileSync(resolve(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+writeFileSync(resolve(outDir, '.nojekyll'), '')
 if (publishHost) {
   writeFileSync(resolve(outDir, 'CNAME'), `${publishHost}\n`)
 }

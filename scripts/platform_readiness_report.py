@@ -1566,7 +1566,13 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 readme,
             ]
         ),
-        ["local buyer-evidence", "evidence:build", "test:buyer-evidence"],
+        [
+            "local buyer-evidence",
+            "evidence:build",
+            "test:buyer-evidence",
+            ".nojekyll",
+            "hostedProofRequirements",
+        ],
     )
     items.append(
         _item(
@@ -1698,6 +1704,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "name: buyer-evidence-storybook",
             "ACGI_EVIDENCE_CNAME: storybook.acgs.ai",
+            ".nojekyll",
+            "hostedProofRequirements",
             "actions/upload-pages-artifact@v3",
             "actions/deploy-pages@v4",
             "vars.STORYBOOK_PAGES_ENABLED == 'true'",

@@ -56,6 +56,8 @@ for (const needle of [
   'Bus-owned proof source',
   'Claim-safe trust surface',
   'Deploy readiness boundary',
+  '.nojekyll',
+  'hostedProofRequirements',
   'not hosted Storybook',
   'not production deployment proof',
 ]) {
@@ -98,8 +100,10 @@ try {
 
   const htmlPath = resolve(outDir, 'index.html')
   const manifestPath = resolve(outDir, 'manifest.json')
+  const nojekyllPath = resolve(outDir, '.nojekyll')
   check(existsSync(htmlPath), 'evidence build must write index.html.')
   check(existsSync(manifestPath), 'evidence build must write manifest.json.')
+  check(existsSync(nojekyllPath), 'evidence build must write .nojekyll for Pages readiness.')
 
   if (existsSync(htmlPath)) {
     const html = readFileSync(htmlPath, 'utf8')
@@ -133,6 +137,16 @@ try {
     check(
       Array.isArray(manifest.stories) && manifest.stories.length >= 4,
       'manifest must include at least four buyer-evidence stories.',
+    )
+    check(
+      manifest.publication?.requiredFiles?.includes('.nojekyll'),
+      'manifest publication requiredFiles must include .nojekyll.',
+    )
+    check(
+      JSON.stringify(manifest.publication?.hostedProofRequirements ?? []).includes(
+        'storybook-manifest-live',
+      ),
+      'manifest must preserve hosted proof requirements for Storybook manifest verification.',
     )
   }
 } catch (error) {

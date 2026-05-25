@@ -61,7 +61,9 @@ claims. Console CI uploads the same gallery as the `buyer-evidence-gallery`
 artifact before credentialed deploy steps. `storybook:build` is a local
 compatibility alias for this gallery. `test:storybook-publication` verifies the
 gated Pages scaffold that can publish the claim-safe artifact to
-`storybook.acgs.ai` when `STORYBOOK_PAGES_ENABLED` is set, but official
+`storybook.acgs.ai` when `STORYBOOK_PAGES_ENABLED` is set. The artifact includes
+Pages publication files (`CNAME` when a custom domain is supplied and
+`.nojekyll`) plus manifest-level `hostedProofRequirements`, but official
 Storybook runtime and live browser/axe/visual proof remain external.
 
 ## Local development modes
