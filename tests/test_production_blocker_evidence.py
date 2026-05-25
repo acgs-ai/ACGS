@@ -87,6 +87,26 @@ def test_dry_run_plan_excludes_deploy_dns_secret_and_infra_mutations():
                 )
 
 
+def test_dry_run_plan_has_no_duplicate_single_value_options():
+    payload = _dry_run()
+    single_value_options = {
+        "--live-output",
+        "--blocker-report",
+        "--cutover-plan",
+        "--manifest",
+        "--out",
+        "--validation-output-ref",
+    }
+
+    for entry in payload["commands"]:
+        tokens = [str(token) for token in entry["cmd"]]
+        for option in single_value_options:
+            assert tokens.count(option) <= 1, (
+                f"{entry['id']} repeats {option}, making the dry-run command "
+                f"unsafe to copy: {entry['cmd']}"
+            )
+
+
 def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_verifier():
     payload = _dry_run("--live-output", "tmp-live-output.json")
     command_ids = [entry["id"] for entry in payload["commands"]]
@@ -139,6 +159,61 @@ def test_internal_copy_live_output_canonicalizes_wrapper_captured_json(tmp_path:
     assert copied["blockers"] == [{"blockerId": "live-console-dns"}]
     assert destination.read_text(encoding="utf-8").lstrip().startswith("{")
     assert "WARN Unsupported engine" not in destination.read_text(encoding="utf-8")
+
+
+def test_internal_copy_live_output_canonicalizes_pnpm_run_transcript(tmp_path: Path):
+    source = tmp_path / "pnpm-run-captured-live-output.txt"
+    destination = tmp_path / "production-live-verification.json"
+    source.write_text(
+        ". | WARN Unsupported engine: wanted: {\"node\":\">=24\"} "
+        "(current: {\"node\":\"v20.0.0\"})\n"
+        "acgi-ai | WARN Unsupported engine: wanted: {\"node\":\">=24\"}\n"
+        "\n"
+        "> acgi-ai@0.0.0 verify:production-live /repo/acgi-ai\n"
+        "> node scripts/verify-production-live.mjs \"--\" \"--json\"\n"
+        "\n"
+        "{\n"
+        '  "schemaVersion": 1,\n'
+        '  "artifactKind": "production-live-verification",\n'
+        '  "generatedAt": "2026-05-25T18:22:10.100Z",\n'
+        '  "status": "fail",\n'
+        '  "targetUrls": {\n'
+        '    "marketing": "https://acgs.ai",\n'
+        '    "console": "https://console.acgs.ai",\n'
+        '    "storybook": "https://storybook.acgs.ai"\n'
+        "  },\n"
+        '  "blockers": [\n'
+        '    {"blockerId": "live-console-dns"},\n'
+        '    {"blockerId": "live-storybook-dns"}\n'
+        "  ],\n"
+        '  "checks": []\n'
+        "}\n"
+        "ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL acgi-ai@0.0.0 verify:production-live: "
+        "`node scripts/verify-production-live.mjs \"--\" \"--json\"`\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--internal-copy-live-output",
+            str(source),
+            str(destination),
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    copied = json.loads(destination.read_text(encoding="utf-8"))
+    assert copied["targetUrls"]["console"] == "https://console.acgs.ai"
+    assert [blocker["blockerId"] for blocker in copied["blockers"]] == [
+        "live-console-dns",
+        "live-storybook-dns",
+    ]
+    assert "ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL" not in destination.read_text(encoding="utf-8")
 
 
 def test_internal_copy_live_output_rejects_ambiguous_wrapper_captured_json(tmp_path: Path):
