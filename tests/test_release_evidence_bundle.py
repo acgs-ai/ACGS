@@ -395,7 +395,9 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
                 "generatedAt": "2026-05-25T00:00:04Z",
                 "status": "pass",
                 "claimBoundary": "source validation boundary",
-                "manifestPath": "../dist-release-evidence/production-evidence.deployment-blocked.json",
+                "manifestPath": (
+                    "../dist-release-evidence/production-evidence.deployment-blocked.json"
+                ),
                 "liveOutputPath": "../dist-release-evidence/production-live-verification.json",
                 "checks": [
                     {"id": "schema-version", "status": "pass"},
