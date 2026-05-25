@@ -5,6 +5,7 @@ import {
   EVIDENCE_ROWS,
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
+  PLATFORM_REQUIREMENT_LANES,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
   WORKBENCH_STAGES,
@@ -47,6 +48,43 @@ export function Workbench() {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section
+        className="overview-section"
+        id="platform-requirements"
+        aria-labelledby="workbench-requirements-h"
+      >
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-requirements-h">
+            Platform requirements
+          </h2>
+          <span className="c-meta">Framework → control → proof</span>
+        </div>
+
+        <div className="workbench-requirement-grid">
+          {PLATFORM_REQUIREMENT_LANES.map((lane) => (
+            <article className="workbench-requirement" key={lane.pillar}>
+              <div>
+                <span className="workbench-requirement-pillar">{lane.pillar}</span>
+                <span className="c-meta">{lane.source}</span>
+              </div>
+              <h3>{lane.title}</h3>
+              <p>
+                <strong>{lane.question}</strong>
+                <span>{lane.visual}</span>
+              </p>
+              <code>{lane.proof}</code>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(lane.route)}
+              >
+                {lane.cta}
+              </button>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="overview-section" aria-labelledby="workbench-board-h">

@@ -5,6 +5,7 @@ import { navigate } from '../lib/navigate'
 import {
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
+  PLATFORM_REQUIREMENT_LANES,
   RESEARCH_INPUTS,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
@@ -320,6 +321,24 @@ export function Marketing() {
                     </li>
                   ))}
                 </ul>
+                <section
+                  className="m-workbench-requirements"
+                  aria-labelledby="marketing-platform-requirements-h"
+                >
+                  <span className="folio-no" id="marketing-platform-requirements-h">
+                    Platform requirements
+                  </span>
+                  <ol>
+                    {PLATFORM_REQUIREMENT_LANES.map(({ pillar, title, proof, source }) => (
+                      <li key={pillar}>
+                        <strong>{pillar}</strong>
+                        <span>{title}</span>
+                        <code>{proof}</code>
+                        <small>{source}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
                 <section className="m-workbench-guided" aria-labelledby="marketing-guided-path-h">
                   <span className="folio-no" id="marketing-guided-path-h">
                     Guided review path

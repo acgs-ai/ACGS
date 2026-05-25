@@ -54,8 +54,20 @@ export const RESEARCH_INPUTS = [
     cue: 'Govern · Map · Measure · Manage translated into the work queue.',
   },
   {
+    source: 'ISO/IEC 42001',
+    cue: 'AI management-system ownership, objectives, controls, and improvement loops.',
+  },
+  {
+    source: 'EU AI Act',
+    cue: 'Risk, transparency, traceability, human oversight, robustness, and cybersecurity gates.',
+  },
+  {
     source: 'OWASP GenAI Security Project',
     cue: 'Prompt injection, excessive agency, leakage, and overreliance as visible controls.',
+  },
+  {
+    source: 'OpenTelemetry GenAI',
+    cue: 'Common telemetry names for model calls, tool calls, spans, logs, and metrics.',
   },
   {
     source: 'OpenAI Agents SDK',
@@ -68,6 +80,78 @@ export const RESEARCH_INPUTS = [
   {
     source: 'Humanloop evaluators',
     cue: 'Code, AI, and human judgment lanes for offline regression and live monitoring.',
+  },
+  {
+    source: 'WCAG 2.2',
+    cue: 'Text-first, keyboard-reviewable visual work that does not rely on color alone.',
+  },
+] as const
+
+export const PLATFORM_REQUIREMENT_LANES = [
+  {
+    pillar: 'Govern',
+    source: 'NIST AI RMF + ISO/IEC 42001',
+    title: 'Operate the governance loop',
+    question: 'Who owns the next safe action?',
+    visual:
+      'Show owner, risk class, AI objective, control, and reversible next step before tables.',
+    proof: 'govern · map · measure · manage',
+    route: '/console/actions',
+    cta: 'Open queue',
+  },
+  {
+    pillar: 'Regulate',
+    source: 'EU AI Act',
+    title: 'Hold release with context',
+    question: 'Can a reviewer reject for the right reason?',
+    visual:
+      'Keep risk, transparency, traceability, oversight, robustness, and cybersecurity gaps together.',
+    proof: 'risk · oversight · traceability',
+    route: '/console/deliberations',
+    cta: 'Open reviews',
+  },
+  {
+    pillar: 'Secure',
+    source: 'OWASP Agentic AI',
+    title: 'Constrain agent agency',
+    question: 'Which guardrail stopped or scoped the agent?',
+    visual:
+      'Surface prompt-injection, tool-scope, leakage, and overreliance controls beside the trace.',
+    proof: 'guardrail · least agency',
+    route: '/console/bus',
+    cta: 'Inspect trace',
+  },
+  {
+    pillar: 'Observe',
+    source: 'OpenTelemetry GenAI',
+    title: 'Make traces navigable',
+    question: 'What did the model and tools actually do?',
+    visual:
+      'Render spans, model calls, tool calls, logs, metrics, and receipts as a readable path.',
+    proof: 'span · tool · receipt',
+    route: '/console/bus',
+    cta: 'Inspect telemetry',
+  },
+  {
+    pillar: 'Measure',
+    source: 'Evaluators + human labels',
+    title: 'Compare quality before promotion',
+    question: 'Did quality regress or improve?',
+    visual:
+      'Place offline tests, AI judgments, human labels, and policy citations next to the case.',
+    proof: 'eval · label · citation',
+    route: '/console/policies',
+    cta: 'Review policy',
+  },
+  {
+    pillar: 'Use',
+    source: 'WCAG 2.2 + service design',
+    title: 'Keep the first minute obvious',
+    question: 'Can a new operator act without a manual?',
+    visual: 'Use text labels, keyboard-safe targets, claim boundaries, and a plain proof ladder.',
+    proof: 'text · focus · boundary',
+    route: '/console/workbench#guided-review-path',
+    cta: 'Follow guide',
   },
 ] as const
 

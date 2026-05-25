@@ -66,6 +66,7 @@ const evidenceStories = [
     buyerQuestion: 'Can an operator understand the next safe action without reading raw traces?',
     proof: [
       'The console workbench turns queue, trace, evaluation, release, and evidence steps into one visual path.',
+      'The platform requirements rail turns governance, regulatory, agent-security, observability, evaluation, and accessibility research into same-console actions.',
       'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
       'Guided review path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
       'Each stage links back to an existing console route instead of creating hidden side effects.',
