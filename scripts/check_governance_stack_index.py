@@ -58,6 +58,7 @@ INTEGRATION_MAP_REQUIRED_CONCEPTS = (
     "Hosted Storybook buyer evidence",
     "Node 22 warning is not readiness evidence",
     "make production-blocker-evidence",
+    "gove-zone smoke",
 )
 
 INTEGRATION_MAP_FORBIDDEN_STALE_SCOPE = (

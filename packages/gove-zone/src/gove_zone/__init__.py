@@ -63,6 +63,7 @@ from gove_zone.replay import (
     replay_call,
     replay_event,
 )
+from gove_zone.smoke import run_smoke
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 
 __version__ = "0.1.0.dev0"
@@ -113,6 +114,7 @@ __all__ = [
     "record_to_governed_action",
     "replay_call",
     "replay_event",
+    "run_smoke",
     "safe_result_hash",
     "sha256_json",
     "tool_call_from_hook_payload",

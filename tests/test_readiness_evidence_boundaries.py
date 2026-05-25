@@ -62,6 +62,7 @@ def test_integration_readiness_task_map_uses_generated_branch_proof() -> None:
 
     assert "make release-evidence" in readiness
     assert "make production-launch-preflight" in readiness
+    assert "gove-zone smoke" in readiness
     assert "branch or deployment proof" in readiness
     assert "feat/acgs-conductor-adapter-spike" not in readiness
     assert "Scope: current checkout at" not in readiness

@@ -30,6 +30,7 @@ release:
 ```bash
 uv sync --all-extras
 uv run --package gove-zone gove-zone doctor
+uv run --package gove-zone gove-zone smoke
 ```
 
 When published, the install target will be:
@@ -37,6 +38,21 @@ When published, the install target will be:
 ```bash
 pip install gove-zone
 ```
+
+## One-command smoke proof
+
+Run this from the monorepo root to prove the local runtime loop without any
+agent host, network call, production credential, or external service:
+
+```bash
+uv run --package gove-zone gove-zone smoke
+```
+
+The command emits JSON showing that a safe `write_file` call was allowed, an
+`id_rsa` path write was denied before side effects, and the two decisions verify
+as a hash-linked audit chain. Add `--audit <path>` to retain the smoke audit
+JSONL as release evidence. The smoke report is local runtime evidence only; it
+is not production deployment proof or third-party framework certification.
 
 ## What ships now
 

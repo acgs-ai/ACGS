@@ -1565,6 +1565,54 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
+    gove_zone_smoke_files_ok, gove_zone_smoke_missing = _all_files_exist(
+        repo_root,
+        [
+            "packages/gove-zone/src/gove_zone/smoke.py",
+            "packages/gove-zone/src/gove_zone/cli.py",
+            "packages/gove-zone/tests/test_setup.py",
+        ],
+    )
+    gove_zone_smoke_ok, gove_zone_smoke_missing_parts = _contains_all(
+        "\n".join(
+            [
+                _maybe_read(repo_root, "packages/gove-zone/src/gove_zone/smoke.py"),
+                _maybe_read(repo_root, "packages/gove-zone/src/gove_zone/cli.py"),
+                _maybe_read(repo_root, "packages/gove-zone/tests/test_setup.py"),
+                _maybe_read(repo_root, "packages/gove-zone/README.md"),
+                readme,
+                readiness,
+            ]
+        ),
+        [
+            "gove-zone-smoke-report",
+            "allow-before-side-effect",
+            "deny-before-side-effect",
+            "audit-chain-verifies",
+            "gove-zone smoke",
+            "not production deployment proof",
+        ],
+    )
+    items.append(
+        _item(
+            "gove-zone-smoke-local",
+            "Gove Zone runtime has a one-command local allow/deny/audit smoke proof",
+            gove_zone_smoke_files_ok and gove_zone_smoke_ok,
+            (
+                "gove-zone smoke proves allow/deny/audit-chain behavior without "
+                "agent-host, network, or production credentials"
+                if gove_zone_smoke_files_ok and gove_zone_smoke_ok
+                else (
+                    f"missing_files={gove_zone_smoke_missing}, "
+                    f"missing_parts={gove_zone_smoke_missing_parts}"
+                )
+            ),
+            "uv run --package gove-zone gove-zone smoke && "
+            "uv run --package gove-zone python -m pytest "
+            "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q",
+        )
+    )
+
     blocker_needles = [
         "Production deployment",
         "Frontend production auth",

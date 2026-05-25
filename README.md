@@ -55,9 +55,15 @@ inside them from the parent repo.
 ```bash
 uv run --package gove-zone gove-zone setup --format json
 uv run --package gove-zone gove-zone doctor
+uv run --package gove-zone gove-zone smoke
 printf '{"tool_name":"Edit","tool_input":{"file_path":"README.md","new_string":"demo"}}' \
   | uv run --package gove-zone gove-zone gate --actor smoke
 ```
+
+`gove-zone smoke` is the fastest local proof that the runtime can allow a safe
+tool call, deny a blocked one before side effects, and verify the audit chain.
+Pass `--audit <path>` when that smoke audit JSONL should be retained as release
+evidence.
 
 The adapter also exposes `tool_call_from_hook_payload` and
 `tool_calls_from_hook_payload` for dependency-free

@@ -67,6 +67,39 @@ def test_cli_doctor_passes_in_writable_env(
     assert payload["gate_mode"] == "observe"
 
 
+def test_cli_smoke_passes_and_can_retain_audit(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    audit_path = tmp_path / "smoke-audit.jsonl"
+
+    rc = cli.main(["smoke", "--audit", str(audit_path)])
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert rc == 0
+    assert payload["artifactKind"] == "gove-zone-smoke-report"
+    assert payload["status"] == "pass"
+    assert "not production deployment proof" in payload["claimBoundary"]
+    assert payload["auditPath"] == str(audit_path)
+    assert payload["auditRetained"] is True
+    assert audit_path.is_file()
+    assert not (tmp_path / "allowed.txt").exists()
+    assert not (tmp_path / "id_rsa").exists()
+    assert {check["id"] for check in payload["checks"]} == {
+        "allow-before-side-effect",
+        "deny-before-side-effect",
+        "audit-chain-verifies",
+    }
+    assert payload["allow"]["decision"] == "allow"
+    assert payload["allow"]["tool"] == "write_file"
+    assert payload["deny"]["decision"] == "deny"
+    assert payload["deny"]["matchedRules"] == ["SMOKE_SECRET_BOUNDARY:keyword:id_rsa"]
+    assert payload["audit"]["valid"] is True
+    assert payload["audit"]["checked"] == 2
+
+
 def test_cli_setup_markdown_default(in_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = cli.main(["setup"])
     out = capsys.readouterr().out

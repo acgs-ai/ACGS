@@ -94,6 +94,9 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "OpenAI Responses" in by_id["runtime-policy-gate-local"].evidence
     assert "batched event" in by_id["runtime-policy-gate-local"].evidence
     assert "malformed recognized" in by_id["runtime-policy-gate-local"].evidence
+    assert by_id["gove-zone-smoke-local"].status == "pass"
+    assert "allow/deny/audit-chain" in by_id["gove-zone-smoke-local"].evidence
+    assert "gove-zone smoke" in by_id["gove-zone-smoke-local"].command
     assert by_id["buyer-evidence-ci-artifact"].status == "pass"
     assert by_id["storybook-runtime-plan-local"].status == "pass"
     assert "pending-external" in by_id["storybook-runtime-plan-local"].evidence
@@ -170,6 +173,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "buyer-evidence-gallery-local" in report
     assert "runtime-framework-bridge-local" in report
     assert "runtime-policy-gate-local" in report
+    assert "gove-zone-smoke-local" in report
     assert "buyer-evidence-ci-artifact" in report
     assert "storybook-runtime-plan-local" in report
     assert "test:storybook-runtime-plan" in report

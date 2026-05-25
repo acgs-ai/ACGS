@@ -27,6 +27,7 @@ from gove_zone.setup import (
     instructions,
     validate_dependencies,
 )
+from gove_zone.smoke import run_smoke
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -248,6 +249,12 @@ def _eval(args: argparse.Namespace) -> int:
     return 0 if report.failed == 0 else 1
 
 
+def _smoke(args: argparse.Namespace) -> int:
+    report = run_smoke(args.audit)
+    _emit(report)
+    return 0 if report["status"] == "pass" else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gove-zone",
@@ -397,6 +404,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="fixture adapter format (default: generic)",
     )
     eval_parser.set_defaults(func=_eval)
+
+    smoke = subparsers.add_parser(
+        "smoke",
+        help="run a local allow/deny/audit smoke proof for the runtime kernel",
+    )
+    smoke.add_argument(
+        "--audit",
+        help="optional path to retain the smoke audit JSONL as evidence",
+    )
+    smoke.set_defaults(func=_smoke)
 
     return parser
 

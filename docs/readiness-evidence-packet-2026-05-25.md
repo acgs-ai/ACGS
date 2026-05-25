@@ -33,9 +33,9 @@ conformance.
 | `git status --short --branch` | Pass | `## feat/agent-bus-analyzer`; no dirty entries before this packet refresh |
 | `git submodule status --recursive` | Pass for inspection | Initialized submodules present and clean; `packages/clinicalguard` remains uninitialized |
 | `git submodule foreach --recursive 'printf "%s " "$name"; git status --porcelain=v1 \| wc -l'` | Pass | Initialized registered submodules each reported `0` dirty paths |
-| `make platform-readiness` | Pass with pending external item | `32/33 pass`, `0 fail`, `1 pending`; pending item is `hosted-storybook-buyer-evidence` |
-| `make release-evidence` | Pass with pending external item | Bundle written to `dist-release-evidence`; `32/33 pass`, `0 fail`, `1 pending` |
-| `make production-launch-preflight` | Blocked as expected | Current clean commit; readiness `32/33 pass`, `0 fail`, `1 pending`; live verifier still fail; external proof blockers remain |
+| `make platform-readiness` | Pass with pending external item | `33/34 pass`, `0 fail`, `1 pending`; pending item is `hosted-storybook-buyer-evidence` |
+| `make release-evidence` | Pass with pending external item | Bundle written to `dist-release-evidence`; `33/34 pass`, `0 fail`, `1 pending` |
+| `make production-launch-preflight` | Blocked as expected | Current clean commit; readiness `33/34 pass`, `0 fail`, `1 pending`; live verifier still fail; external proof blockers remain |
 | `make verify` | Pass | Full root JS/Python lint/type/test fan-out completed after the Acgs-Swarm strict core mypy change |
 | `uv run python -m pytest tests/test_root_typecheck_gate.py -q` | Pass | `4 passed`; includes Acgs-Swarm strict core mypy gate check |
 | `cd packages/Acgs-Swarm && uv run mypy` | Pass | `Success: no issues found in 16 source files` |
@@ -50,7 +50,7 @@ conformance.
 
 | Area | Current state |
 |---|---|
-| Release evidence | Local evidence bundle now reports `32/33 pass`, `0 fail`, `1 pending` |
+| Release evidence | Local evidence bundle now reports `33/34 pass`, `0 fail`, `1 pending` |
 | Typecheck fan-out | Every registered Python package has a configured mypy gate; Acgs-Swarm now contributes a strict core-primitives source scope |
 | Production preflight | Local preflight reports clean/stale status, readiness summary, live verifier status, evidence-chain consistency, and external blocker IDs |
 | Console deployment/auth | Static fail-closed Cloud Run, Caddy, and auth-boundary contracts exist; `/auth/status` now gives the production SPA route guard a same-origin forward-auth session bridge; live auth behavior remains unproven |
@@ -82,7 +82,7 @@ conformance.
 
 - The current root checkout was clean before this packet refresh.
 - Initialized registered submodules were clean before this packet refresh; `packages/clinicalguard` remained uninitialized.
-- Local readiness evidence regenerated successfully: `32/33 pass`, `0 fail`, `1 pending`.
+- Local readiness evidence regenerated successfully: `33/34 pass`, `0 fail`, `1 pending`.
 - Full local verification passed after the Acgs-Swarm strict core mypy update.
 - The production console SPA no longer depends on demo `hasSession()` after edge auth; it awaits `/auth/status`, which Caddy serves only after `AUTH_UPSTREAM` accepts the request.
 - Production launch preflight correctly remains blocked until live deploy, auth, assurance, accessibility, and hosted Storybook proof are attached.

@@ -66,6 +66,7 @@ def test_manifest_is_conservative_and_tracks_readiness():
         "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
         in manifest["verificationCommands"]
     )
+    assert "uv run --package gove-zone gove-zone smoke" in manifest["verificationCommands"]
 
 
 def test_manifest_exposes_buyer_gallery_ci_artifact():

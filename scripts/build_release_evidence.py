@@ -105,6 +105,7 @@ REQUIRED_VERIFICATION_COMMANDS = [
         "uv run --package gove-zone python -m pytest "
         "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q"
     ),
+    "uv run --package gove-zone gove-zone smoke",
     "pnpm -F acgi-ai run evidence:build",
     "pnpm -F acgi-ai run test:buyer-evidence",
     "pnpm -F acgi-ai run test:storybook-runtime-plan",
