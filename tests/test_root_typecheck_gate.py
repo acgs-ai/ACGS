@@ -43,3 +43,19 @@ def test_eval_mvp_has_strict_mypy_gate() -> None:
     assert '"fastmcp"' in pyproject
     assert '"langgraph.*"' in pyproject
     assert "ignore_missing_imports = true" in pyproject
+
+
+def test_acgs_swarm_has_strict_core_mypy_gate() -> None:
+    pyproject = (ROOT / "packages" / "Acgs-Swarm" / "pyproject.toml").read_text()
+
+    assert "[tool.mypy]" in pyproject
+    assert "python_version = \"3.11\"" in pyproject
+    assert "strict = true" in pyproject
+    for source_file in [
+        "src/constitutional_swarm/artifact.py",
+        "src/constitutional_swarm/capability.py",
+        "src/constitutional_swarm/execution.py",
+        "src/constitutional_swarm/governance_receipts.py",
+        "src/constitutional_swarm/swarm.py",
+    ]:
+        assert f'"{source_file}"' in pyproject
