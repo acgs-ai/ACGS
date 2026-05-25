@@ -107,6 +107,13 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_launch_preflight["script"] == "scripts/production_launch_preflight.py"
     assert production_launch_preflight["proofCommand"] == "make production-launch-preflight"
     assert "--require-ready" in production_launch_preflight["operatorCommand"]
+    assert "--out dist-release-evidence/production-launch-preflight.json" in (
+        production_launch_preflight["operatorCommand"]
+    )
+    assert (
+        production_launch_preflight["outputArtifact"]
+        == "dist-release-evidence/production-launch-preflight.json"
+    )
     assert "requiredActions" in production_launch_preflight["outputFields"]
     assert "repository" in production_launch_preflight["outputFields"]
     assert "externalBlockerIds" in production_launch_preflight["outputFields"]
@@ -153,6 +160,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     )
     assert "https://console.acgs.ai" in production_live["targets"]
     assert "blockers" in production_live["outputFields"]
+    assert "blockerDetails" in production_live["outputFields"]
     assert "blockedUntil" in production_live["outputFields"]
     assert (
         production_live["latestOutputSnapshot"]["path"]
@@ -446,9 +454,29 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
                     {"id": "marketing-dns-live", "status": "pass"},
                 ],
                 "blockers": [
-                    {"blockerId": "live-console-dns"},
-                    {"blockerId": "live-console-healthz"},
-                    {"blockerId": "live-storybook-dns"},
+                    {
+                        "blockerId": "live-console-dns",
+                        "checkId": "console-dns-live",
+                        "status": "fail",
+                        "area": "Console DNS",
+                        "requiredAction": "Create the console.acgs.ai DNS record.",
+                        "error": "ENOTFOUND",
+                        "evidence": {"hostname": "console.acgs.ai"},
+                    },
+                    {
+                        "blockerId": "live-console-healthz",
+                        "checkId": "console-healthz-live",
+                        "status": "fail",
+                        "area": "Console /healthz",
+                        "requiredAction": "Deploy the console service and verify /healthz.",
+                    },
+                    {
+                        "blockerId": "live-storybook-dns",
+                        "checkId": "storybook-dns-live",
+                        "status": "fail",
+                        "area": "Hosted Storybook DNS",
+                        "requiredAction": "Create the storybook.acgs.ai DNS record.",
+                    },
                 ],
             }
         )
@@ -579,6 +607,18 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
         "live-console-healthz",
         "live-storybook-dns",
     ]
+    assert live["blockerDetails"][0] == {
+        "blockerId": "live-console-dns",
+        "checkId": "console-dns-live",
+        "status": "fail",
+        "area": "Console DNS",
+        "requiredAction": "Create the console.acgs.ai DNS record.",
+        "error": "ENOTFOUND",
+        "evidence": {"hostname": "console.acgs.ai"},
+    }
+    assert live["blockerDetails"][1]["requiredAction"] == (
+        "Deploy the console service and verify /healthz."
+    )
     assert live["checkStatuses"][0] == {
         "id": "console-dns-live",
         "status": "fail",

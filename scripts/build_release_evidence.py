@@ -166,6 +166,37 @@ def _compact_live_blockers(data: dict[str, Any]) -> list[str]:
     return blocker_ids
 
 
+def _compact_live_blocker_details(data: dict[str, Any]) -> list[dict[str, Any]]:
+    blockers = data.get("blockers")
+    if not isinstance(blockers, list):
+        return []
+
+    compacted: list[dict[str, Any]] = []
+    for blocker in blockers:
+        if isinstance(blocker, str):
+            if blocker.strip():
+                compacted.append({"blockerId": blocker})
+            continue
+        if not isinstance(blocker, dict) or not blocker.get("blockerId"):
+            continue
+        compacted.append(
+            {
+                key: blocker[key]
+                for key in [
+                    "blockerId",
+                    "checkId",
+                    "status",
+                    "area",
+                    "requiredAction",
+                    "error",
+                    "evidence",
+                ]
+                if key in blocker and blocker[key] is not None
+            }
+        )
+    return compacted
+
+
 def _unique_strings(values: list[Any]) -> list[str]:
     """Return stable unique non-empty strings."""
 
@@ -204,6 +235,7 @@ def production_live_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
             "targets": data.get("targets"),
             "checkStatuses": _compact_check_statuses(data),
             "blockers": _compact_live_blockers(data),
+            "blockerDetails": _compact_live_blocker_details(data),
             "sourceClaimBoundary": data.get("claimBoundary"),
         }
     )
@@ -619,8 +651,10 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "proofCommand": "make production-launch-preflight",
                 "operatorCommand": (
                     "uv run python scripts/production_launch_preflight.py "
-                    "--manifest dist-release-evidence/manifest.json --require-ready"
+                    "--manifest dist-release-evidence/manifest.json "
+                    "--out dist-release-evidence/production-launch-preflight.json --require-ready"
                 ),
+                "outputArtifact": "dist-release-evidence/production-launch-preflight.json",
                 "outputFields": [
                     "status",
                     "requiredActions",
@@ -698,6 +732,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "status",
                     "blockedUntil",
                     "blockers",
+                    "blockerDetails",
                     "checks",
                 ],
                 "claimBoundary": (

@@ -142,7 +142,7 @@ release-evidence:
 	$(UV) run python scripts/build_release_evidence.py
 
 production-launch-preflight: release-evidence
-	$(UV) run python scripts/production_launch_preflight.py --manifest dist-release-evidence/manifest.json
+	$(UV) run python scripts/production_launch_preflight.py --manifest dist-release-evidence/manifest.json --out dist-release-evidence/production-launch-preflight.json
 
 production-blocker-evidence:
 	$(UV) run python scripts/build_production_blocker_evidence.py

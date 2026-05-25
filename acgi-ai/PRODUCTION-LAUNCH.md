@@ -78,7 +78,8 @@ clean commit, pending local items, live verifier blockers, evidence validation,
 and external blocker ids are replaced by attached proof.
 The preflight JSON/Markdown output must keep `requiredActions` and
 `externalBlockerIds` visible so launch blockers cannot be hidden by a green
-local build. Its JSON also carries `externalBlockers` and
+local build. Its JSON also carries live verifier `blockerDetails`,
+`externalBlockers`, and
 `proofIntakeArtifacts` so each external blocker points at the authority,
 production evidence, live verifier, or hosted Storybook proof artifact that
 must be replaced with signed/live evidence.

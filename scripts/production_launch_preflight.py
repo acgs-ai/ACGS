@@ -45,6 +45,33 @@ def _compact_artifact(artifact: dict[str, Any], keys: list[str]) -> dict[str, An
     return {key: artifact[key] for key in keys if key in artifact and artifact[key] is not None}
 
 
+def _live_blocker_details(live_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    details = live_snapshot.get("blockerDetails")
+    if not isinstance(details, list):
+        return []
+
+    compacted: list[dict[str, Any]] = []
+    for detail in details:
+        if not isinstance(detail, dict) or not detail.get("blockerId"):
+            continue
+        compacted.append(
+            {
+                key: detail[key]
+                for key in [
+                    "blockerId",
+                    "checkId",
+                    "status",
+                    "area",
+                    "requiredAction",
+                    "error",
+                    "evidence",
+                ]
+                if key in detail and detail[key] is not None
+            }
+        )
+    return compacted
+
+
 def _proof_intake_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
     """Return the local templates/operators that can replace external blockers."""
 
@@ -205,6 +232,7 @@ def build_preflight(
         )
     external_blocker_ids = [str(blocker["blockerId"]) for blocker in external_blockers]
     live_blockers = _strings(live_snapshot.get("blockers"))
+    live_blocker_details = _live_blocker_details(live_snapshot)
     chain_issues = _strings(chain_snapshot.get("issues"))
     validation_failures = _strings(validation_snapshot.get("failingCheckIds"))
 
@@ -250,7 +278,11 @@ def build_preflight(
             _blocker(
                 "attach-passing-production-live-verifier-output",
                 "Run live production checks after deploy and attach a passing verifier output.",
-                {"status": live_snapshot.get("status"), "blockers": live_blockers},
+                {
+                    "status": live_snapshot.get("status"),
+                    "blockers": live_blockers,
+                    "blockerDetails": live_blocker_details,
+                },
             )
         )
     if chain_snapshot.get("status") != "consistent" or chain_issues:
@@ -311,6 +343,7 @@ def build_preflight(
             "present": live_snapshot.get("present"),
             "status": live_snapshot.get("status"),
             "blockers": live_blockers,
+            "blockerDetails": live_blocker_details,
             "generatedAt": live_snapshot.get("generatedAt"),
         },
         "productionEvidenceChain": {
@@ -354,6 +387,24 @@ def render_markdown(preflight: dict[str, Any]) -> str:
         and (meta.get("templatePath") or meta.get("handoff") or meta.get("liveProofCommand"))
     )
     proof_intake_refs = proof_intake_refs or "none"
+    live_blocker_details = (
+        preflight.get("productionLive", {}).get("blockerDetails")
+        if isinstance(preflight.get("productionLive"), dict)
+        else []
+    )
+    live_blocker_lines = (
+        "\n".join(
+            "- `{blocker_id}` — {action}".format(
+                blocker_id=detail.get("blockerId"),
+                action=detail.get("requiredAction")
+                or detail.get("area")
+                or "Resolve this live verifier blocker and rerun verify:production-live.",
+            )
+            for detail in live_blocker_details
+            if isinstance(detail, dict) and detail.get("blockerId")
+        )
+        or "- None."
+    )
     return f"""# Production launch preflight
 
 Status: `{preflight["status"]}`
@@ -372,6 +423,10 @@ Status: `{preflight["status"]}`
 ## Required actions
 
 {action_lines}
+
+## Live verifier blocker details
+
+{live_blocker_lines}
 """
 
 

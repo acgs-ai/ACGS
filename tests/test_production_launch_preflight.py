@@ -13,6 +13,7 @@ import production_launch_preflight as plp
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "production_launch_preflight.py"
+MAKEFILE = ROOT / "Makefile"
 
 
 def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attached():
@@ -140,6 +141,64 @@ def test_preflight_blocks_stale_or_dirty_release_evidence_snapshot():
     ]
 
 
+def test_preflight_carries_live_blocker_details_into_required_actions():
+    manifest = _mark_manifest_locally_ready(bre.build_manifest(ROOT))
+    manifest["externalBlockers"] = []
+    manifest["repository"] = {
+        "path": str(ROOT),
+        "branch": "main",
+        "commit": "a" * 40,
+        "dirty": False,
+        "dirtyEntryCount": 0,
+    }
+    live_snapshot = manifest["evidenceArtifacts"]["productionLiveVerifier"][
+        "latestOutputSnapshot"
+    ]
+    live_snapshot.update(
+        {
+            "present": True,
+            "status": "fail",
+            "blockers": ["live-console-dns"],
+            "blockerDetails": [
+                {
+                    "blockerId": "live-console-dns",
+                    "checkId": "console-dns-live",
+                    "status": "fail",
+                    "area": "Console DNS",
+                    "requiredAction": (
+                        "Create or repair the console.acgs.ai DNS record for the "
+                        "deployed console service."
+                    ),
+                    "error": "getaddrinfo ENOTFOUND console.acgs.ai",
+                    "evidence": {"hostname": "console.acgs.ai"},
+                }
+            ],
+        }
+    )
+
+    preflight = plp.build_preflight(
+        manifest,
+        manifest_path="live-blocked-manifest.json",
+        current_repository=manifest["repository"],
+    )
+
+    action = next(
+        action
+        for action in preflight["requiredActions"]
+        if action["id"] == "attach-passing-production-live-verifier-output"
+    )
+    assert preflight["productionLive"]["blockerDetails"] == action["evidence"][
+        "blockerDetails"
+    ]
+    assert action["evidence"]["blockerDetails"][0]["requiredAction"].startswith(
+        "Create or repair the console.acgs.ai DNS record"
+    )
+    markdown = plp.render_markdown(preflight)
+    assert "## Live verifier blocker details" in markdown
+    assert "`live-console-dns`" in markdown
+    assert "Create or repair the console.acgs.ai DNS record" in markdown
+
+
 def test_cli_outputs_json_and_require_ready_fails_for_blocked_manifest(tmp_path: Path):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(bre.build_manifest(ROOT)), encoding="utf-8")
@@ -172,3 +231,10 @@ def test_cli_outputs_json_and_require_ready_fails_for_blocked_manifest(tmp_path:
 
     assert require_ready.returncode == 1
     assert json.loads(require_ready.stdout)["status"] == "blocked"
+
+
+def test_make_target_writes_preflight_json_artifact():
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+
+    assert "production-launch-preflight: release-evidence" in makefile
+    assert "--out dist-release-evidence/production-launch-preflight.json" in makefile
