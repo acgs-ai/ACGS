@@ -554,6 +554,20 @@ current clean commit and external deploy authority, DNS/auth proof, hosted
 Storybook proof, and assurance evidence are attached. The preflight does not
 deploy, mutate DNS, approve release authority, or create live production proof.
 
+`make production-blocker-evidence` runs
+`scripts/build_production_blocker_evidence.py`, the one-command operator wrapper
+for refreshing a deployment-blocked production evidence packet. It builds the
+buyer-evidence gallery with `storybook.acgs.ai` publication metadata, runs or
+copies `verify:production-live` JSON, builds the blocker report, cutover plan,
+hosted Storybook handoff, deployment-blocked production-evidence draft and
+validator output when live blockers remain, refreshes `make release-evidence`,
+and writes `dist-release-evidence/production-launch-preflight.json`. Its safe
+local proof command is
+`uv run python scripts/build_production_blocker_evidence.py --dry-run --json`;
+the real operator command may perform live network checks but does not deploy,
+mutate DNS, approve release authority, install dependencies, create hosted
+Storybook proof, or create live production proof.
+
 `pnpm run test:storybook-runtime-plan` verifies
 `storybook-runtime.plan.json`, the pending official Storybook runtime dependency
 plan. It keeps `@storybook/react-vite`, `npx storybook@latest init`, lockfile

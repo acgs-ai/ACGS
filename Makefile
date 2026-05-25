@@ -14,6 +14,8 @@
 #                    write local release-readiness evidence bundle
 #   make production-launch-preflight
 #                    summarize whether release evidence is ready or blocked
+#   make production-blocker-evidence
+#                    refresh deployment-blocked production evidence packet
 #   make verify-js-node24
 #                    run acgi-ai readiness with the exact Node 24 toolchain
 #   make build        produce all artifacts
@@ -34,7 +36,7 @@ PYTHON_PACKAGES := \
 PNPM ?= pnpm
 UV ?= uv
 
-.PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence production-launch-preflight verify-js-node24 \
+.PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence production-launch-preflight production-blocker-evidence verify-js-node24 \
         build-js test-js lint-js typecheck-js \
         build-py test-py lint-py typecheck-py lint-docs \
         verify-fresh
@@ -52,6 +54,7 @@ help:
 	@echo "  make platform-readiness  Local platform/deploy-readiness audit"
 	@echo "  make release-evidence    Write local release-readiness evidence bundle"
 	@echo "  make production-launch-preflight  Summarize ready/blocked launch state"
+	@echo "  make production-blocker-evidence  Refresh deployment-blocked evidence packet"
 	@echo "  make verify-js-node24    Run acgi-ai readiness with exact Node 24 via fnm"
 	@echo "  make lint-docs     Check root governance docs invariants"
 	@echo "  make all           verify + build"
@@ -140,6 +143,9 @@ release-evidence:
 
 production-launch-preflight: release-evidence
 	$(UV) run python scripts/production_launch_preflight.py --manifest dist-release-evidence/manifest.json
+
+production-blocker-evidence:
+	$(UV) run python scripts/build_production_blocker_evidence.py
 
 # ---- Combined ----
 

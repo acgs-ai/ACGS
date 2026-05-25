@@ -54,6 +54,7 @@ make verify-js-node24
 make platform-readiness
 make release-evidence
 make production-launch-preflight
+uv run python scripts/build_production_blocker_evidence.py --dry-run --json
 pnpm -F acgi-ai run test:production-deploy-contract
 pnpm -F acgi-ai run test:production-launch-handoff
 pnpm -F acgi-ai run test:production-authority-packet
@@ -124,7 +125,21 @@ pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evide
 The base live verifier command is
 `pnpm -F acgi-ai run verify:production-live -- --json`; use the `--out` form
 above when saving the evidence artifact so package-manager warnings cannot
-contaminate the JSON file.
+contaminate the JSON file. To refresh the complete deployment-blocked handoff
+packet in one local operator step, run:
+
+```bash
+make production-blocker-evidence
+```
+
+That wrapper builds the buyer-evidence gallery, runs or copies the live verifier
+JSON, packages blocker/cutover/hosted-Storybook handoffs, writes the
+validator-ready deployment-blocked evidence draft and validator output when live
+blockers remain, refreshes release evidence, and saves
+`dist-release-evidence/production-launch-preflight.json`. It may perform live
+network checks, but it does not deploy, mutate DNS, approve release authority,
+install dependencies, create hosted Storybook proof, or create live production
+proof.
 
 10. Build the local hosted Storybook handoff from the Pages-ready buyer-evidence
    manifest and live verifier JSON. The `hosted-storybook-handoff` captures
@@ -210,6 +225,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - JSON output from `pnpm -F acgi-ai run build:production-blocker-report -- --live-output <verify-production-live.json> --out <production-blocker-report.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>`
 - JSON output from `pnpm -F acgi-ai run build:production-evidence-draft -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --cutover-plan <production-cutover-plan.json> --out <production-evidence.deployment-blocked.json>`
+- JSON output from `make production-blocker-evidence`, especially `dist-release-evidence/production-launch-preflight.json`, when the operator uses the one-command deployment-blocked packet refresh
 - `productionEvidenceChain` from `dist-release-evidence/manifest.json`, which
   compares the saved live verifier, blocker report, cutover plan,
   deployment-blocked draft, `production-evidence-validation.deployment-blocked.json`,

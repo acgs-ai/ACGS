@@ -1,0 +1,73 @@
+"""Tests for scripts/build_production_blocker_evidence.py."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts" / "build_production_blocker_evidence.py"
+
+
+def _dry_run(*args: str) -> dict:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--dry-run", "--json", *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
+    payload = _dry_run()
+
+    assert payload["artifactKind"] == "production-blocker-evidence-plan"
+    assert payload["status"] == "dry-run"
+    assert "not live production proof" in payload["claimBoundary"]
+    assert "does not deploy" in payload["claimBoundary"]
+    assert payload["outputs"]["preflight"] == (
+        "dist-release-evidence/production-launch-preflight.json"
+    )
+
+    commands = {entry["id"]: entry for entry in payload["commands"]}
+    assert list(commands) == [
+        "build-buyer-evidence-gallery",
+        "run-production-live-verifier",
+        "build-production-blocker-report",
+        "build-production-cutover-plan",
+        "build-hosted-storybook-handoff",
+        "build-production-evidence-draft-when-live-fails",
+        "validate-deployment-blocked-production-evidence-when-live-fails",
+        "refresh-release-evidence-bundle",
+        "write-production-launch-preflight-json",
+    ]
+    assert commands["build-buyer-evidence-gallery"]["env"] == {
+        "ACGI_EVIDENCE_CNAME": "storybook.acgs.ai"
+    }
+    assert commands["run-production-live-verifier"]["continueOnNonzeroWithOutput"] == (
+        "dist-release-evidence/production-live-verification.json"
+    )
+    assert "verify:production-live" in " ".join(commands["run-production-live-verifier"]["cmd"])
+    assert "build:production-evidence-draft" in " ".join(
+        commands["build-production-evidence-draft-when-live-fails"]["cmd"]
+    )
+    assert "validate:production-evidence" in " ".join(
+        commands["validate-deployment-blocked-production-evidence-when-live-fails"]["cmd"]
+    )
+
+
+def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_verifier():
+    payload = _dry_run("--live-output", "tmp-live-output.json")
+    command_ids = [entry["id"] for entry in payload["commands"]]
+
+    assert "copy-supplied-live-output" in command_ids
+    assert "run-production-live-verifier" not in command_ids
+    copy_command = next(
+        entry for entry in payload["commands"] if entry["id"] == "copy-supplied-live-output"
+    )
+    assert "--internal-copy-live-output" in copy_command["cmd"]
+    assert copy_command["cmd"][-1].endswith("dist-release-evidence/production-live-verification.json")

@@ -52,6 +52,9 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["production-evidence-chain-local"].status == "pass"
     assert "blocker drift" in by_id["production-evidence-chain-local"].evidence
     assert "not live production proof" in by_id["production-evidence-chain-local"].evidence
+    assert by_id["production-blocker-evidence-runbook-local"].status == "pass"
+    assert "build_production_blocker_evidence.py" in by_id["production-blocker-evidence-runbook-local"].command
+    assert "preflight JSON" in by_id["production-blocker-evidence-runbook-local"].evidence
     assert by_id["production-launch-preflight-local"].status == "pass"
     assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence
     assert "clean commit" in by_id["production-launch-preflight-local"].evidence
@@ -123,6 +126,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "production-cutover-plan-local" in report
     assert "production-evidence-draft-local" in report
     assert "production-evidence-chain-local" in report
+    assert "production-blocker-evidence-runbook-local" in report
     assert "production-launch-preflight-local" in report
     assert "fixture-fallback-fail-closed-local" in report
     assert "node24-local-toolchain" in report

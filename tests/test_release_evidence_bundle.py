@@ -58,6 +58,10 @@ def test_manifest_is_conservative_and_tracks_readiness():
     assert "pnpm -F acgi-ai run test:storybook-runtime-plan" in manifest["verificationCommands"]
     assert "pnpm -F acgi-ai run test:hosted-storybook-handoff" in manifest["verificationCommands"]
     assert "make production-launch-preflight" in manifest["verificationCommands"]
+    assert (
+        "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
+        in manifest["verificationCommands"]
+    )
 
 
 def test_manifest_exposes_buyer_gallery_ci_artifact():
@@ -75,6 +79,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     production_validator = manifest["evidenceArtifacts"]["productionEvidenceValidator"]
     production_validation = manifest["evidenceArtifacts"]["productionEvidenceValidation"]
     production_chain = manifest["evidenceArtifacts"]["productionEvidenceChain"]
+    blocker_runbook = manifest["evidenceArtifacts"]["productionBlockerEvidenceRunbook"]
     fixture_fallback = manifest["evidenceArtifacts"]["fixtureFallbackBoundary"]
     runtime_bridge = manifest["evidenceArtifacts"]["runtimeFrameworkBridge"]
     runtime_policy_gate = manifest["evidenceArtifacts"]["runtimePolicyGate"]
@@ -202,6 +207,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_chain["latestChainSnapshot"]["status"] in {"consistent", "needs-refresh"}
     assert "productionEvidenceValidation" in production_chain["latestChainSnapshot"]["artifacts"]
     assert "not live production proof" in production_chain["claimBoundary"]
+    assert blocker_runbook["script"] == "scripts/build_production_blocker_evidence.py"
+    assert blocker_runbook["proofCommand"].endswith("--dry-run --json")
+    assert blocker_runbook["operatorCommand"] == "make production-blocker-evidence"
+    assert "dist-release-evidence/production-launch-preflight.json" in blocker_runbook["outputArtifacts"]
+    assert "not live production proof" in blocker_runbook["claimBoundary"]
+    assert "does not deploy" in blocker_runbook["claimBoundary"]
     assert fixture_fallback["module"] == "acgi-ai/src/api/hooks.ts"
     assert "pnpm -F acgi-ai run test:security" in fixture_fallback["proofCommands"]
     assert "pnpm -F acgi-ai run test:mvp" in fixture_fallback["proofCommands"]
@@ -287,6 +298,10 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "production evidence chain" in readme
     assert "production_launch_preflight.py" in readme
     assert "make production-launch-preflight" in readme
+    assert "make production-blocker-evidence" in readme
+    assert "build_production_blocker_evidence.py" in readme
+    assert "production-launch-preflight.json" in readme
+    assert "--dry-run --json" in readme
     assert "--require-ready" in readme
     assert "test:production-evidence-draft" in readme
     assert "build-hosted-storybook-handoff.mjs" in readme

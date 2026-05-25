@@ -73,6 +73,7 @@ REQUIRED_VERIFICATION_COMMANDS = [
     "pnpm -F acgi-ai run test:hosted-storybook-handoff",
     "pnpm -F acgi-ai run test:ci-gates",
     "make production-launch-preflight",
+    "uv run python scripts/build_production_blocker_evidence.py --dry-run --json",
 ]
 
 
@@ -768,6 +769,29 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "SOC2, WCAG, pentest, or regulatory proof"
                 ),
             },
+            "productionBlockerEvidenceRunbook": {
+                "script": "scripts/build_production_blocker_evidence.py",
+                "proofCommand": (
+                    "uv run python scripts/build_production_blocker_evidence.py "
+                    "--dry-run --json"
+                ),
+                "operatorCommand": "make production-blocker-evidence",
+                "outputArtifacts": [
+                    "dist-release-evidence/production-live-verification.json",
+                    "dist-release-evidence/production-blocker-report.json",
+                    "dist-release-evidence/production-cutover-plan.json",
+                    "dist-release-evidence/hosted-storybook-handoff.json",
+                    "dist-release-evidence/production-evidence.deployment-blocked.json",
+                    "dist-release-evidence/production-evidence-validation.deployment-blocked.json",
+                    "dist-release-evidence/production-launch-preflight.json",
+                ],
+                "claimBoundary": (
+                    "operator convenience wrapper only; may run the live verifier, "
+                    "but does not deploy, mutate DNS, approve release authority, "
+                    "install dependencies, create hosted Storybook proof, or create "
+                    "live production proof; not live production proof"
+                ),
+            },
             "fixtureFallbackBoundary": {
                 "module": "acgi-ai/src/api/hooks.ts",
                 "proofCommands": [
@@ -939,6 +963,9 @@ def render_readme(manifest: dict[str, Any]) -> str:
     hosted_storybook_handoff = manifest["evidenceArtifacts"]["hostedStorybookHandoff"][
         "latestHandoffSnapshot"
     ]
+    blocker_evidence_runbook = manifest["evidenceArtifacts"][
+        "productionBlockerEvidenceRunbook"
+    ]
     live_snapshot_line = (
         f"- `{production_live['path']}` captured status "
         f"`{production_live.get('status')}` with blockers "
@@ -1038,6 +1065,16 @@ live production proof.
   the current blocked state without deploying, mutating DNS, or creating live
   production proof. Use `--require-ready` only after external deploy, authority,
   hosted Storybook, and assurance evidence is attached.
+- `scripts/build_production_blocker_evidence.py` is the operator wrapper for
+  refreshing a deployment-blocked evidence packet. `make production-blocker-evidence`
+  builds the buyer-evidence gallery, runs or copies `verify:production-live`
+  JSON, packages blocker/cutover/hosted-Storybook handoffs, writes the
+  deployment-blocked production-evidence draft and validator output when live
+  blockers remain, refreshes release evidence, and saves
+  `production-launch-preflight.json`. Its dry-run proof command is
+  `{blocker_evidence_runbook['proofCommand']}`; the wrapper may perform network
+  live checks but does not deploy, mutate DNS, approve release authority, install
+  dependencies, create hosted Storybook proof, or create live production proof.
 - `acgi-ai/production-authority.example.json` is the template-only authority
   packet for deploy-owner, DNS-owner, auth-owner, claim/legal-owner, and rollback
   approvals. `pnpm -F acgi-ai run test:production-authority-packet` verifies it

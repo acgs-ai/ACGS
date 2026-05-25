@@ -985,6 +985,68 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
+    production_blocker_evidence_files_ok, production_blocker_evidence_missing = _all_files_exist(
+        repo_root,
+        [
+            "scripts/build_production_blocker_evidence.py",
+            "scripts/build_release_evidence.py",
+            "scripts/production_launch_preflight.py",
+            "Makefile",
+            "docs/integration-readiness-task-map.md",
+            "acgi-ai/DEPLOY.md",
+            "acgi-ai/PRODUCTION-LAUNCH.md",
+        ],
+    )
+    production_blocker_evidence_ok, production_blocker_evidence_missing_parts = _contains_all(
+        "\n".join(
+            [
+                _maybe_read(repo_root, "scripts/build_production_blocker_evidence.py"),
+                _maybe_read(repo_root, "scripts/build_release_evidence.py"),
+                _maybe_read(repo_root, "scripts/production_launch_preflight.py"),
+                _maybe_read(repo_root, "Makefile"),
+                _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
+                _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
+                _maybe_read(repo_root, "acgi-ai/PRODUCTION-LAUNCH.md"),
+            ]
+        ),
+        [
+            "build_production_blocker_evidence.py",
+            "production-blocker-evidence:",
+            "productionBlockerEvidenceRunbook",
+            "--dry-run --json",
+            "continueOnNonzeroWithOutput",
+            "production-live-verification.json",
+            "production-blocker-report.json",
+            "production-cutover-plan.json",
+            "hosted-storybook-handoff.json",
+            "production-evidence.deployment-blocked.json",
+            "production-evidence-validation.deployment-blocked.json",
+            "production-launch-preflight.json",
+            "not live production proof",
+            "does not deploy",
+            "mutate DNS",
+        ],
+    )
+    items.append(
+        _item(
+            "production-blocker-evidence-runbook-local",
+            "Deployment-blocked production evidence packet can be refreshed by one operator command",
+            production_blocker_evidence_files_ok and production_blocker_evidence_ok,
+            (
+                "make production-blocker-evidence orchestrates live verifier JSON, "
+                "blocker report, cutover plan, hosted Storybook handoff, deployment-blocked "
+                "evidence draft, validator output, release evidence, and preflight JSON "
+                "without claiming live production proof"
+                if production_blocker_evidence_files_ok and production_blocker_evidence_ok
+                else (
+                    f"missing_files={production_blocker_evidence_missing}, "
+                    f"missing_parts={production_blocker_evidence_missing_parts}"
+                )
+            ),
+            "uv run python scripts/build_production_blocker_evidence.py --dry-run --json",
+        )
+    )
+
     production_launch_preflight_files_ok, production_launch_preflight_missing = (
         _all_files_exist(
             repo_root,
