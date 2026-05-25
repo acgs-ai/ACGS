@@ -30,6 +30,25 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         preflight["proofIntakeArtifacts"]["productionEvidenceTemplate"]["templatePath"]
         == "acgi-ai/production-evidence.example.json"
     )
+    assert "hostedStorybookProofValidation" in preflight["proofIntakeArtifacts"]
+    assert (
+        preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"][
+            "outputArtifact"
+        ]
+        == "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert (
+        "validate:hosted-storybook-proof"
+        in preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"][
+            "operatorCommand"
+        ]
+    )
+    assert (
+        preflight["productionEvidenceChain"]["hostedStorybookProofValidation"][
+            "failingCheckIds"
+        ]
+        == []
+    )
     assert {
         "field": "assurance.legalClaimMatrix",
         "externalBlockerId": "legal-review-of-claim-matrix",
@@ -44,6 +63,7 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         if blocker["blockerId"] == "hosted-storybook-buyer-evidence"
     )
     assert "hostedStorybookProofTemplate" in storybook_blocker["proofIntakeArtifactIds"]
+    assert "hostedStorybookProofValidation" in storybook_blocker["proofIntakeArtifactIds"]
     assert preflight["productionEvidenceChain"]["status"] in {"consistent", "needs-refresh"}
     action_ids = {action["id"] for action in preflight["requiredActions"]}
     assert "clear-local-readiness-pending-items" in action_ids
@@ -60,6 +80,14 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         ]
         == "acgi-ai/production-authority.example.json"
     )
+    assert (
+        external_action["evidence"]["proofIntakeArtifacts"][
+            "hostedStorybookProofValidation"
+        ]["outputArtifact"]
+        == "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    markdown = plp.render_markdown(preflight)
+    assert "hosted-storybook-proof-validation.json" in markdown
 
 
 def _mark_manifest_locally_ready(manifest: dict) -> dict:

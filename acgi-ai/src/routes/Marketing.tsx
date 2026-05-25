@@ -31,6 +31,59 @@ const capabilities = [
   },
 ]
 
+const workflowStages = [
+  {
+    step: '01',
+    title: 'Work queue',
+    signal: 'Who owns the next safe action?',
+    body: 'Intake every agent run as a case with owner, risk class, source system, and the next reversible operator action visible before drill-down.',
+  },
+  {
+    step: '02',
+    title: 'Trace graph',
+    signal: 'What did the agent actually do?',
+    body: 'Render model calls, tool calls, handoffs, guardrails, and custom events as a navigable run path instead of a flat log stream.',
+  },
+  {
+    step: '03',
+    title: 'Evaluation panel',
+    signal: 'Did quality regress?',
+    body: 'Keep dataset tests, code checks, AI judgments, and human labels beside the trace so teams can compare versions before promotion.',
+  },
+  {
+    step: '04',
+    title: 'Human release gate',
+    signal: 'Can a reviewer reject with context?',
+    body: 'Show policy citations, risk deltas, evidence gaps, and release authority in one pane before any privileged action proceeds.',
+  },
+  {
+    step: '05',
+    title: 'Evidence room',
+    signal: 'What proof can leave the product?',
+    body: 'Export receipts, hashes, snapshots, and replay references as buyer-readable packets with claim boundaries attached.',
+  },
+]
+
+const researchInputs = [
+  ['NIST AI RMF', 'Govern · Map · Measure · Manage translated into the work queue.'],
+  [
+    'OWASP GenAI Security Project',
+    'Prompt injection, excessive agency, leakage, and overreliance as visible controls.',
+  ],
+  [
+    'OpenAI Agents SDK',
+    'Tracing and guardrails as first-class workflow objects, not hidden developer logs.',
+  ],
+  [
+    'LangSmith + Phoenix',
+    'Trace search, dashboards, evaluations, and annotations for failure investigation.',
+  ],
+  [
+    'Humanloop evaluators',
+    'Code, AI, and human judgment lanes for offline regression and live monitoring.',
+  ],
+]
+
 const coverage = [
   ['EU AI Act', 'Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy', 'v1.0'],
   ['SR 11-7', '§V model risk · §VII validation · §VIII development', 'v2011'],
@@ -124,6 +177,7 @@ export function Marketing() {
           </button>
           <div className="m-nav-links" id="m-nav-links">
             <a href="#capabilities">Platform</a>
+            <a href="#workbench">Workbench</a>
             <a href="#coverage">Coverage</a>
             <a
               href="/products"
@@ -272,10 +326,54 @@ export function Marketing() {
             {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
 
+          {/* Workbench blueprint */}
+          <section id="workbench" aria-labelledby="workbench-h">
+            <div className="m-sec-head">
+              <span className="num">II · Workbench</span>
+              <h2 id="workbench-h">
+                Visualized <em>work</em>, not another wall of settings.
+              </h2>
+            </div>
+            <div className="m-workbench">
+              <ol className="m-workbench-map" aria-label="Visualized operator workflow">
+                {workflowStages.map((stage) => (
+                  <li className="m-workbench-stage" key={stage.step}>
+                    <span className="stage-step">{stage.step}</span>
+                    <h3>{stage.title}</h3>
+                    <p className="stage-signal">{stage.signal}</p>
+                    <p>{stage.body}</p>
+                  </li>
+                ))}
+              </ol>
+
+              <aside className="m-workbench-panel" aria-label="Research-backed UI inputs">
+                <span className="folio-no">Research inputs</span>
+                <h3>What a leading agent-governance platform should make easy.</h3>
+                <p>
+                  The UI should make risky work inspectable in one pass: queue, trace, evaluation,
+                  release, and export. The claim is a product blueprint, not certification or live
+                  assurance.
+                </p>
+                <ul>
+                  {researchInputs.map(([source, cue]) => (
+                    <li key={source}>
+                      <strong>{source}</strong>
+                      <span>{cue}</span>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            </div>
+          </section>
+
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
+          </div>
+
           {/* Coverage */}
           <section id="coverage" aria-labelledby="cov-h">
             <div className="m-sec-head">
-              <span className="num">II · Coverage</span>
+              <span className="num">III · Coverage</span>
               <h2 id="cov-h">
                 <em>Cited</em>, not claimed.
               </h2>
@@ -309,7 +407,7 @@ export function Marketing() {
           {/* Pricing */}
           <section id="pricing" aria-labelledby="pricing-h">
             <div className="m-sec-head">
-              <span className="num">III · Pricing</span>
+              <span className="num">IV · Pricing</span>
               <h2 id="pricing-h">
                 Three editions. <em>One</em> constitutional hash.
               </h2>
@@ -345,7 +443,7 @@ export function Marketing() {
 
           <section aria-labelledby="book-h">
             <div className="m-sec-head">
-              <span className="num">IV · Conversation</span>
+              <span className="num">V · Conversation</span>
               <h2 id="book-h">
                 We schedule by <em>matter</em>, not by funnel stage.
               </h2>

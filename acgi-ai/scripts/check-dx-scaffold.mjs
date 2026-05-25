@@ -152,7 +152,7 @@ check(
 )
 check(
   packageJson.scripts?.['audit:eval'] ===
-    'pnpm run test:claim-matrix && pnpm run test:trust-surface',
+    'pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:platform-blueprint',
   'package.json must expose audit:eval for public claim/trust evidence checks.',
 )
 check(

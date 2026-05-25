@@ -202,6 +202,18 @@ Risk pills are semantic and restricted to confirmed, partial, blocked, and privi
 
 Product pages use the same primitives as marketing: product-nav, product-hero, product-docket, product-stat-grid, product-brief, and product-evidence-list. Console pages use c-side, c-banner, c-topbar, c-heartbeat, c-table, c-toolbar, c-receipt, and the same button primitives.
 
+## Platform UX blueprint
+
+The leading-platform target is a visual workbench that makes agent governance easy to operate without hiding risk. The public marketing UI now describes the same product principle the console should eventually embody: **work queue → trace graph → evaluation panel → human release gate → evidence room**.
+
+Design requirements:
+
+- Show work as a short, ordered path before exposing dense tables. Operators should understand the next safe action in one scan.
+- Keep trace, evaluation, guardrail, release, and evidence concepts visually adjacent so risk is not split across disconnected tabs.
+- Treat NIST AI RMF-style governance, OWASP GenAI risk controls, agent tracing, guardrails, evaluation, and human judgment as visible product objects.
+- Use existing editorial primitives only: paper layers, black rules, mono stage labels, rust arrows/checks, and serif explanations. Do not add a dashboard color palette, heavy icons, shadows, or animation.
+- Keep copy claim-safe. This is a research-backed product blueprint until deployment proof, legal signoff, and external assurance evidence exist.
+
 ## Route-by-route wire decisions (A7)
 
 The console shell reads `CONSOLE_WIRE_DECISIONS` from `src/routes/console/wire-decisions.ts` so the same route contract drives H1 metadata and the right-rail `Route contract` evidence card. These are local wire-level decisions for the current Phase 1 console slice; production browser evidence, cursor-scale lists, and destructive mutation confirmations remain separate deploy gates.

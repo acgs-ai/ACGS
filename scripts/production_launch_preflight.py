@@ -109,9 +109,20 @@ def _proof_intake_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
             [
                 "templatePath",
                 "proofCommand",
+                "completedProofValidationCommand",
                 "templateStatus",
                 "requiredPassingCheckIds",
                 "requiredAbsentBlockerIds",
+                "claimBoundary",
+            ],
+        ),
+        "hostedStorybookProofValidation": _compact_artifact(
+            _dict(artifacts.get("hostedStorybookProofValidation")),
+            [
+                "operatorCommand",
+                "outputArtifact",
+                "outputFields",
+                "latestValidationSnapshot",
                 "claimBoundary",
             ],
         ),
@@ -136,6 +147,7 @@ def _proof_intake_ids_for_blocker(blocker_id: str) -> list[str]:
         "full-wcag-manual-screen-reader-evidence": ["productionEvidenceTemplate"],
         "hosted-storybook-buyer-evidence": [
             "hostedStorybookProofTemplate",
+            "hostedStorybookProofValidation",
             "productionEvidenceTemplate",
             "productionLiveVerifier",
         ],
@@ -350,6 +362,9 @@ def build_preflight(
             "status": chain_snapshot.get("status"),
             "issues": chain_issues,
             "validation": chain_snapshot.get("validation"),
+            "hostedStorybookProofValidation": chain_snapshot.get(
+                "hostedStorybookProofValidation"
+            ),
         },
         "productionEvidenceValidation": {
             "path": validation_snapshot.get("path"),
@@ -381,10 +396,22 @@ def render_markdown(preflight: dict[str, Any]) -> str:
     blockers = ", ".join(preflight.get("externalBlockerIds", [])) or "none"
     proof_intakes = _dict(preflight.get("proofIntakeArtifacts"))
     proof_intake_refs = ", ".join(
-        str(meta.get("templatePath") or meta.get("handoff") or meta.get("liveProofCommand"))
+        str(
+            meta.get("templatePath")
+            or meta.get("handoff")
+            or meta.get("liveProofCommand")
+            or meta.get("outputArtifact")
+            or meta.get("operatorCommand")
+        )
         for meta in proof_intakes.values()
         if isinstance(meta, dict)
-        and (meta.get("templatePath") or meta.get("handoff") or meta.get("liveProofCommand"))
+        and (
+            meta.get("templatePath")
+            or meta.get("handoff")
+            or meta.get("liveProofCommand")
+            or meta.get("outputArtifact")
+            or meta.get("operatorCommand")
+        )
     )
     proof_intake_refs = proof_intake_refs or "none"
     live_blocker_details = (
