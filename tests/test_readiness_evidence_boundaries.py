@@ -37,3 +37,21 @@ def test_readiness_baseline_docs_exist_and_separate_claims() -> None:
     ]:
         assert claim_area in matrix
     assert "Unsupported Claims" in matrix
+
+
+def test_current_readiness_evidence_docs_track_live_summary() -> None:
+    import platform_readiness_report as pr
+
+    summary = pr.summarize(pr.build_items(ROOT))
+    current_summary = (
+        f"`{summary['pass']}/{summary['total']} pass`, "
+        f"`{summary['fail']} fail`, "
+        f"`{summary['pending']} pending`"
+    )
+    packet = (ROOT / "docs" / "readiness-evidence-packet-2026-05-25.md").read_text()
+    matrix = (ROOT / "docs" / "readiness-evidence-matrix-2026-05-25.md").read_text()
+
+    assert current_summary in packet
+    assert current_summary in matrix
+    assert "30/31 pass" not in packet
+    assert "30/31 pass" not in matrix
