@@ -262,6 +262,116 @@ def _cmd_observer(args: argparse.Namespace) -> int:
         return 1
 
 
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """Verify hash-chain integrity for a single correlation_id.
+
+    Output: structured JSON to stdout.
+    Exit 0 for intact, 1 for tampered/unknown/missing.
+    """
+    store = open_store(args.store_dir)
+    try:
+        trace = store.get_trace(args.correlation_id)
+    finally:
+        store.close()
+
+    if trace is None:
+        print(
+            json.dumps(
+                {
+                    "correlation_id": args.correlation_id,
+                    "integrity_status": "unknown",
+                    "broken_event_id": None,
+                    "event_count": 0,
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    broken_event_id: str | None = None
+    if trace.integrity_status == "tampered":
+        # Re-walk the events to find the first offending event_id.
+        from agent_bus_analyzer.hashing import compute_event_hash
+        from agent_bus_analyzer.store import iter_trace_events
+
+        prev: str | None = None
+        for ev in iter_trace_events(args.store_dir, args.correlation_id):
+            if ev.get("status") == "ingest-gap":
+                continue
+            if ev.get("prev_hash") != prev or compute_event_hash(ev) != ev.get("event_hash"):
+                broken_event_id = str(ev.get("event_id", ""))
+                break
+            prev = ev.get("event_hash")
+
+    print(
+        json.dumps(
+            {
+                "correlation_id": args.correlation_id,
+                "integrity_status": trace.integrity_status,
+                "broken_event_id": broken_event_id,
+                "event_count": len(trace.events),
+            },
+            sort_keys=True,
+        )
+    )
+    return 0 if trace.integrity_status == "intact" else 1
+
+
+def _cmd_dev_traffic(args: argparse.Namespace) -> int:
+    """Write synthetic events directly to the trace store for offline quickstart traffic.
+
+    Generates *count* ``kind=dispatch`` events for the given *target* handler,
+    writing each through the public ``TraceStore.append`` path (no bus required).
+    When ``--include-unwired-handler`` is set, approximately 10 % of events use
+    ``status="unwired-handler"`` to exercise the wiring-defect detection path.
+
+    This helper is intentionally NOT on the authorization path (FR-010).
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    store = open_store(args.store_dir)
+    written = 0
+    try:
+        for i in range(args.count):
+            use_unwired = args.include_unwired_handler and (i % 10 == 9)
+            status = "unwired-handler" if use_unwired else "completed"
+            target_resolved = None if use_unwired else args.target
+            event: dict[str, Any] = {
+                "event_id": str(uuid.uuid4()),
+                "correlation_id": f"dev-traffic-{args.target}-{i:04d}",
+                "recorded_at": datetime.now(UTC).isoformat(),
+                "source_agent": "dev-traffic-generator",
+                "target_handler_declared": args.target,
+                "target_handler_resolved": target_resolved,
+                "payload_ref": f"sha256:{'0' * 64}",
+                "kind": "dispatch",
+                "decision": None,
+                "flagged_rule": None,
+                "audit_receipt_hash": None,
+                "constitutional_hash": "a1b2c3d4e5f60718",
+                "status": status,
+            }
+            store.append(event)
+            written += 1
+    finally:
+        store.close()
+
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "store_dir": str(args.store_dir),
+                "target": args.target,
+                "written": written,
+                "include_unwired_handler": args.include_unwired_handler,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_bus_analyzer")
     subs = parser.add_subparsers(dest="cmd", required=True)
@@ -321,6 +431,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_obs.add_argument("--queue-capacity", type=int, default=10_000)
     p_obs.add_argument("--registry-poll-seconds", type=int, default=30)
     p_obs.set_defaults(func=_cmd_observer)
+
+    p_verify = subs.add_parser(
+        "verify",
+        help="Verify hash-chain integrity for a single trace",
+    )
+    p_verify.add_argument("correlation_id", help="Correlation ID of the trace to verify")
+    p_verify.add_argument("--store-dir", required=True, type=Path)
+    p_verify.set_defaults(func=_cmd_verify)
+
+    p_dev = subs.add_parser(
+        "dev-traffic",
+        help="Write synthetic events to the trace store for offline dev/quickstart use",
+    )
+    p_dev.add_argument("--store-dir", required=True, type=Path, help="Trace store directory")
+    p_dev.add_argument(
+        "--target",
+        required=True,
+        help="Handler name to use as target_handler_declared",
+    )
+    p_dev.add_argument(
+        "--count",
+        type=int,
+        default=10,
+        help="Number of events to write (default: 10)",
+    )
+    p_dev.add_argument(
+        "--include-unwired-handler",
+        action="store_true",
+        help="Make ~10 %% of events use status='unwired-handler' (every 10th event)",
+    )
+    p_dev.set_defaults(func=_cmd_dev_traffic)
 
     return parser
 
