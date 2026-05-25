@@ -1341,8 +1341,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "LangSmith observability",
             "Arize Phoenix overview",
             "Humanloop evaluators",
+            "GOV.UK Service Manual",
+            "WCAG 2.2",
             "## Platform UX blueprint",
             "work queue → trace graph → evaluation panel → human release gate → evidence room",
+            "text-first and keyboard-reviewable",
             'id="workbench"',
             "Visualized <em>work</em>",
             "Work queue",
@@ -1385,7 +1388,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and platform_blueprint_scripts_ok,
             (
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
-                "and console workbench, launch proof ladder, and "
+                "and console workbench, service-design/accessibility anchors, "
+                "launch proof ladder, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1760,6 +1764,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/ARCHITECTURE.md"),
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
                 _maybe_read(repo_root, "acgi-ai/GETTING_STARTED.md"),
+                _maybe_read(repo_root, "acgi-ai/scripts/build-buyer-evidence.mjs"),
                 readme,
             ]
         ),
@@ -1768,6 +1773,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "evidence:build",
             "test:buyer-evidence",
             "visual governance workbench",
+            "launch proof ladder",
+            "Local readiness",
+            "Live verifier",
+            "Assurance packet",
+            "verify:production-live",
             ".nojekyll",
             "hostedProofRequirements",
         ],
@@ -1779,7 +1789,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok,
             (
                 "dependency-free local buyer-evidence gallery builder, visual "
-                "workbench story, and verifier are wired"
+                "workbench story, launch proof ladder story, and verifier are wired"
                 if buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok
                 else (
                     f"missing_files={buyer_evidence_missing}, "

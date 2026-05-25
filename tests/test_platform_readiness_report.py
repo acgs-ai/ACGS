@@ -82,6 +82,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["platform-blueprint-ui-local"].status == "pass"
     assert "same-style marketing workbench" in by_id["platform-blueprint-ui-local"].evidence
     assert "console workbench" in by_id["platform-blueprint-ui-local"].evidence
+    assert "service-design/accessibility anchors" in by_id["platform-blueprint-ui-local"].evidence
     assert "launch proof ladder" in by_id["platform-blueprint-ui-local"].evidence
     assert "test:platform-blueprint" in by_id["platform-blueprint-ui-local"].command
     assert by_id["local-verification-fanout"].status == "pass"
@@ -90,6 +91,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["node24-local-toolchain"].status == "pass"
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
+    assert "launch proof ladder story" in by_id["buyer-evidence-gallery-local"].evidence
     assert by_id["runtime-framework-bridge-local"].status == "pass"
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence

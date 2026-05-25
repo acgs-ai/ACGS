@@ -13,6 +13,8 @@ Status: research-backed product blueprint, not deployment proof or certification
 6. **Exportable evidence and claim boundaries.** GovernZone should keep its differentiator: receipts, hashes, replay references, policy/model/prompt snapshots, and explicit claim boundaries that can leave the product without overstating live assurance.
 7. **Operator quick-start path.** The interface should not force new users to infer the operating model from dense tables. It should expose three plain actions in the same visual workbench: Start here, Hold release, and Export proof.
 8. **Launch proof ladder.** Deployment readiness should be visible as a plain path: Local readiness, Live verifier, and Assurance packet. Operators should not have to read a generated manifest to know which proof is still local and which external blocker remains.
+9. **Simple service path.** GOV.UK service-design guidance emphasizes user needs, simple first-time success, and a clear outcome. GovernZone should therefore make the next safe action visible before dense evidence tables, and should keep blocked/pending states actionable rather than decorative.
+10. **Accessible visual proof.** WCAG 2.2 keeps keyboard focus, input assistance, and accessible authentication in the product-quality frame. Visualized governance work must not rely on color alone; every status, proof step, and blocked action needs text labels that survive keyboard and assistive-technology review.
 
 ## UI/UX direction for this repo
 
@@ -21,6 +23,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 - Keep the console direction simple: one queue, one visual trace, one evaluation panel, one release gate, one evidence room.
 - Add a same-style quick-start checklist so a first-time operator can choose the next safe action, know when to hold release, and export bounded proof without leaving the workbench.
 - Add a launch proof ladder in the same workbench so local readiness, live deployment verification, and external assurance blockers are visible without changing UI systems.
+- Make visual work text-first and keyboard-reviewable: every workbench stage, proof ladder rung, and hold/release decision needs a readable label before any color, icon, or layout cue.
 - Avoid new dependencies, icon systems, dashboard colors, heavy animation, or generic SaaS gradients.
 - Phrase everything as a target product blueprint until live deployment proof, legal review, SOC 2 evidence, WCAG manual evidence, and penetration-test evidence are attached.
 
@@ -33,3 +36,5 @@ Status: research-backed product blueprint, not deployment proof or certification
 - LangSmith observability: https://docs.langchain.com/langsmith/observability
 - Arize Phoenix overview: https://arize.com/docs/phoenix
 - Humanloop evaluators: https://humanloop.com/docs/evaluation/overview
+- GOV.UK Service Manual — user needs and simple services: https://www.gov.uk/service-manual/user-centred-design/user-needs/ and https://www.gov.uk/service-manual/service-standard/point-4-make-the-service-simple-to-use
+- W3C WAI — WCAG 2.2 updates: https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/

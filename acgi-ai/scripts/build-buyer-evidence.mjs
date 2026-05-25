@@ -66,6 +66,7 @@ const evidenceStories = [
     buyerQuestion: 'Can an operator understand the next safe action without reading raw traces?',
     proof: [
       'The console workbench turns queue, trace, evaluation, release, and evidence steps into one visual path.',
+      'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
       'Each stage links back to an existing console route instead of creating hidden side effects.',
       'The claim boundary keeps the workbench as local UX evidence, not production assurance.',
     ],
@@ -80,6 +81,28 @@ const evidenceStories = [
       'src/routes/Console.tsx',
       'src/routes/console/wire-decisions.ts',
       'src/App.css',
+    ],
+  },
+  {
+    id: 'launch-proof-ladder',
+    title: 'Launch proof ladder',
+    route: '/console/workbench#launch-proof-ladder',
+    buyerQuestion: 'Can a buyer see which proof is local, live, or still external?',
+    proof: [
+      'The same workbench separates Local readiness, Live verifier, and Assurance packet evidence.',
+      'verify:production-live stays visible as the live proof command after deployment.',
+      'Legal, pentest, WCAG/manual, and hosted Storybook proof remain external blockers until attached.',
+    ],
+    localGates: [
+      'pnpm run test:platform-blueprint',
+      'pnpm run test:buyer-evidence',
+      'make platform-readiness',
+    ],
+    sourceFiles: [
+      'src/routes/console/Workbench.tsx',
+      'src/routes/Marketing.tsx',
+      'scripts/check-platform-blueprint.mjs',
+      '../scripts/platform_readiness_report.py',
     ],
   },
   {

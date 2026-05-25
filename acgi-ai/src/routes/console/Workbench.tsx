@@ -234,7 +234,11 @@ export function Workbench() {
         </div>
       </section>
 
-      <section className="overview-section" aria-labelledby="workbench-proof-h">
+      <section
+        className="overview-section"
+        id="launch-proof-ladder"
+        aria-labelledby="workbench-proof-h"
+      >
         <div className="c-toolbar">
           <h2 className="overview-section-title" id="workbench-proof-h">
             Launch proof ladder

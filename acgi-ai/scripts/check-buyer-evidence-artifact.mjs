@@ -56,7 +56,16 @@ for (const needle of [
   'Bus-owned proof source',
   'Claim-safe trust surface',
   'Visual governance workbench',
+  'Launch proof ladder',
   'Deploy readiness boundary',
+  'Operator quick start',
+  'Start here',
+  'Hold release',
+  'Export proof',
+  'Local readiness',
+  'Live verifier',
+  'Assurance packet',
+  'verify:production-live',
   '.nojekyll',
   'hostedProofRequirements',
   'not hosted Storybook',
@@ -112,7 +121,16 @@ try {
       'ACGS buyer evidence gallery',
       'Receipt proof journey',
       'Visual governance workbench',
+      'Launch proof ladder',
       'next safe action',
+      'Operator quick start',
+      'Start here',
+      'Hold release',
+      'Export proof',
+      'Local readiness',
+      'Live verifier',
+      'Assurance packet',
+      'verify:production-live',
       'signed evidence packet',
       'not the hosted',
       'not live Cloud Run/Vercel proof',
@@ -138,12 +156,16 @@ try {
       'manifest must preserve the production-proof boundary.',
     )
     check(
-      Array.isArray(manifest.stories) && manifest.stories.length >= 5,
-      'manifest must include at least five buyer-evidence stories.',
+      Array.isArray(manifest.stories) && manifest.stories.length >= 6,
+      'manifest must include at least six buyer-evidence stories.',
     )
     check(
       JSON.stringify(manifest.stories).includes('visual-governance-workbench'),
       'manifest must include the visual governance workbench story.',
+    )
+    check(
+      JSON.stringify(manifest.stories).includes('launch-proof-ladder'),
+      'manifest must include the launch proof ladder story.',
     )
     check(
       manifest.publication?.requiredFiles?.includes('.nojekyll'),
