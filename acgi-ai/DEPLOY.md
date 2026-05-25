@@ -789,7 +789,10 @@ claim-safe gallery with `ACGI_EVIDENCE_CNAME=storybook.acgs.ai`, writes the
 Pages `CNAME`, writes `.nojekyll`, includes a `/manifest.json` for the live
 `storybook-manifest-live` check, records hosted-proof requirements in that
 manifest, uploads the `buyer-evidence-storybook` artifact, and only enables GitHub Pages deployment when
-`STORYBOOK_PAGES_ENABLED` is explicitly set. The console workflow also runs
+`STORYBOOK_PAGES_ENABLED` is explicitly set. Before upload or deploy, the
+Storybook workflow also runs `test:hosted-storybook-handoff` and
+`test:hosted-storybook-proof-template` so the Pages path cannot drift from the
+operator proof handoff or proof-intake contract. The console workflow also runs
 `pnpm evidence:build` and uploads the
 `buyer-evidence-gallery` artifact before any credentialed GCP/auth/deploy
 step, giving reviewers a CI-retained proof bundle.

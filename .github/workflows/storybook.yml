@@ -17,6 +17,8 @@ on:
       - 'acgi-ai/scripts/check-buyer-evidence-artifact.mjs'
       - 'acgi-ai/scripts/check-storybook-runtime-plan.mjs'
       - 'acgi-ai/scripts/check-storybook-publication.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
       - 'acgi-ai/storybook-runtime.plan.json'
       - 'acgi-ai/hosted-storybook-proof.example.json'
@@ -34,6 +36,8 @@ on:
       - 'acgi-ai/scripts/check-buyer-evidence-artifact.mjs'
       - 'acgi-ai/scripts/check-storybook-runtime-plan.mjs'
       - 'acgi-ai/scripts/check-storybook-publication.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
       - 'acgi-ai/storybook-runtime.plan.json'
       - 'acgi-ai/hosted-storybook-proof.example.json'
@@ -74,7 +78,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Verify buyer evidence publication contract
-        run: pnpm test:storybook-runtime-plan && pnpm test:storybook-publication
+        run: pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template
 
       - name: Build buyer evidence Storybook artifact
         env:

@@ -893,6 +893,12 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "target": "https://storybook.acgs.ai",
                 "proofCommand": "pnpm -F acgi-ai run test:storybook-publication",
                 "deploymentGate": "vars.STORYBOOK_PAGES_ENABLED == 'true'",
+                "preDeployLocalChecks": [
+                    "pnpm test:storybook-runtime-plan",
+                    "pnpm test:storybook-publication",
+                    "pnpm test:hosted-storybook-handoff",
+                    "pnpm test:hosted-storybook-proof-template",
+                ],
                 "requiredPublicationFiles": [
                     "index.html",
                     "manifest.json",
@@ -1227,7 +1233,8 @@ live production proof.
 - `.github/workflows/storybook.yml` is the gated buyer-evidence Storybook
   publication scaffold for `storybook.acgs.ai`; its artifact contract includes
   `index.html`, `manifest.json`, `.nojekyll`, and `CNAME` plus hosted proof
-  requirements for `storybook-manifest-live`.
+  requirements for `storybook-manifest-live`; before artifact upload or Pages
+  deploy it also runs the hosted handoff and hosted proof-template checks.
 - `buyer-evidence-gallery` is the CI artifact name for the local buyer proof gallery.
 - This bundle is a deploy handoff artifact, not live production proof.
 """

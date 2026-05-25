@@ -23,6 +23,11 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+function pathFilterCount(workflow, path) {
+  return (workflow.match(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? [])
+    .length
+}
+
 const packageJson = JSON.parse(read('package.json'))
 const buildScript = read('scripts/build-buyer-evidence.mjs')
 const workflow = readRepo('.github/workflows/storybook.yml')
@@ -83,6 +88,8 @@ for (const needle of [
   "node-version: '24'",
   'pnpm install --frozen-lockfile --ignore-workspace',
   'pnpm test:storybook-publication',
+  'pnpm test:hosted-storybook-handoff',
+  'pnpm test:hosted-storybook-proof-template',
   'ACGI_EVIDENCE_CNAME: storybook.acgs.ai',
   'pnpm storybook:build',
   'buyer-evidence-storybook',
@@ -92,6 +99,18 @@ for (const needle of [
   'url: https://storybook.acgs.ai',
 ]) {
   mustContain(workflow, needle, '.github/workflows/storybook.yml')
+}
+
+for (const path of [
+  'acgi-ai/scripts/build-hosted-storybook-handoff.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-handoff.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs',
+  'acgi-ai/hosted-storybook-proof.example.json',
+]) {
+  check(
+    pathFilterCount(workflow, path) >= 2,
+    `.github/workflows/storybook.yml pull_request and push path filters must include ${path}.`,
+  )
 }
 
 for (const source of [deploy, readiness, platformReadiness, releaseEvidence]) {

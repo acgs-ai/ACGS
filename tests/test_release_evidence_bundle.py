@@ -262,6 +262,8 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert publication["target"] == "https://storybook.acgs.ai"
     assert publication["proofCommand"] == "pnpm -F acgi-ai run test:storybook-publication"
     assert publication["deploymentGate"] == "vars.STORYBOOK_PAGES_ENABLED == 'true'"
+    assert "pnpm test:hosted-storybook-handoff" in publication["preDeployLocalChecks"]
+    assert "pnpm test:hosted-storybook-proof-template" in publication["preDeployLocalChecks"]
     assert ".nojekyll" in publication["requiredPublicationFiles"]
     assert "CNAME" in publication["requiredPublicationFiles"]
     assert any(

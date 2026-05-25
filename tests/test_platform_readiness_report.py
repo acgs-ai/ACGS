@@ -89,6 +89,10 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "pending-external:dependency-owner-approval" in storybook_runtime_plan
     assert "not official Storybook runtime proof" in storybook_runtime_plan
     assert by_id["storybook-publication-workflow-local"].status == "pass"
+    assert (
+        "hosted handoff/proof-template checks"
+        in by_id["storybook-publication-workflow-local"].evidence
+    )
     assert by_id["hosted-storybook-handoff-local"].status == "pass"
     assert "pending-external" in by_id["hosted-storybook-handoff-local"].evidence
     assert "copyIntoProductionEvidence" in by_id["hosted-storybook-handoff-local"].evidence

@@ -37,6 +37,7 @@ function pathFilterCount(workflow, path) {
 const packageJson = JSON.parse(read('package.json'))
 const consoleWorkflowPath = '.github/workflows/console.yml'
 const marketingWorkflowPath = '.github/workflows/marketing.yml'
+const storybookWorkflowPath = '.github/workflows/storybook.yml'
 const tthwWorkflowPath = '.github/workflows/tthw.yml'
 const productionDeployCheckPath = 'scripts/check-production-deploy-contract.mjs'
 const productionLaunchCheckPath = 'scripts/check-production-launch-handoff.mjs'
@@ -66,6 +67,7 @@ const e2eHttpSmokePath = 'scripts/smoke-e2e-http-shells.mjs'
 const mswNodeServerPath = 'src/mocks/server.ts'
 const consoleWorkflow = readRepo(consoleWorkflowPath)
 const marketingWorkflow = readRepo(marketingWorkflowPath)
+const storybookWorkflow = readRepo(storybookWorkflowPath)
 const tthwWorkflow = readRepo(tthwWorkflowPath)
 const productionDeployCheck = read(productionDeployCheckPath)
 const productionLaunchCheck = read(productionLaunchCheckPath)
@@ -103,6 +105,10 @@ check(
 check(
   existsSync(resolve(repoRoot, marketingWorkflowPath)),
   '.github/workflows/marketing.yml must exist.',
+)
+check(
+  existsSync(resolve(repoRoot, storybookWorkflowPath)),
+  '.github/workflows/storybook.yml must exist.',
 )
 check(existsSync(resolve(repoRoot, tthwWorkflowPath)), '.github/workflows/tthw.yml must exist.')
 check(
@@ -258,6 +264,13 @@ for (const [label, workflow] of [
     `${label} must run pnpm test:all in a named Readiness gate step.`,
   )
 }
+
+check(
+  /name:\s+Verify buyer evidence publication contract[\s\S]*pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template/.test(
+    storybookWorkflow,
+  ),
+  'storybook.yml must run runtime, publication, hosted handoff, and hosted proof-template checks before artifact upload/deploy.',
+)
 
 before(consoleWorkflow, 'pnpm test:all', 'Auth to GCP via WIF', 'console.yml')
 before(consoleWorkflow, 'pnpm test:all', 'Build buyer evidence gallery artifact', 'console.yml')
@@ -607,6 +620,24 @@ for (const path of [
   check(
     pathFilterCount(consoleWorkflow, path) >= 2,
     `console.yml pull_request and push path filters must include ${path}.`,
+  )
+}
+
+for (const path of [
+  'acgi-ai/scripts/build-buyer-evidence.mjs',
+  'acgi-ai/scripts/check-buyer-evidence-artifact.mjs',
+  'acgi-ai/scripts/check-storybook-runtime-plan.mjs',
+  'acgi-ai/scripts/check-storybook-publication.mjs',
+  'acgi-ai/scripts/build-hosted-storybook-handoff.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-handoff.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs',
+  'acgi-ai/storybook-runtime.plan.json',
+  'acgi-ai/hosted-storybook-proof.example.json',
+  '.github/workflows/storybook.yml',
+]) {
+  check(
+    pathFilterCount(storybookWorkflow, path) >= 2,
+    `storybook.yml pull_request and push path filters must include ${path}.`,
   )
 }
 

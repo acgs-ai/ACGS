@@ -1723,6 +1723,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "actions/deploy-pages@v4",
             "vars.STORYBOOK_PAGES_ENABLED == 'true'",
             "test:storybook-publication",
+            "test:hosted-storybook-handoff",
+            "test:hosted-storybook-proof-template",
             "storybook.acgs.ai",
         ],
     )
@@ -1739,7 +1741,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and storybook_publication_ok
             and storybook_publication_scripts_ok,
             (
-                "storybook.acgs.ai Pages workflow scaffold builds claim-safe buyer evidence"
+                "storybook.acgs.ai Pages workflow scaffold builds claim-safe buyer "
+                "evidence and runs hosted handoff/proof-template checks before deploy"
                 if storybook_publication_files_ok
                 and storybook_publication_ok
                 and storybook_publication_scripts_ok
