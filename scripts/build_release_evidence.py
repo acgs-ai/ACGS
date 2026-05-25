@@ -791,6 +791,8 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "Claude/Codex-style {tool_name, tool_input}",
                     "MCP-style {method: tools/call, params: {name, arguments}}",
                     "function-call-style {type: function_call, name, arguments}",
+                    "OpenAI Chat tool_calls [{function: {name, arguments}}]",
+                    "LangChain-style tool_calls [{name, args}]",
                     "generic {name, arguments|args|input}",
                 ],
                 "claimBoundary": (

@@ -169,6 +169,9 @@ def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dic
     * MCP JSON-RPC tool calls: ``{method: "tools/call", params: {name, arguments}}``
     * OpenAI/function-call style events: ``{type: "function_call", name, arguments}``
       or ``{function: {name, arguments}}``
+    * OpenAI Chat/LangChain-style single tool calls:
+      ``{tool_calls: [{function: {name, arguments}}]}`` or
+      ``{tool_calls: [{name, args}]}``
     * Generic bridges: ``{name, arguments|args|input}`` or
       ``{tool: {name, arguments|args}}``
     """
@@ -184,6 +187,34 @@ def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dic
         arguments = params.get("arguments", params.get("args", params.get("tool_input")))
         if name:
             return str(name), _arguments_to_mapping(arguments)
+
+    tool_calls = payload.get("tool_calls")
+    if isinstance(tool_calls, list) and len(tool_calls) == 1 and isinstance(tool_calls[0], dict):
+        tool_call = cast(dict[str, Any], tool_calls[0])
+        function_call = tool_call.get("function")
+        if isinstance(function_call, dict) and function_call.get("name"):
+            return str(function_call["name"]), _arguments_to_mapping(function_call.get("arguments"))
+        if tool_call.get("name"):
+            arguments = tool_call.get(
+                "arguments",
+                tool_call.get("args", tool_call.get("input")),
+            )
+            return str(tool_call["name"]), _arguments_to_mapping(arguments)
+
+    if isinstance(tool_calls, list) and len(tool_calls) > 1:
+        names: list[str] = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function_call = tool_call.get("function")
+            if isinstance(function_call, dict) and function_call.get("name"):
+                names.append(str(function_call["name"]))
+            elif tool_call.get("name"):
+                names.append(str(tool_call["name"]))
+        return "tool_calls.batch", {
+            "tool_call_count": len(tool_calls),
+            "tool_call_names": names,
+        }
 
     function = payload.get("function")
     if isinstance(function, dict) and function.get("name"):
@@ -228,9 +259,28 @@ def _runtime_context_from_payload(
     params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
     function = payload.get("function") if isinstance(payload.get("function"), dict) else {}
     tool = payload.get("tool") if isinstance(payload.get("tool"), dict) else {}
+    tool_calls = payload.get("tool_calls")
+    single_tool_call = (
+        tool_calls[0]
+        if isinstance(tool_calls, list) and len(tool_calls) == 1 and isinstance(tool_calls[0], dict)
+        else {}
+    )
+    tool_call_function = (
+        single_tool_call.get("function")
+        if isinstance(single_tool_call.get("function"), dict)
+        else {}
+    )
 
     goal = ""
-    for source in (payload, params, function, tool, tool_input):
+    for source in (
+        payload,
+        params,
+        function,
+        tool,
+        single_tool_call,
+        tool_call_function,
+        tool_input,
+    ):
         if not isinstance(source, dict):
             continue
         for key in ("goal", "intent", "purpose"):
@@ -250,6 +300,10 @@ def _runtime_context_from_payload(
         cast(dict[str, Any], function).get("context"),
         cast(dict[str, Any], tool).get("state"),
         cast(dict[str, Any], tool).get("context"),
+        cast(dict[str, Any], single_tool_call).get("state"),
+        cast(dict[str, Any], single_tool_call).get("context"),
+        cast(dict[str, Any], tool_call_function).get("state"),
+        cast(dict[str, Any], tool_call_function).get("context"),
         tool_input.get("state"),
         tool_input.get("context"),
     )

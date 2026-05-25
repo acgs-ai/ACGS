@@ -60,8 +60,9 @@ printf '{"tool_name":"Edit","tool_input":{"file_path":"README.md","new_string":"
 ```
 
 The adapter also exposes `tool_call_from_hook_payload` for dependency-free
-Claude/Codex-style, MCP-style `tools/call`, function-call-style, and generic
-agent-framework bridge payload normalization before receipts are emitted.
+Claude/Codex-style, MCP-style `tools/call`, function-call-style, OpenAI Chat
+`tool_calls`, LangChain-style `tool_calls`, and generic agent-framework bridge
+payload normalization before receipts are emitted.
 For enforceable hook hosts, run `gove-zone gate --policy-bundle
 policy.bundle.json < event.json`; the gate writes the receipt and exits
 non-zero for `deny` / `escalate` decisions before the side effect runs.

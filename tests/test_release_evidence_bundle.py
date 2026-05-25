@@ -210,6 +210,10 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert runtime_bridge["publicHelper"] == "tool_call_from_hook_payload"
     assert "test_integration_hook.py" in runtime_bridge["proofCommand"]
     assert "MCP-style" in runtime_bridge["supportedLocalShapes"][1]
+    assert "tool_calls" in runtime_bridge["supportedLocalShapes"][3]
+    assert "OpenAI Chat" in runtime_bridge["supportedLocalShapes"][3]
+    assert "tool_calls" in runtime_bridge["supportedLocalShapes"][4]
+    assert "LangChain-style" in runtime_bridge["supportedLocalShapes"][4]
     assert "not a claim" in runtime_bridge["claimBoundary"]
     assert "gove-zone gate --policy-bundle" in runtime_policy_gate["cli"]
     assert runtime_policy_gate["policyType"] == "RuleSetPolicy"

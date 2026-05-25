@@ -1381,6 +1381,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "tool_call_from_hook_payload",
             'method": "tools/call"',
             "function_call",
+            "tool_calls",
+            "OpenAI Chat",
+            "LangChain-style",
             "Claude/Codex-style",
             "MCP-style",
         ],
@@ -1391,7 +1394,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Runtime hook adapter normalizes common agent-framework tool-call shapes",
             runtime_bridge_files_ok and runtime_bridge_ok,
             (
-                "gove-zone bridge normalizes Claude/Codex, MCP, function-call, and generic payloads"
+                "gove-zone bridge normalizes Claude/Codex, MCP, function-call, "
+                "OpenAI Chat tool_calls, LangChain-style tool_calls, and generic payloads"
                 if runtime_bridge_files_ok and runtime_bridge_ok
                 else (
                     f"missing_files={runtime_bridge_missing}, "

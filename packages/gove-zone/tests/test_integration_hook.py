@@ -103,6 +103,94 @@ def test_tool_call_from_hook_payload_accepts_function_call_json_arguments() -> N
     assert summary["body"]["len"] == len("please review the evidence bundle")
 
 
+def test_tool_call_from_hook_payload_accepts_openai_tool_calls_shape() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "goal": "Persist governed launch evidence",
+            "state": {"trust_tier": "release-operator"},
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "file.write",
+                        "arguments": json.dumps(
+                            {
+                                "path": "dist-release-evidence/manifest.json",
+                                "content": "proof",
+                            }
+                        ),
+                    },
+                }
+            ],
+        },
+        action_kind="openai-chat-tool-call",
+        actor="openai-chat-bridge",
+    )
+
+    assert call.name == "runtime.file.write"
+    assert call.actor == "openai-chat-bridge"
+    assert call.path == ("dist-release-evidence", "manifest.json")
+    assert call.goal == "Persist governed launch evidence"
+    assert call.state == {"trust_tier": "release-operator"}
+    assert call.args["action_kind"] == "openai-chat-tool-call"
+    summary = call.args["summary"]
+    assert summary["path"]["type"] == "str"
+    assert summary["content"]["len"] == len("proof")
+    assert isinstance(summary["content"]["sha256"], str)
+    assert len(summary["content"]["sha256"]) == 64
+
+
+def test_tool_call_from_hook_payload_accepts_langchain_tool_call_shape() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "tool_calls": [
+                {
+                    "name": "shell.run",
+                    "args": {
+                        "path": "scripts/deploy.sh",
+                        "command": "make verify",
+                    },
+                }
+            ],
+            "context": {"framework": "langchain"},
+        },
+        action_kind="langchain-tool-call",
+        actor="langchain-bridge",
+    )
+
+    assert call.name == "runtime.shell.run"
+    assert call.actor == "langchain-bridge"
+    assert call.path == ("scripts", "deploy.sh")
+    assert call.goal == ""
+    assert call.state == {"framework": "langchain"}
+    summary = call.args["summary"]
+    assert summary["path"]["type"] == "str"
+    assert summary["command"]["len"] == len("make verify")
+
+
+def test_tool_call_from_hook_payload_batches_multiple_tool_calls_without_selecting_one() -> None:
+    call = tool_call_from_hook_payload(
+        {
+            "tool_calls": [
+                {
+                    "id": "call_file",
+                    "function": {"name": "file.write", "arguments": {"path": "README.md"}},
+                },
+                {"id": "call_shell", "name": "shell.run", "args": {"command": "make verify"}},
+            ],
+        },
+        action_kind="tool-call-batch",
+        actor="agent-framework",
+    )
+
+    assert call.name == "runtime.tool_calls.batch"
+    assert call.path == ()
+    summary = call.args["summary"]
+    assert summary["tool_call_count"] == 2
+    assert summary["tool_call_names"]["type"] == "list"
+
+
 def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> None:
     receipt = emit_receipt_for_hook(
         _edit_payload(),

@@ -238,8 +238,10 @@ The adapter:
 - Normalizes multiple dependency-free tool-call shapes before hashing:
   Claude/Codex-style `{tool_name, tool_input}`, MCP-style
   `{method: "tools/call", params: {name, arguments}}`, function-call-style
-  `{type: "function_call", name, arguments}`, and generic
-  `{name, arguments|args|input}` bridges.
+  `{type: "function_call", name, arguments}`, OpenAI Chat-style
+  `{tool_calls: [{function: {name, arguments}}]}`, LangChain-style
+  `{tool_calls: [{name, args}]}`, and generic `{name, arguments|args|input}`
+  bridges.
 - Appends a `DecisionRecord` to the audit JSONL chain at the resolved path.
 - Returns a `Receipt` carrying the audit anchor hash.
 
