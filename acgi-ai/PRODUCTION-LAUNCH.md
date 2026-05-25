@@ -75,8 +75,8 @@ and external blocker ids are replaced by attached proof.
 The preflight JSON/Markdown output must keep `requiredActions` and
 `externalBlockerIds` visible so launch blockers cannot be hidden by a green
 local build.
-`storybook-runtime.plan.json` is a local operator plan only, not official
-Storybook runtime proof. That pending item blocks stronger hosted Storybook
+`storybook-runtime.plan.json` is a local operator plan only, not official Storybook runtime proof.
+That pending item blocks stronger hosted Storybook
 claims but does not weaken the production deploy fail-closed contract.
 
 ## Production execution sequence

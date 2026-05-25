@@ -1,6 +1,6 @@
 # Readiness Baseline Stabilization Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]` / `- [x]`) syntax for tracking.
 
 **Goal:** Stabilize govern-zone so readiness claims are evidence-grounded before any new feature work.
 
@@ -35,7 +35,7 @@
 
 ## Task 1: Evidence Matrix
 
-- [ ] **Step 1: Write `docs/readiness-evidence-matrix-2026-05-25.md`**
+- [x] **Step 1: Write `docs/readiness-evidence-matrix-2026-05-25.md`**
 
 Include a table with columns:
 
@@ -46,7 +46,7 @@ Include a table with columns:
 
 Rows must cover Local, Staging, Production, Legal/compliance, Security, Accessibility, Clinical, Enterprise admin adjunct, and Browser evidence.
 
-- [ ] **Step 2: Verify claim wording**
+- [x] **Step 2: Verify claim wording**
 
 Run:
 
@@ -58,7 +58,7 @@ Expected: no output.
 
 ## Task 2: Console Auth Contract
 
-- [ ] **Step 1: Add failing static contract to `acgi-ai/scripts/check-auth-boundary.mjs`**
+- [x] **Step 1: Add failing static contract to `acgi-ai/scripts/check-auth-boundary.mjs`**
 
 Require the contract to state:
 
@@ -77,7 +77,7 @@ const hasProductionStatusBridge =
 
 Use a failure message that names `/console` and production session/status.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -87,11 +87,11 @@ pnpm -F acgi-ai run test:auth-boundary
 
 Expected: fail if the production status bridge is not currently represented.
 
-- [ ] **Step 3: Implement the smallest passing contract**
+- [x] **Step 3: Implement the smallest passing contract**
 
 Prefer documentation/static contract first. Only change runtime behavior if the failing test proves the existing implementation cannot represent production auth correctly.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run:
 
@@ -103,7 +103,7 @@ Expected: pass.
 
 ## Task 3: `gove-zone` Audit Portability
 
-- [ ] **Step 1: Write failing test `packages/gove-zone/tests/test_audit_portability.py`**
+- [x] **Step 1: Write failing test `packages/gove-zone/tests/test_audit_portability.py`**
 
 Test intent:
 
@@ -114,7 +114,7 @@ def test_audit_module_import_does_not_require_fcntl(monkeypatch):
 
 The test must prove module import does not require `fcntl`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -124,11 +124,11 @@ uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_
 
 Expected: fail while `audit.py` imports `fcntl` at module load.
 
-- [ ] **Step 3: Add minimal lock abstraction**
+- [x] **Step 3: Add minimal lock abstraction**
 
 Move `fcntl` import behind a function or small context manager. Unsupported platforms may raise a clear runtime error when appending if no safe lock is available. Do not claim Windows support unless append behavior is tested there.
 
-- [ ] **Step 4: Run GREEN and regression tests**
+- [x] **Step 4: Run GREEN and regression tests**
 
 Run:
 
@@ -140,11 +140,11 @@ Expected: pass.
 
 ## Task 4: Verification Drift Guards
 
-- [ ] **Step 1: Tighten Node 24 guard test first**
+- [x] **Step 1: Tighten Node 24 guard test first**
 
 Update `tests/test_node24_gate.py` to require a clear fail-fast message and a Makefile surface that does not silently use Node 22 for acgi-ai readiness claims.
 
-- [ ] **Step 2: Run RED/GREEN for Node guard**
+- [x] **Step 2: Run RED/GREEN for Node guard**
 
 Run:
 
@@ -152,21 +152,21 @@ Run:
 uv run python -m pytest tests/test_node24_gate.py --import-mode=importlib -q
 ```
 
-- [ ] **Step 3: Lock `clinicalguard` conditional status**
+- [x] **Step 3: Lock `clinicalguard` conditional status**
 
 Update `scripts/check_governance_stack_index.py` and `docs/governance-stack-index.md` if needed so the index explicitly says parent CI skips `clinicalguard` unless initialized and must not count that as clinical deploy readiness.
 
-- [ ] **Step 4: Lock typecheck signal separation**
+- [x] **Step 4: Lock typecheck signal separation**
 
 Update `tests/test_root_typecheck_gate.py` only if `Makefile` wording does not clearly separate configured strict mypy from skipped/unconfigured packages.
 
-- [ ] **Step 5: Lock enterprise adjunct status**
+- [x] **Step 5: Lock enterprise adjunct status**
 
 Ensure `docs/governance-stack-index.md` keeps `acgs-enterprise-ai-manager/frontend/` as build-proof-only, deferred/archive-or-integrate, and not a readiness source of truth.
 
 ## Task 5: Final Verification Packet
 
-- [ ] **Step 1: Run targeted gates**
+- [x] **Step 1: Run targeted gates**
 
 Run:
 
@@ -177,7 +177,7 @@ uv run python -m pytest tests/test_node24_gate.py tests/test_root_typecheck_gate
 make lint-docs
 ```
 
-- [ ] **Step 2: Run readiness evidence gates**
+- [x] **Step 2: Run readiness evidence gates**
 
 Run:
 
@@ -188,7 +188,7 @@ make release-evidence
 
 Run `make verify-js-node24` only if the local host has `fnm` and Node 24 available; otherwise record the exact blocker.
 
-- [ ] **Step 3: Write `docs/readiness-evidence-packet-2026-05-25.md`**
+- [x] **Step 3: Write `docs/readiness-evidence-packet-2026-05-25.md`**
 
 Include:
 
@@ -208,3 +208,10 @@ Include:
 - Spec coverage: ledger is complete before code changes; matrix, auth test, audit portability test, drift guards, and final evidence packet are mapped to tasks.
 - Placeholder scan: no TODO/TBD placeholders are used as implementation instructions.
 - Type/contract consistency: Node tasks stay in root/acgi-ai; audit portability stays in `packages/gove-zone`; governance/status tasks stay in docs/root scripts.
+
+## Completion note — 2026-05-25 refresh
+
+This plan has been executed and the durable evidence packet was refreshed for the
+current `feat/agent-bus-analyzer` checkout. The current local readiness snapshot
+is `30/31 pass`, `0 fail`, `1 pending`; production launch remains blocked on
+external deployment, auth, assurance, accessibility, and hosted Storybook proof.
