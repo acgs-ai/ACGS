@@ -89,6 +89,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'live-console-dns',
   },
   {
+    id: 'console-production-command-rail',
+    surface: 'console',
+    route: '/console/workbench#production-command-rail',
+    title: 'Console production command rail',
+    expectation:
+      'Operator can see the local and read-only proof commands plus the artifacts they produce.',
+    expectedText: 'make production-blocker-evidence',
+  },
+  {
     id: 'console-assurance-proof-intake',
     surface: 'console',
     route: '/console/workbench#assurance-proof-intake',
@@ -549,12 +558,9 @@ async function waitForRenderedTarget(cdp, target, viewport) {
       const expectedText = ${JSON.stringify(target.expectedText)};
       const hashId = ${JSON.stringify(hashId)};
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      let text = '';
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        text = document.body?.innerText ?? '';
-        if (text.includes(expectedText)) break;
-        await sleep(100);
-      }
+      const newline = String.fromCharCode(10);
+      const readRenderedText = (element) =>
+        [element?.innerText, element?.textContent].filter(Boolean).join(newline);
       const targetEl = hashId ? document.getElementById(hashId) : null;
       if (targetEl) {
         document.documentElement.style.scrollBehavior = 'auto';
@@ -568,7 +574,15 @@ async function waitForRenderedTarget(cdp, target, viewport) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
         await sleep(250);
       }
-      text = document.body?.innerText ?? '';
+      let text = '';
+      let targetText = '';
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        text = readRenderedText(document.body);
+        targetText = readRenderedText(targetEl);
+        if ((text + newline + targetText).includes(expectedText)) break;
+        await sleep(100);
+      }
+      const combinedText = text + newline + targetText;
       const rect = targetEl ? targetEl.getBoundingClientRect() : null;
       const targetVisible =
         !hashId ||
@@ -580,7 +594,7 @@ async function waitForRenderedTarget(cdp, target, viewport) {
             rect.left < window.innerWidth,
         );
       return {
-        expectedFound: text.includes(expectedText),
+        expectedFound: combinedText.includes(expectedText),
         expectedText,
         hashId,
         hashFound: !hashId || Boolean(targetEl),
@@ -597,7 +611,7 @@ async function waitForRenderedTarget(cdp, target, viewport) {
           : null,
         scrollY: window.scrollY,
         viewport: { width: window.innerWidth, height: window.innerHeight },
-        textSample: text.slice(0, 1000),
+        textSample: combinedText.slice(0, 1000),
       };
     })()
   `

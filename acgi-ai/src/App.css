@@ -783,6 +783,7 @@
 
 .m-workbench-cutover,
 .m-workbench-live,
+.m-workbench-command,
 .m-workbench-assurance {
   margin-top: 22px;
   padding-top: 18px;
@@ -791,6 +792,7 @@
 
 .m-workbench-cutover p,
 .m-workbench-live p,
+.m-workbench-command p,
 .m-workbench-assurance p {
   margin: 12px 0 0;
   font-family: var(--font-serif);
@@ -801,6 +803,7 @@
 
 .m-workbench-cutover ol,
 .m-workbench-live ol,
+.m-workbench-command ol,
 .m-workbench-assurance ol {
   display: grid;
   gap: 10px;
@@ -811,6 +814,7 @@
 
 .m-workbench-cutover li,
 .m-workbench-live li,
+.m-workbench-command li,
 .m-workbench-assurance li {
   display: grid;
   gap: 7px;
@@ -822,6 +826,7 @@
 
 .m-workbench-cutover code,
 .m-workbench-live code,
+.m-workbench-command code,
 .m-workbench-assurance code {
   width: fit-content;
   max-width: 100%;
@@ -2212,6 +2217,7 @@
 
 .workbench-cutover-summary,
 .workbench-live-summary,
+.workbench-command-summary,
 .workbench-assurance-summary {
   display: grid;
   gap: 16px;
@@ -2230,6 +2236,12 @@
     var(--paper);
 }
 
+.workbench-command-summary {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--rust) 4%, transparent), transparent 42%),
+    var(--paper);
+}
+
 .workbench-assurance-summary {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 36%),
@@ -2238,6 +2250,7 @@
 
 .workbench-cutover-summary > div:first-child,
 .workbench-live-summary > div:first-child,
+.workbench-command-summary > div:first-child,
 .workbench-assurance-summary > div:first-child {
   display: grid;
   gap: 8px;
@@ -2246,6 +2259,7 @@
 
 .workbench-cutover-summary strong,
 .workbench-live-summary strong,
+.workbench-command-summary strong,
 .workbench-assurance-summary strong {
   font-family: var(--font-display);
   font-size: 24px;
@@ -2255,9 +2269,11 @@
 
 .workbench-cutover-summary p,
 .workbench-live-summary p,
+.workbench-command-summary p,
 .workbench-assurance-summary p,
 .workbench-cutover p,
 .workbench-live-blocker p,
+.workbench-command p,
 .workbench-assurance p {
   margin: 0;
   font-family: var(--font-serif);
@@ -2268,6 +2284,7 @@
 
 .workbench-cutover-lanes,
 .workbench-live-lanes,
+.workbench-command-lanes,
 .workbench-assurance-lanes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2280,6 +2297,7 @@
 
 .workbench-cutover,
 .workbench-live-blocker,
+.workbench-command,
 .workbench-assurance {
   display: grid;
   align-content: start;
@@ -2291,6 +2309,7 @@
 
 .workbench-cutover div,
 .workbench-live-blocker div,
+.workbench-command div,
 .workbench-assurance div {
   display: grid;
   gap: 8px;
@@ -2298,12 +2317,14 @@
 
 .workbench-cutover strong,
 .workbench-live-blocker strong,
+.workbench-command strong,
 .workbench-assurance strong {
   overflow-wrap: anywhere;
 }
 
 .workbench-cutover code,
 .workbench-live-blocker code,
+.workbench-command code,
 .workbench-assurance code {
   width: fit-content;
   max-width: 100%;
@@ -2320,12 +2341,25 @@
   white-space: normal;
 }
 
+.workbench-command code {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .workbench-assurance:last-child {
   grid-column: 1 / -1;
 }
 
+.workbench-command small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .workbench-cutover .btn,
 .workbench-live-blocker .btn,
+.workbench-command .btn,
 .workbench-assurance .btn {
   align-self: end;
   justify-self: start;
@@ -3129,6 +3163,7 @@
   .workbench-proof-ladder,
   .workbench-cutover-lanes,
   .workbench-live-lanes,
+  .workbench-command-lanes,
   .workbench-assurance-lanes,
   .workbench-board {
     grid-template-columns: 1fr;

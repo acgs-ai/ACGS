@@ -1391,6 +1391,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "live-console-security-headers",
             "live-storybook-https",
             "live-storybook-manifest",
+            "Production command rail",
+            "make production-blocker-evidence",
+            "validate:production-evidence",
+            "validate:hosted-storybook-proof",
             "Assurance proof intake",
             "Production authority",
             "Legal claim review",
@@ -1416,7 +1420,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "and console workbench share one workbench content contract, "
                 "service-design/accessibility anchors, guided review path, "
                 "operator decision rail, launch proof ladder, live verifier blocker map, "
-                "assurance proof intake, current 35/36 local readiness copy, and "
+                "production command rail, assurance proof intake, current 35/36 "
+                "local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1867,6 +1872,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "/console/workbench#guided-review-path",
             "/console/workbench#launch-proof-ladder",
             "/console/workbench#live-verifier-blocker-map",
+            "/console/workbench#production-command-rail",
             "/console/workbench#assurance-proof-intake",
             "five visual baseline viewports",
             "not production deployment proof",
@@ -1890,8 +1896,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "hash guard, non-blank screenshot guard, per-surface marketing/console "
                 "launches, and dry-run verifier cover the marketing workbench, console "
                 "workbench, operator decision rail, guided review path, launch "
-                "proof ladder, live verifier blocker map, assurance proof intake, "
-                "and five visual baseline viewports without claiming production assurance"
+                "proof ladder, live verifier blocker map, production command rail, "
+                "assurance proof intake, and five visual baseline viewports without "
+                "claiming production assurance"
                 if browser_evidence_files_ok
                 and browser_evidence_scripts_ok
                 and browser_evidence_docs_ok

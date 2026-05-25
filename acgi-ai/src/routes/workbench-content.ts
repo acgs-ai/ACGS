@@ -360,6 +360,44 @@ export const LIVE_VERIFIER_BLOCKER_LANES = [
   },
 ] as const
 
+export const PRODUCTION_COMMAND_RAIL = [
+  {
+    title: 'Refresh blocked packet',
+    command: 'make production-blocker-evidence',
+    artifact: 'dist-release-evidence/production-launch-preflight.json',
+    body: 'Runs the non-deploying evidence wrapper, refreshes the blocked launch packet, and keeps production proof boundaries intact.',
+    route: '/console/workbench#live-verifier-blocker-map',
+    cta: 'Open blockers',
+  },
+  {
+    title: 'Rerun live verifier',
+    command:
+      'pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json',
+    artifact: 'dist-release-evidence/production-live-verification.json',
+    body: 'Performs read-only DNS, HTTPS, healthz, header, and Storybook manifest checks after deploy or DNS changes.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Validate production evidence',
+    command:
+      'pnpm -F acgi-ai run validate:production-evidence -- --manifest <production-evidence.json> --live-output <verify-production-live.json> --require-pass',
+    artifact: 'dist-release-evidence/production-evidence-validation.json',
+    body: 'Checks a completed production evidence manifest against passing live verifier output and attached assurance proof.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+  {
+    title: 'Validate hosted Storybook',
+    command:
+      'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass',
+    artifact: 'dist-release-evidence/hosted-storybook-proof-validation.json',
+    body: 'Checks the hosted buyer-evidence proof packet before removing the hosted Storybook blocker.',
+    route: '/console/workbench#assurance-proof-intake',
+    cta: 'Open proof intake',
+  },
+] as const
+
 export const ASSURANCE_INTAKE_LANES = [
   {
     title: 'Production authority',

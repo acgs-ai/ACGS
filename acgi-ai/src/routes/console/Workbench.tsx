@@ -8,6 +8,7 @@ import {
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
+  PRODUCTION_COMMAND_RAIL,
   PRODUCTION_CUTOVER_LANES,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
@@ -340,6 +341,42 @@ export function Workbench() {
                   onClick={() => navigate(lane.route)}
                 >
                   {lane.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="workbench-command-summary"
+          id="production-command-rail"
+          aria-labelledby="workbench-command-rail-h"
+        >
+          <div>
+            <span className="c-meta" id="workbench-command-rail-h">
+              Production command rail
+            </span>
+            <strong>Run the proof commands in order, then attach the artifacts.</strong>
+            <p>
+              These commands are local or read-only verification steps. They do not deploy, mutate
+              DNS, approve claims, or create external assurance proof.
+            </p>
+          </div>
+          <div className="workbench-command-lanes">
+            {PRODUCTION_COMMAND_RAIL.map((item) => (
+              <article className="workbench-command" key={item.title}>
+                <div>
+                  <span className="c-meta">{item.title}</span>
+                  <code>{item.command}</code>
+                  <small>{item.artifact}</small>
+                </div>
+                <p>{item.body}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(item.route)}
+                >
+                  {item.cta}
                 </button>
               </article>
             ))}

@@ -57,6 +57,7 @@ for (const needle of [
   '/console/workbench#guided-review-path',
   '/console/workbench#launch-proof-ladder',
   '/console/workbench#live-verifier-blocker-map',
+  '/console/workbench#production-command-rail',
   '/console/workbench#assurance-proof-intake',
   '--headless=new',
   '--dump-dom',
@@ -106,6 +107,11 @@ mustContain(
 )
 mustContain(
   readinessReport,
+  '/console/workbench#production-command-rail',
+  'scripts/platform_readiness_report.py',
+)
+mustContain(
+  readinessReport,
   '/console/workbench#assurance-proof-intake',
   'scripts/platform_readiness_report.py',
 )
@@ -130,7 +136,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 7, 'manifest must include seven browser targets.')
+    check(manifest.targets?.length === 8, 'manifest must include eight browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -142,7 +148,7 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 35,
+      manifest.screenshots?.length === 40,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
@@ -157,6 +163,16 @@ try {
       'dry-run manifest',
     )
     mustContain(JSON.stringify(manifest.targets), 'live-console-dns', 'dry-run manifest')
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-production-command-rail',
+      'dry-run manifest',
+    )
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'make production-blocker-evidence',
+      'dry-run manifest',
+    )
     mustContain(
       JSON.stringify(manifest.targets),
       'console-assurance-proof-intake',

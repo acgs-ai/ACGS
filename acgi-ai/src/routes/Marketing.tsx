@@ -8,6 +8,7 @@ import {
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
+  PRODUCTION_COMMAND_RAIL,
   PRODUCTION_CUTOVER_LANES,
   RESEARCH_INPUTS,
   WORKBENCH_DECISION_RAIL,
@@ -441,6 +442,24 @@ export function Marketing() {
                         <strong>{title}</strong>
                         <span>{blockerId}</span>
                         <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-command" aria-labelledby="marketing-command-rail-h">
+                  <span className="folio-no" id="marketing-command-rail-h">
+                    Production command rail
+                  </span>
+                  <p>
+                    The launch path should show the local and read-only commands that refresh
+                    blocker evidence before operators attach external proof.
+                  </p>
+                  <ol>
+                    {PRODUCTION_COMMAND_RAIL.map(({ title, command, artifact }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <code>{command}</code>
+                        <span>{artifact}</span>
                       </li>
                     ))}
                   </ol>

@@ -41,6 +41,7 @@ mustContain(marketing, 'RESEARCH_INPUTS.map', 'Marketing shared research inputs'
 mustContain(marketing, 'PLATFORM_REQUIREMENT_LANES.map', 'Marketing shared platform requirements')
 mustContain(marketing, 'PRODUCTION_CUTOVER_LANES.map', 'Marketing shared cutover lanes')
 mustContain(marketing, 'LIVE_VERIFIER_BLOCKER_LANES.map', 'Marketing shared live verifier blockers')
+mustContain(marketing, 'PRODUCTION_COMMAND_RAIL.map', 'Marketing production command rail')
 mustContain(marketing, 'ASSURANCE_INTAKE_LANES.map', 'Marketing shared assurance intake lanes')
 mustContain(marketing, 'OPERATOR_CHECKLIST.map', 'Marketing shared operator quick start')
 mustContain(marketing, 'WORKBENCH_GUIDED_PATH.map', 'Marketing shared guided path')
@@ -63,6 +64,7 @@ mustContain(
   'LIVE_VERIFIER_BLOCKER_LANES.map',
   'Console shared live verifier blockers',
 )
+mustContain(consoleWorkbench, 'PRODUCTION_COMMAND_RAIL.map', 'Console production command rail')
 mustContain(consoleWorkbench, 'ASSURANCE_INTAKE_LANES.map', 'Console shared assurance intake lanes')
 mustContain(consoleWorkbench, 'OPERATOR_CHECKLIST.map', 'Console shared operator quick start')
 mustContain(consoleWorkbench, 'WORKBENCH_GUIDED_PATH.map', 'Console shared guided path')
@@ -136,6 +138,14 @@ mustContain(workbenchContent, 'live-console-healthz', 'Shared live verifier bloc
 mustContain(workbenchContent, 'live-console-security-headers', 'Shared live verifier blockers')
 mustContain(workbenchContent, 'live-storybook-https', 'Shared live verifier blockers')
 mustContain(workbenchContent, 'live-storybook-manifest', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'PRODUCTION_COMMAND_RAIL', 'Shared production command rail')
+mustContain(workbenchContent, 'Refresh blocked packet', 'Shared production command rail')
+mustContain(workbenchContent, 'Rerun live verifier', 'Shared production command rail')
+mustContain(workbenchContent, 'Validate production evidence', 'Shared production command rail')
+mustContain(workbenchContent, 'Validate hosted Storybook', 'Shared production command rail')
+mustContain(workbenchContent, 'make production-blocker-evidence', 'Shared production command rail')
+mustContain(workbenchContent, 'validate:production-evidence', 'Shared production command rail')
+mustContain(workbenchContent, 'validate:hosted-storybook-proof', 'Shared production command rail')
 mustContain(workbenchContent, 'ASSURANCE_INTAKE_LANES', 'Shared assurance intake lanes')
 mustContain(workbenchContent, 'Production authority', 'Shared assurance intake lanes')
 mustContain(workbenchContent, 'Legal claim review', 'Shared assurance intake lanes')
@@ -217,6 +227,11 @@ mustContain(marketing, 'Live verifier blocker map', 'Marketing live verifier blo
 mustContain(consoleWorkbench, 'id="live-verifier-blocker-map"', 'Console live verifier blocker map')
 mustContain(consoleWorkbench, 'workbench-live-summary', 'Console live verifier blocker map')
 mustContain(consoleWorkbench, 'Live verifier blocker map', 'Console live verifier blocker map')
+mustContain(marketing, 'm-workbench-command', 'Marketing production command rail')
+mustContain(marketing, 'Production command rail', 'Marketing production command rail')
+mustContain(consoleWorkbench, 'id="production-command-rail"', 'Console production command rail')
+mustContain(consoleWorkbench, 'workbench-command-summary', 'Console production command rail')
+mustContain(consoleWorkbench, 'Production command rail', 'Console production command rail')
 mustContain(marketing, 'm-workbench-assurance', 'Marketing assurance proof intake')
 mustContain(marketing, 'Assurance proof intake', 'Marketing assurance proof intake')
 mustContain(consoleWorkbench, 'id="assurance-proof-intake"', 'Console assurance proof intake')
@@ -243,6 +258,7 @@ mustContain(design, 'Choose → Trace → Check → Export', 'Design source of t
 mustContain(design, 'Local → Live → Assured', 'Design source of truth')
 mustContain(design, 'Current saved cutover state', 'Design source of truth')
 mustContain(design, 'Live verifier blocker map', 'Design source of truth')
+mustContain(design, 'Production command rail', 'Design source of truth')
 mustContain(design, 'Assurance proof intake', 'Design source of truth')
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
@@ -285,6 +301,8 @@ mustContain(
   'live-console-dns, live-storybook-dns, live-console-healthz, live-console-security-headers, live-storybook-https, and live-storybook-manifest',
   'Research memo',
 )
+mustContain(research, 'Production command rail', 'Research memo')
+mustContain(research, 'make production-blocker-evidence', 'Research memo')
 mustContain(research, 'Assurance proof intake', 'Research memo')
 mustContain(
   research,
