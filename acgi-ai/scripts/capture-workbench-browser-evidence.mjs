@@ -76,8 +76,8 @@ export const WORKBENCH_BROWSER_TARGETS = [
     route: '/console/workbench#launch-proof-ladder',
     title: 'Console launch proof ladder',
     expectation:
-      'Operator can separate Local readiness, Live verifier, and Assurance packet proof.',
-    expectedText: '35/36 local pass',
+      'Operator can separate local readiness, live verifier, assurance, and saved cutover proof.',
+    expectedText: 'Current saved cutover state',
   },
 ]
 
@@ -398,7 +398,10 @@ class CdpSession {
 async function connectCdp(webSocketDebuggerUrl) {
   const ws = new WebSocket(webSocketDebuggerUrl)
   await new Promise((resolvePromise, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out opening Chrome DevTools socket')), 5000)
+    const timer = setTimeout(
+      () => reject(new Error('timed out opening Chrome DevTools socket')),
+      5000,
+    )
     ws.addEventListener(
       'open',
       () => {
@@ -472,7 +475,9 @@ async function waitForDebuggingPage(debuggingPort, chromeState) {
     }
     await sleep(100)
   }
-  throw new Error(`Chrome DevTools endpoint did not become ready: ${chromeState.chromeLog.join('')}`)
+  throw new Error(
+    `Chrome DevTools endpoint did not become ready: ${chromeState.chromeLog.join('')}`,
+  )
 }
 
 async function shutdownChrome(chromeState, userDataDir) {
@@ -584,7 +589,9 @@ async function waitForRenderedTarget(cdp, target, viewport) {
     returnByValue: true,
   })
   if (result.exceptionDetails) {
-    throw new Error(`target visibility evaluation failed: ${JSON.stringify(result.exceptionDetails)}`)
+    throw new Error(
+      `target visibility evaluation failed: ${JSON.stringify(result.exceptionDetails)}`,
+    )
   }
   const value = result.result?.value
   if (!value?.expectedFound) {

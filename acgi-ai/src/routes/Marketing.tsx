@@ -6,6 +6,7 @@ import {
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
+  PRODUCTION_CUTOVER_LANES,
   RESEARCH_INPUTS,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
@@ -399,6 +400,27 @@ export function Marketing() {
                         <code>{proof}</code>
                         <span>{state}</span>
                         <span>{cue}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-cutover"
+                  aria-labelledby="marketing-cutover-state-h"
+                >
+                  <span className="folio-no" id="marketing-cutover-state-h">
+                    Current saved cutover state
+                  </span>
+                  <p>
+                    safeToClaimProduction=false · saved live verifier: 2 pass, 6 fail · local state
+                    is not production proof.
+                  </p>
+                  <ol>
+                    {PRODUCTION_CUTOVER_LANES.map(({ title, state, proof }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <span>{state}</span>
+                        <code>{proof}</code>
                       </li>
                     ))}
                   </ol>

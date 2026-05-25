@@ -216,6 +216,7 @@ Design requirements:
 - Add a guided review path in the same workbench UI: **Choose → Trace → Check → Export**. It should show the first-minute sequence before dense tables: choose the case, follow the trace path, check evaluation/authority holds, and export bounded proof only with the claim boundary attached.
 - Add an operator decision rail for first-time use: **Pick the case → Inspect the path → Decide and export**. It should sit between the visual board and dense proof so the next safe action is visible before table review.
 - Add a launch proof ladder in the same UI: **Local → Live → Assured**. Operators should see which evidence is only local, which command proves live deployment, and which external assurance packet must replace blockers before production claims.
+- Add a current cutover panel in the same proof ladder UI: **Current saved cutover state**. It should show `safeToClaimProduction=false`, the saved live-check delta, and separate Marketing origin, Console origin, Storybook proof, and Evidence validation lanes so local operators can act without reading generated JSON.
 - Use existing editorial primitives only: paper layers, black rules, mono stage labels, rust arrows/checks, and serif explanations. Do not add a dashboard color palette, heavy icons, shadows, or animation.
 - Keep copy claim-safe. This is a research-backed product blueprint until deployment proof, legal signoff, and external assurance evidence exist.
 

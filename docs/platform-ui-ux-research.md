@@ -18,6 +18,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 11. **Simple service path.** GOV.UK service-design guidance emphasizes user needs, simple first-time success, and a clear outcome. GovernZone should therefore make the next safe action visible before dense evidence tables, and should keep blocked/pending states actionable rather than decorative.
 12. **Accessible visual proof.** WCAG 2.2 keeps keyboard focus, input assistance, and accessible authentication in the product-quality frame. Visualized governance work must not rely on color alone; every status, proof step, and blocked action needs text labels that survive keyboard and assistive-technology review.
 13. **Platform requirements rail.** The workbench should translate research into six plain visual lanes: Govern, Regulate, Secure, Observe, Measure, and Use. Each lane needs a framework cue, a control question, a proof label, and a same-console route so research is actionable instead of a static memo.
+14. **Current saved cutover state.** Production blockers should be visible in the same workbench instead of hidden in generated JSON. The UI should show Marketing origin, Console origin, Storybook proof, and Evidence validation lanes with the saved verifier state, proof names, next route, and `safeToClaimProduction=false` boundary.
 
 ## UI/UX direction for this repo
 
@@ -29,6 +30,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 - Add a guided review path in the same UI so a first-time operator can follow: Choose the case, Follow the path, Check the hold, and Export bounded proof.
 - Add an operator decision rail in the same UI so the first scan answers: Pick the case, Inspect the path, and Decide and export.
 - Add a launch proof ladder in the same workbench so local readiness, live deployment verification, and external assurance blockers are visible without changing UI systems.
+- Add a current saved cutover state panel under the launch proof ladder so marketing `already-live`, console `dns-or-service-blocked`, Storybook `dns-or-pages-blocked`, and evidence `waiting-for-live-checks` states are actionable without opening a manifest.
 - Make visual work text-first and keyboard-reviewable: every workbench stage, proof ladder rung, and hold/release decision needs a readable label before any color, icon, or layout cue.
 - Avoid new dependencies, icon systems, dashboard colors, heavy animation, or generic SaaS gradients.
 - Phrase everything as a target product blueprint until live deployment proof, legal review, SOC 2 evidence, WCAG manual evidence, and penetration-test evidence are attached.

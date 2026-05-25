@@ -138,7 +138,7 @@ try {
     mustContain(JSON.stringify(manifest.targets), 'console-guided-review-path', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
-    mustContain(JSON.stringify(manifest.targets), '35/36 local pass', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'Current saved cutover state', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not production deployment proof', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not WCAG conformance proof', 'dry-run manifest')
   }

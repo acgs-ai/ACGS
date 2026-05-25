@@ -69,6 +69,7 @@ const evidenceStories = [
       'The platform requirements rail turns governance, regulatory, agent-security, observability, evaluation, and accessibility research into same-console actions.',
       'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
       'Guided review path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
+      'The launch proof area exposes the current saved cutover state so operators see production blockers without opening generated JSON.',
       'Each stage links back to an existing console route instead of creating hidden side effects.',
       'The claim boundary keeps the workbench as local UX evidence, not production assurance.',
     ],
@@ -137,6 +138,7 @@ const evidenceStories = [
     buyerQuestion: 'Can a buyer see which proof is local, live, or still external?',
     proof: [
       'The same workbench separates Local readiness, Live verifier, and Assurance packet evidence.',
+      'Current saved cutover lanes separate marketing already-live proof from console DNS/service, Storybook DNS/pages, and evidence-validation blockers.',
       'verify:production-live stays visible as the live proof command after deployment.',
       'Legal, pentest, WCAG/manual, and hosted Storybook proof remain external blockers until attached.',
     ],

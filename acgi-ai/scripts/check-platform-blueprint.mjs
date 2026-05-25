@@ -39,6 +39,7 @@ mustContain(marketing, "from './workbench-content'", 'Marketing shared workbench
 mustContain(marketing, 'WORKBENCH_STAGES.map', 'Marketing shared workbench stages')
 mustContain(marketing, 'RESEARCH_INPUTS.map', 'Marketing shared research inputs')
 mustContain(marketing, 'PLATFORM_REQUIREMENT_LANES.map', 'Marketing shared platform requirements')
+mustContain(marketing, 'PRODUCTION_CUTOVER_LANES.map', 'Marketing shared cutover lanes')
 mustContain(marketing, 'OPERATOR_CHECKLIST.map', 'Marketing shared operator quick start')
 mustContain(marketing, 'WORKBENCH_GUIDED_PATH.map', 'Marketing shared guided path')
 mustContain(marketing, 'WORKBENCH_DECISION_RAIL.map', 'Marketing shared decision rail')
@@ -54,6 +55,7 @@ mustContain(
   'PLATFORM_REQUIREMENT_LANES.map',
   'Console shared platform requirements',
 )
+mustContain(consoleWorkbench, 'PRODUCTION_CUTOVER_LANES.map', 'Console shared cutover lanes')
 mustContain(consoleWorkbench, 'OPERATOR_CHECKLIST.map', 'Console shared operator quick start')
 mustContain(consoleWorkbench, 'WORKBENCH_GUIDED_PATH.map', 'Console shared guided path')
 mustContain(consoleWorkbench, 'WORKBENCH_DECISION_RAIL.map', 'Console shared decision rail')
@@ -96,9 +98,23 @@ mustContain(workbenchContent, 'Inspect the path', 'Shared decision rail')
 mustContain(workbenchContent, 'Decide and export', 'Shared decision rail')
 mustContain(marketing, 'm-workbench-proof', 'Marketing launch proof ladder')
 mustContain(marketing, 'Launch proof ladder', 'Marketing launch proof ladder')
+mustContain(marketing, 'm-workbench-cutover', 'Marketing saved cutover state')
+mustContain(marketing, 'Current saved cutover state', 'Marketing saved cutover state')
 mustContain(workbenchContent, 'Local readiness', 'Shared launch proof ladder')
 mustContain(workbenchContent, 'Live verifier', 'Shared launch proof ladder')
 mustContain(workbenchContent, 'Assurance packet', 'Shared launch proof ladder')
+mustContain(workbenchContent, 'PRODUCTION_CUTOVER_LANES', 'Shared cutover lanes')
+mustContain(workbenchContent, 'Marketing origin', 'Shared cutover lanes')
+mustContain(workbenchContent, 'Console origin', 'Shared cutover lanes')
+mustContain(workbenchContent, 'Storybook proof', 'Shared cutover lanes')
+mustContain(workbenchContent, 'Evidence validation', 'Shared cutover lanes')
+mustContain(workbenchContent, 'already-live', 'Shared cutover lanes')
+mustContain(workbenchContent, 'dns-or-service-blocked', 'Shared cutover lanes')
+mustContain(workbenchContent, 'dns-or-pages-blocked', 'Shared cutover lanes')
+mustContain(workbenchContent, 'waiting-for-live-checks', 'Shared cutover lanes')
+mustContain(workbenchContent, 'marketing-dns-live', 'Shared cutover lanes')
+mustContain(workbenchContent, 'storybook-manifest-live', 'Shared cutover lanes')
+mustContain(workbenchContent, 'safeToClaimProduction=false', 'Shared cutover lanes')
 mustContain(workbenchContent, 'NIST AI RMF', 'Shared research inputs')
 mustContain(workbenchContent, 'ISO/IEC 42001', 'Shared research inputs')
 mustContain(workbenchContent, 'EU AI Act', 'Shared research inputs')
@@ -148,6 +164,9 @@ mustContain(consoleWorkbench, 'workbench-proof-ladder', 'Console launch proof la
 mustContain(consoleWorkbench, 'id="launch-proof-ladder"', 'Console launch proof ladder')
 mustContain(consoleWorkbench, 'Launch proof ladder', 'Console launch proof ladder')
 mustContain(consoleWorkbench, 'Local → Live → Assured', 'Console launch proof ladder')
+mustContain(consoleWorkbench, 'workbench-cutover-summary', 'Console saved cutover state')
+mustContain(consoleWorkbench, 'Current saved cutover state', 'Console saved cutover state')
+mustContain(consoleWorkbench, 'cutoverDelta=blocked-live-cutover', 'Console saved cutover state')
 mustContain(workbenchContent, 'verify:production-live', 'Shared launch proof ladder')
 mustContain(workbenchContent, 'legal + pentest + WCAG + Storybook', 'Shared launch proof ladder')
 mustContain(
@@ -167,6 +186,7 @@ mustContain(design, 'Start here → Hold release → Export proof', 'Design sour
 mustContain(design, 'Framework → control → proof', 'Design source of truth')
 mustContain(design, 'Choose → Trace → Check → Export', 'Design source of truth')
 mustContain(design, 'Local → Live → Assured', 'Design source of truth')
+mustContain(design, 'Current saved cutover state', 'Design source of truth')
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
 check(existsSync(researchPath), 'docs/platform-ui-ux-research.md must exist.')
@@ -187,11 +207,21 @@ mustContain(research, 'Platform requirements rail', 'Research memo')
 mustContain(research, 'Govern, Regulate, Secure, Observe, Measure, and Use', 'Research memo')
 mustContain(research, 'Start here, Hold release, and Export proof', 'Research memo')
 mustContain(research, 'Guided review path', 'Research memo')
-mustContain(research, 'Choose the case, Follow the path, Check the hold, and Export bounded proof', 'Research memo')
+mustContain(
+  research,
+  'Choose the case, Follow the path, Check the hold, and Export bounded proof',
+  'Research memo',
+)
 mustContain(research, 'Operator decision rail', 'Research memo')
 mustContain(research, 'Pick the case, Inspect the path, and Decide and export', 'Research memo')
 mustContain(research, 'Launch proof ladder', 'Research memo')
 mustContain(research, 'Local readiness, Live verifier, and Assurance packet', 'Research memo')
+mustContain(research, 'Current saved cutover state', 'Research memo')
+mustContain(
+  research,
+  'Marketing origin, Console origin, Storybook proof, and Evidence validation',
+  'Research memo',
+)
 mustContain(research, 'text-first and keyboard-reviewable', 'Research memo')
 
 const blueprintSource = [marketing, consoleWorkbench, workbenchContent].join('\n')

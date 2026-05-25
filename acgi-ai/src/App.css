@@ -781,6 +781,47 @@
   white-space: normal;
 }
 
+.m-workbench-cutover {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-workbench-cutover p {
+  margin: 12px 0 0;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.m-workbench-cutover ol {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-workbench-cutover li {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.m-workbench-cutover code {
+  width: fit-content;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--accent);
+  white-space: normal;
+}
+
 /* coverage / framework table */
 .m-coverage {
   margin-top: 32px;
@@ -2159,6 +2200,91 @@
   font-size: 13px;
 }
 
+.workbench-cutover-summary {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
+    var(--paper);
+}
+
+.workbench-cutover-summary > div:first-child {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.workbench-cutover-summary strong {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.workbench-cutover-summary p,
+.workbench-cutover p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-cutover-lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--line-softer);
+}
+
+.workbench-cutover {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 210px;
+  padding: 16px;
+  background: var(--paper-2);
+}
+
+.workbench-cutover div {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-cutover strong {
+  overflow-wrap: anywhere;
+}
+
+.workbench-cutover code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.workbench-cutover .btn {
+  align-self: end;
+  justify-self: start;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
 /* tables */
 .c-table {
   width: 100%;
@@ -2953,6 +3079,7 @@
   .workbench-decision-rail,
   .workbench-checklist,
   .workbench-proof-ladder,
+  .workbench-cutover-lanes,
   .workbench-board {
     grid-template-columns: 1fr;
   }

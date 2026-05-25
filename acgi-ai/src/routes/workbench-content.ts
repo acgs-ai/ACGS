@@ -274,6 +274,41 @@ export const LAUNCH_PROOF_LANES = [
   },
 ] as const
 
+export const PRODUCTION_CUTOVER_LANES = [
+  {
+    title: 'Marketing origin',
+    state: 'already-live',
+    proof: 'marketing-dns-live + marketing-https-live',
+    body: 'Saved verifier sees acgs.ai resolving and HTTPS 200. Keep this origin stable while console and Storybook cut over.',
+    route: '/console/audit',
+    cta: 'Review verifier',
+  },
+  {
+    title: 'Console origin',
+    state: 'dns-or-service-blocked',
+    proof: 'console-dns-live + healthz + headers',
+    body: 'Create or repair console.acgs.ai DNS, deploy the console service, then verify /healthz plus HSTS, CSP, XFO, and referrer headers.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Storybook proof',
+    state: 'dns-or-pages-blocked',
+    proof: 'storybook-dns-live + https + storybook-manifest-live',
+    body: 'Publish the buyer-evidence artifact, configure storybook.acgs.ai, then verify HTTPS and a manifest with all eight story ids.',
+    route: '/console/workbench#launch-proof-ladder',
+    cta: 'Open ladder',
+  },
+  {
+    title: 'Evidence validation',
+    state: 'waiting-for-live-checks',
+    proof: 'safeToClaimProduction=false + validate:production-evidence',
+    body: 'Only after live checks pass, attach verifier JSON and validate completed production evidence. Local state is not production proof.',
+    route: '/console/audit',
+    cta: 'Open proof',
+  },
+] as const
+
 export const CASE_CARDS = [
   {
     id: 'GOV-214',

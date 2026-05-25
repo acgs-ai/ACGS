@@ -6,6 +6,7 @@ import {
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
+  PRODUCTION_CUTOVER_LANES,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
   WORKBENCH_STAGES,
@@ -274,6 +275,38 @@ export function Workbench() {
             </article>
           ))}
         </div>
+
+        <section className="workbench-cutover-summary" aria-labelledby="workbench-cutover-h">
+          <div>
+            <span className="c-meta" id="workbench-cutover-h">
+              Current saved cutover state
+            </span>
+            <strong>safeToClaimProduction=false</strong>
+            <p>
+              Saved live verifier: 2 pass, 6 fail, cutoverDelta=blocked-live-cutover. Treat these
+              lanes as the next operator checklist, not production proof.
+            </p>
+          </div>
+          <div className="workbench-cutover-lanes">
+            {PRODUCTION_CUTOVER_LANES.map((lane) => (
+              <article className="workbench-cutover" key={lane.title}>
+                <div>
+                  <span className="c-meta">{lane.title}</span>
+                  <strong>{lane.state}</strong>
+                  <code>{lane.proof}</code>
+                </div>
+                <p>{lane.body}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(lane.route)}
+                >
+                  {lane.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
       </section>
     </div>
   )
