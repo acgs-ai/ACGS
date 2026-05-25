@@ -45,6 +45,11 @@ mustContain(marketing, 'Operator quick start', 'Marketing operator quick start')
 mustContain(marketing, 'Start here', 'Marketing operator quick start')
 mustContain(marketing, 'Hold release', 'Marketing operator quick start')
 mustContain(marketing, 'Export proof', 'Marketing operator quick start')
+mustContain(marketing, 'm-workbench-proof', 'Marketing launch proof ladder')
+mustContain(marketing, 'Launch proof ladder', 'Marketing launch proof ladder')
+mustContain(marketing, 'Local readiness', 'Marketing launch proof ladder')
+mustContain(marketing, 'Live verifier', 'Marketing launch proof ladder')
+mustContain(marketing, 'Assurance packet', 'Marketing launch proof ladder')
 mustContain(marketing, 'NIST AI RMF', 'Marketing research inputs')
 mustContain(marketing, 'OWASP GenAI Security Project', 'Marketing research inputs')
 mustContain(marketing, 'OpenAI Agents SDK', 'Marketing research inputs')
@@ -69,6 +74,11 @@ mustContain(consoleWorkbench, 'workbench-checklist', 'Console operator quick sta
 mustContain(consoleWorkbench, 'Operator quick start', 'Console operator quick start')
 mustContain(consoleWorkbench, 'Open queue', 'Console operator quick start')
 mustContain(consoleWorkbench, 'Export packet', 'Console operator quick start')
+mustContain(consoleWorkbench, 'workbench-proof-ladder', 'Console launch proof ladder')
+mustContain(consoleWorkbench, 'Launch proof ladder', 'Console launch proof ladder')
+mustContain(consoleWorkbench, 'Local → Live → Assured', 'Console launch proof ladder')
+mustContain(consoleWorkbench, 'verify:production-live', 'Console launch proof ladder')
+mustContain(consoleWorkbench, 'legal + pentest + WCAG + Storybook', 'Console launch proof ladder')
 mustContain(
   consoleWorkbenchText,
   'local console blueprint for easier use, not production assurance',
@@ -87,6 +97,7 @@ mustContain(
   'Start here → Hold release → Export proof',
   'Design source of truth',
 )
+mustContain(design, 'Local → Live → Assured', 'Design source of truth')
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
 check(existsSync(researchPath), 'docs/platform-ui-ux-research.md must exist.')
@@ -99,6 +110,8 @@ mustContain(research, 'Arize Phoenix overview', 'Research memo')
 mustContain(research, 'Humanloop evaluators', 'Research memo')
 mustContain(research, 'Operator quick-start path', 'Research memo')
 mustContain(research, 'Start here, Hold release, and Export proof', 'Research memo')
+mustContain(research, 'Launch proof ladder', 'Research memo')
+mustContain(research, 'Local readiness, Live verifier, and Assurance packet', 'Research memo')
 
 const blueprintStart = marketing.indexOf('const workflowStages')
 const blueprintEnd = marketing.indexOf('const coverage')

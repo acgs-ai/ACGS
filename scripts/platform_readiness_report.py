@@ -1356,11 +1356,16 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Start here",
             "Hold release",
             "Export proof",
+            "Launch proof ladder",
+            "Local readiness",
+            "Live verifier",
+            "Assurance packet",
             "product blueprint, not certification or live assurance",
             "/console/workbench",
             "workbench-console-map",
             "workbench-board",
             "workbench-checklist",
+            "workbench-proof-ladder",
             "Local UX blueprint only",
             "not production assurance",
         ],
@@ -1380,8 +1385,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and platform_blueprint_scripts_ok,
             (
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
-                "and console workbench, and test:platform-blueprint keep the visual "
-                "easy-use roadmap "
+                "and console workbench, launch proof ladder, and "
+                "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
                 and platform_blueprint_ok

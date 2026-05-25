@@ -80,6 +80,33 @@ const decisionChecklist = [
   },
 ] as const
 
+const launchProofLanes = [
+  {
+    title: 'Local readiness',
+    state: '34/35 local pass · 1 pending',
+    proof: 'make verify + platform-readiness',
+    body: 'Use this only as local readiness evidence for the workbench and release packet.',
+    route: '/console/actions',
+    cta: 'Review queue',
+  },
+  {
+    title: 'Live verifier',
+    state: 'blocked until deploy',
+    proof: 'verify:production-live',
+    body: 'Attach DNS, HTTPS, health, headers, asset, and auth evidence after credentialed deploy.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Assurance packet',
+    state: 'external proof required',
+    proof: 'legal + pentest + WCAG + Storybook',
+    body: 'Replace pending blockers with legal, security, accessibility, and hosted buyer evidence.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+] as const
+
 export function Workbench() {
   return (
     <div>
@@ -201,6 +228,35 @@ export function Workbench() {
                 onClick={() => navigate(item.route)}
               >
                 {item.cta}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="overview-section" aria-labelledby="workbench-proof-h">
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-proof-h">
+            Launch proof ladder
+          </h2>
+          <span className="c-meta">Local → Live → Assured</span>
+        </div>
+
+        <div className="workbench-proof-ladder">
+          {launchProofLanes.map((lane) => (
+            <article className="workbench-proof" key={lane.title}>
+              <div>
+                <span className="c-meta">{lane.title}</span>
+                <strong>{lane.state}</strong>
+                <code>{lane.proof}</code>
+              </div>
+              <p>{lane.body}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(lane.route)}
+              >
+                {lane.cta}
               </button>
             </article>
           ))}

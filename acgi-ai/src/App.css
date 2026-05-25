@@ -590,6 +590,39 @@
   background: var(--paper);
 }
 
+.m-workbench-proof {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-workbench-proof ol {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-workbench-proof li {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.m-workbench-proof code {
+  width: fit-content;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--accent);
+  white-space: normal;
+}
+
 /* coverage / framework table */
 .m-coverage {
   margin-top: 32px;
@@ -1679,6 +1712,67 @@
   font-size: 13px;
 }
 
+.workbench-proof-ladder {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--line-softer);
+}
+
+.workbench-proof {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 220px;
+  padding: 18px;
+  background: var(--paper-2);
+}
+
+.workbench-proof div {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-proof strong {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.workbench-proof code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.workbench-proof p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-proof .btn {
+  align-self: end;
+  justify-self: start;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
 /* tables */
 .c-table {
   width: 100%;
@@ -2469,6 +2563,7 @@
   }
   .workbench-console-map,
   .workbench-checklist,
+  .workbench-proof-ladder,
   .workbench-board {
     grid-template-columns: 1fr;
   }

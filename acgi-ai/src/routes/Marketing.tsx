@@ -99,6 +99,24 @@ const operatorChecklist = [
   ],
 ]
 
+const launchProofLanes = [
+  [
+    'Local readiness',
+    'make verify + platform-readiness',
+    'Safe for internal blueprint review; not deployment or assurance proof.',
+  ],
+  [
+    'Live verifier',
+    'verify:production-live',
+    'DNS, HTTPS, health, headers, assets, and auth must pass after deploy.',
+  ],
+  [
+    'Assurance packet',
+    'legal · pentest · WCAG · Storybook',
+    'External proof replaces blockers before any production or compliance claim.',
+  ],
+]
+
 const coverage = [
   ['EU AI Act', 'Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy', 'v1.0'],
   ['SR 11-7', '§V model risk · §VII validation · §VIII development', 'v2011'],
@@ -388,6 +406,20 @@ export function Marketing() {
                     {operatorChecklist.map(([label, cue]) => (
                       <li key={label}>
                         <strong>{label}</strong>
+                        <span>{cue}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-proof" aria-labelledby="marketing-proof-ladder-h">
+                  <span className="folio-no" id="marketing-proof-ladder-h">
+                    Launch proof ladder
+                  </span>
+                  <ol>
+                    {launchProofLanes.map(([label, proof, cue]) => (
+                      <li key={label}>
+                        <strong>{label}</strong>
+                        <code>{proof}</code>
                         <span>{cue}</span>
                       </li>
                     ))}

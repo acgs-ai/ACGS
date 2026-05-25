@@ -12,6 +12,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 5. **Human release with enough context to reject.** Human-in-the-loop should not be a signature checkbox. The reviewer needs source context, trace evidence, eval deltas, policy citations, and authority status in one release view.
 6. **Exportable evidence and claim boundaries.** GovernZone should keep its differentiator: receipts, hashes, replay references, policy/model/prompt snapshots, and explicit claim boundaries that can leave the product without overstating live assurance.
 7. **Operator quick-start path.** The interface should not force new users to infer the operating model from dense tables. It should expose three plain actions in the same visual workbench: Start here, Hold release, and Export proof.
+8. **Launch proof ladder.** Deployment readiness should be visible as a plain path: Local readiness, Live verifier, and Assurance packet. Operators should not have to read a generated manifest to know which proof is still local and which external blocker remains.
 
 ## UI/UX direction for this repo
 
@@ -19,6 +20,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 - Add a public workbench blueprint to the marketing surface so buyers see how work becomes inspectable.
 - Keep the console direction simple: one queue, one visual trace, one evaluation panel, one release gate, one evidence room.
 - Add a same-style quick-start checklist so a first-time operator can choose the next safe action, know when to hold release, and export bounded proof without leaving the workbench.
+- Add a launch proof ladder in the same workbench so local readiness, live deployment verification, and external assurance blockers are visible without changing UI systems.
 - Avoid new dependencies, icon systems, dashboard colors, heavy animation, or generic SaaS gradients.
 - Phrase everything as a target product blueprint until live deployment proof, legal review, SOC 2 evidence, WCAG manual evidence, and penetration-test evidence are attached.
 
