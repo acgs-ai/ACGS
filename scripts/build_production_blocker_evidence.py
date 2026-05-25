@@ -23,6 +23,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ACGI_ROOT = REPO_ROOT / "acgi-ai"
 EVIDENCE_DIR = REPO_ROOT / "dist-release-evidence"
+NODE24_GATE = REPO_ROOT / "scripts" / "run_acgi_node24_gate.sh"
 
 CLAIM_BOUNDARY = (
     "Local production-blocker evidence orchestration only; may run the live "
@@ -71,6 +72,12 @@ def _command_entry(
     }
 
 
+def _acgi_command(*args: str) -> list[str]:
+    """Return an acgi-ai pnpm command guarded by the exact Node 24 wrapper."""
+
+    return ["bash", _rel_for_repo(NODE24_GATE), "pnpm", "-F", "acgi-ai", *args]
+
+
 def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
     live_output = Path(args.live_output).resolve() if args.live_output else OUTPUTS["live"]
     live_out_for_acgi = _rel_for_acgi(OUTPUTS["live"])
@@ -83,7 +90,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
     commands: list[dict[str, Any]] = [
         _command_entry(
             "build-buyer-evidence-gallery",
-            ["pnpm", "-F", "acgi-ai", "run", "evidence:build"],
+            _acgi_command("run", "evidence:build"),
             env={"ACGI_EVIDENCE_CNAME": "storybook.acgs.ai"},
         )
     ]
@@ -105,10 +112,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
         commands.append(
             _command_entry(
                 "run-production-live-verifier",
-                [
-                    "pnpm",
-                    "-F",
-                    "acgi-ai",
+                _acgi_command(
                     "run",
                     "verify:production-live",
                     "--",
@@ -117,7 +121,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                     live_out_for_acgi,
                     "--timeout-ms",
                     str(args.timeout_ms),
-                ],
+                ),
                 continue_on_nonzero_with_output=OUTPUTS["live"],
             )
         )
@@ -126,10 +130,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
         [
             _command_entry(
                 "build-production-blocker-report",
-                [
-                    "pnpm",
-                    "-F",
-                    "acgi-ai",
+                _acgi_command(
                     "run",
                     "build:production-blocker-report",
                     "--",
@@ -137,14 +138,11 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                     live_out_for_acgi,
                     "--out",
                     blocker_report_for_acgi,
-                ],
+                ),
             ),
             _command_entry(
                 "build-production-cutover-plan",
-                [
-                    "pnpm",
-                    "-F",
-                    "acgi-ai",
+                _acgi_command(
                     "run",
                     "build:production-cutover-plan",
                     "--",
@@ -154,14 +152,11 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                     blocker_report_for_acgi,
                     "--out",
                     cutover_plan_for_acgi,
-                ],
+                ),
             ),
             _command_entry(
                 "build-hosted-storybook-handoff",
-                [
-                    "pnpm",
-                    "-F",
-                    "acgi-ai",
+                _acgi_command(
                     "run",
                     "build:hosted-storybook-handoff",
                     "--",
@@ -171,7 +166,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                     live_out_for_acgi,
                     "--out",
                     hosted_handoff_for_acgi,
-                ],
+                ),
             ),
         ]
     )
@@ -184,10 +179,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                 [
                     _command_entry(
                         "build-production-evidence-draft",
-                        [
-                            "pnpm",
-                            "-F",
-                            "acgi-ai",
+                        _acgi_command(
                             "run",
                             "build:production-evidence-draft",
                             "--",
@@ -201,14 +193,11 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                             evidence_draft_for_acgi,
                             "--validation-output-ref",
                             validation_for_repo,
-                        ],
+                        ),
                     ),
                     _command_entry(
                         "validate-deployment-blocked-production-evidence",
-                        [
-                            "pnpm",
-                            "-F",
-                            "acgi-ai",
+                        _acgi_command(
                             "run",
                             "validate:production-evidence",
                             "--",
@@ -218,7 +207,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                             live_out_for_acgi,
                             "--out",
                             _rel_for_acgi(OUTPUTS["evidenceValidation"]),
-                        ],
+                        ),
                     ),
                 ]
             )
@@ -227,10 +216,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
             [
                 _command_entry(
                     "build-production-evidence-draft-when-live-fails",
-                    [
-                        "pnpm",
-                        "-F",
-                        "acgi-ai",
+                    _acgi_command(
                         "run",
                         "build:production-evidence-draft",
                         "--",
@@ -244,14 +230,11 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                         evidence_draft_for_acgi,
                         "--validation-output-ref",
                         validation_for_repo,
-                    ],
+                    ),
                 ),
                 _command_entry(
                     "validate-deployment-blocked-production-evidence-when-live-fails",
-                    [
-                        "pnpm",
-                        "-F",
-                        "acgi-ai",
+                    _acgi_command(
                         "run",
                         "validate:production-evidence",
                         "--",
@@ -261,7 +244,7 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                         live_out_for_acgi,
                         "--out",
                         _rel_for_acgi(OUTPUTS["evidenceValidation"]),
-                    ],
+                    ),
                 ),
             ]
         )

@@ -74,6 +74,18 @@ def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
     )
 
 
+def test_dry_run_plan_runs_acgi_commands_through_node24_gate():
+    payload = _dry_run()
+
+    for entry in payload["commands"]:
+        tokens = [str(token) for token in entry["cmd"]]
+        if "pnpm" not in tokens:
+            continue
+        assert tokens[:3] == ["bash", "scripts/run_acgi_node24_gate.sh", "pnpm"], (
+            f"{entry['id']} must use the exact Node 24 wrapper before pnpm: {entry['cmd']}"
+        )
+
+
 def test_dry_run_plan_excludes_deploy_dns_secret_and_infra_mutations():
     payload = _dry_run()
 
@@ -165,12 +177,12 @@ def test_internal_copy_live_output_canonicalizes_pnpm_run_transcript(tmp_path: P
     source = tmp_path / "pnpm-run-captured-live-output.txt"
     destination = tmp_path / "production-live-verification.json"
     source.write_text(
-        ". | WARN Unsupported engine: wanted: {\"node\":\">=24\"} "
-        "(current: {\"node\":\"v20.0.0\"})\n"
-        "acgi-ai | WARN Unsupported engine: wanted: {\"node\":\">=24\"}\n"
+        '. | WARN Unsupported engine: wanted: {"node":">=24"} '
+        '(current: {"node":"v20.0.0"})\n'
+        'acgi-ai | WARN Unsupported engine: wanted: {"node":">=24"}\n'
         "\n"
         "> acgi-ai@0.0.0 verify:production-live /repo/acgi-ai\n"
-        "> node scripts/verify-production-live.mjs \"--\" \"--json\"\n"
+        '> node scripts/verify-production-live.mjs "--" "--json"\n'
         "\n"
         "{\n"
         '  "schemaVersion": 1,\n'
@@ -189,7 +201,7 @@ def test_internal_copy_live_output_canonicalizes_pnpm_run_transcript(tmp_path: P
         '  "checks": []\n'
         "}\n"
         "ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL acgi-ai@0.0.0 verify:production-live: "
-        "`node scripts/verify-production-live.mjs \"--\" \"--json\"`\n",
+        '`node scripts/verify-production-live.mjs "--" "--json"`\n',
         encoding="utf-8",
     )
 

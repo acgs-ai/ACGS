@@ -862,6 +862,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
                 ),
                 "operatorCommand": "make production-blocker-evidence",
+                "nodeToolchainGuard": "scripts/run_acgi_node24_gate.sh",
                 "outputArtifacts": [
                     "dist-release-evidence/production-live-verification.json",
                     "dist-release-evidence/production-blocker-report.json",
@@ -1269,8 +1270,9 @@ live production proof.
 - `scripts/build_production_blocker_evidence.py` is the operator wrapper for
   refreshing a deployment-blocked evidence packet. `make production-blocker-evidence`
   builds the buyer-evidence gallery, runs or copies `verify:production-live`
-  JSON, canonicalizes a wrapper-captured live-verifier transcript when it
-  contains exactly one `production-live-verification` object, packages
+  JSON through `scripts/run_acgi_node24_gate.sh` for acgi-ai `pnpm` commands,
+  canonicalizes a wrapper-captured live-verifier transcript when it contains
+  exactly one `production-live-verification` object, packages
   blocker/cutover/hosted-Storybook handoffs, writes the
   deployment-blocked production-evidence draft and validator output when live
   blockers remain, refreshes release evidence, and saves

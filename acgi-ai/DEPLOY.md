@@ -571,10 +571,12 @@ proof.
 `scripts/build_production_blocker_evidence.py`, the one-command operator wrapper
 for refreshing a deployment-blocked production evidence packet. It builds the
 buyer-evidence gallery with `storybook.acgs.ai` publication metadata, runs or
-copies `verify:production-live` JSON, canonicalizes unambiguous wrapper-captured
-verifier transcripts, builds the blocker report, cutover plan, hosted Storybook
-handoff, deployment-blocked production-evidence draft and validator output when
-live blockers remain, refreshes `make release-evidence`,
+copies `verify:production-live` JSON, runs acgi-ai `pnpm` evidence commands
+through the exact Node 24 gate in `scripts/run_acgi_node24_gate.sh`,
+canonicalizes unambiguous wrapper-captured verifier transcripts, builds the
+blocker report, cutover plan, hosted Storybook handoff, deployment-blocked
+production-evidence draft and validator output when live blockers remain,
+refreshes `make release-evidence`,
 and writes `dist-release-evidence/production-launch-preflight.json`. After
 external Pages/DNS evidence is attached, operators validate the completed hosted
 proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass`. Its safe

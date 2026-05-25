@@ -107,8 +107,9 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_launch_preflight["script"] == "scripts/production_launch_preflight.py"
     assert production_launch_preflight["proofCommand"] == "make production-launch-preflight"
     assert "--require-ready" in production_launch_preflight["operatorCommand"]
-    assert "--out dist-release-evidence/production-launch-preflight.json" in (
-        production_launch_preflight["operatorCommand"]
+    assert (
+        "--out dist-release-evidence/production-launch-preflight.json"
+        in (production_launch_preflight["operatorCommand"])
     )
     assert (
         production_launch_preflight["outputArtifact"]
@@ -241,6 +242,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert blocker_runbook["script"] == "scripts/build_production_blocker_evidence.py"
     assert blocker_runbook["proofCommand"].endswith("--dry-run --json")
     assert blocker_runbook["operatorCommand"] == "make production-blocker-evidence"
+    assert blocker_runbook["nodeToolchainGuard"] == "scripts/run_acgi_node24_gate.sh"
     assert (
         "dist-release-evidence/production-launch-preflight.json"
         in blocker_runbook["outputArtifacts"]

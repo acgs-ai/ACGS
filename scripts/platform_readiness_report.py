@@ -1005,6 +1005,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "scripts/build_production_blocker_evidence.py",
             "tests/test_production_blocker_evidence.py",
+            "scripts/run_acgi_node24_gate.sh",
             "scripts/build_release_evidence.py",
             "scripts/production_launch_preflight.py",
             "Makefile",
@@ -1032,6 +1033,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "production-blocker-evidence:",
             "productionBlockerEvidenceRunbook",
             "--dry-run --json",
+            "run_acgi_node24_gate.sh",
+            "exact Node 24",
             "FORBIDDEN_MUTATING_INVOCATIONS",
             "copy-supplied-live-output",
             "continueOnNonzeroWithOutput",
@@ -1060,8 +1063,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "make production-blocker-evidence orchestrates live verifier JSON, "
                 "blocker report, cutover plan, hosted Storybook handoff, deployment-blocked "
                 "evidence draft, validator output, release evidence, and preflight JSON; "
-                "unit tests lock copy-live-output transcript canonicalization and the "
-                "non-deploying dry-run plan without claiming live production proof"
+                "acgi-ai commands run through the exact Node 24 gate; unit tests lock "
+                "copy-live-output transcript canonicalization and the non-deploying "
+                "dry-run plan without claiming live production proof"
                 if production_blocker_evidence_files_ok and production_blocker_evidence_ok
                 else (
                     f"missing_files={production_blocker_evidence_missing}, "

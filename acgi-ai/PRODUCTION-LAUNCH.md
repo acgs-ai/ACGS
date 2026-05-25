@@ -71,6 +71,10 @@ pnpm -F acgi-ai run test:hosted-storybook-handoff
 pnpm -F acgi-ai run test:hosted-storybook-proof-template
 ```
 
+The production-blocker wrapper routes acgi-ai `pnpm` evidence commands through
+`scripts/run_acgi_node24_gate.sh`, so operator-copied plans use the same Node 24
+toolchain required by deploy and CI instead of the caller's shell-default Node.
+
 Expected local state today: `make platform-readiness` may still report the
 hosted Storybook item as pending, and `make production-launch-preflight` should
 report `blocked` until the release-evidence manifest points at the current

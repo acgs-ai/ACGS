@@ -67,6 +67,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         in by_id["production-blocker-evidence-runbook-local"].command
     )
     blocker_evidence = by_id["production-blocker-evidence-runbook-local"].evidence
+    assert "exact Node 24 gate" in blocker_evidence
     assert "non-deploying dry-run plan" in blocker_evidence
     assert "transcript canonicalization" in blocker_evidence
     assert "preflight JSON" in blocker_evidence
