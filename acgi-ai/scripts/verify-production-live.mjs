@@ -306,6 +306,7 @@ async function storybookManifestCheck(targetUrl, options) {
       'claim-safe-trust-surface',
       'visual-governance-workbench',
       'operator-decision-rail',
+      'guided-review-path',
       'launch-proof-ladder',
       'deploy-readiness-boundary',
     ]

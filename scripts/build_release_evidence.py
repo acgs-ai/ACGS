@@ -46,6 +46,17 @@ HOSTED_STORYBOOK_PROOF_VALIDATION_SNAPSHOT = Path(
     "dist-release-evidence/hosted-storybook-proof-validation.json"
 )
 
+EXPECTED_BUYER_EVIDENCE_STORY_IDS = [
+    "receipt-proof-journey",
+    "bus-owned-proof-source",
+    "claim-safe-trust-surface",
+    "visual-governance-workbench",
+    "operator-decision-rail",
+    "guided-review-path",
+    "launch-proof-ladder",
+    "deploy-readiness-boundary",
+]
+
 ASSURANCE_PROOF_REQUIREMENTS = [
     {
         "field": "assurance.legalClaimMatrix",
@@ -410,6 +421,14 @@ def hosted_storybook_handoff_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, 
     local_publication = (
         data.get("localPublication") if isinstance(data.get("localPublication"), dict) else {}
     )
+    story_ids = [
+        story_id
+        for story_id in local_publication.get("storyIds", [])
+        if isinstance(story_id, str) and story_id
+    ]
+    missing_story_ids = [
+        story_id for story_id in EXPECTED_BUYER_EVIDENCE_STORY_IDS if story_id not in story_ids
+    ]
     live_verification = (
         data.get("liveVerification") if isinstance(data.get("liveVerification"), dict) else {}
     )
@@ -431,6 +450,9 @@ def hosted_storybook_handoff_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, 
             "targetUrl": target.get("url"),
             "manifestUrl": target.get("manifestUrl"),
             "publishTargetReady": local_publication.get("publishTargetReady"),
+            "storyIds": story_ids,
+            "storyCount": len(story_ids),
+            "missingExpectedStoryIds": missing_story_ids,
             "productionLiveStatus": live_verification.get("productionLiveStatus"),
             "storybookBlockers": blocker_ids,
             "copyIntoProductionEvidence": data.get("copyIntoProductionEvidence"),
@@ -532,6 +554,8 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
         issues.append("production-live-blocker-drift")
     if hosted_storybook_extra:
         issues.append("hosted-storybook-blocker-not-in-live-output")
+    if hosted_storybook.get("missingExpectedStoryIds"):
+        issues.append("hosted-storybook-handoff-story-coverage-stale")
     if validation.get("present") is True and validation.get("status") != "pass":
         issues.append("production-evidence-validation-not-passing")
     if (
@@ -567,6 +591,10 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
         "missingArtifacts": missing_artifacts,
         "blockerSets": blocker_sets,
         "hostedStorybookBlockers": hosted_storybook_blockers,
+        "hostedStorybookStoryIds": hosted_storybook.get("storyIds", []),
+        "hostedStorybookMissingExpectedStoryIds": hosted_storybook.get(
+            "missingExpectedStoryIds", []
+        ),
         "issues": issues,
         "validation": {
             "status": validation.get("status"),

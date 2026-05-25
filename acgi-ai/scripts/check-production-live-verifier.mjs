@@ -172,6 +172,7 @@ for (const needle of [
   'claim-safe-trust-surface',
   'visual-governance-workbench',
   'operator-decision-rail',
+  'guided-review-path',
   'launch-proof-ladder',
   'deploy-readiness-boundary',
   '--json',

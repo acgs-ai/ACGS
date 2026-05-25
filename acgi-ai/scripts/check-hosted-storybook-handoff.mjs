@@ -92,6 +92,8 @@ function makeLiveOutput(status = 'fail') {
                 'bus-owned-proof-source',
                 'claim-safe-trust-surface',
                 'visual-governance-workbench',
+                'operator-decision-rail',
+                'guided-review-path',
                 'launch-proof-ladder',
                 'deploy-readiness-boundary',
               ],
@@ -271,6 +273,7 @@ try {
     payload.localPublication.storyIds.includes('receipt-proof-journey') &&
       payload.localPublication.storyIds.includes('visual-governance-workbench') &&
       payload.localPublication.storyIds.includes('operator-decision-rail') &&
+      payload.localPublication.storyIds.includes('guided-review-path') &&
       payload.localPublication.storyIds.includes('launch-proof-ladder') &&
       payload.localPublication.storyIds.includes('deploy-readiness-boundary'),
     'handoff must include expected buyer-evidence story ids.',

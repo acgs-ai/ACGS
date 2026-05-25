@@ -175,12 +175,16 @@ try {
       'manifest must preserve the production-proof boundary.',
     )
     check(
-      Array.isArray(manifest.stories) && manifest.stories.length >= 7,
-      'manifest must include at least seven buyer-evidence stories.',
+      Array.isArray(manifest.stories) && manifest.stories.length >= 8,
+      'manifest must include at least eight buyer-evidence stories.',
     )
     check(
       JSON.stringify(manifest.stories).includes('operator-decision-rail'),
       'manifest must include the operator decision rail story.',
+    )
+    check(
+      JSON.stringify(manifest.stories).includes('guided-review-path'),
+      'manifest must include the guided review path story.',
     )
     check(
       JSON.stringify(manifest.stories).includes('visual-governance-workbench'),

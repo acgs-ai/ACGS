@@ -124,6 +124,8 @@ function makeLiveOutput(status) {
                 'bus-owned-proof-source',
                 'claim-safe-trust-surface',
                 'visual-governance-workbench',
+                'operator-decision-rail',
+                'guided-review-path',
                 'launch-proof-ladder',
                 'deploy-readiness-boundary',
               ],

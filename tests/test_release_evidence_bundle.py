@@ -243,6 +243,8 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_chain["latestChainSnapshot"]["status"] in {"consistent", "needs-refresh"}
     assert "productionEvidenceValidation" in production_chain["latestChainSnapshot"]["artifacts"]
     assert "hostedStorybookProofValidation" in production_chain["latestChainSnapshot"]["artifacts"]
+    assert "hostedStorybookStoryIds" in production_chain["latestChainSnapshot"]
+    assert "hostedStorybookMissingExpectedStoryIds" in production_chain["latestChainSnapshot"]
     assert "not live production proof" in production_chain["claimBoundary"]
     assert blocker_runbook["script"] == "scripts/build_production_blocker_evidence.py"
     assert blocker_runbook["proofCommand"].endswith("--dry-run --json")
@@ -317,6 +319,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     runtime_plan = json.loads((ROOT / "acgi-ai/storybook-runtime.plan.json").read_text())
     assert "visual-governance-workbench" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
     assert "operator-decision-rail" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
+    assert "guided-review-path" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
     assert "launch-proof-ladder" in runtime_plan["proposedRuntime"]["expectedStoryCoverage"]
     assert any(
         "storybook build --output-dir storybook-static" in doc["evidence"]
@@ -371,6 +374,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert hosted_storybook_proof["browserEvidence"]["viewportSet"] == [360, 768, 834, 1024, 1440]
     assert "visual-governance-workbench" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert "operator-decision-rail" in hosted_storybook_proof["browserEvidence"]["storyIds"]
+    assert "guided-review-path" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert (
         "visual-governance-workbench"
@@ -380,6 +384,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         "operator-decision-rail"
         in hosted_storybook_proof["browserEvidence"]["automatedA11yReportRefs"]
     )
+    assert "guided-review-path" in hosted_storybook_proof["browserEvidence"]["screenshotRefs"]
     assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["visualDiffRefs"]
     assert "screenshotRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
     assert "automatedA11yReportRefs" in hosted_storybook_proof["requiredBrowserEvidenceFields"]
@@ -643,7 +648,10 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
                     "url": "https://storybook.acgs.ai",
                     "manifestUrl": "https://storybook.acgs.ai/manifest.json",
                 },
-                "localPublication": {"publishTargetReady": True},
+                "localPublication": {
+                    "publishTargetReady": True,
+                    "storyIds": bre.EXPECTED_BUYER_EVIDENCE_STORY_IDS,
+                },
                 "liveVerification": {
                     "productionLiveStatus": "fail",
                     "storybookBlockers": [{"blockerId": "live-storybook-dns"}],
@@ -739,6 +747,8 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
     assert validation["failingCheckIds"] == []
     assert "not live production proof" in validation["claimBoundary"]
     assert chain["status"] == "consistent"
+    assert chain["hostedStorybookStoryIds"] == bre.EXPECTED_BUYER_EVIDENCE_STORY_IDS
+    assert chain["hostedStorybookMissingExpectedStoryIds"] == []
     assert chain["blockerSets"]["productionLiveVerifier"] == [
         "live-console-dns",
         "live-console-healthz",

@@ -130,6 +130,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "storybook build --output-dir storybook-static" in storybook_runtime_plan
     assert "visual-governance-workbench" in storybook_runtime_plan
     assert "operator-decision-rail" in storybook_runtime_plan
+    assert "guided-review-path" in storybook_runtime_plan
     assert "launch-proof-ladder" in storybook_runtime_plan
     assert by_id["storybook-publication-workflow-local"].status == "pass"
     assert (
@@ -160,7 +161,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     )
     assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert (
-        "all seven buyer-evidence stories"
+        "all eight buyer-evidence stories"
         in by_id["hosted-storybook-proof-intake-local"].evidence
     )
     assert by_id["external-blockers-documented"].status == "pass"

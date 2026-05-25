@@ -108,6 +108,28 @@ const evidenceStories = [
     ],
   },
   {
+    id: 'guided-review-path',
+    title: 'Guided review path',
+    route: '/console/workbench#guided-review-path',
+    buyerQuestion:
+      'Can a first-time reviewer follow the governance work without learning the full console?',
+    proof: [
+      'The path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
+      'Each card carries a text proof label for case, trace, evaluation, authority, receipt, hash, and boundary evidence.',
+      'The route stays inside the existing workbench UI and preserves the local UX claim boundary.',
+    ],
+    localGates: [
+      'pnpm run test:platform-blueprint',
+      'pnpm run test:browser-evidence',
+      'pnpm run evidence:browser-workbench',
+    ],
+    sourceFiles: [
+      'src/routes/console/Workbench.tsx',
+      'src/routes/workbench-content.ts',
+      'scripts/capture-workbench-browser-evidence.mjs',
+    ],
+  },
+  {
     id: 'launch-proof-ladder',
     title: 'Launch proof ladder',
     route: '/console/workbench#launch-proof-ladder',

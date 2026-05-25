@@ -466,6 +466,7 @@ check(
     /browserEvidence/.test(hostedStorybookProofTemplate) &&
     /visual-governance-workbench/.test(hostedStorybookProofTemplate) &&
     /operator-decision-rail/.test(hostedStorybookProofTemplate) &&
+    /guided-review-path/.test(hostedStorybookProofTemplate) &&
     /launch-proof-ladder/.test(hostedStorybookProofTemplate) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofTemplate) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplate) &&
@@ -487,6 +488,7 @@ check(
     /browserEvidence/.test(hostedStorybookProofTemplateCheck) &&
     /visual-governance-workbench/.test(hostedStorybookProofTemplateCheck) &&
     /operator-decision-rail/.test(hostedStorybookProofTemplateCheck) &&
+    /guided-review-path/.test(hostedStorybookProofTemplateCheck) &&
     /launch-proof-ladder/.test(hostedStorybookProofTemplateCheck) &&
     /visualDiffRefs/.test(hostedStorybookProofTemplateCheck) &&
     /pending-external:storybook-pages-proof/.test(hostedStorybookProofTemplateCheck) &&
@@ -504,6 +506,7 @@ check(
     /browserEvidence/.test(hostedStorybookProofValidator) &&
     /visual-governance-workbench/.test(hostedStorybookProofValidator) &&
     /operator-decision-rail/.test(hostedStorybookProofValidator) &&
+    /guided-review-path/.test(hostedStorybookProofValidator) &&
     /launch-proof-ladder/.test(hostedStorybookProofValidator) &&
     /automatedA11yReportRefs/.test(hostedStorybookProofValidator) &&
     /visualDiffRefs/.test(hostedStorybookProofValidator) &&
@@ -521,6 +524,7 @@ check(
     /storybook build --output-dir storybook-static/.test(storybookRuntimePlan) &&
     /visual-governance-workbench/.test(storybookRuntimePlan) &&
     /operator-decision-rail/.test(storybookRuntimePlan) &&
+    /guided-review-path/.test(storybookRuntimePlan) &&
     /launch-proof-ladder/.test(storybookRuntimePlan) &&
     /not official Storybook runtime proof/.test(storybookRuntimePlan),
   'storybook-runtime.plan.json must keep a claim-safe pending official Storybook runtime dependency plan.',

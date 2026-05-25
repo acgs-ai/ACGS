@@ -67,6 +67,7 @@
       "claim-safe-trust-surface",
       "visual-governance-workbench",
       "operator-decision-rail",
+      "guided-review-path",
       "launch-proof-ladder",
       "deploy-readiness-boundary"
     ]
@@ -86,7 +87,7 @@
     "Replace pending-external:dependency-owner-approval with signed dependency-owner approval before adding Storybook packages.",
     "Confirm the current official Storybook install path for a React Vite app under the Node 24 toolchain before changing dependencies.",
     "Run the official init command under the Node 24 toolchain and preserve the generated package plus lockfile diff for review.",
-    "Map all seven buyer-evidence story ids, including visual-governance-workbench, operator-decision-rail, and launch-proof-ladder, into official Storybook stories while keeping the conservative claim boundary visible in each proof surface.",
+    "Map all eight buyer-evidence story ids, including visual-governance-workbench, operator-decision-rail, guided-review-path, and launch-proof-ladder, into official Storybook stories while keeping the conservative claim boundary visible in each proof surface.",
     "Replace or rename the current storybook:build shim only after test:storybook-runtime-plan, test:storybook-publication, and test:hosted-storybook-handoff remain green.",
     "Claim hosted Storybook proof only after storybook.acgs.ai has a successful Pages deployment and verify:production-live passes storybook-manifest-live with every expected story id."
   ],
