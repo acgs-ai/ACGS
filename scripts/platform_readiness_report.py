@@ -1366,6 +1366,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "packages/gove-zone/src/gove_zone/integration.py",
             "packages/gove-zone/tests/test_integration_hook.py",
+            "packages/gove-zone/tests/test_setup.py",
             "packages/gove-zone/README.md",
         ],
     )
@@ -1374,6 +1375,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             [
                 _maybe_read(repo_root, "packages/gove-zone/src/gove_zone/integration.py"),
                 _maybe_read(repo_root, "packages/gove-zone/tests/test_integration_hook.py"),
+                _maybe_read(repo_root, "packages/gove-zone/tests/test_setup.py"),
                 _maybe_read(repo_root, "packages/gove-zone/README.md"),
             ]
         ),
@@ -1403,7 +1405,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 )
             ),
             "uv run --package gove-zone python -m pytest "
-            "packages/gove-zone/tests/test_integration_hook.py --import-mode=importlib -q",
+            "packages/gove-zone/tests/test_integration_hook.py "
+            "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q",
         )
     )
 
@@ -1422,6 +1425,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "DENY and ESCALATE decisions exit non-zero",
             "blocked",
             "Runtime policy gate",
+            "OpenAI Chat-style",
+            "LangChain-style",
         ],
     )
     items.append(
@@ -1430,7 +1435,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Runtime gate can enforce reviewed policy bundles before side effects",
             runtime_policy_gate_ok,
             (
-                "gove-zone gate loads RuleSetPolicy bundles and exits non-zero on deny/escalate"
+                "gove-zone gate loads RuleSetPolicy bundles, covers OpenAI/LangChain tool_calls, "
+                "and exits non-zero on deny/escalate"
                 if runtime_policy_gate_ok
                 else f"missing_parts={runtime_policy_gate_missing_parts}"
             ),

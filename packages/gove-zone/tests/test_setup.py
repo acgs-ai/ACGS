@@ -107,11 +107,7 @@ def test_cli_gate_emits_receipt(
     assert payload["blocked"] is False
 
 
-def test_cli_gate_policy_bundle_blocks_denied_runtime_payload(
-    in_project: Path,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def _write_runtime_secrets_policy_bundle(tmp_path: Path) -> Path:
     bundle_path = tmp_path / "policy.bundle.json"
     bundle_path.write_text(
         json.dumps(
@@ -131,6 +127,15 @@ def test_cli_gate_policy_bundle_blocks_denied_runtime_payload(
         ),
         encoding="utf-8",
     )
+    return bundle_path
+
+
+def test_cli_gate_policy_bundle_blocks_denied_runtime_payload(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
     event_path = tmp_path / "event.json"
     event_path.write_text(
         json.dumps(
@@ -172,29 +177,120 @@ def test_cli_gate_policy_bundle_blocks_denied_runtime_payload(
     assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
 
 
-def test_cli_gate_policy_bundle_allows_exempted_runtime_payload(
+def test_cli_gate_policy_bundle_blocks_openai_chat_tool_calls_shape(
     in_project: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    bundle_path = tmp_path / "policy.bundle.json"
-    bundle_path.write_text(
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
         json.dumps(
             {
-                "id": "runtime-secrets/v1",
-                "rules": [
+                "goal": "Persist deploy secret",
+                "state": {"trust_tier": "analyst"},
+                "tool_calls": [
                     {
-                        "id": "BLOCK_SECRET_WRITES",
-                        "effect": "deny",
-                        "tools": ["runtime.file.write"],
-                        "path_prefix": "repo/secrets",
-                        "allow": {"trust_tiers": ["reviewer"]},
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "file.write",
+                            "arguments": json.dumps(
+                                {
+                                    "path": "repo/secrets/api-key.txt",
+                                    "content": "secret",
+                                }
+                            ),
+                        },
                     }
                 ],
             }
         ),
         encoding="utf-8",
     )
+
+    rc = cli.main(
+        [
+            "gate",
+            "--event-file",
+            str(event_path),
+            "--actor",
+            "openai-chat",
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["blocked"] is True
+    assert payload["decision"] == "deny"
+    assert payload["policy_bundle"] == str(bundle_path)
+    assert payload["receipt"]["actor"] == "openai-chat"
+    assert payload["receipt"]["tool"] == "runtime.file.write"
+    assert payload["receipt"]["path"] == ["repo", "secrets", "api-key.txt"]
+    assert payload["receipt"]["goal"] == "Persist deploy secret"
+    assert payload["receipt"]["state_hash"]
+    assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES"]
+
+
+def test_cli_gate_policy_bundle_allows_langchain_tool_calls_shape(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "intent": "Persist deploy secret",
+                "context": {"trust_tier": "reviewer"},
+                "tool_calls": [
+                    {
+                        "id": "call_lc_123",
+                        "name": "file.write",
+                        "args": {
+                            "path": "repo/secrets/api-key.txt",
+                            "content": "secret",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = cli.main(
+        [
+            "gate",
+            "--event-file",
+            str(event_path),
+            "--actor",
+            "langchain",
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["blocked"] is False
+    assert payload["decision"] == "allow"
+    assert payload["policy_bundle"] == str(bundle_path)
+    assert payload["receipt"]["actor"] == "langchain"
+    assert payload["receipt"]["tool"] == "runtime.file.write"
+    assert payload["receipt"]["path"] == ["repo", "secrets", "api-key.txt"]
+    assert payload["receipt"]["goal"] == "Persist deploy secret"
+    assert payload["receipt"]["matched_rules"] == ["BLOCK_SECRET_WRITES:allow:trust_tier"]
+
+
+def test_cli_gate_policy_bundle_allows_exempted_runtime_payload(
+    in_project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle_path = _write_runtime_secrets_policy_bundle(tmp_path)
     event_path = tmp_path / "event.json"
     event_path.write_text(
         json.dumps(

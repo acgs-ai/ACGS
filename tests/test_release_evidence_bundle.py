@@ -209,6 +209,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert runtime_bridge["module"] == "packages/gove-zone/src/gove_zone/integration.py"
     assert runtime_bridge["publicHelper"] == "tool_call_from_hook_payload"
     assert "test_integration_hook.py" in runtime_bridge["proofCommand"]
+    assert "test_setup.py" in runtime_bridge["cliProofCommand"]
     assert "MCP-style" in runtime_bridge["supportedLocalShapes"][1]
     assert "tool_calls" in runtime_bridge["supportedLocalShapes"][3]
     assert "OpenAI Chat" in runtime_bridge["supportedLocalShapes"][3]
@@ -219,6 +220,8 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert runtime_policy_gate["policyType"] == "RuleSetPolicy"
     assert "deny" in runtime_policy_gate["blockingDecisions"]
     assert "escalate" in runtime_policy_gate["blockingDecisions"]
+    assert "OpenAI Chat" in runtime_policy_gate["coveredPayloadShapes"][0]
+    assert "LangChain-style" in runtime_policy_gate["coveredPayloadShapes"][1]
     assert "not live third-party deployment proof" in runtime_policy_gate["claimBoundary"]
     assert storybook_runtime["planPath"] == "acgi-ai/storybook-runtime.plan.json"
     assert (

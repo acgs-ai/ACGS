@@ -795,6 +795,10 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "LangChain-style tool_calls [{name, args}]",
                     "generic {name, arguments|args|input}",
                 ],
+                "cliProofCommand": (
+                    "uv run --package gove-zone python -m pytest "
+                    "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q"
+                ),
                 "claimBoundary": (
                     "dependency-free local adapter normalization only; not a claim "
                     "that every third-party agent framework integration has been "
@@ -810,6 +814,10 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "packages/gove-zone/tests/test_setup.py --import-mode=importlib -q"
                 ),
                 "blockingDecisions": ["deny", "escalate"],
+                "coveredPayloadShapes": [
+                    "OpenAI Chat tool_calls [{function: {name, arguments}}]",
+                    "LangChain-style tool_calls [{name, args}]",
+                ],
                 "claimBoundary": (
                     "local CLI hook-gate contract only; policy effectiveness depends "
                     "on the reviewed bundle supplied by the operator and does not "
