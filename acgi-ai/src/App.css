@@ -783,6 +783,7 @@
 
 .m-workbench-framework,
 .m-workbench-cutover,
+.m-workbench-blockers,
 .m-workbench-live,
 .m-workbench-command,
 .m-workbench-assurance {
@@ -793,6 +794,7 @@
 
 .m-workbench-framework p,
 .m-workbench-cutover p,
+.m-workbench-blockers p,
 .m-workbench-live p,
 .m-workbench-command p,
 .m-workbench-assurance p {
@@ -805,6 +807,7 @@
 
 .m-workbench-framework ol,
 .m-workbench-cutover ol,
+.m-workbench-blockers ol,
 .m-workbench-live ol,
 .m-workbench-command ol,
 .m-workbench-assurance ol {
@@ -817,6 +820,7 @@
 
 .m-workbench-framework li,
 .m-workbench-cutover li,
+.m-workbench-blockers li,
 .m-workbench-live li,
 .m-workbench-command li,
 .m-workbench-assurance li {
@@ -830,6 +834,7 @@
 
 .m-workbench-framework code,
 .m-workbench-cutover code,
+.m-workbench-blockers code,
 .m-workbench-live code,
 .m-workbench-command code,
 .m-workbench-assurance code {
@@ -2295,6 +2300,7 @@
 }
 
 .workbench-cutover-summary,
+.workbench-blocker-summary,
 .workbench-live-summary,
 .workbench-command-summary,
 .workbench-assurance-summary {
@@ -2315,6 +2321,12 @@
     var(--paper);
 }
 
+.workbench-blocker-summary {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--rust) 5%, transparent), transparent 40%),
+    var(--paper);
+}
+
 .workbench-command-summary {
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--rust) 4%, transparent), transparent 42%),
@@ -2328,6 +2340,7 @@
 }
 
 .workbench-cutover-summary > div:first-child,
+.workbench-blocker-summary > div:first-child,
 .workbench-live-summary > div:first-child,
 .workbench-command-summary > div:first-child,
 .workbench-assurance-summary > div:first-child {
@@ -2337,6 +2350,7 @@
 }
 
 .workbench-cutover-summary strong,
+.workbench-blocker-summary strong,
 .workbench-live-summary strong,
 .workbench-command-summary strong,
 .workbench-assurance-summary strong {
@@ -2347,10 +2361,12 @@
 }
 
 .workbench-cutover-summary p,
+.workbench-blocker-summary p,
 .workbench-live-summary p,
 .workbench-command-summary p,
 .workbench-assurance-summary p,
 .workbench-cutover p,
+.workbench-release-blocker p,
 .workbench-live-blocker p,
 .workbench-command p,
 .workbench-assurance p {
@@ -2362,6 +2378,7 @@
 }
 
 .workbench-cutover-lanes,
+.workbench-blocker-lanes,
 .workbench-live-lanes,
 .workbench-command-lanes,
 .workbench-assurance-lanes {
@@ -2375,6 +2392,7 @@
 }
 
 .workbench-cutover,
+.workbench-release-blocker,
 .workbench-live-blocker,
 .workbench-command,
 .workbench-assurance {
@@ -2387,6 +2405,7 @@
 }
 
 .workbench-cutover div,
+.workbench-release-blocker div,
 .workbench-live-blocker div,
 .workbench-command div,
 .workbench-assurance div {
@@ -2395,6 +2414,7 @@
 }
 
 .workbench-cutover strong,
+.workbench-release-blocker strong,
 .workbench-live-blocker strong,
 .workbench-command strong,
 .workbench-assurance strong {
@@ -2402,6 +2422,7 @@
 }
 
 .workbench-cutover code,
+.workbench-release-blocker code,
 .workbench-live-blocker code,
 .workbench-command code,
 .workbench-assurance code {
@@ -2425,6 +2446,20 @@
   text-transform: none;
 }
 
+.workbench-release-blocker h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.workbench-release-blocker small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .workbench-assurance:last-child {
   grid-column: 1 / -1;
 }
@@ -2437,6 +2472,7 @@
 }
 
 .workbench-cutover .btn,
+.workbench-release-blocker .btn,
 .workbench-live-blocker .btn,
 .workbench-command .btn,
 .workbench-assurance .btn {
@@ -3242,6 +3278,7 @@
   .workbench-checklist,
   .workbench-proof-ladder,
   .workbench-cutover-lanes,
+  .workbench-blocker-lanes,
   .workbench-live-lanes,
   .workbench-command-lanes,
   .workbench-assurance-lanes,

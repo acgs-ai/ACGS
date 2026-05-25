@@ -800,8 +800,9 @@ launches the marketing and console Vite surfaces separately, uses
 Chrome/Chromium headless, checks expected DOM text, scrolls hash targets into
 view before capture, rejects likely blank screenshots, and captures the
 marketing workbench, `/console/workbench`, and
-`/console/workbench#guided-review-path` plus
-`/console/workbench#launch-proof-ladder` at the five visual baseline viewports.
+`/console/workbench#guided-review-path`,
+`/console/workbench#launch-proof-ladder`, and
+`/console/workbench#release-blocker-queue` at the five visual baseline viewports.
 It writes a `local-browser-workbench-evidence` manifest and screenshots under
 `dist-browser-evidence/`; `pnpm run test:browser-evidence` verifies the command
 contract, dry-run manifest shape, target-visible screenshot guards, docs, and

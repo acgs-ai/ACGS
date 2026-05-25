@@ -89,6 +89,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'Current saved cutover state',
   },
   {
+    id: 'console-release-blocker-queue',
+    surface: 'console',
+    route: '/console/workbench#release-blocker-queue',
+    title: 'Console release blocker queue',
+    expectation:
+      'Operator can see each external launch blocker with its owner, proof artifact, and unblock path.',
+    expectedText: 'owner · artifact · unblock command',
+  },
+  {
     id: 'console-live-verifier-blocker-map',
     surface: 'console',
     route: '/console/workbench#live-verifier-blocker-map',

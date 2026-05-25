@@ -11,6 +11,7 @@ import {
   PLATFORM_REQUIREMENT_LANES,
   PRODUCTION_COMMAND_RAIL,
   PRODUCTION_CUTOVER_LANES,
+  RELEASE_BLOCKER_QUEUE,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
   WORKBENCH_STAGES,
@@ -340,6 +341,45 @@ export function Workbench() {
                   onClick={() => navigate(lane.route)}
                 >
                   {lane.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="workbench-blocker-summary"
+          id="release-blocker-queue"
+          aria-labelledby="workbench-release-blockers-h"
+        >
+          <div>
+            <span className="c-meta" id="workbench-release-blockers-h">
+              Release blocker queue
+            </span>
+            <strong>Every external blocker has an owner, artifact, and unblock command.</strong>
+            <p>
+              This queue turns the blocked preflight into an operator handoff. It does not clear
+              production, legal, security, accessibility, or hosted proof until the named artifact
+              is attached and verified.
+            </p>
+          </div>
+          <div className="workbench-blocker-lanes">
+            {RELEASE_BLOCKER_QUEUE.map((blocker) => (
+              <article className="workbench-release-blocker" key={blocker.blockerId}>
+                <div>
+                  <span className="c-meta">{blocker.owner}</span>
+                  <strong>{blocker.blockerId}</strong>
+                  <code>{blocker.proof}</code>
+                </div>
+                <h3>{blocker.title}</h3>
+                <p>{blocker.action}</p>
+                <small>{blocker.artifact}</small>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(blocker.route)}
+                >
+                  {blocker.cta}
                 </button>
               </article>
             ))}

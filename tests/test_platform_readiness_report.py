@@ -91,6 +91,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "framework integration rail" in by_id["platform-blueprint-ui-local"].evidence
     assert "launch proof ladder" in by_id["platform-blueprint-ui-local"].evidence
     assert "live verifier blocker map" in by_id["platform-blueprint-ui-local"].evidence
+    assert "release blocker queue" in by_id["platform-blueprint-ui-local"].evidence
     assert "production command rail" in by_id["platform-blueprint-ui-local"].evidence
     assert "assurance proof intake" in by_id["platform-blueprint-ui-local"].evidence
     assert "35/36 local readiness copy" in by_id["platform-blueprint-ui-local"].evidence
@@ -112,6 +113,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "guided review path" in by_id["browser-workbench-evidence-local"].evidence
     assert "framework integration rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "live verifier blocker map" in by_id["browser-workbench-evidence-local"].evidence
+    assert "release blocker queue" in by_id["browser-workbench-evidence-local"].evidence
     assert "production command rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "assurance proof intake" in by_id["browser-workbench-evidence-local"].evidence
     assert "five visual baseline viewports" in by_id["browser-workbench-evidence-local"].evidence
@@ -171,8 +173,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     )
     assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert (
-        "all eight buyer-evidence stories"
-        in by_id["hosted-storybook-proof-intake-local"].evidence
+        "all eight buyer-evidence stories" in by_id["hosted-storybook-proof-intake-local"].evidence
     )
     assert by_id["external-blockers-documented"].status == "pass"
     assert by_id["hosted-storybook-buyer-evidence"].status == "pending"

@@ -437,6 +437,75 @@ export const PRODUCTION_COMMAND_RAIL = [
   },
 ] as const
 
+export const RELEASE_BLOCKER_QUEUE = [
+  {
+    blockerId: 'production-deployment',
+    title: 'Deploy production surfaces',
+    owner: 'Deploy owner',
+    artifact: 'production-live-verification.json',
+    action:
+      'Run the credentialed marketing and console deploys, then attach passing live verifier output.',
+    proof: 'owner · artifact · unblock command',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    blockerId: 'frontend-production-auth',
+    title: 'Prove production auth boundary',
+    owner: 'Frontend auth owner',
+    artifact: 'production-authority.example.json',
+    action:
+      'Replace pending auth approval refs and verify the deployed console uses the intended auth upstream.',
+    proof: 'auth owner · upstream · live check',
+    route: '/console/settings',
+    cta: 'Open auth',
+  },
+  {
+    blockerId: 'legal-review-of-claim-matrix',
+    title: 'Review launch claims',
+    owner: 'Legal reviewer',
+    artifact: 'assurance.legalClaimMatrix',
+    action:
+      'Attach reviewer, reviewedAt, proofRef, and claimMatrixRef before stronger launch copy ships.',
+    proof: 'reviewer · matrix · proofRef',
+    route: '/console/audit',
+    cta: 'Open claims',
+  },
+  {
+    blockerId: 'third-party-penetration-test',
+    title: 'Attach security assessment',
+    owner: 'Security owner',
+    artifact: 'assurance.pentest',
+    action:
+      'Attach vendor, completedAt, reportRef, and criticalFindingsOpen=0 from a third-party assessment.',
+    proof: 'vendor · report · zero criticals',
+    route: '/console/audit',
+    cta: 'Open security',
+  },
+  {
+    blockerId: 'full-wcag-manual-screen-reader-evidence',
+    title: 'Attach manual accessibility proof',
+    owner: 'Accessibility reviewer',
+    artifact: 'assurance.wcagManual',
+    action:
+      'Attach manual WCAG report plus NVDA and VoiceOver evidence; local screenshots are not conformance proof.',
+    proof: 'WCAG · NVDA · VoiceOver',
+    route: '/console/audit',
+    cta: 'Open a11y',
+  },
+  {
+    blockerId: 'hosted-storybook-buyer-evidence',
+    title: 'Verify hosted buyer evidence',
+    owner: 'Evidence publisher',
+    artifact: 'hosted-storybook-proof.example.json',
+    action:
+      'Publish storybook.acgs.ai, attach Pages/DNS/manifest/browser refs, and pass hosted proof validation.',
+    proof: 'Pages · DNS · manifest',
+    route: '/console/workbench#assurance-proof-intake',
+    cta: 'Open proof intake',
+  },
+] as const
+
 export const ASSURANCE_INTAKE_LANES = [
   {
     title: 'Production authority',

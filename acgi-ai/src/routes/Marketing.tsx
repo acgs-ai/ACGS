@@ -11,6 +11,7 @@ import {
   PLATFORM_REQUIREMENT_LANES,
   PRODUCTION_COMMAND_RAIL,
   PRODUCTION_CUTOVER_LANES,
+  RELEASE_BLOCKER_QUEUE,
   RESEARCH_INPUTS,
   WORKBENCH_DECISION_RAIL,
   WORKBENCH_GUIDED_PATH,
@@ -447,6 +448,28 @@ export function Marketing() {
                         <strong>{title}</strong>
                         <span>{state}</span>
                         <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-blockers"
+                  aria-labelledby="marketing-release-blockers-h"
+                >
+                  <span className="folio-no" id="marketing-release-blockers-h">
+                    Release blocker queue
+                  </span>
+                  <p>
+                    The launch path stays easy to act on by pairing every external blocker with an
+                    owner, artifact, and unblock command before any stronger claim is made.
+                  </p>
+                  <ol>
+                    {RELEASE_BLOCKER_QUEUE.map(({ blockerId, owner, artifact, proof }) => (
+                      <li key={blockerId}>
+                        <strong>{owner}</strong>
+                        <span>{blockerId}</span>
+                        <code>{proof}</code>
+                        <small>{artifact}</small>
                       </li>
                     ))}
                   </ol>

@@ -56,9 +56,9 @@ pnpm -F acgi-ai run evidence:browser-workbench
 manifest. `evidence:browser-workbench` launches the marketing and console Vite
 surfaces separately, uses a local Chrome/Chromium binary, checks expected DOM
 text, scrolls hash targets into view, rejects likely blank screenshots, and
-captures the marketing workbench, `/console/workbench`, and
-`/console/workbench#guided-review-path` plus
-`/console/workbench#launch-proof-ladder` at the five visual baseline viewports.
+captures the marketing workbench, `/console/workbench`,
+`/console/workbench#guided-review-path`, `/console/workbench#launch-proof-ladder`,
+and `/console/workbench#release-blocker-queue` at the five visual baseline viewports.
 It writes local browser evidence under
 `acgi-ai/dist-browser-evidence/`; this is not production deployment proof, not
 hosted Storybook proof, not WCAG conformance proof, and not legal/security

@@ -57,6 +57,7 @@ for (const needle of [
   '/console/workbench#guided-review-path',
   '/console/workbench#framework-integration-rail',
   '/console/workbench#launch-proof-ladder',
+  '/console/workbench#release-blocker-queue',
   '/console/workbench#live-verifier-blocker-map',
   '/console/workbench#production-command-rail',
   '/console/workbench#assurance-proof-intake',
@@ -142,7 +143,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 9, 'manifest must include nine browser targets.')
+    check(manifest.targets?.length === 10, 'manifest must include ten browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -154,17 +155,31 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 45,
+      manifest.screenshots?.length === 50,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
-    mustContain(JSON.stringify(manifest.targets), 'console-framework-integration-rail', 'dry-run manifest')
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-framework-integration-rail',
+      'dry-run manifest',
+    )
     mustContain(JSON.stringify(manifest.targets), 'runtime.malformed_batch', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Pick the case', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-guided-review-path', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Current saved cutover state', 'dry-run manifest')
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-release-blocker-queue',
+      'dry-run manifest',
+    )
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'owner · artifact · unblock command',
+      'dry-run manifest',
+    )
     mustContain(
       JSON.stringify(manifest.targets),
       'console-live-verifier-blocker-map',

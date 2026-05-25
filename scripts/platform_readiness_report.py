@@ -1401,6 +1401,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "validate:production-evidence",
             "validate:hosted-storybook-proof",
             "Assurance proof intake",
+            "Release blocker queue",
+            "release-blocker-queue",
+            "production-deployment",
+            "frontend-production-auth",
+            "owner · artifact · unblock command",
             "Production authority",
             "Legal claim review",
             "Security assessment",
@@ -1426,8 +1431,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "service-design/accessibility anchors, guided review path, "
                 "operator decision rail, framework integration rail, launch proof "
                 "ladder, live verifier blocker map, "
-                "production command rail, assurance proof intake, current 35/36 "
-                "local readiness copy, and "
+                "release blocker queue, production command rail, assurance proof "
+                "intake, current 35/36 local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1878,6 +1883,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "/console/workbench#guided-review-path",
             "/console/workbench#framework-integration-rail",
             "/console/workbench#launch-proof-ladder",
+            "/console/workbench#release-blocker-queue",
             "/console/workbench#live-verifier-blocker-map",
             "/console/workbench#production-command-rail",
             "/console/workbench#assurance-proof-intake",
@@ -1904,7 +1910,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "launches, and dry-run verifier cover the marketing workbench, console "
                 "workbench, operator decision rail, guided review path, framework "
                 "integration rail, launch proof ladder, live verifier blocker map, "
-                "production command rail, "
+                "release blocker queue, production command rail, "
                 "assurance proof intake, and five visual baseline viewports without "
                 "claiming production assurance"
                 if browser_evidence_files_ok
