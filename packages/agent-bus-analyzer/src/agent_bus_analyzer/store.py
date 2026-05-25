@@ -523,6 +523,48 @@ class TraceStore:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
+    # ---- retention (T059) ------------------------------------------------
+
+    def expire_older_than(self, days: int) -> list[str]:
+        """Move traces older than *days* into ``expired/`` (T059, FR-012).
+
+        Returns the list of correlation_ids that were expired. The JSONL
+        payload is MOVED, never rewritten — preserves chain integrity per
+        research §R9. A sidecar JSON file records the RetentionPolicy so
+        ``query.get_trace_or_expired`` can return an ``Expired`` shape
+        instead of a generic not-found.
+        """
+        if days < 0:
+            raise ValueError(f"days must be >= 0, got {days}")
+        expired_dir = self.store_dir / "expired"
+        expired_dir.mkdir(parents=True, exist_ok=True)
+        purged_at = datetime.now().isoformat()
+        cutoff_expr = f"datetime('now', '-{int(days)} days')"
+        expired_ids: list[str] = []
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT correlation_id FROM traces "
+                f"WHERE completed_at IS NOT NULL AND completed_at < {cutoff_expr} "
+                "AND status != 'expired'"
+            ).fetchall()
+            for (cid,) in rows:
+                src = _trace_path(self.store_dir, cid)
+                if src.exists():
+                    dst = expired_dir / src.name
+                    src.replace(dst)
+                sidecar = expired_dir / f"{cid}.json"
+                sidecar.write_text(
+                    canonical_json({"max_age_days": int(days), "purged_at": purged_at}),
+                    encoding="utf-8",
+                )
+                self._db.execute(
+                    "UPDATE traces SET status='expired' WHERE correlation_id=?",
+                    (cid,),
+                )
+                expired_ids.append(cid)
+        return expired_ids
+
+
 def open_store(store_dir: str | Path) -> TraceStore:
     """Open or create a TraceStore. Fails closed if the dir is not writable."""
     p = Path(store_dir)

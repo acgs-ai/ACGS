@@ -254,6 +254,22 @@ async def _status_lines(queue: CaptureQueue, stop: asyncio.Event) -> None:
             continue
 
 
+def _cmd_expire(args: argparse.Namespace) -> int:
+    """Move traces older than --days into ``expired/``. T059 / FR-012."""
+    store = open_store(args.store_dir)
+    try:
+        expired_ids = store.expire_older_than(days=args.days)
+    finally:
+        store.close()
+    print(
+        json.dumps(
+            {"status": "ok", "expired_count": len(expired_ids), "correlation_ids": expired_ids},
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _cmd_observer(args: argparse.Namespace) -> int:
     try:
         return asyncio.run(_observer_main(args))
@@ -439,6 +455,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("correlation_id", help="Correlation ID of the trace to verify")
     p_verify.add_argument("--store-dir", required=True, type=Path)
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_expire = subs.add_parser(
+        "expire",
+        help="Move traces older than --days into the expired/ subdir (FR-012)",
+    )
+    p_expire.add_argument("--store-dir", required=True, type=Path)
+    p_expire.add_argument("--days", type=int, default=90, help="Retention window (default: 90)")
+    p_expire.set_defaults(func=_cmd_expire)
 
     p_dev = subs.add_parser(
         "dev-traffic",
