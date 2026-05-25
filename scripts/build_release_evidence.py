@@ -426,7 +426,7 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
             "Production evidence chain consistency only compares saved local "
             "handoff artifacts; it does not deploy, fetch live origins, mutate "
             "DNS, validate legal/SOC2/WCAG/pentest/regulatory claims, or create "
-            "live production proof."
+            "live production proof; it is not live production proof."
         ),
         "artifacts": {
             "productionLiveVerifier": live["path"],
