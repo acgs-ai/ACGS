@@ -56,6 +56,7 @@ for (const needle of [
   '/console/workbench#operator-decision-rail',
   '/console/workbench#guided-review-path',
   '/console/workbench#launch-proof-ladder',
+  '/console/workbench#assurance-proof-intake',
   '--headless=new',
   '--dump-dom',
   'Page.captureScreenshot',
@@ -97,6 +98,11 @@ mustContain(
   '/console/workbench#operator-decision-rail',
   'scripts/platform_readiness_report.py',
 )
+mustContain(
+  readinessReport,
+  '/console/workbench#assurance-proof-intake',
+  'scripts/platform_readiness_report.py',
+)
 
 const outRelative = `.browser-evidence-check-${process.pid}`
 const outDir = resolve(root, outRelative)
@@ -118,7 +124,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 5, 'manifest must include five browser targets.')
+    check(manifest.targets?.length === 6, 'manifest must include six browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -130,7 +136,7 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 25,
+      manifest.screenshots?.length === 30,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
@@ -139,6 +145,12 @@ try {
     mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Current saved cutover state', 'dry-run manifest')
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-assurance-proof-intake',
+      'dry-run manifest',
+    )
+    mustContain(JSON.stringify(manifest.targets), 'Legal claim review', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not production deployment proof', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not WCAG conformance proof', 'dry-run manifest')
   }

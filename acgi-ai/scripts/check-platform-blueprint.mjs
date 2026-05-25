@@ -40,6 +40,7 @@ mustContain(marketing, 'WORKBENCH_STAGES.map', 'Marketing shared workbench stage
 mustContain(marketing, 'RESEARCH_INPUTS.map', 'Marketing shared research inputs')
 mustContain(marketing, 'PLATFORM_REQUIREMENT_LANES.map', 'Marketing shared platform requirements')
 mustContain(marketing, 'PRODUCTION_CUTOVER_LANES.map', 'Marketing shared cutover lanes')
+mustContain(marketing, 'ASSURANCE_INTAKE_LANES.map', 'Marketing shared assurance intake lanes')
 mustContain(marketing, 'OPERATOR_CHECKLIST.map', 'Marketing shared operator quick start')
 mustContain(marketing, 'WORKBENCH_GUIDED_PATH.map', 'Marketing shared guided path')
 mustContain(marketing, 'WORKBENCH_DECISION_RAIL.map', 'Marketing shared decision rail')
@@ -56,6 +57,7 @@ mustContain(
   'Console shared platform requirements',
 )
 mustContain(consoleWorkbench, 'PRODUCTION_CUTOVER_LANES.map', 'Console shared cutover lanes')
+mustContain(consoleWorkbench, 'ASSURANCE_INTAKE_LANES.map', 'Console shared assurance intake lanes')
 mustContain(consoleWorkbench, 'OPERATOR_CHECKLIST.map', 'Console shared operator quick start')
 mustContain(consoleWorkbench, 'WORKBENCH_GUIDED_PATH.map', 'Console shared guided path')
 mustContain(consoleWorkbench, 'WORKBENCH_DECISION_RAIL.map', 'Console shared decision rail')
@@ -115,6 +117,30 @@ mustContain(workbenchContent, 'waiting-for-live-checks', 'Shared cutover lanes')
 mustContain(workbenchContent, 'marketing-dns-live', 'Shared cutover lanes')
 mustContain(workbenchContent, 'storybook-manifest-live', 'Shared cutover lanes')
 mustContain(workbenchContent, 'safeToClaimProduction=false', 'Shared cutover lanes')
+mustContain(workbenchContent, 'ASSURANCE_INTAKE_LANES', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'Production authority', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'Legal claim review', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'Security assessment', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'Manual accessibility', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'Hosted buyer evidence', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'pending-external-authority', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'pending-external-signoff', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'pending-external-report', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'pending-manual-evidence', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'pending-hosted-proof', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'production-authority.example.json', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'assurance.legalClaimMatrix', 'Shared assurance intake lanes')
+mustContain(workbenchContent, 'assurance.pentest', 'Shared assurance intake lanes')
+mustContain(
+  workbenchContent,
+  'assurance.wcagManual + NVDA+VoiceOver',
+  'Shared assurance intake lanes',
+)
+mustContain(
+  workbenchContent,
+  'hosted-storybook-proof.example.json',
+  'Shared assurance intake lanes',
+)
 mustContain(workbenchContent, 'NIST AI RMF', 'Shared research inputs')
 mustContain(workbenchContent, 'ISO/IEC 42001', 'Shared research inputs')
 mustContain(workbenchContent, 'EU AI Act', 'Shared research inputs')
@@ -167,6 +193,11 @@ mustContain(consoleWorkbench, 'Local → Live → Assured', 'Console launch proo
 mustContain(consoleWorkbench, 'workbench-cutover-summary', 'Console saved cutover state')
 mustContain(consoleWorkbench, 'Current saved cutover state', 'Console saved cutover state')
 mustContain(consoleWorkbench, 'cutoverDelta=blocked-live-cutover', 'Console saved cutover state')
+mustContain(marketing, 'm-workbench-assurance', 'Marketing assurance proof intake')
+mustContain(marketing, 'Assurance proof intake', 'Marketing assurance proof intake')
+mustContain(consoleWorkbench, 'id="assurance-proof-intake"', 'Console assurance proof intake')
+mustContain(consoleWorkbench, 'workbench-assurance-summary', 'Console assurance proof intake')
+mustContain(consoleWorkbench, 'Assurance proof intake', 'Console assurance proof intake')
 mustContain(workbenchContent, 'verify:production-live', 'Shared launch proof ladder')
 mustContain(workbenchContent, 'legal + pentest + WCAG + Storybook', 'Shared launch proof ladder')
 mustContain(
@@ -187,6 +218,7 @@ mustContain(design, 'Framework → control → proof', 'Design source of truth')
 mustContain(design, 'Choose → Trace → Check → Export', 'Design source of truth')
 mustContain(design, 'Local → Live → Assured', 'Design source of truth')
 mustContain(design, 'Current saved cutover state', 'Design source of truth')
+mustContain(design, 'Assurance proof intake', 'Design source of truth')
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
 check(existsSync(researchPath), 'docs/platform-ui-ux-research.md must exist.')
@@ -220,6 +252,12 @@ mustContain(research, 'Current saved cutover state', 'Research memo')
 mustContain(
   research,
   'Marketing origin, Console origin, Storybook proof, and Evidence validation',
+  'Research memo',
+)
+mustContain(research, 'Assurance proof intake', 'Research memo')
+mustContain(
+  research,
+  'Production authority, Legal claim review, Security assessment, Manual accessibility, and Hosted buyer evidence',
   'Research memo',
 )
 mustContain(research, 'text-first and keyboard-reviewable', 'Research memo')

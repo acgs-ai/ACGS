@@ -1,6 +1,7 @@
 import { useHashScroll } from '../../lib/hashScroll'
 import { navigate } from '../../lib/navigate'
 import {
+  ASSURANCE_INTAKE_LANES,
   CASE_CARDS,
   EVIDENCE_ROWS,
   LAUNCH_PROOF_LANES,
@@ -290,6 +291,42 @@ export function Workbench() {
           <div className="workbench-cutover-lanes">
             {PRODUCTION_CUTOVER_LANES.map((lane) => (
               <article className="workbench-cutover" key={lane.title}>
+                <div>
+                  <span className="c-meta">{lane.title}</span>
+                  <strong>{lane.state}</strong>
+                  <code>{lane.proof}</code>
+                </div>
+                <p>{lane.body}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(lane.route)}
+                >
+                  {lane.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="workbench-assurance-summary"
+          id="assurance-proof-intake"
+          aria-labelledby="workbench-assurance-h"
+        >
+          <div>
+            <span className="c-meta" id="workbench-assurance-h">
+              Assurance proof intake
+            </span>
+            <strong>External blockers need attached proof, not local promises.</strong>
+            <p>
+              These are the proof packets required before production, compliance, accessibility, or
+              hosted buyer-evidence claims can replace blockers.
+            </p>
+          </div>
+          <div className="workbench-assurance-lanes">
+            {ASSURANCE_INTAKE_LANES.map((lane) => (
+              <article className="workbench-assurance" key={lane.title}>
                 <div>
                   <span className="c-meta">{lane.title}</span>
                   <strong>{lane.state}</strong>

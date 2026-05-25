@@ -1384,6 +1384,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "workbench-board",
             "workbench-checklist",
             "workbench-proof-ladder",
+            "Assurance proof intake",
+            "Production authority",
+            "Legal claim review",
+            "Security assessment",
+            "Manual accessibility",
+            "Hosted buyer evidence",
             "Local UX blueprint only",
             "not production assurance",
         ],
@@ -1402,8 +1408,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
                 "and console workbench share one workbench content contract, "
                 "service-design/accessibility anchors, guided review path, "
-                "operator decision rail, launch proof ladder, current 35/36 "
-                "local readiness copy, and "
+                "operator decision rail, launch proof ladder, assurance proof intake, "
+                "current 35/36 local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1853,6 +1859,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "/console/workbench#operator-decision-rail",
             "/console/workbench#guided-review-path",
             "/console/workbench#launch-proof-ladder",
+            "/console/workbench#assurance-proof-intake",
             "five visual baseline viewports",
             "not production deployment proof",
             "not WCAG conformance proof",
@@ -1875,8 +1882,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "hash guard, non-blank screenshot guard, per-surface marketing/console "
                 "launches, and dry-run verifier cover the marketing workbench, console "
                 "workbench, operator decision rail, guided review path, launch "
-                "proof ladder, and five visual baseline viewports without claiming "
-                "production assurance"
+                "proof ladder, assurance proof intake, and five visual baseline "
+                "viewports without claiming production assurance"
                 if browser_evidence_files_ok
                 and browser_evidence_scripts_ok
                 and browser_evidence_docs_ok

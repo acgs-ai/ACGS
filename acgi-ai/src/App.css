@@ -781,13 +781,15 @@
   white-space: normal;
 }
 
-.m-workbench-cutover {
+.m-workbench-cutover,
+.m-workbench-assurance {
   margin-top: 22px;
   padding-top: 18px;
   border-top: 1px solid var(--line-softer);
 }
 
-.m-workbench-cutover p {
+.m-workbench-cutover p,
+.m-workbench-assurance p {
   margin: 12px 0 0;
   font-family: var(--font-serif);
   font-size: 14px;
@@ -795,7 +797,8 @@
   color: var(--ink-3);
 }
 
-.m-workbench-cutover ol {
+.m-workbench-cutover ol,
+.m-workbench-assurance ol {
   display: grid;
   gap: 10px;
   margin: 14px 0 0;
@@ -803,7 +806,8 @@
   list-style: none;
 }
 
-.m-workbench-cutover li {
+.m-workbench-cutover li,
+.m-workbench-assurance li {
   display: grid;
   gap: 7px;
   padding: 12px;
@@ -812,7 +816,8 @@
   background: var(--paper);
 }
 
-.m-workbench-cutover code {
+.m-workbench-cutover code,
+.m-workbench-assurance code {
   width: fit-content;
   max-width: 100%;
   font-family: var(--font-mono);
@@ -2200,7 +2205,8 @@
   font-size: 13px;
 }
 
-.workbench-cutover-summary {
+.workbench-cutover-summary,
+.workbench-assurance-summary {
   display: grid;
   gap: 16px;
   margin-top: 18px;
@@ -2212,13 +2218,21 @@
     var(--paper);
 }
 
-.workbench-cutover-summary > div:first-child {
+.workbench-assurance-summary {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 36%),
+    var(--paper);
+}
+
+.workbench-cutover-summary > div:first-child,
+.workbench-assurance-summary > div:first-child {
   display: grid;
   gap: 8px;
   max-width: 760px;
 }
 
-.workbench-cutover-summary strong {
+.workbench-cutover-summary strong,
+.workbench-assurance-summary strong {
   font-family: var(--font-display);
   font-size: 24px;
   font-weight: 400;
@@ -2226,7 +2240,9 @@
 }
 
 .workbench-cutover-summary p,
-.workbench-cutover p {
+.workbench-assurance-summary p,
+.workbench-cutover p,
+.workbench-assurance p {
   margin: 0;
   font-family: var(--font-serif);
   font-size: 14.5px;
@@ -2234,7 +2250,8 @@
   color: var(--ink-2);
 }
 
-.workbench-cutover-lanes {
+.workbench-cutover-lanes,
+.workbench-assurance-lanes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
@@ -2244,7 +2261,8 @@
   background: var(--line-softer);
 }
 
-.workbench-cutover {
+.workbench-cutover,
+.workbench-assurance {
   display: grid;
   align-content: start;
   gap: 12px;
@@ -2253,16 +2271,19 @@
   background: var(--paper-2);
 }
 
-.workbench-cutover div {
+.workbench-cutover div,
+.workbench-assurance div {
   display: grid;
   gap: 8px;
 }
 
-.workbench-cutover strong {
+.workbench-cutover strong,
+.workbench-assurance strong {
   overflow-wrap: anywhere;
 }
 
-.workbench-cutover code {
+.workbench-cutover code,
+.workbench-assurance code {
   width: fit-content;
   max-width: 100%;
   padding: 5px 8px;
@@ -2278,7 +2299,12 @@
   white-space: normal;
 }
 
-.workbench-cutover .btn {
+.workbench-assurance:last-child {
+  grid-column: 1 / -1;
+}
+
+.workbench-cutover .btn,
+.workbench-assurance .btn {
   align-self: end;
   justify-self: start;
   padding: 9px 12px;
@@ -3080,6 +3106,7 @@
   .workbench-checklist,
   .workbench-proof-ladder,
   .workbench-cutover-lanes,
+  .workbench-assurance-lanes,
   .workbench-board {
     grid-template-columns: 1fr;
   }

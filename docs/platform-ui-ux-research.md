@@ -19,6 +19,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 12. **Accessible visual proof.** WCAG 2.2 keeps keyboard focus, input assistance, and accessible authentication in the product-quality frame. Visualized governance work must not rely on color alone; every status, proof step, and blocked action needs text labels that survive keyboard and assistive-technology review.
 13. **Platform requirements rail.** The workbench should translate research into six plain visual lanes: Govern, Regulate, Secure, Observe, Measure, and Use. Each lane needs a framework cue, a control question, a proof label, and a same-console route so research is actionable instead of a static memo.
 14. **Current saved cutover state.** Production blockers should be visible in the same workbench instead of hidden in generated JSON. The UI should show Marketing origin, Console origin, Storybook proof, and Evidence validation lanes with the saved verifier state, proof names, next route, and `safeToClaimProduction=false` boundary.
+15. **Assurance proof intake.** External proof should have an operator-facing intake map before launch. The UI should show Production authority, Legal claim review, Security assessment, Manual accessibility, and Hosted buyer evidence lanes with the required template or assurance field and an explicit reminder that placeholders are not proof.
 
 ## UI/UX direction for this repo
 
@@ -31,6 +32,7 @@ Status: research-backed product blueprint, not deployment proof or certification
 - Add an operator decision rail in the same UI so the first scan answers: Pick the case, Inspect the path, and Decide and export.
 - Add a launch proof ladder in the same workbench so local readiness, live deployment verification, and external assurance blockers are visible without changing UI systems.
 - Add a current saved cutover state panel under the launch proof ladder so marketing `already-live`, console `dns-or-service-blocked`, Storybook `dns-or-pages-blocked`, and evidence `waiting-for-live-checks` states are actionable without opening a manifest.
+- Add an assurance proof intake panel under the same launch proof ladder so Production authority, Legal claim review, Security assessment, Manual accessibility, and Hosted buyer evidence blockers have visible proof fields before anyone claims launch readiness.
 - Make visual work text-first and keyboard-reviewable: every workbench stage, proof ladder rung, and hold/release decision needs a readable label before any color, icon, or layout cue.
 - Avoid new dependencies, icon systems, dashboard colors, heavy animation, or generic SaaS gradients.
 - Phrase everything as a target product blueprint until live deployment proof, legal review, SOC 2 evidence, WCAG manual evidence, and penetration-test evidence are attached.
@@ -48,4 +50,6 @@ Status: research-backed product blueprint, not deployment proof or certification
 - Arize Phoenix overview: https://arize.com/docs/phoenix
 - Humanloop evaluators: https://humanloop.com/docs/evaluation/overview
 - GOV.UK Service Manual — user needs and simple services: https://www.gov.uk/service-manual/user-centred-design/user-needs/ and https://www.gov.uk/service-manual/service-standard/point-4-make-the-service-simple-to-use
-- W3C WAI — WCAG 2.2 updates: https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/
+- Nielsen Norman Group — 10 usability heuristics / visibility of system status: https://www.nngroup.com/articles/ten-usability-heuristics/
+- W3C WAI — WCAG 2.2 overview and updates: https://www.w3.org/WAI/standards-guidelines/wcag/ and https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/
+- Storybook visual testing: https://storybook.js.org/docs/writing-tests/visual-testing/

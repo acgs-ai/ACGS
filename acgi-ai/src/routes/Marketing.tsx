@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
 import {
+  ASSURANCE_INTAKE_LANES,
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
@@ -417,6 +418,27 @@ export function Marketing() {
                   </p>
                   <ol>
                     {PRODUCTION_CUTOVER_LANES.map(({ title, state, proof }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <span>{state}</span>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-assurance"
+                  aria-labelledby="marketing-assurance-intake-h"
+                >
+                  <span className="folio-no" id="marketing-assurance-intake-h">
+                    Assurance proof intake
+                  </span>
+                  <p>
+                    External blockers need attached proof before production, compliance,
+                    accessibility, or hosted buyer-evidence claims.
+                  </p>
+                  <ol>
+                    {ASSURANCE_INTAKE_LANES.map(({ title, state, proof }) => (
                       <li key={title}>
                         <strong>{title}</strong>
                         <span>{state}</span>

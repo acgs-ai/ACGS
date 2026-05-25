@@ -309,6 +309,49 @@ export const PRODUCTION_CUTOVER_LANES = [
   },
 ] as const
 
+export const ASSURANCE_INTAKE_LANES = [
+  {
+    title: 'Production authority',
+    state: 'pending-external-authority',
+    proof: 'production-authority.example.json',
+    body: 'Attach deploy, DNS, auth, and claims-owner approvals before production mutation or stronger launch claims.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Legal claim review',
+    state: 'pending-external-signoff',
+    proof: 'assurance.legalClaimMatrix',
+    body: 'Replace the pending legal proof reference with reviewer, reviewedAt, proofRef, and claimMatrixRef evidence.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+  {
+    title: 'Security assessment',
+    state: 'pending-external-report',
+    proof: 'assurance.pentest',
+    body: 'Attach third-party pentest vendor, completedAt, reportRef, and criticalFindingsOpen=0 before release.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+  {
+    title: 'Manual accessibility',
+    state: 'pending-manual-evidence',
+    proof: 'assurance.wcagManual + NVDA+VoiceOver',
+    body: 'Attach reviewer, reportRef, and NVDA plus VoiceOver evidence; automated checks are not conformance proof.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+  {
+    title: 'Hosted buyer evidence',
+    state: 'pending-hosted-proof',
+    proof: 'hosted-storybook-proof.example.json',
+    body: 'Attach Pages run, DNS, hosted manifest, browser screenshots, accessibility artifact, and visual-diff refs.',
+    route: '/console/workbench#launch-proof-ladder',
+    cta: 'Open ladder',
+  },
+] as const
+
 export const CASE_CARDS = [
   {
     id: 'GOV-214',

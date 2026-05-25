@@ -217,6 +217,7 @@ Design requirements:
 - Add an operator decision rail for first-time use: **Pick the case → Inspect the path → Decide and export**. It should sit between the visual board and dense proof so the next safe action is visible before table review.
 - Add a launch proof ladder in the same UI: **Local → Live → Assured**. Operators should see which evidence is only local, which command proves live deployment, and which external assurance packet must replace blockers before production claims.
 - Add a current cutover panel in the same proof ladder UI: **Current saved cutover state**. It should show `safeToClaimProduction=false`, the saved live-check delta, and separate Marketing origin, Console origin, Storybook proof, and Evidence validation lanes so local operators can act without reading generated JSON.
+- Add an assurance proof intake panel in the same proof ladder UI: **Assurance proof intake**. It should show the external proof packets still needed for Production authority, Legal claim review, Security assessment, Manual accessibility, and Hosted buyer evidence without treating templates as completed proof.
 - Use existing editorial primitives only: paper layers, black rules, mono stage labels, rust arrows/checks, and serif explanations. Do not add a dashboard color palette, heavy icons, shadows, or animation.
 - Keep copy claim-safe. This is a research-backed product blueprint until deployment proof, legal signoff, and external assurance evidence exist.
 

@@ -79,6 +79,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
       'Operator can separate local readiness, live verifier, assurance, and saved cutover proof.',
     expectedText: 'Current saved cutover state',
   },
+  {
+    id: 'console-assurance-proof-intake',
+    surface: 'console',
+    route: '/console/workbench#assurance-proof-intake',
+    title: 'Console assurance proof intake',
+    expectation:
+      'Operator can see the external proof packets required before production or assurance claims.',
+    expectedText: 'Legal claim review',
+  },
 ]
 
 const claimBoundary =
