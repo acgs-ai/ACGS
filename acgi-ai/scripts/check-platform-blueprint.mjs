@@ -40,6 +40,7 @@ mustContain(marketing, 'WORKBENCH_STAGES.map', 'Marketing shared workbench stage
 mustContain(marketing, 'RESEARCH_INPUTS.map', 'Marketing shared research inputs')
 mustContain(marketing, 'PLATFORM_REQUIREMENT_LANES.map', 'Marketing shared platform requirements')
 mustContain(marketing, 'PRODUCTION_CUTOVER_LANES.map', 'Marketing shared cutover lanes')
+mustContain(marketing, 'LIVE_VERIFIER_BLOCKER_LANES.map', 'Marketing shared live verifier blockers')
 mustContain(marketing, 'ASSURANCE_INTAKE_LANES.map', 'Marketing shared assurance intake lanes')
 mustContain(marketing, 'OPERATOR_CHECKLIST.map', 'Marketing shared operator quick start')
 mustContain(marketing, 'WORKBENCH_GUIDED_PATH.map', 'Marketing shared guided path')
@@ -57,6 +58,11 @@ mustContain(
   'Console shared platform requirements',
 )
 mustContain(consoleWorkbench, 'PRODUCTION_CUTOVER_LANES.map', 'Console shared cutover lanes')
+mustContain(
+  consoleWorkbench,
+  'LIVE_VERIFIER_BLOCKER_LANES.map',
+  'Console shared live verifier blockers',
+)
 mustContain(consoleWorkbench, 'ASSURANCE_INTAKE_LANES.map', 'Console shared assurance intake lanes')
 mustContain(consoleWorkbench, 'OPERATOR_CHECKLIST.map', 'Console shared operator quick start')
 mustContain(consoleWorkbench, 'WORKBENCH_GUIDED_PATH.map', 'Console shared guided path')
@@ -117,6 +123,19 @@ mustContain(workbenchContent, 'waiting-for-live-checks', 'Shared cutover lanes')
 mustContain(workbenchContent, 'marketing-dns-live', 'Shared cutover lanes')
 mustContain(workbenchContent, 'storybook-manifest-live', 'Shared cutover lanes')
 mustContain(workbenchContent, 'safeToClaimProduction=false', 'Shared cutover lanes')
+mustContain(workbenchContent, 'LIVE_VERIFIER_BLOCKER_LANES', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Console DNS', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Storybook DNS', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Console health', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Security headers', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Storybook HTTPS', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'Storybook manifest', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-console-dns', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-storybook-dns', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-console-healthz', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-console-security-headers', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-storybook-https', 'Shared live verifier blockers')
+mustContain(workbenchContent, 'live-storybook-manifest', 'Shared live verifier blockers')
 mustContain(workbenchContent, 'ASSURANCE_INTAKE_LANES', 'Shared assurance intake lanes')
 mustContain(workbenchContent, 'Production authority', 'Shared assurance intake lanes')
 mustContain(workbenchContent, 'Legal claim review', 'Shared assurance intake lanes')
@@ -193,6 +212,11 @@ mustContain(consoleWorkbench, 'Local → Live → Assured', 'Console launch proo
 mustContain(consoleWorkbench, 'workbench-cutover-summary', 'Console saved cutover state')
 mustContain(consoleWorkbench, 'Current saved cutover state', 'Console saved cutover state')
 mustContain(consoleWorkbench, 'cutoverDelta=blocked-live-cutover', 'Console saved cutover state')
+mustContain(marketing, 'm-workbench-live', 'Marketing live verifier blocker map')
+mustContain(marketing, 'Live verifier blocker map', 'Marketing live verifier blocker map')
+mustContain(consoleWorkbench, 'id="live-verifier-blocker-map"', 'Console live verifier blocker map')
+mustContain(consoleWorkbench, 'workbench-live-summary', 'Console live verifier blocker map')
+mustContain(consoleWorkbench, 'Live verifier blocker map', 'Console live verifier blocker map')
 mustContain(marketing, 'm-workbench-assurance', 'Marketing assurance proof intake')
 mustContain(marketing, 'Assurance proof intake', 'Marketing assurance proof intake')
 mustContain(consoleWorkbench, 'id="assurance-proof-intake"', 'Console assurance proof intake')
@@ -218,6 +242,7 @@ mustContain(design, 'Framework → control → proof', 'Design source of truth')
 mustContain(design, 'Choose → Trace → Check → Export', 'Design source of truth')
 mustContain(design, 'Local → Live → Assured', 'Design source of truth')
 mustContain(design, 'Current saved cutover state', 'Design source of truth')
+mustContain(design, 'Live verifier blocker map', 'Design source of truth')
 mustContain(design, 'Assurance proof intake', 'Design source of truth')
 mustContain(design, 'Do not add a dashboard color palette', 'Design source of truth')
 
@@ -252,6 +277,12 @@ mustContain(research, 'Current saved cutover state', 'Research memo')
 mustContain(
   research,
   'Marketing origin, Console origin, Storybook proof, and Evidence validation',
+  'Research memo',
+)
+mustContain(research, 'Live verifier blocker map', 'Research memo')
+mustContain(
+  research,
+  'live-console-dns, live-storybook-dns, live-console-healthz, live-console-security-headers, live-storybook-https, and live-storybook-manifest',
   'Research memo',
 )
 mustContain(research, 'Assurance proof intake', 'Research memo')

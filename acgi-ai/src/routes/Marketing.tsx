@@ -5,6 +5,7 @@ import { navigate } from '../lib/navigate'
 import {
   ASSURANCE_INTAKE_LANES,
   LAUNCH_PROOF_LANES,
+  LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
   PRODUCTION_CUTOVER_LANES,
@@ -421,6 +422,24 @@ export function Marketing() {
                       <li key={title}>
                         <strong>{title}</strong>
                         <span>{state}</span>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-live" aria-labelledby="marketing-live-blockers-h">
+                  <span className="folio-no" id="marketing-live-blockers-h">
+                    Live verifier blocker map
+                  </span>
+                  <p>
+                    The saved production preflight names each live DNS, service, header, HTTPS, and
+                    hosted manifest blocker before any launch claim changes.
+                  </p>
+                  <ol>
+                    {LIVE_VERIFIER_BLOCKER_LANES.map(({ title, blockerId, proof }) => (
+                      <li key={blockerId}>
+                        <strong>{title}</strong>
+                        <span>{blockerId}</span>
                         <code>{proof}</code>
                       </li>
                     ))}

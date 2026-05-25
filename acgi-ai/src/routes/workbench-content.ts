@@ -309,6 +309,57 @@ export const PRODUCTION_CUTOVER_LANES = [
   },
 ] as const
 
+export const LIVE_VERIFIER_BLOCKER_LANES = [
+  {
+    title: 'Console DNS',
+    blockerId: 'live-console-dns',
+    proof: 'console-dns-live',
+    body: 'Create or repair console.acgs.ai DNS for the deployed console service before rerunning the live verifier.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Storybook DNS',
+    blockerId: 'live-storybook-dns',
+    proof: 'storybook-dns-live',
+    body: 'Create or repair storybook.acgs.ai DNS for the hosted buyer-evidence origin.',
+    route: '/console/workbench#assurance-proof-intake',
+    cta: 'Open proof intake',
+  },
+  {
+    title: 'Console health',
+    blockerId: 'live-console-healthz',
+    proof: 'console-healthz-live',
+    body: 'Deploy the console service and verify /healthz reports ok=true with the expected served_hash and build_id.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Security headers',
+    blockerId: 'live-console-security-headers',
+    proof: 'console-security-headers-live',
+    body: 'Serve the console origin with HSTS, CSP, X-Frame-Options, and Referrer-Policy headers.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    title: 'Storybook HTTPS',
+    blockerId: 'live-storybook-https',
+    proof: 'storybook-https-live',
+    body: 'Publish the buyer-evidence artifact and verify storybook.acgs.ai returns a 2xx or 3xx HTTPS response.',
+    route: '/console/workbench#launch-proof-ladder',
+    cta: 'Open ladder',
+  },
+  {
+    title: 'Storybook manifest',
+    blockerId: 'live-storybook-manifest',
+    proof: 'storybook-manifest-live',
+    body: 'Verify the hosted manifest includes expected story ids, publish target, and claim boundary before removing blockers.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+] as const
+
 export const ASSURANCE_INTAKE_LANES = [
   {
     title: 'Production authority',

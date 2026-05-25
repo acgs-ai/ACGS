@@ -70,6 +70,7 @@ const evidenceStories = [
       'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
       'Guided review path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
       'The launch proof area exposes the current saved cutover state so operators see production blockers without opening generated JSON.',
+      'Live verifier blocker map shows live-console-dns, live-storybook-dns, live-console-healthz, live-console-security-headers, live-storybook-https, and live-storybook-manifest before launch claims.',
       'Assurance proof intake lanes show production authority, legal, security, manual accessibility, and hosted buyer-evidence proof fields before launch claims.',
       'Each stage links back to an existing console route instead of creating hidden side effects.',
       'The claim boundary keeps the workbench as local UX evidence, not production assurance.',
@@ -140,6 +141,7 @@ const evidenceStories = [
     proof: [
       'The same workbench separates Local readiness, Live verifier, and Assurance packet evidence.',
       'Current saved cutover lanes separate marketing already-live proof from console DNS/service, Storybook DNS/pages, and evidence-validation blockers.',
+      'Live verifier blocker map keeps console DNS, Storybook DNS, console healthz, security headers, Storybook HTTPS, and Storybook manifest blockers visible as deploy work.',
       'Assurance proof intake keeps production-authority.example.json, legal claim review, pentest, manual WCAG, and hosted Storybook proof fields visible as external blockers.',
       'verify:production-live stays visible as the live proof command after deployment.',
       'Legal, pentest, WCAG/manual, and hosted Storybook proof remain external blockers until attached.',

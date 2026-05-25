@@ -80,6 +80,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'Current saved cutover state',
   },
   {
+    id: 'console-live-verifier-blocker-map',
+    surface: 'console',
+    route: '/console/workbench#live-verifier-blocker-map',
+    title: 'Console live verifier blocker map',
+    expectation:
+      'Operator can see the exact failed live checks that must clear before production evidence passes.',
+    expectedText: 'live-console-dns',
+  },
+  {
     id: 'console-assurance-proof-intake',
     surface: 'console',
     route: '/console/workbench#assurance-proof-intake',

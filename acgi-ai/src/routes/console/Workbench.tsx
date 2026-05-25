@@ -5,6 +5,7 @@ import {
   CASE_CARDS,
   EVIDENCE_ROWS,
   LAUNCH_PROOF_LANES,
+  LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
   PLATFORM_REQUIREMENT_LANES,
   PRODUCTION_CUTOVER_LANES,
@@ -294,6 +295,42 @@ export function Workbench() {
                 <div>
                   <span className="c-meta">{lane.title}</span>
                   <strong>{lane.state}</strong>
+                  <code>{lane.proof}</code>
+                </div>
+                <p>{lane.body}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(lane.route)}
+                >
+                  {lane.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section
+          className="workbench-live-summary"
+          id="live-verifier-blocker-map"
+          aria-labelledby="workbench-live-blockers-h"
+        >
+          <div>
+            <span className="c-meta" id="workbench-live-blockers-h">
+              Live verifier blocker map
+            </span>
+            <strong>Every failed live check stays visible until verified.</strong>
+            <p>
+              These blocker ids come from the saved production preflight. They are deploy actions,
+              not local proof, and must clear before the production evidence validator can pass.
+            </p>
+          </div>
+          <div className="workbench-live-lanes">
+            {LIVE_VERIFIER_BLOCKER_LANES.map((lane) => (
+              <article className="workbench-live-blocker" key={lane.blockerId}>
+                <div>
+                  <span className="c-meta">{lane.title}</span>
+                  <strong>{lane.blockerId}</strong>
                   <code>{lane.proof}</code>
                 </div>
                 <p>{lane.body}</p>
