@@ -6,6 +6,7 @@ import {
   LAUNCH_PROOF_LANES,
   OPERATOR_CHECKLIST,
   WORKBENCH_DECISION_RAIL,
+  WORKBENCH_GUIDED_PATH,
   WORKBENCH_STAGES,
 } from '../workbench-content'
 
@@ -107,6 +108,39 @@ export function Workbench() {
               <code>platform-blueprint-ui-local</code>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section
+        className="overview-section"
+        id="guided-review-path"
+        aria-labelledby="workbench-guided-h"
+      >
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-guided-h">
+            Guided review path
+          </h2>
+          <span className="c-meta">Choose → Trace → Check → Export</span>
+        </div>
+
+        <div className="workbench-guided-path">
+          {WORKBENCH_GUIDED_PATH.map((item) => (
+            <article className="workbench-guided" key={item.title}>
+              <div>
+                <span className="workbench-guided-step">{item.step}</span>
+                <code>{item.proof}</code>
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.instruction}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(item.route)}
+              >
+                {item.cta}
+              </button>
+            </article>
+          ))}
         </div>
       </section>
 

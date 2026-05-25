@@ -62,6 +62,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'Pick the case',
   },
   {
+    id: 'console-guided-review-path',
+    surface: 'console',
+    route: '/console/workbench#guided-review-path',
+    title: 'Console guided review path',
+    expectation:
+      'Operator can choose a case, trace the path, check holds, and export bounded proof.',
+    expectedText: 'Export bounded proof',
+  },
+  {
     id: 'console-launch-proof-ladder',
     surface: 'console',
     route: '/console/workbench#launch-proof-ladder',

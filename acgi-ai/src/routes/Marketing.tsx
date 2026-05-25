@@ -7,6 +7,7 @@ import {
   OPERATOR_CHECKLIST,
   RESEARCH_INPUTS,
   WORKBENCH_DECISION_RAIL,
+  WORKBENCH_GUIDED_PATH,
   WORKBENCH_STAGES,
 } from './workbench-content'
 
@@ -319,6 +320,21 @@ export function Marketing() {
                     </li>
                   ))}
                 </ul>
+                <section className="m-workbench-guided" aria-labelledby="marketing-guided-path-h">
+                  <span className="folio-no" id="marketing-guided-path-h">
+                    Guided review path
+                  </span>
+                  <ol>
+                    {WORKBENCH_GUIDED_PATH.map(({ step, title, instruction, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <p>{instruction}</p>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
                 <section
                   className="m-workbench-decision"
                   aria-labelledby="marketing-decision-rail-h"

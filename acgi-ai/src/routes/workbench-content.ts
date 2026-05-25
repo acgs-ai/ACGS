@@ -71,6 +71,41 @@ export const RESEARCH_INPUTS = [
   },
 ] as const
 
+export const WORKBENCH_GUIDED_PATH = [
+  {
+    step: '01',
+    title: 'Choose the case',
+    instruction: 'Start with the highest-risk partial or blocked card before opening dense tables.',
+    proof: 'case id · owner · risk',
+    route: '/console/actions',
+    cta: 'Open queue',
+  },
+  {
+    step: '02',
+    title: 'Follow the path',
+    instruction: 'Read goal, model call, guardrail, policy decision, and receipt as one trace.',
+    proof: 'trace id · guardrail',
+    route: '/console/bus',
+    cta: 'Inspect trace',
+  },
+  {
+    step: '03',
+    title: 'Check the hold',
+    instruction: 'Compare evaluation, policy citation, and authority gaps before promotion.',
+    proof: 'eval · citation · authority',
+    route: '/console/deliberations',
+    cta: 'Open review',
+  },
+  {
+    step: '04',
+    title: 'Export bounded proof',
+    instruction: 'Leave the product with receipts, hashes, and explicit non-production boundaries.',
+    proof: 'receipt · hash · boundary',
+    route: '/console/audit',
+    cta: 'Open proof',
+  },
+] as const
+
 export const OPERATOR_CHECKLIST = [
   {
     label: 'Start here',

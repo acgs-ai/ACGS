@@ -212,6 +212,7 @@ Design requirements:
 - Keep trace, evaluation, guardrail, release, and evidence concepts visually adjacent so risk is not split across disconnected tabs.
 - Treat NIST AI RMF-style governance, OWASP GenAI risk controls, agent tracing, guardrails, evaluation, and human judgment as visible product objects.
 - Add an operator quick-start checklist that stays in the same workbench UI: **Start here → Hold release → Export proof**. It should explain the next safe action, the reason to block, and the proof that can leave the product.
+- Add a guided review path in the same workbench UI: **Choose → Trace → Check → Export**. It should show the first-minute sequence before dense tables: choose the case, follow the trace path, check evaluation/authority holds, and export bounded proof only with the claim boundary attached.
 - Add an operator decision rail for first-time use: **Pick the case → Inspect the path → Decide and export**. It should sit between the visual board and dense proof so the next safe action is visible before table review.
 - Add a launch proof ladder in the same UI: **Local → Live → Assured**. Operators should see which evidence is only local, which command proves live deployment, and which external assurance packet must replace blockers before production claims.
 - Use existing editorial primitives only: paper layers, black rules, mono stage labels, rust arrows/checks, and serif explanations. Do not add a dashboard color palette, heavy icons, shadows, or animation.

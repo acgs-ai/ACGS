@@ -67,6 +67,7 @@ const evidenceStories = [
     proof: [
       'The console workbench turns queue, trace, evaluation, release, and evidence steps into one visual path.',
       'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
+      'Guided review path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
       'Each stage links back to an existing console route instead of creating hidden side effects.',
       'The claim boundary keeps the workbench as local UX evidence, not production assurance.',
     ],
@@ -78,6 +79,7 @@ const evidenceStories = [
     ],
     sourceFiles: [
       'src/routes/console/Workbench.tsx',
+      'src/routes/workbench-content.ts',
       'src/routes/Console.tsx',
       'src/routes/console/wire-decisions.ts',
       'src/App.css',

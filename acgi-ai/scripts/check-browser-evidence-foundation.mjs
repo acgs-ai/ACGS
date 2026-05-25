@@ -54,6 +54,7 @@ for (const needle of [
   '/#workbench',
   '/console/workbench',
   '/console/workbench#operator-decision-rail',
+  '/console/workbench#guided-review-path',
   '/console/workbench#launch-proof-ladder',
   '--headless=new',
   '--dump-dom',
@@ -117,7 +118,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 4, 'manifest must include four browser targets.')
+    check(manifest.targets?.length === 5, 'manifest must include five browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -129,11 +130,13 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 20,
+      manifest.screenshots?.length === 25,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Pick the case', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'console-guided-review-path', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-launch-proof-ladder', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), '35/36 local pass', 'dry-run manifest')
     mustContain(manifest.claimBoundary ?? '', 'not production deployment proof', 'dry-run manifest')

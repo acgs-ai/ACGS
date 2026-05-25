@@ -1295,6 +1295,7 @@ check(
     /BROWSER_EVIDENCE_VIEWPORTS/.test(browserEvidenceCapture) &&
     /\/#workbench/.test(browserEvidenceCapture) &&
     /\/console\/workbench/.test(browserEvidenceCapture) &&
+    /\/console\/workbench#guided-review-path/.test(browserEvidenceCapture) &&
     /\/console\/workbench#launch-proof-ladder/.test(browserEvidenceCapture) &&
     /--headless=new/.test(browserEvidenceCapture) &&
     /VITE_BYPASS_SESSION/.test(browserEvidenceCapture) &&

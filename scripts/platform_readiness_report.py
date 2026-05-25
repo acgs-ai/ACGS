@@ -1365,6 +1365,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Start here",
             "Hold release",
             "Export proof",
+            "Guided review path",
+            "Choose → Trace → Check → Export",
+            "Choose the case",
+            "Follow the path",
+            "Check the hold",
+            "Export bounded proof",
             "Launch proof ladder",
             "Local readiness",
             "Live verifier",
@@ -1392,8 +1398,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
                 "and console workbench share one workbench content contract, "
-                "service-design/accessibility anchors, operator decision rail, "
-                "launch proof ladder, current 35/36 local readiness copy, and "
+                "service-design/accessibility anchors, guided review path, "
+                "operator decision rail, launch proof ladder, current 35/36 "
+                "local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1841,6 +1848,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "test:browser-evidence",
             "local browser evidence",
             "/console/workbench#operator-decision-rail",
+            "/console/workbench#guided-review-path",
             "/console/workbench#launch-proof-ladder",
             "five visual baseline viewports",
             "not production deployment proof",
@@ -1863,8 +1871,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "Chrome/Chromium screenshot command, DOM text guard, target-visible "
                 "hash guard, non-blank screenshot guard, per-surface marketing/console "
                 "launches, and dry-run verifier cover the marketing workbench, console "
-                "workbench, operator decision rail, launch proof ladder, and five "
-                "visual baseline viewports without claiming production assurance"
+                "workbench, operator decision rail, guided review path, launch "
+                "proof ladder, and five visual baseline viewports without claiming "
+                "production assurance"
                 if browser_evidence_files_ok
                 and browser_evidence_scripts_ok
                 and browser_evidence_docs_ok
