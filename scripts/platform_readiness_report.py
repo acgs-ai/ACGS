@@ -1306,6 +1306,78 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
+    platform_blueprint_files_ok, platform_blueprint_missing = _all_files_exist(
+        repo_root,
+        [
+            "docs/platform-ui-ux-research.md",
+            "acgi-ai/DESIGN.md",
+            "acgi-ai/src/routes/Marketing.tsx",
+            "acgi-ai/src/App.css",
+            "acgi-ai/scripts/check-platform-blueprint.mjs",
+        ],
+    )
+    platform_blueprint_source = "\n".join(
+        [
+            _maybe_read(repo_root, "docs/platform-ui-ux-research.md"),
+            _maybe_read(repo_root, "acgi-ai/DESIGN.md"),
+            _maybe_read(repo_root, "acgi-ai/src/routes/Marketing.tsx"),
+            _maybe_read(repo_root, "acgi-ai/src/App.css"),
+            _maybe_read(repo_root, "acgi-ai/scripts/check-platform-blueprint.mjs"),
+        ]
+    )
+    platform_blueprint_ok, platform_blueprint_missing_parts = _contains_all(
+        platform_blueprint_source,
+        [
+            "Status: research-backed product blueprint",
+            "NIST AI Risk Management Framework",
+            "OWASP Top 10 for Large Language Model Applications",
+            "OpenAI Agents SDK tracing",
+            "LangSmith observability",
+            "Arize Phoenix overview",
+            "Humanloop evaluators",
+            "## Platform UX blueprint",
+            "work queue → trace graph → evaluation panel → human release gate → evidence room",
+            'id="workbench"',
+            "Visualized <em>work</em>",
+            "Work queue",
+            "Trace graph",
+            "Evaluation panel",
+            "Human release gate",
+            "Evidence room",
+            "m-workbench",
+            "product blueprint, not certification or live assurance",
+        ],
+    )
+    platform_blueprint_scripts_ok = (
+        deploy_scripts.get("test:platform-blueprint")
+        == "node scripts/check-platform-blueprint.mjs"
+        and "pnpm run test:platform-blueprint" in deploy_scripts.get("test:all", "")
+        and "pnpm run test:platform-blueprint" in deploy_scripts.get("audit:eval", "")
+    )
+    items.append(
+        _item(
+            "platform-blueprint-ui-local",
+            "Research-backed visual workbench blueprint is locally guarded",
+            platform_blueprint_files_ok
+            and platform_blueprint_ok
+            and platform_blueprint_scripts_ok,
+            (
+                "platform UI/UX research, DESIGN.md, same-style marketing workbench, "
+                "and test:platform-blueprint keep the visual easy-use roadmap "
+                "inspectable without claiming production assurance"
+                if platform_blueprint_files_ok
+                and platform_blueprint_ok
+                and platform_blueprint_scripts_ok
+                else (
+                    f"missing_files={platform_blueprint_missing}, "
+                    f"missing_parts={platform_blueprint_missing_parts}, "
+                    f"scripts_ok={platform_blueprint_scripts_ok}"
+                )
+            ),
+            "pnpm -F acgi-ai run test:platform-blueprint",
+        )
+    )
+
     local_gate_ok, local_gate_missing = _contains_all(
         makefile,
         [
