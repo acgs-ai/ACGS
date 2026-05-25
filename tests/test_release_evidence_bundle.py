@@ -100,7 +100,9 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_launch_preflight["proofCommand"] == "make production-launch-preflight"
     assert "--require-ready" in production_launch_preflight["operatorCommand"]
     assert "requiredActions" in production_launch_preflight["outputFields"]
+    assert "repository" in production_launch_preflight["outputFields"]
     assert "externalBlockerIds" in production_launch_preflight["outputFields"]
+    assert "current clean commit" in production_launch_preflight["claimBoundary"]
     assert "does not deploy" in production_launch_preflight["claimBoundary"]
     assert production_authority["templatePath"] == "acgi-ai/production-authority.example.json"
     assert (

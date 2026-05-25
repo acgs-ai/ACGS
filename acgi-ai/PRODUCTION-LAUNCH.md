@@ -69,8 +69,9 @@ pnpm -F acgi-ai run test:hosted-storybook-handoff
 
 Expected local state today: `make platform-readiness` may still report the
 hosted Storybook item as pending, and `make production-launch-preflight` should
-report `blocked` until pending local items, live verifier blockers, evidence
-validation, and external blocker ids are replaced by attached proof.
+report `blocked` until the release-evidence manifest points at the current
+clean commit, pending local items, live verifier blockers, evidence validation,
+and external blocker ids are replaced by attached proof.
 `storybook-runtime.plan.json` is a local operator plan only, not official
 Storybook runtime proof. That pending item blocks stronger hosted Storybook
 claims but does not weaken the production deploy fail-closed contract.

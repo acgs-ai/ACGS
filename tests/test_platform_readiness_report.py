@@ -52,6 +52,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "not live production proof" in by_id["production-evidence-chain-local"].evidence
     assert by_id["production-launch-preflight-local"].status == "pass"
     assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence
+    assert "clean commit" in by_id["production-launch-preflight-local"].evidence
     assert "not production deployment proof" in by_id[
         "production-launch-preflight-local"
     ].evidence

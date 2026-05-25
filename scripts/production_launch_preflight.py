@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -40,12 +41,65 @@ def _blocker(action_id: str, title: str, evidence: Any) -> dict[str, Any]:
     return {"id": action_id, "title": title, "evidence": evidence}
 
 
+def _git(args: list[str], repo_root: Path = REPO_ROOT) -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", *args],
+            cwd=repo_root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def _current_repository_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    status_lines = (_git(["status", "--short"], repo_root) or "").splitlines()
+    return {
+        "path": str(repo_root),
+        "branch": _git(["branch", "--show-current"], repo_root),
+        "commit": _git(["rev-parse", "HEAD"], repo_root),
+        "dirty": bool(status_lines),
+        "dirtyEntryCount": len(status_lines),
+    }
+
+
+def _repository_freshness_issues(
+    manifest_repository: dict[str, Any],
+    current_repository: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    manifest_commit = manifest_repository.get("commit")
+    current_commit = current_repository.get("commit")
+    if not manifest_commit:
+        issues.append("manifest-commit-missing")
+    if manifest_repository.get("dirty") or manifest_repository.get("dirtyEntryCount", 0):
+        issues.append("manifest-dirty")
+    if current_repository.get("dirty") or current_repository.get("dirtyEntryCount", 0):
+        issues.append("current-worktree-dirty")
+    if manifest_commit and current_commit and manifest_commit != current_commit:
+        issues.append("manifest-commit-does-not-match-current-head")
+    return issues
+
+
 def build_preflight(
     manifest: dict[str, Any],
     *,
     manifest_path: Path | str = DEFAULT_MANIFEST,
+    current_repository: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a conservative production launch preflight decision."""
+
+    manifest_repository = _dict(manifest.get("repository"))
+    current_repository = (
+        _current_repository_snapshot()
+        if current_repository is None
+        else _dict(current_repository)
+    )
+    repository_issues = _repository_freshness_issues(
+        manifest_repository,
+        current_repository,
+    )
 
     readiness = _dict(manifest.get("readiness"))
     summary = _dict(readiness.get("summary"))
@@ -74,6 +128,18 @@ def build_preflight(
     validation_failures = _strings(validation_snapshot.get("failingCheckIds"))
 
     required_actions: list[dict[str, Any]] = []
+    if repository_issues:
+        required_actions.append(
+            _blocker(
+                "refresh-release-evidence-clean-commit",
+                "Regenerate release evidence from the current clean commit before launch.",
+                {
+                    "issues": repository_issues,
+                    "manifestRepository": manifest_repository,
+                    "currentRepository": current_repository,
+                },
+            )
+        )
     if summary.get("fail", 0) or failing_item_ids:
         required_actions.append(
             _blocker(
@@ -147,6 +213,11 @@ def build_preflight(
         "status": status,
         "manifestPath": str(manifest_path),
         "claimBoundary": CLAIM_BOUNDARY,
+        "repository": {
+            "manifest": manifest_repository,
+            "current": current_repository,
+            "issues": repository_issues,
+        },
         "readinessSummary": summary,
         "pendingItemIds": pending_item_ids,
         "failingItemIds": failing_item_ids,
@@ -192,6 +263,7 @@ Status: `{preflight['status']}`
 {preflight['claimBoundary']}
 
 - Manifest: `{preflight['manifestPath']}`
+- Repository freshness: `{preflight['repository'].get('issues') or 'current clean commit'}`
 - Readiness: `{preflight['readinessSummary']}`
 - Pending items: `{', '.join(preflight['pendingItemIds']) or 'none'}`
 - Live verifier status: `{preflight['productionLive'].get('status')}`

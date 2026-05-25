@@ -30,8 +30,7 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
     assert "replace-external-blockers-with-proof" in action_ids
 
 
-def test_ready_manifest_requires_no_pending_live_chain_validation_or_external_blockers():
-    manifest = bre.build_manifest(ROOT)
+def _mark_manifest_locally_ready(manifest: dict) -> dict:
     ready_manifest = copy.deepcopy(manifest)
     ready_manifest["readiness"]["summary"] = {"fail": 0, "pass": 1, "pending": 0, "total": 1}
     ready_manifest["readiness"]["pendingItemIds"] = []
@@ -47,12 +46,66 @@ def test_ready_manifest_requires_no_pending_live_chain_validation_or_external_bl
     artifacts["productionEvidenceValidation"]["latestValidationSnapshot"].update(
         {"present": True, "status": "pass", "failingCheckIds": []}
     )
+    return ready_manifest
 
-    preflight = plp.build_preflight(ready_manifest, manifest_path="ready-manifest.json")
+
+def test_ready_manifest_requires_no_pending_live_chain_validation_or_external_blockers():
+    manifest = bre.build_manifest(ROOT)
+    ready_manifest = _mark_manifest_locally_ready(manifest)
+    ready_manifest["repository"] = {
+        "path": str(ROOT),
+        "branch": "main",
+        "commit": "a" * 40,
+        "dirty": False,
+        "dirtyEntryCount": 0,
+    }
+
+    preflight = plp.build_preflight(
+        ready_manifest,
+        manifest_path="ready-manifest.json",
+        current_repository=ready_manifest["repository"],
+    )
 
     assert preflight["status"] == "ready"
     assert preflight["requiredActions"] == []
     assert preflight["externalBlockerIds"] == []
+
+
+def test_preflight_blocks_stale_or_dirty_release_evidence_snapshot():
+    manifest = _mark_manifest_locally_ready(bre.build_manifest(ROOT))
+    manifest["repository"] = {
+        "path": str(ROOT),
+        "branch": "feat/old",
+        "commit": "b" * 40,
+        "dirty": True,
+        "dirtyEntryCount": 3,
+    }
+    current_repository = {
+        "path": str(ROOT),
+        "branch": "feat/current",
+        "commit": "c" * 40,
+        "dirty": False,
+        "dirtyEntryCount": 0,
+    }
+
+    preflight = plp.build_preflight(
+        manifest,
+        manifest_path="stale-manifest.json",
+        current_repository=current_repository,
+    )
+
+    assert preflight["status"] == "blocked"
+    assert preflight["repository"]["manifest"]["commit"] == "b" * 40
+    assert preflight["repository"]["current"]["commit"] == "c" * 40
+    action = next(
+        action
+        for action in preflight["requiredActions"]
+        if action["id"] == "refresh-release-evidence-clean-commit"
+    )
+    assert action["evidence"]["issues"] == [
+        "manifest-dirty",
+        "manifest-commit-does-not-match-current-head",
+    ]
 
 
 def test_cli_outputs_json_and_require_ready_fails_for_blocked_manifest(tmp_path: Path):

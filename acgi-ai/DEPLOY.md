@@ -545,11 +545,12 @@ file comparison only; it is not live production proof.
 runs `scripts/production_launch_preflight.py` against
 `dist-release-evidence/manifest.json`. The preflight emits a conservative
 `production-launch-preflight` ready/blocked decision with `requiredActions`,
-live verifier state, production evidence chain state, validation state, and
-`externalBlockerIds`. Current local output is expected to stay `blocked` until
-external deploy authority, DNS/auth proof, hosted Storybook proof, and assurance
-evidence are attached. The preflight does not deploy, mutate DNS, approve
-release authority, or create live production proof.
+repository freshness, live verifier state, production evidence chain state,
+validation state, and `externalBlockerIds`. Current local output is expected to
+stay `blocked` until the release-evidence manifest was generated from the
+current clean commit and external deploy authority, DNS/auth proof, hosted
+Storybook proof, and assurance evidence are attached. The preflight does not
+deploy, mutate DNS, approve release authority, or create live production proof.
 
 `pnpm run test:storybook-runtime-plan` verifies
 `storybook-runtime.plan.json`, the pending official Storybook runtime dependency

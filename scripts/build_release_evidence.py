@@ -576,6 +576,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 "outputFields": [
                     "status",
                     "requiredActions",
+                    "repository",
                     "pendingItemIds",
                     "productionLive",
                     "productionEvidenceChain",
@@ -583,7 +584,8 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 ],
                 "claimBoundary": (
                     "local release-evidence preflight only; reports ready/blocked "
-                    "state but does not deploy, mutate DNS, approve release authority, "
+                    "state and requires a current clean commit evidence snapshot, "
+                    "but does not deploy, mutate DNS, approve release authority, "
                     "or create live production proof"
                 ),
             },
