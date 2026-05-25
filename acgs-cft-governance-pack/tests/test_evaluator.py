@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from acgs_cft_governance_pack.evaluator import evaluate_plan, load_policies, write_evidence_jsonl
 
 ROOT = Path(__file__).resolve().parents[1]
+JsonDict = dict[str, Any]
 
 
-def load_plan(path: str) -> dict:
+def load_plan(path: str) -> JsonDict:
     with (ROOT / path).open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+        return cast(JsonDict, json.load(handle))
 
 
-def policies() -> list[dict]:
+def policies() -> list[JsonDict]:
     return load_policies(ROOT / "policies")
 
 
