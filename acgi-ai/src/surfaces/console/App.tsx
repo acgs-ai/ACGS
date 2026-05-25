@@ -7,7 +7,12 @@ import {
   redirect,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { hasSession, SESSION_CHANGE_EVENT, subscribeToSessionSync } from '../../lib/session'
+import {
+  hasProductionSession,
+  hasSession,
+  SESSION_CHANGE_EVENT,
+  subscribeToSessionSync,
+} from '../../lib/session'
 import { Console } from '../../routes/Console'
 import { Login } from '../../routes/Login'
 import { NotFound } from '../../routes/NotFound'
@@ -29,8 +34,9 @@ function locationNext(location: RouterLocation): string {
   return safeConsoleNext(`${location.pathname}${location.searchStr ?? ''}`)
 }
 
-function requireConsoleSession(location: RouterLocation): void {
+async function requireConsoleSession(location: RouterLocation): Promise<void> {
   if (hasSession()) return
+  if (await hasProductionSession()) return
   throw redirect({ to: '/login', search: { next: locationNext(location) } })
 }
 

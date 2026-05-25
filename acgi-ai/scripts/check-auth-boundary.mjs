@@ -39,12 +39,24 @@ check(
   /export function hasSession\(\): boolean \{[\s\S]*if \(!isDemoSessionEnabled\(\)\) return false/.test(
     sessionSource,
   ),
-  'hasSession() must always return false in production until real OIDC/server cookies land.',
+  'hasSession() must always return false for demo sessionStorage in production.',
 )
 check(
-  /auth\/status|session\/status|operator context|forward-auth status/i.test(sessionSource) ||
-    /auth\/status|session\/status|operator context|forward-auth status/i.test(consoleAppSource),
-  '/console production access must name an edge/server session-status contract instead of relying on demo sessionStorage.',
+  /PRODUCTION_SESSION_STATUS_PATH\s*=\s*['"]\/auth\/status['"]/.test(sessionSource) &&
+    /export async function hasProductionSession\(\): Promise<boolean> \{[\s\S]*fetch\(PRODUCTION_SESSION_STATUS_PATH/.test(
+      sessionSource,
+    ) &&
+    /credentials:\s*['"]same-origin['"]/.test(sessionSource) &&
+    /cache:\s*['"]no-store['"]/.test(sessionSource) &&
+    /forward-auth-status-bridge/.test(sessionSource) &&
+    /client demo storage is not accepted/.test(sessionSource),
+  'src/lib/session.ts must use the same-origin /auth/status production session bridge without demo sessionStorage.',
+)
+check(
+  /async function requireConsoleSession\([^)]*\): Promise<void> \{[\s\S]*hasSession\(\)[\s\S]*await hasProductionSession\(\)[\s\S]*throw redirect/.test(
+    consoleAppSource,
+  ),
+  '/console route guard must await the production /auth/status bridge before redirecting to login.',
 )
 check(
   /export function createSession\(\): void \{[\s\S]*if \(!isDemoSessionEnabled\(\)\) \{[\s\S]*throw new Error/.test(
@@ -62,16 +74,22 @@ check(
   'Caddyfile must define an exact/deep /console matcher for the privileged route auth gate.',
 )
 check(
+  /handle \/auth\/status \{[\s\S]*forward_auth\s+\{\$AUTH_UPSTREAM:127\.0\.0\.1:65535\}[\s\S]*uri \/authorize[\s\S]*copy_headers[\s\S]*X-ACGS-Operator[\s\S]*header Cache-Control "no-store"[\s\S]*forward-auth-status-bridge[\s\S]*client demo storage is not accepted[\s\S]*\}/.test(
+    caddyfile,
+  ),
+  'Caddyfile must expose /auth/status only after the AUTH_UPSTREAM forward-auth status bridge accepts the request.',
+)
+check(
   /handle @console_routes \{[\s\S]*forward_auth\s+\{\$AUTH_UPSTREAM:127\.0\.0\.1:65535\}[\s\S]*uri \/authorize[\s\S]*copy_headers[\s\S]*try_files \{path\} \/index\.html[\s\S]*file_server[\s\S]*\}/.test(
     caddyfile,
   ),
   'Caddyfile must forward-auth /console* through AUTH_UPSTREAM before serving the SPA fallback.',
 )
 check(
-  /route\s+\{[\s\S]*handle \/healthz[\s\S]*handle \/api\/\*[\s\S]*handle @internal_docs[\s\S]*handle @console_routes[\s\S]*handle \{/.test(
+  /route\s+\{[\s\S]*handle \/healthz[\s\S]*handle \/auth\/status[\s\S]*handle \/api\/\*[\s\S]*handle @internal_docs[\s\S]*handle @console_routes[\s\S]*handle \{/.test(
     caddyfile,
   ),
-  'Caddyfile route order must keep health/api/internal-doc handlers before console auth and the public SPA fallback last.',
+  'Caddyfile route order must keep health/auth-status/api/internal-doc handlers before console routes and the public SPA fallback last.',
 )
 for (const environment of ['preview', 'staging', 'production']) {
   const manifest = read(`infra/cloudrun/service.${environment}.yaml`)
@@ -96,13 +114,16 @@ check(
 check(
   /AUTH_UPSTREAM/.test(deployDoc) &&
     /forward_auth/.test(deployDoc) &&
+    /\/auth\/status/.test(deployDoc) &&
     /test:auth-boundary/.test(deployDoc) &&
     /render-cloudrun-service\.mjs/.test(deployDoc),
-  'DEPLOY.md must document the AUTH_UPSTREAM forward-auth gate, shared renderer, and local auth-boundary check.',
+  'DEPLOY.md must document the AUTH_UPSTREAM forward-auth gate, /auth/status bridge, shared renderer, and local auth-boundary check.',
 )
 check(
-  /Console auth forward gate/.test(readinessMap) && /test:auth-boundary/.test(readinessMap),
-  'docs/integration-readiness-task-map.md must map the console auth forward gate to test:auth-boundary.',
+  /Console auth forward gate/.test(readinessMap) &&
+    /\/auth\/status/.test(readinessMap) &&
+    /test:auth-boundary/.test(readinessMap),
+  'docs/integration-readiness-task-map.md must map the console auth forward gate and /auth/status bridge to test:auth-boundary.',
 )
 check(
   packageJson.scripts?.['test:auth-boundary'] === 'node scripts/check-auth-boundary.mjs',

@@ -4,7 +4,7 @@ Scope: `/home/martin/finished work/govern-zone`
 
 Branch: `feat/agent-bus-analyzer`
 
-Recorded source commit before this packet refresh: `9d2a9e8`.
+Recorded source commit before the latest auth-bridge refresh: `0f00aae`.
 
 This packet records current verification evidence for the readiness-baseline and
 production-launch preparation work. It separates local proof from external proof
@@ -40,7 +40,9 @@ conformance.
 | `uv run python -m pytest tests/test_root_typecheck_gate.py -q` | Pass | `4 passed`; includes Acgs-Swarm strict core mypy gate check |
 | `cd packages/Acgs-Swarm && uv run mypy` | Pass | `Success: no issues found in 16 source files` |
 | `cd packages/Acgs-Swarm && uv run python -m pytest tests/test_governance_receipts.py --import-mode=importlib -q` | Pass | `97 passed` |
-| `pnpm -F acgi-ai run test:auth-boundary` | Pass in prior readiness-baseline run | Static contract evidence only; live production auth still requires deployed edge/server proof |
+| `pnpm -F acgi-ai run build:console && pnpm -F acgi-ai run test:auth-boundary` | Pass | Production console bundle built and the auth-boundary gate passed after `/auth/status` bridge wiring; live provider/session proof still requires deployed edge/server evidence |
+| `pnpm -F acgi-ai run test:security && pnpm -F acgi-ai run test:session-sync && pnpm -F acgi-ai run test:cloudrun-renderer` | Pass | Security invariants, demo-session sync, and deploy renderer contracts still pass with the production session bridge |
+| `uv run python -m pytest tests/test_platform_readiness_report.py tests/test_readiness_evidence_boundaries.py tests/test_production_launch_preflight.py --import-mode=importlib -q` | Pass | `12 passed`; readiness/preflight tests accept the updated auth boundary |
 | `uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_portability.py packages/gove-zone/tests/test_cli.py packages/gove-zone/tests/test_kernel_dispatch.py --import-mode=importlib -q` | Pass in prior readiness-baseline run | `10 passed`; import portability is proven, not Windows append support |
 | `make verify-js-node24` | Pass | Wrapper used Node `v24.15.0`, pnpm `9.15.4`, and completed full `pnpm -F acgi-ai run test:all` after the Storybook runtime phrase fix |
 
@@ -51,7 +53,7 @@ conformance.
 | Release evidence | Local evidence bundle now reports `30/31 pass`, `0 fail`, `1 pending` |
 | Typecheck fan-out | Every registered Python package has a configured mypy gate; Acgs-Swarm now contributes a strict core-primitives source scope |
 | Production preflight | Local preflight reports clean/stale status, readiness summary, live verifier status, evidence-chain consistency, and external blocker IDs |
-| Console deployment/auth | Static fail-closed Cloud Run, Caddy, and auth-boundary contracts exist; live auth behavior remains unproven |
+| Console deployment/auth | Static fail-closed Cloud Run, Caddy, and auth-boundary contracts exist; `/auth/status` now gives the production SPA route guard a same-origin forward-auth session bridge; live auth behavior remains unproven |
 | Runtime framework bridge | `gove-zone` normalizes common agent-framework tool-call shapes and can enforce reviewed policy bundles before side effects |
 | Hosted buyer evidence | Local buyer-evidence gallery, Storybook publication scaffold, and hosted Storybook handoff exist; live Storybook proof remains pending |
 
@@ -82,6 +84,7 @@ conformance.
 - Initialized registered submodules were clean before this packet refresh; `packages/clinicalguard` remained uninitialized.
 - Local readiness evidence regenerated successfully: `30/31 pass`, `0 fail`, `1 pending`.
 - Full local verification passed after the Acgs-Swarm strict core mypy update.
+- The production console SPA no longer depends on demo `hasSession()` after edge auth; it awaits `/auth/status`, which Caddy serves only after `AUTH_UPSTREAM` accepts the request.
 - Production launch preflight correctly remains blocked until live deploy, auth, assurance, accessibility, and hosted Storybook proof are attached.
 - The repo has machine-readable local handoffs for production authority, live verification, blocker reporting, cutover planning, production evidence drafting/validation, and hosted Storybook proof collection.
 

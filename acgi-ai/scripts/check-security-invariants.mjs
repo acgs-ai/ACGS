@@ -925,11 +925,14 @@ check(
 )
 check(existsSync(authBoundaryCheckPath), 'scripts/check-auth-boundary.mjs must exist.')
 check(
-  /hasSession\(\) must always return false in production/.test(authBoundaryCheck) &&
+  /hasSession\(\) must always return false for demo sessionStorage in production/.test(
+    authBoundaryCheck,
+  ) &&
+    /\/auth\/status production session bridge/.test(authBoundaryCheck) &&
     /production console bundle must not contain demo auth sentinel/.test(authBoundaryCheck) &&
     /TanStack Router scroll restoration/.test(authBoundaryCheck) &&
     /test:auth-boundary/.test(authBoundaryCheck),
-  'auth boundary contract check must guard demo-auth exclusion, TanStack scroll-storage allowance, and package script wiring.',
+  'auth boundary contract check must guard demo-auth exclusion, /auth/status bridge wiring, TanStack scroll-storage allowance, and package script wiring.',
 )
 check(existsSync(fontManifestPath), 'fonts.sha256 must exist for self-hosted WOFF2 provenance.')
 check(existsSync(fontManifestCheckPath), 'scripts/check-font-manifest.mjs must exist.')

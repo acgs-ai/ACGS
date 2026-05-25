@@ -1,11 +1,18 @@
 export const SESSION_CHANGE_EVENT = 'acgs-session-change'
 export const SESSION_SYNC_KEY = getSessionSyncKey()
+export const PRODUCTION_SESSION_STATUS_PATH = '/auth/status'
 export const PRODUCTION_SESSION_STATUS_CONTRACT =
-  'Production /console access must be proven by an edge/server auth/status or session/status bridge; demo sessionStorage is never production auth.'
+  'Production /console access must be proven by the same-origin /auth/status forward-auth status bridge; demo sessionStorage is never production auth.'
 
 type ConsoleSession = {
   createdAt: string
   nonce: string
+}
+
+type ProductionSessionStatus = {
+  authenticated?: boolean
+  source?: string
+  claimBoundary?: string
 }
 
 type SessionSyncAction = 'signed-in' | 'signed-out'
@@ -19,6 +26,10 @@ type SessionSyncMessage = {
 
 function isDemoSessionEnabled(): boolean {
   return !import.meta.env.PROD
+}
+
+function isProductionBuild(): boolean {
+  return import.meta.env.PROD
 }
 
 function getDemoSessionKey(): string {
@@ -67,6 +78,18 @@ function isConsoleSession(value: unknown): value is ConsoleSession {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<ConsoleSession>
   return typeof candidate.createdAt === 'string' && typeof candidate.nonce === 'string'
+}
+
+function isProductionSessionStatus(value: unknown): value is ProductionSessionStatus {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as ProductionSessionStatus
+  return (
+    candidate.authenticated === true &&
+    typeof candidate.source === 'string' &&
+    candidate.source === 'forward-auth-status-bridge' &&
+    typeof candidate.claimBoundary === 'string' &&
+    candidate.claimBoundary.includes('client demo storage is not accepted')
+  )
 }
 
 function writeSession(session: ConsoleSession): void {
@@ -176,6 +199,23 @@ export function hasSession(): boolean {
     return isConsoleSession(parsed)
   } catch {
     clearSession()
+    return false
+  }
+}
+
+export async function hasProductionSession(): Promise<boolean> {
+  if (!isProductionBuild()) return false
+  if (typeof fetch === 'undefined') return false
+  try {
+    const response = await fetch(PRODUCTION_SESSION_STATUS_PATH, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+    if (!response.ok) return false
+    const payload: unknown = await response.json()
+    return isProductionSessionStatus(payload)
+  } catch {
     return false
   }
 }

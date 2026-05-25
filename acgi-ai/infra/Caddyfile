@@ -81,6 +81,20 @@
       respond `{"ok":true,"served_hash":"608508a9bd224290","build_id":"{$ACGI_BUILD_ID:local}","surface":"console"}` 200
     }
 
+    # ── Same-origin production session status bridge. The SPA uses this
+    #    endpoint before rendering /console in production; Caddy only returns a
+    #    positive JSON status after the same AUTH_UPSTREAM forward_auth check
+    #    that protects console deep links has already accepted the request.
+    handle /auth/status {
+      forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535} {
+        uri /authorize
+        copy_headers X-ACGS-Operator X-ACGS-Tenant X-ACGS-Auth-Context
+      }
+      header Content-Type "application/json"
+      header Cache-Control "no-store"
+      respond `{"authenticated":true,"source":"forward-auth-status-bridge","claimBoundary":"server-authorized status only; client demo storage is not accepted"}` 200
+    }
+
     # ── API reverse proxy — Phase 5 bus-readiness gate (PLAN.md §5.5).
     #    BUS_UPSTREAM must point at the governed bus/gateway. If it is not set,
     #    the fallback points at a closed localhost port so production fails

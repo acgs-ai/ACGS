@@ -233,4 +233,6 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
   good revision and preserve the failing `postdeploy-verify.sh` output.
 - If `CONSOLE_AUTH_UPSTREAM` or `CONSOLE_BUS_UPSTREAM` is missing or invalid,
   do not bypass the forward-auth/bus boundary; fix the secret and rerun the
-  deploy.
+  deploy. A positive `/auth/status` response is valid only when it comes from
+  the deployed console origin after `AUTH_UPSTREAM` accepts the request; it is
+  not a client-side demo session.

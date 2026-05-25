@@ -1,7 +1,7 @@
 import { ArrowRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
-import { hasSession } from '../lib/session'
+import { hasProductionSession, hasSession } from '../lib/session'
 import { CONSTITUTION_HASH } from './console/shared'
 
 type Provider = {
@@ -61,8 +61,17 @@ export function Login({ nextPath }: { nextPath?: string }) {
 
   // Authenticated users do not need to see the entrance ritual again.
   useEffect(() => {
-    if (hasSession()) {
-      navigate(nextConsolePath(nextPath))
+    let cancelled = false
+
+    async function returnIfAuthenticated() {
+      if (hasSession() || (await hasProductionSession())) {
+        if (!cancelled) navigate(nextConsolePath(nextPath))
+      }
+    }
+
+    void returnIfAuthenticated()
+    return () => {
+      cancelled = true
     }
   }, [nextPath])
 

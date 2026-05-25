@@ -587,15 +587,18 @@ Until that external provider/session layer is provisioned, the client-side
 demo session helper is non-production-only: `hasSession()` returns `false` in
 production, storage access is gated before `window` storage is touched, and
 `test:auth-boundary` scans the built console bundle for demo-auth sentinels.
-The server edge also gates `/console` and `/console/*` with Caddy
-`forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535}` using `/authorize`; every
-Cloud Run template carries `AUTH_UPSTREAM`, and the shared
-`render-cloudrun-service.mjs` path used by `console.yml` refuses to deploy
-until the `CONSOLE_AUTH_UPSTREAM`-derived `AUTH_UPSTREAM` value is present.
-The localhost fallback is a closed port so a missing authorizer fails closed
-before the SPA fallback can serve privileged deep links. This is a local
-fail-closed hedge, not a replacement for the Phase 5 OIDC deployment gate or
-staged provider proof.
+The production SPA route guard instead awaits the same-origin `/auth/status`
+bridge. Caddy serves that JSON only after the same
+`forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535}` `/authorize` check used for
+`/console` and `/console/*` has accepted the request, so a public marketing
+SPA navigation cannot mint a console session in JavaScript. Every Cloud Run
+template carries `AUTH_UPSTREAM`, and the shared `render-cloudrun-service.mjs`
+path used by `console.yml` refuses to deploy until the
+`CONSOLE_AUTH_UPSTREAM`-derived `AUTH_UPSTREAM` value is present. The localhost
+fallback is a closed port so a missing authorizer fails closed before the SPA
+fallback can serve privileged deep links or a positive `/auth/status` response.
+This is a local fail-closed bridge, not a replacement for the Phase 5 OIDC
+deployment gate or staged provider proof.
 
 **Cloud Run service templates.** The three committed templates keep scaling
 policy reviewable. The shared renderer performs the only deploy-time

@@ -1109,6 +1109,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         repo_root,
         [
             "acgi-ai/infra/Caddyfile",
+            "acgi-ai/src/lib/session.ts",
+            "acgi-ai/src/surfaces/console/App.tsx",
             "acgi-ai/scripts/check-auth-boundary.mjs",
             "acgi-ai/infra/cloudrun/service.preview.yaml",
             "acgi-ai/infra/cloudrun/service.staging.yaml",
@@ -1119,6 +1121,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         "\n".join(
             [
                 _maybe_read(repo_root, "acgi-ai/infra/Caddyfile"),
+                _maybe_read(repo_root, "acgi-ai/src/lib/session.ts"),
+                _maybe_read(repo_root, "acgi-ai/src/surfaces/console/App.tsx"),
+                _maybe_read(repo_root, "acgi-ai/scripts/check-auth-boundary.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/render-cloudrun-service.mjs"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
                 _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
@@ -1127,6 +1132,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         ),
         [
             "@console_routes path /console /console/*",
+            "/auth/status",
+            "hasProductionSession",
+            "forward-auth-status-bridge",
             "forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535}",
             "REPLACE_AUTH_UPSTREAM_AT_DEPLOY_TIME",
             "CONSOLE_AUTH_UPSTREAM",
@@ -1145,8 +1153,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Console deep links fail closed behind a deploy-time auth upstream",
             auth_gate_files_ok and auth_gate_ok and auth_gate_scripts_ok,
             (
-                "/console* is forward-auth gated, Cloud Run templates carry AUTH_UPSTREAM, "
-                "and CI refuses deploy without CONSOLE_AUTH_UPSTREAM"
+                "/console* and /auth/status are forward-auth gated, the SPA awaits "
+                "hasProductionSession, Cloud Run templates carry AUTH_UPSTREAM, and "
+                "CI refuses deploy without CONSOLE_AUTH_UPSTREAM"
                 if auth_gate_files_ok and auth_gate_ok and auth_gate_scripts_ok
                 else (
                     f"missing_files={auth_gate_missing}, "

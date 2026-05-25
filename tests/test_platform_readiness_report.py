@@ -21,6 +21,8 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["bus-contract-regeneration"].status == "pass"
     assert by_id["deploy-contracts-local"].status == "pass"
     assert by_id["console-auth-forward-gate"].status == "pass"
+    assert "/auth/status" in by_id["console-auth-forward-gate"].evidence
+    assert "hasProductionSession" in by_id["console-auth-forward-gate"].evidence
     assert by_id["cloudrun-renderer-local"].status == "pass"
     assert by_id["production-deploy-fail-closed-local"].status == "pass"
     assert by_id["production-launch-handoff-local"].status == "pass"
