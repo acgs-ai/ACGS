@@ -9,6 +9,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "build_production_blocker_evidence.py"
+FORBIDDEN_MUTATING_INVOCATIONS = (
+    ("gcloud", "run", "deploy"),
+    ("wrangler",),
+    ("vercel", "deploy"),
+    ("gh", "secret"),
+    ("kubectl",),
+    ("terraform", "apply"),
+)
 
 
 def _dry_run(*args: str) -> dict:
@@ -51,6 +59,12 @@ def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
     assert commands["run-production-live-verifier"]["continueOnNonzeroWithOutput"] == (
         "dist-release-evidence/production-live-verification.json"
     )
+    assert "--out" in commands["run-production-live-verifier"]["cmd"]
+    live_out_index = commands["run-production-live-verifier"]["cmd"].index("--out")
+    assert (
+        commands["run-production-live-verifier"]["cmd"][live_out_index + 1]
+        == "../dist-release-evidence/production-live-verification.json"
+    )
     assert "verify:production-live" in " ".join(commands["run-production-live-verifier"]["cmd"])
     assert "build:production-evidence-draft" in " ".join(
         commands["build-production-evidence-draft-when-live-fails"]["cmd"]
@@ -58,6 +72,19 @@ def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
     assert "validate:production-evidence" in " ".join(
         commands["validate-deployment-blocked-production-evidence-when-live-fails"]["cmd"]
     )
+
+
+def test_dry_run_plan_excludes_deploy_dns_secret_and_infra_mutations():
+    payload = _dry_run()
+
+    for entry in payload["commands"]:
+        tokens = [str(token) for token in entry["cmd"]]
+        for forbidden in FORBIDDEN_MUTATING_INVOCATIONS:
+            for start in range(len(tokens) - len(forbidden) + 1):
+                assert tuple(tokens[start : start + len(forbidden)]) != forbidden, (
+                    f"{entry['id']} includes forbidden mutating invocation {forbidden}: "
+                    f"{entry['cmd']}"
+                )
 
 
 def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_verifier():
@@ -70,4 +97,6 @@ def test_dry_run_with_supplied_live_output_copies_instead_of_running_network_ver
         entry for entry in payload["commands"] if entry["id"] == "copy-supplied-live-output"
     )
     assert "--internal-copy-live-output" in copy_command["cmd"]
-    assert copy_command["cmd"][-1].endswith("dist-release-evidence/production-live-verification.json")
+    assert copy_command["cmd"][-1].endswith(
+        "dist-release-evidence/production-live-verification.json"
+    )

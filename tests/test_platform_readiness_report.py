@@ -57,6 +57,13 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         "build_production_blocker_evidence.py"
         in by_id["production-blocker-evidence-runbook-local"].command
     )
+    assert (
+        "tests/test_production_blocker_evidence.py"
+        in by_id["production-blocker-evidence-runbook-local"].command
+    )
+    assert (
+        "non-deploying dry-run plan" in by_id["production-blocker-evidence-runbook-local"].evidence
+    )
     assert "preflight JSON" in by_id["production-blocker-evidence-runbook-local"].evidence
     assert by_id["production-launch-preflight-local"].status == "pass"
     assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence

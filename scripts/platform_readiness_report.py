@@ -988,6 +988,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         repo_root,
         [
             "scripts/build_production_blocker_evidence.py",
+            "tests/test_production_blocker_evidence.py",
             "scripts/build_release_evidence.py",
             "scripts/production_launch_preflight.py",
             "Makefile",
@@ -1000,6 +1001,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         "\n".join(
             [
                 _maybe_read(repo_root, "scripts/build_production_blocker_evidence.py"),
+                _maybe_read(repo_root, "tests/test_production_blocker_evidence.py"),
                 _maybe_read(repo_root, "scripts/build_release_evidence.py"),
                 _maybe_read(repo_root, "scripts/production_launch_preflight.py"),
                 _maybe_read(repo_root, "Makefile"),
@@ -1010,9 +1012,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         ),
         [
             "build_production_blocker_evidence.py",
+            "test_production_blocker_evidence.py",
             "production-blocker-evidence:",
             "productionBlockerEvidenceRunbook",
             "--dry-run --json",
+            "FORBIDDEN_MUTATING_INVOCATIONS",
+            "copy-supplied-live-output",
             "continueOnNonzeroWithOutput",
             "production-live-verification.json",
             "production-blocker-report.json",
@@ -1037,7 +1042,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "make production-blocker-evidence orchestrates live verifier JSON, "
                 "blocker report, cutover plan, hosted Storybook handoff, deployment-blocked "
-                "evidence draft, validator output, release evidence, and preflight JSON "
+                "evidence draft, validator output, release evidence, and preflight JSON; "
+                "unit tests lock the copy-live-output path and non-deploying dry-run plan "
                 "without claiming live production proof"
                 if production_blocker_evidence_files_ok and production_blocker_evidence_ok
                 else (
@@ -1045,7 +1051,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                     f"missing_parts={production_blocker_evidence_missing_parts}"
                 )
             ),
-            "uv run python scripts/build_production_blocker_evidence.py --dry-run --json",
+            "uv run python scripts/build_production_blocker_evidence.py --dry-run --json "
+            "&& uv run python -m pytest tests/test_production_blocker_evidence.py "
+            "--import-mode=importlib -q",
         )
     )
 
