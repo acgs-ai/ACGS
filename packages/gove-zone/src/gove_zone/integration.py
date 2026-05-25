@@ -56,6 +56,9 @@ __all__ = [
 _DEFAULT_AUDIT_SUBPATH = Path(".gove-zone") / "audit.jsonl"
 _GATE_MODE_SUBPATH = Path(".gove-zone") / "gate.mode"
 _OBSERVER_POLICY_VERSION = "hook-observer/v0"
+_MALFORMED_BATCH_PAYLOAD_KEY = "_gove_zone_malformed_batch"
+_MALFORMED_BATCH_TOOL_NAME = "runtime.malformed_batch"
+_MALFORMED_BATCH_POLICY_VERSION = "runtime-malformed-batch/v0"
 
 
 class GateMode(StrEnum):
@@ -217,6 +220,35 @@ def _with_top_level_runtime_context(
     return merged
 
 
+def _is_parseable_tool_call_item(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    function_call = item.get("function")
+    return bool((isinstance(function_call, dict) and function_call.get("name")) or item.get("name"))
+
+
+def _malformed_batch_payload(
+    payload: dict[str, Any],
+    *,
+    batch_shape: str,
+    reason: str,
+    item_count: int,
+    parseable_count: int,
+) -> dict[str, Any]:
+    """Return an internal fail-closed payload for unsafe batch containers."""
+    return {
+        **_with_top_level_runtime_context(payload, {}),
+        _MALFORMED_BATCH_PAYLOAD_KEY: True,
+        "summary": {
+            "batch_shape": batch_shape,
+            "reason": reason,
+            "item_count": item_count,
+            "parseable_count": parseable_count,
+            "unparseable_count": max(item_count - parseable_count, 0),
+        },
+    }
+
+
 def _individual_tool_payloads_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     """Expand recognizable multi-call runtime batches into child payloads.
 
@@ -227,8 +259,23 @@ def _individual_tool_payloads_from_payload(payload: dict[str, Any]) -> tuple[dic
     shapes and falls back to the original payload for single-call or unknown
     shapes.
     """
-    responses_function_calls = _responses_function_call_items(payload)
-    if len(responses_function_calls) > 1:
+    response_function_call_items = [
+        item
+        for item in _response_output_items_from_payload(payload)
+        if item.get("type") == "function_call"
+    ]
+    responses_function_calls = [item for item in response_function_call_items if item.get("name")]
+    if len(response_function_call_items) > 1:
+        if len(responses_function_calls) != len(response_function_call_items):
+            return (
+                _malformed_batch_payload(
+                    payload,
+                    batch_shape="responses.output",
+                    reason="unparseable function_call output item in batch",
+                    item_count=len(response_function_call_items),
+                    parseable_count=len(responses_function_calls),
+                ),
+            )
         return tuple(
             _with_top_level_runtime_context(payload, item) for item in responses_function_calls
         )
@@ -238,10 +285,19 @@ def _individual_tool_payloads_from_payload(payload: dict[str, Any]) -> tuple[dic
         children = [
             _with_top_level_runtime_context(payload, cast(dict[str, Any], item))
             for item in tool_calls
-            if isinstance(item, dict)
+            if _is_parseable_tool_call_item(item)
         ]
-        if children:
-            return tuple(children)
+        if len(children) != len(tool_calls):
+            return (
+                _malformed_batch_payload(
+                    payload,
+                    batch_shape="tool_calls",
+                    reason="unparseable child tool call in batch",
+                    item_count=len(tool_calls),
+                    parseable_count=len(children),
+                ),
+            )
+        return tuple(children)
 
     return (payload,)
 
@@ -441,6 +497,26 @@ def tool_call_from_hook_payload(
     exact canonical pre-execution request that ``emit_receipt_for_hook`` will
     audit, without forcing the bridge to duplicate hook-shape parsing.
     """
+    if payload.get(_MALFORMED_BATCH_PAYLOAD_KEY) is True:
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            summary = {
+                "batch_shape": "unknown",
+                "reason": "unparseable runtime batch",
+                "item_count": 0,
+                "parseable_count": 0,
+                "unparseable_count": 0,
+            }
+        goal, state = _runtime_context_from_payload(payload, {})
+        return ToolCall(
+            name=_MALFORMED_BATCH_TOOL_NAME,
+            args={"action_kind": action_kind, "summary": cast(dict[str, Any], summary)},
+            goal=goal,
+            actor=actor,
+            path=(),
+            state=state,
+        )
+
     tool_name, tool_input = _tool_name_and_input_from_payload(payload)
     goal, state = _runtime_context_from_payload(payload, tool_input)
     summary = _summarize_tool_input(tool_input)
@@ -508,18 +584,29 @@ def _decision_record_for_call(
     action_kind: str,
     active_policy: Policy,
 ) -> DecisionRecord:
-    try:
-        record = active_policy.evaluate(call)
-    except Exception as exc:  # noqa: BLE001 — fail-closed on policy error
+    if call.name == _MALFORMED_BATCH_TOOL_NAME:
         record = DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
             argument_hash=call.argument_hash(),
-            policy_version=getattr(active_policy, "version", "unknown"),
+            policy_version=_MALFORMED_BATCH_POLICY_VERSION,
             event_id=new_event_id(),
-            matched_rules=(f"action_kind:{action_kind}", "policy_error"),
-            reason=f"policy raised: {type(exc).__name__}: {exc}",
+            matched_rules=("malformed_batch",),
+            reason="runtime batch contains unparseable tool calls",
         )
+    else:
+        try:
+            record = active_policy.evaluate(call)
+        except Exception as exc:  # noqa: BLE001 — fail-closed on policy error
+            record = DecisionRecord(
+                decision=Decision.DENY,
+                tool=call.name,
+                argument_hash=call.argument_hash(),
+                policy_version=getattr(active_policy, "version", "unknown"),
+                event_id=new_event_id(),
+                matched_rules=(f"action_kind:{action_kind}", "policy_error"),
+                reason=f"policy raised: {type(exc).__name__}: {exc}",
+            )
     return dataclasses.replace(
         record,
         goal=call.goal,

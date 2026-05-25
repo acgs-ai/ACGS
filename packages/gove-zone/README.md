@@ -242,7 +242,9 @@ The adapter:
   `{output: [{type: "function_call", name, arguments}]}`, OpenAI Chat-style
   `{tool_calls: [{function: {name, arguments}}]}`, LangChain-style
   `{tool_calls: [{name, args}]}`, multi-call batches for those shapes, and
-  generic `{name, arguments|args|input}` bridges.
+  generic `{name, arguments|args|input}` bridges. Recognized multi-call
+  containers with unparseable child calls fail closed as
+  `runtime.malformed_batch` instead of being treated as unknown tools.
 - Appends a `DecisionRecord` to the audit JSONL chain at the resolved path.
 - Returns a `Receipt` carrying the audit anchor hash.
 
@@ -310,8 +312,10 @@ hook payloads as the adapter, including batched OpenAI Responses-style
 `function.arguments`, and LangChain-style `tool_calls` with `args`. Batched
 events are expanded into one governed receipt per child tool call; a single
 denied child blocks the whole event and is surfaced as the primary `receipt`
-alongside `receipts[]` and `receipt_count`. Invalid policy bundles also exit
-non-zero; this is a hook configuration failure, not an allow.
+alongside `receipts[]` and `receipt_count`. Malformed recognized batches emit
+a `runtime.malformed_batch` deny receipt and exit non-zero before any child is
+allowed. Invalid policy bundles also exit non-zero; this is a hook
+configuration failure, not an allow.
 
 ## End-to-end demo
 

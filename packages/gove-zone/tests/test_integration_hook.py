@@ -362,6 +362,75 @@ def test_tool_calls_from_hook_payload_expands_batched_openai_responses_output() 
     assert all(call.state == {"trust_tier": "analyst"} for call in calls)
 
 
+def test_tool_calls_from_hook_payload_returns_malformed_batch_for_unparseable_batch() -> None:
+    calls = tool_calls_from_hook_payload(
+        {
+            "goal": "Persist deploy artifacts",
+            "state": {"trust_tier": "analyst"},
+            "tool_calls": [
+                {
+                    "id": "call_without_name",
+                    "type": "function",
+                    "function": {
+                        "arguments": json.dumps({"path": "repo/secrets/api-key.txt"}),
+                    },
+                },
+                "not-a-tool-call",
+            ],
+        },
+        action_kind="tool-call-batch",
+        actor="openai-chat",
+    )
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call.name == "runtime.malformed_batch"
+    assert call.goal == "Persist deploy artifacts"
+    assert call.state == {"trust_tier": "analyst"}
+    summary = call.args["summary"]
+    assert summary["batch_shape"] == "tool_calls"
+    assert summary["reason"] == "unparseable child tool call in batch"
+    assert summary["item_count"] == 2
+    assert summary["parseable_count"] == 0
+
+
+def test_tool_calls_from_hook_payload_returns_malformed_batch_for_responses_output() -> None:
+    calls = tool_calls_from_hook_payload(
+        {
+            "response": {
+                "intent": "Persist deploy artifacts",
+                "context": {"trust_tier": "analyst"},
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "shell.run",
+                        "arguments": json.dumps({"path": "scripts/verify.sh"}),
+                    },
+                    {
+                        "type": "function_call",
+                        "arguments": json.dumps({"path": "repo/secrets/api-key.txt"}),
+                    },
+                ],
+            }
+        },
+        action_kind="responses-output-batch",
+        actor="openai-responses",
+    )
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert call.name == "runtime.malformed_batch"
+    assert call.goal == "Persist deploy artifacts"
+    assert call.state == {"trust_tier": "analyst"}
+    assert call.args["summary"] == {
+        "batch_shape": "responses.output",
+        "reason": "unparseable function_call output item in batch",
+        "item_count": 2,
+        "parseable_count": 1,
+        "unparseable_count": 1,
+    }
+
+
 def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> None:
     receipt = emit_receipt_for_hook(
         _edit_payload(),

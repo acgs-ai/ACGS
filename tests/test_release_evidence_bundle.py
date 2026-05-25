@@ -267,6 +267,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "LangChain-style" in runtime_bridge["supportedLocalShapes"][5]
     assert "batched" in runtime_bridge["supportedLocalShapes"][6]
     assert "one receipt per child call" in runtime_bridge["batchGateBehavior"]
+    assert "runtime.malformed_batch" in runtime_bridge["batchGateBehavior"]
     assert "not a claim" in runtime_bridge["claimBoundary"]
     assert "gove-zone gate --policy-bundle" in runtime_policy_gate["cli"]
     assert runtime_policy_gate["policyType"] == "RuleSetPolicy"
@@ -276,6 +277,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "OpenAI Chat" in runtime_policy_gate["coveredPayloadShapes"][1]
     assert "LangChain-style" in runtime_policy_gate["coveredPayloadShapes"][2]
     assert "receipt_count" in runtime_policy_gate["coveredPayloadShapes"][3]
+    assert "runtime.malformed_batch" in runtime_policy_gate["coveredPayloadShapes"][4]
     assert "not live third-party deployment proof" in runtime_policy_gate["claimBoundary"]
     assert storybook_runtime["planPath"] == "acgi-ai/storybook-runtime.plan.json"
     assert storybook_runtime["proofCommand"] == "pnpm -F acgi-ai run test:storybook-runtime-plan"
@@ -408,6 +410,7 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "tool_calls_from_hook_payload" in readme
     assert "gove-zone gate --policy-bundle" in readme
     assert "one receipt per recognized child call" in readme
+    assert "runtime.malformed_batch" in readme
     assert "pending-external" in readme
 
 

@@ -68,7 +68,9 @@ before receipts are emitted.
 For enforceable hook hosts, run `gove-zone gate --policy-bundle
 policy.bundle.json < event.json`; the gate writes receipts and exits non-zero
 when any normalized child call returns `deny` / `escalate` before the side
-effect runs.
+effect runs. Recognized multi-call containers that include unparseable child
+calls fail closed as a `runtime.malformed_batch` deny receipt instead of
+falling back to `runtime.unknown`.
 
 The parent `.claude/settings.json` wires `.claude/hooks/acgs-emit-receipt.py` to
 Claude Code `PreToolUse` events for `Edit|Write|MultiEdit` and selected `Bash`

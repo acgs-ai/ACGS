@@ -87,10 +87,12 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence
     assert "batched tool-call" in by_id["runtime-framework-bridge-local"].evidence
+    assert "malformed recognized batch" in by_id["runtime-framework-bridge-local"].evidence
     assert by_id["runtime-policy-gate-local"].status == "pass"
     assert "RuleSetPolicy" in by_id["runtime-policy-gate-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-policy-gate-local"].evidence
     assert "batched event" in by_id["runtime-policy-gate-local"].evidence
+    assert "malformed recognized" in by_id["runtime-policy-gate-local"].evidence
     assert by_id["buyer-evidence-ci-artifact"].status == "pass"
     assert by_id["storybook-runtime-plan-local"].status == "pass"
     assert "pending-external" in by_id["storybook-runtime-plan-local"].evidence

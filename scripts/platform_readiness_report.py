@@ -1495,6 +1495,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Claude/Codex-style",
             "MCP-style",
             "receipt_count",
+            "runtime.malformed_batch",
         ],
     )
     items.append(
@@ -1506,7 +1507,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "gove-zone bridge normalizes Claude/Codex, MCP, function-call, "
                 "OpenAI Responses output function_call items, OpenAI Chat tool_calls, "
                 "LangChain-style tool_calls, generic payloads, and batched tool-call "
-                "events without letting one denied child hide inside a batch"
+                "events without letting one denied child or malformed recognized batch "
+                "hide inside a batch"
                 if runtime_bridge_files_ok and runtime_bridge_ok
                 else (
                     f"missing_files={runtime_bridge_missing}, "
@@ -1538,6 +1540,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "OpenAI Chat-style",
             "LangChain-style",
             "receipt_count",
+            "malformed_batch",
         ],
     )
     items.append(
@@ -1548,7 +1551,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "gove-zone gate loads RuleSetPolicy bundles, covers OpenAI Responses, "
                 "OpenAI Chat, and LangChain tool-call payloads, and exits non-zero "
-                "on deny/escalate, including one denied child inside a batched event"
+                "on deny/escalate, including one denied child or malformed recognized "
+                "batch inside a batched event"
                 if runtime_policy_gate_ok
                 else f"missing_parts={runtime_policy_gate_missing_parts}"
             ),
