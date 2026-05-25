@@ -92,6 +92,14 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
     assert "launch proof ladder story" in by_id["buyer-evidence-gallery-local"].evidence
+    assert by_id["browser-workbench-evidence-local"].status == "pass"
+    assert (
+        "Chrome/Chromium screenshot command"
+        in by_id["browser-workbench-evidence-local"].evidence
+    )
+    assert "five visual baseline viewports" in by_id["browser-workbench-evidence-local"].evidence
+    assert "test:browser-evidence" in by_id["browser-workbench-evidence-local"].command
+    assert "evidence:browser-workbench" in by_id["browser-workbench-evidence-local"].command
     assert by_id["runtime-framework-bridge-local"].status == "pass"
     assert "MCP" in by_id["runtime-framework-bridge-local"].evidence
     assert "OpenAI Responses" in by_id["runtime-framework-bridge-local"].evidence
@@ -189,6 +197,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "platform-blueprint-ui-local" in report
     assert "node24-local-toolchain" in report
     assert "buyer-evidence-gallery-local" in report
+    assert "browser-workbench-evidence-local" in report
     assert "runtime-framework-bridge-local" in report
     assert "runtime-policy-gate-local" in report
     assert "gove-zone-smoke-local" in report

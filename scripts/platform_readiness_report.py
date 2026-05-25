@@ -1801,6 +1801,71 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
+    browser_evidence_files_ok, browser_evidence_missing = _all_files_exist(
+        repo_root,
+        [
+            "acgi-ai/scripts/capture-workbench-browser-evidence.mjs",
+            "acgi-ai/scripts/check-browser-evidence-foundation.mjs",
+        ],
+    )
+    browser_evidence_scripts_ok = (
+        deploy_scripts.get("evidence:browser-workbench")
+        == "node scripts/capture-workbench-browser-evidence.mjs"
+        and deploy_scripts.get("test:browser-evidence")
+        == "node scripts/check-browser-evidence-foundation.mjs"
+        and "pnpm run test:browser-evidence" in deploy_scripts.get("test:all", "")
+        and "pnpm run evidence:browser-workbench" not in deploy_scripts.get("test:all", "")
+    )
+    browser_evidence_docs_ok, browser_evidence_docs_missing = _contains_all(
+        "\n".join(
+            [
+                readiness,
+                _maybe_read(repo_root, "docs/readiness-evidence-matrix-2026-05-25.md"),
+                _maybe_read(repo_root, "acgi-ai/ARCHITECTURE.md"),
+                _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
+                _maybe_read(repo_root, "acgi-ai/GETTING_STARTED.md"),
+                _maybe_read(repo_root, "acgi-ai/scripts/capture-workbench-browser-evidence.mjs"),
+                _maybe_read(repo_root, "acgi-ai/scripts/check-browser-evidence-foundation.mjs"),
+            ]
+        ),
+        [
+            "browser-workbench-evidence-local",
+            "local-browser-workbench-evidence",
+            "evidence:browser-workbench",
+            "test:browser-evidence",
+            "local browser evidence",
+            "/console/workbench#launch-proof-ladder",
+            "five visual baseline viewports",
+            "not production deployment proof",
+            "not WCAG conformance proof",
+            "Chrome/Chromium",
+        ],
+    )
+    items.append(
+        _item(
+            "browser-workbench-evidence-local",
+            "Local browser screenshot evidence command is reproducible",
+            browser_evidence_files_ok and browser_evidence_scripts_ok and browser_evidence_docs_ok,
+            (
+                "Chrome/Chromium screenshot command and dry-run verifier cover the "
+                "marketing workbench, console workbench, launch proof ladder, and "
+                "five visual baseline viewports without claiming production assurance"
+                if browser_evidence_files_ok
+                and browser_evidence_scripts_ok
+                and browser_evidence_docs_ok
+                else (
+                    f"missing_files={browser_evidence_missing}, "
+                    f"scripts_ok={browser_evidence_scripts_ok}, "
+                    f"missing_docs={browser_evidence_docs_missing}"
+                )
+            ),
+            (
+                "pnpm -F acgi-ai run test:browser-evidence && "
+                "pnpm -F acgi-ai run evidence:browser-workbench"
+            ),
+        )
+    )
+
     console_workflow = _maybe_read(repo_root, ".github/workflows/console.yml")
     buyer_evidence_ci_ok, buyer_evidence_ci_missing = _contains_all(
         console_workflow,

@@ -11,9 +11,11 @@ node_modules
 dist
 dist-marketing
 dist-buyer-evidence
+dist-browser-evidence
 dist-ssr
 .surface-check
 .buyer-evidence-check-*
+.browser-evidence-check-*
 *.local
 
 # Editor directories and files

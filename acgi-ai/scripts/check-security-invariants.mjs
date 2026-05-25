@@ -260,6 +260,17 @@ const visualBaselineFoundationCheckPath = resolve(
 const visualBaselineFoundationCheck = existsSync(visualBaselineFoundationCheckPath)
   ? readFileSync(visualBaselineFoundationCheckPath, 'utf8')
   : ''
+const browserEvidenceCapturePath = resolve(root, 'scripts/capture-workbench-browser-evidence.mjs')
+const browserEvidenceCapture = existsSync(browserEvidenceCapturePath)
+  ? readFileSync(browserEvidenceCapturePath, 'utf8')
+  : ''
+const browserEvidenceFoundationCheckPath = resolve(
+  root,
+  'scripts/check-browser-evidence-foundation.mjs',
+)
+const browserEvidenceFoundationCheck = existsSync(browserEvidenceFoundationCheckPath)
+  ? readFileSync(browserEvidenceFoundationCheckPath, 'utf8')
+  : ''
 const tthwFoundationCheckPath = resolve(root, 'scripts/check-tthw-foundation.mjs')
 const tthwFoundationCheck = existsSync(tthwFoundationCheckPath)
   ? readFileSync(tthwFoundationCheckPath, 'utf8')
@@ -354,8 +365,8 @@ check(
 )
 check(
   packageJson.scripts?.['test:all'] ===
-    'pnpm run lint && pnpm run build:console && pnpm run test:security && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:auth-boundary && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:platform-blueprint && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:hosted-storybook-proof-template && pnpm run test:e2e-http && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:vercel-routes && pnpm run test:ci-gates && pnpm run test:style-bundle && pnpm run test:csp',
-  'package.json test:all must run lint, console build, security, MVP, font-manifest, surface-split, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, platform-blueprint, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification while excluding live/operator-specific proof commands.',
+    'pnpm run lint && pnpm run build:console && pnpm run test:security && pnpm run test:mvp && pnpm run test:font-manifest && pnpm run test:surfaces && pnpm run test:performance && pnpm run test:bus-schema && pnpm run test:bus-proxy && pnpm run test:cloudrun-templates && pnpm run test:cloudrun-renderer && pnpm run test:production-deploy-contract && pnpm run test:production-launch-handoff && pnpm run test:production-authority-packet && pnpm run test:production-evidence-template && pnpm run test:production-live-verifier && pnpm run test:production-blocker-report && pnpm run test:production-evidence-validator && pnpm run test:production-cutover-plan && pnpm run test:production-evidence-draft && pnpm run test:container-pins && pnpm run test:auth-boundary && pnpm run test:postdeploy-live-assets && pnpm run test:claim-matrix && pnpm run test:trust-surface && pnpm run test:platform-blueprint && pnpm run test:state-coverage && pnpm run test:polling-hygiene && pnpm run test:session-sync && pnpm run test:app-errors && pnpm run test:login-interstitial && pnpm run test:privilege-banner && pnpm run test:wire-decisions && pnpm run test:test-surface && pnpm run test:buyer-evidence && pnpm run test:storybook-runtime-plan && pnpm run test:storybook-publication && pnpm run test:hosted-storybook-handoff && pnpm run test:hosted-storybook-proof-template && pnpm run test:e2e-http && pnpm run test:browser-evidence && pnpm run test:tthw && pnpm run test:msw-node && pnpm run test:a11y && pnpm run test:docs-scaffold && pnpm run test:runtime-primitives && pnpm run test:router && pnpm run test:marketing-csp && pnpm run test:vercel-routes && pnpm run test:ci-gates && pnpm run test:style-bundle && pnpm run test:csp',
+  'package.json test:all must run lint, console build, security, MVP, font-manifest, surface-split, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, platform-blueprint, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell smoke, browser evidence foundation, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification while excluding live/operator-specific proof commands.',
 )
 check(
   packageJson.scripts?.['verify:postdeploy'] === 'bash scripts/postdeploy-verify.sh',
@@ -487,6 +498,16 @@ check(
 check(
   packageJson.scripts?.['test:visual'] === 'node scripts/check-visual-baseline-foundation.mjs',
   'package.json must expose test:visual for the visual baseline manifest gate.',
+)
+check(
+  packageJson.scripts?.['evidence:browser-workbench'] ===
+    'node scripts/capture-workbench-browser-evidence.mjs',
+  'package.json must expose evidence:browser-workbench for local browser workbench screenshots.',
+)
+check(
+  packageJson.scripts?.['test:browser-evidence'] ===
+    'node scripts/check-browser-evidence-foundation.mjs',
+  'package.json must expose test:browser-evidence for the local browser evidence verifier.',
 )
 check(
   packageJson.scripts?.['test:a11y'] === 'node scripts/check-a11y-foundation.mjs',
@@ -699,6 +720,8 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-handoff') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
     packageJson.scripts['test:all'].includes('pnpm run test:e2e-http') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:browser-evidence') &&
+    !packageJson.scripts['test:all'].includes('pnpm run evidence:browser-workbench') &&
     packageJson.scripts['test:all'].includes('pnpm run test:tthw') &&
     packageJson.scripts['test:all'].includes('pnpm run test:msw-node') &&
     packageJson.scripts['test:all'].includes('pnpm run test:a11y') &&
@@ -710,7 +733,7 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:ci-gates') &&
     packageJson.scripts['test:all'].includes('pnpm run test:style-bundle') &&
     packageJson.scripts['test:all'].includes('pnpm run test:csp'),
-  'package.json test:all must include font-manifest, marketing/console surface, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, platform-blueprint, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, hosted Storybook proof template, E2E HTTP shell smoke, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification.',
+  'package.json test:all must include font-manifest, marketing/console surface, performance-budget, bus-schema, bus-proxy, Cloud Run template, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production evidence validator, production cutover plan, production evidence draft, hosted Storybook handoff, hosted Storybook proof template, container-pin, auth-boundary, postdeploy-live-asset, claim-matrix, trust-surface, platform-blueprint, console state coverage, polling/session-sync hygiene, AppError boundary, login interstitial, privilege banner, wire decisions, test surface foundation, buyer-evidence gallery, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, hosted Storybook proof template, E2E HTTP shell smoke, browser evidence foundation, TTHW foundation, MSW node-mode foundation, a11y foundation, docs-scaffold, runtime-primitives, router, marketing-CSP, Vercel-route, CI readiness-gate, style-bundle, and console-CSP verification.',
 )
 check(
   /@surface\/App/.test(main) && !/from ['"]\.\/App(?:\.tsx)?['"]/.test(main),
@@ -1172,6 +1195,14 @@ check(
   'scripts/check-visual-baseline-foundation.mjs must exist.',
 )
 check(
+  existsSync(browserEvidenceCapturePath),
+  'scripts/capture-workbench-browser-evidence.mjs must exist.',
+)
+check(
+  existsSync(browserEvidenceFoundationCheckPath),
+  'scripts/check-browser-evidence-foundation.mjs must exist.',
+)
+check(
   /check-e2e-smoke-foundation\.mjs/.test(testSurfaceFoundationCheck) &&
     /check-visual-baseline-foundation\.mjs/.test(testSurfaceFoundationCheck) &&
     /smoke-e2e-http-shells\.mjs/.test(testSurfaceFoundationCheck) &&
@@ -1257,6 +1288,29 @@ check(
     /test:visual/.test(visualBaselineFoundationCheck) &&
     /manifest gate only/.test(visualBaselineFoundationCheck),
   'visual baseline foundation check must guard viewport, target, threshold, and package wiring manifests.',
+)
+check(
+  /local-browser-workbench-evidence/.test(browserEvidenceCapture) &&
+    /WORKBENCH_BROWSER_TARGETS/.test(browserEvidenceCapture) &&
+    /BROWSER_EVIDENCE_VIEWPORTS/.test(browserEvidenceCapture) &&
+    /\/#workbench/.test(browserEvidenceCapture) &&
+    /\/console\/workbench/.test(browserEvidenceCapture) &&
+    /\/console\/workbench#launch-proof-ladder/.test(browserEvidenceCapture) &&
+    /--headless=new/.test(browserEvidenceCapture) &&
+    /VITE_BYPASS_SESSION/.test(browserEvidenceCapture) &&
+    /VITE_USE_MOCKS/.test(browserEvidenceCapture) &&
+    /not production deployment proof/.test(browserEvidenceCapture) &&
+    /not WCAG conformance proof/.test(browserEvidenceCapture),
+  'capture-workbench-browser-evidence.mjs must guard local browser screenshot targets, viewports, mock-session env, and claim boundaries.',
+)
+check(
+  /Browser evidence foundation check/.test(browserEvidenceFoundationCheck) &&
+    /evidence:browser-workbench/.test(browserEvidenceFoundationCheck) &&
+    /test:browser-evidence/.test(browserEvidenceFoundationCheck) &&
+    /dry-run-plan/.test(browserEvidenceFoundationCheck) &&
+    /browser-workbench-evidence-local/.test(browserEvidenceFoundationCheck) &&
+    /not production deployment proof/.test(browserEvidenceFoundationCheck),
+  'check-browser-evidence-foundation.mjs must guard package wiring, dry-run manifest shape, readiness item, docs, and claim boundaries.',
 )
 check(
   /internal-doc 404 route/.test(vercelRouteCheck) &&
@@ -1614,6 +1668,9 @@ check(
     /test:test-surface/.test(ciReadinessGateCheck) &&
     /test:tthw/.test(ciReadinessGateCheck) &&
     /test:e2e-http/.test(ciReadinessGateCheck) &&
+    /test:browser-evidence/.test(ciReadinessGateCheck) &&
+    /evidence:browser-workbench/.test(ciReadinessGateCheck) &&
+    /browser-workbench-evidence-local/.test(ciReadinessGateCheck) &&
     /smoke-e2e-http-shells\.mjs/.test(ciReadinessGateCheck) &&
     /test:msw-node/.test(ciReadinessGateCheck) &&
     /check-msw-node-foundation\.mjs/.test(ciReadinessGateCheck) &&
@@ -1669,6 +1726,11 @@ check(
   /E2E HTTP shell foundation check/.test(e2eHttpFoundationCheck) &&
     /test:e2e-http/.test(e2eHttpFoundationCheck),
   'E2E HTTP shell foundation check must guard its package wiring.',
+)
+check(
+  /Browser evidence foundation check/.test(browserEvidenceFoundationCheck) &&
+    /test:browser-evidence/.test(browserEvidenceFoundationCheck),
+  'Browser evidence foundation check must guard its package wiring.',
 )
 check(
   /TTHW foundation check/.test(tthwFoundationCheck) && /test:tthw/.test(tthwFoundationCheck),

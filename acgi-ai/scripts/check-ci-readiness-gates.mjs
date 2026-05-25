@@ -65,6 +65,8 @@ const storybookRuntimePlanCheckPath = 'scripts/check-storybook-runtime-plan.mjs'
 const mswNodeFoundationCheckPath = 'scripts/check-msw-node-foundation.mjs'
 const e2eHttpFoundationCheckPath = 'scripts/check-e2e-http-foundation.mjs'
 const e2eHttpSmokePath = 'scripts/smoke-e2e-http-shells.mjs'
+const browserEvidenceCapturePath = 'scripts/capture-workbench-browser-evidence.mjs'
+const browserEvidenceFoundationCheckPath = 'scripts/check-browser-evidence-foundation.mjs'
 const mswNodeServerPath = 'src/mocks/server.ts'
 const consoleWorkflow = readRepo(consoleWorkflowPath)
 const marketingWorkflow = readRepo(marketingWorkflowPath)
@@ -96,6 +98,8 @@ const storybookRuntimePlanCheck = read(storybookRuntimePlanCheckPath)
 const mswNodeFoundationCheck = read(mswNodeFoundationCheckPath)
 const e2eHttpFoundationCheck = read(e2eHttpFoundationCheckPath)
 const e2eHttpSmoke = read(e2eHttpSmokePath)
+const browserEvidenceCapture = read(browserEvidenceCapturePath)
+const browserEvidenceFoundationCheck = read(browserEvidenceFoundationCheckPath)
 const mswNodeServer = read(mswNodeServerPath)
 const deploy = read('DEPLOY.md')
 const readiness = readRepo('docs/integration-readiness-task-map.md')
@@ -220,6 +224,16 @@ check(
   'package.json must expose test:e2e-http.',
 )
 check(
+  packageJson.scripts?.['evidence:browser-workbench'] ===
+    'node scripts/capture-workbench-browser-evidence.mjs',
+  'package.json must expose evidence:browser-workbench.',
+)
+check(
+  packageJson.scripts?.['test:browser-evidence'] ===
+    'node scripts/check-browser-evidence-foundation.mjs',
+  'package.json must expose test:browser-evidence.',
+)
+check(
   typeof packageJson.scripts?.['test:all'] === 'string' &&
     packageJson.scripts['test:all'].includes('pnpm run test:ci-gates') &&
     packageJson.scripts['test:all'].includes('pnpm run test:bus-schema') &&
@@ -258,8 +272,10 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
     packageJson.scripts['test:all'].includes('pnpm run test:tthw') &&
     packageJson.scripts['test:all'].includes('pnpm run test:e2e-http') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:browser-evidence') &&
+    !packageJson.scripts['test:all'].includes('pnpm run evidence:browser-workbench') &&
     packageJson.scripts['test:all'].includes('pnpm run test:msw-node'),
-  'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:tthw, test:e2e-http, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
+  'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:tthw, test:e2e-http, test:browser-evidence, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
 )
 
 for (const [label, workflow] of [
@@ -638,6 +654,25 @@ check(
   'smoke-e2e-http-shells.mjs must guard local route shell smoke without claiming Playwright execution.',
 )
 check(
+  /local-browser-workbench-evidence/.test(browserEvidenceCapture) &&
+    /WORKBENCH_BROWSER_TARGETS/.test(browserEvidenceCapture) &&
+    /BROWSER_EVIDENCE_VIEWPORTS/.test(browserEvidenceCapture) &&
+    /\/console\/workbench#launch-proof-ladder/.test(browserEvidenceCapture) &&
+    /--headless=new/.test(browserEvidenceCapture) &&
+    /VITE_BYPASS_SESSION/.test(browserEvidenceCapture) &&
+    /not production deployment proof/.test(browserEvidenceCapture) &&
+    /not WCAG conformance proof/.test(browserEvidenceCapture),
+  'capture-workbench-browser-evidence.mjs must guard local browser screenshot targets, viewports, and claim boundaries.',
+)
+check(
+  /Browser evidence foundation check/.test(browserEvidenceFoundationCheck) &&
+    /evidence:browser-workbench/.test(browserEvidenceFoundationCheck) &&
+    /test:browser-evidence/.test(browserEvidenceFoundationCheck) &&
+    /dry-run-plan/.test(browserEvidenceFoundationCheck) &&
+    /browser-workbench-evidence-local/.test(browserEvidenceFoundationCheck),
+  'check-browser-evidence-foundation.mjs must guard browser-evidence package wiring, dry-run manifest, docs, and readiness wiring.',
+)
+check(
   /MSW node-mode foundation check/.test(mswNodeFoundationCheck) &&
     /test:msw-node/.test(mswNodeFoundationCheck) &&
     /src\/mocks\/server\.ts/.test(mswNodeFoundationCheck),
@@ -779,11 +814,14 @@ check(
     /storybook.acgs.ai/.test(readiness) &&
     /pnpm -F acgi-ai run test:tthw/.test(readiness) &&
     /pnpm -F acgi-ai run test:e2e-http/.test(readiness) &&
+    /pnpm -F acgi-ai run test:browser-evidence/.test(readiness) &&
+    /pnpm -F acgi-ai run evidence:browser-workbench/.test(readiness) &&
+    /browser-workbench-evidence-local/.test(readiness) &&
     /pnpm -F acgi-ai run test:msw-node/.test(readiness) &&
     /pnpm -F acgi-ai run hello:world:local/.test(readiness) &&
     /pnpm -F acgi-ai run test:e2e/.test(readiness) &&
     /pnpm -F acgi-ai run test:visual/.test(readiness),
-  'integration readiness map must record the deploy workflow readiness and bus schema, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production cutover plan, production evidence draft, Storybook runtime plan, hosted Storybook handoff, hosted Storybook proof template, production evidence validator, performance, console state coverage, polling hygiene, session sync, login interstitial, privilege banner, wire decisions, test surface, buyer-evidence artifact, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell, TTHW, MSW node-mode, and AppError gates.',
+  'integration readiness map must record the deploy workflow readiness and bus schema, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production cutover plan, production evidence draft, Storybook runtime plan, hosted Storybook handoff, hosted Storybook proof template, production evidence validator, performance, console state coverage, polling hygiene, session sync, login interstitial, privilege banner, wire decisions, test surface, buyer-evidence artifact, local browser workbench evidence, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell, TTHW, MSW node-mode, and AppError gates.',
 )
 
 if (failures.length > 0) {

@@ -792,6 +792,16 @@ visual-diff artifact; browser screenshots, CSP event capture, accessibility
 scans, and visual diff proof remain external Phase 2 evidence before stronger
 launch claims.
 
+**Local browser workbench evidence.** `pnpm run evidence:browser-workbench`
+starts the mock Vite server and captures Chrome/Chromium headless screenshots
+for the marketing workbench, `/console/workbench`, and
+`/console/workbench#launch-proof-ladder` at the five visual baseline viewports.
+It writes a `local-browser-workbench-evidence` manifest and screenshots under
+`dist-browser-evidence/`; `pnpm run test:browser-evidence` verifies the command
+contract, dry-run manifest shape, docs, and readiness wiring. This local browser evidence
+is not production deployment proof, not hosted Storybook proof, not
+WCAG conformance proof, and not legal/security assurance.
+
 **Buyer evidence gallery gate.** `pnpm run evidence:build` produces the
 dependency-free local buyer-evidence gallery under `dist-buyer-evidence/`.
 `pnpm run test:buyer-evidence` rebuilds it in a scratch directory and verifies

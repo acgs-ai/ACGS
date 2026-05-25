@@ -45,6 +45,22 @@ pnpm -F acgi-ai run test:e2e-http
 
 `test:e2e-http` starts the mock Vite dev server and fetches the marketing landing, product slugs including `/products/gove-zone`, login handoff URL, and every in-scope console sidebar path. It proves those paths return the Vite root shell locally; it does not replace Playwright navigation, axe, screenshot, or deployed-browser evidence.
 
+## Local browser workbench evidence
+
+```bash
+pnpm -F acgi-ai run test:browser-evidence
+pnpm -F acgi-ai run evidence:browser-workbench
+```
+
+`test:browser-evidence` verifies the browser-evidence command and a dry-run
+manifest. `evidence:browser-workbench` starts the mock Vite server and uses a
+local Chrome/Chromium binary to capture screenshots for the marketing
+workbench, `/console/workbench`, and `/console/workbench#launch-proof-ladder`
+at the five visual baseline viewports. It writes local browser evidence under
+`acgi-ai/dist-browser-evidence/`; this is not production deployment proof, not
+hosted Storybook proof, not WCAG conformance proof, and not legal/security
+assurance.
+
 ## Buyer evidence gallery
 
 ```bash
