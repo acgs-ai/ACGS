@@ -59,6 +59,7 @@ def test_manifest_is_conservative_and_tracks_readiness():
         "verificationCommands"
     ]
     assert "pnpm -F acgi-ai run test:hosted-storybook-handoff" in manifest["verificationCommands"]
+    assert "make production-launch-preflight" in manifest["verificationCommands"]
 
 
 def test_manifest_exposes_buyer_gallery_ci_artifact():
@@ -66,6 +67,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     renderer = manifest["evidenceArtifacts"]["cloudRunRenderer"]
     production_deploy = manifest["evidenceArtifacts"]["productionDeployContract"]
     production_launch = manifest["evidenceArtifacts"]["productionLaunchHandoff"]
+    production_launch_preflight = manifest["evidenceArtifacts"]["productionLaunchPreflight"]
     production_authority = manifest["evidenceArtifacts"]["productionAuthorityPacket"]
     production_evidence = manifest["evidenceArtifacts"]["productionEvidenceTemplate"]
     production_live = manifest["evidenceArtifacts"]["productionLiveVerifier"]
@@ -94,6 +96,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_launch["handoff"] == "acgi-ai/PRODUCTION-LAUNCH.md"
     assert production_launch["proofCommand"] == "pnpm -F acgi-ai run test:production-launch-handoff"
     assert "not live production deployment proof" in production_launch["claimBoundary"]
+    assert production_launch_preflight["script"] == "scripts/production_launch_preflight.py"
+    assert production_launch_preflight["proofCommand"] == "make production-launch-preflight"
+    assert "--require-ready" in production_launch_preflight["operatorCommand"]
+    assert "requiredActions" in production_launch_preflight["outputFields"]
+    assert "externalBlockerIds" in production_launch_preflight["outputFields"]
+    assert "does not deploy" in production_launch_preflight["claimBoundary"]
     assert production_authority["templatePath"] == "acgi-ai/production-authority.example.json"
     assert (
         production_authority["proofCommand"]
@@ -269,6 +277,9 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "production-evidence.deployment-blocked.json" in readme
     assert "production-evidence-validation.deployment-blocked.json" in readme
     assert "production evidence chain" in readme
+    assert "production_launch_preflight.py" in readme
+    assert "make production-launch-preflight" in readme
+    assert "--require-ready" in readme
     assert "test:production-evidence-draft" in readme
     assert "build-hosted-storybook-handoff.mjs" in readme
     assert "hosted-storybook-handoff.json" in readme

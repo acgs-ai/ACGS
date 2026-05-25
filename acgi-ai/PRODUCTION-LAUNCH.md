@@ -53,6 +53,7 @@ Run these before a production push or release handoff:
 make verify-js-node24
 make platform-readiness
 make release-evidence
+make production-launch-preflight
 pnpm -F acgi-ai run test:production-deploy-contract
 pnpm -F acgi-ai run test:production-launch-handoff
 pnpm -F acgi-ai run test:production-authority-packet
@@ -67,9 +68,12 @@ pnpm -F acgi-ai run test:hosted-storybook-handoff
 ```
 
 Expected local state today: `make platform-readiness` may still report the
-hosted Storybook item as pending. `storybook-runtime.plan.json` is a local
-operator plan only, not official Storybook runtime proof. That pending item blocks stronger hosted
-Storybook claims but does not weaken the production deploy fail-closed contract.
+hosted Storybook item as pending, and `make production-launch-preflight` should
+report `blocked` until pending local items, live verifier blockers, evidence
+validation, and external blocker ids are replaced by attached proof.
+`storybook-runtime.plan.json` is a local operator plan only, not official
+Storybook runtime proof. That pending item blocks stronger hosted Storybook
+claims but does not weaken the production deploy fail-closed contract.
 
 ## Production execution sequence
 
@@ -201,6 +205,11 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
   deployment-blocked draft, `production-evidence-validation.deployment-blocked.json`,
   and `hostedStorybookHandoff` blocker sets for local drift. This is not live
   production proof.
+- JSON output from `uv run python scripts/production_launch_preflight.py --manifest dist-release-evidence/manifest.json --require-ready --json`
+  after the release manifest has no pending items, no live verifier blockers, a
+  consistent production evidence chain, passing validation, and no remaining
+  external blocker ids. Blocked preflight output is an operator handoff, not
+  production deployment proof.
 - `productionLiveBlockers` copied from the live verifier `blockers[].blockerId`
 - JSON output from `pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json>`
 - `/healthz` served_hash and build_id values from the live console origin

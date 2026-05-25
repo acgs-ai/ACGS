@@ -973,7 +973,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "release evidence now compares saved live verifier, blocker report, "
                 "cutover plan, deployment-blocked draft, validator output, and hosted "
-                "Storybook handoff snapshots for blocker drift without claiming live proof"
+                "Storybook handoff snapshots for blocker drift; not live production proof"
                 if production_evidence_chain_files_ok and production_evidence_chain_ok
                 else (
                     f"missing_files={production_evidence_chain_missing}, "
@@ -982,6 +982,67 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             ),
             "make release-evidence && uv run python -m pytest "
             "tests/test_release_evidence_bundle.py --import-mode=importlib -q",
+        )
+    )
+
+    production_launch_preflight_files_ok, production_launch_preflight_missing = (
+        _all_files_exist(
+            repo_root,
+            [
+                "scripts/production_launch_preflight.py",
+                "tests/test_production_launch_preflight.py",
+                "scripts/build_release_evidence.py",
+                "Makefile",
+                "docs/integration-readiness-task-map.md",
+                "acgi-ai/DEPLOY.md",
+                "acgi-ai/PRODUCTION-LAUNCH.md",
+            ],
+        )
+    )
+    production_launch_preflight_ok, production_launch_preflight_missing_parts = _contains_all(
+        "\n".join(
+            [
+                _maybe_read(repo_root, "scripts/production_launch_preflight.py"),
+                _maybe_read(repo_root, "tests/test_production_launch_preflight.py"),
+                _maybe_read(repo_root, "scripts/build_release_evidence.py"),
+                _maybe_read(repo_root, "Makefile"),
+                _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
+                _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
+                _maybe_read(repo_root, "acgi-ai/PRODUCTION-LAUNCH.md"),
+            ]
+        ),
+        [
+            "production-launch-preflight",
+            "production_launch_preflight.py",
+            "productionLaunchPreflight",
+            "ready",
+            "blocked",
+            "requiredActions",
+            "externalBlockerIds",
+            "not production deployment proof",
+            "does not deploy",
+            "mutate DNS",
+            "--require-ready",
+        ],
+    )
+    items.append(
+        _item(
+            "production-launch-preflight-local",
+            "Release evidence has a conservative production launch ready/blocked gate",
+            production_launch_preflight_files_ok and production_launch_preflight_ok,
+            (
+                "production launch preflight converts the release-evidence manifest "
+                "into a ready/blocked decision with requiredActions, live verifier, "
+                "evidence-chain, and externalBlockerIds while preserving the not "
+                "production deployment proof boundary"
+                if production_launch_preflight_files_ok and production_launch_preflight_ok
+                else (
+                    f"missing_files={production_launch_preflight_missing}, "
+                    f"missing_parts={production_launch_preflight_missing_parts}"
+                )
+            ),
+            "make production-launch-preflight && uv run python -m pytest "
+            "tests/test_production_launch_preflight.py --import-mode=importlib -q",
         )
     )
 

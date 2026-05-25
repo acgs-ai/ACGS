@@ -47,6 +47,14 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["production-evidence-draft-local"].status == "pass"
     assert "deployment-blocked" in by_id["production-evidence-draft-local"].evidence
     assert "pending-external" in by_id["production-evidence-draft-local"].evidence
+    assert by_id["production-evidence-chain-local"].status == "pass"
+    assert "blocker drift" in by_id["production-evidence-chain-local"].evidence
+    assert "not live production proof" in by_id["production-evidence-chain-local"].evidence
+    assert by_id["production-launch-preflight-local"].status == "pass"
+    assert "ready/blocked" in by_id["production-launch-preflight-local"].evidence
+    assert "not production deployment proof" in by_id[
+        "production-launch-preflight-local"
+    ].evidence
     assert by_id["fixture-fallback-fail-closed-local"].status == "pass"
     assert "network-unavailable" in by_id["fixture-fallback-fail-closed-local"].evidence
     assert by_id["claim-safety"].status == "pass"
@@ -111,6 +119,8 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "production-evidence-validator-local" in report
     assert "production-cutover-plan-local" in report
     assert "production-evidence-draft-local" in report
+    assert "production-evidence-chain-local" in report
+    assert "production-launch-preflight-local" in report
     assert "fixture-fallback-fail-closed-local" in report
     assert "node24-local-toolchain" in report
     assert "buyer-evidence-gallery-local" in report

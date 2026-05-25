@@ -72,6 +72,7 @@ REQUIRED_VERIFICATION_COMMANDS = [
     "pnpm -F acgi-ai run test:storybook-publication",
     "pnpm -F acgi-ai run test:hosted-storybook-handoff",
     "pnpm -F acgi-ai run test:ci-gates",
+    "make production-launch-preflight",
 ]
 
 
@@ -565,6 +566,27 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "operator production launch handoff only; not live production deployment proof"
                 ),
             },
+            "productionLaunchPreflight": {
+                "script": "scripts/production_launch_preflight.py",
+                "proofCommand": "make production-launch-preflight",
+                "operatorCommand": (
+                    "uv run python scripts/production_launch_preflight.py "
+                    "--manifest dist-release-evidence/manifest.json --require-ready"
+                ),
+                "outputFields": [
+                    "status",
+                    "requiredActions",
+                    "pendingItemIds",
+                    "productionLive",
+                    "productionEvidenceChain",
+                    "externalBlockerIds",
+                ],
+                "claimBoundary": (
+                    "local release-evidence preflight only; reports ready/blocked "
+                    "state but does not deploy, mutate DNS, approve release authority, "
+                    "or create live production proof"
+                ),
+            },
             # Production authority packet remains not production deployment proof.
             "productionAuthorityPacket": {
                 "templatePath": "acgi-ai/production-authority.example.json",
@@ -992,6 +1014,12 @@ live production proof.
 - `acgi-ai/PRODUCTION-LAUNCH.md` is the production launch handoff for required
   secrets, preflight commands, live proof artifacts, rollback triggers, and claim
   boundaries.
+- `scripts/production_launch_preflight.py` reads `dist-release-evidence/manifest.json`
+  and emits a conservative ready/blocked production launch preflight. `make
+  production-launch-preflight` refreshes the release evidence first and reports
+  the current blocked state without deploying, mutating DNS, or creating live
+  production proof. Use `--require-ready` only after external deploy, authority,
+  hosted Storybook, and assurance evidence is attached.
 - `acgi-ai/production-authority.example.json` is the template-only authority
   packet for deploy-owner, DNS-owner, auth-owner, claim/legal-owner, and rollback
   approvals. `pnpm -F acgi-ai run test:production-authority-packet` verifies it

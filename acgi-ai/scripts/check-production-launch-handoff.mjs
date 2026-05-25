@@ -112,6 +112,7 @@ for (const needle of [
   'make verify-js-node24',
   'make platform-readiness',
   'make release-evidence',
+  'make production-launch-preflight',
   'pnpm -F acgi-ai run test:production-deploy-contract',
   'pnpm -F acgi-ai run test:production-launch-handoff',
   'pnpm -F acgi-ai run test:production-evidence-template',
@@ -136,6 +137,11 @@ for (const needle of [
   'productionEvidenceValidationCommand',
   'productionEvidenceValidationOutputRef',
   'validatedProductionEvidence',
+  'production-launch-preflight',
+  'production_launch_preflight.py',
+  'requiredActions',
+  'externalBlockerIds',
+  '--require-ready',
   'pending-external',
   'not live production proof',
   'pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai',
@@ -196,6 +202,7 @@ for (const [label, source] of [
   mustContain(source, 'build:production-cutover-plan', label)
   mustContain(source, 'build:production-evidence-draft', label)
   mustContain(source, 'validate:production-evidence', label)
+  mustContain(source, 'production-launch-preflight', label)
   mustContain(source, 'production-blocker-report', label)
   mustContain(source, 'production-cutover-plan', label)
   mustContain(source, 'production-evidence-draft', label)
