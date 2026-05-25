@@ -3,13 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Callable
-
-try:  # pragma: no cover - exercised only when optional deps are installed.
-    from pydantic import BaseModel, Field
-except Exception:  # pragma: no cover - local tests do not require pydantic.
-    BaseModel = object  # type: ignore[assignment]
-    Field = None  # type: ignore[assignment]
+from typing import Annotated, Any, Callable, cast
 
 
 def list_reducer(left: list[Any], right: list[Any]) -> list[Any]:
@@ -19,18 +13,19 @@ def list_reducer(left: list[Any], right: list[Any]) -> list[Any]:
 
 
 try:  # pragma: no cover - optional LangGraph 1.2 alpha surface.
-    from langgraph.channels import DeltaChannel as _LangGraphDeltaChannel
+    from langgraph.channels import DeltaChannel as _ImportedDeltaChannel
 except Exception:  # pragma: no cover - compatibility fallback for tests.
 
     @dataclass(frozen=True)
-    class _LangGraphDeltaChannel:
+    class _FallbackDeltaChannel:
         """Small marker compatible with Annotated state declarations."""
 
         reducer: Callable[[list[Any], list[Any]], list[Any]]
         snapshot_frequency: int = 5
 
+    _ImportedDeltaChannel = _FallbackDeltaChannel
 
-DeltaChannel = _LangGraphDeltaChannel
+DeltaChannel = _ImportedDeltaChannel
 
 
 def _messages_channel() -> Any:
@@ -59,34 +54,55 @@ GUARDED_TOOL_ACTIONS = {
 }
 TOOL_ACTIONS = {**SAFE_TOOL_ACTIONS, **GUARDED_TOOL_ACTIONS}
 
-if BaseModel is not object:
 
-    class GovernedGraphState(BaseModel):
-        """LangGraph-style state schema for governed tool admission.
+@dataclass
+class GovernedGraphState:
+    """LangGraph-style state schema for governed tool admission.
 
-        LangGraph 1.2.0a7 adds DeltaChannel for append-heavy state. The
-        messages field follows the recommended pattern:
-        Annotated[list, DeltaChannel(list_reducer, snapshot_frequency=5)].
-        Local tests use the fallback marker when langgraph is absent.
-        """
+    LangGraph 1.2.0a7 adds DeltaChannel for append-heavy state. The messages
+    field follows the recommended pattern:
+    Annotated[list, DeltaChannel(list_reducer, snapshot_frequency=5)].
+    Local tests use the fallback marker when langgraph is absent.
 
-        messages: Annotated[list[dict[str, Any]], MESSAGES_CHANNEL] = Field(default_factory=list)
-        tool_name: str | None = None
-        action_id: str | None = None
-        tool_args: dict[str, Any] = Field(default_factory=dict)
-        approved: bool = False
-        decision_reason: str | None = None
+    The lightweight ``model_copy`` method preserves the pydantic-shaped update
+    API used by graph adapters without making pydantic a runtime requirement.
+    """
 
-else:
+    messages: Annotated[list[dict[str, Any]], MESSAGES_CHANNEL] = field(default_factory=list)
+    tool_name: str | None = None
+    action_id: str | None = None
+    tool_args: dict[str, Any] = field(default_factory=dict)
+    approved: bool = False
+    decision_reason: str | None = None
 
-    @dataclass
-    class GovernedGraphState:
-        messages: Annotated[list[dict[str, Any]], MESSAGES_CHANNEL] = field(default_factory=list)
-        tool_name: str | None = None
-        action_id: str | None = None
-        tool_args: dict[str, Any] = field(default_factory=dict)
-        approved: bool = False
-        decision_reason: str | None = None
+    def model_copy(self, *, update: dict[str, Any] | None = None) -> GovernedGraphState:
+        messages = list(self.messages)
+        tool_name = self.tool_name
+        action_id = self.action_id
+        tool_args = dict(self.tool_args)
+        approved = self.approved
+        decision_reason = self.decision_reason
+        if update:
+            if "messages" in update:
+                messages = list(cast(list[dict[str, Any]], update["messages"]))
+            if "tool_name" in update:
+                tool_name = cast(str | None, update["tool_name"])
+            if "action_id" in update:
+                action_id = cast(str | None, update["action_id"])
+            if "tool_args" in update:
+                tool_args = dict(cast(dict[str, Any], update["tool_args"]))
+            if "approved" in update:
+                approved = bool(update["approved"])
+            if "decision_reason" in update:
+                decision_reason = cast(str | None, update["decision_reason"])
+        return GovernedGraphState(
+            messages=messages,
+            tool_name=tool_name,
+            action_id=action_id,
+            tool_args=tool_args,
+            approved=approved,
+            decision_reason=decision_reason,
+        )
 
 
 def interrupt_for_approval(state: GovernedGraphState) -> dict[str, Any]:
@@ -116,26 +132,11 @@ def apply_admission_decision(
     """Return state updated with a deterministic admission result."""
 
     updates = {"approved": allowed, "decision_reason": reason}
-    if hasattr(state, "model_copy"):
-        return state.model_copy(update=updates)  # type: ignore[no-any-return]
-    for key, value in updates.items():
-        setattr(state, key, value)
-    return state
+    return state.model_copy(update=updates)
 
 
 def _copy_state(state: GovernedGraphState, updates: dict[str, Any]) -> GovernedGraphState:
-    if hasattr(state, "model_copy"):
-        return state.model_copy(update=updates)  # type: ignore[no-any-return]
-    values = {
-        "messages": list(getattr(state, "messages", [])),
-        "tool_name": getattr(state, "tool_name", None),
-        "action_id": getattr(state, "action_id", None),
-        "tool_args": getattr(state, "tool_args", {}),
-        "approved": getattr(state, "approved", False),
-        "decision_reason": getattr(state, "decision_reason", None),
-    }
-    values.update(updates)
-    return GovernedGraphState(**values)
+    return state.model_copy(update=updates)
 
 
 def _latest_receipt(server: Any) -> dict[str, Any] | None:

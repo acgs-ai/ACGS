@@ -54,7 +54,7 @@ class EvidenceToClaimMapper:
     ) -> EvidenceToClaimMapper:
         import dspy
 
-        class ClaimMappingSignature(dspy.Signature):  # type: ignore[name-defined]
+        class ClaimMappingSignature(dspy.Signature):  # type: ignore[misc]
             claim_text = dspy.InputField()
             audit_event_ids = dspy.InputField()
             evidence_refs = dspy.InputField()

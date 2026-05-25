@@ -26,3 +26,20 @@ def test_cft_governance_pack_has_strict_mypy_gate() -> None:
     assert "[[tool.mypy.overrides]]" in pyproject
     assert 'module = ["yaml"]' in pyproject
     assert "ignore_missing_imports = true" in pyproject
+
+
+def test_eval_mvp_has_strict_mypy_gate() -> None:
+    pyproject = (ROOT / "acgs_governance_eval_mvp" / "pyproject.toml").read_text()
+
+    assert "[tool.mypy]" in pyproject
+    assert "strict = true" in pyproject
+    assert 'files = ["governance", "governed_mcp_v0"]' in pyproject
+    assert "[[tool.mypy.overrides]]" in pyproject
+    assert "module = [" in pyproject
+    assert '"yaml"' in pyproject
+    assert '"dspy"' in pyproject
+    assert '"opentelemetry"' in pyproject
+    assert '"mcp.server.fastmcp"' in pyproject
+    assert '"fastmcp"' in pyproject
+    assert '"langgraph.*"' in pyproject
+    assert "ignore_missing_imports = true" in pyproject

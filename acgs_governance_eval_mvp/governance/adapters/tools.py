@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from governance.audit.jsonl_chain import ChainHashAuditStore
+from governance.audit import AuditStore
 from governance.gates import AuthorityGate, GovernanceRecallGate, PolicyRecallGate
 from governance.metrics.otel import GovernanceMetrics
 from governance.models import (
     DECISION_SCHEMA_VERSION,
     ActionRequest,
     DecisionRecord,
+    DecisionState,
     GateResult,
     GovernanceDeniedError,
     sha256_json,
@@ -28,7 +29,7 @@ class GovernedToolAdapter:
         *,
         roles_bundle: dict[str, Any],
         policy_bundle: dict[str, Any],
-        audit_store: ChainHashAuditStore | None = None,
+        audit_store: AuditStore | None = None,
         metrics: GovernanceMetrics | None = None,
     ):
         self.roles_bundle = roles_bundle
@@ -65,7 +66,7 @@ class GovernedToolAdapter:
         self.metrics.record_gate(governance)
 
         allow = all(check.allowed for check in checks)
-        decision_state = "allow" if allow else "deny"
+        decision_state: DecisionState = "allow" if allow else "deny"
         # For "allow", the validated executor binding equals request.tool_input.
         # Future "rewrite" gates will set effective_tool_input to a sanitized
         # version. None is used for "deny" or when the caller supplied no
