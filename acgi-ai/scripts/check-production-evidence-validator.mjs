@@ -184,12 +184,44 @@ function makeManifest({ status, productionLiveStatus }) {
         : 'verified only by attached live Storybook proof.',
     },
     assurance: {
-      legalClaimMatrix: { status: 'pending-external', proofRef: 'pending-external:legal-review' },
-      pentest: { status: 'pending-external', proofRef: 'pending-external:pentest' },
-      wcagManual: { status: 'pending-external', proofRef: 'pending-external:wcag-manual' },
+      legalClaimMatrix: blocked
+        ? { status: 'pending-external', proofRef: 'pending-external:legal-review' }
+        : {
+            status: 'verified',
+            proofRef: 'sha256:legal-claim-matrix-review',
+            reviewer: 'claim-legal-owner',
+            reviewedAt: '2026-05-25T00:00:00.000Z',
+            claimMatrixRef: 'sha256:claim-matrix',
+          },
+      pentest: blocked
+        ? { status: 'pending-external', proofRef: 'pending-external:pentest' }
+        : {
+            status: 'verified',
+            proofRef: 'sha256:pentest-report',
+            vendor: 'regulated-ai-pentest-vendor',
+            completedAt: '2026-05-25T00:00:00.000Z',
+            reportRef: 'sha256:pentest-report',
+            criticalFindingsOpen: 0,
+          },
+      wcagManual: blocked
+        ? { status: 'pending-external', proofRef: 'pending-external:wcag-manual' }
+        : {
+            status: 'verified',
+            proofRef: 'sha256:manual-wcag-report',
+            reviewer: 'accessibility-owner',
+            reviewedAt: '2026-05-25T00:00:00.000Z',
+            reportRef: 'sha256:manual-wcag-report',
+            assistiveTech: ['NVDA', 'VoiceOver'],
+          },
       browserScreenshots: {
         status: blocked ? 'pending-external' : 'verified',
         proofRef: blocked ? 'pending-external:browser-screenshots' : 'sha256:browser-screenshots',
+        ...(blocked
+          ? {}
+          : {
+              capturedAt: '2026-05-25T00:00:00.000Z',
+              bundleRef: 'sha256:browser-screenshot-bundle',
+            }),
       },
     },
     artifacts: {
@@ -210,11 +242,7 @@ function makeManifest({ status, productionLiveStatus }) {
           'full-wcag-manual-screen-reader-evidence',
           'hosted-storybook-buyer-evidence',
         ]
-      : [
-          'legal-review-of-claim-matrix',
-          'third-party-penetration-test',
-          'full-wcag-manual-screen-reader-evidence',
-        ],
+      : [],
   }
 }
 
@@ -320,6 +348,9 @@ for (const needle of [
   'validatedProductionEvidence',
   'pending-external',
   'isBlockedPendingExternalRef',
+  'require-pass-assurance-legalClaimMatrix-verified',
+  'criticalFindingsOpen',
+  'assistiveTech',
   'not legal signoff',
   'not SOC2 proof',
   'not WCAG conformance evidence',
@@ -447,6 +478,7 @@ try {
   const blockedLiveWithoutBlockers = join(tempDir, 'blocked-live-without-blockers.json')
   const blockedPendingExternalManifest = join(tempDir, 'blocked-pending-external-manifest.json')
   const blockedMismatchManifest = join(tempDir, 'blocked-mismatch-manifest.json')
+  const pendingAssuranceManifest = join(tempDir, 'pending-assurance-manifest.json')
   const failLive = join(tempDir, 'fail-live.json')
   const validationOut = join(tempDir, 'production-evidence-validation.json')
 
@@ -478,6 +510,14 @@ try {
         .verification,
       productionLiveBlockers: ['live-console-dns'],
     },
+  })
+  writeJson(pendingAssuranceManifest, {
+    ...makeManifest({ status: 'live-verified', productionLiveStatus: 'pass' }),
+    assurance: {
+      ...makeManifest({ status: 'live-verified', productionLiveStatus: 'pass' }).assurance,
+      legalClaimMatrix: { status: 'pending-external', proofRef: 'pending-external:legal-review' },
+    },
+    remainingBlockers: ['legal-review-of-claim-matrix'],
   })
   writeJson(failLive, makeLiveOutput('fail'))
 
@@ -575,6 +615,30 @@ try {
     requirePassResult.status !== 0,
     'live-verified manifest with failing live output must fail --require-pass validation.',
   )
+
+  const pendingAssuranceResult = runValidator([
+    '--manifest',
+    pendingAssuranceManifest,
+    '--live-output',
+    passLive,
+    '--require-pass',
+    '--json',
+  ])
+  check(
+    pendingAssuranceResult.status !== 0,
+    'live-verified --require-pass manifest with pending external assurance must fail validation.',
+  )
+  if (pendingAssuranceResult.stdout.trim()) {
+    const pendingAssurancePayload = JSON.parse(pendingAssuranceResult.stdout)
+    check(
+      pendingAssurancePayload.checks?.some(
+        (entry) =>
+          entry.id === 'require-pass-assurance-legalClaimMatrix-verified' &&
+          entry.status === 'fail',
+      ),
+      'pending external legal claim matrix assurance must fail require-pass-assurance-legalClaimMatrix-verified.',
+    )
+  }
 } finally {
   rmSync(tempDir, { recursive: true, force: true })
 }

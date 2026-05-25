@@ -213,6 +213,9 @@ for (const needle of [
   'productionEvidenceValidationCommand',
   'productionBlockerReport',
   'productionCutoverPlan',
+  'claimMatrixRef',
+  'criticalFindingsOpen',
+  'assistiveTech',
   'not live production proof',
   'does not deploy',
 ]) {
@@ -295,6 +298,16 @@ try {
     draft.artifacts.productionBlockerReport.endsWith('blocker-report.json') &&
       draft.artifacts.productionCutoverPlan.endsWith('cutover-plan.json'),
     'draft must reference blocker-report and cutover-plan source artifacts.',
+  )
+  check(
+    draft.assurance.legalClaimMatrix.claimMatrixRef ===
+      'pending-external:legal-reviewed-claim-matrix' &&
+      draft.assurance.pentest.criticalFindingsOpen ===
+        'pending-external:zero-open-critical-findings-count' &&
+      draft.assurance.wcagManual.assistiveTech.includes('pending-external:nvda-evidence') &&
+      draft.assurance.browserScreenshots.bundleRef ===
+        'pending-external:browser-screenshot-or-visual-diff-bundle',
+    'draft must preserve pending external assurance detail refs for completed-proof replacement.',
   )
 
   const validationResult = runValidator([

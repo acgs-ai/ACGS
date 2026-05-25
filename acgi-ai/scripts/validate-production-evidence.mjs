@@ -113,8 +113,25 @@ function isBlockedPendingExternalRef(value, manifest) {
   return manifest.status === 'deployment-blocked' && String(value ?? '').startsWith('pending-external:')
 }
 
+function isPendingExternalRef(value) {
+  return String(value ?? '').startsWith('pending-external:')
+}
+
 function isHttpsUrlOrBlockedPendingExternal(value, manifest, { allowPendingExternal = false } = {}) {
   return isHttpsUrl(value) || (allowPendingExternal && isBlockedPendingExternalRef(value, manifest))
+}
+
+function isCompletedOperatorRef(value) {
+  const normalized = String(value ?? '').trim()
+  return (
+    normalized.length > 0 &&
+    !normalized.includes('REPLACE_WITH_') &&
+    !isPendingExternalRef(normalized)
+  )
+}
+
+function isIsoTimestamp(value) {
+  return isNonEmptyString(value) && !Number.isNaN(Date.parse(value))
 }
 
 function includesAll(source, fragments) {
@@ -349,6 +366,73 @@ function validateManifest(manifest, options, liveOutput) {
       `assurance.${key} pending-external must keep ${blocker} in remainingBlockers and name a proofRef`,
       { proofRef: assurance[key]?.proofRef ?? null, remainingBlockers },
     )
+  }
+  if (manifest.status === 'live-verified' || options.requirePass) {
+    const assuranceStatusCheckIds = {
+      legalClaimMatrix: 'require-pass-assurance-legalClaimMatrix-verified',
+      pentest: 'require-pass-assurance-pentest-verified',
+      wcagManual: 'require-pass-assurance-wcagManual-verified',
+      browserScreenshots: 'require-pass-assurance-browserScreenshots-verified',
+    }
+    const assuranceRequirements = {
+      legalClaimMatrix: {
+        requiredFields: {
+          reviewer: (entry) => isNonEmptyString(entry?.reviewer),
+          reviewedAt: (entry) => isIsoTimestamp(entry?.reviewedAt),
+          claimMatrixRef: (entry) => isCompletedOperatorRef(entry?.claimMatrixRef),
+        },
+      },
+      pentest: {
+        requiredFields: {
+          vendor: (entry) => isNonEmptyString(entry?.vendor),
+          completedAt: (entry) => isIsoTimestamp(entry?.completedAt),
+          reportRef: (entry) => isCompletedOperatorRef(entry?.reportRef),
+          criticalFindingsOpen: (entry) => entry?.criticalFindingsOpen === 0,
+        },
+      },
+      wcagManual: {
+        requiredFields: {
+          reviewer: (entry) => isNonEmptyString(entry?.reviewer),
+          reviewedAt: (entry) => isIsoTimestamp(entry?.reviewedAt),
+          reportRef: (entry) => isCompletedOperatorRef(entry?.reportRef),
+          assistiveTech: (entry) =>
+            Array.isArray(entry?.assistiveTech) &&
+            ['NVDA', 'VoiceOver'].every((tool) => entry.assistiveTech.includes(tool)),
+        },
+      },
+      browserScreenshots: {
+        requiredFields: {
+          capturedAt: (entry) => isIsoTimestamp(entry?.capturedAt),
+          bundleRef: (entry) => isCompletedOperatorRef(entry?.bundleRef),
+        },
+      },
+    }
+    for (const [key, requirement] of Object.entries(assuranceRequirements)) {
+      const entry = assurance[key] ?? {}
+      pushCheck(
+        checks,
+        entry.status === 'verified',
+        assuranceStatusCheckIds[key],
+        `live-verified or --require-pass manifests require assurance.${key}.status=verified`,
+        { status: entry.status ?? null },
+      )
+      pushCheck(
+        checks,
+        isCompletedOperatorRef(entry.proofRef),
+        `require-pass-assurance-${key}-proof-ref`,
+        `live-verified or --require-pass manifests require assurance.${key}.proofRef to reference attached external proof`,
+        { proofRef: entry.proofRef ?? null },
+      )
+      for (const [field, predicate] of Object.entries(requirement.requiredFields)) {
+        pushCheck(
+          checks,
+          predicate(entry),
+          `require-pass-assurance-${key}-${field}`,
+          `live-verified or --require-pass manifests require assurance.${key}.${field}`,
+          { value: entry[field] ?? null },
+        )
+      }
+    }
   }
 
   if (liveOutput) {

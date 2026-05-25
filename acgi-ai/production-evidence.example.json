@@ -43,19 +43,35 @@
   "assurance": {
     "legalClaimMatrix": {
       "status": "pending-external",
-      "proofRef": "REPLACE_WITH_LEGAL_REVIEW_RECORD"
+      "proofRef": "REPLACE_WITH_LEGAL_REVIEW_RECORD",
+      "reviewer": "REPLACE_WITH_LEGAL_OR_CLAIM_REVIEWER",
+      "reviewedAt": "REPLACE_WITH_LEGAL_REVIEW_ISO8601_TIMESTAMP",
+      "claimMatrixRef": "REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH"
     },
     "pentest": {
       "status": "pending-external",
-      "proofRef": "REPLACE_WITH_THIRD_PARTY_PENTEST_REPORT"
+      "proofRef": "REPLACE_WITH_THIRD_PARTY_PENTEST_REPORT",
+      "vendor": "REPLACE_WITH_THIRD_PARTY_PENTEST_VENDOR",
+      "completedAt": "REPLACE_WITH_PENTEST_COMPLETION_ISO8601_TIMESTAMP",
+      "reportRef": "REPLACE_WITH_THIRD_PARTY_PENTEST_REPORT_ARTIFACT_OR_HASH",
+      "criticalFindingsOpen": "REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT"
     },
     "wcagManual": {
       "status": "pending-external",
-      "proofRef": "REPLACE_WITH_MANUAL_SCREEN_READER_AND_WCAG_REPORT"
+      "proofRef": "REPLACE_WITH_MANUAL_SCREEN_READER_AND_WCAG_REPORT",
+      "reviewer": "REPLACE_WITH_ACCESSIBILITY_REVIEWER",
+      "reviewedAt": "REPLACE_WITH_MANUAL_WCAG_REVIEW_ISO8601_TIMESTAMP",
+      "reportRef": "REPLACE_WITH_MANUAL_SCREEN_READER_AND_WCAG_REPORT_ARTIFACT_OR_HASH",
+      "assistiveTech": [
+        "REPLACE_WITH_NVDA_EVIDENCE",
+        "REPLACE_WITH_VOICEOVER_EVIDENCE"
+      ]
     },
     "browserScreenshots": {
       "status": "pending-external",
-      "proofRef": "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE"
+      "proofRef": "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE",
+      "capturedAt": "REPLACE_WITH_BROWSER_SCREENSHOT_CAPTURE_ISO8601_TIMESTAMP",
+      "bundleRef": "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH"
     }
   },
   "artifacts": {

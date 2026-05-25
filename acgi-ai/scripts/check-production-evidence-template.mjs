@@ -163,6 +163,41 @@ for (const key of ['legalClaimMatrix', 'pentest', 'wcagManual', 'browserScreensh
     `${templatePath} assurance.${key} must remain pending-external with an operator proof placeholder.`,
   )
 }
+check(
+  template.assurance?.legalClaimMatrix?.reviewer === 'REPLACE_WITH_LEGAL_OR_CLAIM_REVIEWER' &&
+    template.assurance.legalClaimMatrix.reviewedAt ===
+      'REPLACE_WITH_LEGAL_REVIEW_ISO8601_TIMESTAMP' &&
+    template.assurance.legalClaimMatrix.claimMatrixRef ===
+      'REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH',
+  `${templatePath} assurance.legalClaimMatrix must require reviewer, reviewedAt, and claimMatrixRef placeholders.`,
+)
+check(
+  template.assurance?.pentest?.vendor === 'REPLACE_WITH_THIRD_PARTY_PENTEST_VENDOR' &&
+    template.assurance.pentest.completedAt ===
+      'REPLACE_WITH_PENTEST_COMPLETION_ISO8601_TIMESTAMP' &&
+    template.assurance.pentest.reportRef ===
+      'REPLACE_WITH_THIRD_PARTY_PENTEST_REPORT_ARTIFACT_OR_HASH' &&
+    template.assurance.pentest.criticalFindingsOpen ===
+      'REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT',
+  `${templatePath} assurance.pentest must require vendor, completedAt, reportRef, and zero-open-critical placeholders.`,
+)
+check(
+  template.assurance?.wcagManual?.reviewer === 'REPLACE_WITH_ACCESSIBILITY_REVIEWER' &&
+    template.assurance.wcagManual.reviewedAt ===
+      'REPLACE_WITH_MANUAL_WCAG_REVIEW_ISO8601_TIMESTAMP' &&
+    template.assurance.wcagManual.reportRef ===
+      'REPLACE_WITH_MANUAL_SCREEN_READER_AND_WCAG_REPORT_ARTIFACT_OR_HASH' &&
+    template.assurance.wcagManual.assistiveTech?.includes('REPLACE_WITH_NVDA_EVIDENCE') &&
+    template.assurance.wcagManual.assistiveTech?.includes('REPLACE_WITH_VOICEOVER_EVIDENCE'),
+  `${templatePath} assurance.wcagManual must require reviewer, reviewedAt, reportRef, NVDA, and VoiceOver placeholders.`,
+)
+check(
+  template.assurance?.browserScreenshots?.capturedAt ===
+    'REPLACE_WITH_BROWSER_SCREENSHOT_CAPTURE_ISO8601_TIMESTAMP' &&
+    template.assurance.browserScreenshots.bundleRef ===
+      'REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH',
+  `${templatePath} assurance.browserScreenshots must require capturedAt and bundleRef placeholders.`,
+)
 
 for (const [key, expected] of [
   ['releaseEvidenceManifest', 'dist-release-evidence/manifest.json'],

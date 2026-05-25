@@ -35,6 +35,10 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "not production deployment proof" in authority_template
     assert by_id["production-evidence-template-local"].status == "pass"
     assert "pending-external" in by_id["production-evidence-template-local"].evidence
+    assert (
+        "verified assurance detail fields"
+        in by_id["production-evidence-template-local"].evidence
+    )
     assert by_id["production-live-verifier-local"].status == "pass"
     assert "verify:production-live" in by_id["production-live-verifier-local"].evidence
     assert "blocker ids" in by_id["production-live-verifier-local"].evidence
@@ -43,6 +47,8 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["production-evidence-validator-local"].status == "pass"
     assert "validate:production-evidence" in by_id["production-evidence-validator-local"].evidence
     assert "blocker ids" in by_id["production-evidence-validator-local"].evidence
+    assert "manual WCAG" in by_id["production-evidence-validator-local"].evidence
+    assert "pending-external refs" in by_id["production-evidence-validator-local"].evidence
     assert by_id["production-cutover-plan-local"].status == "pass"
     assert "DNS cutover" in by_id["production-cutover-plan-local"].evidence
     assert "copyIntoProductionEvidence" in by_id["production-cutover-plan-local"].evidence

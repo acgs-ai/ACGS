@@ -65,7 +65,13 @@ def _proof_intake_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
         ),
         "productionEvidenceTemplate": _compact_artifact(
             _dict(artifacts.get("productionEvidenceTemplate")),
-            ["templatePath", "proofCommand", "templateStatus", "claimBoundary"],
+            [
+                "templatePath",
+                "proofCommand",
+                "templateStatus",
+                "assuranceProofRequirements",
+                "claimBoundary",
+            ],
         ),
         "productionLiveVerifier": _compact_artifact(
             _dict(artifacts.get("productionLiveVerifier")),

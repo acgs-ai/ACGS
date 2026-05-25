@@ -233,12 +233,34 @@ function buildDraft({ template, liveOutput, blockerReport, cutoverPlan, options 
       claimBoundary: 'pending means this file does not prove hosted Storybook buyer evidence.',
     },
     assurance: {
-      legalClaimMatrix: { status: 'pending-external', proofRef: pendingExternal('legal-review') },
-      pentest: { status: 'pending-external', proofRef: pendingExternal('pentest') },
-      wcagManual: { status: 'pending-external', proofRef: pendingExternal('wcag-manual') },
+      legalClaimMatrix: {
+        status: 'pending-external',
+        proofRef: pendingExternal('legal-review'),
+        reviewer: pendingExternal('legal-or-claim-reviewer'),
+        reviewedAt: pendingExternal('legal-review-timestamp'),
+        claimMatrixRef: pendingExternal('legal-reviewed-claim-matrix'),
+      },
+      pentest: {
+        status: 'pending-external',
+        proofRef: pendingExternal('pentest'),
+        vendor: pendingExternal('pentest-vendor'),
+        completedAt: pendingExternal('pentest-completion-timestamp'),
+        reportRef: pendingExternal('pentest-report'),
+        criticalFindingsOpen: pendingExternal('zero-open-critical-findings-count'),
+      },
+      wcagManual: {
+        status: 'pending-external',
+        proofRef: pendingExternal('wcag-manual'),
+        reviewer: pendingExternal('accessibility-reviewer'),
+        reviewedAt: pendingExternal('manual-wcag-review-timestamp'),
+        reportRef: pendingExternal('manual-wcag-report'),
+        assistiveTech: [pendingExternal('nvda-evidence'), pendingExternal('voiceover-evidence')],
+      },
       browserScreenshots: {
         status: 'pending-external',
         proofRef: pendingExternal('browser-screenshots'),
+        capturedAt: pendingExternal('browser-screenshot-capture-timestamp'),
+        bundleRef: pendingExternal('browser-screenshot-or-visual-diff-bundle'),
       },
     },
     artifacts: {

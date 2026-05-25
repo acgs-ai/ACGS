@@ -43,6 +43,45 @@ PRODUCTION_EVIDENCE_VALIDATION_SNAPSHOT = Path(
 )
 HOSTED_STORYBOOK_HANDOFF_SNAPSHOT = Path("dist-release-evidence/hosted-storybook-handoff.json")
 
+ASSURANCE_PROOF_REQUIREMENTS = [
+    {
+        "field": "assurance.legalClaimMatrix",
+        "externalBlockerId": "legal-review-of-claim-matrix",
+        "requiredStatus": "verified",
+        "requiredFields": ["proofRef", "reviewer", "reviewedAt", "claimMatrixRef"],
+    },
+    {
+        "field": "assurance.pentest",
+        "externalBlockerId": "third-party-penetration-test",
+        "requiredStatus": "verified",
+        "requiredFields": [
+            "proofRef",
+            "vendor",
+            "completedAt",
+            "reportRef",
+            "criticalFindingsOpen=0",
+        ],
+    },
+    {
+        "field": "assurance.wcagManual",
+        "externalBlockerId": "full-wcag-manual-screen-reader-evidence",
+        "requiredStatus": "verified",
+        "requiredFields": [
+            "proofRef",
+            "reviewer",
+            "reviewedAt",
+            "reportRef",
+            "assistiveTech=NVDA+VoiceOver",
+        ],
+    },
+    {
+        "field": "assurance.browserScreenshots",
+        "externalBlockerId": "hosted-storybook-buyer-evidence",
+        "requiredStatus": "verified",
+        "requiredFields": ["proofRef", "capturedAt", "bundleRef"],
+    },
+]
+
 REQUIRED_VERIFICATION_COMMANDS = [
     "make verify",
     "make verify-js-node24",
@@ -627,6 +666,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                 ),
                 "templatePresent": production_evidence_template is not None,
                 "templateStatus": (production_evidence_template or {}).get("status"),
+                "assuranceProofRequirements": ASSURANCE_PROOF_REQUIREMENTS,
                 "template": production_evidence_template,
             },
             "productionLiveVerifier": {
@@ -751,7 +791,12 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "productionEvidenceValidationCommand",
                     "productionEvidenceValidationOutputRef",
                     "validatedProductionEvidence",
+                    "assurance.legalClaimMatrix",
+                    "assurance.pentest",
+                    "assurance.wcagManual",
+                    "assurance.browserScreenshots",
                 ],
+                "assuranceProofRequirements": ASSURANCE_PROOF_REQUIREMENTS,
                 "claimBoundary": (
                     "local proofCommand only verifies validator behavior; operatorCommand "
                     "validates completed production evidence and live verifier JSON but is "
@@ -1198,7 +1243,11 @@ live production proof.
 - `acgi-ai/production-evidence.example.json` is the template-only live proof
   intake manifest. It is not live production proof; legal, pentest, WCAG/manual,
   browser, and hosted Storybook fields stay `pending-external` until external
-  evidence is attached.
+  evidence is attached. A completed `live-verified` / `--require-pass` manifest
+  must replace those placeholders with verified assurance detail fields: legal
+  claim-matrix reviewer/review timestamp/artifact ref, third-party pentest vendor
+  and report with `criticalFindingsOpen=0`, manual WCAG report covering NVDA and
+  VoiceOver, and browser screenshot or visual-diff bundle refs.
 - `acgi-ai/scripts/verify-production-live.mjs` is the post-deploy live evidence
   command for DNS, HTTPS, `/healthz`, security headers, and Storybook proof,
   including `storybook-manifest-live` validation of `https://storybook.acgs.ai/manifest.json`.
@@ -1238,7 +1287,10 @@ live production proof.
   evidence draft. `productionEvidenceChain` in `manifest.json` compares the
   saved live-verifier, blocker-report, cutover-plan, draft, validator, and
   hosted Storybook handoff snapshots so stale blocker copying is visible before
-  an operator attaches external proof.
+  an operator attaches external proof. The completed validator also rejects
+  `live-verified` / `--require-pass` production evidence while legal, pentest,
+  manual WCAG/screen-reader, or browser screenshot assurance fields remain
+  `pending-external`.
 - `acgi-ai/scripts/build-hosted-storybook-handoff.mjs` combines a Pages-ready
   buyer-evidence manifest and saved `verify:production-live` JSON into a local
   `hosted-storybook-handoff.json` with `storybook-manifest-live`,

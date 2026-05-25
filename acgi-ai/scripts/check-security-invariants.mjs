@@ -1273,6 +1273,9 @@ check(
     /production-evidence\.example\.json/.test(productionEvidenceTemplateCheck) &&
     /not live production proof/.test(productionEvidenceTemplateCheck) &&
     /pending-external/.test(productionEvidenceTemplateCheck) &&
+    /claimMatrixRef/.test(productionEvidenceTemplateCheck) &&
+    /criticalFindingsOpen/.test(productionEvidenceTemplateCheck) &&
+    /assistiveTech/.test(productionEvidenceTemplateCheck) &&
     /verify:production-live/.test(productionEvidenceTemplateCheck) &&
     /test:production-live-verifier/.test(productionEvidenceTemplateCheck) &&
     /build:production-blocker-report/.test(productionEvidenceTemplateCheck) &&
@@ -1322,6 +1325,8 @@ check(
     /--manifest/.test(productionEvidenceValidatorCheck) &&
     /--live-output/.test(productionEvidenceValidatorCheck) &&
     /--require-pass/.test(productionEvidenceValidatorCheck) &&
+    /require-pass-assurance-legalClaimMatrix-verified/.test(productionEvidenceValidatorCheck) &&
+    /pending external legal claim matrix assurance/.test(productionEvidenceValidatorCheck) &&
     /productionLiveBlockers/.test(productionEvidenceValidatorCheck) &&
     /validatedProductionEvidence/.test(productionEvidenceValidatorCheck) &&
     /not live production proof/.test(productionEvidenceValidatorCheck),
@@ -1479,6 +1484,9 @@ check(
     /--manifest/.test(productionEvidenceValidator) &&
     /--live-output/.test(productionEvidenceValidator) &&
     /--require-pass/.test(productionEvidenceValidator) &&
+    /require-pass-assurance-legalClaimMatrix-verified/.test(productionEvidenceValidator) &&
+    /criticalFindingsOpen/.test(productionEvidenceValidator) &&
+    /assistiveTech/.test(productionEvidenceValidator) &&
     /isBlockedPendingExternalRef/.test(productionEvidenceValidator) &&
     /pending-external/.test(productionEvidenceValidator),
   'validate-production-evidence.mjs must validate completed evidence manifests against live verifier JSON without live network execution.',
@@ -1515,6 +1523,14 @@ check(
     /template-only/.test(productionEvidenceTemplate) &&
     /not live production proof/.test(productionEvidenceTemplate) &&
     /pending-external/.test(productionEvidenceTemplate) &&
+    /REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH/.test(
+      productionEvidenceTemplate,
+    ) &&
+    /REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT/.test(productionEvidenceTemplate) &&
+    /REPLACE_WITH_NVDA_EVIDENCE/.test(productionEvidenceTemplate) &&
+    /REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH/.test(
+      productionEvidenceTemplate,
+    ) &&
     /https:\/\/console\.acgs\.ai\/healthz/.test(productionEvidenceTemplate) &&
     /REPLACE_WITH_POSTDEPLOY_OUTPUT_ARTIFACT_OR_HASH/.test(productionEvidenceTemplate) &&
     /verify:production-live/.test(productionEvidenceTemplate) &&

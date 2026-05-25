@@ -222,7 +222,12 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 
    JSON output from `pnpm -F acgi-ai run validate:production-evidence -- --manifest ...`
    is required before stronger deployment evidence claims; it is still not legal,
-   SOC2, WCAG, pentest, or regulatory proof.
+   SOC2, WCAG, pentest, or regulatory proof. A `live-verified` or
+   `--require-pass` manifest must replace every `pending-external` assurance
+   field with operator-supplied verified details: legal claim-matrix reviewer,
+   review timestamp, and artifact ref; third-party pentest vendor/report with
+   `criticalFindingsOpen=0`; manual WCAG/screen-reader report covering NVDA and
+   VoiceOver; and browser screenshot or visual-diff bundle refs.
 17. Attach the release-evidence bundle and CI artifacts listed below.
 18. Update buyer-facing claims only after live evidence exists for the exact
    claim. No stronger claims until live proof is attached.
@@ -234,7 +239,9 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - Completed production authority packet derived from
   `production-authority.example.json`
 - Completed production evidence manifest derived from
-  `production-evidence.example.json`
+  `production-evidence.example.json`, with verified legal claim-matrix review,
+  third-party pentest, manual WCAG/screen-reader, and browser screenshot /
+  visual-diff assurance details before any `--require-pass` validation
 - Completed official Storybook runtime approval evidence derived from
   `storybook-runtime.plan.json`, or the unresolved
   `pending-external:dependency-owner-approval` blocker kept visible

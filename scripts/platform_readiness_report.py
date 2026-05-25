@@ -472,6 +472,18 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and template_payload.get("hostedStorybook", {}).get("status") == "pending"
             and template_payload.get("assurance", {}).get("legalClaimMatrix", {}).get("status")
             == "pending-external"
+            and template_payload.get("assurance", {})
+            .get("legalClaimMatrix", {})
+            .get("claimMatrixRef")
+            == "REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH"
+            and template_payload.get("assurance", {}).get("pentest", {}).get("criticalFindingsOpen")
+            == "REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT"
+            and "REPLACE_WITH_NVDA_EVIDENCE"
+            in template_payload.get("assurance", {}).get("wcagManual", {}).get("assistiveTech", [])
+            and template_payload.get("assurance", {})
+            .get("browserScreenshots", {})
+            .get("bundleRef")
+            == "REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH"
             and template_payload.get("verification", {}).get("postdeployCommand")
             == "pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai"
             and template_payload.get("verification", {}).get("productionLiveCommand")
@@ -543,7 +555,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and production_evidence_scripts_ok,
             (
                 "template captures live deploy proof placeholders and pending-external "
-                "assurance boundaries without claiming production proof"
+                "assurance boundaries plus verified assurance detail fields without "
+                "claiming production proof"
                 if production_evidence_files_ok
                 and production_evidence_json_ok
                 and production_evidence_ok
@@ -747,6 +760,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "--manifest",
             "--live-output",
             "--require-pass",
+            "require-pass-assurance-legalClaimMatrix-verified",
+            "criticalFindingsOpen",
+            "assistiveTech",
             "deployment-blocked",
             "live-verified",
             "not live production proof",
@@ -772,7 +788,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             (
                 "validate:production-evidence checks completed live-verified or "
                 "deployment-blocked manifests and blocker ids against attached "
-                "live verifier JSON"
+                "live verifier JSON, and rejects require-pass output until verified "
+                "legal, pentest, manual WCAG, and browser assurance details replace "
+                "pending-external refs"
                 if production_evidence_validator_files_ok
                 and production_evidence_validator_ok
                 and production_evidence_validator_scripts_ok

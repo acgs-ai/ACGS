@@ -29,6 +29,14 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         preflight["proofIntakeArtifacts"]["productionEvidenceTemplate"]["templatePath"]
         == "acgi-ai/production-evidence.example.json"
     )
+    assert {
+        "field": "assurance.legalClaimMatrix",
+        "externalBlockerId": "legal-review-of-claim-matrix",
+        "requiredStatus": "verified",
+        "requiredFields": ["proofRef", "reviewer", "reviewedAt", "claimMatrixRef"],
+    } in preflight["proofIntakeArtifacts"]["productionEvidenceTemplate"][
+        "assuranceProofRequirements"
+    ]
     storybook_blocker = next(
         blocker
         for blocker in preflight["externalBlockers"]

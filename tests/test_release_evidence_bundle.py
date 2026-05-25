@@ -134,6 +134,12 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_evidence["templateStatus"] == "template-only"
     assert "not live production proof" in production_evidence["claimBoundary"]
     assert "pending-external" in production_evidence["claimBoundary"]
+    assert {
+        "field": "assurance.legalClaimMatrix",
+        "externalBlockerId": "legal-review-of-claim-matrix",
+        "requiredStatus": "verified",
+        "requiredFields": ["proofRef", "reviewer", "reviewedAt", "claimMatrixRef"],
+    } in production_evidence["assuranceProofRequirements"]
     assert production_live["script"] == "acgi-ai/scripts/verify-production-live.mjs"
     assert production_live["proofCommand"] == "pnpm -F acgi-ai run test:production-live-verifier"
     assert (
@@ -205,6 +211,15 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "productionLiveStatus" in production_validator["templateFields"]
     assert "productionLiveBlockers" in production_validator["templateFields"]
     assert "validatedProductionEvidence" in production_validator["templateFields"]
+    assert "assurance.legalClaimMatrix" in production_validator["templateFields"]
+    assert any(
+        "criticalFindingsOpen=0" in requirement["requiredFields"]
+        for requirement in production_validator["assuranceProofRequirements"]
+    )
+    assert any(
+        "assistiveTech=NVDA+VoiceOver" in requirement["requiredFields"]
+        for requirement in production_validator["assuranceProofRequirements"]
+    )
     assert "not legal" in production_validator["claimBoundary"]
     assert (
         production_validation["latestValidationSnapshot"]["path"]
@@ -348,6 +363,9 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "Local release-readiness evidence bundle" in readme
     assert "not live production proof" in readme or "not production deployment proof" in readme
     assert "production-evidence.example.json" in readme
+    assert "verified assurance detail fields" in readme
+    assert "criticalFindingsOpen=0" in readme
+    assert "NVDA and" in readme
     assert "verify-production-live.mjs" in readme
     assert "test:production-live-verifier" in readme
     assert "build-production-blocker-report.mjs" in readme
