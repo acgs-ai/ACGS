@@ -62,6 +62,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'Pick the case',
   },
   {
+    id: 'console-framework-integration-rail',
+    surface: 'console',
+    route: '/console/workbench#framework-integration-rail',
+    title: 'Console framework integration rail',
+    expectation:
+      'Operator can see how common agent-framework tool calls normalize, gate, emit receipts, and handle malformed batches.',
+    expectedText: 'runtime.malformed_batch',
+  },
+  {
     id: 'console-guided-review-path',
     surface: 'console',
     route: '/console/workbench#guided-review-path',

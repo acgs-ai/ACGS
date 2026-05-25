@@ -155,6 +155,45 @@ export const PLATFORM_REQUIREMENT_LANES = [
   },
 ] as const
 
+export const FRAMEWORK_INTEGRATION_RAIL = [
+  {
+    step: '01',
+    title: 'Normalize framework calls',
+    source: 'Claude/Codex-style · MCP-style · OpenAI Responses',
+    proof: 'tool_call_from_hook_payload',
+    body: 'Translate common agent-framework tool-call shapes into one governed request before policy decisions run.',
+    route: '/products/gove-zone',
+    cta: 'Open runtime path',
+  },
+  {
+    step: '02',
+    title: 'Gate before side effects',
+    source: 'RuleSetPolicy · deny · escalate',
+    proof: 'gove-zone gate --policy-bundle',
+    body: 'Keep allow, deny, and escalate outcomes visible before a host executes a privileged tool call.',
+    route: '/console/policies',
+    cta: 'Open policy',
+  },
+  {
+    step: '03',
+    title: 'Emit governed receipts',
+    source: 'OpenAI Chat · LangChain-style · batched calls',
+    proof: 'receipt_count + audit hash',
+    body: 'Record one receipt per child call so batches, denials, and reviewer handoffs stay inspectable.',
+    route: '/console/audit',
+    cta: 'Open receipts',
+  },
+  {
+    step: '04',
+    title: 'Adopt without lock-in',
+    source: 'generic payloads · malformed batch guard',
+    proof: 'runtime.malformed_batch',
+    body: 'Treat malformed recognized batches as deny receipts instead of hiding unsupported framework behavior.',
+    route: '/console/bus',
+    cta: 'Inspect traces',
+  },
+] as const
+
 export const WORKBENCH_GUIDED_PATH = [
   {
     step: '01',

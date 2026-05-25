@@ -55,6 +55,7 @@ for (const needle of [
   '/console/workbench',
   '/console/workbench#operator-decision-rail',
   '/console/workbench#guided-review-path',
+  '/console/workbench#framework-integration-rail',
   '/console/workbench#launch-proof-ladder',
   '/console/workbench#live-verifier-blocker-map',
   '/console/workbench#production-command-rail',
@@ -102,6 +103,11 @@ mustContain(
 )
 mustContain(
   readinessReport,
+  '/console/workbench#framework-integration-rail',
+  'scripts/platform_readiness_report.py',
+)
+mustContain(
+  readinessReport,
   '/console/workbench#live-verifier-blocker-map',
   'scripts/platform_readiness_report.py',
 )
@@ -136,7 +142,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 8, 'manifest must include eight browser targets.')
+    check(manifest.targets?.length === 9, 'manifest must include nine browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -148,10 +154,12 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 40,
+      manifest.screenshots?.length === 45,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'console-framework-integration-rail', 'dry-run manifest')
+    mustContain(JSON.stringify(manifest.targets), 'runtime.malformed_batch', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Pick the case', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-guided-review-path', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')

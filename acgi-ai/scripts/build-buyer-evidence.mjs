@@ -67,6 +67,7 @@ const evidenceStories = [
     proof: [
       'The console workbench turns queue, trace, evaluation, release, and evidence steps into one visual path.',
       'The platform requirements rail turns governance, regulatory, agent-security, observability, evaluation, and accessibility research into same-console actions.',
+      'Framework integration rail shows Normalize, Gate, Receipt, and Adopt steps for common agent-framework payloads before side effects run.',
       'Operator quick start labels Start here, Hold release, and Export proof as the next safe actions.',
       'Guided review path shows Choose the case, Follow the path, Check the hold, and Export bounded proof before dense tables.',
       'The launch proof area exposes the current saved cutover state so operators see production blockers without opening generated JSON.',
@@ -142,6 +143,7 @@ const evidenceStories = [
     proof: [
       'The same workbench separates Local readiness, Live verifier, and Assurance packet evidence.',
       'Current saved cutover lanes separate marketing already-live proof from console DNS/service, Storybook DNS/pages, and evidence-validation blockers.',
+      'Framework integration rail keeps OpenAI Responses, OpenAI Chat, LangChain-style, MCP-style, and Claude/Codex-style adoption visible as local adapter evidence, not live framework deployment proof.',
       'Live verifier blocker map keeps console DNS, Storybook DNS, console healthz, security headers, Storybook HTTPS, and Storybook manifest blockers visible as deploy work.',
       'Production command rail keeps blocker refresh, live verifier, production evidence validation, and hosted Storybook validation commands beside their output artifacts.',
       'Assurance proof intake keeps production-authority.example.json, legal claim review, pentest, manual WCAG, and hosted Storybook proof fields visible as external blockers.',

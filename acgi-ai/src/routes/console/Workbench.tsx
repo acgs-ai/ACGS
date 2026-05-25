@@ -4,6 +4,7 @@ import {
   ASSURANCE_INTAKE_LANES,
   CASE_CARDS,
   EVIDENCE_ROWS,
+  FRAMEWORK_INTEGRATION_RAIL,
   LAUNCH_PROOF_LANES,
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
@@ -85,6 +86,40 @@ export function Workbench() {
                 onClick={() => navigate(lane.route)}
               >
                 {lane.cta}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section
+        className="overview-section"
+        id="framework-integration-rail"
+        aria-labelledby="workbench-framework-h"
+      >
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-framework-h">
+            Framework integration rail
+          </h2>
+          <span className="c-meta">Normalize → Gate → Receipt → Adopt</span>
+        </div>
+
+        <div className="workbench-framework-rail">
+          {FRAMEWORK_INTEGRATION_RAIL.map((item) => (
+            <article className="workbench-framework" key={item.title}>
+              <div>
+                <span className="workbench-framework-step">{item.step}</span>
+                <span className="c-meta">{item.source}</span>
+              </div>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+              <code>{item.proof}</code>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(item.route)}
+              >
+                {item.cta}
               </button>
             </article>
           ))}

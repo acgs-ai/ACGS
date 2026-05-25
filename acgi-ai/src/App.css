@@ -781,6 +781,7 @@
   white-space: normal;
 }
 
+.m-workbench-framework,
 .m-workbench-cutover,
 .m-workbench-live,
 .m-workbench-command,
@@ -790,6 +791,7 @@
   border-top: 1px solid var(--line-softer);
 }
 
+.m-workbench-framework p,
 .m-workbench-cutover p,
 .m-workbench-live p,
 .m-workbench-command p,
@@ -801,6 +803,7 @@
   color: var(--ink-3);
 }
 
+.m-workbench-framework ol,
 .m-workbench-cutover ol,
 .m-workbench-live ol,
 .m-workbench-command ol,
@@ -812,6 +815,7 @@
   list-style: none;
 }
 
+.m-workbench-framework li,
 .m-workbench-cutover li,
 .m-workbench-live li,
 .m-workbench-command li,
@@ -824,6 +828,7 @@
   background: var(--paper);
 }
 
+.m-workbench-framework code,
 .m-workbench-cutover code,
 .m-workbench-live code,
 .m-workbench-command code,
@@ -1856,6 +1861,80 @@
 }
 
 .workbench-requirement .btn {
+  align-self: end;
+  justify-self: start;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+.workbench-framework-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--line-softer);
+}
+
+.workbench-framework {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 250px;
+  padding: 18px;
+  background: var(--paper-2);
+}
+
+.workbench-framework div {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-framework-step {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.workbench-framework h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 400;
+  line-height: 1.08;
+}
+
+.workbench-framework p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-framework code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.workbench-framework .btn {
   align-self: end;
   justify-self: start;
   padding: 9px 12px;
@@ -3157,6 +3236,7 @@
   }
   .workbench-console-map,
   .workbench-requirement-grid,
+  .workbench-framework-rail,
   .workbench-guided-path,
   .workbench-decision-rail,
   .workbench-checklist,

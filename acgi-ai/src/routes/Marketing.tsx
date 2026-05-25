@@ -4,6 +4,7 @@ import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
 import {
   ASSURANCE_INTAKE_LANES,
+  FRAMEWORK_INTEGRATION_RAIL,
   LAUNCH_PROOF_LANES,
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
@@ -339,6 +340,28 @@ export function Marketing() {
                         <span>{title}</span>
                         <code>{proof}</code>
                         <small>{source}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-framework"
+                  aria-labelledby="marketing-framework-rail-h"
+                >
+                  <span className="folio-no" id="marketing-framework-rail-h">
+                    Framework integration rail
+                  </span>
+                  <p>
+                    Agent-framework adoption should be visible as normalize, gate, receipt, and
+                    adopt steps before anyone treats local adapter proof as live integration proof.
+                  </p>
+                  <ol>
+                    {FRAMEWORK_INTEGRATION_RAIL.map(({ step, title, source, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <small>{source}</small>
+                        <code>{proof}</code>
                       </li>
                     ))}
                   </ol>

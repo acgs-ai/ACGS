@@ -88,6 +88,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "service-design/accessibility anchors" in by_id["platform-blueprint-ui-local"].evidence
     assert "guided review path" in by_id["platform-blueprint-ui-local"].evidence
     assert "operator decision rail" in by_id["platform-blueprint-ui-local"].evidence
+    assert "framework integration rail" in by_id["platform-blueprint-ui-local"].evidence
     assert "launch proof ladder" in by_id["platform-blueprint-ui-local"].evidence
     assert "live verifier blocker map" in by_id["platform-blueprint-ui-local"].evidence
     assert "production command rail" in by_id["platform-blueprint-ui-local"].evidence
@@ -109,6 +110,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "target-visible hash guard" in by_id["browser-workbench-evidence-local"].evidence
     assert "operator decision rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "guided review path" in by_id["browser-workbench-evidence-local"].evidence
+    assert "framework integration rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "live verifier blocker map" in by_id["browser-workbench-evidence-local"].evidence
     assert "production command rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "assurance proof intake" in by_id["browser-workbench-evidence-local"].evidence

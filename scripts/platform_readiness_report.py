@@ -1383,6 +1383,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "workbench-console-map",
             "workbench-board",
             "workbench-checklist",
+            "Framework integration rail",
+            "framework-integration-rail",
+            "OpenAI Responses",
+            "LangChain-style",
+            "runtime.malformed_batch",
             "workbench-proof-ladder",
             "Live verifier blocker map",
             "live-console-dns",
@@ -1419,7 +1424,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
                 "and console workbench share one workbench content contract, "
                 "service-design/accessibility anchors, guided review path, "
-                "operator decision rail, launch proof ladder, live verifier blocker map, "
+                "operator decision rail, framework integration rail, launch proof "
+                "ladder, live verifier blocker map, "
                 "production command rail, assurance proof intake, current 35/36 "
                 "local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
@@ -1870,6 +1876,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "local browser evidence",
             "/console/workbench#operator-decision-rail",
             "/console/workbench#guided-review-path",
+            "/console/workbench#framework-integration-rail",
             "/console/workbench#launch-proof-ladder",
             "/console/workbench#live-verifier-blocker-map",
             "/console/workbench#production-command-rail",
@@ -1895,8 +1902,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "Chrome/Chromium screenshot command, DOM text guard, target-visible "
                 "hash guard, non-blank screenshot guard, per-surface marketing/console "
                 "launches, and dry-run verifier cover the marketing workbench, console "
-                "workbench, operator decision rail, guided review path, launch "
-                "proof ladder, live verifier blocker map, production command rail, "
+                "workbench, operator decision rail, guided review path, framework "
+                "integration rail, launch proof ladder, live verifier blocker map, "
+                "production command rail, "
                 "assurance proof intake, and five visual baseline viewports without "
                 "claiming production assurance"
                 if browser_evidence_files_ok
