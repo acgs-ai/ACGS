@@ -8,6 +8,7 @@ email send, deploy restart, github mutate, shell exec) with:
   - safe-read tools: read_file, list_files, query_sql_select,
     github_read_issue (no admission required)
 """
+
 from __future__ import annotations
 
 import shlex
@@ -49,9 +50,7 @@ class GovernedMCPServer:
         if tool_name in SAFE_TOOLS:
             raise GovernanceDenied("safe tools do not require side-effect admission")
         if not isinstance(args, dict):
-            recorded = self._record_decision(
-                action_id, tool_name, {}, "deny", "malformed args", ["fail-closed"]
-            )
+            recorded = self._record_decision(action_id, tool_name, {}, "deny", "malformed args", ["fail-closed"])
             raise GovernanceDenied(recorded.reason)
         expected_action = GUARDED_TOOLS.get(tool_name)
         if expected_action is None:
@@ -78,17 +77,13 @@ class GovernedMCPServer:
             normalized_args_hash = sha256_json(args)
             _constitution, constitution_hash = _load_constitution(self.targets)
             if hasattr(self.policy_engine, "evaluate_policy"):
-                decision, reason, policy_ids = self.policy_engine.evaluate_policy(
-                    action_id, args, self.targets
-                )
+                decision, reason, policy_ids = self.policy_engine.evaluate_policy(action_id, args, self.targets)
             else:
                 raw = self.policy_engine.evaluate(action_id, args, self.targets)
                 decision, reason, policy_ids = raw.decision, raw.reason, raw.policy_ids
         except Exception as exc:
             normalized_args_hash = (
-                sha256_json({"args": args})
-                if isinstance(args, dict)
-                else sha256_json({"malformed": True})
+                sha256_json({"args": args}) if isinstance(args, dict) else sha256_json({"malformed": True})
             )
             constitution_hash = _constitution_hash_or_missing(self.targets)
             decision, reason, policy_ids = (
@@ -134,10 +129,7 @@ class GovernedMCPServer:
             "policy_ids": policy_ids,
             "decision": decision,
             "reason": reason,
-            "timestamp": datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "constitution_hash": constitution_hash,
         }
         previous_hash = _last_audit_hash(self.targets.audit_path)
@@ -156,9 +148,7 @@ class GovernedMCPServer:
             _write_json(receipt_path, receipt)
             _append_jsonl(self.targets.audit_path, audit_event)
         except Exception as exc:  # pragma: no cover - covered through failure mode helpers if platform permits.
-            raise GovernanceStorageError(
-                f"fail closed while persisting governance evidence: {exc}"
-            ) from exc
+            raise GovernanceStorageError(f"fail closed while persisting governance evidence: {exc}") from exc
         return AdmissionDecision(receipt_path=receipt_path, **receipt)
 
     def read_file(self, path: str) -> str:
@@ -167,11 +157,7 @@ class GovernedMCPServer:
 
     def list_files(self) -> list[str]:
         base = self.targets.fs_dir.resolve()
-        return sorted(
-            str(path.resolve().relative_to(base))
-            for path in base.rglob("*")
-            if path.is_file()
-        )
+        return sorted(str(path.resolve().relative_to(base)) for path in base.rglob("*") if path.is_file())
 
     def query_sql_select(self, sql: str) -> list[dict[str, Any]]:
         if sql.strip().split(None, 1)[0].upper() != "SELECT":
@@ -238,15 +224,11 @@ class GovernedMCPServer:
             {"repo": repo, "mutation": mutation, "payload_hash": sha256_json(payload)},
         )
         state = _read_json(self.targets.github_state_path)
-        state.setdefault("mutations", []).append(
-            {"repo": repo, "mutation": mutation, "payload": payload}
-        )
+        state.setdefault("mutations", []).append({"repo": repo, "mutation": mutation, "payload": payload})
         _write_json(self.targets.github_state_path, state)
 
     def run_shell(self, command: str) -> str:
         self.admit("shell.execute_command", "run_shell", {"command": command})
         argv = shlex.split(command)
-        completed = subprocess.run(
-            argv, cwd=self.targets.fs_dir, check=True, capture_output=True, text=True
-        )
+        completed = subprocess.run(argv, cwd=self.targets.fs_dir, check=True, capture_output=True, text=True)
         return completed.stdout.strip()

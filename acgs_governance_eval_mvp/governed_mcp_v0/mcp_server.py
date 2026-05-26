@@ -17,6 +17,7 @@ New code should import from the dedicated modules:
     governed_mcp_v0.fixtures     (create_fixture_environment)
     governed_mcp_v0.verify       (verify_replay_bundle)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,9 +42,7 @@ def build_fastmcp_server(targets: RuntimeTargets | None = None) -> Any:
     if FastMCP is None:
         return None
     server = FastMCP("governed-mcp-v0")
-    facade = GovernedMCPServer(
-        targets or create_fixture_environment(Path.cwd() / ".governed_mcp_v0")
-    )
+    facade = GovernedMCPServer(targets or create_fixture_environment(Path.cwd() / ".governed_mcp_v0"))
 
     server.tool()(facade.read_file)
     server.tool()(facade.list_files)

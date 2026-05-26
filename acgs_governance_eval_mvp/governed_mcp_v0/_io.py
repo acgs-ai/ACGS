@@ -4,6 +4,7 @@ Kept as private (underscore prefix) because most helpers are internal.
 The two public helpers — ``canonical_json`` and ``sha256_json`` — are also
 re-exported by ``mcp_server`` for back-compat with external callers.
 """
+
 from __future__ import annotations
 
 import json

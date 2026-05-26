@@ -4,6 +4,7 @@ Pure decision logic — no IO, no side effects.  Returns a ``(decision,
 reason, policy_ids)`` triple that the ``GovernedMCPServer`` wraps into an
 ``AdmissionDecision`` with the audit chain attached.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,9 +15,7 @@ from .models import AdmissionDecision, RuntimeTargets
 
 
 class DeterministicPolicyEngine:
-    def evaluate(
-        self, action_id: str, args: dict[str, Any], targets: RuntimeTargets
-    ) -> AdmissionDecision:
+    def evaluate(self, action_id: str, args: dict[str, Any], targets: RuntimeTargets) -> AdmissionDecision:
         raise NotImplementedError("use evaluate_policy for normalized policy output")
 
     def evaluate_policy(

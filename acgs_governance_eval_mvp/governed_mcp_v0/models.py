@@ -6,6 +6,7 @@ same module because its method signature forward-refers to
 RuntimeTargets and AdmissionDecision; co-locating them avoids a circular
 import.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

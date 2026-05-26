@@ -3,6 +3,7 @@
 Centralised so policy / engine / tool-mapping consumers do not have to import
 the full ``mcp_server`` module just to read a constant.
 """
+
 from __future__ import annotations
 
 GENESIS_HASH = "0" * 64

@@ -13,6 +13,7 @@ tests pin both contracts:
 If either drift, this test catches it — no need to wait for an
 integration suite to fail on a stale import path.
 """
+
 from __future__ import annotations
 
 

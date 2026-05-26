@@ -7,6 +7,7 @@ deploy_state.json, github_state.json, and an empty receipts/ dir.
 Lives outside ``_io.py`` because it is setup-time fixture seeding, not
 runtime IO — separating the two keeps the runtime surface area smaller.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -33,12 +34,8 @@ def create_fixture_environment(root: Path) -> RuntimeTargets:
         },
     )
     with sqlite3.connect(targets.sqlite_path) as connection:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
-        )
-        connection.execute(
-            "INSERT OR IGNORE INTO records (id, value) VALUES (1, 'fixture')"
-        )
+        connection.execute("CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute("INSERT OR IGNORE INTO records (id, value) VALUES (1, 'fixture')")
         connection.commit()
     _write_json(
         targets.deploy_state_path,

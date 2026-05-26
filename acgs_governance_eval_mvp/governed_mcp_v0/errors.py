@@ -1,4 +1,5 @@
 """Typed exceptions raised by the governed MCP v0 runtime."""
+
 from __future__ import annotations
 
 

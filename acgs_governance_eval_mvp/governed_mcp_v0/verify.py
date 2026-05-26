@@ -7,6 +7,7 @@ state, github mutation).
 
 Pure read-only — never mutates the audit chain or the fixture tree.
 """
+
 from __future__ import annotations
 
 import json
@@ -91,11 +92,7 @@ def _verify_allowed_effect(
 
     if action_id == "deploy.restart_service":
         try:
-            state = (
-                _read_json(targets.deploy_state_path)
-                if targets.deploy_state_path.exists()
-                else {}
-            )
+            state = _read_json(targets.deploy_state_path) if targets.deploy_state_path.exists() else {}
         except Exception:
             failures.append(f"audit line {line_number}: deploy_effect_malformed")
             return
@@ -109,11 +106,7 @@ def _verify_allowed_effect(
 
     if action_id == "github.mutate_repo":
         try:
-            state = (
-                _read_json(targets.github_state_path)
-                if targets.github_state_path.exists()
-                else {}
-            )
+            state = _read_json(targets.github_state_path) if targets.github_state_path.exists() else {}
         except Exception:
             failures.append(f"audit line {line_number}: github_effect_malformed")
             return
@@ -179,9 +172,7 @@ def verify_replay_bundle(targets: RuntimeTargets) -> ReplayResult:
                 }
                 missing = sorted(required.difference(receipt))
                 if missing:
-                    failures.append(
-                        f"audit line {line_number}: receipt_missing_fields={','.join(missing)}"
-                    )
+                    failures.append(f"audit line {line_number}: receipt_missing_fields={','.join(missing)}")
                 receipt_core = dict(receipt)
                 receipt_event_hash = receipt_core.pop("event_hash", None)
                 if sha256_json(receipt_core) != event.get("receipt_hash"):
