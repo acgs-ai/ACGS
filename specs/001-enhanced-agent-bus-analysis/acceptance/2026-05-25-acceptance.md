@@ -52,7 +52,14 @@ $ git log --oneline master..HEAD -- docs/constitutional-hashes.lock
 (empty)
 ```
 
-The clinicalguard files are absent locally because the submodule is "path-filtered CI only until initialization is reliable" per `CLAUDE.md`. Initializing the submodule (with `SUBMODULE_TOKEN`) or running on CI restores the files and the verifier passes. This branch does not touch any sealed governance artifact: spec.md/data-model.md/tasks.md edits in this branch contain the literal phrase "Constitutional Hash:" in narrative text but no governance-sealed hex values.
+The clinicalguard files are absent locally because the submodule is "path-filtered CI only until initialization is reliable" per `CLAUDE.md`. Initializing the submodule (with `SUBMODULE_TOKEN`) or running on CI restores the files and the verifier passes. This branch does not touch any sealed governance artifact: the 14 files in this branch's diff that contain the literal phrase `Constitutional Hash:` are narrative prose (specs, docs) or test fixtures using fake/sample hashes (`scripts/hardening_report.py`, `tests/test_verify_constitutional_hashes.py`) — no sealed hex value was mutated.
+
+**Verifier re-run after `git submodule update --init --recursive packages/clinicalguard`:**
+
+```
+$ python3 scripts/verify_constitutional_hashes.py
+OK — 201 constitutional hash markers verified clean.
+```
 
 ## Quickstart correspondence (T064)
 
