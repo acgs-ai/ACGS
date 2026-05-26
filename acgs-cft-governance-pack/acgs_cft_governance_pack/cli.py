@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from acgs_cft_governance_pack.evaluator import evaluate_plan, load_policies, write_evidence_jsonl
+from acgs_cft_governance_pack import evaluate_plan, load_policies, write_evidence_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
