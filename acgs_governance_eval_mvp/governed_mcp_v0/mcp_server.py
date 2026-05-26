@@ -10,8 +10,10 @@ from typing import Any
 
 from ._io import (
     _append_jsonl,
+    _constitution_hash_or_missing,
     _last_audit_hash,
     _load_constitution,
+    _next_receipt_index,
     _read_json,
     _resolve_fixture_path,
     _write_json,
@@ -19,6 +21,7 @@ from ._io import (
 )
 from .constants import GUARDED_TOOLS, SAFE_TOOLS
 from .errors import GovernanceDenied, GovernanceStorageError
+from .fixtures import create_fixture_environment
 from .models import AdmissionDecision, ReplayResult, RuntimeTargets
 from .policy import DeterministicPolicyEngine
 from .verify import verify_replay_bundle
@@ -220,52 +223,6 @@ class GovernedMCPServer:
         argv = shlex.split(command)
         completed = subprocess.run(argv, cwd=self.targets.fs_dir, check=True, capture_output=True, text=True)
         return completed.stdout.strip()
-
-
-def _constitution_hash_or_missing(targets: RuntimeTargets) -> str:
-    try:
-        _constitution, constitution_hash = _load_constitution(targets)
-    except Exception:
-        return "missing"
-    return constitution_hash
-
-
-def _next_receipt_index(audit_path: Path) -> int:
-    if not audit_path.exists():
-        return 1
-    with audit_path.open("r", encoding="utf-8") as handle:
-        return 1 + sum(1 for line in handle if line.strip())
-
-
-def create_fixture_environment(root: Path) -> RuntimeTargets:
-    targets = RuntimeTargets(root=root)
-    targets.fs_dir.mkdir(parents=True, exist_ok=True)
-    targets.receipts_dir.mkdir(parents=True, exist_ok=True)
-    (targets.fs_dir / "readme.txt").write_text("sandbox fixture\n", encoding="utf-8")
-    _write_json(
-        targets.constitution_path,
-        {
-            "id": "governed-mcp-v0",
-            "policies": [
-                "guard-side-effects",
-                "fixture-only-targets",
-                "deterministic-replay",
-            ],
-        },
-    )
-    with sqlite3.connect(targets.sqlite_path) as connection:
-        connection.execute("CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
-        connection.execute("INSERT OR IGNORE INTO records (id, value) VALUES (1, 'fixture')")
-        connection.commit()
-    _write_json(
-        targets.deploy_state_path,
-        {"service": "sandbox-api", "environment": "sandbox", "status": "ready"},
-    )
-    _write_json(
-        targets.github_state_path,
-        {"issues": {"sandbox/repo#1": {"title": "fixture issue"}}, "mutations": []},
-    )
-    return targets
 
 
 def build_fastmcp_server(targets: RuntimeTargets | None = None) -> Any:

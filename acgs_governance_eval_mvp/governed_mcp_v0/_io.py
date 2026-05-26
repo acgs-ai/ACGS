@@ -88,3 +88,18 @@ def _last_audit_hash(path: Path) -> str:
                 event = json.loads(line)
                 previous = str(event.get("event_hash", ""))
     return previous or GENESIS_HASH
+
+
+def _constitution_hash_or_missing(targets: RuntimeTargets) -> str:
+    try:
+        _constitution, constitution_hash = _load_constitution(targets)
+    except Exception:
+        return "missing"
+    return constitution_hash
+
+
+def _next_receipt_index(audit_path: Path) -> int:
+    if not audit_path.exists():
+        return 1
+    with audit_path.open("r", encoding="utf-8") as handle:
+        return 1 + sum(1 for line in handle if line.strip())
