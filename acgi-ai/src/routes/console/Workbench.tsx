@@ -6,6 +6,7 @@ import {
   CASE_CARDS,
   EVIDENCE_ROWS,
   FRAMEWORK_INTEGRATION_RAIL,
+  HOSTED_STORYBOOK_RUNWAY,
   LAUNCH_PROOF_LANES,
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
@@ -499,6 +500,43 @@ export function Workbench() {
           </div>
         </section>
 
+        <section
+          className="workbench-storybook-summary"
+          id="hosted-storybook-runway"
+          aria-labelledby="workbench-storybook-runway-h"
+        >
+          <div>
+            <span className="c-meta" id="workbench-storybook-runway-h">
+              Hosted Storybook runway
+            </span>
+            <strong>Publish buyer evidence through one visible proof path.</strong>
+            <p>
+              This runway keeps the local gallery, guarded Pages deploy, live verifier, and
+              completed hosted proof validation in order. It does not deploy, mutate DNS, or remove
+              the hosted blocker by itself.
+            </p>
+          </div>
+          <div className="workbench-storybook-lanes">
+            {HOSTED_STORYBOOK_RUNWAY.map((item) => (
+              <article className="workbench-storybook-step" key={item.title}>
+                <div>
+                  <span className="c-meta">{item.step}</span>
+                  <strong>{item.title}</strong>
+                  <code>{item.proof}</code>
+                  <small>{item.command}</small>
+                </div>
+                <p>{item.body}</p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => navigate(item.route)}
+                >
+                  {item.cta}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
         <section
           className="workbench-assurance-summary"
           id="assurance-proof-intake"

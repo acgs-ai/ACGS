@@ -479,6 +479,47 @@ export const PRODUCTION_COMMAND_RAIL = [
   },
 ] as const
 
+export const HOSTED_STORYBOOK_RUNWAY = [
+  {
+    step: '01',
+    title: 'Build local gallery',
+    command: 'pnpm -F acgi-ai run storybook:build',
+    proof: 'dist-buyer-evidence/manifest.json + .nojekyll + CNAME',
+    body: 'Create the dependency-free buyer-evidence gallery locally and keep the hosted proof boundary attached.',
+    route: '/console/workbench#assurance-proof-intake',
+    cta: 'Open proof intake',
+  },
+  {
+    step: '02',
+    title: 'Enable Pages deploy',
+    command: 'STORYBOOK_PAGES_ENABLED=true',
+    proof: '.github/workflows/storybook.yml',
+    body: 'Only enable the guarded Pages workflow for the intended repository and environment after authority is attached.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    step: '03',
+    title: 'Verify live Storybook',
+    command:
+      'pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json',
+    proof: 'storybook-dns-live + storybook-https-live + storybook-manifest-live',
+    body: 'Rerun the read-only live verifier until DNS, HTTPS, and hosted manifest checks pass for storybook.acgs.ai.',
+    route: '/console/workbench#live-verifier-blocker-map',
+    cta: 'Open blockers',
+  },
+  {
+    step: '04',
+    title: 'Attach hosted proof',
+    command:
+      'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass',
+    proof: 'copyIntoProductionEvidence.hostedStorybook',
+    body: 'Validate the completed Pages, DNS, manifest, browser, accessibility, and visual-diff proof before removing the hosted blocker.',
+    route: '/console/audit',
+    cta: 'Open audit',
+  },
+] as const
+
 export const RELEASE_BLOCKER_QUEUE = [
   {
     blockerId: 'production-deployment',

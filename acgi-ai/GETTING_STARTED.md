@@ -57,8 +57,12 @@ manifest. `evidence:browser-workbench` launches the marketing and console Vite
 surfaces separately, uses a local Chrome/Chromium binary, checks expected DOM
 text, scrolls hash targets into view, rejects likely blank screenshots, and
 captures the marketing workbench, `/console/workbench`,
-`/console/workbench#guided-review-path`, `/console/workbench#agent-framework-starter-kits`,
-`/console/workbench#launch-proof-ladder`, and `/console/workbench#release-blocker-queue` at the five visual baseline viewports.
+`/console/workbench#operator-decision-rail`,
+`/console/workbench#guided-review-path`, `/console/workbench#framework-integration-rail`,
+`/console/workbench#agent-framework-starter-kits`, `/console/workbench#launch-proof-ladder`,
+`/console/workbench#release-blocker-queue`, `/console/workbench#live-verifier-blocker-map`,
+`/console/workbench#production-command-rail`, `/console/workbench#hosted-storybook-runway`,
+and `/console/workbench#assurance-proof-intake` at the five visual baseline viewports.
 It writes local browser evidence under
 `acgi-ai/dist-browser-evidence/`; this is not production deployment proof, not
 hosted Storybook proof, not WCAG conformance proof, and not legal/security
@@ -75,7 +79,7 @@ pnpm -F acgi-ai run test:storybook-publication
 `evidence:build` creates a dependency-free local buyer-evidence gallery at
 `acgi-ai/dist-buyer-evidence/`. `test:buyer-evidence` verifies that the
 artifact covers the receipt proof journey, bus-owned proof source, claim-safe
-trust surface, visual governance workbench, and deploy-readiness boundary
+trust surface, visual governance workbench, hosted Storybook runway, and deploy-readiness boundary
 without unsupported production claims. Console CI uploads the same gallery as the `buyer-evidence-gallery`
 artifact before credentialed deploy steps. `storybook:build` is a local
 compatibility alias for this gallery. `test:storybook-publication` verifies the

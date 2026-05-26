@@ -6,6 +6,7 @@ import {
   AGENT_FRAMEWORK_STARTER_KITS,
   ASSURANCE_INTAKE_LANES,
   FRAMEWORK_INTEGRATION_RAIL,
+  HOSTED_STORYBOOK_RUNWAY,
   LAUNCH_PROOF_LANES,
   LIVE_VERIFIER_BLOCKER_LANES,
   OPERATOR_CHECKLIST,
@@ -529,6 +530,28 @@ export function Marketing() {
                         <strong>{title}</strong>
                         <code>{command}</code>
                         <span>{artifact}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-storybook-runway"
+                  aria-labelledby="marketing-storybook-runway-h"
+                >
+                  <span className="folio-no" id="marketing-storybook-runway-h">
+                    Hosted Storybook runway
+                  </span>
+                  <p>
+                    Buyer-evidence publication stays visible as build local gallery, enable Pages,
+                    verify live Storybook, and attach hosted proof before the hosted blocker clears.
+                  </p>
+                  <ol>
+                    {HOSTED_STORYBOOK_RUNWAY.map(({ step, title, command, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <code>{proof}</code>
+                        <small>{command}</small>
                       </li>
                     ))}
                   </ol>

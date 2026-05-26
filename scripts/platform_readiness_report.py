@@ -1405,6 +1405,13 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "make production-blocker-evidence",
             "validate:production-evidence",
             "validate:hosted-storybook-proof",
+            "Hosted Storybook runway",
+            "hosted-storybook-runway",
+            "Build local gallery",
+            "Enable Pages deploy",
+            "Verify live Storybook",
+            "Attach hosted proof",
+            "copyIntoProductionEvidence.hostedStorybook",
             "Assurance proof intake",
             "Release blocker queue",
             "release-blocker-queue",
@@ -1436,8 +1443,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "service-design/accessibility anchors, guided review path, "
                 "operator decision rail, framework integration rail, agent "
                 "framework starter kits, launch proof ladder, live verifier blocker map, "
-                "release blocker queue, production command rail, assurance proof "
-                "intake, current 35/36 local readiness copy, and "
+                "release blocker queue, production command rail, hosted Storybook "
+                "runway, assurance proof intake, current 35/36 local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
                 "inspectable without claiming production assurance"
                 if platform_blueprint_files_ok
@@ -1824,6 +1831,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "agent framework starter kits",
             "operator decision rail",
             "launch proof ladder",
+            "hosted Storybook runway",
             "Local readiness",
             "Live verifier",
             "Assurance packet",
@@ -1841,7 +1849,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "dependency-free local buyer-evidence gallery builder, visual "
                 "workbench story, agent framework starter kits, guided review path "
                 "story, operator decision rail story, launch proof ladder story, "
-                "and verifier are wired"
+                "hosted Storybook runway proof points, and verifier are wired"
                 if buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok
                 else (
                     f"missing_files={buyer_evidence_missing}, "
@@ -1894,6 +1902,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "/console/workbench#release-blocker-queue",
             "/console/workbench#live-verifier-blocker-map",
             "/console/workbench#production-command-rail",
+            "/console/workbench#hosted-storybook-runway",
             "/console/workbench#assurance-proof-intake",
             "five visual baseline viewports",
             "not production deployment proof",
@@ -1919,7 +1928,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "workbench, operator decision rail, guided review path, framework "
                 "integration rail, agent framework starter kits, launch proof ladder, "
                 "live verifier blocker map, release blocker queue, production command rail, "
-                "assurance proof intake, and five visual baseline viewports without "
+                "hosted Storybook runway, assurance proof intake, and five visual baseline "
+                "viewports without "
                 "claiming production assurance"
                 if browser_evidence_files_ok
                 and browser_evidence_scripts_ok

@@ -94,6 +94,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "live verifier blocker map" in by_id["platform-blueprint-ui-local"].evidence
     assert "release blocker queue" in by_id["platform-blueprint-ui-local"].evidence
     assert "production command rail" in by_id["platform-blueprint-ui-local"].evidence
+    assert "hosted Storybook runway" in by_id["platform-blueprint-ui-local"].evidence
     assert "assurance proof intake" in by_id["platform-blueprint-ui-local"].evidence
     assert "35/36 local readiness copy" in by_id["platform-blueprint-ui-local"].evidence
     assert "test:platform-blueprint" in by_id["platform-blueprint-ui-local"].command
@@ -106,6 +107,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "agent framework starter kits" in by_id["buyer-evidence-gallery-local"].evidence
     assert "operator decision rail story" in by_id["buyer-evidence-gallery-local"].evidence
     assert "launch proof ladder story" in by_id["buyer-evidence-gallery-local"].evidence
+    assert "hosted Storybook runway proof points" in by_id["buyer-evidence-gallery-local"].evidence
     assert by_id["browser-workbench-evidence-local"].status == "pass"
     assert (
         "Chrome/Chromium screenshot command" in by_id["browser-workbench-evidence-local"].evidence
@@ -118,6 +120,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "live verifier blocker map" in by_id["browser-workbench-evidence-local"].evidence
     assert "release blocker queue" in by_id["browser-workbench-evidence-local"].evidence
     assert "production command rail" in by_id["browser-workbench-evidence-local"].evidence
+    assert "hosted Storybook runway" in by_id["browser-workbench-evidence-local"].evidence
     assert "assurance proof intake" in by_id["browser-workbench-evidence-local"].evidence
     assert "five visual baseline viewports" in by_id["browser-workbench-evidence-local"].evidence
     assert "test:browser-evidence" in by_id["browser-workbench-evidence-local"].command

@@ -41,6 +41,7 @@ mustContain(marketing, 'RESEARCH_INPUTS.map', 'Marketing shared research inputs'
 mustContain(marketing, 'PLATFORM_REQUIREMENT_LANES.map', 'Marketing shared platform requirements')
 mustContain(marketing, 'FRAMEWORK_INTEGRATION_RAIL.map', 'Marketing framework integration rail')
 mustContain(marketing, 'AGENT_FRAMEWORK_STARTER_KITS.map', 'Marketing agent framework starter kits')
+mustContain(marketing, 'HOSTED_STORYBOOK_RUNWAY.map', 'Marketing hosted Storybook runway')
 mustContain(marketing, 'PRODUCTION_CUTOVER_LANES.map', 'Marketing shared cutover lanes')
 mustContain(marketing, 'LIVE_VERIFIER_BLOCKER_LANES.map', 'Marketing shared live verifier blockers')
 mustContain(marketing, 'PRODUCTION_COMMAND_RAIL.map', 'Marketing production command rail')
@@ -61,12 +62,17 @@ mustContain(
   'PLATFORM_REQUIREMENT_LANES.map',
   'Console shared platform requirements',
 )
-mustContain(consoleWorkbench, 'FRAMEWORK_INTEGRATION_RAIL.map', 'Console framework integration rail')
+mustContain(
+  consoleWorkbench,
+  'FRAMEWORK_INTEGRATION_RAIL.map',
+  'Console framework integration rail',
+)
 mustContain(
   consoleWorkbench,
   'AGENT_FRAMEWORK_STARTER_KITS.map',
   'Console agent framework starter kits',
 )
+mustContain(consoleWorkbench, 'HOSTED_STORYBOOK_RUNWAY.map', 'Console hosted Storybook runway')
 mustContain(consoleWorkbench, 'PRODUCTION_CUTOVER_LANES.map', 'Console shared cutover lanes')
 mustContain(
   consoleWorkbench,
@@ -192,6 +198,7 @@ mustContain(workbenchContent, 'WCAG 2.2', 'Shared research inputs')
 mustContain(workbenchContent, 'PLATFORM_REQUIREMENT_LANES', 'Shared platform requirements')
 mustContain(workbenchContent, 'FRAMEWORK_INTEGRATION_RAIL', 'Shared framework integration rail')
 mustContain(workbenchContent, 'AGENT_FRAMEWORK_STARTER_KITS', 'Shared starter kits')
+mustContain(workbenchContent, 'HOSTED_STORYBOOK_RUNWAY', 'Shared hosted Storybook runway')
 mustContain(workbenchContent, 'Normalize framework calls', 'Shared framework integration rail')
 mustContain(workbenchContent, 'Gate before side effects', 'Shared framework integration rail')
 mustContain(workbenchContent, 'Emit governed receipts', 'Shared framework integration rail')
@@ -207,6 +214,22 @@ mustContain(workbenchContent, 'uv run --package gove-zone gove-zone gate', 'Shar
 mustContain(workbenchContent, 'uv run --package gove-zone gove-zone setup', 'Shared starter kits')
 mustContain(workbenchContent, 'uv run --package gove-zone gove-zone eval', 'Shared starter kits')
 mustContain(workbenchContent, 'Pick payload → run gate → attach receipt', 'Shared starter kits')
+mustContain(workbenchContent, 'Build local gallery', 'Shared hosted Storybook runway')
+mustContain(workbenchContent, 'Enable Pages deploy', 'Shared hosted Storybook runway')
+mustContain(workbenchContent, 'Verify live Storybook', 'Shared hosted Storybook runway')
+mustContain(workbenchContent, 'Attach hosted proof', 'Shared hosted Storybook runway')
+mustContain(
+  workbenchContent,
+  'pnpm -F acgi-ai run storybook:build',
+  'Shared hosted Storybook runway',
+)
+mustContain(workbenchContent, 'STORYBOOK_PAGES_ENABLED=true', 'Shared hosted Storybook runway')
+mustContain(workbenchContent, 'storybook-manifest-live', 'Shared hosted Storybook runway')
+mustContain(
+  workbenchContent,
+  'copyIntoProductionEvidence.hostedStorybook',
+  'Shared hosted Storybook runway',
+)
 mustContain(workbenchContent, 'Operate the governance loop', 'Shared platform requirements')
 mustContain(workbenchContent, 'Hold release with context', 'Shared platform requirements')
 mustContain(workbenchContent, 'Constrain agent agency', 'Shared platform requirements')
@@ -226,7 +249,11 @@ mustContain(consoleWorkbench, 'workbench-requirement-grid', 'Console platform re
 mustContain(consoleWorkbench, 'Framework → control → proof', 'Console platform requirements')
 mustContain(marketing, 'm-workbench-requirements', 'Marketing platform requirements')
 mustContain(marketing, 'Platform requirements', 'Marketing platform requirements')
-mustContain(consoleWorkbench, 'id="framework-integration-rail"', 'Console framework integration rail')
+mustContain(
+  consoleWorkbench,
+  'id="framework-integration-rail"',
+  'Console framework integration rail',
+)
 mustContain(consoleWorkbench, 'workbench-framework-rail', 'Console framework integration rail')
 mustContain(consoleWorkbench, 'Framework integration rail', 'Console framework integration rail')
 mustContain(marketing, 'm-workbench-framework', 'Marketing framework integration rail')
@@ -236,6 +263,8 @@ mustContain(consoleWorkbench, 'workbench-starter-summary', 'Console starter kits
 mustContain(consoleWorkbench, 'Agent framework starter kits', 'Console starter kits')
 mustContain(marketing, 'm-workbench-starters', 'Marketing starter kits')
 mustContain(marketing, 'Agent framework starter kits', 'Marketing starter kits')
+mustContain(marketing, 'm-workbench-storybook-runway', 'Marketing hosted Storybook runway')
+mustContain(marketing, 'Hosted Storybook runway', 'Marketing hosted Storybook runway')
 mustContain(consoleWorkbench, 'workbench-board', 'Console workbench board')
 mustContain(workbenchContent, 'Work queue', 'Shared workbench stages')
 mustContain(workbenchContent, 'Trace graph', 'Shared workbench stages')
@@ -271,6 +300,9 @@ mustContain(consoleWorkbench, 'workbench-command-summary', 'Console production c
 mustContain(consoleWorkbench, 'Production command rail', 'Console production command rail')
 mustContain(marketing, 'm-workbench-assurance', 'Marketing assurance proof intake')
 mustContain(marketing, 'Assurance proof intake', 'Marketing assurance proof intake')
+mustContain(consoleWorkbench, 'id="hosted-storybook-runway"', 'Console hosted Storybook runway')
+mustContain(consoleWorkbench, 'workbench-storybook-summary', 'Console hosted Storybook runway')
+mustContain(consoleWorkbench, 'Hosted Storybook runway', 'Console hosted Storybook runway')
 mustContain(marketing, 'm-workbench-blockers', 'Marketing release blocker queue')
 mustContain(marketing, 'Release blocker queue', 'Marketing release blocker queue')
 mustContain(consoleWorkbench, 'id="assurance-proof-intake"', 'Console assurance proof intake')
@@ -284,7 +316,11 @@ mustContain(workbenchContent, 'production-deployment', 'Shared release blocker q
 mustContain(workbenchContent, 'frontend-production-auth', 'Shared release blocker queue')
 mustContain(workbenchContent, 'legal-review-of-claim-matrix', 'Shared release blocker queue')
 mustContain(workbenchContent, 'third-party-penetration-test', 'Shared release blocker queue')
-mustContain(workbenchContent, 'full-wcag-manual-screen-reader-evidence', 'Shared release blocker queue')
+mustContain(
+  workbenchContent,
+  'full-wcag-manual-screen-reader-evidence',
+  'Shared release blocker queue',
+)
 mustContain(workbenchContent, 'hosted-storybook-buyer-evidence', 'Shared release blocker queue')
 mustContain(workbenchContent, 'owner · artifact · unblock command', 'Shared release blocker queue')
 mustContain(workbenchContent, 'verify:production-live', 'Shared launch proof ladder')
@@ -306,6 +342,7 @@ mustContain(design, 'Start here → Hold release → Export proof', 'Design sour
 mustContain(design, 'Framework → control → proof', 'Design source of truth')
 mustContain(design, 'Framework integration rail', 'Design source of truth')
 mustContain(design, 'Agent framework starter kits', 'Design source of truth')
+mustContain(design, 'Hosted Storybook runway', 'Design source of truth')
 mustContain(design, 'Choose → Trace → Check → Export', 'Design source of truth')
 mustContain(design, 'Local → Live → Assured', 'Design source of truth')
 mustContain(design, 'Current saved cutover state', 'Design source of truth')
@@ -331,8 +368,17 @@ mustContain(research, 'Operator quick-start path', 'Research memo')
 mustContain(research, 'Platform requirements rail', 'Research memo')
 mustContain(research, 'Framework integration rail', 'Research memo')
 mustContain(research, 'Agent framework starter kits', 'Research memo')
-mustContain(research, 'OpenAI Responses, OpenAI Chat, LangChain-style, MCP-style, and Claude/Codex-style', 'Research memo')
-mustContain(research, 'OpenAI Responses starter, LangChain tool-call starter, MCP / Claude / Codex hook starter, and Benchmark fixture starter', 'Research memo')
+mustContain(research, 'Hosted Storybook runway', 'Research memo')
+mustContain(
+  research,
+  'OpenAI Responses, OpenAI Chat, LangChain-style, MCP-style, and Claude/Codex-style',
+  'Research memo',
+)
+mustContain(
+  research,
+  'OpenAI Responses starter, LangChain tool-call starter, MCP / Claude / Codex hook starter, and Benchmark fixture starter',
+  'Research memo',
+)
 mustContain(research, 'Govern, Regulate, Secure, Observe, Measure, and Use', 'Research memo')
 mustContain(research, 'Start here, Hold release, and Export proof', 'Research memo')
 mustContain(research, 'Guided review path', 'Research memo')
@@ -359,6 +405,11 @@ mustContain(
 )
 mustContain(research, 'Production command rail', 'Research memo')
 mustContain(research, 'make production-blocker-evidence', 'Research memo')
+mustContain(
+  research,
+  'Build local gallery, Enable Pages deploy, Verify live Storybook, and Attach hosted proof',
+  'Research memo',
+)
 mustContain(research, 'Assurance proof intake', 'Research memo')
 mustContain(
   research,

@@ -125,6 +125,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'make production-blocker-evidence',
   },
   {
+    id: 'console-hosted-storybook-runway',
+    surface: 'console',
+    route: '/console/workbench#hosted-storybook-runway',
+    title: 'Console hosted Storybook runway',
+    expectation:
+      'Operator can follow the hosted buyer-evidence path from local gallery build through Pages, live verifier, and completed proof validation.',
+    expectedText: 'Build local gallery',
+  },
+  {
     id: 'console-assurance-proof-intake',
     surface: 'console',
     route: '/console/workbench#assurance-proof-intake',

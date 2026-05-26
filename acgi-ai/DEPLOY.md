@@ -799,11 +799,17 @@ launch claims.
 launches the marketing and console Vite surfaces separately, uses
 Chrome/Chromium headless, checks expected DOM text, scrolls hash targets into
 view before capture, rejects likely blank screenshots, and captures the
-marketing workbench, `/console/workbench`, and
+marketing workbench, `/console/workbench`,
+`/console/workbench#operator-decision-rail`,
 `/console/workbench#guided-review-path`,
+`/console/workbench#framework-integration-rail`,
 `/console/workbench#agent-framework-starter-kits`,
-`/console/workbench#launch-proof-ladder`, and
-`/console/workbench#release-blocker-queue` at the five visual baseline viewports.
+`/console/workbench#launch-proof-ladder`,
+`/console/workbench#release-blocker-queue`,
+`/console/workbench#live-verifier-blocker-map`,
+`/console/workbench#production-command-rail`,
+`/console/workbench#hosted-storybook-runway`, and
+`/console/workbench#assurance-proof-intake` at the five visual baseline viewports.
 It writes a `local-browser-workbench-evidence` manifest and screenshots under
 `dist-browser-evidence/`; `pnpm run test:browser-evidence` verifies the command
 contract, dry-run manifest shape, target-visible screenshot guards, docs, and
@@ -814,8 +820,9 @@ legal/security assurance.
 **Buyer evidence gallery gate.** `pnpm run evidence:build` produces the
 dependency-free local buyer-evidence gallery under `dist-buyer-evidence/`.
 `pnpm run test:buyer-evidence` rebuilds it in a scratch directory and verifies
-the proof-story manifest, visual governance workbench story, conservative claim
-boundary, package-script wiring, and documentation links. `pnpm run
+the proof-story manifest, visual governance workbench story, hosted Storybook
+runway proof points, conservative claim boundary, package-script wiring, and
+documentation links. `pnpm run
 storybook:build` currently aliases this
 local gallery build so the planned Storybook proof command has a local
 artifact. `pnpm run test:storybook-runtime-plan` verifies the

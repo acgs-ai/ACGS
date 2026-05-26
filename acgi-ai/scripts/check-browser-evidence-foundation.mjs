@@ -61,6 +61,7 @@ for (const needle of [
   '/console/workbench#release-blocker-queue',
   '/console/workbench#live-verifier-blocker-map',
   '/console/workbench#production-command-rail',
+  '/console/workbench#hosted-storybook-runway',
   '/console/workbench#assurance-proof-intake',
   '--headless=new',
   '--dump-dom',
@@ -144,7 +145,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 11, 'manifest must include eleven browser targets.')
+    check(manifest.targets?.length === 12, 'manifest must include twelve browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -156,7 +157,7 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 55,
+      manifest.screenshots?.length === 60,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
@@ -212,6 +213,12 @@ try {
       'make production-blocker-evidence',
       'dry-run manifest',
     )
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-hosted-storybook-runway',
+      'dry-run manifest',
+    )
+    mustContain(JSON.stringify(manifest.targets), 'Build local gallery', 'dry-run manifest')
     mustContain(
       JSON.stringify(manifest.targets),
       'console-assurance-proof-intake',
