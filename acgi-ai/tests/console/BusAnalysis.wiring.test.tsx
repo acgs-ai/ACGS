@@ -13,7 +13,10 @@
 
 import { describe, expect, test } from 'vitest'
 import { HttpResponse, http } from 'msw'
+import { screen } from '@testing-library/react'
 import { server } from '../../src/mocks/server'
+import { BusAnalysis } from '../../src/routes/console/BusAnalysis'
+import { renderWithProviders } from './render'
 
 type BusDefect = {
   id: string
@@ -76,11 +79,12 @@ describe('BusAnalysis defect wiring (T037)', () => {
     expect(body.items).toEqual([])
   })
 
-  test.skip('DefectPanel renders the defect list (skipped until useBusDefects lands)', () => {
-    // TODO(T037): once src/api/hooks.ts exports useBusDefects and
-    // src/routes/console/BusAnalysis.tsx renders a DefectPanel, replace this
-    // skip with a renderWithProviders(<BusAnalysis />) assertion that the
-    // "unwired-handler" defect row is visible.
-    expect(true).toBe(true)
+  test('DefectPanel renders the defect list when useBusDefects returns data', async () => {
+    server.use(
+      http.get('/api/bus/defects', () => HttpResponse.json(FIXTURE)),
+    )
+    renderWithProviders(<BusAnalysis />)
+    await screen.findByText(/wiring defects/i)
+    expect(await screen.findByText(/reasoner\.evaluate/i)).toBeInTheDocument()
   })
 })

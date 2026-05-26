@@ -1,27 +1,33 @@
 // T063 — Console /console/bus end-to-end smoke.
 //
 // The console surface is auth-gated by `requireConsoleSession` in
-// src/surfaces/console/App.tsx. In dev/preview builds the demo session lives
-// at `acgs.console.session` in sessionStorage with shape
-// `{ createdAt: string, nonce: string }` (see src/lib/session.ts). We inject
-// that key via `addInitScript` before any console route is loaded so the
-// route guard accepts the request without a real IdP roundtrip.
+// src/surfaces/console/App.tsx. In a production build (which `vite preview`
+// serves), the demo sessionStorage path is intentionally disabled
+// (`isDemoSessionEnabled` returns `!import.meta.env.PROD`), so `hasSession()`
+// always returns false. The only remaining gate is `hasProductionSession()`,
+// which fetches `/auth/status` and accepts the exact forward-auth-status-bridge
+// payload shape pinned in `isProductionSessionStatus` (session.ts).
+//
+// We mock `/auth/status` with that exact payload so the route guard admits
+// the smoke navigation without a real IdP roundtrip.
 
 import { expect, test } from '@playwright/test'
 
+const AUTH_STATUS_PAYLOAD = {
+  authenticated: true,
+  source: 'forward-auth-status-bridge',
+  claimBoundary:
+    'production · forward-auth status bridge · client demo storage is not accepted',
+}
+
 test.describe('Bus Analysis console route', () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      const session = {
-        createdAt: new Date().toISOString(),
-        nonce: 'e2e-bus-analysis-nonce',
-      }
-      try {
-        window.sessionStorage.setItem('acgs.console.session', JSON.stringify(session))
-      } catch {
-        // sessionStorage may be unavailable on some surface modes; we still
-        // try the navigation so the test fails on the visible symptom.
-      }
+    await page.route('**/auth/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(AUTH_STATUS_PAYLOAD),
+      })
     })
   })
 

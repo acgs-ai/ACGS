@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useBusTraceList, useSingleTrace } from '../../api/hooks'
+import { useBusDefects, useBusTraceList, useSingleTrace } from '../../api/hooks'
 import type {
+  BusDefectList,
   BusEventStatus,
   BusExpired,
   BusIntegrityStatus,
@@ -242,10 +243,27 @@ function TraceInspector({
   )
 }
 
+function DefectPanel({ data }: { data: BusDefectList | undefined }) {
+  if (!data || data.items.length === 0) return null
+  return (
+    <section>
+      <p className="u-mono-cap-wide">Wiring defects</p>
+      <ul>
+        {data.items.map((defect) => (
+          <li key={defect.id}>
+            {defect.severity} · {defect.kind} · {defect.detail.slice(0, 60)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export function BusAnalysis() {
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const list = useBusTraceList()
+  const defects = useBusDefects()
   const single = useSingleTrace(selectedId)
   const filtered = useTextFilter(list.data?.items, query, listFields)
 
@@ -270,6 +288,7 @@ export function BusAnalysis() {
   const total = list.data.items.length
   return (
     <div>
+      <DefectPanel data={defects.data} />
       <SearchToolbar
         value={query}
         onChange={setQuery}

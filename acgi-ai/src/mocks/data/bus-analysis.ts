@@ -8,6 +8,7 @@
 
 import type {
   BusDecisionVerdict,
+  BusDefectList,
   BusReceiptProof,
   BusSingleTrace,
   BusTraceEvent,
@@ -311,4 +312,26 @@ const RECEIPT_PROOF_BY_ID: Record<string, BusReceiptProof> = Object.fromEntries(
 
 export function getReceiptProofFixture(receiptId: string): BusReceiptProof | null {
   return RECEIPT_PROOF_BY_ID[receiptId] ?? null
+}
+
+export const BUS_DEFECT_LIST: BusDefectList = {
+  kind: 'defect-list',
+  items: [
+    {
+      id: 'defect-0001',
+      kind: 'unwired-handler',
+      severity: 'warning',
+      correlation_id: TRACE_C_ID,
+      detected_at: '2026-05-14T13:32:45.000Z',
+      detail: 'Handler reasoner.evaluate was dispatched but never registered.',
+    },
+    {
+      id: 'defect-0002',
+      kind: 'tampered-chain',
+      severity: 'critical',
+      correlation_id: TRACE_B_ID,
+      detected_at: '2026-05-14T13:51:09.000Z',
+      detail: 'Audit chain hash mismatch detected at causal_index 1.',
+    },
+  ],
 }

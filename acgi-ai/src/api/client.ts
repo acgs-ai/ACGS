@@ -14,6 +14,7 @@ import type {
   ActionTestRequest,
   Agent,
   AuditEvent,
+  BusDefectList,
   BusExpired,
   BusReceiptProof,
   BusSingleTrace,
@@ -164,5 +165,6 @@ export const api = {
       busHttp<BusSingleTrace | BusExpired>(`/traces/${encodeURIComponent(correlationId)}`),
     getReceiptProof: (receiptId: string) =>
       busHttp<BusReceiptProof>(`/receipts/${encodeURIComponent(receiptId)}`),
+    listDefects: () => busHttp<BusDefectList>('/defects?window_seconds=60'),
   },
 }

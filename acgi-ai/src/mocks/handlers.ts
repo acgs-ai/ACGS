@@ -15,7 +15,12 @@ import { ACCOUNT_VIEW } from './data/account'
 import { GOVERNED_ACTIONS, getGovernedActionProof } from './data/actions'
 import { AGENTS } from './data/agents'
 import { AUDIT_EVENTS } from './data/audit'
-import { BUS_TRACE_LIST, getReceiptProofFixture, getSingleTraceFixture } from './data/bus-analysis'
+import {
+  BUS_DEFECT_LIST,
+  BUS_TRACE_LIST,
+  getReceiptProofFixture,
+  getSingleTraceFixture,
+} from './data/bus-analysis'
 import { COMPILE_DRAFT } from './data/compile'
 import { CONSOLE_SUMMARY } from './data/console-summary'
 import { DELIBERATIONS } from './data/deliberations'
@@ -70,6 +75,7 @@ export const handlers = [
   http.get('/api/v1/settings', () => HttpResponse.json(SETTING_SECTIONS)),
   http.get('/api/v1/tenants', () => HttpResponse.json(TENANTS)),
   http.get('/api/v1/account', () => HttpResponse.json(ACCOUNT_VIEW)),
+  http.get('/api/bus/defects', () => HttpResponse.json(BUS_DEFECT_LIST)),
   http.get('/api/bus/traces', () => HttpResponse.json(BUS_TRACE_LIST)),
   http.get('/api/bus/traces/:correlationId', ({ params }) => {
     const id = String(params.correlationId)

@@ -584,3 +584,18 @@ export function useSingleTrace(correlationId: string | null) {
     ...SNAPSHOT,
   })
 }
+
+export function useBusDefects() {
+  const busHealth = useBusHealth('live')
+  return useQuery({
+    queryKey: ['bus-defects'],
+    queryFn: import.meta.env.DEV
+      ? () =>
+          withFixtureFallback(
+            () => api.bus.listDefects(),
+            () => import('../mocks/data/bus-analysis').then((m) => m.BUS_DEFECT_LIST),
+          )
+      : () => api.bus.listDefects(),
+    ...busHealth,
+  })
+}

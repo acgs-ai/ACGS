@@ -428,3 +428,17 @@ export type BusExpired = {
     purged_at: string
   }
 }
+
+export type BusDefect = {
+  id: string
+  kind: 'unwired-handler' | 'orphan-response' | 'ingest-gap' | 'tampered-chain'
+  severity: 'info' | 'warning' | 'critical'
+  correlation_id: string
+  detected_at: string
+  detail: string
+}
+
+export type BusDefectList = {
+  kind: 'defect-list'
+  items: BusDefect[]
+}
