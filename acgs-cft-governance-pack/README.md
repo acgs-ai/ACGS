@@ -58,6 +58,22 @@ Each evaluation writes one JSONL event:
 
 The sample bundle in `evidence/sample-governed-terraform-plan.jsonl` is generated from the allowed Project Factory fixture.
 
+## Package architecture
+
+The importable package keeps runtime boundaries explicit:
+
+| Module | Responsibility |
+| --- | --- |
+| `acgs_cft_governance_pack.evaluator` | Public orchestration facade: hash the plan, evaluate controls, and delegate evidence event construction. |
+| `acgs_cft_governance_pack.controls` | Terraform plan resource selection, rule-kind dispatch, and violation generation. |
+| `acgs_cft_governance_pack.evidence` | Evidence event envelope construction, `allow` / `deny` decision text, timestamping, and Merkle-root assignment. |
+| `acgs_cft_governance_pack.hashing` | Canonical JSON SHA-256 hashing and Merkle-root construction. |
+| `acgs_cft_governance_pack.policy_io` | YAML policy loading and evidence JSONL writing. |
+| `acgs_cft_governance_pack.terraform_plan` | Terraform plan shape helpers for active resource changes, `after` payloads, firewall ports, and violation records. |
+| `acgs_cft_governance_pack.cli` | `python -m acgs_cft_governance_pack evaluate ...` and `acgs-cft-govern` entrypoints. |
+
+The package facade exports `evaluate_plan`, `load_policies`, and `write_evidence_jsonl` for library callers. CLI behavior remains the primary integration contract for CI.
+
 ## Policy schema
 
 Policies are YAML files with one or more controls:

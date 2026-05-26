@@ -10,12 +10,21 @@ directory carries the YAML rule bundles consumed at runtime, and
 
 ## Key Files
 
-- `__init__.py` — Public re-exports: `evaluate_plan`, `load_policies`
+- `__init__.py` — Public re-exports: `evaluate_plan`, `load_policies`,
+  `write_evidence_jsonl`
 - `__main__.py` — Enables `python -m acgs_cft_governance_pack` invocation
 - `cli.py` — `acgs-cft-govern` console script; subcommands `evaluate`, plus arg
   parsing for `--plan`, `--policy-dir`, `--policy`, evidence output paths
-- `evaluator.py` — Core engine: policy loader, plan walker, decision builder
-  (`allow` / `deny` / `warn`), evidence record assembly with `plan_hash` SHA-256
+- `evaluator.py` — Public orchestration facade: plan hashing, policy iteration,
+  control evaluation, and evidence builder delegation.
+- `controls.py` — Terraform plan walker, rule-kind dispatch, and violation
+  construction for every bundled governance control.
+- `evidence.py` — Evidence envelope construction, decision/reason text,
+  timestamping, and Merkle-root assignment.
+- `hashing.py` — Canonical JSON SHA-256 hashing and Merkle-root construction.
+- `policy_io.py` — YAML policy loading and evidence JSONL writing.
+- `terraform_plan.py` — Terraform plan shape helpers for active changes,
+  `after` payloads, firewall ports, and violation records.
 
 ## Workflow / Commands
 
@@ -41,10 +50,9 @@ pip install -e ./acgs-cft-governance-pack
 - `load_policies()` accepts both a directory of YAML files and explicit
   `--policy` paths; the CLI flattens both into a single list before
   `evaluate_plan()` runs, so policy precedence follows insertion order.
-- The package depends on `governance.models.sha256_json` from
-  `acgs_governance_eval_mvp` only for evidence canonicalisation in some
-  pipelines; the local evaluator implements its own hashing for the
-  Terraform-plan path to stay drop-in installable.
-- Keep `evaluator.py` import-light at module top — heavy YAML/JSON work belongs
-  inside `load_policies()` and `evaluate_plan()` so `python -m` startup stays
-  under ~300 ms.
+- `evaluator.py` intentionally re-exports `load_policies()` and
+  `write_evidence_jsonl()` from `policy_io.py` for backward-compatible imports.
+- Keep `evaluator.py` import-light at module top. YAML/JSON file work belongs
+  in `policy_io.py`; deterministic hashing belongs in `hashing.py`; evidence
+  envelope assembly belongs in `evidence.py`; plan-rule logic belongs in
+  `controls.py`; Terraform plan shape parsing belongs in `terraform_plan.py`.
