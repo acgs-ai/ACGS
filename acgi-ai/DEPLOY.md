@@ -440,6 +440,7 @@ pnpm run test:production-evidence-draft
 pnpm run test:storybook-runtime-plan
 pnpm run test:hosted-storybook-handoff
 pnpm run test:hosted-storybook-proof-template
+pnpm run test:hosted-storybook-proof-gap-report
 pnpm run test:container-pins
 pnpm run test:auth-boundary
 pnpm run smoke:bus-proxy
@@ -575,11 +576,12 @@ buyer-evidence gallery with `storybook.acgs.ai` publication metadata, runs or
 copies `verify:production-live` JSON, runs acgi-ai `pnpm` evidence commands
 through the exact Node 24 gate in `scripts/run_acgi_node24_gate.sh`,
 canonicalizes unambiguous wrapper-captured verifier transcripts, builds the
-blocker report, cutover plan, hosted Storybook handoff, deployment-blocked
-production-evidence draft and validator output when live blockers remain,
-optionally writes `dist-release-evidence/hosted-storybook-proof-validation.json`
-when `--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied,
-refreshes `make release-evidence`,
+blocker report, cutover plan, hosted Storybook handoff, `dist-release-evidence/hosted-storybook-proof-gap-report.json`
+Build proof gap report, deployment-blocked production-evidence draft and validator
+output when live blockers remain, optionally writes
+`dist-release-evidence/hosted-storybook-proof-validation.json` when
+`--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied, refreshes
+`make release-evidence`,
 and writes `dist-release-evidence/production-launch-preflight.json`. After
 external Pages/DNS evidence is attached, operators validate the completed hosted
 proof with `pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --out ../dist-release-evidence/hosted-storybook-proof-validation.json --require-pass`. Its safe
@@ -621,6 +623,16 @@ buyer-evidence stories,
 `copyIntoProductionEvidence.hostedStorybook` fields. The template is not hosted
 Storybook proof, not official Storybook runtime proof, not production
 deployment proof, and not WCAG conformance proof.
+
+`pnpm run test:hosted-storybook-proof-gap-report` verifies
+`build:hosted-storybook-proof-gap-report`, the local Build proof gap report
+command that reads `hosted-storybook-proof.example.json`, saved
+`verify:production-live` JSON, and `hosted-storybook-handoff.json`, then writes
+`hosted-storybook-proof-gap-report.json`. The report makes unresolved Pages run,
+DNS, `storybook-manifest-live`, hosted manifest, hosted browser/a11y/visual-diff,
+`copyIntoProductionEvidence.hostedStorybook`, and template-ref gaps visible; it
+does not deploy, mutate DNS, fetch live origins, install Storybook, create hosted
+Storybook proof, or create live production proof.
 
 The console image build is pinned to `node:24-alpine` and the runtime image
 is pinned to `caddy:2.10.2-alpine`; `pnpm run test:container-pins` keeps
@@ -835,8 +847,9 @@ Pages `CNAME`, writes `.nojekyll`, includes a `/manifest.json` for the live
 `storybook-manifest-live` check, records hosted-proof requirements in that
 manifest, uploads the `buyer-evidence-storybook` artifact, and only enables GitHub Pages deployment when
 `STORYBOOK_PAGES_ENABLED` is explicitly set. Before upload or deploy, the
-Storybook workflow also runs `test:hosted-storybook-handoff` and
-`test:hosted-storybook-proof-template` so the Pages path cannot drift from the
+Storybook workflow also runs `test:hosted-storybook-handoff`,
+`test:hosted-storybook-proof-template`, and
+`test:hosted-storybook-proof-gap-report` so the Pages path cannot drift from the
 operator proof handoff or proof-intake contract. The console workflow also runs
 `pnpm evidence:build` and uploads the
 `buyer-evidence-gallery` artifact before any credentialed GCP/auth/deploy
@@ -852,7 +865,9 @@ for the Pages run URL, DNS evidence, hosted `/manifest.json` evidence, absent
 `live-storybook-*` blockers, hosted browser screenshot, automated
 accessibility, and visual-diff refs for all eight buyer-evidence stories, plus
 the `hosted-storybook-buyer-evidence`
-blocker removal handoff. This is still not the official Storybook runtime; `storybook-runtime.plan.json`
+blocker removal handoff. `build:hosted-storybook-proof-gap-report` then writes
+`hosted-storybook-proof-gap-report.json` as the local gap checklist before proof
+owners are asked to complete the packet. This is still not the official Storybook runtime; `storybook-runtime.plan.json`
 is only a pending dependency plan and not official Storybook runtime proof,
 not live `storybook.acgs.ai` proof, not live production proof, and not
 WCAG conformance proof.
@@ -1041,6 +1056,7 @@ hash-anchored, operator-readable.
 | 2026-05-25 | Storybook runtime dependency has a local approval plan | `pnpm run test:storybook-runtime-plan` guards `storybook-runtime.plan.json`, keeping `@storybook/react-vite`, `npx storybook@latest init`, lockfile updates, and shim replacement behind `pending-external:dependency-owner-approval`; the plan is not official Storybook runtime proof, not hosted Storybook proof, and not production deployment proof. |
 | 2026-05-25 | Hosted Storybook proof has a local operator handoff | `pnpm run test:hosted-storybook-handoff` guards `build:hosted-storybook-handoff`, which turns a Pages-ready buyer-evidence manifest and saved live verifier JSON into `hosted-storybook-handoff.json` with `pending-external:storybook-pages-proof`, `storybook-manifest-live`, and `copyIntoProductionEvidence.hostedStorybook` fields while preserving the not live production proof boundary. |
 | 2026-05-25 | Hosted Storybook proof intake is machine-verifiable before claim | `pnpm run test:hosted-storybook-proof-template` guards `hosted-storybook-proof.example.json`, keeping Storybook Pages run URL, DNS evidence, hosted manifest evidence, `storybook-manifest-live`, absent `live-storybook-*` blockers, and `copyIntoProductionEvidence.hostedStorybook` requirements explicit while preserving the not hosted Storybook proof boundary. |
+| 2026-05-25 | Hosted Storybook proof gaps have a local checklist | `pnpm run test:hosted-storybook-proof-gap-report` guards `build:hosted-storybook-proof-gap-report`, which writes `hosted-storybook-proof-gap-report.json` from the proof template, live verifier output, and handoff so unresolved Pages, DNS, live verifier, hosted manifest, hosted browser, copy-field, and pending-ref gaps are visible without claiming hosted Storybook proof. |
 | 2026-05-25 | Fixture fallback is network-only outside production | `withFixtureFallback` is disabled in production, rethrows `ApiError`/4xx/5xx and non-network errors, and only uses fixture data for explicit network-unavailable `TypeError` cases in non-production mock mode; `pnpm run test:security` and `pnpm run test:mvp` guard the boundary. |
 
 ---

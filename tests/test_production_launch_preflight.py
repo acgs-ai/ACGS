@@ -30,23 +30,26 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         preflight["proofIntakeArtifacts"]["productionEvidenceTemplate"]["templatePath"]
         == "acgi-ai/production-evidence.example.json"
     )
+    assert "hostedStorybookProofGapReport" in preflight["proofIntakeArtifacts"]
+    assert (
+        preflight["proofIntakeArtifacts"]["hostedStorybookProofGapReport"]["outputArtifact"]
+        == "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+    )
+    assert (
+        "build:hosted-storybook-proof-gap-report"
+        in preflight["proofIntakeArtifacts"]["hostedStorybookProofGapReport"]["operatorCommand"]
+    )
     assert "hostedStorybookProofValidation" in preflight["proofIntakeArtifacts"]
     assert (
-        preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"][
-            "outputArtifact"
-        ]
+        preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"]["outputArtifact"]
         == "dist-release-evidence/hosted-storybook-proof-validation.json"
     )
     assert (
         "validate:hosted-storybook-proof"
-        in preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"][
-            "operatorCommand"
-        ]
+        in preflight["proofIntakeArtifacts"]["hostedStorybookProofValidation"]["operatorCommand"]
     )
     assert (
-        preflight["productionEvidenceChain"]["hostedStorybookProofValidation"][
-            "failingCheckIds"
-        ]
+        preflight["productionEvidenceChain"]["hostedStorybookProofValidation"]["failingCheckIds"]
         == []
     )
     assert {
@@ -63,6 +66,7 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         if blocker["blockerId"] == "hosted-storybook-buyer-evidence"
     )
     assert "hostedStorybookProofTemplate" in storybook_blocker["proofIntakeArtifactIds"]
+    assert "hostedStorybookProofGapReport" in storybook_blocker["proofIntakeArtifactIds"]
     assert "hostedStorybookProofValidation" in storybook_blocker["proofIntakeArtifactIds"]
     assert preflight["productionEvidenceChain"]["status"] in {"consistent", "needs-refresh"}
     action_ids = {action["id"] for action in preflight["requiredActions"]}
@@ -81,12 +85,19 @@ def test_current_manifest_preflight_stays_blocked_until_external_proof_is_attach
         == "acgi-ai/production-authority.example.json"
     )
     assert (
-        external_action["evidence"]["proofIntakeArtifacts"][
-            "hostedStorybookProofValidation"
-        ]["outputArtifact"]
+        external_action["evidence"]["proofIntakeArtifacts"]["hostedStorybookProofGapReport"][
+            "outputArtifact"
+        ]
+        == "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+    )
+    assert (
+        external_action["evidence"]["proofIntakeArtifacts"]["hostedStorybookProofValidation"][
+            "outputArtifact"
+        ]
         == "dist-release-evidence/hosted-storybook-proof-validation.json"
     )
     markdown = plp.render_markdown(preflight)
+    assert "hosted-storybook-proof-gap-report.json" in markdown
     assert "hosted-storybook-proof-validation.json" in markdown
 
 
@@ -179,9 +190,7 @@ def test_preflight_carries_live_blocker_details_into_required_actions():
         "dirty": False,
         "dirtyEntryCount": 0,
     }
-    live_snapshot = manifest["evidenceArtifacts"]["productionLiveVerifier"][
-        "latestOutputSnapshot"
-    ]
+    live_snapshot = manifest["evidenceArtifacts"]["productionLiveVerifier"]["latestOutputSnapshot"]
     live_snapshot.update(
         {
             "present": True,
@@ -215,9 +224,7 @@ def test_preflight_carries_live_blocker_details_into_required_actions():
         for action in preflight["requiredActions"]
         if action["id"] == "attach-passing-production-live-verifier-output"
     )
-    assert preflight["productionLive"]["blockerDetails"] == action["evidence"][
-        "blockerDetails"
-    ]
+    assert preflight["productionLive"]["blockerDetails"] == action["evidence"]["blockerDetails"]
     assert action["evidence"]["blockerDetails"][0]["requiredAction"].startswith(
         "Create or repair the console.acgs.ai DNS record"
     )

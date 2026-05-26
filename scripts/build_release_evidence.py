@@ -42,6 +42,9 @@ PRODUCTION_EVIDENCE_VALIDATION_SNAPSHOT = Path(
     "dist-release-evidence/production-evidence-validation.deployment-blocked.json"
 )
 HOSTED_STORYBOOK_HANDOFF_SNAPSHOT = Path("dist-release-evidence/hosted-storybook-handoff.json")
+HOSTED_STORYBOOK_PROOF_GAP_REPORT_SNAPSHOT = Path(
+    "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+)
 HOSTED_STORYBOOK_PROOF_VALIDATION_SNAPSHOT = Path(
     "dist-release-evidence/hosted-storybook-proof-validation.json"
 )
@@ -126,6 +129,7 @@ REQUIRED_VERIFICATION_COMMANDS = [
     "pnpm -F acgi-ai run test:storybook-publication",
     "pnpm -F acgi-ai run test:hosted-storybook-handoff",
     "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+    "pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report",
     "pnpm -F acgi-ai run test:ci-gates",
     "make production-launch-preflight",
     "uv run python scripts/build_production_blocker_evidence.py --dry-run --json",
@@ -501,6 +505,37 @@ def hosted_storybook_handoff_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, 
     return snapshot
 
 
+def hosted_storybook_proof_gap_report_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Return a compact optional snapshot of a saved hosted Storybook proof gap report."""
+
+    data = _read_json_if_present(repo_root / HOSTED_STORYBOOK_PROOF_GAP_REPORT_SNAPSHOT)
+    snapshot: dict[str, Any] = {
+        "path": HOSTED_STORYBOOK_PROOF_GAP_REPORT_SNAPSHOT.as_posix(),
+        "present": data is not None,
+        "claimBoundary": (
+            "Saved hosted-storybook-proof-gap-report output is a local operator "
+            "checklist only; it is not hosted Storybook proof, not live production proof, "
+            "not legal/SOC2/WCAG/pentest proof, and not release authority."
+        ),
+    }
+    if data is None:
+        return snapshot
+
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    snapshot.update(
+        {
+            "artifactKind": data.get("artifactKind"),
+            "generatedAt": data.get("generatedAt"),
+            "status": data.get("status"),
+            "openGapCount": summary.get("openGapCount"),
+            "openGapIds": summary.get("openGapIds", []),
+            "storybookBlockers": summary.get("storybookBlockers", []),
+            "sourceClaimBoundary": data.get("claimBoundary"),
+        }
+    )
+    return snapshot
+
+
 def hosted_storybook_proof_validation_snapshot(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     """Return a compact optional snapshot of saved hosted Storybook proof validation."""
 
@@ -549,6 +584,7 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
     evidence_draft = production_evidence_draft_snapshot(repo_root)
     validation = production_evidence_validation_snapshot(repo_root)
     hosted_storybook = hosted_storybook_handoff_snapshot(repo_root)
+    hosted_storybook_gap_report = hosted_storybook_proof_gap_report_snapshot(repo_root)
     hosted_storybook_proof_validation = hosted_storybook_proof_validation_snapshot(repo_root)
 
     missing_artifacts = [
@@ -625,12 +661,18 @@ def production_evidence_chain_snapshot(repo_root: Path = REPO_ROOT) -> dict[str,
             "productionEvidenceDraft": evidence_draft["path"],
             "productionEvidenceValidation": validation["path"],
             "hostedStorybookHandoff": hosted_storybook["path"],
+            "hostedStorybookProofGapReport": hosted_storybook_gap_report["path"],
             "hostedStorybookProofValidation": hosted_storybook_proof_validation["path"],
         },
         "missingArtifacts": missing_artifacts,
         "blockerSets": blocker_sets,
         "hostedStorybookBlockers": hosted_storybook_blockers,
         "hostedStorybookStoryIds": hosted_storybook.get("storyIds", []),
+        "hostedStorybookProofGapReport": {
+            "status": hosted_storybook_gap_report.get("status"),
+            "openGapCount": hosted_storybook_gap_report.get("openGapCount"),
+            "openGapIds": hosted_storybook_gap_report.get("openGapIds", []),
+        },
         "hostedStorybookMissingExpectedStoryIds": hosted_storybook.get(
             "missingExpectedStoryIds", []
         ),
@@ -997,6 +1039,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "dist-release-evidence/production-blocker-report.json",
                     "dist-release-evidence/production-cutover-plan.json",
                     "dist-release-evidence/hosted-storybook-handoff.json",
+                    "dist-release-evidence/hosted-storybook-proof-gap-report.json",
                     "dist-release-evidence/hosted-storybook-proof-validation.json",
                     "dist-release-evidence/production-evidence.deployment-blocked.json",
                     "dist-release-evidence/production-evidence-validation.deployment-blocked.json",
@@ -1016,6 +1059,25 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "claimBoundary": (
                         "canonicalization removes package-manager wrapper noise only; "
                         "it does not make a failing verifier pass or create live proof"
+                    ),
+                },
+                "hostedStorybookProofGapReport": {
+                    "operatorCommand": (
+                        "pnpm -F acgi-ai run build:hosted-storybook-proof-gap-report -- "
+                        "--proof-template <hosted-storybook-proof.example.json> "
+                        "--live-output <verify-production-live.json> --handoff "
+                        "<hosted-storybook-handoff.json> --out "
+                        "<hosted-storybook-proof-gap-report.json>"
+                    ),
+                    "latestGapReportSnapshot": hosted_storybook_proof_gap_report_snapshot(
+                        repo_root
+                    ),
+                    "outputArtifact": "dist-release-evidence/hosted-storybook-proof-gap-report.json",
+                    "outputFields": ["status", "summary.openGapIds", "gaps", "operatorSequence"],
+                    "claimBoundary": (
+                        "local operator checklist only; it does not deploy, mutate DNS, "
+                        "fetch live origins, install the official Storybook runtime, "
+                        "or create hosted Storybook proof"
                     ),
                 },
                 "hostedStorybookProofIntake": {
@@ -1153,6 +1215,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "pnpm test:storybook-publication",
                     "pnpm test:hosted-storybook-handoff",
                     "pnpm test:hosted-storybook-proof-template",
+                    "pnpm test:hosted-storybook-proof-gap-report",
                 ],
                 "requiredPublicationFiles": [
                     "index.html",
@@ -1195,6 +1258,33 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "hosted-storybook-handoff, does not deploy, mutate DNS, fetch live "
                     "origins, install the official Storybook runtime, or create live "
                     "production proof; not live production proof"
+                ),
+            },
+            "hostedStorybookProofGapReport": {
+                "script": "acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs",
+                "proofCommand": "pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report",
+                "latestGapReportSnapshot": hosted_storybook_proof_gap_report_snapshot(repo_root),
+                "operatorCommand": (
+                    "pnpm -F acgi-ai run build:hosted-storybook-proof-gap-report -- "
+                    "--proof-template <hosted-storybook-proof.example.json> "
+                    "--live-output <verify-production-live.json> --handoff "
+                    "<hosted-storybook-handoff.json> --out "
+                    "<hosted-storybook-proof-gap-report.json>"
+                ),
+                "outputArtifact": "dist-release-evidence/hosted-storybook-proof-gap-report.json",
+                "requiredGapIds": [
+                    "storybook-pages-run-evidence",
+                    "storybook-dns-evidence",
+                    "storybook-live-verifier-pass",
+                    "hosted-manifest-evidence",
+                    "hosted-browser-evidence",
+                    "production-evidence-copy-field",
+                    "no-template-or-pending-refs",
+                ],
+                "claimBoundary": (
+                    "local operator checklist only; it does not deploy, mutate DNS, fetch "
+                    "live origins, install the official Storybook runtime, or create "
+                    "hosted Storybook proof"
                 ),
             },
             "hostedStorybookProofTemplate": {
@@ -1253,9 +1343,7 @@ def build_manifest(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
                     "../dist-release-evidence/hosted-storybook-proof-validation.json "
                     "--require-pass"
                 ),
-                "outputArtifact": (
-                    "dist-release-evidence/hosted-storybook-proof-validation.json"
-                ),
+                "outputArtifact": ("dist-release-evidence/hosted-storybook-proof-validation.json"),
                 "outputFields": [
                     "status",
                     "proofPath",
@@ -1460,8 +1548,10 @@ live production proof.
   exactly one `production-live-verification` object, packages
   blocker/cutover/hosted-Storybook handoffs, writes the
   deployment-blocked production-evidence draft and validator output when live
-  blockers remain, optionally saves `hosted-storybook-proof-validation.json`
-  when `--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied,
+  blockers remain, always writes `hosted-storybook-proof-gap-report.json` so
+  the external Pages/DNS/manifest/browser proof gaps are visible, optionally
+  saves `hosted-storybook-proof-validation.json` when
+  `--hosted-storybook-proof <hosted-storybook-proof.json>` is supplied,
   refreshes release evidence, and saves
   `production-launch-preflight.json`. Its dry-run proof command is
   `{blocker_evidence_runbook["proofCommand"]}`; the wrapper may perform network
@@ -1535,6 +1625,13 @@ live production proof.
   `pnpm -F acgi-ai run test:hosted-storybook-handoff` verifies this behavior;
   the builder does not deploy, mutate DNS, fetch live origins, install the
   official Storybook runtime, or create live production proof.
+- Build proof gap report: `dist-release-evidence/hosted-storybook-proof-gap-report.json` is the saved
+  local operator checklist for the hosted Storybook proof packet. It compares the
+  template, current live-verifier Storybook status, and hosted handoff so Pages
+  run, DNS, hosted manifest, hosted screenshots, automated accessibility,
+  visual-diff, `copyIntoProductionEvidence.hostedStorybook`, and pending-ref gaps
+  are visible before an operator asks owners for external proof. It is not hosted
+  Storybook proof and does not deploy or fetch live origins.
 - `acgi-ai/hosted-storybook-proof.example.json` is the template-only external
   proof intake for removing `hosted-storybook-buyer-evidence`. `pnpm -F acgi-ai
   run test:hosted-storybook-proof-template` verifies the required Storybook

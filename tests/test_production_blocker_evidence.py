@@ -48,6 +48,7 @@ def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
         "build-production-blocker-report",
         "build-production-cutover-plan",
         "build-hosted-storybook-handoff",
+        "build-hosted-storybook-proof-gap-report",
         "build-production-evidence-draft-when-live-fails",
         "validate-deployment-blocked-production-evidence-when-live-fails",
         "refresh-release-evidence-bundle",
@@ -66,6 +67,13 @@ def test_dry_run_plan_is_claim_safe_and_does_not_execute_live_checks():
         == "../dist-release-evidence/production-live-verification.json"
     )
     assert "verify:production-live" in " ".join(commands["run-production-live-verifier"]["cmd"])
+    assert "build:hosted-storybook-proof-gap-report" in " ".join(
+        commands["build-hosted-storybook-proof-gap-report"]["cmd"]
+    )
+    gap_command = commands["build-hosted-storybook-proof-gap-report"]["cmd"]
+    assert gap_command[gap_command.index("--out") + 1] == (
+        "../dist-release-evidence/hosted-storybook-proof-gap-report.json"
+    )
     assert "build:production-evidence-draft" in " ".join(
         commands["build-production-evidence-draft-when-live-fails"]["cmd"]
     )
@@ -158,6 +166,9 @@ def test_dry_run_with_hosted_storybook_proof_saves_validation_artifact():
     assert "--require-pass" in validate_command
     assert payload["outputs"]["hostedStorybookProofValidation"] == (
         "dist-release-evidence/hosted-storybook-proof-validation.json"
+    )
+    assert payload["outputs"]["hostedStorybookProofGapReport"] == (
+        "dist-release-evidence/hosted-storybook-proof-gap-report.json"
     )
 
 

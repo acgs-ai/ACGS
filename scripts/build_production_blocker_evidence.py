@@ -37,6 +37,7 @@ OUTPUTS = {
     "blockerReport": EVIDENCE_DIR / "production-blocker-report.json",
     "cutoverPlan": EVIDENCE_DIR / "production-cutover-plan.json",
     "hostedStorybookHandoff": EVIDENCE_DIR / "hosted-storybook-handoff.json",
+    "hostedStorybookProofGapReport": EVIDENCE_DIR / "hosted-storybook-proof-gap-report.json",
     "hostedStorybookProofValidation": EVIDENCE_DIR / "hosted-storybook-proof-validation.json",
     "evidenceDraft": EVIDENCE_DIR / "production-evidence.deployment-blocked.json",
     "evidenceValidation": EVIDENCE_DIR / "production-evidence-validation.deployment-blocked.json",
@@ -85,9 +86,8 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
     blocker_report_for_acgi = _rel_for_acgi(OUTPUTS["blockerReport"])
     cutover_plan_for_acgi = _rel_for_acgi(OUTPUTS["cutoverPlan"])
     hosted_handoff_for_acgi = _rel_for_acgi(OUTPUTS["hostedStorybookHandoff"])
-    hosted_proof_validation_for_acgi = _rel_for_acgi(
-        OUTPUTS["hostedStorybookProofValidation"]
-    )
+    hosted_gap_report_for_acgi = _rel_for_acgi(OUTPUTS["hostedStorybookProofGapReport"])
+    hosted_proof_validation_for_acgi = _rel_for_acgi(OUTPUTS["hostedStorybookProofValidation"])
     evidence_draft_for_acgi = _rel_for_acgi(OUTPUTS["evidenceDraft"])
     validation_for_repo = _rel_for_repo(OUTPUTS["evidenceValidation"])
 
@@ -170,6 +170,22 @@ def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:
                     live_out_for_acgi,
                     "--out",
                     hosted_handoff_for_acgi,
+                ),
+            ),
+            _command_entry(
+                "build-hosted-storybook-proof-gap-report",
+                _acgi_command(
+                    "run",
+                    "build:hosted-storybook-proof-gap-report",
+                    "--",
+                    "--proof-template",
+                    "hosted-storybook-proof.example.json",
+                    "--live-output",
+                    live_out_for_acgi,
+                    "--handoff",
+                    hosted_handoff_for_acgi,
+                    "--out",
+                    hosted_gap_report_for_acgi,
                 ),
             ),
         ]

@@ -24,8 +24,7 @@ function mustContain(source, needle, label) {
 }
 
 function pathFilterCount(workflow, path) {
-  return (workflow.match(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? [])
-    .length
+  return (workflow.match(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
 }
 
 const packageJson = JSON.parse(read('package.json'))
@@ -37,6 +36,8 @@ const platformReadiness = readRepo('scripts/platform_readiness_report.py')
 const releaseEvidence = readRepo('scripts/build_release_evidence.py')
 const hostedStorybookHandoffBuilder = read('scripts/build-hosted-storybook-handoff.mjs')
 const hostedStorybookHandoffCheck = read('scripts/check-hosted-storybook-handoff.mjs')
+const hostedStorybookProofGapBuilder = read('scripts/build-hosted-storybook-proof-gap-report.mjs')
+const hostedStorybookProofGapCheck = read('scripts/check-hosted-storybook-proof-gap-report.mjs')
 
 check(
   packageJson.scripts?.['storybook:build'] === 'pnpm run evidence:build',
@@ -69,6 +70,19 @@ check(
   !packageJson.scripts?.['test:all']?.includes('pnpm run build:hosted-storybook-handoff'),
   'package.json test:all must not run the input-dependent hosted Storybook handoff builder.',
 )
+check(
+  packageJson.scripts?.['test:hosted-storybook-proof-gap-report'] ===
+    'node scripts/check-hosted-storybook-proof-gap-report.mjs',
+  'package.json must expose test:hosted-storybook-proof-gap-report.',
+)
+check(
+  packageJson.scripts?.['test:all']?.includes('pnpm run test:hosted-storybook-proof-gap-report'),
+  'package.json test:all must include hosted Storybook proof gap report verification.',
+)
+check(
+  !packageJson.scripts?.['test:all']?.includes('pnpm run build:hosted-storybook-proof-gap-report'),
+  'package.json test:all must not run the input-dependent hosted Storybook proof gap report builder.',
+)
 
 for (const needle of [
   'ACGI_EVIDENCE_CNAME',
@@ -90,6 +104,7 @@ for (const needle of [
   'pnpm test:storybook-publication',
   'pnpm test:hosted-storybook-handoff',
   'pnpm test:hosted-storybook-proof-template',
+  'pnpm test:hosted-storybook-proof-gap-report',
   'ACGI_EVIDENCE_CNAME: storybook.acgs.ai',
   'pnpm storybook:build',
   'buyer-evidence-storybook',
@@ -105,6 +120,8 @@ for (const path of [
   'acgi-ai/scripts/build-hosted-storybook-handoff.mjs',
   'acgi-ai/scripts/check-hosted-storybook-handoff.mjs',
   'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs',
+  'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs',
   'acgi-ai/hosted-storybook-proof.example.json',
 ]) {
   check(
@@ -120,6 +137,16 @@ for (const source of [deploy, readiness, platformReadiness, releaseEvidence]) {
   mustContain(source, 'test:hosted-storybook-handoff', 'hosted Storybook handoff evidence')
   mustContain(source, 'hosted-storybook-handoff', 'hosted Storybook handoff evidence')
   mustContain(source, 'hosted-storybook-handoff.json', 'hosted Storybook handoff evidence')
+  mustContain(
+    source,
+    'test:hosted-storybook-proof-gap-report',
+    'hosted Storybook proof gap evidence',
+  )
+  mustContain(
+    source,
+    'hosted-storybook-proof-gap-report.json',
+    'hosted Storybook proof gap evidence',
+  )
 }
 
 for (const source of [hostedStorybookHandoffBuilder, hostedStorybookHandoffCheck]) {
@@ -128,6 +155,23 @@ for (const source of [hostedStorybookHandoffBuilder, hostedStorybookHandoffCheck
   mustContain(source, 'pending-external:storybook-pages-proof', 'hosted Storybook handoff contract')
   mustContain(source, 'copyIntoProductionEvidence', 'hosted Storybook handoff contract')
   mustContain(source, 'not live production proof', 'hosted Storybook handoff contract')
+}
+
+for (const source of [hostedStorybookProofGapBuilder, hostedStorybookProofGapCheck]) {
+  mustContain(source, 'storybook.acgs.ai', 'hosted Storybook proof gap report contract')
+  mustContain(source, 'storybook-manifest-live', 'hosted Storybook proof gap report contract')
+  mustContain(source, 'hosted-browser-evidence', 'hosted Storybook proof gap report contract')
+  mustContain(
+    source,
+    'production-evidence-copy-field',
+    'hosted Storybook proof gap report contract',
+  )
+  mustContain(
+    source,
+    'copyIntoProductionEvidence.hostedStorybook',
+    'hosted Storybook proof gap report contract',
+  )
+  mustContain(source, 'not live production proof', 'hosted Storybook proof gap report contract')
 }
 
 const outRelative = `.storybook-publication-check-${process.pid}`

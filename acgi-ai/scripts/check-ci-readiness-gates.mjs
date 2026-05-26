@@ -59,6 +59,8 @@ const hostedStorybookHandoffPath = 'scripts/build-hosted-storybook-handoff.mjs'
 const hostedStorybookHandoffCheckPath = 'scripts/check-hosted-storybook-handoff.mjs'
 const hostedStorybookProofTemplatePath = 'hosted-storybook-proof.example.json'
 const hostedStorybookProofTemplateCheckPath = 'scripts/check-hosted-storybook-proof-template.mjs'
+const hostedStorybookProofGapReportPath = 'scripts/build-hosted-storybook-proof-gap-report.mjs'
+const hostedStorybookProofGapReportCheckPath = 'scripts/check-hosted-storybook-proof-gap-report.mjs'
 const hostedStorybookProofValidatorPath = 'scripts/validate-hosted-storybook-proof.mjs'
 const storybookRuntimePlanPath = 'storybook-runtime.plan.json'
 const storybookRuntimePlanCheckPath = 'scripts/check-storybook-runtime-plan.mjs'
@@ -92,6 +94,8 @@ const hostedStorybookHandoff = read(hostedStorybookHandoffPath)
 const hostedStorybookHandoffCheck = read(hostedStorybookHandoffCheckPath)
 const hostedStorybookProofTemplate = read(hostedStorybookProofTemplatePath)
 const hostedStorybookProofTemplateCheck = read(hostedStorybookProofTemplateCheckPath)
+const hostedStorybookProofGapReport = read(hostedStorybookProofGapReportPath)
+const hostedStorybookProofGapReportCheck = read(hostedStorybookProofGapReportCheckPath)
 const hostedStorybookProofValidator = read(hostedStorybookProofValidatorPath)
 const storybookRuntimePlan = read(storybookRuntimePlanPath)
 const storybookRuntimePlanCheck = read(storybookRuntimePlanCheckPath)
@@ -211,6 +215,16 @@ check(
   'package.json must expose test:hosted-storybook-proof-template.',
 )
 check(
+  packageJson.scripts?.['build:hosted-storybook-proof-gap-report'] ===
+    'node scripts/build-hosted-storybook-proof-gap-report.mjs',
+  'package.json must expose build:hosted-storybook-proof-gap-report.',
+)
+check(
+  packageJson.scripts?.['test:hosted-storybook-proof-gap-report'] ===
+    'node scripts/check-hosted-storybook-proof-gap-report.mjs',
+  'package.json must expose test:hosted-storybook-proof-gap-report.',
+)
+check(
   packageJson.scripts?.['test:storybook-runtime-plan'] ===
     'node scripts/check-storybook-runtime-plan.mjs',
   'package.json must expose test:storybook-runtime-plan.',
@@ -249,11 +263,13 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:production-evidence-draft') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-handoff') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-gap-report') &&
     !packageJson.scripts['test:all'].includes('pnpm run verify:production-live') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:production-blocker-report') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:production-cutover-plan') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:production-evidence-draft') &&
     !packageJson.scripts['test:all'].includes('pnpm run build:hosted-storybook-handoff') &&
+    !packageJson.scripts['test:all'].includes('pnpm run build:hosted-storybook-proof-gap-report') &&
     !packageJson.scripts['test:all'].includes('pnpm run validate:production-evidence') &&
     !packageJson.scripts['test:all'].includes('pnpm run validate:hosted-storybook-proof') &&
     packageJson.scripts['test:all'].includes('pnpm run test:performance') &&
@@ -270,12 +286,13 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:storybook-publication') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-handoff') &&
     packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-template') &&
+    packageJson.scripts['test:all'].includes('pnpm run test:hosted-storybook-proof-gap-report') &&
     packageJson.scripts['test:all'].includes('pnpm run test:tthw') &&
     packageJson.scripts['test:all'].includes('pnpm run test:e2e-http') &&
     packageJson.scripts['test:all'].includes('pnpm run test:browser-evidence') &&
     !packageJson.scripts['test:all'].includes('pnpm run evidence:browser-workbench') &&
     packageJson.scripts['test:all'].includes('pnpm run test:msw-node'),
-  'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:tthw, test:e2e-http, test:browser-evidence, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
+  'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:tthw, test:e2e-http, test:browser-evidence, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
 )
 
 for (const [label, workflow] of [
@@ -290,10 +307,10 @@ for (const [label, workflow] of [
 }
 
 check(
-  /name:\s+Verify buyer evidence publication contract[\s\S]*pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template/.test(
+  /name:\s+Verify buyer evidence publication contract[\s\S]*pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template && pnpm test:hosted-storybook-proof-gap-report/.test(
     storybookWorkflow,
   ),
-  'storybook.yml must run runtime, publication, hosted handoff, and hosted proof-template checks before artifact upload/deploy.',
+  'storybook.yml must run runtime, publication, hosted handoff, hosted proof-template, and hosted proof gap report checks before artifact upload/deploy.',
 )
 
 before(consoleWorkflow, 'pnpm test:all', 'Auth to GCP via WIF', 'console.yml')
@@ -496,6 +513,18 @@ check(
   'check-hosted-storybook-proof-template.mjs must guard hosted Storybook proof template wiring and claim boundary.',
 )
 check(
+  /Hosted Storybook proof gap report/.test(hostedStorybookProofGapReport) &&
+    /hosted-storybook-proof-gap-report/.test(hostedStorybookProofGapReport) &&
+    /storybook-live-verifier-pass/.test(hostedStorybookProofGapReport) &&
+    /hosted-browser-evidence/.test(hostedStorybookProofGapReport) &&
+    /production-evidence-copy-field/.test(hostedStorybookProofGapReport) &&
+    /copyIntoProductionEvidence.hostedStorybook/.test(hostedStorybookProofGapReport) &&
+    /not live production proof/.test(hostedStorybookProofGapReport) &&
+    /Hosted Storybook proof gap report check/.test(hostedStorybookProofGapReportCheck) &&
+    /test:hosted-storybook-proof-gap-report/.test(hostedStorybookProofGapReportCheck),
+  'hosted Storybook proof gap report scripts must guard gap ids, package wiring, docs, and claim boundary.',
+)
+check(
   /Hosted Storybook proof validation/.test(hostedStorybookProofValidator) &&
     /hosted-storybook-proof-validation/.test(hostedStorybookProofValidator) &&
     /--proof/.test(hostedStorybookProofValidator) &&
@@ -612,9 +641,7 @@ check(
     /template-only/.test(productionEvidenceTemplate) &&
     /not live production proof/.test(productionEvidenceTemplate) &&
     /pending-external/.test(productionEvidenceTemplate) &&
-    /REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH/.test(
-      productionEvidenceTemplate,
-    ) &&
+    /REPLACE_WITH_LEGAL_REVIEWED_CLAIM_MATRIX_ARTIFACT_OR_HASH/.test(productionEvidenceTemplate) &&
     /REPLACE_WITH_ZERO_OPEN_CRITICAL_FINDINGS_COUNT/.test(productionEvidenceTemplate) &&
     /REPLACE_WITH_NVDA_EVIDENCE/.test(productionEvidenceTemplate) &&
     /REPLACE_WITH_BROWSER_SCREENSHOT_OR_VISUAL_DIFF_BUNDLE_ARTIFACT_OR_HASH/.test(
@@ -732,6 +759,8 @@ for (const path of [
   'acgi-ai/scripts/build-hosted-storybook-handoff.mjs',
   'acgi-ai/scripts/check-hosted-storybook-handoff.mjs',
   'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs',
+  'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs',
+  'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs',
   'acgi-ai/storybook-runtime.plan.json',
   'acgi-ai/hosted-storybook-proof.example.json',
   '.github/workflows/storybook.yml',
@@ -764,6 +793,9 @@ check(
     /pending-external:dependency-owner-approval/.test(deploy) &&
     /test:hosted-storybook-handoff/.test(deploy) &&
     /test:hosted-storybook-proof-template/.test(deploy) &&
+    /test:hosted-storybook-proof-gap-report/.test(deploy) &&
+    /build:hosted-storybook-proof-gap-report/.test(deploy) &&
+    /hosted-storybook-proof-gap-report/.test(deploy) &&
     /verify:production-live/.test(deploy) &&
     /build:production-blocker-report/.test(deploy) &&
     /build:production-cutover-plan/.test(deploy) &&
@@ -815,6 +847,9 @@ check(
     /hosted-storybook-handoff/.test(readiness) &&
     /hosted-storybook-handoff\.json/.test(readiness) &&
     /pnpm -F acgi-ai run test:hosted-storybook-proof-template/.test(readiness) &&
+    /pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report/.test(readiness) &&
+    /build:hosted-storybook-proof-gap-report/.test(readiness) &&
+    /hosted-storybook-proof-gap-report\.json/.test(readiness) &&
     /hosted-storybook-proof\.example\.json/.test(readiness) &&
     /productionLiveBlockers/.test(readiness) &&
     /production evidence validator/.test(readiness) &&
@@ -840,7 +875,7 @@ check(
     /pnpm -F acgi-ai run hello:world:local/.test(readiness) &&
     /pnpm -F acgi-ai run test:e2e/.test(readiness) &&
     /pnpm -F acgi-ai run test:visual/.test(readiness),
-  'integration readiness map must record the deploy workflow readiness and bus schema, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production cutover plan, production evidence draft, Storybook runtime plan, hosted Storybook handoff, hosted Storybook proof template, production evidence validator, performance, console state coverage, polling hygiene, session sync, login interstitial, privilege banner, wire decisions, test surface, buyer-evidence artifact, local browser workbench evidence, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell, TTHW, MSW node-mode, and AppError gates.',
+  'integration readiness map must record the deploy workflow readiness and bus schema, Cloud Run renderer, production deploy fail-closed, production launch handoff, production authority packet, production evidence template, production live verifier, production blocker report, production cutover plan, production evidence draft, Storybook runtime plan, hosted Storybook handoff, hosted Storybook proof template, hosted Storybook proof gap report, production evidence validator, performance, console state coverage, polling hygiene, session sync, login interstitial, privilege banner, wire decisions, test surface, buyer-evidence artifact, local browser workbench evidence, Storybook runtime plan, Storybook publication scaffold, hosted Storybook handoff, E2E HTTP shell, TTHW, MSW node-mode, and AppError gates.',
 )
 
 if (failures.length > 0) {

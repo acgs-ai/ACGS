@@ -116,6 +116,17 @@ def _proof_intake_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
                 "claimBoundary",
             ],
         ),
+        "hostedStorybookProofGapReport": _compact_artifact(
+            _dict(artifacts.get("hostedStorybookProofGapReport")),
+            [
+                "proofCommand",
+                "operatorCommand",
+                "outputArtifact",
+                "requiredGapIds",
+                "latestGapReportSnapshot",
+                "claimBoundary",
+            ],
+        ),
         "hostedStorybookProofValidation": _compact_artifact(
             _dict(artifacts.get("hostedStorybookProofValidation")),
             [
@@ -147,6 +158,7 @@ def _proof_intake_ids_for_blocker(blocker_id: str) -> list[str]:
         "full-wcag-manual-screen-reader-evidence": ["productionEvidenceTemplate"],
         "hosted-storybook-buyer-evidence": [
             "hostedStorybookProofTemplate",
+            "hostedStorybookProofGapReport",
             "hostedStorybookProofValidation",
             "productionEvidenceTemplate",
             "productionLiveVerifier",
@@ -362,9 +374,7 @@ def build_preflight(
             "status": chain_snapshot.get("status"),
             "issues": chain_issues,
             "validation": chain_snapshot.get("validation"),
-            "hostedStorybookProofValidation": chain_snapshot.get(
-                "hostedStorybookProofValidation"
-            ),
+            "hostedStorybookProofValidation": chain_snapshot.get("hostedStorybookProofValidation"),
         },
         "productionEvidenceValidation": {
             "path": validation_snapshot.get("path"),

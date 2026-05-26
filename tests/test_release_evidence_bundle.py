@@ -61,6 +61,10 @@ def test_manifest_is_conservative_and_tracks_readiness():
         "pnpm -F acgi-ai run test:hosted-storybook-proof-template"
         in manifest["verificationCommands"]
     )
+    assert (
+        "pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report"
+        in manifest["verificationCommands"]
+    )
     assert "make production-launch-preflight" in manifest["verificationCommands"]
     assert (
         "uv run python scripts/build_production_blocker_evidence.py --dry-run --json"
@@ -91,10 +95,9 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     storybook_runtime = manifest["evidenceArtifacts"]["storybookRuntimePlan"]
     publication = manifest["evidenceArtifacts"]["storybookPublication"]
     hosted_storybook = manifest["evidenceArtifacts"]["hostedStorybookHandoff"]
+    hosted_storybook_gap_report = manifest["evidenceArtifacts"]["hostedStorybookProofGapReport"]
     hosted_storybook_proof = manifest["evidenceArtifacts"]["hostedStorybookProofTemplate"]
-    hosted_storybook_validation = manifest["evidenceArtifacts"][
-        "hostedStorybookProofValidation"
-    ]
+    hosted_storybook_validation = manifest["evidenceArtifacts"]["hostedStorybookProofValidation"]
     buyer = manifest["evidenceArtifacts"]["buyerEvidenceGallery"]
 
     assert renderer["script"] == "acgi-ai/scripts/render-cloudrun-service.mjs"
@@ -244,6 +247,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert production_chain["proofCommand"] == "make release-evidence"
     assert production_chain["latestChainSnapshot"]["status"] in {"consistent", "needs-refresh"}
     assert "productionEvidenceValidation" in production_chain["latestChainSnapshot"]["artifacts"]
+    assert "hostedStorybookProofGapReport" in production_chain["latestChainSnapshot"]["artifacts"]
     assert "hostedStorybookProofValidation" in production_chain["latestChainSnapshot"]["artifacts"]
     assert "hostedStorybookStoryIds" in production_chain["latestChainSnapshot"]
     assert "hostedStorybookMissingExpectedStoryIds" in production_chain["latestChainSnapshot"]
@@ -258,9 +262,21 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         in blocker_runbook["outputArtifacts"]
     )
     assert (
+        "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+        in blocker_runbook["outputArtifacts"]
+    )
+    assert (
         "dist-release-evidence/hosted-storybook-proof-validation.json"
         in blocker_runbook["outputArtifacts"]
     )
+    hosted_gap_runbook = blocker_runbook["hostedStorybookProofGapReport"]
+    assert "build:hosted-storybook-proof-gap-report" in hosted_gap_runbook["operatorCommand"]
+    assert (
+        hosted_gap_runbook["outputArtifact"]
+        == "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+    )
+    assert "operatorSequence" in hosted_gap_runbook["outputFields"]
+    assert "does not deploy" in hosted_gap_runbook["claimBoundary"]
     live_intake = blocker_runbook["suppliedLiveOutputIntake"]
     assert live_intake["canonicalizesTo"] == (
         "dist-release-evidence/production-live-verification.json"
@@ -353,6 +369,22 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         == "dist-release-evidence/hosted-storybook-handoff.json"
     )
     assert "not live production proof" in hosted_storybook["claimBoundary"]
+    assert (
+        hosted_storybook_gap_report["script"]
+        == "acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs"
+    )
+    assert (
+        hosted_storybook_gap_report["proofCommand"]
+        == "pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report"
+    )
+    assert (
+        hosted_storybook_gap_report["outputArtifact"]
+        == "dist-release-evidence/hosted-storybook-proof-gap-report.json"
+    )
+    assert "storybook-live-verifier-pass" in hosted_storybook_gap_report["requiredGapIds"]
+    assert "hosted-browser-evidence" in hosted_storybook_gap_report["requiredGapIds"]
+    assert "production-evidence-copy-field" in hosted_storybook_gap_report["requiredGapIds"]
+    assert "does not deploy" in hosted_storybook_gap_report["claimBoundary"]
     assert hosted_storybook_proof["templatePath"] == "acgi-ai/hosted-storybook-proof.example.json"
     assert (
         hosted_storybook_proof["proofCommand"]
@@ -379,8 +411,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
     assert "guided-review-path" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert "launch-proof-ladder" in hosted_storybook_proof["browserEvidence"]["storyIds"]
     assert (
-        "visual-governance-workbench"
-        in hosted_storybook_proof["browserEvidence"]["screenshotRefs"]
+        "visual-governance-workbench" in hosted_storybook_proof["browserEvidence"]["screenshotRefs"]
     )
     assert (
         "operator-decision-rail"
@@ -403,10 +434,7 @@ def test_manifest_exposes_buyer_gallery_ci_artifact():
         hosted_storybook_validation["latestValidationSnapshot"]["path"]
         == "dist-release-evidence/hosted-storybook-proof-validation.json"
     )
-    assert (
-        "validate:hosted-storybook-proof"
-        in hosted_storybook_validation["operatorCommand"]
-    )
+    assert "validate:hosted-storybook-proof" in hosted_storybook_validation["operatorCommand"]
     assert (
         "--out ../dist-release-evidence/hosted-storybook-proof-validation.json"
         in hosted_storybook_validation["operatorCommand"]
@@ -477,7 +505,9 @@ def test_write_bundle_outputs_machine_and_human_artifacts(tmp_path: Path):
     assert "test:hosted-storybook-handoff" in readme
     assert "hosted-storybook-proof.example.json" in readme
     assert "hosted-storybook-proof-validation.json" in readme
+    assert "hosted-storybook-proof-gap-report.json" in readme
     assert "test:hosted-storybook-proof-template" in readme
+    assert "test:hosted-storybook-proof-gap-report" in readme
     assert "validate:hosted-storybook-proof" in readme
     assert "--hosted-storybook-proof <hosted-storybook-proof.json>" in readme
     assert "--out ../dist-release-evidence/hosted-storybook-proof-validation.json" in readme
@@ -687,6 +717,26 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
         )
         + "\n"
     )
+    (evidence_dir / "hosted-storybook-proof-gap-report.json").write_text(
+        json.dumps(
+            {
+                "artifactKind": "hosted-storybook-proof-gap-report",
+                "generatedAt": "2026-05-25T00:00:06Z",
+                "status": "blocked",
+                "claimBoundary": "source hosted Storybook proof gap report boundary",
+                "summary": {
+                    "openGapCount": 2,
+                    "openGapIds": [
+                        "storybook-live-verifier-pass",
+                        "hosted-browser-evidence",
+                    ],
+                    "storybookBlockers": ["live-storybook-dns"],
+                },
+                "gaps": [],
+            }
+        )
+        + "\n"
+    )
     (evidence_dir / "hosted-storybook-proof-validation.json").write_text(
         json.dumps(
             {
@@ -712,6 +762,7 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
     validation = bre.production_evidence_validation_snapshot(tmp_path)
     chain = bre.production_evidence_chain_snapshot(tmp_path)
     hosted_storybook = bre.hosted_storybook_handoff_snapshot(tmp_path)
+    hosted_storybook_gap_report = bre.hosted_storybook_proof_gap_report_snapshot(tmp_path)
     hosted_storybook_validation = bre.hosted_storybook_proof_validation_snapshot(tmp_path)
 
     assert live["present"] is True
@@ -796,16 +847,32 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
     assert hosted_storybook["targetUrl"] == "https://storybook.acgs.ai"
     assert hosted_storybook["storybookBlockers"] == ["live-storybook-dns"]
     assert "not live production proof" in hosted_storybook["claimBoundary"]
+    assert hosted_storybook_gap_report["present"] is True
+    assert hosted_storybook_gap_report["status"] == "blocked"
+    assert hosted_storybook_gap_report["openGapCount"] == 2
+    assert hosted_storybook_gap_report["openGapIds"] == [
+        "storybook-live-verifier-pass",
+        "hosted-browser-evidence",
+    ]
+    assert hosted_storybook_gap_report["storybookBlockers"] == ["live-storybook-dns"]
+    assert "not live production proof" in hosted_storybook_gap_report["claimBoundary"]
     assert hosted_storybook_validation["present"] is True
     assert hosted_storybook_validation["status"] == "pass"
     assert hosted_storybook_validation["checkCount"] == 2
     assert hosted_storybook_validation["failingCheckIds"] == []
     assert "not hosted Storybook proof" in hosted_storybook_validation["claimBoundary"]
+    assert chain["hostedStorybookProofGapReport"]["status"] == "blocked"
+    assert chain["hostedStorybookProofGapReport"]["openGapCount"] == 2
+    assert chain["hostedStorybookProofGapReport"]["openGapIds"] == [
+        "storybook-live-verifier-pass",
+        "hosted-browser-evidence",
+    ]
     assert chain["hostedStorybookProofValidation"]["status"] == "pass"
     assert chain["hostedStorybookProofValidation"]["failingCheckIds"] == []
     assert bre.production_live_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_draft_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_validation_snapshot(tmp_path / "missing")["present"] is False
+    assert bre.hosted_storybook_proof_gap_report_snapshot(tmp_path / "missing")["present"] is False
     assert bre.hosted_storybook_proof_validation_snapshot(tmp_path / "missing")["present"] is False
     assert bre.production_evidence_chain_snapshot(tmp_path / "missing")["status"] == "needs-refresh"
     assert bre.hosted_storybook_handoff_snapshot(tmp_path / "missing")["present"] is False
@@ -814,6 +881,26 @@ def test_optional_live_snapshot_helpers_are_claim_safe(tmp_path: Path):
 def test_hosted_storybook_proof_validation_failure_marks_chain_stale(tmp_path: Path):
     evidence_dir = tmp_path / "dist-release-evidence"
     evidence_dir.mkdir()
+    (evidence_dir / "hosted-storybook-proof-gap-report.json").write_text(
+        json.dumps(
+            {
+                "artifactKind": "hosted-storybook-proof-gap-report",
+                "generatedAt": "2026-05-25T00:00:06Z",
+                "status": "blocked",
+                "claimBoundary": "source hosted Storybook proof gap report boundary",
+                "summary": {
+                    "openGapCount": 2,
+                    "openGapIds": [
+                        "storybook-live-verifier-pass",
+                        "hosted-browser-evidence",
+                    ],
+                    "storybookBlockers": ["live-storybook-dns"],
+                },
+                "gaps": [],
+            }
+        )
+        + "\n"
+    )
     (evidence_dir / "hosted-storybook-proof-validation.json").write_text(
         json.dumps(
             {

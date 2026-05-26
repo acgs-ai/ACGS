@@ -500,6 +500,15 @@ export const HOSTED_STORYBOOK_RUNWAY = [
   },
   {
     step: '03',
+    title: 'Build proof gap report',
+    command: 'pnpm -F acgi-ai run build:hosted-storybook-proof-gap-report',
+    proof: 'hosted-storybook-proof-gap-report.json',
+    body: 'Generate the external-evidence checklist from the hosted proof template, current live verifier output, and Storybook handoff before asking owners for proof.',
+    route: '/console/workbench#assurance-proof-intake',
+    cta: 'Open proof intake',
+  },
+  {
+    step: '04',
     title: 'Verify live Storybook',
     command:
       'pnpm -F acgi-ai run verify:production-live -- --json --out ../dist-release-evidence/production-live-verification.json',
@@ -509,7 +518,7 @@ export const HOSTED_STORYBOOK_RUNWAY = [
     cta: 'Open blockers',
   },
   {
-    step: '04',
+    step: '05',
     title: 'Attach hosted proof',
     command:
       'pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --require-pass',

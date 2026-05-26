@@ -20,6 +20,8 @@ on:
       - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs'
       - 'acgi-ai/storybook-runtime.plan.json'
       - 'acgi-ai/hosted-storybook-proof.example.json'
       - 'acgi-ai/ARCHITECTURE.md'
@@ -39,6 +41,8 @@ on:
       - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
       - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs'
       - 'acgi-ai/storybook-runtime.plan.json'
       - 'acgi-ai/hosted-storybook-proof.example.json'
       - 'acgi-ai/ARCHITECTURE.md'
@@ -78,7 +82,7 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-workspace
 
       - name: Verify buyer evidence publication contract
-        run: pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template
+        run: pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template && pnpm test:hosted-storybook-proof-gap-report
 
       - name: Build buyer evidence Storybook artifact
         env:

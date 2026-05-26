@@ -167,15 +167,28 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
         "test:hosted-storybook-proof-template"
         in by_id["hosted-storybook-proof-intake-local"].command
     )
+    assert (
+        "test:hosted-storybook-proof-gap-report"
+        in by_id["hosted-storybook-proof-intake-local"].command
+    )
+    assert (
+        "build:hosted-storybook-proof-gap-report"
+        in by_id["hosted-storybook-proof-intake-local"].command
+    )
     assert "validate:hosted-storybook-proof" in by_id["hosted-storybook-proof-intake-local"].command
     assert (
         "../dist-release-evidence/hosted-storybook-proof-validation.json"
         in by_id["hosted-storybook-proof-intake-local"].command
     )
+    assert "gap checklist" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert "completed-proof checks" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert (
         "hosted-storybook-proof-validation.json"
         in by_id["hosted-storybook-proof-intake-local"].evidence
+    )
+    assert (
+        "hosted-storybook-proof-gap-report.json"
+        in by_id["hosted-storybook-proof-intake-local"].command
     )
     assert "visual-diff evidence" in by_id["hosted-storybook-proof-intake-local"].evidence
     assert (
@@ -240,6 +253,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "storybook-publication-workflow-local" in report
     assert "hosted-storybook-handoff-local" in report
     assert "hosted-storybook-proof-intake-local" in report
+    assert "test:hosted-storybook-proof-gap-report" in report
     assert "hosted-storybook-buyer-evidence" in report
     assert "pending" in report
 

@@ -216,6 +216,7 @@ mustContain(workbenchContent, 'uv run --package gove-zone gove-zone eval', 'Shar
 mustContain(workbenchContent, 'Pick payload → run gate → attach receipt', 'Shared starter kits')
 mustContain(workbenchContent, 'Build local gallery', 'Shared hosted Storybook runway')
 mustContain(workbenchContent, 'Enable Pages deploy', 'Shared hosted Storybook runway')
+mustContain(workbenchContent, 'Build proof gap report', 'Shared hosted Storybook runway')
 mustContain(workbenchContent, 'Verify live Storybook', 'Shared hosted Storybook runway')
 mustContain(workbenchContent, 'Attach hosted proof', 'Shared hosted Storybook runway')
 mustContain(
@@ -224,6 +225,16 @@ mustContain(
   'Shared hosted Storybook runway',
 )
 mustContain(workbenchContent, 'STORYBOOK_PAGES_ENABLED=true', 'Shared hosted Storybook runway')
+mustContain(
+  workbenchContent,
+  'build:hosted-storybook-proof-gap-report',
+  'Shared hosted Storybook runway',
+)
+mustContain(
+  workbenchContent,
+  'hosted-storybook-proof-gap-report.json',
+  'Shared hosted Storybook runway',
+)
 mustContain(workbenchContent, 'storybook-manifest-live', 'Shared hosted Storybook runway')
 mustContain(
   workbenchContent,
@@ -407,7 +418,7 @@ mustContain(research, 'Production command rail', 'Research memo')
 mustContain(research, 'make production-blocker-evidence', 'Research memo')
 mustContain(
   research,
-  'Build local gallery, Enable Pages deploy, Verify live Storybook, and Attach hosted proof',
+  'Build local gallery, Enable Pages deploy, Build proof gap report, Verify live Storybook, and Attach hosted proof',
   'Research memo',
 )
 mustContain(research, 'Assurance proof intake', 'Research memo')

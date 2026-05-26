@@ -2150,6 +2150,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         == "node scripts/check-hosted-storybook-handoff.mjs"
         and "pnpm run test:hosted-storybook-handoff" in deploy_scripts.get("test:all", "")
         and "pnpm run build:hosted-storybook-handoff" not in deploy_scripts.get("test:all", "")
+        and "pnpm run build:hosted-storybook-proof-gap-report"
+        not in deploy_scripts.get("test:all", "")
     )
     items.append(
         _item(
@@ -2182,6 +2184,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "acgi-ai/hosted-storybook-proof.example.json",
             "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs",
             "acgi-ai/scripts/validate-hosted-storybook-proof.mjs",
+            "acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs",
+            "acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs",
             "acgi-ai/scripts/build-hosted-storybook-handoff.mjs",
             "acgi-ai/scripts/verify-production-live.mjs",
             ".github/workflows/storybook.yml",
@@ -2197,6 +2201,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/hosted-storybook-proof.example.json"),
                 _maybe_read(repo_root, "acgi-ai/scripts/check-hosted-storybook-proof-template.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/validate-hosted-storybook-proof.mjs"),
+                _maybe_read(
+                    repo_root, "acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs"
+                ),
+                _maybe_read(
+                    repo_root, "acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs"
+                ),
                 _maybe_read(repo_root, "acgi-ai/scripts/build-hosted-storybook-handoff.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/verify-production-live.mjs"),
                 _maybe_read(repo_root, ".github/workflows/storybook.yml"),
@@ -2212,6 +2222,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "test:hosted-storybook-proof-template",
             "validate:hosted-storybook-proof",
             "hosted-storybook-proof-validation",
+            "hosted-storybook-proof-gap-report",
+            "build:hosted-storybook-proof-gap-report",
+            "test:hosted-storybook-proof-gap-report",
+            "Build proof gap report",
+            "hosted-browser-evidence",
+            "production-evidence-copy-field",
             "hosted-storybook-proof-template",
             "storybook-manifest-live",
             "pending-external:storybook-pages-proof",
@@ -2237,10 +2253,17 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         == "node scripts/check-hosted-storybook-proof-template.mjs"
         and deploy_scripts.get("validate:hosted-storybook-proof")
         == "node scripts/validate-hosted-storybook-proof.mjs"
+        and deploy_scripts.get("build:hosted-storybook-proof-gap-report")
+        == "node scripts/build-hosted-storybook-proof-gap-report.mjs"
+        and deploy_scripts.get("test:hosted-storybook-proof-gap-report")
+        == "node scripts/check-hosted-storybook-proof-gap-report.mjs"
         and "pnpm run test:hosted-storybook-proof-template" in deploy_scripts.get("test:all", "")
+        and "pnpm run test:hosted-storybook-proof-gap-report" in deploy_scripts.get("test:all", "")
         and "pnpm run validate:hosted-storybook-proof" not in deploy_scripts.get("test:all", "")
         and "pnpm run verify:production-live" not in deploy_scripts.get("test:all", "")
         and "pnpm run build:hosted-storybook-handoff" not in deploy_scripts.get("test:all", "")
+        and "pnpm run build:hosted-storybook-proof-gap-report"
+        not in deploy_scripts.get("test:all", "")
     )
     items.append(
         _item(
@@ -2256,6 +2279,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "accessibility, and visual-diff evidence for all eight "
                 "buyer-evidence stories, "
                 "copyIntoProductionEvidence.hostedStorybook, "
+                "build:hosted-storybook-proof-gap-report gap checklist, "
                 "and validate:hosted-storybook-proof completed-proof checks saved as "
                 "dist-release-evidence/hosted-storybook-proof-validation.json before "
                 "hosted-storybook-buyer-evidence can be removed"
@@ -2270,6 +2294,12 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             ),
             (
                 "pnpm -F acgi-ai run test:hosted-storybook-proof-template "
+                "&& pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report "
+                "&& pnpm -F acgi-ai run build:hosted-storybook-proof-gap-report -- "
+                "--proof-template hosted-storybook-proof.example.json --live-output "
+                "../dist-release-evidence/production-live-verification.json --handoff "
+                "../dist-release-evidence/hosted-storybook-handoff.json --out "
+                "../dist-release-evidence/hosted-storybook-proof-gap-report.json "
                 "&& pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof "
                 "<hosted-storybook-proof.json> --live-output <verify-production-live.json> "
                 "--out ../dist-release-evidence/hosted-storybook-proof-validation.json "
