@@ -1,6 +1,7 @@
 import { useHashScroll } from '../../lib/hashScroll'
 import { navigate } from '../../lib/navigate'
 import {
+  AGENT_FRAMEWORK_STARTER_KITS,
   ASSURANCE_INTAKE_LANES,
   CASE_CARDS,
   EVIDENCE_ROWS,
@@ -121,6 +122,46 @@ export function Workbench() {
                 onClick={() => navigate(item.route)}
               >
                 {item.cta}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section
+        className="overview-section workbench-starter-summary"
+        id="agent-framework-starter-kits"
+        aria-labelledby="workbench-starter-kits-h"
+      >
+        <div className="c-toolbar">
+          <h2 className="overview-section-title" id="workbench-starter-kits-h">
+            Agent framework starter kits
+          </h2>
+          <span className="c-meta">Pick payload → run gate → attach receipt</span>
+        </div>
+
+        <p>
+          Start adoption from the framework payload shape, not a generic setup page. Each card keeps
+          the local command, proof label, and next operator action visible before any live
+          framework-deployment claim.
+        </p>
+
+        <div className="workbench-starter-kits">
+          {AGENT_FRAMEWORK_STARTER_KITS.map((kit) => (
+            <article className="workbench-starter" key={kit.framework}>
+              <div>
+                <span className="c-meta">{kit.entry}</span>
+                <strong>{kit.framework}</strong>
+                <code>{kit.proof}</code>
+              </div>
+              <pre>{kit.command}</pre>
+              <p>{kit.next}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(kit.route)}
+              >
+                {kit.cta}
               </button>
             </article>
           ))}

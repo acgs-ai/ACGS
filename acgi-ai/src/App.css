@@ -782,6 +782,7 @@
 }
 
 .m-workbench-framework,
+.m-workbench-starters,
 .m-workbench-cutover,
 .m-workbench-blockers,
 .m-workbench-live,
@@ -793,6 +794,7 @@
 }
 
 .m-workbench-framework p,
+.m-workbench-starters p,
 .m-workbench-cutover p,
 .m-workbench-blockers p,
 .m-workbench-live p,
@@ -806,6 +808,7 @@
 }
 
 .m-workbench-framework ol,
+.m-workbench-starters ol,
 .m-workbench-cutover ol,
 .m-workbench-blockers ol,
 .m-workbench-live ol,
@@ -819,6 +822,7 @@
 }
 
 .m-workbench-framework li,
+.m-workbench-starters li,
 .m-workbench-cutover li,
 .m-workbench-blockers li,
 .m-workbench-live li,
@@ -833,6 +837,7 @@
 }
 
 .m-workbench-framework code,
+.m-workbench-starters code,
 .m-workbench-cutover code,
 .m-workbench-blockers code,
 .m-workbench-live code,
@@ -1940,6 +1945,87 @@
 }
 
 .workbench-framework .btn {
+  align-self: end;
+  justify-self: start;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+.workbench-starter-summary > p {
+  max-width: 760px;
+  margin: -4px 0 4px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-starter-kits {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--line-softer);
+}
+
+.workbench-starter {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 285px;
+  padding: 18px;
+  background: var(--paper-2);
+}
+
+.workbench-starter div {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-starter strong {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.08;
+}
+
+.workbench-starter code,
+.workbench-starter pre {
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.workbench-starter code {
+  width: fit-content;
+  letter-spacing: 0.04em;
+}
+
+.workbench-starter pre {
+  margin: 0;
+  border-radius: var(--radius-md);
+  color: var(--ink-2);
+}
+
+.workbench-starter p {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.workbench-starter .btn {
   align-self: end;
   justify-self: start;
   padding: 9px 12px;
@@ -3273,6 +3359,7 @@
   .workbench-console-map,
   .workbench-requirement-grid,
   .workbench-framework-rail,
+  .workbench-starter-kits,
   .workbench-guided-path,
   .workbench-decision-rail,
   .workbench-checklist,

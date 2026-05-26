@@ -71,6 +71,15 @@ export const WORKBENCH_BROWSER_TARGETS = [
     expectedText: 'runtime.malformed_batch',
   },
   {
+    id: 'console-agent-framework-starter-kits',
+    surface: 'console',
+    route: '/console/workbench#agent-framework-starter-kits',
+    title: 'Console agent framework starter kits',
+    expectation:
+      'Developer can pick a framework payload shape and see uv run --package gove-zone gove-zone gate, proof label, and next adoption action.',
+    expectedText: 'Pick payload → run gate → attach receipt',
+  },
+  {
     id: 'console-guided-review-path',
     surface: 'console',
     route: '/console/workbench#guided-review-path',

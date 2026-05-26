@@ -801,6 +801,7 @@ Chrome/Chromium headless, checks expected DOM text, scrolls hash targets into
 view before capture, rejects likely blank screenshots, and captures the
 marketing workbench, `/console/workbench`, and
 `/console/workbench#guided-review-path`,
+`/console/workbench#agent-framework-starter-kits`,
 `/console/workbench#launch-proof-ladder`, and
 `/console/workbench#release-blocker-queue` at the five visual baseline viewports.
 It writes a `local-browser-workbench-evidence` manifest and screenshots under

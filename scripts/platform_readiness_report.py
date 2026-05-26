@@ -1388,6 +1388,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "OpenAI Responses",
             "LangChain-style",
             "runtime.malformed_batch",
+            "Agent framework starter kits",
+            "agent-framework-starter-kits",
+            "Pick payload → run gate → attach receipt",
+            "uv run --package gove-zone gove-zone gate",
+            "uv run --package gove-zone gove-zone eval",
             "workbench-proof-ladder",
             "Live verifier blocker map",
             "live-console-dns",
@@ -1429,8 +1434,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "platform UI/UX research, DESIGN.md, same-style marketing workbench "
                 "and console workbench share one workbench content contract, "
                 "service-design/accessibility anchors, guided review path, "
-                "operator decision rail, framework integration rail, launch proof "
-                "ladder, live verifier blocker map, "
+                "operator decision rail, framework integration rail, agent "
+                "framework starter kits, launch proof ladder, live verifier blocker map, "
                 "release blocker queue, production command rail, assurance proof "
                 "intake, current 35/36 local readiness copy, and "
                 "test:platform-blueprint keep the visual easy-use roadmap "
@@ -1816,6 +1821,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "evidence:build",
             "test:buyer-evidence",
             "visual governance workbench",
+            "agent framework starter kits",
             "operator decision rail",
             "launch proof ladder",
             "Local readiness",
@@ -1833,8 +1839,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok,
             (
                 "dependency-free local buyer-evidence gallery builder, visual "
-                "workbench story, guided review path story, operator decision rail "
-                "story, launch proof ladder story, and verifier are wired"
+                "workbench story, agent framework starter kits, guided review path "
+                "story, operator decision rail story, launch proof ladder story, "
+                "and verifier are wired"
                 if buyer_evidence_files_ok and buyer_evidence_scripts_ok and buyer_evidence_docs_ok
                 else (
                     f"missing_files={buyer_evidence_missing}, "
@@ -1882,6 +1889,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "/console/workbench#operator-decision-rail",
             "/console/workbench#guided-review-path",
             "/console/workbench#framework-integration-rail",
+            "/console/workbench#agent-framework-starter-kits",
             "/console/workbench#launch-proof-ladder",
             "/console/workbench#release-blocker-queue",
             "/console/workbench#live-verifier-blocker-map",
@@ -1909,8 +1917,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 "hash guard, non-blank screenshot guard, per-surface marketing/console "
                 "launches, and dry-run verifier cover the marketing workbench, console "
                 "workbench, operator decision rail, guided review path, framework "
-                "integration rail, launch proof ladder, live verifier blocker map, "
-                "release blocker queue, production command rail, "
+                "integration rail, agent framework starter kits, launch proof ladder, "
+                "live verifier blocker map, release blocker queue, production command rail, "
                 "assurance proof intake, and five visual baseline viewports without "
                 "claiming production assurance"
                 if browser_evidence_files_ok

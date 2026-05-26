@@ -194,6 +194,48 @@ export const FRAMEWORK_INTEGRATION_RAIL = [
   },
 ] as const
 
+export const AGENT_FRAMEWORK_STARTER_KITS = [
+  {
+    framework: 'OpenAI Responses starter',
+    entry: 'output function_call payload',
+    command:
+      'uv run --package gove-zone gove-zone gate --event-file openai-responses-tool-call.json --policy-bundle policy.bundle.json',
+    proof: 'responses.output[].type=function_call',
+    next: 'Pick payload → run gate → attach receipt before a tool side effect.',
+    route: '/products/gove-zone',
+    cta: 'Open runtime path',
+  },
+  {
+    framework: 'LangChain tool-call starter',
+    entry: 'message.tool_calls[] payload',
+    command:
+      'uv run --package gove-zone gove-zone gate --event-file langchain-tool-calls.json --policy-bundle policy.bundle.json',
+    proof: 'tool_calls[] → receipt_count',
+    next: 'Run the local gate with the policy bundle and inspect the receipt count.',
+    route: '/console/bus',
+    cta: 'Inspect traces',
+  },
+  {
+    framework: 'MCP / Claude / Codex hook starter',
+    entry: 'runtime hook event',
+    command: 'uv run --package gove-zone gove-zone setup --format markdown --enforce',
+    proof: '.claude/hooks/acgs-emit-receipt.py',
+    next: 'Render copy-paste setup, then keep enforce mode explicit before adoption.',
+    route: '/console/settings',
+    cta: 'Open settings',
+  },
+  {
+    framework: 'Benchmark fixture starter',
+    entry: 'AgentDojo / InjecAgent / ToolEmu-style fixture',
+    command:
+      'uv run --package gove-zone gove-zone eval --bundle policy.bundle.json --scenarios scenarios.json',
+    proof: 'attack/utility metrics',
+    next: 'Replay local scenarios before treating framework adoption as ready.',
+    route: '/console/policies',
+    cta: 'Open policy',
+  },
+] as const
+
 export const WORKBENCH_GUIDED_PATH = [
   {
     step: '01',

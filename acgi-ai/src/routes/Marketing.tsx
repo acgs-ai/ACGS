@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
 import {
+  AGENT_FRAMEWORK_STARTER_KITS,
   ASSURANCE_INTAKE_LANES,
   FRAMEWORK_INTEGRATION_RAIL,
   LAUNCH_PROOF_LANES,
@@ -363,6 +364,28 @@ export function Marketing() {
                         <span>{title}</span>
                         <small>{source}</small>
                         <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-starters"
+                  aria-labelledby="marketing-framework-starters-h"
+                >
+                  <span className="folio-no" id="marketing-framework-starters-h">
+                    Agent framework starter kits
+                  </span>
+                  <p>
+                    Adoption starts from a concrete payload, local gate command, and receipt proof
+                    before anyone claims live framework deployment.
+                  </p>
+                  <ol>
+                    {AGENT_FRAMEWORK_STARTER_KITS.map(({ framework, entry, command, proof }) => (
+                      <li key={framework}>
+                        <strong>{framework}</strong>
+                        <span>{entry}</span>
+                        <code>{proof}</code>
+                        <small>{command}</small>
                       </li>
                     ))}
                   </ol>

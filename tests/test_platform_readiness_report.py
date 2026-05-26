@@ -89,6 +89,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "guided review path" in by_id["platform-blueprint-ui-local"].evidence
     assert "operator decision rail" in by_id["platform-blueprint-ui-local"].evidence
     assert "framework integration rail" in by_id["platform-blueprint-ui-local"].evidence
+    assert "agent framework starter kits" in by_id["platform-blueprint-ui-local"].evidence
     assert "launch proof ladder" in by_id["platform-blueprint-ui-local"].evidence
     assert "live verifier blocker map" in by_id["platform-blueprint-ui-local"].evidence
     assert "release blocker queue" in by_id["platform-blueprint-ui-local"].evidence
@@ -102,6 +103,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["node24-local-toolchain"].status == "pass"
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
+    assert "agent framework starter kits" in by_id["buyer-evidence-gallery-local"].evidence
     assert "operator decision rail story" in by_id["buyer-evidence-gallery-local"].evidence
     assert "launch proof ladder story" in by_id["buyer-evidence-gallery-local"].evidence
     assert by_id["browser-workbench-evidence-local"].status == "pass"
@@ -112,6 +114,7 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert "operator decision rail" in by_id["browser-workbench-evidence-local"].evidence
     assert "guided review path" in by_id["browser-workbench-evidence-local"].evidence
     assert "framework integration rail" in by_id["browser-workbench-evidence-local"].evidence
+    assert "agent framework starter kits" in by_id["browser-workbench-evidence-local"].evidence
     assert "live verifier blocker map" in by_id["browser-workbench-evidence-local"].evidence
     assert "release blocker queue" in by_id["browser-workbench-evidence-local"].evidence
     assert "production command rail" in by_id["browser-workbench-evidence-local"].evidence

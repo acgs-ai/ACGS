@@ -56,6 +56,7 @@ for (const needle of [
   '/console/workbench#operator-decision-rail',
   '/console/workbench#guided-review-path',
   '/console/workbench#framework-integration-rail',
+  '/console/workbench#agent-framework-starter-kits',
   '/console/workbench#launch-proof-ladder',
   '/console/workbench#release-blocker-queue',
   '/console/workbench#live-verifier-blocker-map',
@@ -143,7 +144,7 @@ try {
       'manifest must identify the browser workbench evidence artifact kind.',
     )
     check(manifest.status === 'dry-run-plan', 'dry-run manifest status must be dry-run-plan.')
-    check(manifest.targets?.length === 10, 'manifest must include ten browser targets.')
+    check(manifest.targets?.length === 11, 'manifest must include eleven browser targets.')
     check(
       manifest.targets?.some((target) => target.surface === 'marketing') === true &&
         manifest.targets?.some((target) => target.surface === 'console') === true,
@@ -155,7 +156,7 @@ try {
       'manifest must record a minimum screenshot byte guard.',
     )
     check(
-      manifest.screenshots?.length === 50,
+      manifest.screenshots?.length === 55,
       'manifest must plan one screenshot per target/viewport.',
     )
     mustContain(JSON.stringify(manifest.targets), 'console-decision-rail', 'dry-run manifest')
@@ -165,6 +166,21 @@ try {
       'dry-run manifest',
     )
     mustContain(JSON.stringify(manifest.targets), 'runtime.malformed_batch', 'dry-run manifest')
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'console-agent-framework-starter-kits',
+      'dry-run manifest',
+    )
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'Pick payload → run gate → attach receipt',
+      'dry-run manifest',
+    )
+    mustContain(
+      JSON.stringify(manifest.targets),
+      'uv run --package gove-zone gove-zone gate',
+      'dry-run manifest',
+    )
     mustContain(JSON.stringify(manifest.targets), 'Pick the case', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'console-guided-review-path', 'dry-run manifest')
     mustContain(JSON.stringify(manifest.targets), 'Export bounded proof', 'dry-run manifest')
