@@ -12,14 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .constants import GENESIS_HASH, GUARDED_ACTIONS, GUARDED_TOOLS, SAFE_TOOLS
-
-
-class GovernanceDenied(RuntimeError):
-    """Raised when deterministic governance denies a side effect."""
-
-
-class GovernanceStorageError(RuntimeError):
-    """Raised when receipt or audit persistence fails closed."""
+from .errors import GovernanceDenied, GovernanceStorageError
 
 
 class PolicyEngine(Protocol):
