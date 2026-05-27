@@ -112,9 +112,16 @@ def _last_audit_hash(path: Path) -> str:
 
 
 def _constitution_hash_or_missing(targets: RuntimeTargets) -> str:
+    """Best-effort constitution hash for fail-closed receipt enrichment.
+
+    Returns the literal string ``"missing"`` when the constitution cannot be
+    read or parsed. Catches only file/format failures — never
+    programming errors, so a real bug surfaces instead of being silently
+    re-encoded into the receipt as ``constitution_hash="missing"``.
+    """
     try:
         _constitution, constitution_hash = _load_constitution(targets)
-    except Exception:
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
         return "missing"
     return constitution_hash
 
