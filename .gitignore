@@ -79,6 +79,13 @@ credentials/
 .remember
 .omx
 
+# Additional agent / tool state (per-developer indexes, eval outputs, scratch
+# generators). Pattern without trailing slash matches both files and dirs.
+.antigravitycli
+.codegraph
+.plugin-eval
+.understand-anything
+
 # Editor / tool caches — per-developer state, never tracked.
 .cursor/
 .gitnexus/
@@ -113,8 +120,18 @@ credentials/
 
 # Scratch / debug artifacts at workspace root (per-developer, never tracked).
 /ACGS-pr52-review/
+/actions-runner/
 /atomic-agents-playground/
+/.gove-zone/
+/.scratch/
+/dist-release-evidence/
 /request.json
+
+# Frontend build outputs + Playwright captures (per-run, not source).
+/acgi-ai/dist-browser-evidence/
+/acgi-ai/dist-buyer-evidence/
+/acgi-ai/dist-marketing/
+/acgi-ai/test-results/
 
 # Out-of-band exploration clones in external/ that are NOT registered as
 # submodules in .gitmodules. Promote to a real submodule before tracking.

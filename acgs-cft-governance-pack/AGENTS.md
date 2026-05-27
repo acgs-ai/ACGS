@@ -6,13 +6,18 @@ This is a companion policy and evidence pack for Google Cloud's Cloud Foundation
 
 ## Key Files / Subdirs
 
-- `acgs_cft_governance_pack/evaluator.py` — Policy engine: implements all rule kinds (`forbidden_apis`, `require_project_labels`, `deny_iam_roles`, `require_gke_private_nodes`, etc.) and emits the JSONL evidence event.
+- `acgs_cft_governance_pack/evaluator.py` — Public orchestration facade: hashes the plan, iterates policies, calls the control evaluator, and delegates evidence event assembly.
+- `acgs_cft_governance_pack/controls.py` — Terraform plan resource selection, rule dispatch, and rule implementations (`forbidden_apis`, `require_project_labels`, `deny_iam_roles`, `require_gke_private_nodes`, etc.).
+- `acgs_cft_governance_pack/evidence.py` — Evidence envelope construction: `allow` / `deny` decision text, timestamping, and Merkle-root assignment.
+- `acgs_cft_governance_pack/hashing.py` — Canonical JSON SHA-256 hashing and Merkle-root construction for evidence records.
+- `acgs_cft_governance_pack/policy_io.py` — YAML policy loading and evidence JSONL writing.
+- `acgs_cft_governance_pack/terraform_plan.py` — Terraform plan shape helpers for active changes, `after` payloads, firewall ports, and violation records.
 - `acgs_cft_governance_pack/cli.py` + `__main__.py` — `python -m acgs_cft_governance_pack evaluate ...` entrypoint.
 - `policies/*.yaml` — Bundled control sets for Project Factory, network exposure, GKE secure baseline, SA-key posture, and GitHub Actions runner gate.
 - `examples/` — Allowed / denied Terraform plan fixtures used by tests and the README walkthrough.
 - `ci/github-actions-acgs-gate.yaml` — Reference GitHub Actions workflow that runs `terraform show -json`, calls this evaluator, and uploads the evidence bundle.
 - `evidence/sample-governed-terraform-plan.jsonl` — Reference output for verifier development.
-- `tests/` — Pytest suite covering every rule kind and the Merkle root construction.
+- `tests/` — Pytest suite covering rule behavior, evidence hashing, policy IO, and CLI smoke contracts.
 
 ## Workflow / Commands
 
@@ -39,5 +44,5 @@ python -m pytest acgs-cft-governance-pack/tests -q
 
 ## Gotchas
 
-- Policy YAML schemas are strict: an unknown `rule.kind` is a hard error, not a warning. When adding a new control kind, register it in `evaluator.py` and document it in the README rule-kinds table in the same change.
+- Policy YAML schemas are strict: an unknown `rule.kind` is a hard error, not a warning. When adding a new control kind, register it in `controls.py` and document it in the README rule-kinds table in the same change.
 - The evidence JSONL is append-only and Merkle-rooted per evaluation. Never edit emitted events by hand — regenerate from the original plan instead.

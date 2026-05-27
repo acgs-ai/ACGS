@@ -38,20 +38,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'acgs-cft-governance-pack/pyproject.toml'
 
       - name: Install
-        # `--system` targets the active Python from setup-python above
-        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
-        # externally-managed on current ubuntu-latest runners.
-        run: uv pip install --system --editable '.[test]'
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
+        # Create a per-matrix venv to insulate from /usr (PEP 668).
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --editable '.[test]'
 
       - name: Lint
         run: |
@@ -59,7 +58,7 @@ jobs:
           uvx ruff@0.8 format --check .
 
       - name: Test
-        run: python -m pytest tests/ -v --import-mode=importlib
+        run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib
 
       - name: CLI smoke (acgs-cft-govern --help must exit 0)
-        run: acgs-cft-govern --help
+        run: .venv/bin/acgs-cft-govern --help
