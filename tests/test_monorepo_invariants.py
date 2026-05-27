@@ -4,10 +4,12 @@ Every assertion here corresponds to a premise or DoD row that, if it drifts,
 silently breaks the workspace. Tests fail loudly when the repo no longer
 matches the plan; that is the entire point.
 """
+
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -30,7 +32,12 @@ def _load_yaml(rel: str) -> dict:
 
 
 def _read_uv_members(repo_root: Path) -> list[str]:
-    """Read uv workspace members from the root pyproject.toml."""
+    """Read uv workspace members from the root pyproject.toml.
+
+    Mirrored in ``scripts/hardening_report.py``; keep the two
+    implementations in lock-step — both must read the same key from the
+    same file.
+    """
     with (repo_root / "pyproject.toml").open("rb") as f:
         root = tomllib.load(f)
     return list(root["tool"]["uv"]["workspace"]["members"])
@@ -63,13 +70,17 @@ def _is_gitlink(rel: str) -> bool:
         registered = rel in _registered_submodule_paths(ROOT)
         if registered:
             return True
-        print(f"gitlink check unavailable for {rel}: {exc}; no .gitmodules fallback entry")
+        print(
+            f"gitlink check unavailable for {rel}: {exc}; no .gitmodules fallback entry",
+            file=sys.stderr,
+        )
         return False
 
 
 # ---------------------------------------------------------------------------
 # §1 Premise 4 — workspace floor is 3.11; per-package floors intentional
 # ---------------------------------------------------------------------------
+
 
 def test_root_python_floor_is_3_11():
     """Workspace floor must be the highest member floor per PRD."""
@@ -96,6 +107,7 @@ def test_acgs_swarm_floor_drives_workspace_floor():
 # §4 Target architecture — workspace member list
 # ---------------------------------------------------------------------------
 
+
 def test_uv_workspace_members_match_plan():
     declared = _read_uv_members(ROOT)
     assert declared, "uv workspace members must be declared in pyproject.toml"
@@ -106,9 +118,7 @@ def test_every_uv_member_has_pyproject_on_disk():
     """Initialized workspace members need pyproject.toml; gitlinks may be lazy."""
     members = _read_uv_members(ROOT)
     missing = [
-        m
-        for m in members
-        if not (ROOT / m / "pyproject.toml").is_file() and not _is_gitlink(m)
+        m for m in members if not (ROOT / m / "pyproject.toml").is_file() and not _is_gitlink(m)
     ]
     assert not missing, f"Members missing pyproject.toml: {missing}"
 
@@ -151,6 +161,7 @@ def test_uv_root_is_virtual_workspace():
 # ---------------------------------------------------------------------------
 # JS workspace — pnpm pin must match the established acgi-ai version
 # ---------------------------------------------------------------------------
+
 
 def test_packagemanager_pin_matches_acgi_ai():
     root = _load_json("package.json")
@@ -258,6 +269,7 @@ def test_archon_harness_lessons_keep_acgs_boundary():
 # ---------------------------------------------------------------------------
 # Constitutional-hash lock file shape
 # ---------------------------------------------------------------------------
+
 
 def test_constitutional_hash_lock_is_well_formed():
     lock = _load_json("docs/constitutional-hashes.lock")
