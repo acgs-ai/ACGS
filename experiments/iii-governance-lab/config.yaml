@@ -1,0 +1,8 @@
+workers:
+  - name: iii-worker-manager
+    config:
+      port: 49134
+  - name: iii-http
+    config:
+      host: 127.0.0.1
+      port: 3111
