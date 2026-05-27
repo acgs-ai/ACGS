@@ -38,6 +38,23 @@ from typing import Any
 from governance.models import sha256_json
 
 _ACTIONS = {"allow", "deny", "transform", "require_review"}
+_WHEN_KEYS = {
+    "allowed_outputs_contains_any",
+    "disallowed_outputs_contains_any",
+    "environment",
+    "phase",
+    "requested_capabilities_all",
+    "requested_capabilities_any",
+    "requested_capabilities_subset_of",
+    "risk_class",
+}
+
+# MUST stay in sync with gate.py.
+_WHEN_ENUMS: dict[str, tuple[str, ...]] = {
+    "phase": ("workflow_admission", "step_admission", "final_output"),
+    "risk_class": ("low", "medium", "high", "critical"),
+    "environment": ("local", "ci", "hosted", "production"),
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +89,7 @@ def policy_bundle_from_dict(raw: dict[str, Any]) -> PolicyBundle:
                 raise ValueError(f"rule[{i}] missing required key: {key}")
         if rule["action"] not in _ACTIONS:
             raise ValueError(f"rule[{i}].action must be one of {sorted(_ACTIONS)}, got {rule['action']!r}")
+        _validate_when(rule, i)
     default_action = raw.get("default_action", "deny")
     if default_action not in _ACTIONS:
         raise ValueError(f"policy bundle default_action must be one of {sorted(_ACTIONS)}, got {default_action!r}")
@@ -88,3 +106,23 @@ def policy_bundle_hash(bundle: PolicyBundle | dict[str, Any]) -> str:
     if isinstance(bundle, PolicyBundle):
         return bundle.hash()
     return sha256_json(bundle)
+
+
+def _validate_when(rule: dict[str, Any], index: int) -> None:
+    rule_ref = f"rule[{index}] id={rule.get('id', '<missing>')!r}"
+    when = rule.get("when", {})
+    if not isinstance(when, dict):
+        raise ValueError(f"{rule_ref}.when must be a dict")
+
+    for key, value in when.items():
+        if key not in _WHEN_KEYS:
+            raise ValueError(f"{rule_ref}.when contains unknown key {key!r}; allowed keys: {sorted(_WHEN_KEYS)}")
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"{rule_ref}.when[{key!r}] must be list[str]")
+        if key in _WHEN_ENUMS:
+            allowed = _WHEN_ENUMS[key]
+            invalid = [item for item in value if item not in allowed]
+            if invalid:
+                raise ValueError(
+                    f"{rule_ref}.when[{key!r}] contains invalid values {invalid!r}; allowed values: {list(allowed)}"
+                )
