@@ -50,6 +50,17 @@ _WHEN_KEYS = {
 }
 
 # MUST stay in sync with gate.py.
+#
+# Closed-set vs open-set contract:
+#   - Keys present here (risk_class / phase / environment) are **closed
+#     enums** — typo'd values fail load-time validation.
+#   - All other supported `when` keys (notably ``requested_capabilities_*``,
+#     ``allowed_outputs_contains_any``, ``disallowed_outputs_contains_any``)
+#     are **open vocabularies** by design. Capabilities and output sentinels
+#     are domain-specific and grow per tenant, so we only type-check
+#     (``list[str]``) — a typo in a capability key still loads but, because
+#     the matcher enforces presence checks, it produces a no-op rule rather
+#     than an overbroad one.
 _WHEN_ENUMS: dict[str, tuple[str, ...]] = {
     "phase": ("workflow_admission", "step_admission", "final_output"),
     "risk_class": ("low", "medium", "high", "critical"),

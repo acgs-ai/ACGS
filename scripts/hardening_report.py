@@ -40,7 +40,12 @@ DRILLS_DIR = ARTIFACTS_DIR / "rollback_drills"
 
 
 def _read_uv_members(repo_root: Path) -> list[str]:
-    """Read uv workspace members from the root pyproject.toml."""
+    """Read uv workspace members from the root pyproject.toml.
+
+    Mirrored in ``tests/test_monorepo_invariants.py``; keep the two
+    implementations in lock-step — both must read the same key from the
+    same file.
+    """
     with (repo_root / "pyproject.toml").open("rb") as f:
         root_proj = tomllib.load(f)
     return list(root_proj["tool"]["uv"]["workspace"]["members"])
