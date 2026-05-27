@@ -29,7 +29,7 @@ defaults:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       matrix:
@@ -37,31 +37,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'packages/agent-bus-analyzer/pyproject.toml'
 
       - name: Install
-        run: uv pip install --system --no-config --editable '.[dev]'
+        # Mirrors python-eval-mvp.yml: use uv's python-build-standalone instead of
+        # actions/setup-python (which lacks prebuilds for Ubuntu 25.10 on the
+        # self-hosted runner) and install into a venv so the lint/test step
+        # invocations are unambiguous.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --editable '.[dev]'
 
       - name: Lint
         run: |
-          python -m ruff check .
-          python -m ruff format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Typecheck
-        run: python -m mypy src/
+        run: .venv/bin/mypy src/
 
       - name: Test
-        run: python -m pytest -q
+        run: .venv/bin/pytest -q
 
       - name: OpenAPI export smoke
-        run: agent-bus-analyzer export-openapi --output -
+        run: .venv/bin/agent-bus-analyzer export-openapi --output -
 
       - name: OpenAPI drift check
         working-directory: ${{ github.workspace }}
