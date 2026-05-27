@@ -74,6 +74,7 @@ EXPECTED_UV_MEMBERS = {
     "packages/Acgs-Swarm",
     "packages/clinicalguard",
     "packages/gove-zone",
+    "packages/agent-bus-analyzer",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
 }
@@ -98,6 +99,27 @@ def test_every_uv_member_has_pyproject_on_disk():
     ]
     assert not missing, f"Members missing pyproject.toml: {missing}"
 
+
+
+
+def test_mypy_configured_uv_members_declare_targets():
+    """Bare `uv run mypy` needs an explicit target in package-local config."""
+    root = _load_toml("pyproject.toml")
+    missing_targets: list[str] = []
+    for member in root["tool"]["uv"]["workspace"]["members"]:
+        pyproject = ROOT / member / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        config = _load_toml(f"{member}/pyproject.toml")
+        mypy = config.get("tool", {}).get("mypy")
+        if mypy is None:
+            continue
+        if not any(key in mypy for key in ("files", "packages", "modules")):
+            missing_targets.append(member)
+    assert not missing_targets, (
+        "Workspace Makefile runs bare `uv run mypy` for members with mypy config; "
+        f"these members need files/packages/modules targets: {missing_targets}"
+    )
 
 def test_uv_root_is_virtual_workspace():
     """Root must NOT be a buildable package — `[tool.uv] package = false`."""

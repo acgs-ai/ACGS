@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "ACGS runtime governance evaluation MVP for AI agents"
 requires-python = ">=3.10"
 dependencies = [
-  "pyyaml>=6.0"
+  "pyyaml>=6.0",
+  "cryptography>=42.0"
 ]
 
 # Setuptools auto-discovery refuses to proceed when multiple top-level

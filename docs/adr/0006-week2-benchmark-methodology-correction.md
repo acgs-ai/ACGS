@@ -20,6 +20,10 @@ exercise a real latency distribution and should remain a historical record, not
 the canonical benchmark method.
 
 The corrected run still produced a Week-2 PASS verdict.
+This correction is still an N=10 in-process Python benchmark. It validates the
+local Week-2 gate against real per-chain timings, but it does not validate the
+arXiv paper's distributed or multi-agent scaling claims, nor any p95
+tail-latency claim at external scale.
 
 ## Decision
 

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 import pytest
 from governance.policy_loader import load_policy_bundle, load_roles
+
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
 
 if sys.version_info >= (3, 14):
     try:

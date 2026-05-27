@@ -256,13 +256,18 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         import tomllib
         root_proj = tomllib.loads((repo_root / "pyproject.toml").read_text())
         expected = {
-            "packages/acgs-lite", "packages/Acgs-Swarm", "packages/clinicalguard",
-            "acgs_governance_eval_mvp", "acgs-cft-governance-pack",
+            "packages/acgs-lite",
+            "packages/Acgs-Swarm",
+            "packages/clinicalguard",
+            "packages/gove-zone",
+            "packages/agent-bus-analyzer",
+            "acgs_governance_eval_mvp",
+            "acgs-cft-governance-pack",
         }
         declared = set(root_proj["tool"]["uv"]["workspace"]["members"])
         items.append(ChecklistItem(
             number=3,
-            description="uv workspace members match plan (5 packages)",
+            description="uv workspace members match plan (7 packages)",
             status="pass" if declared == expected else "fail",
             evidence=f"declared={sorted(declared)}",
         ))
