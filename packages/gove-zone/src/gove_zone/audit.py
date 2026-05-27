@@ -126,14 +126,18 @@ class ChainHashAuditStore:
                         last_line = stripped.decode("utf-8")
                         break
         except (OSError, UnicodeDecodeError) as exc:
-            raise AuditChainError(f"could not read audit chain tail from {self.path}: {exc}") from exc
+            raise AuditChainError(
+                f"could not read audit chain tail from {self.path}: {exc}"
+            ) from exc
 
         if not last_line:
             raise AuditChainError(f"audit chain tail is blank in non-empty file {self.path}")
         try:
             event = json.loads(last_line)
         except json.JSONDecodeError as exc:
-            raise AuditChainError(f"audit chain tail is not valid JSON in {self.path}: {exc}") from exc
+            raise AuditChainError(
+                f"audit chain tail is not valid JSON in {self.path}: {exc}"
+            ) from exc
         if not isinstance(event, dict):
             raise AuditChainError(f"audit chain tail is not a JSON object in {self.path}")
         event_hash = event.get("event_hash")
