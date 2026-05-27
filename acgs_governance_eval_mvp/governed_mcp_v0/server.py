@@ -130,7 +130,7 @@ class GovernedMCPServer:
         constitution_hash = constitution_hash or _constitution_hash_or_missing(self.targets)
         try:
             with _evidence_lock(self.targets.audit_path):
-                index = _next_receipt_index(self.targets.audit_path)
+                index = _next_receipt_index(self.targets.receipts_dir, self.targets.audit_path)
                 receipt_path = self.targets.receipts_dir / f"{index:04d}-{action_id.replace('.', '-')}.json"
                 receipt_core = {
                     "action_id": action_id,

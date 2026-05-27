@@ -119,7 +119,23 @@ def _constitution_hash_or_missing(targets: RuntimeTargets) -> str:
     return constitution_hash
 
 
-def _next_receipt_index(audit_path: Path) -> int:
+def _next_receipt_index(receipts_dir: Path, audit_path: Path) -> int:
+    """Return the next 1-based receipt index.
+
+    Prefer max(existing receipt filenames) + 1 — this is collision-proof
+    against orphan audit lines (audit row written but receipt later unlinked
+    by an external cleanup, or vice-versa). Falls back to audit-line count
+    + 1 when no receipts exist yet so the very first admission still gets
+    index 1.
+    """
+    indices: list[int] = []
+    if receipts_dir.exists():
+        for entry in receipts_dir.iterdir():
+            name = entry.name
+            if len(name) >= 5 and name[:4].isdigit() and name.endswith(".json"):
+                indices.append(int(name[:4]))
+    if indices:
+        return max(indices) + 1
     if not audit_path.exists():
         return 1
     with audit_path.open("r", encoding="utf-8") as handle:
