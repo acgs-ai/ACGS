@@ -21,6 +21,10 @@
     "test:mvp": "node scripts/check-gove-zone-mvp.mjs",
     "smoke:gove-zone-live": "node scripts/smoke-gove-zone-live.mjs",
     "test:all": "pnpm run lint && pnpm run build && pnpm run test:security && pnpm run test:mvp",
+    "build:console": "tsc -b && vite build --mode console",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:playwright": "playwright test --config=playwright.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -39,20 +43,27 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "^4.2.4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.7",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
+    "jsdom": "^29.1.1",
     "msw": "^2.14.2",
     "tailwindcss": "^4.2.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.7"
   },
   "msw": {
     "workerDirectory": [
