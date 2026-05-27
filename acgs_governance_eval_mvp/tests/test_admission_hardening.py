@@ -144,6 +144,69 @@ def test_bundle_rejects_invalid_default_action() -> None:
 
 
 # ---------------------------------------------------------------------------
+# CP2 — policy ``when`` schema validation at load time
+# ---------------------------------------------------------------------------
+
+
+def test_policy_bundle_rejects_unknown_when_key_with_rule_id() -> None:
+    with pytest.raises(ValueError, match=r"typo_rule.*requested_capabilites_any"):
+        policy_bundle_from_dict(
+            {
+                "bundle_id": "legalguard_ca",
+                "version": "1.2.0",
+                "rules": [
+                    {
+                        "id": "typo_rule",
+                        "when": {"requested_capabilites_any": ["legal_analysis"]},
+                        "action": "deny",
+                        "reason_code": "prohibited_output",
+                    }
+                ],
+            }
+        )
+
+
+def test_policy_bundle_rejects_string_when_value() -> None:
+    with pytest.raises(ValueError, match=r"risk_class.*list\[str\]"):
+        policy_bundle_from_dict(
+            {
+                "bundle_id": "legalguard_ca",
+                "version": "1.2.0",
+                "rules": [
+                    {
+                        "id": "string_risk_class",
+                        "when": {"risk_class": "high"},
+                        "action": "deny",
+                        "reason_code": "prohibited_output",
+                    }
+                ],
+            }
+        )
+
+
+def test_policy_bundle_rejects_invalid_when_enum_value() -> None:
+    with pytest.raises(ValueError, match=r"risk_class.*catastrophic_unknown"):
+        policy_bundle_from_dict(
+            {
+                "bundle_id": "legalguard_ca",
+                "version": "1.2.0",
+                "rules": [
+                    {
+                        "id": "bad_risk_class",
+                        "when": {"risk_class": ["catastrophic_unknown"]},
+                        "action": "deny",
+                        "reason_code": "prohibited_output",
+                    }
+                ],
+            }
+        )
+
+
+def test_policy_bundle_fixture_loads_with_when_schema_validation() -> None:
+    load_policy_bundle(FIXTURES / "policy_bundle.json")
+
+
+# ---------------------------------------------------------------------------
 # CRITICAL #2 — enum validation in decide()
 # ---------------------------------------------------------------------------
 

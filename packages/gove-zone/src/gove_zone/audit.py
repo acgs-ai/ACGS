@@ -25,8 +25,13 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.decision import DecisionRecord, sha256_json
+from gove_zone.errors import AuditError
 
 GENESIS_HASH = "0" * 64
+
+
+class AuditChainError(AuditError):
+    """Raised when the persisted audit chain tail is corrupt or unreadable."""
 
 
 class ChainHashAuditStore:
@@ -91,13 +96,17 @@ class ChainHashAuditStore:
     def _read_last_hash_from_disk(self) -> str:
         if not self.path.exists():
             return GENESIS_HASH
+        try:
+            size = self.path.stat().st_size
+        except OSError as exc:
+            raise AuditChainError(f"could not stat audit chain {self.path}: {exc}") from exc
+        if size == 0:
+            return GENESIS_HASH
+
         last_line: str | None = None
-        with self.path.open("rb") as fh:
-            try:
+        try:
+            with self.path.open("rb") as fh:
                 fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                if size == 0:
-                    return GENESIS_HASH
                 # Tail-read in chunks until the newline preceding the final
                 # record, so we never load the whole file.
                 chunk = 4096
@@ -116,25 +125,51 @@ class ChainHashAuditStore:
                     if pos == 0:
                         last_line = stripped.decode("utf-8")
                         break
-            except OSError:
-                return GENESIS_HASH
+        except (OSError, UnicodeDecodeError) as exc:
+            raise AuditChainError(
+                f"could not read audit chain tail from {self.path}: {exc}"
+            ) from exc
+
         if not last_line:
-            return GENESIS_HASH
+            raise AuditChainError(f"audit chain tail is blank in non-empty file {self.path}")
         try:
             event = json.loads(last_line)
-        except json.JSONDecodeError:
-            return GENESIS_HASH
-        return str(event.get("event_hash", GENESIS_HASH))
+        except json.JSONDecodeError as exc:
+            raise AuditChainError(
+                f"audit chain tail is not valid JSON in {self.path}: {exc}"
+            ) from exc
+        if not isinstance(event, dict):
+            raise AuditChainError(f"audit chain tail is not a JSON object in {self.path}")
+        event_hash = event.get("event_hash")
+        if not isinstance(event_hash, str):
+            raise AuditChainError(f"audit chain tail has invalid event_hash in {self.path}")
+        return event_hash
 
     def iter_events(self) -> Iterable[dict[str, Any]]:
-        """Yield every persisted event dict in chain order."""
+        """Yield every persisted event dict in chain order.
+
+        Raises :class:`AuditChainError` on any malformed line so callers
+        such as :meth:`verify_chain` surface the same exception type as
+        :meth:`append` instead of leaking a raw ``json.JSONDecodeError``.
+        """
         if not self.path.exists():
             return
         with self.path.open("r", encoding="utf-8") as fh:
-            for line in fh:
+            for line_number, line in enumerate(fh, start=1):
                 clean = line.strip()
-                if clean:
-                    yield json.loads(clean)
+                if not clean:
+                    continue
+                try:
+                    event = json.loads(clean)
+                except json.JSONDecodeError as exc:
+                    raise AuditChainError(
+                        f"audit chain line {line_number} in {self.path} is not valid JSON: {exc}"
+                    ) from exc
+                if not isinstance(event, dict):
+                    raise AuditChainError(
+                        f"audit chain line {line_number} in {self.path} is not a JSON object"
+                    )
+                yield event
 
     def query(
         self,
