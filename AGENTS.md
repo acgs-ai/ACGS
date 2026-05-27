@@ -56,6 +56,11 @@ codex exec "rename PolicyEnforcer to PolicyGate in packages/acgs-lite/src/"
 
 Codex sandbox respects `.gitignore`. The nested git repos in `packages/` are visible to Codex but writes to them must be staged from inside the nested repo.
 
+Local runtime and agent state such as `.acgs-swarm/`, `.omc/`, `.omx/`,
+`.remember/`, `.coverage`, `htmlcov/`, `__pycache__/`, virtualenvs, and build
+outputs is not source architecture. Keep it ignored and do not stage it from the
+parent repo.
+
 ## Hard constraints
 
 1. **Constitutional hashes are sealed.** Files with `# Constitutional Hash:` markers must not change without recomputing the hash.

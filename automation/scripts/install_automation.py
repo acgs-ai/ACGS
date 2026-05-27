@@ -15,8 +15,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from audit_log import append_event
-
+from audit_log import (
+    append_event,
+)
 
 APPROVED_DIR = Path("automation/approved")
 WORKFLOWS_DIR = Path("automation/workflows")
@@ -46,7 +47,9 @@ def install_automation(automation_id: str, registry_path: Path) -> Path:
     if entry is None:
         raise SystemExit(f"fail_closed: {automation_id} is not in registry")
     if entry.get("status") != "approved":
-        raise SystemExit(f"fail_closed: {automation_id} status is {entry.get('status')}, not approved")
+        raise SystemExit(
+            f"fail_closed: {automation_id} status is {entry.get('status')}, not approved"
+        )
 
     approved_path = APPROVED_DIR / f"{automation_id}.yaml"
     if not approved_path.exists():

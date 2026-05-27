@@ -22,17 +22,18 @@ import json
 import os
 import threading
 import uuid
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 ZERO_HASH = "0" * 64
 
 
 def utc_now_iso() -> str:
     """Return an RFC3339-ish UTC timestamp."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def canonical_json(value: Any) -> str:

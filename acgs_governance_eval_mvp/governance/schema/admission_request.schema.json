@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/admission_request.schema.json",
+  "title": "ACGS Admission Gate v0.1 Request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "workflow_id",
+    "run_id",
+    "phase",
+    "actor",
+    "declared_goal",
+    "proposed_method",
+    "risk_class",
+    "requested_capabilities",
+    "execution_boundary",
+    "policy_context",
+    "inputs_manifest"
+  ],
+  "properties": {
+    "schema_version": {"const": "admission_gate/0.1"},
+    "request_id": {"type": "string", "pattern": "^req_[A-Za-z0-9_-]+$"},
+    "workflow_id": {"type": "string"},
+    "run_id": {"type": "string", "pattern": "^run_[A-Za-z0-9_-]+$"},
+    "phase": {
+      "type": "string",
+      "enum": ["workflow_admission", "step_admission", "final_output"]
+    },
+    "step_id": {"type": ["string", "null"]},
+    "actor": {
+      "type": "object",
+      "required": ["id", "role"],
+      "properties": {
+        "id": {"type": "string"},
+        "role": {"type": "string", "enum": ["agent", "human", "system"]},
+        "tenant": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "declared_goal": {"type": "string", "minLength": 1},
+    "proposed_method": {"type": "string", "minLength": 1},
+    "risk_class": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "requested_capabilities": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 0
+    },
+    "execution_boundary": {
+      "type": "object",
+      "required": ["environment", "allowed_outputs", "disallowed_outputs"],
+      "properties": {
+        "environment": {
+          "type": "string",
+          "enum": ["local", "ci", "hosted", "production"]
+        },
+        "allowed_outputs": {"type": "array", "items": {"type": "string"}},
+        "disallowed_outputs": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "policy_context": {
+      "type": "object",
+      "required": ["policy_bundle_id", "policy_version"],
+      "properties": {
+        "policy_bundle_id": {"type": "string"},
+        "policy_version": {"type": "string"},
+        "jurisdiction": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "inputs_manifest": {
+      "type": "object",
+      "required": ["hash_alg", "items"],
+      "properties": {
+        "hash_alg": {"type": "string", "enum": ["sha256"]},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "hash"],
+            "properties": {
+              "kind": {"type": "string"},
+              "ref": {"type": "string"},
+              "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timestamp": {"type": "string"}
+  },
+  "additionalProperties": false
+}

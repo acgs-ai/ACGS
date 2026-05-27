@@ -1,0 +1,31 @@
+{
+  "schema_version": "admission_gate/0.1",
+  "request_id": "req_transform_001",
+  "workflow_id": "legalguard_contract_review",
+  "run_id": "run_transform_001",
+  "phase": "step_admission",
+  "step_id": "step_draft_review",
+  "actor": {"id": "legal_assistant_agent", "role": "agent", "tenant": "demo"},
+  "declared_goal": "draft a risk summary of an uploaded contract",
+  "proposed_method": "extract material terms, flag risks, write narrative analysis",
+  "risk_class": "medium",
+  "requested_capabilities": ["legal_analysis", "summarize"],
+  "execution_boundary": {
+    "environment": "hosted",
+    "allowed_outputs": ["internal_draft", "client_facing_legal_advice"],
+    "disallowed_outputs": []
+  },
+  "policy_context": {
+    "policy_bundle_id": "legalguard_ca",
+    "policy_version": "1.2.0",
+    "jurisdiction": "CA-ON"
+  },
+  "inputs_manifest": {
+    "hash_alg": "sha256",
+    "items": [
+      {"kind": "document", "ref": "contract.pdf",
+       "hash": "0000000000000000000000000000000000000000000000000000000000000003"}
+    ]
+  },
+  "timestamp": "2026-05-21T00:00:00Z"
+}

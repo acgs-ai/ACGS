@@ -7,9 +7,40 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from governance.models import DecisionRecord, sha256_json
+from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityError, DecisionRecord, sha256_json
 
 GENESIS_HASH = "0" * 64
+
+
+def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
+    """Extract and validate an authorization trace from an audit event.
+
+    Returns ``None`` only when the event has no authorization_trace field.
+    Malformed or tampered trace payloads always raise
+    ``AuthorizationTraceIntegrityError``; callers that want fallback behavior
+    must catch that exception at the call site.
+    """
+    trace_payload = event_dict.get("authorization_trace")
+    if trace_payload is None:
+        return None
+    if not isinstance(trace_payload, dict):
+        raise AuthorizationTraceIntegrityError("authorization_trace must be an object")
+
+    try:
+        trace = AuthorizationTrace.from_dict(trace_payload)
+    except Exception as exc:
+        raise AuthorizationTraceIntegrityError("authorization_trace is invalid") from exc
+
+    receipt = trace_payload.get("receipt")
+    if isinstance(receipt, dict) and receipt.get("trace_hash") != trace.trace_hash():
+        raise AuthorizationTraceIntegrityError("authorization_trace trace_hash does not match trace payload")
+
+    actor = event_dict.get("request", {}).get("actor") if isinstance(event_dict.get("request"), dict) else None
+    actor_id = actor.get("id") if isinstance(actor, dict) else None
+    if actor_id and actor_id not in {entry["principal_id"] for entry in trace.principal_chain}:
+        raise AuthorizationTraceIntegrityError("authorization_trace principal_chain does not reference request actor")
+
+    return trace
 
 
 class ChainHashAuditStore:
@@ -17,14 +48,22 @@ class ChainHashAuditStore:
 
     Each event hash covers the canonical event payload excluding event_hash.
     previous_hash links to the prior event_hash.
+
+    ``verify_chain()`` returns structured hash-chain failures for ordinary
+    event hash mismatches. Trace-bearing events are stricter: malformed or
+    tampered authorization traces raise ``AuthorizationTraceIntegrityError``.
     """
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._last_hash: str | None = None
 
-    def append(self, decision: DecisionRecord) -> dict[str, Any]:
+    def append(
+        self,
+        decision: DecisionRecord,
+        authorization_trace: AuthorizationTrace | None = None,
+    ) -> dict[str, Any]:
+        trace_payload = authorization_trace.to_dict() if authorization_trace is not None else None
         # Serialize read-then-write under an exclusive lock so concurrent
         # callers do not produce sibling events pointing at the same
         # previous_hash. Without this, verify_chain() reports the chain
@@ -33,11 +72,12 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                if self._last_hash is None:
-                    self._last_hash = self._read_last_hash_from_disk()
-                previous_hash = self._last_hash
+                previous_hash = self._read_last_hash_from_disk()
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
+                if trace_payload is not None:
+                    payload["authorization_trace"] = trace_payload
+                    extract_trace(payload)
                 payload.pop("event_hash", None)
                 payload["event_hash"] = sha256_json(payload)
 
@@ -46,14 +86,11 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
-                self._last_hash = str(payload["event_hash"])
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
 
     def last_hash(self) -> str:
-        if self._last_hash is not None:
-            return self._last_hash
         return self._read_last_hash_from_disk()
 
     def _read_last_hash_from_disk(self) -> str:
@@ -141,6 +178,18 @@ class ChainHashAuditStore:
         return out
 
     def verify_chain(self) -> dict[str, Any]:
+        # Acquire a shared lock for the duration of the scan so concurrent
+        # appenders (which hold LOCK_EX) cannot interleave a partial line
+        # underneath the reader and trigger JSONDecodeError.
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        with lock_path.open("a+") as lock_fh:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_SH)
+            try:
+                return self._verify_chain_locked()
+            finally:
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+    def _verify_chain_locked(self) -> dict[str, Any]:
         previous = GENESIS_HASH
         checked = 0
         failures: list[dict[str, Any]] = []
@@ -171,6 +220,13 @@ class ChainHashAuditStore:
                         "actual": claimed_hash,
                     }
                 )
+
+            if event.get("authorization_trace") is not None:
+                if claimed_hash != recomputed:
+                    raise AuthorizationTraceIntegrityError(
+                        f"trace-bearing event hash mismatch for {event.get('event_id')}"
+                    )
+                extract_trace(event)
 
             previous = str(claimed_hash)
 

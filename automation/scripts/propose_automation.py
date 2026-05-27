@@ -16,8 +16,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from audit_log import append_event
-
+from audit_log import (
+    append_event,
+)
 
 PROPOSALS_DIR = Path("automation/proposals")
 CONTEXT_PATTERNS = (
@@ -72,7 +73,9 @@ def first_summary_line(path: Path) -> str:
     return "local file present"
 
 
-def collect_project_context(repo_root: Path, limit: int = MAX_CONTEXT_FILES) -> list[dict[str, str]]:
+def collect_project_context(
+    repo_root: Path, limit: int = MAX_CONTEXT_FILES
+) -> list[dict[str, str]]:
     context: list[dict[str, str]] = []
     seen: set[Path] = set()
     for pattern in CONTEXT_PATTERNS:
@@ -141,7 +144,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    proposal = build_proposal(args.prompt, args.owner, include_context=args.include_context, repo_root=Path("."))
+    proposal = build_proposal(
+        args.prompt,
+        args.owner,
+        include_context=args.include_context,
+        repo_root=Path("."),
+    )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output_path = args.output_dir / f"{proposal['id']}.yaml"
     output_path.write_text(yaml.safe_dump(proposal, sort_keys=False), encoding="utf-8")

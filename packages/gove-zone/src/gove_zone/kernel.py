@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
@@ -33,7 +35,7 @@ from gove_zone.errors import (
 )
 from gove_zone.policy import Policy, new_event_id
 from gove_zone.receipt import Receipt, safe_result_hash
-from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
+from gove_zone.tool import ToolCall, ToolRegistry
 
 
 class Kernel:
@@ -60,11 +62,16 @@ class Kernel:
         audit: ChainHashAuditStore,
         registry: ToolRegistry | None = None,
         actor: str = "anonymous",
+        policy_timeout: float | None = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
         self.registry = registry or ToolRegistry()
         self.actor = actor
+        # Watchdog: if set, policy.evaluate must return within this many
+        # seconds or the kernel synthesizes a fail-closed DENY. None
+        # preserves the unbounded synchronous path (default).
+        self.policy_timeout = policy_timeout
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator to register a tool under *name*.
@@ -87,8 +94,6 @@ class Kernel:
         args: Mapping[str, Any] | None = None,
         *,
         goal: str = "",
-        path: str | Sequence[str] | None = None,
-        state: Mapping[str, Any] | None = None,
     ) -> tuple[Any, Receipt]:
         """Run the kernel loop for a single tool call.
 
@@ -99,23 +104,13 @@ class Kernel:
 
         ``goal`` is the caller's high-level intent; the kernel records it
         verbatim in the decision and receipt for replay/debug.
-        ``path`` and ``state`` are optional policies-on-paths context. They are
-        available to policies before execution and persisted as path segments
-        plus hashes in the audit record.
         """
         args_dict: dict[str, Any] = dict(args or {})
 
         if not self.registry.has(tool_name):
             raise UnknownToolError(tool_name)
 
-        call = ToolCall(
-            name=tool_name,
-            args=args_dict,
-            goal=goal,
-            actor=self.actor,
-            path=normalize_path_context(path),
-            state=dict(state or {}),
-        )
+        call = ToolCall(name=tool_name, args=args_dict, goal=goal)
         record, audit_hash = self._evaluate_and_record(call)
 
         if record.decision is Decision.DENY:
@@ -145,16 +140,6 @@ class Kernel:
         )
         return result, receipt
 
-    def _attach_context(self, record: DecisionRecord, call: ToolCall) -> DecisionRecord:
-        return dataclasses.replace(
-            record,
-            goal=call.goal,
-            actor=call.actor,
-            path=call.path,
-            state_hash=call.state_hash(),
-            decision_request_hash=call.decision_request_hash(),
-        )
-
     def _evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
         """Evaluate policy + append to audit. Fail-closed on both steps.
 
@@ -163,7 +148,18 @@ class Kernel:
         - If audit.append raises, surface :class:`AuditError`.
         """
         try:
-            record = self.policy.evaluate(call)
+            record = self._evaluate_with_watchdog(call)
+        except FuturesTimeoutError:
+            record = DecisionRecord(
+                decision=Decision.DENY,
+                tool=call.name,
+                argument_hash=sha256_json(dict(call.args)),
+                policy_version="fail-closed/policy-timeout",
+                event_id=new_event_id(),
+                matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
+                reason=(f"policy evaluation exceeded watchdog timeout of {self.policy_timeout}s"),
+                goal=call.goal,
+            )
         except Exception as exc:
             record = DecisionRecord(
                 decision=Decision.DENY,
@@ -173,8 +169,12 @@ class Kernel:
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
                 reason=f"policy evaluation raised: {exc}",
+                goal=call.goal,
             )
         else:
+            # Inject the goal into the policy's record so callers don't have
+            # to thread it through every policy implementation.
+            record = dataclasses.replace(record, goal=call.goal)
             if record.decision is Decision.TRANSFORM and record.transformed_args is None:
                 record = dataclasses.replace(
                     record,
@@ -186,9 +186,6 @@ class Kernel:
                     reason=(f"{record.reason}; " if record.reason else "")
                     + "transform decision missing transformed_args",
                 )
-        # Inject kernel-owned context into the policy's record so callers don't
-        # have to thread it through every policy implementation.
-        record = self._attach_context(record, call)
 
         try:
             payload = self.audit.append(record)
@@ -196,6 +193,36 @@ class Kernel:
             raise AuditError(f"audit append failed for {record.event_id}: {exc}") from exc
 
         return record, str(payload["event_hash"])
+
+    def _evaluate_with_watchdog(self, call: ToolCall) -> DecisionRecord:
+        """Run ``policy.evaluate`` under the configured watchdog.
+
+        When ``policy_timeout`` is ``None`` this is a direct synchronous
+        call (no thread overhead, preserves existing behavior). When set,
+        the evaluation runs on a single-shot worker thread and raises
+        :class:`concurrent.futures.TimeoutError` if it exceeds the
+        deadline. The orphan thread completes naturally; its result is
+        discarded so a late ALLOW cannot bypass the fail-closed DENY the
+        kernel will record.
+        """
+        if self.policy_timeout is None:
+            return self.policy.evaluate(call)
+        # Manual lifecycle: ThreadPoolExecutor's context manager blocks
+        # on __exit__ waiting for the worker — that defeats the watchdog
+        # when policy.evaluate is hung. Detach via shutdown(wait=False)
+        # so dispatch returns inside the timeout; the orphan worker
+        # completes naturally and is cleaned up by the interpreter at
+        # exit.
+        ex = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = ex.submit(self.policy.evaluate, call)
+            try:
+                return future.result(timeout=self.policy_timeout)
+            except FuturesTimeoutError:
+                future.cancel()
+                raise
+        finally:
+            ex.shutdown(wait=False)
 
     def _record_execution_failure(
         self,
@@ -218,10 +245,6 @@ class Kernel:
             matched_rules=(f"EXEC_FAILURE:{type(exc).__name__}",),
             reason=f"execution raised: {exc}",
             goal=call.goal,
-            actor=call.actor,
-            path=call.path,
-            state_hash=call.state_hash(),
-            decision_request_hash=call.decision_request_hash(),
         )
         with contextlib.suppress(Exception):
             self.audit.append(failure)

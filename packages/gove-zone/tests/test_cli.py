@@ -6,8 +6,6 @@ import json
 import tomllib
 from pathlib import Path
 
-import pytest
-
 from gove_zone import ChainHashAuditStore, Decision, DecisionRecord, sha256_json
 from gove_zone.cli import main
 
@@ -29,7 +27,7 @@ def test_pyproject_installs_gove_zone_cli() -> None:
     assert data["project"]["scripts"]["gove-zone"] == "gove_zone.cli:main"
 
 
-def test_cli_replay_accepts_frontend_command_shape(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_replay_accepts_frontend_command_shape(capsys) -> None:
     exit_code = main(["replay", "--event", "ev_1", "--audit-hash", "abc"])
 
     assert exit_code == 0
@@ -41,7 +39,7 @@ def test_cli_replay_accepts_frontend_command_shape(capsys: pytest.CaptureFixture
 
 def test_cli_replay_verifies_audit_event_when_path_supplied(
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    capsys,
 ) -> None:
     path = tmp_path / "audit.jsonl"
     event = ChainHashAuditStore(path).append(_record("ev_1"))

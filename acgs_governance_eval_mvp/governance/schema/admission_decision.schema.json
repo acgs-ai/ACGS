@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/admission_decision.schema.json",
+  "title": "ACGS Admission Gate v0.1 Decision",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "decision_id",
+    "decision",
+    "reason_code",
+    "policy_version",
+    "matched_constraints",
+    "execution_boundary",
+    "transform",
+    "review",
+    "receipt"
+  ],
+  "properties": {
+    "schema_version": {"const": "admission_gate/0.1"},
+    "request_id": {"type": "string", "pattern": "^req_[A-Za-z0-9_-]+$"},
+    "decision_id": {"type": "string", "pattern": "^dec_[A-Za-z0-9_-]+$"},
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "transform", "require_review"]
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "allowed_with_constraints",
+        "missing_authority",
+        "no_matching_policy",
+        "prohibited_output",
+        "review_required",
+        "risk_threshold_exceeded",
+        "policy_violation",
+        "transformed_to_safe_boundary"
+      ]
+    },
+    "reason": {"type": "string"},
+    "policy_version": {"type": "string"},
+    "matched_constraints": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "execution_boundary": {
+      "type": "object",
+      "required": ["effective_permissions", "required_controls", "blocked_capabilities"],
+      "properties": {
+        "effective_permissions": {"type": "array", "items": {"type": "string"}},
+        "required_controls": {"type": "array", "items": {"type": "string"}},
+        "blocked_capabilities": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "transform": {
+      "type": "object",
+      "required": ["applied"],
+      "properties": {
+        "applied": {"type": "boolean"},
+        "description": {"type": ["string", "null"]},
+        "transformed_method": {"type": ["string", "null"]},
+        "transformed_boundary": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["allowed_outputs", "disallowed_outputs"],
+              "properties": {
+                "allowed_outputs": {"type": "array", "items": {"type": "string"}},
+                "disallowed_outputs": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": ["required"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "reviewer_role": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "receipt": {"$ref": "https://acgs.ai/schema/decision_receipt.schema.json"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"decision": {"const": "transform"}}, "required": ["decision"]},
+      "then": {
+        "properties": {
+          "transform": {
+            "properties": {
+              "applied": {"const": true},
+              "transformed_boundary": {"type": "object"}
+            },
+            "required": ["applied", "transformed_boundary"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "transform": {
+            "properties": {"applied": {"const": false}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"decision": {"const": "require_review"}}, "required": ["decision"]},
+      "then": {
+        "properties": {
+          "review": {
+            "properties": {
+              "required": {"const": true},
+              "reviewer_role": {"type": "string"}
+            },
+            "required": ["required", "reviewer_role"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "review": {
+            "properties": {"required": {"const": false}}
+          }
+        }
+      }
+    }
+  ]
+}

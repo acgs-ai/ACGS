@@ -55,8 +55,6 @@ class DecisionRecord:
     ``transformed_args`` is only set when ``decision is Decision.TRANSFORM``.
     ``goal`` is the high-level intent the caller passed to ``Kernel.dispatch``
     — opaque to the kernel, but persisted alongside the decision for replay.
-    ``actor``, ``path``, ``state_hash``, and ``decision_request_hash`` bind the
-    decision to the policies-on-paths context without storing raw state.
     """
 
     decision: Decision
@@ -69,10 +67,6 @@ class DecisionRecord:
     timestamp_iso: str = field(default_factory=_now_iso)
     transformed_args: dict[str, Any] | None = None
     goal: str = ""
-    actor: str = ""
-    path: tuple[str, ...] = ()
-    state_hash: str | None = None
-    decision_request_hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,8 +80,4 @@ class DecisionRecord:
             "timestamp_iso": self.timestamp_iso,
             "transformed_args": self.transformed_args,
             "goal": self.goal,
-            "actor": self.actor,
-            "path": list(self.path),
-            "state_hash": self.state_hash,
-            "decision_request_hash": self.decision_request_hash,
         }

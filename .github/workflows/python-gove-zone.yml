@@ -32,17 +32,13 @@ defaults:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
 
       - uses: astral-sh/setup-uv@v3
         with:
@@ -52,15 +48,20 @@ jobs:
       - name: Install (dev + schema extras)
         # Standalone CI: no parent uv workspace context. The package
         # declares zero runtime deps and an optional pydantic via
-        # [project.optional-dependencies].schema.
-        run: uv pip install --system --no-config --editable '.[dev,schema]'
+        # [project.optional-dependencies].schema. Use uv's python-build-standalone
+        # toolchain because actions/setup-python has no prebuilds for Ubuntu
+        # 25.10 on the self-hosted runner.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema]'
 
       - name: Lint
         run: |
-          python -m ruff check src tests examples
-          python -m ruff format --check src tests examples
+          .venv/bin/python -m ruff check src tests examples
+          .venv/bin/python -m ruff format --check src tests examples
 
       - name: Test
         # `--import-mode=importlib` matches the package's pytest config and
         # keeps tests insulated from sys.path leakage from sibling packages.
-        run: python -m pytest tests/ -v
+        run: .venv/bin/python -m pytest tests/ -v

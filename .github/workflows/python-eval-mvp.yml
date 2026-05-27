@@ -30,7 +30,7 @@ defaults:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       matrix:
@@ -38,28 +38,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'acgs_governance_eval_mvp/pyproject.toml'
 
       - name: Install
-        # `--system` targets the active Python from setup-python above
-        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
-        # externally-managed on current ubuntu-latest runners.
-        run: uv pip install --system --editable '.[test]'
+        # Provision the matrix Python via uv's python-build-standalone toolchain
+        # instead of actions/setup-python — the latter has no prebuilds for
+        # Ubuntu 25.10 on the self-hosted runner. uv resolves the interpreter
+        # against a portable distribution and creates the venv directly.
+        # Ruff is installed alongside test deps so CI uses the same minor
+        # version `make lint-py` resolves against the workspace lockfile.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --editable '.[test]' 'ruff==0.15.12'
 
       - name: Lint
+        # Use the project-pinned ruff from the dev install, not uvx ruff@0.8.
+        # The pin in pyproject is `ruff>=0.8`, but 0.8 formats differently from
+        # current minor versions; pinning CI to 0.8 caused drift with
+        # `make lint-py` (which uses the locked ruff).
         run: |
-          uvx ruff@0.8 check .
-          uvx ruff@0.8 format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Authorization trace receipt tests
+        run: |
+          .venv/bin/python -m pytest tests/test_authorization_trace_receipts.py -q
 
       - name: Test
-        run: python -m pytest tests/ -v --import-mode=importlib
-
-      - name: Governed MCP deterministic gate
-        run: python -m pytest tests/test_governed_mcp_v0.py -q
+        run: |
+          .venv/bin/python -m pytest tests/ -v --import-mode=importlib

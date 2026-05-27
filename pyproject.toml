@@ -24,6 +24,7 @@ package = false
 members = [
     "packages/acgs-lite",
     "packages/Acgs-Swarm",
+    "packages/clinicalguard",
     "packages/gove-zone",
     "packages/agent-bus-analyzer",
     "acgs_governance_eval_mvp",
@@ -58,6 +59,18 @@ target-version = "py311"
 # Permissive baseline; per-package configs tighten.
 select = ["E", "F", "I", "B", "UP", "RUF"]
 ignore = ["RUF002", "RUF003"]  # Acgs-Swarm latent_dna.py uses Greek chars
+
+[tool.ruff.lint.per-file-ignores]
+# These scripts/tests intentionally do `sys.path.insert(...)` for sibling-script
+# imports before any normal import statement (the audit_log / validate_automation
+# / hermes_acgs_middleware modules live next to the script, not in an installed
+# package). E402 (module-level import not at top of file) is the expected price
+# of that idiom; ignoring it locally is cleaner than per-line `# noqa: E402`
+# that ruff's `I` (import-sort) keeps stripping.
+"automation/scripts/install_automation.py" = ["E402"]
+"automation/scripts/propose_automation.py" = ["E402"]
+"automation/tests/test_automation_system.py" = ["E402"]
+"hermes_acgs_bundle/tests/test_hermes_acgs_middleware.py" = ["E402"]
 
 [tool.pytest.ini_options]
 # Members override; this is the workspace fallback.

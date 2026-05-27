@@ -18,7 +18,6 @@ Usage:
     python scripts/verify_constitutional_hashes.py --print    # print inventory
     python scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
 """
-
 from __future__ import annotations
 
 import argparse
@@ -43,38 +42,15 @@ MARKER_RE = re.compile(r"Constitutional Hash:[\s`'\"]*([0-9a-fA-F]+)")
 # File extensions worth scanning. Binary formats and large vendored trees
 # are excluded for performance — markers belong in source / config / docs.
 SCAN_EXTENSIONS = {
-    ".py",
-    ".pyi",
-    ".toml",
-    ".yaml",
-    ".yml",
-    ".json",
-    ".md",
-    ".rst",
-    ".txt",
-    ".cfg",
-    ".ini",
-    ".sh",
-    ".ts",
-    ".tsx",
-    ".js",
+    ".py", ".pyi", ".toml", ".yaml", ".yml", ".json", ".md",
+    ".rst", ".txt", ".cfg", ".ini", ".sh", ".ts", ".tsx", ".js",
 }
 
 # Path prefixes to skip even if extensions match.
 SKIP_PREFIXES = (
-    ".git/",
-    "node_modules/",
-    ".venv/",
-    "venv/",
-    "dist/",
-    "build/",
-    "target/",
-    ".turbo/",
-    "__pycache__/",
-    ".mypy_cache/",
-    ".pytest_cache/",
-    ".ruff_cache/",
-    "site-packages/",
+    ".git/", "node_modules/", ".venv/", "venv/", "dist/", "build/",
+    "target/", ".turbo/", "__pycache__/", ".mypy_cache/", ".pytest_cache/",
+    ".ruff_cache/", "site-packages/",
 )
 
 # Exact file paths to skip. These files embed marker strings as test fixtures
@@ -82,12 +58,10 @@ SKIP_PREFIXES = (
 # list, regenerating the lock would bake synthetic hashes (e.g. the drill's
 # `deadbeefcafebabe`) into the inventory, and any future edit to the fixture
 # would trip a false drift alert.
-SKIP_FILES = frozenset(
-    {
-        "scripts/hardening_report.py",  # drill harness — synthetic `deadbeefcafebabe`
-        "tests/test_verify_constitutional_hashes.py",  # verifier's own test fixtures
-    }
-)
+SKIP_FILES = frozenset({
+    "scripts/hardening_report.py",        # drill harness — synthetic `deadbeefcafebabe`
+    "tests/test_verify_constitutional_hashes.py",  # verifier's own test fixtures
+})
 
 
 def _list_files() -> Iterable[Path]:
@@ -193,7 +167,10 @@ def _filter_ignored_removed(
     if not ignored_prefixes:
         return removed, []
 
-    normalized = [prefix if prefix.endswith("/") else f"{prefix}/" for prefix in ignored_prefixes]
+    normalized = [
+        prefix if prefix.endswith("/") else f"{prefix}/"
+        for prefix in ignored_prefixes
+    ]
     enforced: list[str] = []
     ignored: list[str] = []
     for path in removed:
@@ -243,7 +220,9 @@ def main() -> int:
 
     pinned = load_lock()
     added, removed, changed = diff_inventories(pinned, inventory)
-    removed, ignored_removed = _filter_ignored_removed(removed, args.ignore_missing_prefix)
+    removed, ignored_removed = _filter_ignored_removed(
+        removed, args.ignore_missing_prefix
+    )
 
     if not (added or removed or changed):
         if ignored_removed:

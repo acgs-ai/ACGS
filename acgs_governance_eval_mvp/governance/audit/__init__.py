@@ -6,7 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 from governance.models import DecisionRecord
 
 from .in_memory import InMemoryAuditStore
-from .jsonl_chain import ChainHashAuditStore
+from .jsonl_chain import AuthorizationTraceIntegrityError, ChainHashAuditStore, extract_trace
 
 
 @runtime_checkable
@@ -32,4 +32,10 @@ class AuditStore(Protocol):
     def verify_chain(self) -> dict[str, Any]: ...
 
 
-__all__ = ["AuditStore", "ChainHashAuditStore", "InMemoryAuditStore"]
+__all__ = [
+    "AuditStore",
+    "AuthorizationTraceIntegrityError",
+    "ChainHashAuditStore",
+    "InMemoryAuditStore",
+    "extract_trace",
+]
