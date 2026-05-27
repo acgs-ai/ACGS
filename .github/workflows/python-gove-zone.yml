@@ -11,6 +11,8 @@ on:
     paths:
       - 'packages/gove-zone/**'
       - 'scripts/**'
+      - 'tests/**'
+      - 'Makefile'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
   push:
@@ -18,6 +20,8 @@ on:
     paths:
       - 'packages/gove-zone/**'
       - 'scripts/**'
+      - 'tests/**'
+      - 'Makefile'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
 
