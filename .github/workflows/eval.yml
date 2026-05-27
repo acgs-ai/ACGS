@@ -21,15 +21,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v3
 
-      - name: Install test dependencies
+      - name: Provision Python 3.11 and install deps
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml 'pydantic>=2.10'
+          uv python install 3.11
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python pytest pyyaml 'pydantic>=2.10'
 
       - name: Run governed MCP v0 deterministic gate
-        run: pytest acgs_governance_eval_mvp/tests/test_governed_mcp_v0.py -q
+        run: .venv/bin/python -m pytest acgs_governance_eval_mvp/tests/test_governed_mcp_v0.py -q
