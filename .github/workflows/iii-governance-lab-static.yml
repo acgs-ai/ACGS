@@ -1,0 +1,49 @@
+# Stage 1 static CI for experiments/iii-governance-lab/.
+# This gate validates repository contracts only; it does not start a live iii engine.
+
+name: iii-governance-lab-static
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/iii-governance-lab/**'
+      - 'tests/test_iii_governance_lab.py'
+      - 'tests/conftest.py'
+      - 'pyproject.toml'
+      - '.github/workflows/iii-governance-lab-static.yml'
+  push:
+    paths:
+      - 'experiments/iii-governance-lab/**'
+      - 'tests/test_iii_governance_lab.py'
+      - 'tests/conftest.py'
+      - 'pyproject.toml'
+      - '.github/workflows/iii-governance-lab-static.yml'
+
+concurrency:
+  group: iii-governance-lab-static-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'pyproject.toml'
+
+      - name: Install static test dependencies
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python pytest pyyaml
+
+      - name: Run iii governance lab static contract
+        run: |
+          .venv/bin/python -m pytest tests/test_iii_governance_lab.py -q
