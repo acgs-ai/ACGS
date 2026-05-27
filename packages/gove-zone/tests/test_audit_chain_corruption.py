@@ -110,3 +110,28 @@ def test_dispatch_does_not_invoke_tool_when_audit_tail_is_corrupt(tmp_path: Path
     assert isinstance(exc_info.value.__cause__, AuditChainError)
     assert invocations == []
     assert path.read_text(encoding="utf-8") == '{"event_id":"broken"\n'
+
+
+def test_verify_chain_raises_audit_chain_error_on_malformed_line(tmp_path: Path) -> None:
+    """verify_chain must surface AuditChainError, not raw JSONDecodeError.
+
+    Callers that catch AuditError around append also expect the same type
+    from verify_chain; a leaked json.JSONDecodeError forces them to widen
+    the except clause and breaks the symmetric audit-chain contract.
+    """
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+    store.append(_record("e1"))
+    path.write_text(path.read_text(encoding="utf-8") + "{not-json\n", encoding="utf-8")
+
+    with pytest.raises(AuditChainError, match="not valid JSON"):
+        store.verify_chain()
+
+
+def test_verify_chain_raises_audit_chain_error_on_non_object_line(tmp_path: Path) -> None:
+    """A line that parses to a non-dict (e.g. a JSON list) is also corruption."""
+    path = tmp_path / "audit.jsonl"
+    path.write_text("[1, 2, 3]\n", encoding="utf-8")
+
+    with pytest.raises(AuditChainError, match="not a JSON object"):
+        ChainHashAuditStore(path).verify_chain()

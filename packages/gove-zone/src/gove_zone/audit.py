@@ -146,14 +146,30 @@ class ChainHashAuditStore:
         return event_hash
 
     def iter_events(self) -> Iterable[dict[str, Any]]:
-        """Yield every persisted event dict in chain order."""
+        """Yield every persisted event dict in chain order.
+
+        Raises :class:`AuditChainError` on any malformed line so callers
+        such as :meth:`verify_chain` surface the same exception type as
+        :meth:`append` instead of leaking a raw ``json.JSONDecodeError``.
+        """
         if not self.path.exists():
             return
         with self.path.open("r", encoding="utf-8") as fh:
-            for line in fh:
+            for line_number, line in enumerate(fh, start=1):
                 clean = line.strip()
-                if clean:
-                    yield json.loads(clean)
+                if not clean:
+                    continue
+                try:
+                    event = json.loads(clean)
+                except json.JSONDecodeError as exc:
+                    raise AuditChainError(
+                        f"audit chain line {line_number} in {self.path} is not valid JSON: {exc}"
+                    ) from exc
+                if not isinstance(event, dict):
+                    raise AuditChainError(
+                        f"audit chain line {line_number} in {self.path} is not a JSON object"
+                    )
+                yield event
 
     def query(
         self,
