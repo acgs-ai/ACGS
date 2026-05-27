@@ -7,11 +7,13 @@ re-exported by ``mcp_server`` for back-compat with external callers.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from .constants import GENESIS_HASH
 from .models import RuntimeTargets
@@ -33,9 +35,10 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _write_json(path: Path, value: dict[str, Any]) -> None:
+def _write_json(path: Path, value: dict[str, Any], *, exclusive: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    mode = "x" if exclusive else "w"
+    with path.open(mode, encoding="utf-8") as handle:
         handle.write(canonical_json(value))
         handle.write("\n")
         handle.flush()
@@ -49,6 +52,23 @@ def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
+
+
+@contextmanager
+def _evidence_lock(audit_path: Path) -> IO[str]:
+    """Serialize evidence writers with a sidecar POSIX lock file.
+
+    TODO: ``fcntl`` is POSIX-only; Windows fallback is out of scope because
+    the package CI runs on Linux.
+    """
+    lock_path = audit_path.with_suffix(audit_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield handle
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _contains(base: Path, candidate: Path) -> bool:
