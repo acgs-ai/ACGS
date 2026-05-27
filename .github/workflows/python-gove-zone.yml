@@ -10,12 +10,14 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - 'scripts/**'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
   push:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - 'scripts/**'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
 
