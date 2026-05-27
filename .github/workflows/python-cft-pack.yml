@@ -1,0 +1,64 @@
+# Path-filtered CI for acgs-cft-governance-pack/ — GCP CFT governance policy pack.
+# Triggers only when files under this package change.
+
+name: python-cft-pack
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'acgs-cft-governance-pack/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-cft-pack.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'acgs-cft-governance-pack/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-cft-pack.yml'
+
+concurrency:
+  group: python-cft-pack-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: acgs-cft-governance-pack
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'acgs-cft-governance-pack/pyproject.toml'
+
+      - name: Install
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
+        # Create a per-matrix venv to insulate from /usr (PEP 668).
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --editable '.[test]'
+
+      - name: Lint
+        run: |
+          uvx ruff@0.8 check .
+          uvx ruff@0.8 format --check .
+
+      - name: Test
+        run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib
+
+      - name: CLI smoke (acgs-cft-govern --help must exit 0)
+        run: .venv/bin/acgs-cft-govern --help

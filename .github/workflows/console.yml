@@ -1,0 +1,244 @@
+# Console surface — Cloud Run deploy (DEPLOY.md §4, §7).
+#
+# Auth model: Workload Identity Federation (no service-account JSON in
+# secrets — the GitHub OIDC token authenticates against GCP). Set up:
+#
+#   1. Create a workload identity pool + GitHub provider in GCP IAM
+#   2. Bind a deploy service account to that provider
+#   3. Set repo secrets:
+#        GCP_PROJECT_ID
+#        GCP_REGION                  (e.g. us-central1)
+#        GCP_WORKLOAD_IDENTITY_PROVIDER  (full resource path)
+#        GCP_SERVICE_ACCOUNT         (deploy SA email)
+#        GCP_ARTIFACT_REGISTRY       (e.g. us-central1-docker.pkg.dev/<project>/acgi)
+#        CONSOLE_AUTH_UPSTREAM       (edge auth/forward-auth upstream for /console*)
+#        CONSOLE_BUS_UPSTREAM        (same-origin governed bus/gateway upstream)
+#
+# The console image is built and pushed on every PR (so previews can run
+# against a real revision) but only deployed to production on push-to-master.
+#
+# Workflow lives at repo root (.github/workflows/) — GitHub Actions only
+# discovers workflows from there. The acgi-ai app is in a subdirectory, so
+# defaults.run.working-directory pins all `run:` steps there. Path filters
+# are repo-root relative.
+
+name: console
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'acgi-ai/src/**'
+      - 'acgi-ai/public/**'
+      - 'acgi-ai/index.html'
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/scripts/**'
+      - 'acgi-ai/contracts/**'
+      - 'acgi-ai/vite.config.ts'
+      - 'acgi-ai/tsconfig*.json'
+      - 'acgi-ai/infra/**'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/PRODUCTION-LAUNCH.md'
+      - 'acgi-ai/production-authority.example.json'
+      - 'acgi-ai/production-evidence.example.json'
+      - 'acgi-ai/hosted-storybook-proof.example.json'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/A11Y.md'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/INTEGRATING.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'docs/integration-readiness-task-map.md'
+      - '.github/workflows/console.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'acgi-ai/src/**'
+      - 'acgi-ai/public/**'
+      - 'acgi-ai/index.html'
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/scripts/**'
+      - 'acgi-ai/contracts/**'
+      - 'acgi-ai/vite.config.ts'
+      - 'acgi-ai/tsconfig*.json'
+      - 'acgi-ai/infra/**'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/PRODUCTION-LAUNCH.md'
+      - 'acgi-ai/production-authority.example.json'
+      - 'acgi-ai/production-evidence.example.json'
+      - 'acgi-ai/hosted-storybook-proof.example.json'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/A11Y.md'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/INTEGRATING.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'docs/integration-readiness-task-map.md'
+      - '.github/workflows/console.yml'
+
+concurrency:
+  group: console-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write  # Required for Workload Identity Federation
+  pull-requests: write
+
+defaults:
+  run:
+    working-directory: acgi-ai
+
+jobs:
+  build:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # No `version:` here — read it from root package.json's
+        # `packageManager` field. action-setup@v4 errors on duplicate
+        # version declarations now that the monorepo root pins pnpm.
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      # `--ignore-workspace` keeps acgi-ai installed against its own
+      # pnpm-lock.yaml. Without this, pnpm walks up to the monorepo root,
+      # finds pnpm-workspace.yaml + root package.json, treats the whole
+      # workspace as installable, and demands a non-existent root
+      # pnpm-lock.yaml — failing with ERR_PNPM_NO_LOCKFILE.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Readiness gate
+        run: pnpm test:all
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build (verify TS / Vite before docker)
+        run: pnpm build:console
+
+      - name: Build buyer evidence gallery artifact
+        run: pnpm evidence:build
+
+      - name: Upload buyer evidence gallery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: buyer-evidence-gallery
+          path: acgi-ai/dist-buyer-evidence
+          if-no-files-found: error
+
+      - name: Upload built console artifact for post-deploy verification
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+          if-no-files-found: error
+
+      # ---- Image build + push: master pushes only ----
+      # PRs run Lint + Build above as verification; only pushes to master
+      # authenticate to GCP and push an image. This keeps PRs unblocked
+      # when GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT secrets
+      # aren't yet configured (which causes the auth action to abort with
+      # "must specify exactly one of workload_identity_provider or
+      # credentials_json").
+      - id: auth
+        name: Auth to GCP via WIF
+        if: github.event_name == 'push'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure docker auth
+        if: github.event_name == 'push'
+        run: |
+          gcloud auth configure-docker \
+            "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
+
+      - name: Compute image URI
+        id: image
+        if: github.event_name == 'push'
+        run: |
+          SHA="${GITHUB_SHA::12}"
+          URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/acgi-console:${SHA}"
+          echo "uri=$URI" >> "$GITHUB_OUTPUT"
+          echo "Image URI: $URI"
+
+      - uses: docker/setup-buildx-action@v3
+        if: github.event_name == 'push'
+
+      - name: Build & push image
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          # Dockerfile uses `COPY package.json pnpm-lock.yaml ./` and
+          # `COPY infra/Caddyfile …`, both relative to acgi-ai/.
+          context: acgi-ai
+          file: acgi-ai/infra/Dockerfile.console
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built console artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Render service.yaml
+        env:
+          DEPLOY_ENV: production
+          AUTH_UPSTREAM: ${{ secrets.CONSOLE_AUTH_UPSTREAM }}
+          BUS_UPSTREAM: ${{ secrets.CONSOLE_BUS_UPSTREAM }}
+        run: |
+          BUILD_ID="${GITHUB_SHA::12}"
+          IMAGE_URI="${{ needs.build.outputs.image }}"
+          node scripts/render-cloudrun-service.mjs \
+            --env "${DEPLOY_ENV}" \
+            --image "${IMAGE_URI}" \
+            --build-id "${BUILD_ID}" \
+            --auth-upstream "${AUTH_UPSTREAM}" \
+            --bus-upstream "${BUS_UPSTREAM}" \
+            --out infra/cloudrun/service.yaml
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services replace infra/cloudrun/service.yaml \
+            --region=${{ secrets.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Post-deploy verification
+        run: |
+          BUILD_ID="${GITHUB_SHA::12}"
+          URL=$(gcloud run services describe acgi-console \
+            --region=${{ secrets.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --format='value(status.url)')
+          echo "Deployed: $URL"
+          EXPECTED_BUILD_ID="$BUILD_ID" bash scripts/postdeploy-verify.sh "$URL"

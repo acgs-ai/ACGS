@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://govern-zone.dev/agent-bus-analyzer/trace-event.schema.json",
+  "title": "TraceEvent",
+  "description": "One captured event in an Enhanced Agent Bus trace. Source of truth: packages/agent-bus-analyzer/src/agent_bus_analyzer/models.py (Pydantic v2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "correlation_id",
+    "causal_index",
+    "recorded_at",
+    "source_agent",
+    "payload_ref",
+    "kind",
+    "constitutional_hash",
+    "event_hash",
+    "status"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUIDv7. Unique per event across all traces."
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Trace identifier; FK to Trace.correlation_id."
+    },
+    "causal_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Strictly monotonic within a trace."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Capture-side wall-clock; analyzer does not trust source clocks."
+    },
+    "source_agent": {
+      "type": "string",
+      "description": "Convention: <role>:<instance> (e.g., 'claude:worker-03'). Parses to role='unknown' if no colon."
+    },
+    "target_handler_declared": {
+      "type": ["string", "null"],
+      "description": "Handler name from the bus payload — what the dispatcher tried to route to."
+    },
+    "target_handler_resolved": {
+      "type": ["string", "null"],
+      "description": "Handler that actually responded; null on dispatch-failure / unwired-handler."
+    },
+    "payload_ref": {
+      "type": "string",
+      "description": "Opaque reference (hash or storage key). Bodies are NOT inlined to keep JSONL bounded."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["dispatch", "response", "decision"],
+      "description": "Three observable kinds. 'decision' originates from the gove-zone audit tail."
+    },
+    "decision": {
+      "type": ["string", "null"],
+      "enum": ["allow", "deny", "transform", "escalate", null],
+      "description": "Required when kind='decision'; otherwise null."
+    },
+    "flagged_rule": {
+      "type": ["string", "null"],
+      "description": "Rule identifier that produced a policy-violation."
+    },
+    "audit_receipt_hash": {
+      "type": ["string", "null"],
+      "description": "Reference to gove-zone audit chain when this event has a paired Receipt."
+    },
+    "constitutional_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "Active constitutional hash at capture time (16-char form). Repeated per event to detect mid-run rotation."
+    },
+    "event_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256(canonical_json(event minus event_hash) + prev_hash) — full 64-char hex."
+    },
+    "prev_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Predecessor event_hash in this trace, or null for the trace's first event."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "policy-violation",
+        "dispatch-failure",
+        "unwired-handler",
+        "orphan-response",
+        "incomplete-pair",
+        "ingest-gap"
+      ],
+      "description": "Classification per data-model.md §EventStatus."
+    },
+    "gap_started_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Only set when status='ingest-gap'."
+    },
+    "gap_ended_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Only set when status='ingest-gap'."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "decision" } } },
+      "then": { "required": ["decision"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "policy-violation" } } },
+      "then": { "required": ["flagged_rule"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "ingest-gap" } } },
+      "then": {
+        "required": ["gap_started_at", "gap_ended_at"],
+        "description": "ingest-gap events are intentionally NOT part of the prev_hash chain — they describe missing capture, so chaining them would falsify what was actually observed."
+      }
+    }
+  ]
+}

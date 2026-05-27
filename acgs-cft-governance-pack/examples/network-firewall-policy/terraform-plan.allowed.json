@@ -1,0 +1,53 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.7.5",
+  "resource_changes": [
+    {
+      "address": "module.vpc.google_compute_firewall.internal_admin",
+      "mode": "managed",
+      "type": "google_compute_firewall",
+      "name": "internal_admin",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "allow-internal-admin",
+          "direction": "INGRESS",
+          "source_ranges": ["10.0.0.0/8"],
+          "allow": [
+            {
+              "protocol": "tcp",
+              "ports": ["22"]
+            }
+          ],
+          "log_config": [
+            {
+              "metadata": "INCLUDE_ALL_METADATA"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "address": "module.vpc.google_compute_subnetwork.app",
+      "mode": "managed",
+      "type": "google_compute_subnetwork",
+      "name": "app",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "app-subnet",
+          "ip_cidr_range": "10.10.0.0/24",
+          "log_config": [
+            {
+              "enable": true,
+              "flow_sampling": 0.5,
+              "metadata": "INCLUDE_ALL_METADATA"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

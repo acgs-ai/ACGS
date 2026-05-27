@@ -1,0 +1,18 @@
+id: cft-github-actions-runner-gate
+description: Governance controls for CFT GitHub Actions runner authentication.
+controls:
+  - id: cft-github-actions-oidc-provider
+    description: GitHub Actions workload identity provider must use GitHub OIDC and repository scoping.
+    severity: high
+    resource_types:
+      - google_iam_workload_identity_pool_provider
+    rule:
+      kind: require_github_oidc_provider
+      issuer_uri: https://token.actions.githubusercontent.com
+      required_condition_terms:
+        - assertion.repository_owner
+        - assertion.repository
+      allowed_repository_owners:
+        - example-org
+      allowed_repositories:
+        - example-org/platform-infra

@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "topic": "eval-regression-coverage-hardening",
+  "provenance": {
+    "seed_source": "eval-mvp-hardening final_report.md §4",
+    "source_commit": "6b5fa14",
+    "source_branch": "improve/eval-mvp-hardening",
+    "source_path": ".omc/self-improve/topics/eval-mvp-hardening/tracking/final_report.md"
+  },
+  "severity_weights": { "CRIT": 4, "HIGH": 2, "MEDIUM": 1, "LOW": 0.5 },
+  "seed_baseline_points": 70,
+  "issues": [
+    {
+      "issue": "pr4_uc5_decision_state_toctou",
+      "pr": "dislovelhl/govern-zone#4",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "TOCTOU between authority/policy check and tool execution; closed by snapshotting decision_state and effective_tool_input.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_decision_state.py::test_decision_state_is_allow_when_all_checks_allow", "coverage_angle": "decision_state_allow_aggregation", "final_report_tag": "TOCTOU (HIGH)"},
+        {"nodeid": "tests/test_decision_state.py::test_decision_state_is_deny_when_any_check_denies", "coverage_angle": "decision_state_deny_short_circuit", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_decision_record_carries_policy_bundle_hash", "coverage_angle": "policy_bundle_hash_in_record", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_decision_record_carries_role_bundle_hash", "coverage_angle": "role_bundle_hash_in_record", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_effective_tool_input_set_on_allow", "coverage_angle": "effective_tool_input_present_on_allow", "final_report_tag": "TOCTOU (HIGH)"},
+        {"nodeid": "tests/test_decision_state.py::test_effective_tool_input_none_on_deny", "coverage_angle": "effective_tool_input_absent_on_deny", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_action_request_from_dict_derives_inputs_hash_from_tool_input", "coverage_angle": "inputs_hash_derivation_from_tool_input", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_guard_calls_fn_with_effective_tool_input", "coverage_angle": "guard_executes_effective_input_only", "final_report_tag": "TOCTOU (HIGH)"},
+        {"nodeid": "tests/test_decision_state.py::test_guard_refuses_when_request_has_no_tool_input", "coverage_angle": "guard_refuses_no_input", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_decision_state.py::test_guard_does_not_execute_fn_when_decision_denies", "coverage_angle": "guard_blocks_on_deny", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "pr4_uc5_decision_state_invariants",
+      "pr": "dislovelhl/govern-zone#4",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "Decision-record schema v1 + replay drift detection invariants; locks bundle_hash semantics across replay.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_decision_state.py::test_decision_record_has_schema_version_v1", "coverage_angle": "decision_record_schema_v1", "final_report_tag": "schema invariant"},
+        {"nodeid": "tests/test_decision_state.py::test_replay_no_drift_when_bundle_unchanged", "coverage_angle": "replay_no_drift_when_bundle_stable", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_decision_state.py::test_replay_detects_policy_drift_via_bundle_hash", "coverage_angle": "replay_detects_bundle_drift", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_decision_state.py::test_replay_old_event_without_bundle_hash_passes_gracefully", "coverage_angle": "replay_back_compat_no_bundle_hash", "final_report_tag": "invariant"}
+      ]
+    },
+    {
+      "issue": "pr4_replay_same_versions_invariant",
+      "pr": "dislovelhl/govern-zone#4",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "Replay determinism invariant — same-version replay must match original record.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4 (cross-cut row)",
+      "seed_tests": [
+        {"nodeid": "tests/test_adapter_and_replay.py::test_replay_same_versions_matches", "coverage_angle": "replay_same_versions_byte_identical", "final_report_tag": "invariant"}
+      ]
+    },
+    {
+      "issue": "pr5_in_memory_audit_store",
+      "pr": "dislovelhl/govern-zone#5",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "InMemoryAuditStore parity with disk store + governance.testing harness.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_in_memory_audit.py::test_in_memory_chain_valid_for_two_events", "coverage_angle": "in_memory_chain_validity_two_events", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_in_memory_audit.py::test_in_memory_chain_detects_tamper", "coverage_angle": "in_memory_chain_tamper_detection", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_in_memory_audit.py::test_in_memory_audit_store_produces_same_event_hash_as_disk", "coverage_angle": "memory_disk_event_hash_parity", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_in_memory_audit.py::test_governance_test_harness_yields_working_adapter", "coverage_angle": "test_harness_yields_adapter", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_in_memory_audit.py::test_make_request_helper_produces_valid_actionrequest_dict", "coverage_angle": "make_request_helper_validity", "final_report_tag": "new feature"}
+      ]
+    },
+    {
+      "issue": "pr6_reference_adapters_block_denied",
+      "pr": "dislovelhl/govern-zone#6",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "Three reference adapters (OpenAI/LangGraph/Anthropic) consistently block denied tool calls and allow permitted ones.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_reference_adapters.py::test_openai_agents_adapter_blocks_denied_tool_call", "coverage_angle": "openai_adapter_blocks_denied", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_reference_adapters.py::test_openai_agents_adapter_allows_permitted_tool_call", "coverage_angle": "openai_adapter_allows_permitted", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_reference_adapters.py::test_langgraph_adapter_blocks_denied", "coverage_angle": "langgraph_adapter_blocks_denied", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_reference_adapters.py::test_anthropic_adapter_blocks_denied", "coverage_angle": "anthropic_adapter_blocks_denied", "final_report_tag": "new feature"}
+      ]
+    },
+    {
+      "issue": "pr6_canonical_hash_invariants",
+      "pr": "dislovelhl/govern-zone#6",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "canonical_input_hash is deterministic, key-order invariant, value-sensitive, and identical across all three adapters.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_reference_adapters.py::test_all_three_adapters_produce_identical_inputs_hash_for_same_input", "coverage_angle": "cross_adapter_canonical_hash_parity", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_canonical_hash.py::test_canonical_hash_is_deterministic", "coverage_angle": "canonical_hash_deterministic", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_canonical_hash.py::test_canonical_hash_is_key_order_invariant", "coverage_angle": "canonical_hash_key_order_invariant", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_canonical_hash.py::test_canonical_hash_differs_for_different_values", "coverage_angle": "canonical_hash_value_sensitive", "final_report_tag": "invariant"}
+      ]
+    },
+    {
+      "issue": "pr7_governance_denied_error",
+      "pr": "dislovelhl/govern-zone#7",
+      "severity": "MEDIUM",
+      "contributes": true,
+      "failure_mode": "Denied guard raises GovernanceDeniedError (PermissionError subclass) carrying full decision and remediation hints.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_error_ux.py::test_guard_raises_governance_denied_error_carrying_full_decision", "coverage_angle": "denied_error_carries_full_decision", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_error_ux.py::test_governance_denied_error_is_subclass_of_permissionerror", "coverage_angle": "denied_error_subclasses_permissionerror", "final_report_tag": "invariant"},
+        {"nodeid": "tests/test_error_ux.py::test_authority_deny_carries_remediation_hint", "coverage_angle": "authority_deny_remediation_hint", "final_report_tag": "new feature"},
+        {"nodeid": "tests/test_error_ux.py::test_policy_deny_carries_remediation_hint", "coverage_angle": "policy_deny_remediation_hint", "final_report_tag": "new feature"}
+      ]
+    },
+    {
+      "issue": "autofix_o_n2_audit_caching",
+      "pr": "fix/governance-eng-autofix",
+      "severity": "CRIT",
+      "contributes": true,
+      "failure_mode": "Audit append must be amortized O(1); guards against re-introduction of the O(n²) hash recomputation regression.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_audit_chain.py::test_audit_append_is_amortized_O1", "coverage_angle": "audit_append_amortized_O1", "final_report_tag": "**CRIT**"}
+      ]
+    },
+    {
+      "issue": "autofix_fnmatch_path_traversal",
+      "pr": "fix/governance-eng-autofix",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "Authority scope matcher rejects ../, double-dot segments, and absolute paths; positive scope still works.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_authority_gate.py::test_scope_rejects_path_traversal", "coverage_angle": "scope_rejects_traversal", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_authority_gate.py::test_scope_rejects_double_dot_segment", "coverage_angle": "scope_rejects_double_dot", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_authority_gate.py::test_scope_rejects_absolute_path", "coverage_angle": "scope_rejects_absolute", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_authority_gate.py::test_normal_scope_still_works", "coverage_angle": "normal_scope_positive_case", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "autofix_api_auth_bypass",
+      "pr": "fix/governance-eng-autofix",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "API endpoints reject missing/invalid token; tenant mismatch returns 403; matched tenant returns 200.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_api_auth.py::test_validate_without_token_returns_401", "coverage_angle": "validate_no_token_401", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_api_auth.py::test_validate_with_invalid_token_returns_401", "coverage_angle": "validate_invalid_token_401", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_api_auth.py::test_validate_with_tenant_mismatch_returns_403", "coverage_angle": "validate_tenant_mismatch_403", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_api_auth.py::test_validate_with_matched_tenant_returns_200", "coverage_angle": "validate_matched_tenant_200", "final_report_tag": "HIGH"},
+        {"nodeid": "tests/test_api_auth.py::test_audit_query_without_token_returns_401", "coverage_angle": "audit_query_no_token_401", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "codex_tenant_spoof",
+      "pr": "codex-investigate (no upstream PR)",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "Actor cannot spoof request tenant via metadata.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_authority_gate.py::test_actor_cannot_spoof_request_tenant", "coverage_angle": "actor_cannot_spoof_request_tenant", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "codex_audit_race",
+      "pr": "codex-investigate (no upstream PR)",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "Audit chain remains valid under concurrent appends.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_audit_chain.py::test_audit_chain_handles_concurrent_appends", "coverage_angle": "audit_concurrent_append_safety", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "codex_no_audit_guard",
+      "pr": "codex-investigate (no upstream PR)",
+      "severity": "HIGH",
+      "contributes": true,
+      "failure_mode": "Guard refuses to execute when no audit store is configured.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_adapter_and_replay.py::test_guard_refuses_when_audit_store_missing", "coverage_angle": "guard_refuses_no_audit_store", "final_report_tag": "HIGH"}
+      ]
+    },
+    {
+      "issue": "base_authority_gate",
+      "pr": "base",
+      "severity": "LOW",
+      "contributes": false,
+      "failure_mode": "Pre-PR-series baseline authority gate behavior — no upstream PR anchor.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_authority_gate.py::test_legalops_can_redline_contract_scope", "coverage_angle": "legalops_can_redline", "final_report_tag": "base"},
+        {"nodeid": "tests/test_authority_gate.py::test_marketingops_cannot_approve_contract", "coverage_angle": "marketingops_cannot_approve", "final_report_tag": "base"}
+      ]
+    },
+    {
+      "issue": "base_audit_chain",
+      "pr": "base",
+      "severity": "LOW",
+      "contributes": false,
+      "failure_mode": "Pre-O(n²)-fix baseline audit chain validity + tamper detection.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_audit_chain.py::test_audit_chain_valid_for_two_events", "coverage_angle": "audit_chain_baseline_validity", "final_report_tag": "base"},
+        {"nodeid": "tests/test_audit_chain.py::test_audit_chain_detects_tamper", "coverage_angle": "audit_chain_baseline_tamper_detection", "final_report_tag": "invariant"}
+      ]
+    },
+    {
+      "issue": "base_policy_recall_gate",
+      "pr": "base",
+      "severity": "LOW",
+      "contributes": false,
+      "failure_mode": "Baseline policy citation gating.",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_policy_recall_gate.py::test_contract_action_requires_policy_citation", "coverage_angle": "contract_action_requires_citation", "final_report_tag": "base"},
+        {"nodeid": "tests/test_policy_recall_gate.py::test_contract_action_passes_with_policy_citation", "coverage_angle": "contract_action_with_citation_passes", "final_report_tag": "base"},
+        {"nodeid": "tests/test_policy_recall_gate.py::test_ontario_marketing_inducement_is_denied", "coverage_angle": "ontario_marketing_inducement_denied", "final_report_tag": "base"}
+      ]
+    },
+    {
+      "issue": "base_adapter_and_replay",
+      "pr": "base",
+      "severity": "LOW",
+      "contributes": false,
+      "failure_mode": "Cross-cut adapter+policy baseline (no concrete PR anchor in final report).",
+      "source": "eval-mvp-hardening@6b5fa14:final_report.md#section-4",
+      "seed_tests": [
+        {"nodeid": "tests/test_adapter_and_replay.py::test_adapter_denies_without_policy_citation", "coverage_angle": "adapter_denies_without_citation", "final_report_tag": "base"}
+      ]
+    }
+  ],
+  "unmapped_or_ambiguous": [
+    {
+      "nodeid": "tests/test_authority_gate.py::test_cross_tenant_delegation_metadata_permits_mismatch",
+      "final_report_tag": "HIGH",
+      "confidence": "MEDIUM",
+      "ambiguity": "Tenant-isolation cross-cut. May be a legitimate delegation positive path, not a spoof-prevention regression. Excluded per user decision; do not attach to codex_tenant_spoof.",
+      "decision": "EXCLUDED from regression set; revisit only if final report adds a concrete PR/finding anchor."
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "admission_gate/0.1",
+  "request_id": "req_allow_001",
+  "workflow_id": "legalguard_doc_summary",
+  "run_id": "run_allow_001",
+  "phase": "workflow_admission",
+  "actor": {"id": "summary_agent", "role": "agent", "tenant": "demo"},
+  "declared_goal": "summarize an uploaded contract for an internal reader",
+  "proposed_method": "extract clauses, group by topic, output internal markdown summary",
+  "risk_class": "low",
+  "requested_capabilities": ["read_file", "summarize"],
+  "execution_boundary": {
+    "environment": "local",
+    "allowed_outputs": ["internal_draft"],
+    "disallowed_outputs": ["client_facing_legal_advice", "final_legal_advice"]
+  },
+  "policy_context": {
+    "policy_bundle_id": "legalguard_ca",
+    "policy_version": "1.2.0",
+    "jurisdiction": "CA-ON"
+  },
+  "inputs_manifest": {
+    "hash_alg": "sha256",
+    "items": [
+      {"kind": "document", "ref": "contract.pdf",
+       "hash": "0000000000000000000000000000000000000000000000000000000000000001"}
+    ]
+  },
+  "timestamp": "2026-05-21T00:00:00Z"
+}

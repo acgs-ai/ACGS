@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acgs.local/schemas/authorization_trace.schema.json",
+  "title": "ACGS Authorization Trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workflow_scope",
+    "evaluation_policy",
+    "receipt"
+  ],
+  "properties": {
+    "workflow_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflow_id",
+        "parent_workflow_id",
+        "principal_chain",
+        "action_binding",
+        "hop_signatures_version"
+      ],
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_workflow_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "hop_signatures_version": {
+          "type": "string",
+          "const": "phase2-hop-v2"
+        },
+        "action_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "action_type",
+            "tenant",
+            "actor_id",
+            "resource",
+            "inputs_hash",
+            "workflow_id",
+            "policy_version",
+            "role_version",
+            "session_nonce"
+          ],
+          "properties": {
+            "action_type": {"type": "string", "minLength": 1},
+            "tenant": {"type": "string", "minLength": 1},
+            "actor_id": {"type": "string", "minLength": 1},
+            "resource": {"type": "string", "minLength": 1},
+            "inputs_hash": {"type": "string", "minLength": 1},
+            "workflow_id": {"type": "string", "minLength": 1},
+            "policy_version": {"type": "string", "minLength": 1},
+            "role_version": {"type": "string", "minLength": 1},
+            "session_nonce": {"type": "string", "minLength": 1}
+          }
+        },
+        "principal_chain": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "principal_id",
+              "role",
+              "tenant",
+              "delegated_at",
+              "delegation_evidence_hash",
+              "delegator_id",
+              "signing_key_id",
+              "signature",
+              "not_after"
+            ],
+            "properties": {
+              "principal_id": {"type": "string", "minLength": 1},
+              "role": {"type": "string", "minLength": 1},
+              "tenant": {"type": "string", "minLength": 1},
+              "delegated_at": {"type": "string", "minLength": 1},
+              "delegation_evidence_hash": {"type": "string", "minLength": 1},
+              "delegator_id": {"type": "string", "minLength": 1},
+              "signing_key_id": {"type": "string", "minLength": 1},
+              "signature": {"type": "string", "minLength": 1},
+              "not_after": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "evaluation_policy": {
+      "type": "string",
+      "enum": [
+        "initiation-time",
+        "access-time",
+        "completion-time"
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trace_hash",
+        "audit_event_hash",
+        "trace_id",
+        "schema_version"
+      ],
+      "properties": {
+        "trace_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "audit_event_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version": {
+          "type": "string",
+          "const": "v1"
+        }
+      }
+    }
+  }
+}

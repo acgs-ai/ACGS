@@ -1,0 +1,67 @@
+# Cloud Run service for the console origin — DEPLOY.md §4.
+#
+# Apply via:
+#   gcloud run services replace infra/cloudrun/service.yaml \
+#     --region=$REGION --project=$PROJECT_ID
+#
+# Production override:
+#   - Set autoscaling.knative.dev/minScale to "1" so the privileged surface
+#     never serves a cold-start blank page (DESIGN.md §4.3 forbids gating
+#     the banner; cold start would visually do that).
+#   - Bind the custom domain console.acgs.ai (DEPLOY.md §9).
+#
+# Image must be pre-pushed to Artifact Registry by the GHA workflow at
+# .github/workflows/console.yml.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: acgi-console
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/launch-stage: GA
+    # Enable end-user logs to flow through to Cloud Logging.
+    run.googleapis.com/cpu-throttling: "false"
+spec:
+  template:
+    metadata:
+      annotations:
+        # ─ Scaling. minScale=1 in production; staging may use 0.
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+        # ─ Concurrency. Caddy + static files = high per-instance.
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 30
+      containers:
+        - name: console
+          image: REPLACE_AT_DEPLOY_TIME  # set by .github/workflows/console.yml
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+  traffic:
+    - latestRevision: true
+      percent: 100

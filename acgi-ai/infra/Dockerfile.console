@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+#
+# Console origin image — DEPLOY.md §4.
+#
+# Stage 1 builds the Vite bundle. Stage 2 is a Caddy-on-alpine runtime that
+# serves the bundle and (when wired) reverse-proxies /api/* to the bus. The
+# image listens on $PORT (default 8080) so it drops straight into Cloud Run
+# without modification; for Fly.io, set PORT=8080 in fly.toml.
+
+# ---- Stage 1: build ---------------------------------------------------------
+
+FROM node:24-alpine AS build
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+# pnpm version is pinned in package.json's `packageManager` field; corepack
+# resolves it on first invocation. We only need to enable corepack here.
+RUN corepack enable
+
+WORKDIR /app
+
+# Lockfile-first for cache hits across source-only changes.
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Source.
+COPY tsconfig.json tsconfig.app.json tsconfig.node.json ./
+COPY vite.config.ts index.html biome.json eslint.config.js ./
+COPY src ./src
+COPY public ./public
+
+RUN pnpm build
+
+# ---- Stage 2: runtime -------------------------------------------------------
+
+FROM caddy:2-alpine AS runtime
+
+# Caddy runs as a non-root user inside the official image.
+COPY infra/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv/dist
+
+ENV PORT=8080
+EXPOSE 8080
+
+# Format-check the Caddyfile at build time so a syntax error fails the image
+# build, not the cold start.
+RUN caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

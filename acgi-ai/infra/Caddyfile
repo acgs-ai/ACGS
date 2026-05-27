@@ -1,0 +1,94 @@
+# Console origin — DEPLOY.md §4.
+#
+# This Caddyfile is tuned for Cloud Run / Fly.io: TLS is terminated upstream
+# (the platform's load balancer), so we listen on $PORT plain HTTP and emit
+# the security headers ourselves. For a self-hosted deploy that owns its own
+# cert, replace `:{$PORT:8080}` with the hostname and Caddy will obtain a
+# Let's Encrypt cert via ACME.
+
+{
+  # Disable the admin endpoint — we don't expose runtime config in production.
+  admin off
+  # Don't write a redundant Server: header.
+  servers {
+    metrics
+  }
+  auto_https off
+}
+
+:{$PORT:8080} {
+  encode zstd gzip
+
+  # ── Static assets — Vite emits hashed filenames; cache forever.
+  @assets path /assets/*
+  header @assets Cache-Control "public, max-age=31536000, immutable"
+
+  # ── Self-hosted fonts — DESIGN.md §7.1 / DEPLOY.md §6.
+  #    Same-origin only; no CORS allowance because the marketing surface
+  #    loads fonts from a different provider entirely.
+  @fonts path /static/fonts/*.woff2
+  header @fonts Cache-Control "public, max-age=31536000, immutable"
+
+  # ── Health endpoint — DEPLOY.md §10. Reports the constitution hash that
+  #    the bundle was compiled against. The runtime constitution lives in
+  #    the bus; this is the *served* hash, used to detect drift between the
+  #    static bundle and the bus.
+  handle /healthz {
+    header Content-Type "application/json"
+    respond `{"ok":true,"served_hash":"608508a9bd224290","surface":"console"}` 200
+  }
+
+  # ── API reverse proxy — wired when the bus client lands (DESIGN.md §7.5).
+  #    Until then, /api/* returns 503 so client code that calls the API too
+  #    early fails loud, not silent.
+  handle /api/* {
+    respond "API not yet wired (DESIGN.md §7.5)" 503
+  }
+
+  # ── Privileged HTML — never cache the entry document. The bundle hash in
+  #    /assets/* is what carries the cache key; index.html must always be
+  #    a fresh fetch so a constitution change is visible immediately.
+  @html path / /index.html
+  header @html Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+
+  # ── Internal docs blocklist. Vite copies public/ verbatim into dist/, so
+  #    AGENTS.md files placed for in-repo agent navigation would otherwise be
+  #    web-reachable on the privileged origin. DEPLOY.md §4: nothing internal
+  #    leaves the audit-trail surface. Defense in depth — the source of truth
+  #    is "don't put docs in public/", this rule guarantees the URL is dead
+  #    even if one slips in.
+  @internal_docs path *AGENTS.md *CLAUDE.md *DESIGN.md *DEPLOY.md
+  respond @internal_docs 404
+
+  # ── Security headers — DEPLOY.md §5.
+  header {
+    Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    X-Content-Type-Options    "nosniff"
+    X-Frame-Options           "DENY"
+    Referrer-Policy           "no-referrer"
+    Permissions-Policy        "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    Cross-Origin-Opener-Policy   "same-origin"
+    Cross-Origin-Resource-Policy "same-origin"
+    # Strict CSP — no 'unsafe-inline' anywhere. JSX inline styles eliminated
+    # in favour of utility/component classes (src/csp-utilities.css). See
+    # DEPLOY.md §5 for the rationale.
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests"
+    # Don't advertise the server.
+    -Server
+  }
+
+  # ── Static file serving with SPA fallback for the custom 14-line router
+  #    (src/lib/navigate.ts). Any path that doesn't resolve to a file gets
+  #    index.html so deep links into /console/* work.
+  root * /srv/dist
+  try_files {path} /index.html
+  file_server
+
+  # ── Access log — JSON, one event per request. DEPLOY.md §10 forwards
+  #    these into the same audit sink the bus uses.
+  log {
+    output stdout
+    format json
+    level INFO
+  }
+}

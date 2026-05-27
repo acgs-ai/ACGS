@@ -1,0 +1,38 @@
+{
+  "workflow_scope": {
+    "workflow_id": "workflow-2026-05-22-r5-r6",
+    "parent_workflow_id": null,
+    "principal_chain": [
+      {
+        "principal_id": "codex:gpt-5",
+        "role": "implementation-agent",
+        "tenant": "default",
+        "delegated_at": "2026-05-22T00:00:00+00:00",
+        "delegation_evidence_hash": "sha256:delegation-evidence",
+        "delegator_id": "orchestrator-root",
+        "signing_key_id": "key-orchestrator-root",
+        "signature": "A0pCCf-1Luh7lk8qamsvtVdwXw4qQwtOTsWGMbJjjxH27hRdAVijpWozkV_RXO5tKUtXV4Gu2SgaRVHhL8EWAg",
+        "not_after": "2026-05-22T01:00:00+00:00"
+      }
+    ],
+    "action_binding": {
+      "action_type": "governance.receipt.verify",
+      "tenant": "default",
+      "actor_id": "codex:gpt-5",
+      "resource": "workflow-2026-05-22-r5-r6",
+      "inputs_hash": "sha256:trace-test",
+      "workflow_id": "workflow-2026-05-22-r5-r6",
+      "policy_version": "policy-test/v1",
+      "role_version": "roles-test/v1",
+      "session_nonce": "AAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "hop_signatures_version": "phase2-hop-v2"
+  },
+  "evaluation_policy": "access-time",
+  "receipt": {
+    "trace_hash": "3e4ac5d582915d8a6301ccd2fe4e5396ec5fe814aba8626dfac51d8d43496671",
+    "audit_event_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "trace_id": "trace-2026-05-22-r5-r6",
+    "schema_version": "v1"
+  }
+}

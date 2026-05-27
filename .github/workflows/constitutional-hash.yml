@@ -1,0 +1,78 @@
+# Constitutional-hash drift detector.
+#
+# Runs on every PR + push to master. Fails if any file with a
+# `# Constitutional Hash: <hash>` marker has drifted from the inventory
+# pinned in docs/constitutional-hashes.lock.
+#
+# Today the inventory is empty (no markers in the parent-tracked tree).
+# Once Phase 2 of docs/PLAN-MONOREPO.md registers submodules, the script
+# will automatically discover markers inside packages/* and the lock
+# regenerates with `python scripts/verify_constitutional_hashes.py --update`.
+
+name: constitutional-hash
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: constitutional-hash-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 5
+    steps:
+      # Two-step checkout: parent uses the default github.token (always
+      # has contents:read on this repo), then submodules are initialized
+      # separately with SUBMODULE_TOKEN via `git url.insteadOf` rewrite.
+      # Avoids the truthy-fallback trap where an invalid-but-set
+      # SUBMODULE_TOKEN beats `|| github.token` and silently breaks the
+      # parent-repo fetch. SUBMODULE_TOKEN needs `Contents: Read` on each
+      # submodule repo (public submodules ignore the auth header).
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init submodules
+        id: submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule sync -- packages/acgs-lite
+          git submodule update --init --recursive -- packages/acgs-lite
+
+          # clinicalguard is still pinned in docs/constitutional-hashes.lock,
+          # but its private repo can be unavailable until SUBMODULE_TOKEN is
+          # rotated. Keep acgs-lite strict and report clinicalguard as an
+          # explicit credential-gated gap instead of pretending it was checked.
+          git submodule sync -- packages/clinicalguard
+          if git submodule update --init --recursive -- packages/clinicalguard; then
+            echo "clinicalguard_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "clinicalguard_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::packages/clinicalguard could not be initialized; verifier will ignore removed entries under that prefix for this CI run"
+          fi
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Verify constitutional-hash inventory
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
+        run: |
+          uv python install 3.11
+          PY="$(uv python find 3.11)"
+          if [ "${{ steps.submodules.outputs.clinicalguard_available }}" = "true" ]; then
+            "$PY" scripts/verify_constitutional_hashes.py
+          else
+            "$PY" scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
+          fi

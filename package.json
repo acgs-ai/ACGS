@@ -1,0 +1,22 @@
+{
+  "name": "govern-zone",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ACGS GovernZone monorepo root. Not published. JS workspace via pnpm + Turborepo; Python workspace via uv (see pyproject.toml).",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "dev": "turbo run dev",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3"
+  }
+}

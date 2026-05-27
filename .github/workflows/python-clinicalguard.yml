@@ -1,0 +1,85 @@
+# Path-filtered CI for packages/clinicalguard/ — clinical-domain governance agent.
+# Triggers only when the submodule path, .gitmodules, or this workflow change.
+
+name: python-clinicalguard
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/clinicalguard/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-clinicalguard.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/clinicalguard/**'
+      - '.gitmodules'
+      - 'pyproject.toml'
+      - '.github/workflows/python-clinicalguard.yml'
+
+concurrency:
+  group: python-clinicalguard-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/clinicalguard
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      # Two-step checkout: see constitutional-hash.yml for rationale.
+      # clinicalguard is one of the private repos that motivates the PAT.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init submodules
+        id: clinicalguard
+        working-directory: ${{ github.workspace }}
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule sync -- packages/clinicalguard
+          if git submodule update --init --recursive -- packages/clinicalguard; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::packages/clinicalguard could not be initialized. Rotate SUBMODULE_TOKEN to include Contents: Read on dislovelhl/clinicalguard, then rerun this workflow for full verification."
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.clinicalguard.outputs.available == 'true'
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        if: steps.clinicalguard.outputs.available == 'true'
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/clinicalguard/pyproject.toml'
+
+      - name: Install (dev extras)
+        if: steps.clinicalguard.outputs.available == 'true'
+        run: uv pip install --system --no-config --no-sources --editable '.[dev]'
+
+      - name: Lint
+        if: steps.clinicalguard.outputs.available == 'true'
+        run: python -m ruff check .
+
+      - name: Test
+        if: steps.clinicalguard.outputs.available == 'true'
+        run: python -m pytest --import-mode=importlib -q

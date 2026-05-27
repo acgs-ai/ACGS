@@ -1,0 +1,153 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Dependencies
+node_modules/
+# This is a pnpm workspace — pnpm-lock.yaml is the only JS lockfile that
+# should ever land in the parent. package-lock.json (npm) and yarn.lock
+# slip in when someone runs `npm install` inside a workspace member; they
+# split resolution and break `pnpm install --frozen-lockfile`. Ignore both.
+package-lock.json
+yarn.lock
+__pycache__/
+*.pyc
+*.pyo
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+dist/
+build/
+target/
+
+# Rust
+target/
+Cargo.lock
+*.rlib
+*.rmeta
+
+# C / C++
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.out
+*.elf
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile.cmake
+
+# Large asset directories
+separated_32_images/
+
+# Hardening sprint evidence — generated per-run, not checked in.
+artifacts/
+
+# Turborepo cache
+.turbo/
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+.gstack/
+
+# Agent / harness scratch — never tracked at this level.
+# Patterns without trailing slash match both files and directories.
+.acgs-swarm
+.codex
+.omc
+# Project-level OMC skills are knowledge artifacts, not scratch state — keep them.
+# Allow traversal into repo-root .omc/, ignore everything one level deep,
+# then re-include skills/ specifically. Subdir .omc/ dirs (e.g.
+# acgs_governance_eval_mvp/.omc/) remain fully ignored by the broad rule above.
+!/.omc/
+/.omc/*
+!/.omc/skills/
+!/.omc/skills/**
+.remember
+.omx
+
+# Additional agent / tool state (per-developer indexes, eval outputs, scratch
+# generators). Pattern without trailing slash matches both files and dirs.
+.antigravitycli
+.codegraph
+.plugin-eval
+.understand-anything
+
+# Editor / tool caches — per-developer state, never tracked.
+.cursor/
+.gitnexus/
+.obsidian/
+.playwright-mcp/
+
+# Claude Code: per-user state ignored, shared team config tracked at root.
+# Sub-package .claude/ dirs stay fully ignored — each package owns its own
+# setup if needed. Mirrors the .omc/ whitelist pattern above.
+**/.claude/
+!/.claude/
+/.claude/*
+!/.claude/settings.json
+!/.claude/hooks/
+!/.claude/hooks/**
+!/.claude/skills/
+!/.claude/skills/**
+!/.claude/agents/
+!/.claude/agents/**
+
+# Sibling projects — out of scope for this monorepo (each has its own home).
+# Add explicitly so the working tree stays clean for tooling that gates on
+# `git status --porcelain`. Re-include any of these by removing its line.
+/ACGS/
+/acgs-lite/
+/ca-legal-agent-skills/
+/clinicalguard-privacy-hardening/
+/craft-agents-oss/
+/eab-production-hardening/
+/scheduled-todos-backup-2026-04-30/
+/swarm-mesh-refactors-backup-2026-04-30/
+
+# Scratch / debug artifacts at workspace root (per-developer, never tracked).
+/ACGS-pr52-review/
+/actions-runner/
+/atomic-agents-playground/
+/.gove-zone/
+/.scratch/
+/dist-release-evidence/
+/request.json
+
+# Frontend build outputs + Playwright captures (per-run, not source).
+/acgi-ai/dist-browser-evidence/
+/acgi-ai/dist-buyer-evidence/
+/acgi-ai/dist-marketing/
+/acgi-ai/test-results/
+
+# Out-of-band exploration clones in external/ that are NOT registered as
+# submodules in .gitmodules. Promote to a real submodule before tracking.
+/external/openswarm/
+
+# Per-session ad-hoc snapshot artifacts (Playwright captures, request bodies).
+# Belong in PR descriptions or evidence bundles, not the repo.
+/gove-zone-actions-*.md
+
+# Pytest / ruff caches anywhere in the tree.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Workspace-level lockfiles are intentionally NOT committed yet — until the
+# canonical install policy lands. acgi-ai/pnpm-lock.yaml stays tracked.
+# Remove these two lines once root-level reproducibility is decided.
+/pnpm-lock.yaml
+/uv.lock

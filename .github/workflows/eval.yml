@@ -1,0 +1,35 @@
+name: deterministic-eval
+
+on:
+  pull_request:
+    paths:
+      - "acgs_governance_eval_mvp/governed_mcp_v0/**"
+      - "acgs_governance_eval_mvp/tests/test_governed_mcp_v0.py"
+      - ".github/workflows/eval.yml"
+  push:
+    paths:
+      - "acgs_governance_eval_mvp/governed_mcp_v0/**"
+      - "acgs_governance_eval_mvp/tests/test_governed_mcp_v0.py"
+      - ".github/workflows/eval.yml"
+
+jobs:
+  governed-mcp-v0:
+    runs-on: [self-hosted, Linux, X64]
+    env:
+      PYTHONPATH: acgs_governance_eval_mvp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Provision Python 3.11 and install deps
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # Ubuntu 25.10 runner, where actions/setup-python has no prebuilds.
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python pytest pyyaml 'pydantic>=2.10'
+
+      - name: Run governed MCP v0 deterministic gate
+        run: .venv/bin/python -m pytest acgs_governance_eval_mvp/tests/test_governed_mcp_v0.py -q

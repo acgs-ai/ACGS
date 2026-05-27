@@ -1,0 +1,48 @@
+import type { Tenant } from '../../api/types'
+
+export const TENANTS: Tenant[] = [
+  {
+    id: 'T-001',
+    name: 'Hofstra & Lorenz',
+    tier: 'Custodial',
+    agents: 12,
+    matters: 84,
+    refusals24h: 1402,
+    state: 'active',
+    lastActivity: '14:09:11 · UTC',
+    jurisdiction: 'NY · DE',
+  },
+  {
+    id: 'T-002',
+    name: 'Northway Mutual',
+    tier: 'Governed',
+    agents: 6,
+    matters: 12,
+    refusals24h: 41,
+    state: 'standby',
+    lastActivity: '13:51 · UTC',
+    jurisdiction: 'CT',
+  },
+  {
+    id: 'T-003',
+    name: 'Atelier Beaumont',
+    tier: 'Examined',
+    agents: 2,
+    matters: 0,
+    refusals24h: 0,
+    state: 'standby',
+    lastActivity: 'yesterday',
+    jurisdiction: 'FR · IDF',
+  },
+  {
+    id: 'T-004',
+    name: 'Praesidium Trust',
+    tier: 'Custodial',
+    agents: 9,
+    matters: 31,
+    refusals24h: 502,
+    state: 'sealed',
+    lastActivity: '2026-04-22',
+    jurisdiction: 'CH · ZG',
+  },
+]

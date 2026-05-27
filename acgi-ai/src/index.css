@@ -1,0 +1,189 @@
+/* ============================================================================
+ * ACGS — design tokens + base
+ * Source of truth: /home/martin/Downloads/govern-zone/ACGS/DESIGN.md
+ *
+ * §2.1 Color (warm-paper, rust accent)
+ * §2.2 Typography (Instrument Serif bridge + Instrument Sans + IBM Plex Serif
+ *      + Inter Tight runtime + JetBrains Mono)
+ * §2.3 Spacing (4px base, compact)
+ * §2.4 Focus rings (double-ring spacer + rust)
+ * §2.5 Motion (minimal-functional, honour prefers-reduced-motion)
+ *
+ * NOTE — fonts are self-hosted WOFF2 subsets (latin + latin-ext) under
+ * public/fonts/, declared in src/fonts.css. The privileged console origin
+ * MUST NOT pull fonts from a third-party CDN — matter/session IDs in URLs
+ * would leak via Referer (DESIGN.md §7.1, DEPLOY.md §3 / §7).
+ * ============================================================================ */
+
+@import "./fonts.css";
+@import "./csp-utilities.css";
+
+:root {
+  /* §2.1 Color — warm paper */
+  --paper: #fafaf7; /* primary background */
+  --paper-2: #f2f1ec; /* alternate surface */
+  --paper-3: #ebeae2; /* deep-warm surface */
+  --card: #ffffff; /* used sparingly */
+
+  --ink: #1a1a1a;
+  --ink-2: #2b2b2b;
+  --ink-3: #424242;
+  --muted: #6b6b6b;
+  --muted-2: #999999;
+
+  --line: #1a1a1a;
+  --line-soft: #cfcfcf;
+  --line-softer: #e5e5e5;
+
+  --accent: #b8422e; /* WCAG AA rust — single brand accent */
+  --accent-2: #8f361e;
+  --accent-soft: #f4e2d8;
+
+  --boundary: #f3ead4; /* parchment — privilege */
+  --boundary-ink: #5a4111; /* AAA contrast 7.96:1 on --boundary at 11.5px */
+  --boundary-line: #e3d5a8;
+
+  --risk-lo: #3d6b4a;
+  --risk-mid: #76520d; /* WCAG AA mustard for PARTIAL */
+  --risk-hi: #c8432a;
+
+  /* §2.2 Typography */
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --font-sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-runtime: "Inter Tight", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+  /* §2.3 Spacing */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+  --space-4xl: 48px;
+  --space-5xl: 64px;
+
+  /* radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  /* runtime layout */
+  --console-sidebar: 276px;
+  --console-right-rail: 280px;
+  --console-input-h: 80px;
+  --doc-body-max: 64ch;
+
+  color-scheme: light;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-sans);
+  font-feature-settings:
+    "kern" 1,
+    "liga" 1,
+    "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =========================================================================
+ * Reset
+ * ========================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+#root {
+  width: 100%;
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+ul,
+ol,
+figure {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+/* tabular numerals on numeric columns / hashes */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* §2.4 Focus rings — universal */
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--paper),
+    0 0 0 4px var(--accent);
+  border-radius: 4px;
+}
+
+/* §2.5 Motion — honour reduced motion globally.
+   DESIGN.md §2.5 mandates !important so user motion preference cannot be
+   overridden by a higher-specificity transition elsewhere. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: DESIGN.md §2.5 */
+    animation: none !important;
+    /* biome-ignore lint/complexity/noImportantStyles: DESIGN.md §2.5 */
+    transition: none !important;
+  }
+}

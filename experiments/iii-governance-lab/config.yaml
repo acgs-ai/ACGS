@@ -1,0 +1,21 @@
+engine:
+  host: 127.0.0.1
+  port: 49134
+
+workers:
+  - name: governance-worker
+    path: ./workers/governance-worker
+    language: python
+  - name: caller-worker
+    path: ./workers/caller-worker
+    language: typescript
+
+adapters:
+  state:
+    type: memory
+  queue:
+    type: memory
+
+http:
+  host: 127.0.0.1
+  port: 3111
