@@ -158,10 +158,7 @@ def main() -> int:
     print(f"alg          : EdDSA (-8), kid={kid.decode()}")
 
     if orig_json == decoded_json:
-        print(
-            "SCITT spike: round-trip PASS -- "
-            "ACGS event survives COSE_Sign1 (EdDSA/Ed25519) cleanly"
-        )
+        print("SCITT spike: round-trip PASS -- ACGS event survives COSE_Sign1 (EdDSA/Ed25519) cleanly")
         return 0
 
     # Find the first drifting field for a useful PARTIAL message.
@@ -172,10 +169,7 @@ def main() -> int:
         ):
             drift_field = key
             break
-    print(
-        "SCITT spike: round-trip PARTIAL -- "
-        f"payload drift detected at field '{drift_field}'"
-    )
+    print(f"SCITT spike: round-trip PARTIAL -- payload drift detected at field '{drift_field}'")
     return 2
 
 
