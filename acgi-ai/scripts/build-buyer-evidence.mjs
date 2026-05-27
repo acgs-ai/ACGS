@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outDir = resolve(root, process.env.ACGI_EVIDENCE_OUT_DIR ?? 'dist-buyer-evidence')
+const outDir = resolve(root, process.env.ACGI_EVIDENCE_OUT_DIR || 'dist-buyer-evidence')
 const publishHost = process.env.ACGI_EVIDENCE_CNAME?.trim()
 const publishTarget = publishHost
   ? `https://${publishHost}`

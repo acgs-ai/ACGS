@@ -99,14 +99,17 @@ check(
   packageJson.scripts?.['test:all']?.includes('pnpm run test:storybook-runtime-plan'),
   'package.json test:all must include storybook runtime plan verification.',
 )
+const testAll = packageJson.scripts?.['test:all'] ?? ''
+const idxBuyerEvidence = testAll.indexOf('pnpm run test:buyer-evidence')
+const idxRuntimePlan = testAll.indexOf('pnpm run test:storybook-runtime-plan')
+const idxPublication = testAll.indexOf('pnpm run test:storybook-publication')
+
 check(
-  packageJson.scripts?.['test:all']?.indexOf('pnpm run test:buyer-evidence') <
-    packageJson.scripts?.['test:all']?.indexOf('pnpm run test:storybook-runtime-plan'),
+  idxBuyerEvidence !== -1 && idxRuntimePlan !== -1 && idxBuyerEvidence < idxRuntimePlan,
   'test:all must check buyer evidence before the Storybook runtime plan.',
 )
 check(
-  packageJson.scripts?.['test:all']?.indexOf('pnpm run test:storybook-runtime-plan') <
-    packageJson.scripts?.['test:all']?.indexOf('pnpm run test:storybook-publication'),
+  idxRuntimePlan !== -1 && idxPublication !== -1 && idxRuntimePlan < idxPublication,
   'test:all must check the Storybook runtime plan before publication wiring.',
 )
 check(
