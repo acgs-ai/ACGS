@@ -1,0 +1,115 @@
+# Buyer evidence Storybook publication scaffold.
+#
+# This workflow publishes the dependency-free buyer-evidence gallery through the
+# existing `storybook:build` package script. It is intentionally named and
+# routed as Storybook because `storybook.acgs.ai` is the buyer-facing evidence
+# target from acgi-ai/PLAN.md, but it does not claim the official Storybook
+# runtime is installed yet.
+
+name: buyer-evidence-storybook
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/scripts/build-buyer-evidence.mjs'
+      - 'acgi-ai/scripts/check-buyer-evidence-artifact.mjs'
+      - 'acgi-ai/scripts/check-storybook-runtime-plan.mjs'
+      - 'acgi-ai/scripts/check-storybook-publication.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/hosted-storybook-proof.example.json'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'README.md'
+      - 'docs/integration-readiness-task-map.md'
+      - '.github/workflows/storybook.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/scripts/build-buyer-evidence.mjs'
+      - 'acgi-ai/scripts/check-buyer-evidence-artifact.mjs'
+      - 'acgi-ai/scripts/check-storybook-runtime-plan.mjs'
+      - 'acgi-ai/scripts/check-storybook-publication.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-handoff.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs'
+      - 'acgi-ai/scripts/build-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/hosted-storybook-proof.example.json'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'README.md'
+      - 'docs/integration-readiness-task-map.md'
+      - '.github/workflows/storybook.yml'
+
+concurrency:
+  group: buyer-evidence-storybook-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: acgi-ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Verify buyer evidence publication contract
+        run: pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template && pnpm test:hosted-storybook-proof-gap-report
+
+      - name: Build buyer evidence Storybook artifact
+        env:
+          ACGI_EVIDENCE_CNAME: storybook.acgs.ai
+        run: pnpm storybook:build
+
+      - name: Upload buyer evidence Storybook artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: buyer-evidence-storybook
+          path: acgi-ai/dist-buyer-evidence
+          if-no-files-found: error
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name == 'push' && vars.STORYBOOK_PAGES_ENABLED == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: acgi-ai/dist-buyer-evidence
+
+  deploy-pages:
+    needs: build
+    if: github.event_name == 'push' && vars.STORYBOOK_PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: https://storybook.acgs.ai
+    steps:
+      - name: Deploy buyer evidence Storybook to Pages
+        uses: actions/deploy-pages@v4

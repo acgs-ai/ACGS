@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "hosted-storybook-proof-template",
+  "status": "template-only",
+  "sourceTemplate": "acgi-ai/hosted-storybook-proof.example.json",
+  "claimBoundary": "Example hosted Storybook proof intake only; not hosted Storybook proof, not official Storybook runtime proof, not production deployment proof, not legal signoff, not SOC2 proof, not WCAG conformance proof, not pentest completion, and not regulatory compliance proof until every REPLACE_WITH_ placeholder and pending-external ref is replaced by operator-supplied evidence and verify:production-live passes.",
+  "target": {
+    "url": "https://storybook.acgs.ai",
+    "manifestUrl": "https://storybook.acgs.ai/manifest.json",
+    "expectedPublishTarget": "https://storybook.acgs.ai",
+    "requiredStoryIds": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "visual-governance-workbench",
+      "operator-decision-rail",
+      "guided-review-path",
+      "launch-proof-ladder",
+      "deploy-readiness-boundary"
+    ],
+    "manifestClaimBoundaryMustInclude": "not production deployment proof"
+  },
+  "workflow": {
+    "name": "buyer-evidence-storybook",
+    "file": ".github/workflows/storybook.yml",
+    "artifactName": "buyer-evidence-storybook",
+    "requiredRepoVariable": "STORYBOOK_PAGES_ENABLED=true",
+    "runUrl": "REPLACE_WITH_STORYBOOK_WORKFLOW_RUN_URL",
+    "pagesDeployUrl": "REPLACE_WITH_STORYBOOK_PAGES_DEPLOY_URL",
+    "buildOutputRef": "REPLACE_WITH_BUYER_EVIDENCE_STORYBOOK_ARTIFACT_OR_HASH"
+  },
+  "dns": {
+    "host": "storybook.acgs.ai",
+    "recordType": "CNAME",
+    "configuredBy": "REPLACE_WITH_DNS_OWNER_OR_CHANGE_RECORD",
+    "evidenceRef": "REPLACE_WITH_DNS_SCREENSHOT_DIG_OR_PROVIDER_RECORD"
+  },
+  "liveVerification": {
+    "command": "pnpm -F acgi-ai run verify:production-live -- --json",
+    "outputRef": "REPLACE_WITH_VERIFY_PRODUCTION_LIVE_JSON_ARTIFACT_OR_HASH",
+    "status": "REPLACE_WITH_PASS_FROM_VERIFY_PRODUCTION_LIVE",
+    "requiredPassingCheckIds": [
+      "storybook-dns-live",
+      "storybook-https-live",
+      "storybook-manifest-live"
+    ],
+    "requiredAbsentBlockerIds": [
+      "live-storybook-dns",
+      "live-storybook-https",
+      "live-storybook-manifest"
+    ]
+  },
+  "manifestEvidence": {
+    "artifactKind": "local-buyer-evidence-gallery",
+    "publishTarget": "https://storybook.acgs.ai",
+    "manifestJsonRef": "REPLACE_WITH_HOSTED_STORYBOOK_MANIFEST_JSON_OR_HASH",
+    "storyIds": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "visual-governance-workbench",
+      "operator-decision-rail",
+      "guided-review-path",
+      "launch-proof-ladder",
+      "deploy-readiness-boundary"
+    ],
+    "claimBoundaryRef": "REPLACE_WITH_MANIFEST_CLAIM_BOUNDARY_OR_HASH"
+  },
+  "validation": {
+    "localTemplateCheckCommand": "pnpm -F acgi-ai run test:hosted-storybook-proof-template",
+    "localHandoffCheckCommand": "pnpm -F acgi-ai run test:hosted-storybook-handoff",
+    "handoffProofCommand": "pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json> --require-live-clear",
+    "handoffProofOutputRef": "REPLACE_WITH_HOSTED_STORYBOOK_HANDOFF_JSON_OR_HASH",
+    "productionEvidenceValidationCommand": "pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-production-evidence.json> --live-output <verify-production-live.json> --require-pass",
+    "completedProofValidationCommand": "pnpm -F acgi-ai run validate:hosted-storybook-proof -- --proof <hosted-storybook-proof.json> --live-output <verify-production-live.json> --out ../dist-release-evidence/hosted-storybook-proof-validation.json --require-pass",
+    "completedProofValidationOutputRef": "REPLACE_WITH_HOSTED_STORYBOOK_PROOF_VALIDATION_JSON_OR_HASH",
+    "completedArtifactKind": "hosted-storybook-proof"
+  },
+  "copyIntoProductionEvidence": {
+    "productionEvidencePointer": "copyIntoProductionEvidence.hostedStorybook",
+    "hostedStorybook": {
+      "url": "https://storybook.acgs.ai",
+      "manifestUrl": "https://storybook.acgs.ai/manifest.json",
+      "status": "verified",
+      "proofRef": "REPLACE_WITH_STORYBOOK_PAGES_RUN_AND_PASSING_LIVE_VERIFIER_REF",
+      "claimBoundary": "verified only by attached Storybook Pages deploy evidence, DNS evidence, hosted manifest evidence, and passing verify:production-live JSON."
+    },
+    "remainingBlockerToRemove": "hosted-storybook-buyer-evidence"
+  },
+  "remainingExternalUntilReplaced": [
+    "pending-external:storybook-pages-proof",
+    "pending-external:storybook-dns-proof",
+    "pending-external:storybook-manifest-live",
+    "pending-external:official-storybook-runtime-approval",
+    "pending-external:hosted-browser-qa-proof"
+  ],
+  "browserEvidence": {
+    "status": "REPLACE_WITH_PASS_FROM_HOSTED_BROWSER_QA",
+    "targetUrl": "https://storybook.acgs.ai",
+    "storyIds": [
+      "receipt-proof-journey",
+      "bus-owned-proof-source",
+      "claim-safe-trust-surface",
+      "visual-governance-workbench",
+      "operator-decision-rail",
+      "guided-review-path",
+      "launch-proof-ladder",
+      "deploy-readiness-boundary"
+    ],
+    "viewportSet": [
+      360,
+      768,
+      834,
+      1024,
+      1440
+    ],
+    "screenshotRefs": {
+      "receipt-proof-journey": "REPLACE_WITH_HOSTED_RECEIPT_PROOF_JOURNEY_SCREENSHOT_REF",
+      "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_SCREENSHOT_REF",
+      "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_SCREENSHOT_REF",
+      "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_SCREENSHOT_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_SCREENSHOT_REF",
+      "guided-review-path": "REPLACE_WITH_HOSTED_GUIDED_REVIEW_PATH_SCREENSHOT_REF",
+      "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_SCREENSHOT_REF",
+      "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_SCREENSHOT_REF"
+    },
+    "automatedA11yReportRefs": {
+      "receipt-proof-journey": "REPLACE_WITH_HOSTED_RECEIPT_PROOF_JOURNEY_AUTOMATED_A11Y_REPORT_REF",
+      "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_AUTOMATED_A11Y_REPORT_REF",
+      "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_AUTOMATED_A11Y_REPORT_REF",
+      "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_AUTOMATED_A11Y_REPORT_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_AUTOMATED_A11Y_REPORT_REF",
+      "guided-review-path": "REPLACE_WITH_HOSTED_GUIDED_REVIEW_PATH_AUTOMATED_A11Y_REPORT_REF",
+      "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_AUTOMATED_A11Y_REPORT_REF",
+      "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_AUTOMATED_A11Y_REPORT_REF"
+    },
+    "visualDiffRefs": {
+      "receipt-proof-journey": "REPLACE_WITH_HOSTED_RECEIPT_PROOF_JOURNEY_VISUAL_DIFF_REF",
+      "bus-owned-proof-source": "REPLACE_WITH_HOSTED_BUS_OWNED_PROOF_SOURCE_VISUAL_DIFF_REF",
+      "claim-safe-trust-surface": "REPLACE_WITH_HOSTED_CLAIM_SAFE_TRUST_SURFACE_VISUAL_DIFF_REF",
+      "visual-governance-workbench": "REPLACE_WITH_HOSTED_VISUAL_GOVERNANCE_WORKBENCH_VISUAL_DIFF_REF",
+      "operator-decision-rail": "REPLACE_WITH_HOSTED_OPERATOR_DECISION_RAIL_VISUAL_DIFF_REF",
+      "guided-review-path": "REPLACE_WITH_HOSTED_GUIDED_REVIEW_PATH_VISUAL_DIFF_REF",
+      "launch-proof-ladder": "REPLACE_WITH_HOSTED_LAUNCH_PROOF_LADDER_VISUAL_DIFF_REF",
+      "deploy-readiness-boundary": "REPLACE_WITH_HOSTED_DEPLOY_READINESS_BOUNDARY_VISUAL_DIFF_REF"
+    },
+    "claimBoundary": "Browser evidence proves attached hosted rendering screenshots, automated accessibility reports, and visual-diff artifacts only; it is not production deployment proof, not WCAG conformance proof, not manual screen-reader evidence, not legal signoff, not SOC2 proof, and not pentest completion."
+  }
+}
