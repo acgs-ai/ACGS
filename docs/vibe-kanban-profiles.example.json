@@ -1,0 +1,44 @@
+{
+  "executors": {
+    "CLAUDE_CODE": {
+      "ACGS_PLAN": {
+        "CLAUDE_CODE": {
+          "plan": true,
+          "approvals": true,
+          "dangerously_skip_permissions": false,
+          "effort": "high",
+          "append_prompt": "\n\nGovern-zone profile: read AGENTS.md, CLAUDE.md, and MONOREPO.md before conclusions. Produce a plan and verification hooks first. Do not use dangerous permission bypasses. Respect nested git repo boundaries and constitutional-hash constraints.\n"
+        }
+      },
+      "ACGS_SUPERVISED": {
+        "CLAUDE_CODE": {
+          "approvals": true,
+          "dangerously_skip_permissions": false,
+          "effort": "high",
+          "append_prompt": "\n\nGovern-zone profile: stay within the task path boundary, request approval for risky writes/commands, never stage broadly, and report exact verification commands plus output. Respect AGENTS.md, CLAUDE.md, MONOREPO.md, nested git repos, and constitutional hashes.\n"
+        }
+      }
+    },
+    "CODEX": {
+      "ACGS_READONLY": {
+        "CODEX": {
+          "sandbox": "read-only",
+          "ask_for_approval": "on-request",
+          "plan": true,
+          "model_reasoning_effort": "high",
+          "append_prompt": "\n\nGovern-zone profile: inspect only unless the user explicitly escalates. Read AGENTS.md and MONOREPO.md, identify nested repo boundaries, and return a concise plan with verification gates.\n"
+        }
+      },
+      "ACGS_WORKSPACE_WRITE": {
+        "CODEX": {
+          "sandbox": "workspace-write",
+          "ask_for_approval": "unless-trusted",
+          "plan": false,
+          "include_apply_patch_tool": true,
+          "model_reasoning_effort": "high",
+          "append_prompt": "\n\nGovern-zone profile: implement the smallest scoped diff, do not stage/commit, do not use git add -A or git add ., respect nested repos under packages/acgs-lite and packages/Acgs-Swarm, preserve constitutional hashes unless explicitly instructed, and run the relevant verification gate before claiming success.\n"
+        }
+      }
+    }
+  }
+}
