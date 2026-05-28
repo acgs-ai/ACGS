@@ -1,0 +1,819 @@
+# Instincts generated from https://github.com/dislovelhl/govern-zone
+# Generated: 2026-05-28T18:59:24.645Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: govern-zone-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Commit Length
+
+## Action
+
+Write moderate-length commit messages (~52 characters)
+
+## Evidence
+
+- Average commit message length: 52 chars
+- Based on 100 commits
+
+---
+id: govern-zone-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: govern-zone-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: govern-zone-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: govern-zone-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: govern-zone-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: govern-zone-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.js
+
+---
+id: govern-zone-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.js
+
+## Evidence
+
+- File pattern: *.test.js
+- Consistent across test files
+
+---
+id: govern-zone-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Test Mocking
+
+## Action
+
+Use msw for mocking
+
+## Evidence
+
+- Mocking pattern detected: msw
+- Consistent across test files
+
+---
+id: govern-zone-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Test Types
+
+## Action
+
+Write unit, integration, e2e tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, integration, e2e
+- Coverage config: yes
+
+---
+id: govern-zone-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~15x per month
+- Files: acgi-ai/src/api/*, acgi-ai/src/mocks/data/*, acgi-ai/src/mocks/*
+
+---
+id: govern-zone-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: src/**/*
+
+---
+id: govern-zone-workflow-add-new-workspace-python-package
+trigger: "when doing add new workspace python package"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Add New Workspace Python Package
+
+## Action
+
+Follow the add-new-workspace-python-package workflow:
+1. Create new package directory under packages/
+2. Add pyproject.toml, README.md, .gitignore, and Makefile
+3. Implement source files in src/{package_name}/
+4. Add tests in tests/
+5. Register package in root pyproject.toml [tool.uv.workspace].members
+6. Update tests/test_monorepo_invariants.py to include the new member
+7. Add or update .github/workflows/python-{package}.yml for CI
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: packages/{package}/pyproject.toml, packages/{package}/README.md, packages/{package}/src/{package}/__init__.py
+
+---
+id: govern-zone-workflow-add-new-frontend-console-surface
+trigger: "when doing add new frontend console surface"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Add New Frontend Console Surface
+
+## Action
+
+Follow the add-new-frontend-console-surface workflow:
+1. Create new route file in src/routes/console/
+2. Register the route in src/routes/Console.tsx (and sometimes App.tsx)
+3. Add/update API client in src/api/client.ts and types in src/api/types.ts
+4. Add React Query hooks in src/api/hooks.ts
+5. Add or update MSW mock data and handlers in src/mocks/data/ and src/mocks/handlers.ts
+6. Add or update CSS in src/App.css
+7. Add/extend invariant or smoke scripts in scripts/
+8. Update package.json test scripts if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: acgi-ai/src/routes/console/{Feature}.tsx, acgi-ai/src/routes/Console.tsx, acgi-ai/src/api/client.ts
+
+---
+id: govern-zone-workflow-spec-plan-implement-feature-with-contracts-and-tests
+trigger: "when doing spec plan implement feature with contracts and tests"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Spec Plan Implement Feature With Contracts And Tests
+
+## Action
+
+Follow the spec-plan-implement-feature-with-contracts-and-tests workflow:
+1. Draft feature spec and requirements in specs/{feature}/
+2. Write implementation plan, data model, and contracts (JSON Schema, OpenAPI)
+3. Add tasks.md with granular task breakdown
+4. Implement backend package (see add-new-workspace-python-package)
+5. Implement frontend surface (see add-new-frontend-console-surface)
+6. Add/extend tests for backend and frontend
+7. Add/extend acceptance/README.md documenting evidence and acceptance
+8. Update readiness docs and evidence packet
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: specs/{feature}/spec.md, specs/{feature}/plan.md, specs/{feature}/data-model.md
+
+---
+id: govern-zone-workflow-ci-gate-tighten-or-fix
+trigger: "when doing ci gate tighten or fix"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Ci Gate Tighten Or Fix
+
+## Action
+
+Follow the ci-gate-tighten-or-fix workflow:
+1. Update Makefile to include or exclude packages in lint/test/typecheck fan-out
+2. Update root pyproject.toml workspace.members
+3. Update or add .github/workflows/*.yml for affected packages
+4. Update tests/test_monorepo_invariants.py to match current package inventory
+5. Fix or update package-level test/lint/typecheck scripts as needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: Makefile, pyproject.toml, .github/workflows/*.yml
+
+---
+id: govern-zone-workflow-add-or-update-readiness-evidence-and-boundaries
+trigger: "when doing add or update readiness evidence and boundaries"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Add Or Update Readiness Evidence And Boundaries
+
+## Action
+
+Follow the add-or-update-readiness-evidence-and-boundaries workflow:
+1. Update docs/readiness-evidence-matrix-*.md and docs/readiness-evidence-packet-*.md
+2. Update scripts/build_release_evidence.py, scripts/platform_readiness_report.py, and related scripts
+3. Update or add tests for readiness evidence and preflight in tests/
+4. Update acgi-ai/DEPLOY.md, PRODUCTION-LAUNCH.md, and related docs
+5. Add or update Makefile targets for evidence/report generation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: docs/readiness-evidence-matrix-*.md, docs/readiness-evidence-packet-*.md, scripts/build_release_evidence.py
+
+---
+id: govern-zone-workflow-update-or-add-gitignore-for-tool-or-build-artifacts
+trigger: "when doing update or add gitignore for tool or build artifacts"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Update Or Add Gitignore For Tool Or Build Artifacts
+
+## Action
+
+Follow the update-or-add-gitignore-for-tool-or-build-artifacts workflow:
+1. Edit .gitignore or package/.gitignore to add new patterns
+2. Document rationale in commit message
+3. Review with git status or similar
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: .gitignore, packages/{package}/.gitignore
+
+---
+id: govern-zone-workflow-remove-or-extract-inactive-or-experimental-package
+trigger: "when doing remove or extract inactive or experimental package"
+confidence: 0.55
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/dislovelhl/govern-zone
+---
+
+# Govern Zone Workflow Remove Or Extract Inactive Or Experimental Package
+
+## Action
+
+Follow the remove-or-extract-inactive-or-experimental-package workflow:
+1. Delete package directory and all files under it
+2. Remove package from root pyproject.toml workspace.members if present
+3. Update docs or manifests referencing the package
+4. Archive externally if needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~1x per month
+- Files: packages/{package}/, pyproject.toml, docs/architecture-audit.md
+
+---
+id: govern-zone-instinct-camelcase-files
+trigger: "When creating or renaming files in the codebase"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Camelcase Files
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Naming conventions specified in analysis
+- Pattern in acgi-ai/src/api/client.ts
+
+---
+id: govern-zone-instinct-camelcase-functions
+trigger: "When defining functions"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Camelcase Functions
+
+## Action
+
+Use camelCase for function names
+
+## Evidence
+
+- Naming conventions specified in analysis
+- Pattern in acgi-ai/src/api/client.ts
+
+---
+id: govern-zone-instinct-pascalcase-classes
+trigger: "When defining classes"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Pascalcase Classes
+
+## Action
+
+Use PascalCase for class names
+
+## Evidence
+
+- Naming conventions specified in analysis
+
+---
+id: govern-zone-instinct-screaming-snake-constants
+trigger: "When defining constants"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Screaming Snake Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constants
+
+## Evidence
+
+- Naming conventions specified in analysis
+
+---
+id: govern-zone-instinct-relative-imports
+trigger: "When importing modules within the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Relative Imports
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Import style specified as relative
+- Pattern in acgi-ai/src/api/client.ts
+
+---
+id: govern-zone-instinct-named-exports
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Named Exports
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Export style specified as named
+
+---
+id: govern-zone-instinct-vitest-pattern
+trigger: "When writing tests for frontend or JS/TS code"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Vitest Pattern
+
+## Action
+
+Use vitest framework and name test files with *.test.js
+
+## Evidence
+
+- Testing framework specified as vitest
+- File pattern *.test.js
+
+---
+id: govern-zone-instinct-msw-mocking
+trigger: "When mocking API calls in tests"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Msw Mocking
+
+## Action
+
+Use msw (Mock Service Worker) for API mocking
+
+## Evidence
+
+- Mocking style specified as msw
+- Pattern in acgi-ai/src/mocks/handlers.ts
+
+---
+id: govern-zone-instinct-coverage-config
+trigger: "When configuring tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Coverage Config
+
+## Action
+
+Ensure test coverage is configured and measured
+
+## Evidence
+
+- CoverageConfig: true
+- Pattern in package.json test scripts
+
+---
+id: govern-zone-instinct-error-boundaries
+trigger: "When handling errors in application code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Error Boundaries
+
+## Action
+
+Implement error boundaries and custom error classes
+
+## Evidence
+
+- Error handling style: error-boundaries
+- CustomErrorClasses: true
+
+---
+id: govern-zone-instinct-commit-prefixes
+trigger: "When composing a git commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Commit Prefixes
+
+## Action
+
+Prefix commit messages with chore, fix, feat, impl, style, or spec as appropriate
+
+## Evidence
+
+- Seen in commits: fix(ci): tolerate credential-gated clinicalguard + workspace-source resolution
+- chore(gitignore): suppress IDE/editor scratch + unregistered external clones
+- feat(gove-zone): add minimal governed agent runtime kernel package
+
+---
+id: govern-zone-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Commit Length
+
+## Action
+
+Keep commit messages concise (average ~52 characters), but descriptive
+
+## Evidence
+
+- Average commit length: 52
+- Pattern in commit examples
+
+---
+id: govern-zone-instinct-add-python-package
+trigger: "When a new governed agent runtime or analyzer package is needed"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Add Python Package
+
+## Action
+
+Follow the add-new-workspace-python-package workflow: create package dir, add pyproject, README, Makefile, implement src/tests, register in pyproject.toml, update monorepo invariants, add CI workflow
+
+## Evidence
+
+- Workflow: add-new-workspace-python-package
+- Pattern in commits: Create new package directory under packages/, Add pyproject.toml, README.md, .gitignore, and Makefile
+
+---
+id: govern-zone-instinct-add-frontend-console-surface
+trigger: "When a new operator-facing page or feature is needed in the acgi-ai console"
+confidence: 0.92
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Add Frontend Console Surface
+
+## Action
+
+Follow the add-new-frontend-console-surface workflow: create route, register in Console.tsx, update API client/types/hooks, add mocks, update CSS, add scripts/tests
+
+## Evidence
+
+- Workflow: add-new-frontend-console-surface
+- Pattern in commits: Create new route file in src/routes/console/
+
+---
+id: govern-zone-instinct-spec-plan-implement-feature
+trigger: "When delivering a new major feature with traceable requirements and acceptance"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Spec Plan Implement Feature
+
+## Action
+
+Follow the spec-plan-implement-feature-with-contracts-and-tests workflow: draft spec, plan, data model, contracts, tasks, implement backend/frontend, add tests, update acceptance/readiness docs
+
+## Evidence
+
+- Workflow: spec-plan-implement-feature-with-contracts-and-tests
+- Pattern in commits: Draft feature spec and requirements in specs/{feature}/
+
+---
+id: govern-zone-instinct-ci-gate-align
+trigger: "When CI is failing or packages need to be added/removed from root/package verification"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Ci Gate Align
+
+## Action
+
+Follow the ci-gate-tighten-or-fix workflow: update Makefile, pyproject.toml, CI workflows, monorepo invariants, and package scripts as needed
+
+## Evidence
+
+- Workflow: ci-gate-tighten-or-fix
+- Pattern in commits: Update Makefile to include or exclude packages in lint/test/typecheck fan-out
+
+---
+id: govern-zone-instinct-refresh-readiness-evidence
+trigger: "When readiness docs or evidence need to be updated for preflight/launch gating"
+confidence: 0.93
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Refresh Readiness Evidence
+
+## Action
+
+Follow the add-or-update-readiness-evidence-and-boundaries workflow: update evidence docs, scripts, tests, deployment docs, and Makefile targets
+
+## Evidence
+
+- Workflow: add-or-update-readiness-evidence-and-boundaries
+- Pattern in commits: Update docs/readiness-evidence-matrix-*.md and docs/readiness-evidence-packet-*.md
+
+---
+id: govern-zone-instinct-update-gitignore
+trigger: "When new tool-generated, build, or scratch artifacts need to be excluded from version control"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Update Gitignore
+
+## Action
+
+Edit .gitignore or package/.gitignore to add new patterns, document rationale in commit, and review with git status
+
+## Evidence
+
+- Workflow: update-or-add-gitignore-for-tool-or-build-artifacts
+- Pattern in commits: chore(gitignore): suppress IDE/editor scratch + unregistered external clones
+
+---
+id: govern-zone-instinct-remove-inactive-package
+trigger: "When an inactive, experimental, or deprecated package should be removed from the workspace"
+confidence: 0.87
+domain: workflow
+source: repo-analysis
+source_repo: dislovelhl/govern-zone
+---
+
+# Govern Zone Instinct Remove Inactive Package
+
+## Action
+
+Delete package directory, remove from pyproject.toml, update docs/manifests, and archive externally if needed
+
+## Evidence
+
+- Workflow: remove-or-extract-inactive-or-experimental-package
+- Pattern in commits: Delete package directory and all files under it
+
