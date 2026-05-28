@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useGovernedActions, useTestAction } from '../../api/hooks'
 import type { DecisionOutcome, GovernedAction, Posture } from '../../api/types'
+import { navigate } from '../../lib/navigate'
 import {
   ConsoleError,
   ConsoleLoading,
@@ -198,6 +199,16 @@ export function Actions() {
               ))}
             </div>
 
+            <div className="action-proof-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => navigate(`/console/audit/${encodeURIComponent(active.receiptId)}`)}
+              >
+                Open proof journey
+              </button>
+            </div>
+
             <div className="action-test-panel">
               <div>
                 <h3>Test before execution</h3>
@@ -228,7 +239,12 @@ export function Actions() {
           </section>
         </div>
       ) : (
-        <EmptyState query={query} label="actions" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="audit-drift"
+          query={query}
+          label="actions"
+          onClear={() => setQuery('')}
+        />
       )}
     </div>
   )

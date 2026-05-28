@@ -32,7 +32,12 @@ export function Policies() {
       />
 
       {filtered.length === 0 || !active ? (
-        <EmptyState query={query} label="policies" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="awaiting-bus"
+          query={query}
+          label="policies"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <div className="policy-list">
           <div className="policy-rules">

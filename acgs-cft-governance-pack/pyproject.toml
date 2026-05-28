@@ -31,3 +31,12 @@ testpaths = ["tests"]
 # Override the monorepo root's strict `line-length = 100` for this package
 # until a cleanup PR rewrites the long lines (mostly in tests/).
 line-length = 120
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["acgs_cft_governance_pack", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true

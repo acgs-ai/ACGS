@@ -32,7 +32,12 @@ export function Agents() {
       />
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="agents" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="awaiting-bus"
+          query={query}
+          label="agents"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <table className="c-table">
           <thead>

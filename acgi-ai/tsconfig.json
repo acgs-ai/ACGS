@@ -5,6 +5,7 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
+      "@surface/App": ["./src/surface/App.tsx"],
       "@/*": ["./src/*"]
     }
   }

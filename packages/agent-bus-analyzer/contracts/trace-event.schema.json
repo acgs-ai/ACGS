@@ -109,6 +109,21 @@
       "type": ["string", "null"],
       "format": "date-time",
       "description": "Only set when status='ingest-gap'."
+    },
+    "phoenix_trace_id": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{32}$",
+      "description": "OpenTelemetry/Phoenix trace id extracted from traceparent or explicit trace_id fields."
+    },
+    "phoenix_span_id": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "OpenTelemetry/Phoenix current span id when the source event exposes it explicitly."
+    },
+    "phoenix_parent_span_id": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{16}$",
+      "description": "OpenTelemetry traceparent parent-id or explicit parent span id for Phoenix drill-through."
     }
   },
   "allOf": [

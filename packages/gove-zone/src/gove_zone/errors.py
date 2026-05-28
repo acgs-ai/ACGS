@@ -15,6 +15,10 @@ class GoveZoneError(Exception):
     """Base for all gove-zone errors."""
 
 
+class ReceiptValidationError(GoveZoneError):
+    """Raised when a DecisionReceipt validation fails."""
+
+
 class DeniedError(GoveZoneError):
     """Raised when a dispatch is denied by policy or fail-closed fallback."""
 

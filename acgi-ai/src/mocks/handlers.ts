@@ -12,10 +12,15 @@ if (import.meta.env.VITE_USE_MOCKS !== 'true') {
 
 import { HttpResponse, http } from 'msw'
 import { ACCOUNT_VIEW } from './data/account'
-import { GOVERNED_ACTIONS } from './data/actions'
+import { GOVERNED_ACTIONS, getGovernedActionProof } from './data/actions'
 import { AGENTS } from './data/agents'
 import { AUDIT_EVENTS } from './data/audit'
-import { BUS_TRACE_LIST, getSingleTraceFixture } from './data/bus-analysis'
+import {
+  BUS_DEFECT_LIST,
+  BUS_TRACE_LIST,
+  getReceiptProofFixture,
+  getSingleTraceFixture,
+} from './data/bus-analysis'
 import { COMPILE_DRAFT } from './data/compile'
 import { CONSOLE_SUMMARY } from './data/console-summary'
 import { DELIBERATIONS } from './data/deliberations'
@@ -30,6 +35,13 @@ export const handlers = [
   http.get('/api/v1/console-summary', () => HttpResponse.json(CONSOLE_SUMMARY)),
   http.get('/api/v1/agents', () => HttpResponse.json(AGENTS)),
   http.get('/api/v1/actions', () => HttpResponse.json(GOVERNED_ACTIONS)),
+  http.get('/api/v1/actions/:receiptId/proof', ({ params }) => {
+    const proof = getGovernedActionProof(String(params.receiptId))
+    if (!proof) {
+      return HttpResponse.json({ detail: 'receipt proof not found' }, { status: 404 })
+    }
+    return HttpResponse.json(proof)
+  }),
   http.post('/api/v1/actions/test', async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { actionId?: string; payload?: string }
     const action = GOVERNED_ACTIONS.find((item) => item.id === body.actionId) ?? GOVERNED_ACTIONS[0]
@@ -63,6 +75,7 @@ export const handlers = [
   http.get('/api/v1/settings', () => HttpResponse.json(SETTING_SECTIONS)),
   http.get('/api/v1/tenants', () => HttpResponse.json(TENANTS)),
   http.get('/api/v1/account', () => HttpResponse.json(ACCOUNT_VIEW)),
+  http.get('/api/bus/defects', () => HttpResponse.json(BUS_DEFECT_LIST)),
   http.get('/api/bus/traces', () => HttpResponse.json(BUS_TRACE_LIST)),
   http.get('/api/bus/traces/:correlationId', ({ params }) => {
     const id = String(params.correlationId)
@@ -71,5 +84,13 @@ export const handlers = [
       return HttpResponse.json({ detail: 'trace not found' }, { status: 404 })
     }
     return HttpResponse.json(trace)
+  }),
+  http.get('/api/bus/receipts/:receiptId', ({ params }) => {
+    const receiptId = String(params.receiptId)
+    const proof = getReceiptProofFixture(receiptId)
+    if (!proof) {
+      return HttpResponse.json({ detail: 'receipt proof not found' }, { status: 404 })
+    }
+    return HttpResponse.json(proof)
   }),
 ]

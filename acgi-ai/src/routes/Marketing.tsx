@@ -1,6 +1,24 @@
 import { ArrowRight, Menu, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
+import {
+  AGENT_FRAMEWORK_STARTER_KITS,
+  ASSURANCE_INTAKE_LANES,
+  FRAMEWORK_INTEGRATION_RAIL,
+  HOSTED_STORYBOOK_RUNWAY,
+  LAUNCH_PROOF_LANES,
+  LIVE_VERIFIER_BLOCKER_LANES,
+  OPERATOR_CHECKLIST,
+  PLATFORM_REQUIREMENT_LANES,
+  PRODUCTION_COMMAND_RAIL,
+  PRODUCTION_CUTOVER_LANES,
+  RELEASE_BLOCKER_QUEUE,
+  RESEARCH_INPUTS,
+  WORKBENCH_DECISION_RAIL,
+  WORKBENCH_GUIDED_PATH,
+  WORKBENCH_STAGES,
+} from './workbench-content'
 
 const ASTERISM = '⁂'
 
@@ -92,6 +110,8 @@ export function Marketing() {
   const [navOpen, setNavOpen] = useState(false)
   const closeNav = () => setNavOpen(false)
 
+  useHashScroll()
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     const close = () => setNavOpen(false)
@@ -101,6 +121,9 @@ export function Marketing() {
 
   return (
     <div className="marketing">
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <div className="shell">
         <nav className={`m-nav${navOpen ? ' is-open' : ''}`} aria-label="Primary">
           <a className="m-brand" href="/" aria-label="ACGS home">
@@ -121,6 +144,7 @@ export function Marketing() {
           </button>
           <div className="m-nav-links" id="m-nav-links">
             <a href="#capabilities">Platform</a>
+            <a href="#workbench">Workbench</a>
             <a href="#coverage">Coverage</a>
             <a
               href="/products"
@@ -159,207 +183,502 @@ export function Marketing() {
           </a>
         </nav>
 
-        <header className="m-hero">
-          <div>
-            <span className="m-eyebrow">
-              <span className="asterism" aria-hidden>
-                {ASTERISM}
+        <main id="main-content" tabIndex={-1}>
+          <header className="m-hero">
+            <div>
+              <span className="m-eyebrow">
+                <span className="asterism" aria-hidden>
+                  {ASTERISM}
+                </span>
+                Vol. I · Constitutional governance for AI agents
               </span>
-              Vol. I · Constitutional governance for AI agents
-            </span>
-            <h1>
-              The publishing house that ships <em>governance</em>.
-            </h1>
-            <p className="m-hero-lede">
-              ACGS turns regulatory prose — the EU AI Act, SR 11-7, HIPAA, GDPR — into runtime
-              artifacts your agent cannot ignore. Constitutions are authored, compiled, hashed, and
-              enforced. Every refusal carries a citation. Every approval carries a signature.
-            </p>
-            <div className="m-hero-actions">
-              <a className="btn btn-primary" href="#book">
-                Schedule a review <ArrowRight size={16} strokeWidth={1.8} />
-              </a>
-              <a
-                className="btn btn-secondary"
-                href="/console/agents"
-                onClick={(e) => {
-                  e.preventDefault()
-                  navigate('/console/agents')
-                }}
-              >
-                Open the console
-              </a>
+              <h1>
+                The publishing house that ships <em>governance</em>.
+              </h1>
+              <p className="m-hero-lede">
+                ACGS maps regulatory prose — the EU AI Act, SR 11-7, HIPAA, GDPR — into runtime
+                artifacts, citations, and evidence workflows for governed agents. Constitutions are
+                authored, compiled, hashed, and checked before privileged actions proceed.
+              </p>
+              <div className="m-hero-actions">
+                <a className="btn btn-primary" href="#book">
+                  Schedule a review <ArrowRight size={16} strokeWidth={1.8} />
+                </a>
+                <a
+                  className="btn btn-secondary"
+                  href="/console/agents"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/console/agents')
+                  }}
+                >
+                  Open the console
+                </a>
+              </div>
             </div>
+
+            <aside className="m-hero-aside">
+              <figure className="m-code">
+                <figcaption className="m-code-head">
+                  <span>constitution.acgs · v3.1.0</span>
+                  <span>608508a9bd224290</span>
+                </figcaption>
+                <pre>
+                  <span className="c">{'// Article IV — Privileged work product'}</span>
+                  {'\n'}
+                  <span className="k">rule</span> <span className="s">"matter.disclosure"</span>{' '}
+                  {'{'}
+                  {'\n'}
+                  {'  '}
+                  <span className="k">when</span>
+                  {'  agent.role == '}
+                  <span className="s">"public"</span>
+                  {'\n'}
+                  {'  '}
+                  <span className="k">when</span>
+                  {'  payload.contains('}
+                  <span className="s">"matter_id"</span>
+                  {')'}
+                  {'\n'}
+                  {'  '}
+                  <span className="k">deny</span>
+                  {'  '}
+                  <span className="s">"privilege boundary"</span>
+                  {'\n'}
+                  {'  '}
+                  <span className="k">cite</span>
+                  {'  '}
+                  <span className="s">"§164.502(b)"</span>
+                  {'\n'}
+                  {'}'}
+                </pre>
+              </figure>
+              <blockquote className="m-pull">
+                The page is a poster, not a document. Every refusal we emit is countersigned by a
+                section number from a primary source.
+                <cite>— ACGS, Decisions Log §3</cite>
+              </blockquote>
+            </aside>
+          </header>
+
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
 
-          <aside className="m-hero-aside">
-            <figure className="m-code">
-              <figcaption className="m-code-head">
-                <span>constitution.acgs · v3.1.0</span>
-                <span>608508a9bd224290</span>
-              </figcaption>
-              <pre>
-                <span className="c">{'// Article IV — Privileged work product'}</span>
-                {'\n'}
-                <span className="k">rule</span> <span className="s">"matter.disclosure"</span> {'{'}
-                {'\n'}
-                {'  '}
-                <span className="k">when</span>
-                {'  agent.role == '}
-                <span className="s">"public"</span>
-                {'\n'}
-                {'  '}
-                <span className="k">when</span>
-                {'  payload.contains('}
-                <span className="s">"matter_id"</span>
-                {')'}
-                {'\n'}
-                {'  '}
-                <span className="k">deny</span>
-                {'  '}
-                <span className="s">"privilege boundary"</span>
-                {'\n'}
-                {'  '}
-                <span className="k">cite</span>
-                {'  '}
-                <span className="s">"§164.502(b)"</span>
-                {'\n'}
-                {'}'}
-              </pre>
-            </figure>
-            <blockquote className="m-pull">
-              The page is a poster, not a document. Every refusal we emit is countersigned by a
-              section number from a primary source.
-              <cite>— ACGS, Decisions Log §3</cite>
-            </blockquote>
-          </aside>
-        </header>
+          {/* Capabilities */}
+          <section id="capabilities" aria-labelledby="cap-h">
+            <p className="m-product-definition">
+              ACGS is a policy compiler and enforcement layer for regulated AI agents, binding
+              citations, roles, and refusal rules into the runtime path.
+            </p>
+            <div className="m-sec-head">
+              <span className="num">I · Platform</span>
+              <h2 id="cap-h">
+                An <em>operating constitution</em> for systems that decide on behalf of people.
+              </h2>
+            </div>
 
-        <div className="m-break" aria-hidden>
-          {ASTERISM} {ASTERISM} {ASTERISM}
-        </div>
+            <div className="m-cards">
+              {capabilities.map((c) => (
+                <article className="m-card" key={c.n}>
+                  <span className="folio-no">№ {c.n}</span>
+                  <h3>{c.title}</h3>
+                  <p>{c.body}</p>
+                </article>
+              ))}
+            </div>
+          </section>
 
-        {/* Capabilities */}
-        <section id="capabilities" aria-labelledby="cap-h">
-          <p className="m-product-definition">
-            ACGS is a policy compiler and enforcement layer for regulated AI agents, binding
-            citations, roles, and refusal rules into the runtime path.
-          </p>
-          <div className="m-sec-head">
-            <span className="num">I · Platform</span>
-            <h2 id="cap-h">
-              An <em>operating constitution</em> for systems that decide on behalf of people.
-            </h2>
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
 
-          <div className="m-cards">
-            {capabilities.map((c) => (
-              <article className="m-card" key={c.n}>
-                <span className="folio-no">№ {c.n}</span>
-                <h3>{c.title}</h3>
-                <p>{c.body}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <div className="m-break" aria-hidden>
-          {ASTERISM} {ASTERISM} {ASTERISM}
-        </div>
-
-        {/* Coverage */}
-        <section id="coverage" aria-labelledby="cov-h">
-          <div className="m-sec-head">
-            <span className="num">II · Coverage</span>
-            <h2 id="cov-h">
-              <em>Cited</em>, not claimed.
-            </h2>
-          </div>
-          <div className="m-coverage">
-            <table>
-              <thead>
-                <tr>
-                  <th>Framework</th>
-                  <th>Sections enforced</th>
-                  <th>Version</th>
-                </tr>
-              </thead>
-              <tbody>
-                {coverage.map((row) => (
-                  <tr key={row[0]}>
-                    <td>{row[0]}</td>
-                    <td>{row[1]}</td>
-                    <td>{row[2]}</td>
-                  </tr>
+          {/* Workbench blueprint */}
+          <section id="workbench" aria-labelledby="workbench-h">
+            <div className="m-sec-head">
+              <span className="num">II · Workbench</span>
+              <h2 id="workbench-h">
+                Visualized <em>work</em>, not another wall of settings.
+              </h2>
+            </div>
+            <div className="m-workbench">
+              <ol className="m-workbench-map" aria-label="Visualized operator workflow">
+                {WORKBENCH_STAGES.map((stage) => (
+                  <li className="m-workbench-stage" key={stage.step}>
+                    <span className="stage-step">{stage.step}</span>
+                    <h3>{stage.title}</h3>
+                    <p className="stage-signal">{stage.signal}</p>
+                    <p>{stage.body}</p>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </ol>
 
-        <div className="m-break" aria-hidden>
-          {ASTERISM} {ASTERISM} {ASTERISM}
-        </div>
-
-        {/* Pricing */}
-        <section id="pricing" aria-labelledby="pricing-h">
-          <div className="m-sec-head">
-            <span className="num">III · Pricing</span>
-            <h2 id="pricing-h">
-              Three editions. <em>One</em> constitutional hash.
-            </h2>
-          </div>
-          <div className="m-pricing">
-            {tiers.map((t) => (
-              <article className={`m-tier ${t.feat ? 'feat' : ''}`} key={t.name}>
-                <span className="t-tag">{t.tag}</span>
-                <h3 className="t-name">{t.name}</h3>
-                <div className="t-price">
-                  <span className="t-price-num">
-                    {t.price.startsWith('On') ? t.price : `$${t.price}`}
-                  </span>
-                  <span className="t-price-unit">{t.unit}</span>
-                </div>
-                <hr />
+              <aside className="m-workbench-panel" aria-label="Research-backed UI inputs">
+                <span className="folio-no">Research inputs</span>
+                <h3>What a leading agent-governance platform should make easy.</h3>
+                <p>
+                  The UI should make risky work inspectable in one pass: queue, trace, evaluation,
+                  release, and export. The claim is a product blueprint, not certification or live
+                  assurance.
+                </p>
                 <ul>
-                  {t.bullets.map((b) => (
-                    <li key={b}>{b}</li>
+                  {RESEARCH_INPUTS.map(({ source, cue }) => (
+                    <li key={source}>
+                      <strong>{source}</strong>
+                      <span>{cue}</span>
+                    </li>
                   ))}
                 </ul>
-                <a className="btn btn-primary" href="#book">
-                  {t.cta} <ArrowRight size={15} strokeWidth={1.8} />
-                </a>
-              </article>
-            ))}
-          </div>
-        </section>
+                <section
+                  className="m-workbench-requirements"
+                  aria-labelledby="marketing-platform-requirements-h"
+                >
+                  <span className="folio-no" id="marketing-platform-requirements-h">
+                    Platform requirements
+                  </span>
+                  <ol>
+                    {PLATFORM_REQUIREMENT_LANES.map(({ pillar, title, proof, source }) => (
+                      <li key={pillar}>
+                        <strong>{pillar}</strong>
+                        <span>{title}</span>
+                        <code>{proof}</code>
+                        <small>{source}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-framework"
+                  aria-labelledby="marketing-framework-rail-h"
+                >
+                  <span className="folio-no" id="marketing-framework-rail-h">
+                    Framework integration rail
+                  </span>
+                  <p>
+                    Agent-framework adoption should be visible as normalize, gate, receipt, and
+                    adopt steps before anyone treats local adapter proof as live integration proof.
+                  </p>
+                  <ol>
+                    {FRAMEWORK_INTEGRATION_RAIL.map(({ step, title, source, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <small>{source}</small>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-starters"
+                  aria-labelledby="marketing-framework-starters-h"
+                >
+                  <span className="folio-no" id="marketing-framework-starters-h">
+                    Agent framework starter kits
+                  </span>
+                  <p>
+                    Adoption starts from a concrete payload, local gate command, and receipt proof
+                    before anyone claims live framework deployment.
+                  </p>
+                  <ol>
+                    {AGENT_FRAMEWORK_STARTER_KITS.map(({ framework, entry, command, proof }) => (
+                      <li key={framework}>
+                        <strong>{framework}</strong>
+                        <span>{entry}</span>
+                        <code>{proof}</code>
+                        <small>{command}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-guided" aria-labelledby="marketing-guided-path-h">
+                  <span className="folio-no" id="marketing-guided-path-h">
+                    Guided review path
+                  </span>
+                  <ol>
+                    {WORKBENCH_GUIDED_PATH.map(({ step, title, instruction, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <p>{instruction}</p>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-decision"
+                  aria-labelledby="marketing-decision-rail-h"
+                >
+                  <span className="folio-no" id="marketing-decision-rail-h">
+                    Operator decision rail
+                  </span>
+                  <ol>
+                    {WORKBENCH_DECISION_RAIL.map(({ step, title, prompt, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <p>{prompt}</p>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-checklist"
+                  aria-labelledby="marketing-operator-start-h"
+                >
+                  <span className="folio-no" id="marketing-operator-start-h">
+                    Operator quick start
+                  </span>
+                  <ol>
+                    {OPERATOR_CHECKLIST.map(({ label, cue }) => (
+                      <li key={label}>
+                        <strong>{label}</strong>
+                        <span>{cue}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-proof" aria-labelledby="marketing-proof-ladder-h">
+                  <span className="folio-no" id="marketing-proof-ladder-h">
+                    Launch proof ladder
+                  </span>
+                  <ol>
+                    {LAUNCH_PROOF_LANES.map(({ title, state, proof, cue }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <code>{proof}</code>
+                        <span>{state}</span>
+                        <span>{cue}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-cutover"
+                  aria-labelledby="marketing-cutover-state-h"
+                >
+                  <span className="folio-no" id="marketing-cutover-state-h">
+                    Current saved cutover state
+                  </span>
+                  <p>
+                    safeToClaimProduction=false · saved live verifier: 2 pass, 6 fail · local state
+                    is not production proof.
+                  </p>
+                  <ol>
+                    {PRODUCTION_CUTOVER_LANES.map(({ title, state, proof }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <span>{state}</span>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-blockers"
+                  aria-labelledby="marketing-release-blockers-h"
+                >
+                  <span className="folio-no" id="marketing-release-blockers-h">
+                    Release blocker queue
+                  </span>
+                  <p>
+                    The launch path stays easy to act on by pairing every external blocker with an
+                    owner, artifact, and unblock command before any stronger claim is made.
+                  </p>
+                  <ol>
+                    {RELEASE_BLOCKER_QUEUE.map(({ blockerId, owner, artifact, proof }) => (
+                      <li key={blockerId}>
+                        <strong>{owner}</strong>
+                        <span>{blockerId}</span>
+                        <code>{proof}</code>
+                        <small>{artifact}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-live" aria-labelledby="marketing-live-blockers-h">
+                  <span className="folio-no" id="marketing-live-blockers-h">
+                    Live verifier blocker map
+                  </span>
+                  <p>
+                    The saved production preflight names each live DNS, service, header, HTTPS, and
+                    hosted manifest blocker before any launch claim changes.
+                  </p>
+                  <ol>
+                    {LIVE_VERIFIER_BLOCKER_LANES.map(({ title, blockerId, proof }) => (
+                      <li key={blockerId}>
+                        <strong>{title}</strong>
+                        <span>{blockerId}</span>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section className="m-workbench-command" aria-labelledby="marketing-command-rail-h">
+                  <span className="folio-no" id="marketing-command-rail-h">
+                    Production command rail
+                  </span>
+                  <p>
+                    The launch path should show the local and read-only commands that refresh
+                    blocker evidence before operators attach external proof.
+                  </p>
+                  <ol>
+                    {PRODUCTION_COMMAND_RAIL.map(({ title, command, artifact }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <code>{command}</code>
+                        <span>{artifact}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-storybook-runway"
+                  aria-labelledby="marketing-storybook-runway-h"
+                >
+                  <span className="folio-no" id="marketing-storybook-runway-h">
+                    Hosted Storybook runway
+                  </span>
+                  <p>
+                    Buyer-evidence publication stays visible as build local gallery, enable Pages,
+                    verify live Storybook, and attach hosted proof before the hosted blocker clears.
+                  </p>
+                  <ol>
+                    {HOSTED_STORYBOOK_RUNWAY.map(({ step, title, command, proof }) => (
+                      <li key={title}>
+                        <strong>{step}</strong>
+                        <span>{title}</span>
+                        <code>{proof}</code>
+                        <small>{command}</small>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+                <section
+                  className="m-workbench-assurance"
+                  aria-labelledby="marketing-assurance-intake-h"
+                >
+                  <span className="folio-no" id="marketing-assurance-intake-h">
+                    Assurance proof intake
+                  </span>
+                  <p>
+                    External blockers need attached proof before production, compliance,
+                    accessibility, or hosted buyer-evidence claims.
+                  </p>
+                  <ol>
+                    {ASSURANCE_INTAKE_LANES.map(({ title, state, proof }) => (
+                      <li key={title}>
+                        <strong>{title}</strong>
+                        <span>{state}</span>
+                        <code>{proof}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              </aside>
+            </div>
+          </section>
 
-        <div className="m-break" id="book" aria-hidden>
-          {ASTERISM} {ASTERISM} {ASTERISM}
-        </div>
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
+          </div>
 
-        <section aria-labelledby="book-h">
-          <div className="m-sec-head">
-            <span className="num">IV · Conversation</span>
-            <h2 id="book-h">
-              We schedule by <em>matter</em>, not by funnel stage.
-            </h2>
+          {/* Coverage */}
+          <section id="coverage" aria-labelledby="cov-h">
+            <div className="m-sec-head">
+              <span className="num">III · Coverage</span>
+              <h2 id="cov-h">
+                <em>Cited</em>, not claimed.
+              </h2>
+            </div>
+            <div className="m-coverage">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Framework</th>
+                    <th>Sections enforced</th>
+                    <th>Version</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.map((row) => (
+                    <tr key={row[0]}>
+                      <td>{row[0]}</td>
+                      <td>{row[1]}</td>
+                      <td>{row[2]}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div className="m-break" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
-          <div className="m-conversation">
-            <p>
-              Tell us what you are deploying, which framework you answer to, and which decisions an
-              agent has to make on your behalf. We will send back a one-page reading that names the
-              rules we would compile and the refusals we would emit. No deck. No funnel.
-            </p>
-            <p className="m-conversation-follow">
-              Mail{' '}
-              <a className="m-text-link" href="mailto:matters@acgs.ai">
-                matters@acgs.ai
-              </a>{' '}
-              with a subject line that begins <code>[matter]</code>.
-            </p>
+
+          {/* Pricing */}
+          <section id="pricing" aria-labelledby="pricing-h">
+            <div className="m-sec-head">
+              <span className="num">IV · Pricing</span>
+              <h2 id="pricing-h">
+                Three editions. <em>One</em> constitutional hash.
+              </h2>
+            </div>
+            <div className="m-pricing">
+              {tiers.map((t) => (
+                <article className={`m-tier ${t.feat ? 'feat' : ''}`} key={t.name}>
+                  <span className="t-tag">{t.tag}</span>
+                  <h3 className="t-name">{t.name}</h3>
+                  <div className="t-price">
+                    <span className="t-price-num">
+                      {t.price.startsWith('On') ? t.price : `$${t.price}`}
+                    </span>
+                    <span className="t-price-unit">{t.unit}</span>
+                  </div>
+                  <hr />
+                  <ul>
+                    {t.bullets.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+                  <a className="btn btn-primary" href="#book">
+                    {t.cta} <ArrowRight size={15} strokeWidth={1.8} />
+                  </a>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <div className="m-break" id="book" aria-hidden>
+            {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
-        </section>
+
+          <section aria-labelledby="book-h">
+            <div className="m-sec-head">
+              <span className="num">V · Conversation</span>
+              <h2 id="book-h">
+                We schedule by <em>matter</em>, not by funnel stage.
+              </h2>
+            </div>
+            <div className="m-conversation">
+              <p>
+                Tell us what you are deploying, which framework you answer to, and which decisions
+                an agent has to make on your behalf. We will send back a one-page reading that names
+                the rules we would compile and the refusals we would emit. No deck. No funnel.
+              </p>
+              <p className="m-conversation-follow">
+                Mail{' '}
+                <a className="m-text-link" href="mailto:matters@acgs.ai">
+                  matters@acgs.ai
+                </a>{' '}
+                with a subject line that begins <code>[matter]</code>.
+              </p>
+            </div>
+          </section>
+        </main>
       </div>
 
       <footer className="m-foot">
@@ -434,6 +753,28 @@ legal technology vertical.`}
                   }}
                 >
                   Privacy &amp; subprocessors
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/trust"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/trust')
+                  }}
+                >
+                  Trust center
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/security"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate('/security')
+                  }}
+                >
+                  Security
                 </a>
               </li>
               <li>

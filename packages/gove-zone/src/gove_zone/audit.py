@@ -1,7 +1,9 @@
 """Append-only JSONL audit store with hash chaining.
 
 Ported from ``acgs_governance_eval_mvp/governance/audit/jsonl_chain.py``.
-Process-safe via ``fcntl.flock`` (Unix-only — Windows support is deferred).
+Process-safe via ``fcntl.flock`` when that lock primitive is available. Importing
+the package does not require ``fcntl``; append support on platforms without a
+safe lock primitive remains deferred.
 
 Chain rules:
 
@@ -17,12 +19,12 @@ Concurrent writers are serialized through an exclusive lock on a sidecar
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Generator, Iterable
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.errors import AuditError
@@ -32,6 +34,24 @@ GENESIS_HASH = "0" * 64
 
 class AuditChainError(AuditError):
     """Raised when the persisted audit chain tail is corrupt or unreadable."""
+
+
+@contextmanager
+def _exclusive_file_lock(lock_fh: TextIO) -> Generator[None, None, None]:
+    """Hold an exclusive process lock for platforms with ``fcntl`` support."""
+    try:
+        import fcntl
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "ChainHashAuditStore append requires a platform file-lock primitive; "
+            "fcntl is unavailable on this host, so audit append support is deferred."
+        ) from exc
+
+    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    try:
+        yield
+    finally:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
 class ChainHashAuditStore:
@@ -53,39 +73,35 @@ class ChainHashAuditStore:
     def append(self, decision: DecisionRecord) -> dict[str, Any]:
         """Append *decision* and return the persisted event dict.
 
-        Serializes read-then-write under an exclusive ``fcntl.flock`` so
+        Serializes read-then-write under an exclusive platform file lock so
         concurrent callers never produce sibling events pointing at the same
         ``previous_hash``. Writes are fsync'd before the lock is released.
         """
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        with lock_path.open("a+") as lock_fh:
-            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-            try:
-                # Always re-read while holding the lock. This instance may
-                # have appended earlier, then another store/process may have
-                # advanced the chain before this append.
-                previous_hash = self._read_last_hash_from_disk()
-                payload = decision.to_dict()
-                payload["previous_hash"] = previous_hash
-                payload.pop("event_hash", None)
-                payload["event_hash"] = sha256_json(payload)
+        with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+            # Always re-read while holding the lock. This instance may
+            # have appended earlier, then another store/process may have
+            # advanced the chain before this append.
+            previous_hash = self._read_last_hash_from_disk()
+            payload = decision.to_dict()
+            payload["previous_hash"] = previous_hash
+            payload.pop("event_hash", None)
+            payload["event_hash"] = sha256_json(payload)
 
-                line = (
-                    json.dumps(
-                        payload,
-                        sort_keys=True,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    )
-                    + "\n"
+            line = (
+                json.dumps(
+                    payload,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
                 )
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-                self._last_hash = str(payload["event_hash"])
-            finally:
-                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+                + "\n"
+            )
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+                fh.flush()
+                os.fsync(fh.fileno())
+            self._last_hash = str(payload["event_hash"])
         return payload
 
     def last_hash(self) -> str:

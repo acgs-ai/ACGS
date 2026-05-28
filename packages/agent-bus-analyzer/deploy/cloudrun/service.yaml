@@ -1,0 +1,91 @@
+# Cloud Run service template for the observer-only analyzer API.
+#
+# This is a deployment contract, not live-deploy proof. Render the REPLACE_*
+# placeholders in CI/CD, keep the signing secret in Secret Manager, and pin the
+# secret version instead of using latest so receipt proof exports are
+# reproducible at instance startup.
+
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: agent-bus-analyzer
+  annotations:
+    run.googleapis.com/ingress: internal-and-cloud-load-balancing
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        # File-backed TraceStore uses SQLite + JSONL over the mounted bucket.
+        # Keep a single serving instance until an object-store/index backend
+        # owns multi-writer fan-out or trace writes are partitioned by writer.
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/secrets: evidence-signing-secret:projects/REPLACE_GCP_PROJECT_NUMBER/secrets/acgs-evidence-signing-secret
+    spec:
+      serviceAccountName: REPLACE_ANALYZER_RUNTIME_SERVICE_ACCOUNT
+      containerConcurrency: 80
+      timeoutSeconds: 30
+      containers:
+        - name: analyzer-api
+          image: REPLACE_AT_DEPLOY_TIME
+          command: ["agent-bus-analyzer"]
+          args:
+            - serve
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8080"
+            - --store-dir
+            - /var/lib/agent-bus-analyzer
+          ports:
+            - name: http1
+              containerPort: 8080
+          volumeMounts:
+            - name: analyzer-trace-store
+              mountPath: /var/lib/agent-bus-analyzer
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AGENT_BUS_ANALYZER_STORE_DIR
+              value: /var/lib/agent-bus-analyzer
+            - name: ACGS_EVIDENCE_SIGNING_REQUIRED
+              value: "true"
+            - name: ACGS_EVIDENCE_SIGNING_KEY_ID
+              value: bus-signer-v1
+            - name: ACGS_EVIDENCE_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: evidence-signing-secret
+                  key: "1"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /api/bus/healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /api/bus/healthz
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: analyzer-trace-store
+          csi:
+            driver: gcsfuse.run.googleapis.com
+            readOnly: false
+            volumeAttributes:
+              bucketName: REPLACE_ANALYZER_TRACE_BUCKET
+              mountOptions: implicit-dirs,uid=10001,gid=10001
+  traffic:
+    - latestRevision: true
+      percent: 100

@@ -1,0 +1,6 @@
+Contact: mailto:security@acgs.ai
+Expires: 2027-06-30T23:59:59Z
+Preferred-Languages: en
+Policy: https://acgs.ai/security
+Canonical: https://acgs.ai/.well-known/security.txt
+Hiring: https://acgs.ai/trust

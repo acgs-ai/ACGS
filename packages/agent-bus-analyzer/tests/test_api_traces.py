@@ -88,10 +88,76 @@ def test_get_trace_returns_schema_conforming_response(tmp_path: Path) -> None:
     assert len(body["events"]) == 3
 
 
+def test_get_receipt_proof_returns_counter_signed_packet(tmp_path: Path) -> None:
+    receipt_id = "00000000-0000-0000-0000-000000000099"
+    phoenix_trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+    phoenix_span_id = "53995c3f42cd8ad8"
+    phoenix_parent_span_id = "00f067aa0ba902b7"
+    store = TraceStore(tmp_path / "store")
+    store.append(
+        {
+            **_seed_event("trace-receipt", 0),
+            "phoenix_trace_id": phoenix_trace_id,
+            "phoenix_span_id": "1111111111111111",
+        }
+    )
+    decision = {
+        **_seed_event("trace-receipt", 1),
+        "event_id": receipt_id,
+        "kind": "decision",
+        "decision": "deny",
+        "flagged_rule": "P-1207",
+        "target_handler_declared": "matter.fetch",
+        "target_handler_resolved": "matter.fetch",
+        "audit_receipt_hash": "sha256:8b38f0a1c2",
+        "status": "policy-violation",
+        "phoenix_trace_id": phoenix_trace_id,
+        "phoenix_span_id": phoenix_span_id,
+        "phoenix_parent_span_id": phoenix_parent_span_id,
+    }
+    store.append(decision)
+    set_validator(lambda _t: frozenset({"governance-reviewer"}))
+    client = TestClient(create_app(store=store))
+
+    response = client.get(
+        f"/api/bus/receipts/{receipt_id}",
+        headers={"Authorization": "Bearer x"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    jsonschema.Draft202012Validator(_query_schema(), registry=_registry()).validate(body)
+    assert body["kind"] == "receipt-proof"
+    assert body["receipt_id"] == receipt_id
+    assert body["receipt_hash"] == "sha256:8b38f0a1c2"
+    assert body["correlation_id"] == "trace-receipt"
+    assert body["hash_chain_verified"] is True
+    assert body["policy_path"] == ["matter.fetch", "P-1207"]
+    assert body["phoenix_trace_id"] == phoenix_trace_id
+    assert body["phoenix_span_id"] == "1111111111111111"
+    assert body["phoenix_parent_span_id"] == phoenix_parent_span_id
+    assert body["trace"]["phoenix_trace_id"] == phoenix_trace_id
+    assert body["events"][1]["phoenix_span_id"] == phoenix_span_id
+    packet = json.loads(body["signed_evidence_packet"])
+    assert packet["counter_signature"].startswith("agent-bus-analyzer:")
+    assert packet["phoenix_trace_id"] == phoenix_trace_id
+    assert packet["phoenix_span_id"] == "1111111111111111"
+    assert packet["phoenix_parent_span_id"] == phoenix_parent_span_id
+
+
 def test_get_trace_unknown_yields_404(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.get(
         "/api/bus/traces/unknown",
+        headers={"Authorization": "Bearer x"},
+    )
+    assert response.status_code == 404
+
+
+def test_get_receipt_proof_unknown_yields_404(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    response = client.get(
+        "/api/bus/receipts/unknown-receipt",
         headers={"Authorization": "Bearer x"},
     )
     assert response.status_code == 404

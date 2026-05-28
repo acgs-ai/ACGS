@@ -29,22 +29,6 @@
   @fonts path /static/fonts/*.woff2
   header @fonts Cache-Control "public, max-age=31536000, immutable"
 
-  # ── Health endpoint — DEPLOY.md §10. Reports the constitution hash that
-  #    the bundle was compiled against. The runtime constitution lives in
-  #    the bus; this is the *served* hash, used to detect drift between the
-  #    static bundle and the bus.
-  handle /healthz {
-    header Content-Type "application/json"
-    respond `{"ok":true,"served_hash":"608508a9bd224290","surface":"console"}` 200
-  }
-
-  # ── API reverse proxy — wired when the bus client lands (DESIGN.md §7.5).
-  #    Until then, /api/* returns 503 so client code that calls the API too
-  #    early fails loud, not silent.
-  handle /api/* {
-    respond "API not yet wired (DESIGN.md §7.5)" 503
-  }
-
   # ── Privileged HTML — never cache the entry document. The bundle hash in
   #    /assets/* is what carries the cache key; index.html must always be
   #    a fresh fetch so a constitution change is visible immediately.
@@ -58,7 +42,12 @@
   #    is "don't put docs in public/", this rule guarantees the URL is dead
   #    even if one slips in.
   @internal_docs path *AGENTS.md *CLAUDE.md *DESIGN.md *DEPLOY.md
-  respond @internal_docs 404
+
+  # ── Privileged console routes — DEPLOY.md §7. Deep links must not be
+  #    served directly by the SPA fallback unless the deployment supplies a
+  #    real edge/session authorizer. AUTH_UPSTREAM intentionally falls back to
+  #    a closed localhost port so missing auth config fails closed.
+  @console_routes path /console /console/*
 
   # ── Security headers — DEPLOY.md §5.
   header {
@@ -77,12 +66,74 @@
     -Server
   }
 
-  # ── Static file serving with SPA fallback for the custom 14-line router
-  #    (src/lib/navigate.ts). Any path that doesn't resolve to a file gets
-  #    index.html so deep links into /console/* work.
   root * /srv/dist
-  try_files {path} /index.html
-  file_server
+
+  # ── Request routing. Caddy normally sorts directives by type; the route
+  #    block preserves this order so /api/* reaches reverse_proxy before the
+  #    SPA try_files fallback can rewrite it to /index.html.
+  route {
+    # ── Health endpoint — DEPLOY.md §10. Reports the constitution hash that
+    #    the bundle was compiled against plus the deployed build id. The
+    #    runtime constitution lives in the bus; this is the *served* hash,
+    #    used to detect drift between the static bundle and the bus.
+    handle /healthz {
+      header Content-Type "application/json"
+      respond `{"ok":true,"served_hash":"608508a9bd224290","build_id":"{$ACGI_BUILD_ID:local}","surface":"console"}` 200
+    }
+
+    # ── Same-origin production session status bridge. The SPA uses this
+    #    endpoint before rendering /console in production; Caddy only returns a
+    #    positive JSON status after the same AUTH_UPSTREAM forward_auth check
+    #    that protects console deep links has already accepted the request.
+    handle /auth/status {
+      forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535} {
+        uri /authorize
+        copy_headers X-ACGS-Operator X-ACGS-Tenant X-ACGS-Auth-Context
+      }
+      header Content-Type "application/json"
+      header Cache-Control "no-store"
+      respond `{"authenticated":true,"source":"forward-auth-status-bridge","claimBoundary":"server-authorized status only; client demo storage is not accepted"}` 200
+    }
+
+    # ── API reverse proxy — Phase 5 bus-readiness gate (PLAN.md §5.5).
+    #    BUS_UPSTREAM must point at the governed bus/gateway. If it is not set,
+    #    the fallback points at a closed localhost port so production fails
+    #    closed with a proxy error rather than rendering fixture data. The schema
+    #    version header is forwarded and echoed for contract-handshake evidence.
+    handle /api/* {
+      reverse_proxy {$BUS_UPSTREAM:127.0.0.1:65535} {
+        header_up X-ACGS-Schema-Version "{$ACGS_SCHEMA_VERSION:v1}"
+        header_down X-ACGS-Schema-Version "{$ACGS_SCHEMA_VERSION:v1}"
+        lb_try_duration 2s
+        lb_try_interval 250ms
+      }
+    }
+
+    handle @internal_docs {
+      respond 404
+    }
+
+    # ── Edge auth for console deep links. The upstream owns OIDC/server-cookie
+    #    verification and returns 2xx only for authorized sessions; non-2xx
+    #    responses are returned before the SPA fallback can serve /console/*.
+    handle @console_routes {
+      forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535} {
+        uri /authorize
+        copy_headers X-ACGS-Operator X-ACGS-Tenant X-ACGS-Auth-Context
+      }
+      try_files {path} /index.html
+      file_server
+    }
+
+    # ── Static file serving with SPA fallback for the TanStack Router route
+    #    tree. Any path that doesn't resolve to a file gets index.html so
+    #    public/product deep links work. /console/* is handled above by the
+    #    fail-closed auth gate.
+    handle {
+      try_files {path} /index.html
+      file_server
+    }
+  }
 
   # ── Access log — JSON, one event per request. DEPLOY.md §10 forwards
   #    these into the same audit sink the bus uses.

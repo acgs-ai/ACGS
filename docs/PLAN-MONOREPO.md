@@ -1,11 +1,15 @@
 # govern-zone Monorepo Unification Plan
 
+> Historical note: this file records the original unification plan. The current
+> truth for package inventory, CI fan-out, and active carve-outs is
+> `../MONOREPO.md`.
+
 > Scope: turn `govern-zone/` from "single repo + three uncommitted external repos in
 > `packages/`" into a true Turborepo + uv-workspace monorepo, while preserving the
 > independent publish lifecycle of `acgs-lite` (PyPI) and the existing CI for
 > `acgi-ai`.
 >
-> Companion to `PLAN.md` (which is scoped to `acgi-ai/` only).
+> Companion to `../acgi-ai/PLAN.md` (which is scoped to `acgi-ai/` only).
 
 ---
 

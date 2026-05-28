@@ -38,10 +38,12 @@ from agent_bus_analyzer.models import (
     Event,
     EventStatus,
     IntegrityStatus,
+    ReceiptProof,
     SingleTrace,
     TraceList,
     TraceListItem,
 )
+from agent_bus_analyzer.signing import sign_evidence_packet
 
 # Strict allow-list for correlation_id. Refuses path-traversal payloads
 # (../, /, NUL, whitespace) before any Path concatenation. The 1-128 range
@@ -102,6 +104,51 @@ _STATUS_WORST_ORDER: dict[EventStatus, int] = {
 
 def _worst(a: EventStatus, b: EventStatus) -> EventStatus:
     return a if _STATUS_WORST_ORDER[a] >= _STATUS_WORST_ORDER[b] else b
+
+
+def _receipt_matches(event: dict[str, Any], receipt_id: str) -> bool:
+    return receipt_id in {
+        str(event.get("event_id")),
+        str(event.get("correlation_id")),
+        str(event.get("audit_receipt_hash")),
+        str(event.get("event_hash")),
+    }
+
+
+def _receipt_policy_path(events: list[Event]) -> list[str]:
+    path: list[str] = []
+    for event in events:
+        if event.kind != "decision":
+            continue
+        handler = event.target_handler_resolved or event.target_handler_declared
+        if handler and handler not in path:
+            path.append(handler)
+        if event.flagged_rule and event.flagged_rule not in path:
+            path.append(event.flagged_rule)
+    if path:
+        return path
+    for event in events:
+        handler = event.target_handler_resolved or event.target_handler_declared
+        if handler and handler not in path:
+            path.append(handler)
+    return path
+
+
+def _trace_context_from_events(events: Iterable[Event]) -> dict[str, str | None]:
+    context: dict[str, str | None] = {
+        "phoenix_trace_id": None,
+        "phoenix_span_id": None,
+        "phoenix_parent_span_id": None,
+    }
+    for event in events:
+        for field in context:
+            if context[field] is None:
+                context[field] = getattr(event, field)
+    return context
+
+
+def _non_null_trace_context(context: dict[str, str | None]) -> dict[str, str]:
+    return {key: value for key, value in context.items() if value is not None}
 
 
 class TraceStore:
@@ -227,6 +274,8 @@ class TraceStore:
             path = _trace_path(self.store_dir, cid)
             raw_events = list(self._iter_file(path)) if path.exists() else []
             integrity = self._verify_chain(raw_events) if raw_events else "unknown"
+            events = [Event(**event) for event in raw_events]
+            trace_context = _trace_context_from_events(events)
             items.append(
                 TraceListItem(
                     correlation_id=cid,
@@ -236,6 +285,9 @@ class TraceStore:
                     worst_event_status=worst,
                     integrity_status=integrity,
                     constitutional_hash=cons_hash,
+                    phoenix_trace_id=trace_context["phoenix_trace_id"],
+                    phoenix_span_id=trace_context["phoenix_span_id"],
+                    phoenix_parent_span_id=trace_context["phoenix_parent_span_id"],
                 )
             )
         return TraceList(items=items, next_cursor=None)
@@ -252,6 +304,7 @@ class TraceStore:
         worst: EventStatus = "completed"
         for ev in events:
             worst = _worst(worst, ev.status)
+        trace_context = _trace_context_from_events(events)
         item = TraceListItem(
             correlation_id=correlation_id,
             started_at=events[0].recorded_at,
@@ -260,6 +313,9 @@ class TraceStore:
             worst_event_status=worst,
             integrity_status=integrity,
             constitutional_hash=events[0].constitutional_hash,
+            phoenix_trace_id=trace_context["phoenix_trace_id"],
+            phoenix_span_id=trace_context["phoenix_span_id"],
+            phoenix_parent_span_id=trace_context["phoenix_parent_span_id"],
         )
         # Mark a rotation if the constitutional hash changed mid-trace.
         rotation_at: int | None = None
@@ -273,6 +329,82 @@ class TraceStore:
             events=events,
             integrity_status=integrity,
             rotation_at_index=rotation_at,
+        )
+
+    def get_receipt_proof(self, receipt_id: str) -> ReceiptProof | None:
+        """Find a receipt by id or hash and return a console-ready proof packet."""
+        for path in sorted((self.store_dir / "traces").glob("*.jsonl")):
+            raw_events = list(self._iter_file(path))
+            if not raw_events:
+                continue
+            match = next(
+                (event for event in raw_events if _receipt_matches(event, receipt_id)),
+                None,
+            )
+            if match is None:
+                continue
+            return self._build_receipt_proof(path.stem, raw_events, match)
+        return None
+
+    def _build_receipt_proof(
+        self,
+        correlation_id: str,
+        raw_events: list[dict[str, Any]],
+        match: dict[str, Any],
+    ) -> ReceiptProof:
+        integrity = self._verify_chain(raw_events)
+        events = [Event(**e) for e in raw_events]
+        worst: EventStatus = "completed"
+        for ev in events:
+            worst = _worst(worst, ev.status)
+        trace_context = _trace_context_from_events(events)
+        trace = TraceListItem(
+            correlation_id=correlation_id,
+            started_at=events[0].recorded_at,
+            completed_at=events[-1].recorded_at,
+            event_count=len(events),
+            worst_event_status=worst,
+            integrity_status=integrity,
+            constitutional_hash=events[0].constitutional_hash,
+            phoenix_trace_id=trace_context["phoenix_trace_id"],
+            phoenix_span_id=trace_context["phoenix_span_id"],
+            phoenix_parent_span_id=trace_context["phoenix_parent_span_id"],
+        )
+        receipt_hash = str(match.get("audit_receipt_hash") or match.get("event_hash"))
+        policy_path = _receipt_policy_path(events)
+        flagged_rules = [event.flagged_rule for event in events if event.flagged_rule]
+        decision = next((event.decision for event in reversed(events) if event.decision), None)
+        packet = {
+            "kind": "receipt-proof-export",
+            "receipt_id": str(match.get("event_id")),
+            "receipt_hash": receipt_hash,
+            "correlation_id": correlation_id,
+            "integrity_status": integrity,
+            "hash_chain_verified": integrity == "intact",
+            "policy_path": policy_path,
+            "decision": decision,
+            "flagged_rules": flagged_rules,
+            "event_hashes": [event.event_hash for event in events],
+            "source_audit_hash": receipt_hash,
+            "counter_signature": f"agent-bus-analyzer:{events[-1].event_hash}",
+        }
+        packet.update(_non_null_trace_context(trace_context))
+        signed_packet = sign_evidence_packet(packet)
+        return ReceiptProof(
+            receipt_id=str(match.get("event_id")),
+            receipt_hash=receipt_hash,
+            correlation_id=correlation_id,
+            trace=trace,
+            events=events,
+            integrity_status=integrity,
+            hash_chain_verified=integrity == "intact",
+            policy_path=policy_path,
+            decision=decision,
+            flagged_rules=flagged_rules,
+            signed_evidence_packet=canonical_json(signed_packet),
+            phoenix_trace_id=trace_context["phoenix_trace_id"],
+            phoenix_span_id=trace_context["phoenix_span_id"],
+            phoenix_parent_span_id=trace_context["phoenix_parent_span_id"],
         )
 
     def _verify_chain(self, raw_events: list[dict[str, Any]]) -> IntegrityStatus:
@@ -389,6 +521,47 @@ class TraceStore:
                 self._upsert_index(payload)
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+    # ---- retention (T059) ------------------------------------------------
+
+    def expire_older_than(self, days: int) -> list[str]:
+        """Move traces older than *days* into ``expired/`` (T059, FR-012).
+
+        Returns the list of correlation_ids that were expired. The JSONL
+        payload is MOVED, never rewritten — preserves chain integrity per
+        research §R9. A sidecar JSON file records the RetentionPolicy so
+        ``query.get_trace_or_expired`` can return an ``Expired`` shape
+        instead of a generic not-found.
+        """
+        if days < 0:
+            raise ValueError(f"days must be >= 0, got {days}")
+        expired_dir = self.store_dir / "expired"
+        expired_dir.mkdir(parents=True, exist_ok=True)
+        purged_at = datetime.now().isoformat()
+        cutoff_expr = f"datetime('now', '-{int(days)} days')"
+        expired_ids: list[str] = []
+        with self._db_lock:
+            rows = self._db.execute(
+                "SELECT correlation_id FROM traces "
+                f"WHERE completed_at IS NOT NULL AND completed_at < {cutoff_expr} "
+                "AND status != 'expired'"
+            ).fetchall()
+            for (cid,) in rows:
+                src = _trace_path(self.store_dir, cid)
+                if src.exists():
+                    dst = expired_dir / src.name
+                    src.replace(dst)
+                sidecar = expired_dir / f"{cid}.json"
+                sidecar.write_text(
+                    canonical_json({"max_age_days": int(days), "purged_at": purged_at}),
+                    encoding="utf-8",
+                )
+                self._db.execute(
+                    "UPDATE traces SET status='expired' WHERE correlation_id=?",
+                    (cid,),
+                )
+                expired_ids.append(cid)
+        return expired_ids
 
 
 def open_store(store_dir: str | Path) -> TraceStore:

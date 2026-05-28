@@ -13,6 +13,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip(
+    "enhanced_agent_bus",
+    reason="dispatcher integration requires optional enhanced-agent-bus checkout",
+)
 from enhanced_agent_bus.core_models import AgentMessage, MessageType
 from enhanced_agent_bus.local_bus import LocalEventBus
 

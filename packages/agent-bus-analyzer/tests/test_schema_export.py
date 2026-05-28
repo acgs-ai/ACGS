@@ -24,6 +24,7 @@ from referencing import Registry, Resource
 from agent_bus_analyzer.models import (
     Event,
     Expired,
+    ReceiptProof,
     RetentionPolicy,
     SingleTrace,
     TraceList,
@@ -77,6 +78,9 @@ def _sample_event() -> Event:
         event_hash="a" * 64,
         prev_hash=None,
         status="completed",
+        phoenix_trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+        phoenix_span_id="53995c3f42cd8ad8",
+        phoenix_parent_span_id="00f067aa0ba902b7",
     )
 
 
@@ -88,6 +92,9 @@ def _sample_list_item() -> TraceListItem:
         worst_event_status="completed",
         integrity_status="intact",
         constitutional_hash="608508a9bd224290",
+        phoenix_trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+        phoenix_span_id="53995c3f42cd8ad8",
+        phoenix_parent_span_id="00f067aa0ba902b7",
     )
 
 
@@ -130,6 +137,27 @@ def test_single_trace_conforms() -> None:
         events=[_sample_event()],
         integrity_status="intact",
         rotation_at_index=None,
+    )
+    _validate(_payload(response), schema)
+
+
+def test_receipt_proof_conforms() -> None:
+    schema = _load("trace-query.schema.json")
+    response = ReceiptProof(
+        receipt_id="01234567-89ab-cdef-0123-456789abcdef",
+        receipt_hash="sha256:abc123",
+        correlation_id="89abcdef-0123-4567-89ab-cdef01234567",
+        trace=_sample_list_item(),
+        events=[_sample_event()],
+        integrity_status="intact",
+        hash_chain_verified=True,
+        policy_path=["policy.evaluate", "P-1207"],
+        decision="deny",
+        flagged_rules=["P-1207"],
+        signed_evidence_packet='{"counter_signature":"observer:audit"}',
+        phoenix_trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+        phoenix_span_id="53995c3f42cd8ad8",
+        phoenix_parent_span_id="00f067aa0ba902b7",
     )
     _validate(_payload(response), schema)
 

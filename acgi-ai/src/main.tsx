@@ -1,18 +1,21 @@
+import App from '@surface/App'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary'
-import App from './App.tsx'
 import './index.css'
+import { toAppError } from './lib/errors'
 import { navigate } from './lib/navigate'
 import { hasSession } from './lib/session'
+import { getMswUnhandledRequestPolicy } from './mocks/policy'
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: 1,
+      retry: (failureCount) => hasSession() && failureCount < 1,
       staleTime: 5_000,
       refetchOnWindowFocus: false,
+      refetchIntervalInBackground: false,
     },
   },
 })
@@ -21,14 +24,15 @@ async function enableMocks(): Promise<void> {
   if (import.meta.env.VITE_USE_MOCKS !== 'true') return
   try {
     const { worker } = await import('./mocks/browser')
-    await worker.start({ onUnhandledRequest: 'bypass' })
+    await worker.start({ onUnhandledRequest: getMswUnhandledRequestPolicy() })
   } catch (error) {
     console.error('ACGS mock worker failed to start; mounting without mocks.', error)
   }
 }
 
-function AppErrorFallback({ resetErrorBoundary }: FallbackProps) {
+function AppErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   const canReturnToConsole = hasSession()
+  const appError = toAppError(error, 'CSP')
   const go = (path: string) => {
     resetErrorBoundary()
     navigate(path)
@@ -52,6 +56,22 @@ function AppErrorFallback({ resetErrorBoundary }: FallbackProps) {
           A rendering fault was contained before the console shell could blank the constitutional
           boundary. Return to a stable surface and retry the route after the bus refreshes.
         </p>
+        <dl className="app-error-details">
+          <div>
+            <dt>Cause</dt>
+            <dd>{appError.cause}</dd>
+          </div>
+          <div>
+            <dt>Fix</dt>
+            <dd>{appError.fix}</dd>
+          </div>
+          <div>
+            <dt>Trace ID</dt>
+            <dd>
+              <code>{appError.traceId}</code>
+            </dd>
+          </div>
+        </dl>
         <div className="app-error-actions">
           <button className="btn btn-primary" type="button" onClick={() => go('/')}>
             Return home

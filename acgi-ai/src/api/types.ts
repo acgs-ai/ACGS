@@ -1,13 +1,15 @@
 // API contract types for the ACGS console.
 //
-// Shapes are hand-written to match FastAPI Pydantic models in the upstream
-// monorepo at /home/martin/Downloads/govern-zone/ACGS. When the bus and
-// gateway expose stable list endpoints and we add an OpenAPI codegen step
-// (openapi-typescript or hey-api), this file is the migration target.
+// `/api/v1` shapes are hand-written to match FastAPI Pydantic models in
+// the upstream monorepo at /home/martin/Downloads/govern-zone/ACGS. The
+// `/api/bus/*` shapes are generated from `contracts/bus.openapi.json` into
+// `src/api/bus.generated.ts` and aliased below.
 //
-// Until then, treat every type below as load-bearing — every console hook
-// depends on these shapes lining up with what the MSW handlers return today
-// and what the FastAPI services will return tomorrow.
+// Treat every type below as load-bearing: every console hook depends on these
+// shapes lining up with what the MSW handlers return locally and what the
+// deployed services return through the same-origin proxy.
+
+import type { components as BusApiComponents } from './bus.generated'
 
 export type MaciLane = 'Proposer' | 'Validator' | 'Executor' | 'Custodian'
 
@@ -102,6 +104,32 @@ export type GovernedAction = {
   checks: GovernanceCheck[]
   before: string
   after: string
+}
+
+export type EvidenceSignatureSummary = {
+  status: 'signed' | 'unsigned-local-digest' | 'missing' | 'malformed'
+  label: string
+  algorithm: string
+  keyId?: string
+  digest?: string
+  reason?: string
+}
+
+export type ReceiptProofPacket = {
+  receiptId: string
+  receiptHash: string
+  traceId: string
+  phoenixTraceId?: string
+  phoenixSpanId?: string
+  phoenixParentSpanId?: string
+  replayCommand: string
+  auditEventId: string
+  signedEvidencePacket: string
+  evidenceSignature: EvidenceSignatureSummary
+  hashChainVerified: boolean
+  policyPath: string
+  toolExecuted: boolean
+  action: GovernedAction
 }
 
 export type ActionTestRequest = {
@@ -228,6 +256,51 @@ export type CompileActionRequest = {
 
 // ─── Audit ────────────────────────────────────────────────────────────────
 
+export type EvaluationEvidenceStatus = 'passed' | 'failed'
+export type EvaluationEvidenceSource = 'gove-zone' | 'agentdojo' | 'injecagent' | 'toolemu'
+
+export type EvaluationEvidenceApi = {
+  source: EvaluationEvidenceSource
+  dataset: string
+  status: EvaluationEvidenceStatus
+  report_hash: string
+  policy_version: string
+  scenario_count: number
+  passed: number
+  failed: number
+  attack_success_rate: number | null
+  utility_retention_rate: number | null
+  p95_latency_ms: number | null
+  event_id?: string | null
+  tenant?: string | null
+  allow?: boolean
+  previous_hash?: string | null
+  event_hash?: string | null
+  claim_safe?: boolean
+  ingested_at?: string
+}
+
+export type EvaluationEvidence = {
+  source: EvaluationEvidenceSource
+  dataset: string
+  status: EvaluationEvidenceStatus
+  reportHash: string
+  policyVersion: string
+  scenarioCount: number
+  passed: number
+  failed: number
+  attackSuccessRate: number | null
+  utilityRetentionRate: number | null
+  p95LatencyMs: number | null
+  eventId?: string | null
+  tenant?: string | null
+  allow?: boolean
+  previousHash?: string | null
+  eventHash?: string | null
+  claimSafe?: boolean
+  ingestedAt?: string
+}
+
 export type AuditEvent = {
   ts: string
   posture: Posture
@@ -235,6 +308,7 @@ export type AuditEvent = {
   src: string
   hash: string
   matter?: string
+  evaluationEvidence?: EvaluationEvidence
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────
@@ -316,68 +390,34 @@ export type OperatorSession = {
 
 // ─── Bus traces ───────────────────────────────────────────────────────────
 //
-// Snake_case mirrors the analyzer JSON schemas literally
-// (packages/agent-bus-analyzer/contracts/trace-query.schema.json
-//  + trace-event.schema.json) so the page renders with no transform layer.
+// Snake_case mirrors the analyzer OpenAPI contract literally. Only the
+// /api/bus/* surface is generated; /api/v1 console contracts stay hand-written.
 
-export type BusEventStatus =
-  | 'completed'
-  | 'policy-violation'
-  | 'dispatch-failure'
-  | 'unwired-handler'
-  | 'orphan-response'
-  | 'incomplete-pair'
-  | 'ingest-gap'
+type BusSchemas = BusApiComponents['schemas']
+type BusEventSchema = Required<BusSchemas['Event']>
+type BusTraceListSchema = Required<BusSchemas['TraceList']>
+type BusSingleTraceSchema = Required<BusSchemas['SingleTrace']>
+type BusReceiptProofSchema = Required<BusSchemas['ReceiptProof']>
 
-export type BusIntegrityStatus = 'intact' | 'tampered' | 'unknown'
-
-export type BusEventKind = 'dispatch' | 'response' | 'decision'
-
-export type BusDecisionVerdict = 'allow' | 'deny' | 'transform' | 'escalate'
-
-export type BusTraceEvent = {
-  event_id: string
-  correlation_id: string
-  causal_index: number
-  recorded_at: string
-  source_agent: string
-  target_handler_declared: string | null
-  target_handler_resolved: string | null
-  payload_ref: string
-  kind: BusEventKind
-  decision: BusDecisionVerdict | null
-  flagged_rule: string | null
-  audit_receipt_hash: string | null
-  constitutional_hash: string
-  event_hash: string
-  prev_hash: string | null
-  status: BusEventStatus
-  gap_started_at: string | null
-  gap_ended_at: string | null
-}
-
-export type BusTraceListItem = {
-  correlation_id: string
-  started_at: string
-  completed_at: string | null
-  event_count: number
-  worst_event_status: BusEventStatus
-  integrity_status: BusIntegrityStatus
-  constitutional_hash: string
-}
-
-export type BusTraceList = {
-  kind: 'trace-list'
+export type BusEventStatus = BusEventSchema['status']
+export type BusIntegrityStatus = BusSchemas['TraceListItem']['integrity_status']
+export type BusEventKind = BusEventSchema['kind']
+export type BusDecisionVerdict = NonNullable<BusEventSchema['decision']>
+export type BusTraceEvent = BusEventSchema
+export type BusTraceListItem = BusSchemas['TraceListItem']
+export type BusTraceList = Omit<BusTraceListSchema, 'items'> & {
   items: BusTraceListItem[]
-  next_cursor?: string | null
 }
-
-export type BusSingleTrace = {
-  kind: 'single-trace'
-  trace: BusTraceListItem
+export type BusSingleTrace = Omit<BusSingleTraceSchema, 'events'> & {
   events: BusTraceEvent[]
-  integrity_status: BusIntegrityStatus
-  rotation_at_index?: number | null
+}
+export type BusReceiptProof = Omit<
+  BusReceiptProofSchema,
+  'events' | 'policy_path' | 'flagged_rules'
+> & {
+  events: BusTraceEvent[]
+  policy_path: string[]
+  flagged_rules: string[]
 }
 
 export type BusExpired = {
@@ -387,4 +427,18 @@ export type BusExpired = {
     max_age_days: number
     purged_at: string
   }
+}
+
+export type BusDefect = {
+  id: string
+  kind: 'unwired-handler' | 'orphan-response' | 'ingest-gap' | 'tampered-chain'
+  severity: 'info' | 'warning' | 'critical'
+  correlation_id: string
+  detected_at: string
+  detail: string
+}
+
+export type BusDefectList = {
+  kind: 'defect-list'
+  items: BusDefect[]
 }

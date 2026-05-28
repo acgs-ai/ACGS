@@ -17,6 +17,7 @@
 
 @import "./fonts.css";
 @import "./csp-utilities.css";
+@import "./App.css";
 
 :root {
   /* §2.1 Color — warm paper */
@@ -77,6 +78,10 @@
   --console-right-rail: 280px;
   --console-input-h: 80px;
   --doc-body-max: 64ch;
+  --z-console-backdrop: 90;
+  --z-console-nav: 100;
+  --z-console-nav-toggle: 110;
+  --z-privilege-banner: 120;
 
   color-scheme: light;
   color: var(--ink);

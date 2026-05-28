@@ -36,7 +36,12 @@ export function Incidents() {
       />
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="incidents" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="fresh-tenant"
+          query={query}
+          label="incidents"
+          onClear={() => setQuery('')}
+        />
       ) : (
         <div className="incidents-list">
           {filtered.map((i) => (

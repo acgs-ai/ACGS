@@ -4,7 +4,7 @@
 # lib
 
 ## Purpose
-This directory contains small shared utilities used across the app. The current utilities support the custom router and optional class-name composition.
+This directory contains small shared utilities used across the app. The current utilities support TanStack Router navigation bridging, runtime flags, AppError taxonomy, session state, and class-name composition.
 
 ## Key Files
 | File | Description |
@@ -25,7 +25,7 @@ This directory contains small shared utilities used across the app. The current 
 
 ### Testing Requirements
 - Run `pnpm lint` and `pnpm build` after utility changes.
-- Manually reason through route updates if `navigate.ts` changes because no router test suite exists.
+- Run `pnpm -F acgi-ai run test:router` if `navigate.ts` or a surface route tree changes.
 
 ### Common Patterns
 - Utilities are named exports.

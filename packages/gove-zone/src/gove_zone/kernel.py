@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
@@ -35,7 +35,7 @@ from gove_zone.errors import (
 )
 from gove_zone.policy import Policy, new_event_id
 from gove_zone.receipt import Receipt, safe_result_hash
-from gove_zone.tool import ToolCall, ToolRegistry
+from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 
 
 class Kernel:
@@ -94,6 +94,8 @@ class Kernel:
         args: Mapping[str, Any] | None = None,
         *,
         goal: str = "",
+        path: str | Sequence[str] | None = None,
+        state: Mapping[str, Any] | None = None,
     ) -> tuple[Any, Receipt]:
         """Run the kernel loop for a single tool call.
 
@@ -104,13 +106,23 @@ class Kernel:
 
         ``goal`` is the caller's high-level intent; the kernel records it
         verbatim in the decision and receipt for replay/debug.
+        ``path`` and ``state`` are optional policies-on-paths context. They are
+        available to policies before execution and persisted as path segments
+        plus hashes in the audit record.
         """
         args_dict: dict[str, Any] = dict(args or {})
 
         if not self.registry.has(tool_name):
             raise UnknownToolError(tool_name)
 
-        call = ToolCall(name=tool_name, args=args_dict, goal=goal)
+        call = ToolCall(
+            name=tool_name,
+            args=args_dict,
+            goal=goal,
+            actor=self.actor,
+            path=normalize_path_context(path),
+            state=dict(state or {}),
+        )
         record, audit_hash = self._evaluate_and_record(call)
 
         if record.decision is Decision.DENY:
@@ -140,11 +152,20 @@ class Kernel:
         )
         return result, receipt
 
+    def _attach_context(self, record: DecisionRecord, call: ToolCall) -> DecisionRecord:
+        return dataclasses.replace(
+            record,
+            goal=call.goal,
+            actor=call.actor,
+            path=call.path,
+            state_hash=call.state_hash(),
+            decision_request_hash=call.decision_request_hash(),
+        )
+
     def _evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
         """Evaluate policy + append to audit. Fail-closed on both steps.
 
-        - If policy.evaluate raises, synthesize a DENY record with the
-          exception type in matched_rules and try to append it.
+        - If policy.evaluate raises or times out, synthesize a DENY record and try to append it.
         - If audit.append raises, surface :class:`AuditError`.
         """
         try:
@@ -157,8 +178,7 @@ class Kernel:
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
-                reason=(f"policy evaluation exceeded watchdog timeout of {self.policy_timeout}s"),
-                goal=call.goal,
+                reason=f"policy evaluation exceeded watchdog timeout of {self.policy_timeout}s",
             )
         except Exception as exc:
             record = DecisionRecord(
@@ -169,12 +189,8 @@ class Kernel:
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
                 reason=f"policy evaluation raised: {exc}",
-                goal=call.goal,
             )
         else:
-            # Inject the goal into the policy's record so callers don't have
-            # to thread it through every policy implementation.
-            record = dataclasses.replace(record, goal=call.goal)
             if record.decision is Decision.TRANSFORM and record.transformed_args is None:
                 record = dataclasses.replace(
                     record,
@@ -186,6 +202,9 @@ class Kernel:
                     reason=(f"{record.reason}; " if record.reason else "")
                     + "transform decision missing transformed_args",
                 )
+        # Inject kernel-owned context into the policy's record so callers don't
+        # have to thread it through every policy implementation.
+        record = self._attach_context(record, call)
 
         try:
             payload = self.audit.append(record)
@@ -207,12 +226,6 @@ class Kernel:
         """
         if self.policy_timeout is None:
             return self.policy.evaluate(call)
-        # Manual lifecycle: ThreadPoolExecutor's context manager blocks
-        # on __exit__ waiting for the worker — that defeats the watchdog
-        # when policy.evaluate is hung. Detach via shutdown(wait=False)
-        # so dispatch returns inside the timeout; the orphan worker
-        # completes naturally and is cleaned up by the interpreter at
-        # exit.
         ex = ThreadPoolExecutor(max_workers=1)
         try:
             future = ex.submit(self.policy.evaluate, call)
@@ -245,6 +258,10 @@ class Kernel:
             matched_rules=(f"EXEC_FAILURE:{type(exc).__name__}",),
             reason=f"execution raised: {exc}",
             goal=call.goal,
+            actor=call.actor,
+            path=call.path,
+            state_hash=call.state_hash(),
+            decision_request_hash=call.decision_request_hash(),
         )
         with contextlib.suppress(Exception):
             self.audit.append(failure)

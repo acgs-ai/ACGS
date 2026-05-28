@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ AUTHORIZATION_TRACE_SCHEMA_VERSION = "v1"
 
 
 def utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def stable_json(value: Any) -> str:

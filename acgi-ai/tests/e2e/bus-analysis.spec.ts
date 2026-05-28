@@ -1,31 +1,34 @@
 // T063 — Console /console/bus end-to-end smoke.
 //
-// The console surface is auth-gated by `hasSession()` in src/App.tsx, which
-// reads `acgs.console.session` from sessionStorage. We seed that key before
-// navigating to /console/bus so the route guard admits us without a real
-// IdP roundtrip. Note: `createSession()` itself throws in PROD, so we set
-// the storage directly via Playwright rather than calling the helper.
+// The console surface is auth-gated by `requireConsoleSession` in
+// src/surfaces/console/App.tsx. In a production build (which `vite preview`
+// serves), the demo sessionStorage path is intentionally disabled
+// (`isDemoSessionEnabled` returns `!import.meta.env.PROD`), so `hasSession()`
+// always returns false. The only remaining gate is `hasProductionSession()`,
+// which fetches `/auth/status` and accepts the exact forward-auth-status-bridge
+// payload shape pinned in `isProductionSessionStatus` (session.ts).
+//
+// We mock `/auth/status` with that exact payload so the route guard admits
+// the smoke navigation without a real IdP roundtrip.
 
 import { expect, test } from '@playwright/test'
 
-const SESSION_KEY = 'acgs.console.session'
-const SESSION_VALUE = JSON.stringify({
-  createdAt: '2026-05-14T13:51:09.000Z',
-  nonce: 'e2e-bus-analysis-smoke',
-})
+const AUTH_STATUS_PAYLOAD = {
+  authenticated: true,
+  source: 'forward-auth-status-bridge',
+  claimBoundary:
+    'production · forward-auth status bridge · client demo storage is not accepted',
+}
 
 test.describe('Bus Analysis console route', () => {
   test.beforeEach(async ({ page }) => {
-    // sessionStorage is per-origin; we need to be on the origin before we
-    // can set it. Land on the marketing root first, seed the session, then
-    // navigate to the privileged route.
-    await page.goto('/')
-    await page.evaluate(
-      ([key, value]) => {
-        window.sessionStorage.setItem(key, value)
-      },
-      [SESSION_KEY, SESSION_VALUE],
-    )
+    await page.route('**/auth/status', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(AUTH_STATUS_PAYLOAD),
+      })
+    })
   })
 
   test('renders the bus analysis page with 2xx response and a bus heading', async ({ page }) => {

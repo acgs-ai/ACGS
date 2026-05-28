@@ -1,0 +1,268 @@
+{
+  "version": 1,
+  "status": "engineering_draft_pending_legal",
+  "legalReview": {
+    "requiredBeforePublicDeploy": true,
+    "signedOff": false,
+    "owner": "legal-owner-required",
+    "notes": "Engineering draft only. No public deploy may rely on these claims until legal review signs off the wording and evidence state."
+  },
+  "claims": [
+    {
+      "id": "subprocessor-boundary",
+      "surface": "privacy-trust",
+      "sourceFiles": [
+        "src/routes/Privacy.tsx",
+        "src/routes/Marketing.tsx",
+        "src/routes/Trust.tsx",
+        "public/subprocessors.xml"
+      ],
+      "allowedWording": "The deployment design separates public marketing hosting from the privileged console origin; the public subprocessor list and change feed are engineering drafts pending legal review and live environment confirmation.",
+      "evidenceState": "external_required",
+      "evidence": [
+        {
+          "file": "acgi-ai/DEPLOY.md",
+          "anchor": "Two origins, one brand. Marketing on edge, console on operator-controlled"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Legal review of claim matrix"
+        },
+        {
+          "file": "acgi-ai/public/subprocessors.xml",
+          "anchor": "Engineering draft pending legal review; records intended subprocessor disclosure changes"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "console-privilege-boundary",
+      "surface": "console",
+      "sourceFiles": [
+        "src/routes/Console.tsx",
+        "src/surfaces/console/App.tsx",
+        "src/surfaces/marketing/App.tsx"
+      ],
+      "allowedWording": "The console is served as a distinct privileged surface with routing, headers, and bundle split checks that support the privilege-boundary design.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "acgi-ai/scripts/check-surface-bundles.mjs",
+          "anchor": "marketing artifact excludes console-only sentinels"
+        },
+        {
+          "file": "acgi-ai/scripts/check-security-invariants.mjs",
+          "anchor": "surface bundle verification must build both surfaces and scan for console-only sentinels in the marketing artifact."
+        },
+        {
+          "file": "acgi-ai/DEPLOY.md",
+          "anchor": "console on operator-controlled"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "audit-retention",
+      "surface": "privacy",
+      "sourceFiles": ["src/routes/Privacy.tsx", "src/routes/console/BusAnalysis.tsx"],
+      "allowedWording": "Audit-retention language is a product target backed by local design/config evidence; production retention proof requires live storage policy and legal review.",
+      "evidenceState": "external_required",
+      "evidence": [
+        {
+          "file": "acgi-ai/DEPLOY.md",
+          "anchor": "object-lock + WORM retention of 7 years"
+        },
+        {
+          "file": "acgi-ai/PLAN.md",
+          "anchor": "Compliance claim matrix"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "regulatory-positioning",
+      "surface": "marketing",
+      "sourceFiles": [
+        "src/routes/Marketing.tsx",
+        "src/routes/ProductSurfaces.tsx",
+        "src/mocks/data/overview.ts"
+      ],
+      "allowedWording": "Regulatory references describe mappings, citations, and evidence workflows; they do not state that the product satisfies a regulation or third-party standard.",
+      "evidenceState": "stubbed",
+      "evidence": [
+        {
+          "file": "acgi-ai/PLAN.md",
+          "anchor": "Every public compliance/security claim ties to a live or explicitly stubbed evidence object"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Legal review of claim matrix"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "production-auth-boundary",
+      "surface": "console",
+      "sourceFiles": ["src/lib/session.ts", "src/routes/Login.tsx", "src/surfaces/console/App.tsx"],
+      "allowedWording": "Production demo-session paths are locally blocked; real OIDC or server-cookie auth remains required before production use.",
+      "evidenceState": "external_required",
+      "evidence": [
+        {
+          "file": "acgi-ai/scripts/check-auth-boundary.mjs",
+          "anchor": "src/lib/session.ts must centralize the non-production-only demo-session gate."
+        },
+        {
+          "file": "acgi-ai/DEPLOY.md",
+          "anchor": "forward_auth {$AUTH_UPSTREAM:127.0.0.1:65535}"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Frontend production auth"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "console-csp-and-headers",
+      "surface": "console-security",
+      "sourceFiles": ["infra/Caddyfile", "scripts/postdeploy-verify.sh", "src/routes/Security.tsx"],
+      "allowedWording": "Console header and CSP behavior is locked by local configuration checks and postdeploy verification; live proof must come from the deployed origin and the security page must keep that distinction visible.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "acgi-ai/infra/Caddyfile",
+          "anchor": "Content-Security-Policy"
+        },
+        {
+          "file": "acgi-ai/scripts/postdeploy-verify.sh",
+          "anchor": "strict security headers on the entry document"
+        },
+        {
+          "file": "acgi-ai/scripts/check-security-invariants.mjs",
+          "anchor": "postdeploy verification must check console security headers."
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "font-provenance",
+      "surface": "marketing-console",
+      "sourceFiles": ["src/fonts.css", "public/static/fonts/AGENTS.md"],
+      "allowedWording": "Self-hosted font files have a committed SHA-256 manifest and CSS reference check; license attribution remains documented separately.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "acgi-ai/fonts.sha256",
+          "anchor": "public/static/fonts/ibm-plex-serif-400-normal-latin-ext.woff2"
+        },
+        {
+          "file": "acgi-ai/scripts/check-font-manifest.mjs",
+          "anchor": "fonts.sha256 must contain exactly one sorted entry for every WOFF2 file."
+        },
+        {
+          "file": "acgi-ai/DEPLOY.md",
+          "anchor": "Self-hosted fonts"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "bus-proxy-boundary",
+      "surface": "console",
+      "sourceFiles": ["infra/Caddyfile", "src/api/client.ts", "src/api/hooks.ts"],
+      "allowedWording": "The console origin has a same-origin bus proxy contract that fails closed without an upstream; live bus integration still requires a configured governed bus.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "acgi-ai/scripts/check-bus-proxy-contract.mjs",
+          "anchor": "Caddyfile must route /api/* through reverse_proxy {$BUS_UPSTREAM:...}."
+        },
+        {
+          "file": "acgi-ai/scripts/smoke-bus-proxy-contract.mjs",
+          "anchor": "Bus proxy smoke passed: /api/* proxied to stub bus with X-ACGS-Schema-Version"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Console `/api/*` bus proxy readiness"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "wcag-manual-evidence",
+      "surface": "marketing-console",
+      "sourceFiles": ["src/App.css", "src/index.css", "src/routes/Console.tsx"],
+      "allowedWording": "Accessibility work can reference local design and styling safeguards; WCAG conformance wording requires axe evidence plus signed manual screen-reader review.",
+      "evidenceState": "manual_required",
+      "evidence": [
+        {
+          "file": "acgi-ai/PLAN.md",
+          "anchor": "manual NVDA/VoiceOver"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Full WCAG/manual screen reader evidence"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "accessibility-reviewer-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
+      "id": "soc2-roadmap",
+      "surface": "trust",
+      "sourceFiles": [
+        "src/routes/Marketing.tsx",
+        "src/routes/ProductSurfaces.tsx",
+        "src/routes/Trust.tsx",
+        "src/routes/Security.tsx"
+      ],
+      "allowedWording": "SOC 2 references are roadmap or control-mapping references only, not an attestation, certification, or compliance statement.",
+      "evidenceState": "external_required",
+      "evidence": [
+        {
+          "file": "acgi-ai/PLAN.md",
+          "anchor": "SOC 2 Type II roadmap"
+        },
+        {
+          "file": "docs/integration-readiness-task-map.md",
+          "anchor": "Legal review of claim matrix"
+        },
+        {
+          "file": "acgi-ai/src/routes/Trust.tsx",
+          "anchor": "SOC 2 language is roadmap and control-mapping language only."
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    }
+  ]
+}

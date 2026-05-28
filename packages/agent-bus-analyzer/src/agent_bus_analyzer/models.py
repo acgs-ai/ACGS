@@ -44,6 +44,22 @@ EventHashStr = Annotated[
     Field(pattern=r"^[a-f0-9]{64}$", description="SHA-256 hex digest"),
 ]
 
+PhoenixTraceIdStr = Annotated[
+    str,
+    Field(
+        pattern=r"^[a-f0-9]{32}$",
+        description="OpenTelemetry/Phoenix trace identifier; 16-byte lower-case hex.",
+    ),
+]
+
+PhoenixSpanIdStr = Annotated[
+    str,
+    Field(
+        pattern=r"^[a-f0-9]{16}$",
+        description="OpenTelemetry/Phoenix span identifier; 8-byte lower-case hex.",
+    ),
+]
+
 
 class _Strict(BaseModel):
     """Base class: forbids unknown fields so contract drift fails loudly."""
@@ -72,6 +88,9 @@ class Event(_Strict):
     status: EventStatus
     gap_started_at: datetime | None = None
     gap_ended_at: datetime | None = None
+    phoenix_trace_id: PhoenixTraceIdStr | None = None
+    phoenix_span_id: PhoenixSpanIdStr | None = None
+    phoenix_parent_span_id: PhoenixSpanIdStr | None = None
 
 
 class Trace(_Strict):
@@ -129,6 +148,9 @@ class TraceListItem(_Strict):
     worst_event_status: EventStatus
     integrity_status: IntegrityStatus
     constitutional_hash: ConstitutionalHashStr
+    phoenix_trace_id: PhoenixTraceIdStr | None = None
+    phoenix_span_id: PhoenixSpanIdStr | None = None
+    phoenix_parent_span_id: PhoenixSpanIdStr | None = None
 
 
 class TraceList(_Strict):
@@ -143,6 +165,26 @@ class SingleTrace(_Strict):
     events: list[Event] = Field(default_factory=list)
     integrity_status: IntegrityStatus
     rotation_at_index: int | None = None
+
+
+class ReceiptProof(_Strict):
+    """Console-ready proof packet for one receipt or receipt hash."""
+
+    kind: Literal["receipt-proof"] = "receipt-proof"
+    receipt_id: str
+    receipt_hash: str
+    correlation_id: str
+    trace: TraceListItem
+    events: list[Event]
+    integrity_status: IntegrityStatus
+    hash_chain_verified: bool
+    policy_path: list[str]
+    decision: Decision | None = None
+    flagged_rules: list[str]
+    signed_evidence_packet: str
+    phoenix_trace_id: PhoenixTraceIdStr | None = None
+    phoenix_span_id: PhoenixSpanIdStr | None = None
+    phoenix_parent_span_id: PhoenixSpanIdStr | None = None
 
 
 class WiringDefectSummary(_Strict):

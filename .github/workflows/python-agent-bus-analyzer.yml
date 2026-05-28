@@ -1,0 +1,73 @@
+# Path-filtered CI for packages/agent-bus-analyzer/ — observer-only bus analysis.
+
+name: python-agent-bus-analyzer
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/agent-bus-analyzer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-agent-bus-analyzer.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/agent-bus-analyzer/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-agent-bus-analyzer.yml'
+
+concurrency:
+  group: python-agent-bus-analyzer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/agent-bus-analyzer
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/agent-bus-analyzer/pyproject.toml'
+
+      - name: Install
+        # Mirrors python-eval-mvp.yml: use uv's python-build-standalone instead of
+        # actions/setup-python (which lacks prebuilds for Ubuntu 25.10 on the
+        # self-hosted runner) and install into a venv so the lint/test step
+        # invocations are unambiguous.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --editable '.[dev]'
+
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck
+        run: .venv/bin/mypy src/
+
+      - name: Test
+        run: .venv/bin/pytest -q
+
+      - name: OpenAPI export smoke
+        run: .venv/bin/agent-bus-analyzer export-openapi --output -
+
+      - name: OpenAPI drift check
+        working-directory: ${{ github.workspace }}
+        run: |
+          make openapi
+          git diff --exit-code -- acgi-ai/src/api/openapi.json

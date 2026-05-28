@@ -280,8 +280,8 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         ChecklistItem(
             number=2,
             description=(
-                "Build orchestration installed (Makefile + turbo.json + "
-                "pnpm-workspace.yaml + pyproject.toml)"
+                "Build orchestration installed "
+                "(Makefile + turbo.json + pnpm-workspace.yaml + pyproject.toml)"
             ),
             status="pass" if all_present else "fail",
             evidence=(
@@ -293,12 +293,26 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
 
     # 3. uv workspace member list matches plan
     try:
-        declared = _read_uv_members(repo_root)
+        import tomllib
+
+        root_proj = tomllib.loads((repo_root / "pyproject.toml").read_text())
+        expected = {
+            "packages/acgs-lite",
+            "packages/Acgs-Swarm",
+            "packages/clinicalguard",
+            "packages/gove-zone",
+            "packages/agent-bus-analyzer",
+            "acgs_governance_eval_mvp",
+            "acgs-cft-governance-pack",
+        }
+        declared = set(root_proj["tool"]["uv"]["workspace"]["members"])
         items.append(
             ChecklistItem(
                 number=3,
-                description="uv workspace members are declared in pyproject.toml",
-                status="pass" if declared else "fail",
+                description=(
+                    "uv workspace members match current parent Python registry (7 packages)"
+                ),
+                status="pass" if declared == expected else "fail",
                 evidence=f"declared={sorted(declared)}",
             )
         )
@@ -330,7 +344,7 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
         ChecklistItem(
             number=4,
             description=(
-                f"Path-filtered CI for parent-tracked surfaces "
+                "Path-filtered CI for parent-tracked surfaces "
                 f"({len(expected_workflows)} workflows)"
             ),
             status="pass" if not missing else "fail",
@@ -391,14 +405,14 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
     )
 
     # 9. Plan recorded
-    _plan_path = repo_root / "docs/PLAN-MONOREPO.md"
-    _plan_size_kb = _plan_path.stat().st_size // 1024 if _plan_path.is_file() else 0
+    plan_path = repo_root / "docs/PLAN-MONOREPO.md"
+    plan_size_kb = plan_path.stat().st_size // 1024 if plan_path.is_file() else 0
     items.append(
         ChecklistItem(
             number=9,
             description="docs/PLAN-MONOREPO.md exists and records the multi-phase plan",
-            status="pass" if _plan_path.is_file() else "fail",
-            evidence=f"size_kb={_plan_size_kb}",
+            status="pass" if plan_path.is_file() else "fail",
+            evidence=f"size_kb={plan_size_kb}",
         )
     )
 

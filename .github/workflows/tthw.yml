@@ -1,0 +1,34 @@
+# ACGI Time-to-Hello-World measurement (PLAN.md A4).
+# This scheduled clean-runner gate measures install + dev-server HTTP shell
+# readiness on Node 24. It is not a production deployment proof and not a
+# headless browser visual proof.
+
+name: acgi-tthw
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  tthw:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Time to hello world
+        env:
+          ACGI_TTHW_BUDGET_SECONDS: 300
+        run: bash acgi-ai/scripts/hello-world.sh

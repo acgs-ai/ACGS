@@ -10,6 +10,7 @@ This directory contains the individual governance console page bodies rendered i
 | File | Description |
 |------|-------------|
 | `Overview.tsx` | Dashboard page for summary stats, active cases, queue pressure, and refusals by article. |
+| `Workbench.tsx` | Visualized governed-work operator path: work queue, trace graph, evaluation panel, release gate, and evidence room blueprint. |
 | `Agents.tsx` | Agent registry table with lane, model, refusals, health, and refresh metadata. |
 | `Maci.tsx` | MACI lane board with proposer, validator, and executor cards. |
 | `Deliberations.tsx` | Deliberation cards with emphasized title words, citations, due dates, and actions. |
@@ -20,6 +21,7 @@ This directory contains the individual governance console page bodies rendered i
 | `Settings.tsx` | Settings table grouped by source labels from constitution, operator, or defaults. |
 | `Tenants.tsx` | Tenant registry with selected tenant summary and tenant table. |
 | `Account.tsx` | Account identity, session, and recent action view. |
+| `wire-decisions.ts` | Route contract registry consumed by the console shell and guarded by `test:wire-decisions`. |
 
 ## Subdirectories
 | Directory | Purpose |

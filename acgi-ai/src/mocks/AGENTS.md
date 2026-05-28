@@ -11,6 +11,8 @@ This directory provides optional MSW-backed API responses for local development.
 |------|-------------|
 | `browser.ts` | Creates the MSW browser worker from the handler list. |
 | `handlers.ts` | Maps `/api/v1/*` GET routes to JSON fixtures from `data/`. |
+| `server.ts` | Creates the MSW node-mode server for future Vitest hook tests. |
+| `policy.ts` | Keeps unhandled-request policy strict in eval/test mode and bypass-only for normal local browser mocks. |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -30,7 +32,8 @@ This directory provides optional MSW-backed API responses for local development.
 
 ### Common Patterns
 - Handlers return `HttpResponse.json(CONSTANT)` from module-level fixture constants.
-- The worker starts with `onUnhandledRequest: 'bypass'` in `src/main.tsx`.
+- The browser worker starts with `onUnhandledRequest: 'bypass'` for normal local development and `onUnhandledRequest: 'error'` when `VITE_EVAL_MODE=true`.
+- The node-mode server defaults to `onUnhandledRequest: 'error'`; future hook tests should call `resetMswNodeServer()` after each test and `stopMswNodeServer()` after the suite.
 
 ## Dependencies
 

@@ -1,28 +1,16 @@
 import { useOverview } from '../../api/hooks'
 import { navigate } from '../../lib/navigate'
+import { ConsoleError, ConsoleLoading } from './shared'
 
 export function Overview() {
   const { data, isLoading, isError, refetch } = useOverview()
 
   if (isLoading) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">⁂ Polling …</span>
-      </div>
-    )
+    return <ConsoleLoading />
   }
 
   if (isError || !data) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">
-          ⁂ Could not reach the bus.{' '}
-          <button type="button" className="m-text-link" onClick={() => refetch()}>
-            Retry
-          </button>
-        </span>
-      </div>
-    )
+    return <ConsoleError onRetry={() => refetch()} />
   }
 
   return (

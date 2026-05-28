@@ -59,3 +59,19 @@ line-length = 120
 # unknown selector. Newer local ruff (≥0.12) flags one occurrence
 # we'll sweep in the cleanup PR.
 ignore = ["B008", "RUF012", "UP028"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["governance", "governed_mcp_v0"]
+
+[[tool.mypy.overrides]]
+module = [
+  "yaml",
+  "dspy",
+  "opentelemetry",
+  "mcp.server.fastmcp",
+  "fastmcp",
+  "langgraph.*",
+]
+ignore_missing_imports = true

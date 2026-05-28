@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import hmac
 import os
+from typing import Any
 
 from governance.adapters.tools import GovernedToolAdapter
 from governance.audit.jsonl_chain import ChainHashAuditStore
+from governance.evaluation import (
+    EvaluationStatus,
+    ingest_gove_zone_evaluation_report,
+    list_gove_zone_evaluation_evidence,
+)
 from governance.policy_loader import load_policy_bundle, load_roles
 
 try:
@@ -82,7 +88,10 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/govern/validate")
-async def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
+async def validate(
+    payload: dict[str, Any],
+    caller_tenant: str = Depends(verify_caller),
+) -> dict[str, Any]:
     actor = payload.get("actor") or {}
     actor_tenant = actor.get("tenant", "default") if isinstance(actor, dict) else "default"
     metadata = payload.get("metadata") or {}
@@ -94,7 +103,7 @@ async def validate(payload: dict, caller_tenant: str = Depends(verify_caller)):
 
 
 @app.get("/govern/explain/{event_id}")
-async def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
+async def explain(event_id: str, caller_tenant: str = Depends(verify_caller)) -> dict[str, Any]:
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     events = _adapter.audit_store.query(event_id=event_id, tenant=caller_tenant, limit=1)
@@ -109,6 +118,48 @@ async def explain(event_id: str, caller_tenant: str = Depends(verify_caller)):
     }
 
 
+@app.post("/evidence/evaluation-report")
+async def ingest_evaluation_report(
+    payload: dict[str, Any],
+    caller_tenant: str = Depends(verify_caller),
+) -> dict[str, Any]:
+    if _adapter.audit_store is None:
+        raise HTTPException(status_code=500, detail="audit store is disabled")
+    requested_tenant = str(payload.get("tenant", caller_tenant))
+    if requested_tenant != caller_tenant and caller_tenant not in _admin_tenants():
+        raise HTTPException(status_code=403, detail="evaluation evidence tenant does not match caller tenant")
+    raw_report = payload.get("report", payload)
+    if not isinstance(raw_report, dict):
+        raise HTTPException(status_code=400, detail="report must be a JSON object")
+    actor_id = str(payload.get("actor_id", "api-evaluation-ingestor"))
+    try:
+        evidence = ingest_gove_zone_evaluation_report(
+            raw_report,
+            audit_store=_adapter.audit_store,
+            tenant=requested_tenant,
+            actor_id=actor_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return evidence.to_dict()
+
+
+@app.get("/evidence/evaluation-reports")
+async def evaluation_reports(
+    status: EvaluationStatus | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    caller_tenant: str = Depends(verify_caller),
+) -> list[dict[str, Any]]:
+    if _adapter.audit_store is None:
+        raise HTTPException(status_code=500, detail="audit store is disabled")
+    return list_gove_zone_evaluation_evidence(
+        _adapter.audit_store,
+        tenant=caller_tenant,
+        status=status,
+        limit=limit,
+    )
+
+
 @app.get("/audit/query")
 async def audit_query(
     rule_id: str | None = None,
@@ -117,7 +168,7 @@ async def audit_query(
     risk_tag: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
     caller_tenant: str = Depends(verify_caller),
-):
+) -> list[dict[str, Any]]:
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     return _adapter.audit_store.query(
@@ -126,7 +177,7 @@ async def audit_query(
 
 
 @app.get("/audit/verify-chain")
-async def verify_chain(caller_tenant: str = Depends(verify_caller)):
+async def verify_chain(caller_tenant: str = Depends(verify_caller)) -> dict[str, Any]:
     if _adapter.audit_store is None:
         raise HTTPException(status_code=500, detail="audit store is disabled")
     if caller_tenant not in _admin_tenants():

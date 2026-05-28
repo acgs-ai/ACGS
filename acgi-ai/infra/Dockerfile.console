@@ -30,11 +30,11 @@ COPY vite.config.ts index.html biome.json eslint.config.js ./
 COPY src ./src
 COPY public ./public
 
-RUN pnpm build
+RUN pnpm build:console
 
 # ---- Stage 2: runtime -------------------------------------------------------
 
-FROM caddy:2-alpine AS runtime
+FROM caddy:2.10.2-alpine AS runtime
 
 # Caddy runs as a non-root user inside the official image.
 COPY infra/Caddyfile /etc/caddy/Caddyfile

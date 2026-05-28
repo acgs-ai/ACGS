@@ -107,6 +107,15 @@ def test_acgs_swarm_floor_drives_workspace_floor():
 # §4 Target architecture — workspace member list
 # ---------------------------------------------------------------------------
 
+EXPECTED_UV_MEMBERS = {
+    "packages/acgs-lite",
+    "packages/Acgs-Swarm",
+    "packages/clinicalguard",
+    "packages/gove-zone",
+    "packages/agent-bus-analyzer",
+    "acgs_governance_eval_mvp",
+    "acgs-cft-governance-pack",
+}
 
 def test_uv_workspace_members_match_plan():
     declared = _read_uv_members(ROOT)

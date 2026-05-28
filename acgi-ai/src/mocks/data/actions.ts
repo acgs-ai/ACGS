@@ -1,4 +1,8 @@
-import type { GovernedAction } from '../../api/types'
+import type { EvidenceSignatureSummary, GovernedAction, ReceiptProofPacket } from '../../api/types'
+
+const PHOENIX_TRACE_ID = '4bf92f3577b34da6a3ce929d0e0e4736'
+const PHOENIX_SPAN_ID = '53995c3f42cd8ad8'
+const PHOENIX_PARENT_SPAN_ID = '00f067aa0ba902b7'
 
 export const GOVERNED_ACTIONS: readonly GovernedAction[] = [
   {
@@ -101,3 +105,84 @@ export const GOVERNED_ACTIONS: readonly GovernedAction[] = [
     ],
   },
 ]
+
+function proofPolicyPath(action: GovernedAction): string {
+  return action.checks.map((check) => check.id).join(' → ')
+}
+
+function proofToolExecuted(action: GovernedAction): boolean {
+  return action.outcome === 'transformed'
+}
+
+function buildSignedEvidencePacket(action: GovernedAction): string {
+  return JSON.stringify(
+    {
+      receipt_id: action.receiptId,
+      receipt_hash: action.receiptHash,
+      trace_id: action.traceId,
+      phoenix_trace_id: PHOENIX_TRACE_ID,
+      phoenix_span_id: PHOENIX_SPAN_ID,
+      phoenix_parent_span_id: PHOENIX_PARENT_SPAN_ID,
+      audit_event_id: action.auditEventId,
+      policy_path: proofPolicyPath(action),
+      action: `${action.agent} → ${action.action}`,
+      target: action.target,
+      hash_chain_verified: true,
+      tool_executed: proofToolExecuted(action),
+      export_signature: {
+        status: 'signed',
+        algorithm: 'HMAC-SHA256-CANONICAL-JSON',
+        key_id: 'bus-signer-v1',
+        payload_digest: '0c79206b3f2295b541984ed6c9758c961c4d788eeb7e92526d2a323484e87962',
+        signature: 'fixture-hmac:0c79206b3f2295b541984ed6c9758c961c4d788eeb7e92526d2a323484e87962',
+      },
+    },
+    null,
+    2,
+  )
+}
+
+const DEPLOYMENT_SIGNATURE_FIXTURE: EvidenceSignatureSummary = {
+  status: 'signed',
+  label: 'Deployment-managed signature',
+  algorithm: 'HMAC-SHA256-CANONICAL-JSON',
+  keyId: 'bus-signer-v1',
+  digest: '0c79206b3f2295b541984ed6c9758c961c4d788eeb7e92526d2a323484e87962',
+}
+
+function buildGovernedActionProof(action: GovernedAction): ReceiptProofPacket {
+  const baseProof = {
+    receiptId: action.receiptId,
+    receiptHash: action.receiptHash,
+    traceId: action.traceId,
+    phoenixTraceId: PHOENIX_TRACE_ID,
+    phoenixSpanId: PHOENIX_SPAN_ID,
+    phoenixParentSpanId: PHOENIX_PARENT_SPAN_ID,
+    replayCommand: action.replayCommand,
+    auditEventId: action.auditEventId,
+    policyPath: proofPolicyPath(action),
+    hashChainVerified: true,
+    signedEvidencePacket: buildSignedEvidencePacket(action),
+    evidenceSignature: DEPLOYMENT_SIGNATURE_FIXTURE,
+    action,
+  }
+
+  if (!proofToolExecuted(action)) {
+    return {
+      ...baseProof,
+      toolExecuted: false,
+    }
+  }
+
+  return {
+    ...baseProof,
+    toolExecuted: true,
+  }
+}
+
+export const GOVERNED_ACTION_PROOFS: readonly ReceiptProofPacket[] =
+  GOVERNED_ACTIONS.map(buildGovernedActionProof)
+
+export function getGovernedActionProof(receiptId: string): ReceiptProofPacket | undefined {
+  return GOVERNED_ACTION_PROOFS.find((proof) => proof.receiptId === receiptId)
+}

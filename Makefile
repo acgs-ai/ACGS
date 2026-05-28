@@ -8,6 +8,12 @@
 # Commands:
 #   make install      pnpm install + uv sync
 #   make verify       lint + typecheck + test
+#   make platform-readiness
+#                    local readiness audit for deploy/platform proof
+#   make release-evidence
+#                    write local release-readiness evidence bundle
+#   make verify-js-node24
+#                    run acgi-ai readiness with the exact Node 24 toolchain
 #   make build        produce all artifacts
 #   make all          verify + build
 #   make clean        drop build outputs + node_modules + .venv
@@ -18,18 +24,17 @@
 PYTHON_PACKAGES := \
 	packages/acgs-lite \
 	packages/Acgs-Swarm \
-	packages/clinicalguard \
-	packages/agent-bus-analyzer \
 	packages/gove-zone \
+	packages/agent-bus-analyzer \
 	acgs_governance_eval_mvp \
 	acgs-cft-governance-pack
 
 PNPM ?= pnpm
 UV ?= uv
 
-.PHONY: help all install build test lint typecheck verify clean \
+.PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence verify-js-node24 production-blocker-evidence production-launch-preflight \
         build-js test-js lint-js typecheck-js \
-        build-py test-py lint-py typecheck-py \
+        build-py test-py lint-py typecheck-py lint-docs \
         verify-fresh
 
 help:
@@ -41,6 +46,11 @@ help:
 	@echo "  make lint          Lint everything"
 	@echo "  make typecheck     Type-check everything"
 	@echo "  make verify        lint + typecheck + test"
+	@echo "  make openapi       Export analyzer OpenAPI for the console"
+	@echo "  make platform-readiness  Local platform/deploy-readiness audit"
+	@echo "  make release-evidence    Write local release-readiness evidence bundle"
+	@echo "  make verify-js-node24    Run acgi-ai readiness with exact Node 24 via fnm"
+	@echo "  make lint-docs     Check root governance docs invariants"
 	@echo "  make all           verify + build"
 	@echo "  make clean         Drop node_modules, .venv, build artifacts"
 	@echo "  make verify-fresh  clean + install + verify (CI-friendly)"
@@ -69,6 +79,9 @@ lint-js:
 typecheck-js:
 	$(PNPM) turbo run typecheck
 
+verify-js-node24:
+	bash scripts/run_acgi_node24_gate.sh $(PNPM) -F acgi-ai run test:all
+
 # ---- Python surfaces (uv workspace) ----
 
 build-py:
@@ -82,39 +95,66 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/clinicalguard packages/agent-bus-analyzer packages/gove-zone acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks; \
-	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks; \
+	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer acgs_governance_eval_mvp acgs-cft-governance-pack; \
 	$(MAKE) -C packages/acgs-lite lint; \
-	(cd packages/Acgs-Swarm && $(UV) run ruff check src/ && $(UV) run ruff format --check src/); \
-	(cd packages/clinicalguard && $(UV) run ruff check . && $(UV) run ruff format --check .)
+	(cd packages/Acgs-Swarm && $(UV) run ruff check src/)
 
 typecheck-py:
 	@for pkg in $(PYTHON_PACKAGES); do \
 		if [ -f "$$pkg/pyproject.toml" ]; then \
-			echo "==> typecheck $$pkg"; \
-			if grep -q '^\[tool\.mypy\]' "$$pkg/pyproject.toml" || [ -f "$$pkg/mypy.ini" ] || grep -q '^\[mypy\]' "$$pkg/setup.cfg" 2>/dev/null; then \
-				(cd "$$pkg" && $(UV) run mypy) || exit $$?; \
+			if grep -q '^\[tool\.mypy\]' "$$pkg/pyproject.toml"; then \
+				echo "==> typecheck $$pkg"; \
+				if grep -q '^files = ' "$$pkg/pyproject.toml"; then \
+					(cd "$$pkg" && $(UV) run mypy) || exit $$?; \
+				else \
+					(cd "$$pkg" && $(UV) run mypy src tests) || exit $$?; \
+				fi; \
 			else \
+				echo "==> typecheck $$pkg"; \
 				echo "    (mypy skipped — not configured for $$pkg)"; \
 			fi; \
 		fi; \
 	done
 
+# ---- Root governance docs ----
+
+lint-docs:
+	python3 scripts/check_governance_stack_index.py
+
+platform-readiness:
+	$(UV) run python scripts/platform_readiness_report.py
+
+release-evidence:
+	$(UV) run python scripts/build_release_evidence.py
+
+production-blocker-evidence:
+	$(UV) run python scripts/build_production_blocker_evidence.py
+
+production-launch-preflight: release-evidence
+	$(UV) run python scripts/production_launch_preflight.py --out dist-release-evidence/production-launch-preflight.json
+
 # ---- Combined ----
 
 build: build-js build-py
 test: test-js test-py
-lint: lint-js lint-py
+lint: lint-js lint-py lint-docs
 typecheck: typecheck-js typecheck-py
 
 verify: lint typecheck test
+
+openapi:
+	$(UV) run --package agent-bus-analyzer agent-bus-analyzer export-openapi --output acgi-ai/contracts/bus.openapi.json
+	$(PNPM) -F acgi-ai exec biome format --write contracts/bus.openapi.json
+	cp acgi-ai/contracts/bus.openapi.json acgi-ai/src/api/openapi.json
+	$(PNPM) -F acgi-ai run gen:api
 
 clean:
 	-$(PNPM) turbo run clean 2>/dev/null

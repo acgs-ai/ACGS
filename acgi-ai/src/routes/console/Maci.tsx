@@ -1,5 +1,6 @@
 import { useMaci } from '../../api/hooks'
 import type { MaciCard } from '../../api/types'
+import { ConsoleError, ConsoleLoading } from './shared'
 
 function Lane({ title, meta, cards }: { title: string; meta: string; cards: MaciCard[] }) {
   return (
@@ -31,24 +32,11 @@ export function Maci() {
   const { data, isLoading, isError, refetch } = useMaci()
 
   if (isLoading) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">⁂ Polling …</span>
-      </div>
-    )
+    return <ConsoleLoading />
   }
 
   if (isError || !data) {
-    return (
-      <div className="c-toolbar">
-        <span className="c-meta">
-          ⁂ Could not reach the bus.{' '}
-          <button type="button" className="m-text-link" onClick={() => refetch()}>
-            Retry
-          </button>
-        </span>
-      </div>
-    )
+    return <ConsoleError onRetry={() => refetch()} />
   }
 
   return (

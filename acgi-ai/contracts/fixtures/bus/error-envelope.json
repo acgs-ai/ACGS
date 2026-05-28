@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "trace_not_found",
+    "message": "No bus trace exists for the requested correlation_id.",
+    "retryable": false
+  },
+  "correlation_id": "11111111-1111-7111-8111-111111111111",
+  "detail": "The bus analyzer returned a machine-readable error envelope."
+}

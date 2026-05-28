@@ -10,7 +10,7 @@ This directory contains the full React application source for the ACGS marketing
 | File | Description |
 |------|-------------|
 | `main.tsx` | React entrypoint; creates the React Query client, optionally starts MSW, and renders `<App />`. |
-| `App.tsx` | Custom path router for `/`, `/login`, `/privacy`, `/console/*`, and marketing 404s. |
+| `App.tsx` | Thin re-export of the active `@surface/App` route tree selected by Vite mode. |
 | `App.css` | Main component stylesheet for marketing, console, responsive behavior, and page-specific layouts. |
 | `index.css` | Design tokens, global reset, font imports, focus ring, and reduced-motion reset. |
 | `fonts.css` | Self-hosted `@font-face` declarations for all runtime font families and subsets. |

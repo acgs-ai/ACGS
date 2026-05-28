@@ -79,7 +79,12 @@ export function Settings() {
       </p>
 
       {filtered.length === 0 ? (
-        <EmptyState query={query} label="settings" onClear={() => setQuery('')} />
+        <EmptyState
+          emptyMeans="fresh-tenant"
+          query={query}
+          label="settings"
+          onClear={() => setQuery('')}
+        />
       ) : (
         filtered.map((section) => (
           <div className="settings-section" key={section.title}>

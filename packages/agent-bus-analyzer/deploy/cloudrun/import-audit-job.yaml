@@ -1,0 +1,57 @@
+# Cloud Run Job template for one-shot gove-zone audit backfills.
+#
+# This is a deployment contract, not live-deploy proof. Upload a canonical
+# gove-zone audit JSONL into the mounted trace bucket at
+# /var/lib/agent-bus-analyzer/imports/gove-zone-audit.jsonl, render the
+# REPLACE_* placeholders, run this job once, then run
+# `agent-bus-analyzer postdeploy-smoke` against the analyzer service.
+#
+# Retries are disabled because the current SQLite + JSONL TraceStore is an
+# append-only file store; review partial writes before manually re-running.
+
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: agent-bus-analyzer-import-audit
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          maxRetries: 0
+          timeoutSeconds: 600
+          serviceAccountName: REPLACE_ANALYZER_RUNTIME_SERVICE_ACCOUNT
+          containers:
+            - name: import-audit
+              image: REPLACE_AT_DEPLOY_TIME
+              command: ["agent-bus-analyzer"]
+              args:
+                - import-audit
+                - --audit-file
+                - /var/lib/agent-bus-analyzer/imports/gove-zone-audit.jsonl
+                - --store-dir
+                - /var/lib/agent-bus-analyzer
+                - --constitutional-hash
+                - REPLACE_CONSTITUTIONAL_HASH
+              volumeMounts:
+                - name: analyzer-trace-store
+                  mountPath: /var/lib/agent-bus-analyzer
+              resources:
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: analyzer-trace-store
+              csi:
+                driver: gcsfuse.run.googleapis.com
+                readOnly: false
+                volumeAttributes:
+                  bucketName: REPLACE_ANALYZER_TRACE_BUCKET
+                  mountOptions: implicit-dirs,uid=10001,gid=10001
