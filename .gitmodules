@@ -25,3 +25,6 @@
 [submodule "packages/ca-legal-agent-skills"]
 	path = packages/ca-legal-agent-skills
 	url = https://github.com/dislovelhl/ca-legal-agent-skills.git
+[submodule "external/hermes-desktop"]
+	path = external/hermes-desktop
+	url = https://github.com/fathah/hermes-desktop.git
