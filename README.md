@@ -1,14 +1,27 @@
 # govern-zone
 
-`govern-zone` is the ACGS workspace for governed agent/runtime experiments,
-frontend console work, and integration-ready governance packages. The current
-repo is a monorepo: root files coordinate setup and verification; individual
-packages own their runtime contracts.
+`govern-zone` is a receipt-first governance plane for AI agents and agentic
+workflows. It is not another agent framework: it sits before high-risk
+execution, decides whether a proposed action is allowed, denied, transformed,
+or escalated, and emits verifiable Decision Receipts plus audit evidence before
+side effects can run.
 
-Use `MONOREPO.md` as the package registry,
-`docs/governance-stack-index.md` as the policy/evidence ownership map, and
-`AGENTS.md` / package-local `AGENTS.md` or `CLAUDE.md` files as the agent
-operating contract.
+The first execution-ready foundation lives in `packages/gove-zone/`. It proves
+this local path:
+
+```text
+agent/workflow request
+-> pre-execution governance check
+-> ALLOW / DENY / TRANSFORM / ESCALATE Decision Receipt
+-> receipt-gated executor
+-> hash-chained audit evidence
+```
+
+The current implementation is an alpha foundation, not a production-ready,
+compliance-proven, or regulator-approved system. Use `MONOREPO.md` as the
+package registry, `docs/governance-stack-index.md` as the policy/evidence
+ownership map, and `AGENTS.md` / package-local `AGENTS.md` or `CLAUDE.md` files
+as the agent operating contract.
 
 ## Quick start
 
@@ -33,6 +46,29 @@ For a bounded local smoke check that avoids full dependency fan-out:
 ```bash
 bash scripts/vibe-kanban-verify.sh
 uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q
+PYTHONPATH=packages/gove-zone/src python3 packages/gove-zone/examples/receipt_first_demo.py
+```
+
+## Docker
+
+The root Docker setup is for local workspace and CI-style commands. The
+privileged console production image remains
+`acgi-ai/infra/Dockerfile.console`, matching the Cloud Run contract in
+`acgi-ai/DEPLOY.md`.
+
+```bash
+docker compose --profile dev build workspace
+docker compose --profile dev run --rm workspace make install
+docker compose --profile dev run --rm workspace make verify
+
+docker compose --profile console build console
+docker compose --profile console up console
+```
+
+Set `CONSOLE_PORT` to publish the console on a different host port:
+
+```bash
+CONSOLE_PORT=8081 docker compose --profile console up console
 ```
 
 ## Primary package surfaces
@@ -44,46 +80,52 @@ uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mo
 | `packages/agent-bus-analyzer/` | FastAPI observer API and OpenAPI export | package pytest + mypy via `make verify` |
 | `acgs_governance_eval_mvp/` | Governance evaluation MVP and replay checks | package pytest via `make verify` |
 
+## External desktop clients
+
+| Path | Purpose | Description |
+|---|---|---|
+| `external/hermes-desktop/` | Electron desktop GUI companion | Graphical desktop assistant interface for conversations and task execution with the Hermes agent, protected by ACGS runtime governance. |
+
 Nested repos under `packages/acgs-lite`, `packages/Acgs-Swarm`, and
 `packages/clinicalguard` keep their own git boundaries. Do not stage or commit
 inside them from the parent repo.
 
 ## Agent/runtime integration smoke path
 
-`gove-zone` exposes a single hook adapter for runtimes that emit tool events:
+`gove-zone` exposes a small receipt-gated CLI surface that is implemented in
+`packages/gove-zone/src/gove_zone/cli.py`:
 
 ```bash
-uv run --package gove-zone gove-zone setup --format json
 uv run --package gove-zone gove-zone doctor
 uv run --package gove-zone gove-zone smoke
-printf '{"tool_name":"Edit","tool_input":{"file_path":"README.md","new_string":"demo"}}' \
-  | uv run --package gove-zone gove-zone gate --actor smoke
+printf '{"tool":"message.send","args":{"body":"hello"},"tenant_id":"tenant-alpha","policy_bundle_id":"local-boundary"}' \
+  | uv run --package gove-zone gove-zone gate
+uv run --package gove-zone gove-zone proofpack
 ```
 
 `gove-zone smoke` is the fastest local proof that the runtime can allow a safe
-tool call, deny a blocked one before side effects, and verify the audit chain.
-Pass `--audit <path>` when that smoke audit JSONL should be retained as release
-evidence. The marketing product atlas exposes the same adoption path at
-`/products/gove-zone` with local framework-bridge scope and proof boundaries.
+tool call, deny a blocked one before side effects, block missing receipts, and
+verify the audit chain. Pass `--audit <path>` when that smoke audit JSONL should
+be retained as evidence.
 
-The adapter also exposes `tool_call_from_hook_payload` and
-`tool_calls_from_hook_payload` for dependency-free
-Claude/Codex-style, MCP-style `tools/call`, function-call-style, OpenAI Chat
-`tool_calls`, OpenAI Responses, LangChain-style `tool_calls`, generic
-agent-framework bridge payload normalization, and batched tool-call expansion
-before receipts are emitted.
-For enforceable hook hosts, run `gove-zone gate --policy-bundle
-policy.bundle.json < event.json`; the gate writes receipts and exits non-zero
-when any normalized child call returns `deny` / `escalate` before the side
-effect runs. Recognized multi-call containers that include unparseable child
-calls fail closed as a `runtime.malformed_batch` deny receipt instead of
-falling back to `runtime.unknown`.
+`gove-zone gate` normalizes one JSON tool-call envelope, performs a deterministic
+pre-execution governance check, emits a canonical Decision Receipt, appends the
+audit event, and exits non-zero for `DENY` or `ESCALATE`. The current gate uses
+a local static boundary policy for alpha proof; it is not a remote policy-engine
+integration.
 
-The parent `.claude/settings.json` wires `.claude/hooks/acgs-emit-receipt.py` to
-Claude Code `PreToolUse` events for `Edit|Write|MultiEdit` and selected `Bash`
-workflow commands. The hook writes a tamper-evident audit chain to
-`.gove-zone/audit.jsonl` by default. Use `gove-zone enable --enforce` to make
-receipt-emission failures block the tool call.
+`gove-zone proofpack` writes `dist-govern-zone-proofpack/` with receipts,
+`audit.jsonl`, verification output, conformance results, and limitations. It is
+the local buyer/security-review artifact for the claim: no valid Decision
+Receipt, no side effect.
+
+The adapter module exposes `normalize_governance_request` for MCP-style
+`tools/call`, OpenAI/Responses-style function calls, LangChain-style tool calls,
+generic JSON tool calls, CI/CD executor actions, and workflow-engine steps.
+Unsupported envelopes fail closed with a clear adapter error.
+
+`setup` and `enable` are not advertised commands in this alpha surface. Add them
+later only when they perform real, tested work.
 
 ## Deployment readiness
 
