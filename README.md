@@ -127,9 +127,12 @@ build/test success is deployment readiness, not independent production proof.
 Use `make platform-readiness` to summarize the local proof surface and the
 remaining external blockers before making platform-readiness claims.
 
-## Known limitations
+## Known limitations & Status
 
-- `packages/gove-zone` is alpha (`0.1.0.dev0`) and not yet published to PyPI.
+- **Status**: Alpha (`0.1.0.dev0`).
+- **Scope**: Local proof and production-shaped foundation only.
+- **Certification**: NOT production-certified, NOT compliance-certified. Do not claim live production deployment or regulatory compliance without direct evidence.
+- `packages/gove-zone` is not yet published to PyPI.
 - `packages/gove-zone` audit locking uses Unix `fcntl`; Windows support is not
   implemented.
 - Private submodule checkout for `packages/clinicalguard` may require

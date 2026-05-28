@@ -3,10 +3,7 @@
 A minimal governed agent runtime — fail-closed governance, replayable
 receipts, and a tamper-evident audit chain for AI agent tool calls.
 
-> Status: MVP runtime kernel (`0.1.0.dev0`) with audit chain, typed decisions,
-> policy dispatch, receipts, replay, CLI, and runtime-hook adapter. Not yet
-> shipped to PyPI. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo
-> for roadmap context and acceptance criteria.
+> Status: Alpha (`0.1.0.dev0`). Local proof and production-shaped foundation only. NOT production-certified and NOT compliance-certified. Do not make live production deployment claims without evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for roadmap context.
 
 ## Why this exists
 
