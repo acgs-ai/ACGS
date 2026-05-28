@@ -84,7 +84,7 @@ CONSOLE_PORT=8081 docker compose --profile console up console
 
 | Path | Purpose | Description |
 |---|---|---|
-| `external/hermes-desktop/` | Electron desktop GUI companion | Graphical desktop assistant interface for conversations and task execution with the Hermes agent, protected by ACGS runtime governance. |
+| `external/hermes-desktop/` | Electron desktop GUI companion (ACGS Agent) | Graphical desktop assistant interface for conversations and task execution with the ACGS Agent, protected by runtime governance. |
 
 Nested repos under `packages/acgs-lite`, `packages/Acgs-Swarm`, and
 `packages/clinicalguard` keep their own git boundaries. Do not stage or commit
