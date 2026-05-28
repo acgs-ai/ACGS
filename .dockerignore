@@ -1,0 +1,47 @@
+# VCS and local agent/runtime state
+.git
+.gitignore
+.omc
+.omx
+.codex
+.claude
+.agents
+.codegraph
+.remember
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+**/secrets.dev.yaml
+**/values.dev.yaml
+
+# Dependency and build output
+**/node_modules
+**/.pnpm-store
+**/.turbo
+**/.vite
+**/.venv
+**/dist
+**/build
+**/htmlcov
+**/.coverage
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+
+# Editor and OS noise
+**/.DS_Store
+**/.idea
+**/.vscode
+**/*.swp
+**/*.swo
+
+# Test and package artifacts
+**/coverage
+**/playwright-report
+**/test-results
+**/*.egg-info
+**/*.whl
+**/*.tar.gz

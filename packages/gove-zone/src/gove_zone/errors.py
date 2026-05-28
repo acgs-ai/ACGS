@@ -45,6 +45,10 @@ class AuditError(GoveZoneError):
     """
 
 
+class ReceiptVerificationError(GoveZoneError):
+    """Raised when a Decision Receipt is missing, malformed, or unverifiable."""
+
+
 class UnknownToolError(GoveZoneError):
     """Raised when dispatch names a tool that was never registered."""
 

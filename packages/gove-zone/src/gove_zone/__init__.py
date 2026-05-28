@@ -4,6 +4,7 @@ A small library that wraps AI agent tool calls with policy checks,
 fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 """
 
+from gove_zone.adapters import AdapterError, normalize_governance_request
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
 from gove_zone.decision import (
     Decision,
@@ -17,7 +18,21 @@ from gove_zone.errors import (
     EscalateError,
     GoveZoneError,
     PolicyError,
+    ReceiptVerificationError,
     UnknownToolError,
+)
+from gove_zone.foundation import (
+    DecisionReceipt,
+    GovernanceEngine,
+    GovernanceRequest,
+    GovernedExecutor,
+    InMemoryGovernanceMetrics,
+    PolicyBundleBinding,
+    StaticPolicyBundleRegistry,
+    executable_action_from_receipt,
+    make_decision_receipt,
+    parse_and_verify_decision_receipt,
+    verify_decision_receipt,
 )
 from gove_zone.frontend_contract import (
     receipt_to_governed_action,
@@ -45,6 +60,8 @@ __version__ = "0.1.0.dev0"
 
 __all__ = [
     "GENESIS_HASH",
+    "normalize_governance_request",
+    "AdapterError",
     "AllowAllPolicy",
     "AuditChainError",
     "AuditError",
@@ -53,6 +70,18 @@ __all__ = [
     "CompositePolicy",
     "Decision",
     "DecisionRecord",
+    "DecisionReceipt",
+    "GovernanceEngine",
+    "GovernanceRequest",
+    "GovernedExecutor",
+    "InMemoryGovernanceMetrics",
+    "PolicyBundleBinding",
+    "ReceiptVerificationError",
+    "StaticPolicyBundleRegistry",
+    "executable_action_from_receipt",
+    "make_decision_receipt",
+    "parse_and_verify_decision_receipt",
+    "verify_decision_receipt",
     "DeniedError",
     "DenyAllPolicy",
     "EscalateError",

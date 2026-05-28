@@ -153,3 +153,16 @@ def test_concurrent_appends_preserve_chain_integrity(tmp_path: Path) -> None:
     result = ChainHashAuditStore(path).verify_chain()
     assert result["valid"] is True, f"chain broken: {result['failures'][:3]}"
     assert result["checked"] == n_workers * per_worker
+
+
+def test_chain_detects_reordered_events(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+    for i in range(3):
+        store.append(_record(f"e{i}"))
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join([lines[1], lines[0], lines[2]]) + "\n", encoding="utf-8")
+
+    result = ChainHashAuditStore(path).verify_chain()
+    assert result["valid"] is False
+    assert any(f["type"] == "previous_hash_mismatch" for f in result["failures"])

@@ -1,0 +1,43 @@
+name: govern-zone
+
+services:
+  workspace:
+    image: govern-zone-workspace
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: workspace
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - pnpm-store:/pnpm/store
+      - uv-cache:/root/.cache/uv
+    environment:
+      PNPM_HOME: /pnpm
+      UV_CACHE_DIR: /root/.cache/uv
+      UV_LINK_MODE: copy
+    command: bash
+    profiles:
+      - dev
+
+  console:
+    image: govern-zone-console
+    build:
+      context: ./acgi-ai
+      dockerfile: infra/Dockerfile.console
+    ports:
+      - "${CONSOLE_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - console
+
+volumes:
+  pnpm-store:
+  uv-cache:

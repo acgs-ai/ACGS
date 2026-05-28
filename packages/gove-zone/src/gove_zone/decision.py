@@ -67,6 +67,15 @@ class DecisionRecord:
     timestamp_iso: str = field(default_factory=_now_iso)
     transformed_args: dict[str, Any] | None = None
     goal: str = ""
+    request_id: str | None = None
+    tenant_id: str | None = None
+    actor: dict[str, Any] | str | None = None
+    subject: dict[str, Any] | str | None = None
+    proposed_action: dict[str, Any] | None = None
+    execution_boundary: dict[str, Any] | None = None
+    policy_bundle_id: str | None = None
+    constitutional_hash: str | None = None
+    receipt_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,4 +89,13 @@ class DecisionRecord:
             "timestamp_iso": self.timestamp_iso,
             "transformed_args": self.transformed_args,
             "goal": self.goal,
+            "request_id": self.request_id,
+            "tenant_id": self.tenant_id,
+            "actor": self.actor,
+            "subject": self.subject,
+            "proposed_action": self.proposed_action,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "constitutional_hash": self.constitutional_hash,
+            "receipt_hash": self.receipt_hash,
         }

@@ -22,10 +22,12 @@ import json
 import os
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.errors import AuditError
+
+T = TypeVar("T")
 
 GENESIS_HASH = "0" * 64
 
@@ -57,14 +59,25 @@ class ChainHashAuditStore:
         concurrent callers never produce sibling events pointing at the same
         ``previous_hash``. Writes are fsync'd before the lock is released.
         """
+        payload, _ = self.append_prepared(lambda _previous_hash: (decision, None))
+        return payload
+
+    def append_prepared(
+        self,
+        prepare: Callable[[str], tuple[DecisionRecord, T]],
+    ) -> tuple[dict[str, Any], T]:
+        """Append a decision prepared from the locked chain tail.
+
+        ``prepare`` receives the current ``previous_hash`` while the audit
+        lock is held. Receipt-first callers use this to bind a receipt to the
+        exact chain pointer that will be persisted with the audit event.
+        """
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
-                # Always re-read while holding the lock. This instance may
-                # have appended earlier, then another store/process may have
-                # advanced the chain before this append.
                 previous_hash = self._read_last_hash_from_disk()
+                decision, artifact = prepare(previous_hash)
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
                 payload.pop("event_hash", None)
@@ -86,7 +99,7 @@ class ChainHashAuditStore:
                 self._last_hash = str(payload["event_hash"])
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
-        return payload
+        return payload, artifact
 
     def last_hash(self) -> str:
         """Return the event_hash of the most recent event, or genesis."""

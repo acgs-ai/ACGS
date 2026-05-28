@@ -1,0 +1,9 @@
+services:
+  workspace:
+    stdin_open: true
+    tty: true
+    command: sleep infinity
+
+  console:
+    stdin_open: true
+    tty: true
