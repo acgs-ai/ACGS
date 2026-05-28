@@ -26,6 +26,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import tomllib
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = REPO_ROOT / "artifacts"
 REPORTS_DIR = ARTIFACTS_DIR / "hardening_reports"
 DRILLS_DIR = ARTIFACTS_DIR / "rollback_drills"
+
+
+def _read_uv_members(repo_root: Path) -> list[str]:
+    """Read uv workspace members from the root pyproject.toml.
+
+    Mirrored in ``tests/test_monorepo_invariants.py``; keep the two
+    implementations in lock-step — both must read the same key from the
+    same file.
+    """
+    with (repo_root / "pyproject.toml").open("rb") as f:
+        root_proj = tomllib.load(f)
+    return list(root_proj["tool"]["uv"]["workspace"]["members"])
 
 
 @dataclass
@@ -233,12 +246,7 @@ def drill_lock_integrity(repo_root: Path) -> DrillRecord:
     finished = dt.datetime.now(dt.UTC).isoformat()
     passed = has_key and not bad_entries
     return DrillRecord(
-        "lock-integrity",
-        drill_id,
-        "passed" if passed else "failed",
-        started,
-        finished,
-        events,
+        "lock-integrity", drill_id, "passed" if passed else "failed", started, finished, events
     )
 
 

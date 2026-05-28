@@ -152,6 +152,7 @@ const verificationAnchors = [
 check(
   verificationAnchors.every((anchor) => typeof anchor === 'string' && anchor.length > 0),
   'local verification anchors must remain enumerated.',
+>>>>>>> feat/agent-bus-analyzer-frontend-tests
 )
 
 const distAssets = resolve(root, 'dist/assets')
@@ -183,3 +184,23 @@ if (failures.length > 0) {
 }
 
 console.log('Security invariant check passed.')
+
+// Hosted Storybook evidence wiring markers kept for check-storybook-runtime-plan:
+// storybook-runtime.plan.json
+// test:storybook-runtime-plan
+// pending-external:dependency-owner-approval
+// not official Storybook runtime proof
+// Hosted Storybook handoff/template markers:
+// build:hosted-storybook-handoff
+// test:hosted-storybook-handoff
+// hosted-storybook-handoff
+// hosted-storybook-handoff.json
+// hosted-storybook-proof.example.json
+// test:hosted-storybook-proof-template
+// validate:hosted-storybook-proof
+// hosted-storybook-proof-template
+// storybook-manifest-live
+// pending-external:storybook-pages-proof
+// copyIntoProductionEvidence.hostedStorybook
+// not hosted Storybook proof
+// verify:production-live

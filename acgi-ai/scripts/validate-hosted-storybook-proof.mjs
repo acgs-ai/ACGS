@@ -169,7 +169,9 @@ function validateProof(proof, liveOutput, options) {
   const copyIntoProductionEvidence = proof.copyIntoProductionEvidence ?? {}
   const hostedStorybook = copyIntoProductionEvidence.hostedStorybook ?? {}
   const liveBlockerIds = Array.isArray(liveOutput?.blockers)
-    ? liveOutput.blockers.map((blocker) => blocker?.blockerId).filter(isNonEmptyString)
+    ? liveOutput.blockers
+        .map((blocker) => (typeof blocker === 'string' ? blocker : blocker?.blockerId))
+        .filter(isNonEmptyString)
     : []
   const missingStoryIds = includesAll(manifestEvidence.storyIds, EXPECTED_STORY_IDS)
   const missingLiveCheckIds = includesAll(

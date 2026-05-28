@@ -22,6 +22,16 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Enhanced Agent Bus observability layer |
 | `automation/` | parent files | YAML + Python helpers | (covered by `python-other` umbrella when added) | Policies, proposals, workflows |
 
+## Experimental surfaces
+
+Parent-tracked experiments are not production deployment surfaces. Keep their CI
+path-filtered and static unless an experiment-specific plan explicitly promotes
+one into a package or service.
+
+| Experiment | Tracking | Toolchain | Parent CI | Maintainer / notes |
+|---|---|---|---|---|
+| `experiments/iii-governance-lab/` | parent files | Python 3.11, Node/TypeScript, locked npm deps, iii-sdk examples | `.github/workflows/iii-governance-lab-static.yml` | Stage 1 local iii governance lab; static contract only, no live iii engine or deploy gate |
+
 ## Nested packages
 
 Registered as submodules — parent pins each at a specific SHA in
@@ -42,6 +52,7 @@ pinned SHA in a follow-up parent commit.
 | Constitutional-hash drift | `.github/workflows/constitutional-hash.yml` | PR + push to `master` | Recomputes every `# Constitutional Hash:` marker against `docs/constitutional-hashes.lock`. Lock holds 201 markers post-Phase 2 — drilled from the now-visible submodules; 2 fixture-bearing files (`scripts/hardening_report.py`, `tests/test_verify_constitutional_hashes.py`) are in `SKIP_FILES` so synthetic markers don't pollute the inventory. |
 | Cloud Run console | `.github/workflows/console.yml` | path-filtered on `acgi-ai/**` | Lint + build + deploy of privileged console origin |
 | Vercel marketing | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build of public marketing origin |
+| iii governance lab static | `.github/workflows/iii-governance-lab-static.yml` | path-filtered on `experiments/iii-governance-lab/**`, its invariant test, and static workflow changes | Static contract checks only: Python compile, shell syntax, TypeScript typecheck, and pytest invariants; no live iii engine |
 
 ## Required Actions secrets
 

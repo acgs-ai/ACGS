@@ -4,13 +4,14 @@
 # workflows
 
 ## Purpose
-This directory defines CI/CD workflows for the two-origin deployment model: a marketing surface deployed through Vercel and a privileged console surface deployed as a Cloud Run container.
+This directory defines CI/CD workflows for the two-origin deployment model: a marketing surface deployed through Vercel and a privileged console surface deployed as a Cloud Run container. It can also contain path-filtered static validation workflows for experiments that must not deploy.
 
 ## Key Files
 | File | Description |
 |------|-------------|
 | `console.yml` | Builds, lints, containerizes, pushes, deploys, and smoke-tests the console origin using GCP Workload Identity Federation. |
 | `marketing.yml` | Builds, lints, previews, and deploys the marketing origin using Vercel. |
+| `iii-governance-lab-static.yml` | Runs static-only contract checks for `experiments/iii-governance-lab/`; it must not start a live iii engine or deploy. |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -23,6 +24,7 @@ This directory defines CI/CD workflows for the two-origin deployment model: a ma
 - Never replace Workload Identity Federation with long-lived GCP keys.
 - Keep preview comments and production deploy conditions scoped to the correct event type.
 - Keep path filters in sync with files that can affect each surface.
+- Keep experiment workflows path-filtered to their experiment, read-only, and free of secrets or deployment steps.
 
 ### Testing Requirements
 - Confirm edited workflow commands exist in `package.json`.

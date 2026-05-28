@@ -4,7 +4,7 @@ A small library that wraps AI agent tool calls with policy checks,
 fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 """
 
-from gove_zone.audit import GENESIS_HASH, ChainHashAuditStore
+from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
     injecagent_scenarios_from_fixture,
@@ -81,6 +81,7 @@ __version__ = "0.1.0.dev0"
 __all__ = [
     "GENESIS_HASH",
     "AllowAllPolicy",
+    "AuditChainError",
     "AuditError",
     "BoundaryPolicy",
     "ChainHashAuditStore",

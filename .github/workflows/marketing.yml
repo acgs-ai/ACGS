@@ -19,14 +19,16 @@ name: marketing
 on:
   pull_request:
     branches: [master]
-    paths-ignore:
-      - 'acgi-ai/infra/**'
-      - '.github/workflows/console.yml'
+    paths:
+      - 'acgi-ai/**'
+      - '!acgi-ai/infra/**'
+      - '!acgi-ai/DEPLOY.md'
   push:
     branches: [master]
-    paths-ignore:
-      - 'acgi-ai/infra/**'
-      - '.github/workflows/console.yml'
+    paths:
+      - 'acgi-ai/**'
+      - '!acgi-ai/infra/**'
+      - '!acgi-ai/DEPLOY.md'
 
 concurrency:
   group: marketing-${{ github.ref }}

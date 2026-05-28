@@ -101,6 +101,10 @@ credentials/
 !/.claude/settings.json
 !/.claude/hooks/
 !/.claude/hooks/**
+!/.claude/skills/
+!/.claude/skills/**
+!/.claude/agents/
+!/.claude/agents/**
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on

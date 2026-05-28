@@ -22,6 +22,7 @@ from typing import Any
 from ._io import (
     _append_jsonl,
     _constitution_hash_or_missing,
+    _evidence_lock,
     _last_audit_hash,
     _load_constitution,
     _next_receipt_index,
@@ -117,36 +118,52 @@ class GovernedMCPServer:
         normalized_args_hash: str | None = None,
         constitution_hash: str | None = None,
     ) -> AdmissionDecision:
+        """Persist one decision receipt and audit event, failing closed on IO errors.
+
+        The receipt index, previous audit hash, receipt write, and audit append
+        are serialized under one sidecar evidence lock. Receipt creation is
+        exclusive; if a receipt path already exists, no audit event is appended
+        and storage fails closed as a corruption signal. Audit append failures
+        after receipt creation are raised to the caller and never swallowed.
+        """
         normalized_args_hash = normalized_args_hash or sha256_json(args)
         constitution_hash = constitution_hash or _constitution_hash_or_missing(self.targets)
-        index = _next_receipt_index(self.targets.audit_path)
-        receipt_path = self.targets.receipts_dir / f"{index:04d}-{action_id.replace('.', '-')}.json"
-        receipt_core = {
-            "action_id": action_id,
-            "tool_name": tool_name,
-            "normalized_args_hash": normalized_args_hash,
-            "normalized_args": args,
-            "policy_ids": policy_ids,
-            "decision": decision,
-            "reason": reason,
-            "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "constitution_hash": constitution_hash,
-        }
-        previous_hash = _last_audit_hash(self.targets.audit_path)
-        audit_core = {
-            "action_id": action_id,
-            "tool_name": tool_name,
-            "receipt_path": str(receipt_path.relative_to(self.targets.evidence_dir)),
-            "receipt_hash": sha256_json(receipt_core),
-            "decision": decision,
-            "previous_hash": previous_hash,
-        }
-        event_hash = sha256_json(audit_core)
-        receipt = {**receipt_core, "event_hash": event_hash}
-        audit_event = {**audit_core, "event_hash": event_hash}
         try:
-            _write_json(receipt_path, receipt)
-            _append_jsonl(self.targets.audit_path, audit_event)
+            with _evidence_lock(self.targets.audit_path):
+                index = _next_receipt_index(self.targets.receipts_dir, self.targets.audit_path)
+                receipt_path = self.targets.receipts_dir / f"{index:04d}-{action_id.replace('.', '-')}.json"
+                receipt_core = {
+                    "action_id": action_id,
+                    "tool_name": tool_name,
+                    "normalized_args_hash": normalized_args_hash,
+                    "normalized_args": args,
+                    "policy_ids": policy_ids,
+                    "decision": decision,
+                    "reason": reason,
+                    "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "constitution_hash": constitution_hash,
+                }
+                previous_hash = _last_audit_hash(self.targets.audit_path)
+                audit_core = {
+                    "action_id": action_id,
+                    "tool_name": tool_name,
+                    "receipt_path": str(receipt_path.relative_to(self.targets.evidence_dir)),
+                    "receipt_hash": sha256_json(receipt_core),
+                    "decision": decision,
+                    "previous_hash": previous_hash,
+                }
+                event_hash = sha256_json(audit_core)
+                receipt = {**receipt_core, "event_hash": event_hash}
+                audit_event = {**audit_core, "event_hash": event_hash}
+                try:
+                    _write_json(receipt_path, receipt, exclusive=True)
+                except FileExistsError as exc:
+                    raise GovernanceStorageError(
+                        f"fail closed: receipt already exists at {receipt_path}; audit event was not written"
+                    ) from exc
+                _append_jsonl(self.targets.audit_path, audit_event)
+        except GovernanceStorageError:
+            raise
         except Exception as exc:  # pragma: no cover - covered through failure mode helpers if platform permits.
             raise GovernanceStorageError(f"fail closed while persisting governance evidence: {exc}") from exc
         return AdmissionDecision(receipt_path=receipt_path, **receipt)

@@ -4,12 +4,85 @@ import fcntl
 import json
 import os
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from governance.models import AuthorizationTrace, AuthorizationTraceIntegrityError, DecisionRecord, sha256_json
 
 GENESIS_HASH = "0" * 64
+
+# Filesystems where fcntl LOCK_EX is silently advisory across hosts or
+# where lock state is not coherent with the data plane. The chain-hash
+# audit store relies on LOCK_EX for serialization and on the tail-scan
+# observing committed bytes from peers; both guarantees break on these
+# mounts, so we refuse to open the store rather than silently corrupt.
+_UNRELIABLE_FS: frozenset[str] = frozenset(
+    {"nfs", "nfs3", "nfs4", "smb", "smb2", "smb3", "cifs", "fuse", "glusterfs", "ceph", "cephfs"}
+)
+
+
+class UnsafeAuditStorageError(RuntimeError):
+    """Raised when the audit store path resolves to a filesystem whose
+    fcntl LOCK_EX semantics are unreliable (NFS, CIFS, FUSE-overlay,
+    Gluster, Ceph). Closes design test #15.
+    """
+
+
+def _detect_fs_type(path: Path) -> str | None:
+    """Best-effort lookup of the filesystem type backing ``path``.
+
+    Linux-only: parses ``/proc/self/mounts`` and picks the longest mount
+    point that is a prefix of the resolved path. Returns ``None`` when
+    the lookup is unavailable (non-Linux host, /proc not mounted, file
+    unreadable) so the guard defaults to permissive on platforms whose
+    fcntl semantics we cannot probe from userspace.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    try:
+        with open("/proc/self/mounts", encoding="utf-8") as fh:
+            entries = fh.readlines()
+    except OSError:
+        return None
+    best_match: tuple[int, str] | None = None
+    for line in entries:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mount_point, fs_type = parts[1], parts[2]
+        try:
+            mp = Path(mount_point)
+        except ValueError:
+            continue
+        try:
+            resolved.relative_to(mp)
+        except ValueError:
+            continue
+        depth = len(mp.parts)
+        if best_match is None or depth > best_match[0]:
+            best_match = (depth, fs_type)
+    return best_match[1] if best_match is not None else None
+
+
+def _refuse_unreliable_fs(path: Path) -> None:
+    fs_type = _detect_fs_type(path)
+    if fs_type is not None and fs_type.lower() in _UNRELIABLE_FS:
+        raise UnsafeAuditStorageError(
+            f"audit store path {path} resides on '{fs_type}', whose fcntl LOCK_EX "
+            "semantics are unreliable; use a local filesystem (ext4, xfs, btrfs, apfs)"
+        )
+
+
+class NonceReplayError(ValueError):
+    """Raised when (trace_id, session_nonce) was already consumed by a prior
+    audit-chain commit. See docs/design/phase2-trace-crypto.md §verifier flow.
+    The pair is single-use the instant its DecisionRecord is appended; any
+    subsequent commit attempt with the same pair fails closed — regardless
+    of whether the prior commit was made by this process or another.
+    """
 
 
 def extract_trace(event_dict: dict[str, Any]) -> AuthorizationTrace | None:
@@ -57,12 +130,23 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        _refuse_unreliable_fs(self.path.parent)
+        # Phase 2 nonce index: (trace_id, session_nonce) pairs already
+        # observed on disk, plus the byte offset up to which the chain
+        # has been merged. The in-memory index is a fast-path cache;
+        # the in-lock tail-scan from this offset is what guarantees a
+        # second process cannot replay a nonce committed by the first
+        # while this process held no lock. See design §verifier flow.
+        self._nonce_index: set[tuple[str, str]] = set()
+        self._index_offset: int = 0
 
     def append(
         self,
         decision: DecisionRecord,
         authorization_trace: AuthorizationTrace | None = None,
     ) -> dict[str, Any]:
+        if not decision.allow and decision.nonce_consumed is not None:
+            decision = replace(decision, nonce_consumed=None)
         trace_payload = authorization_trace.to_dict() if authorization_trace is not None else None
         # Serialize read-then-write under an exclusive lock so concurrent
         # callers do not produce sibling events pointing at the same
@@ -72,6 +156,25 @@ class ChainHashAuditStore:
         with lock_path.open("a+") as lock_fh:
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
             try:
+                # Phase 2: merge any events appended by other processes
+                # between our last touch and now, BEFORE the nonce check.
+                self._merge_tail_into_index()
+
+                new_nonce_key: tuple[str, str] | None = None
+                if decision.nonce_consumed is not None:
+                    consumed = decision.nonce_consumed
+                    if (
+                        not isinstance(consumed, dict)
+                        or not consumed.get("trace_id")
+                        or not consumed.get("session_nonce")
+                    ):
+                        raise ValueError(
+                            "DecisionRecord.nonce_consumed must contain non-empty trace_id and session_nonce"
+                        )
+                    new_nonce_key = (consumed["trace_id"], consumed["session_nonce"])
+                    if new_nonce_key in self._nonce_index:
+                        raise NonceReplayError(f"session_nonce already consumed for trace_id={consumed['trace_id']!r}")
+
                 previous_hash = self._read_last_hash_from_disk()
                 payload = decision.to_dict()
                 payload["previous_hash"] = previous_hash
@@ -86,9 +189,63 @@ class ChainHashAuditStore:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
+                    # Re-anchor _index_offset to true EOF rather than
+                    # incrementing by len(line). If any partial trailing
+                    # bytes existed before this append (legacy data,
+                    # prior-process crash), incrementing would drift
+                    # the offset off real EOF and the next merge would
+                    # mis-frame. tell() in append mode returns EOF.
+                    new_offset = fh.tell()
+
+                if new_nonce_key is not None:
+                    self._nonce_index.add(new_nonce_key)
+                self._index_offset = new_offset
             finally:
                 fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
         return payload
+
+    def _merge_tail_into_index(self) -> None:
+        """Read events appended since the last merge and absorb their
+        nonces into the in-memory index. MUST be called while holding
+        LOCK_EX so partial writes by other processes are impossible.
+        Only complete lines (ending in newline) are absorbed; a partial
+        trailing record leaves the offset where it is so the next call
+        re-reads it once it's complete.
+        """
+        if not self.path.exists():
+            return
+        with self.path.open("rb") as fh:
+            fh.seek(self._index_offset)
+            chunk = fh.read()
+        if not chunk:
+            return
+        last_nl = chunk.rfind(b"\n")
+        if last_nl == -1:
+            return
+        complete = chunk[: last_nl + 1]
+        for raw in complete.splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                # Complete lines (we already trimmed past the last \n)
+                # that are not valid JSON are not partial-write artifacts —
+                # they are integrity violations. Fail closed rather than
+                # silently skipping, so a corrupt middle line cannot let
+                # a duplicate nonce slip through the in-memory replay
+                # check on its second observation.
+                raise AuthorizationTraceIntegrityError(
+                    f"audit chain contains malformed JSON line at offset >= {self._index_offset}"
+                ) from exc
+            consumed = event.get("nonce_consumed") if isinstance(event, dict) else None
+            if isinstance(consumed, dict):
+                trace_id = consumed.get("trace_id")
+                session_nonce = consumed.get("session_nonce")
+                if isinstance(trace_id, str) and trace_id and isinstance(session_nonce, str) and session_nonce:
+                    self._nonce_index.add((trace_id, session_nonce))
+        self._index_offset += len(complete)
 
     def last_hash(self) -> str:
         return self._read_last_hash_from_disk()

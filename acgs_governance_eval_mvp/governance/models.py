@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Literal
+from datetime import UTC, datetime, timezone
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from governance.crypto.principal_keys import PrincipalKeyStore
 
 # 5-state decision domain. Today only "allow" and "deny" are produced by the
 # runtime; "require_human", "rewrite", and "redact" are reserved for
@@ -149,11 +153,22 @@ class DecisionRecord:
     policy_bundle_hash: str = ""
     role_bundle_hash: str = ""
     decision_schema_version: str = DECISION_SCHEMA_VERSION
+    # Phase 2: embedded nonce tombstone. When set, the audit event for
+    # this DecisionRecord burns (trace_id, session_nonce) — a successful
+    # allow-path commit consumes the nonce that the AuthorizationTrace's
+    # action_binding issued. See docs/design/phase2-trace-crypto.md
+    # §nonce-store contract. Covered by event_hash because asdict()
+    # serializes it inside to_dict().
+    nonce_consumed: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["checks"] = [check.to_dict() if isinstance(check, GateResult) else check for check in self.checks]
         data["request"] = self.request.to_dict() if isinstance(self.request, ActionRequest) else self.request
+        if self.nonce_consumed is None:
+            data.pop("nonce_consumed", None)
+        else:
+            data["nonce_consumed"] = dict(self.nonce_consumed)
         return data
 
     def canonical_payload_for_hash(self) -> dict[str, Any]:
@@ -174,6 +189,50 @@ class AuthorizationTraceIntegrityError(ValueError):
     """Raised when an authorization trace fails receipt or hash validation."""
 
 
+class LegacyUnsignedTraceError(AuthorizationTraceIntegrityError):
+    """Raised by from_dict when the wire payload is Phase-1-shaped.
+
+    Phase 2 requires per-hop delegation signatures + action_binding +
+    hop_signatures_version. A payload that lacks them entirely is a
+    legacy unsigned trace; we reject it explicitly so callers can
+    discriminate "untrusted wire" from "Phase 2 with a forged sig".
+    """
+
+
+# Phase 2 hop signed-payload schema version. Tracks the
+# DOMAIN_TAG_HOP byte tag in governance.crypto.hop_signature.
+HOP_SIGNATURES_VERSION = "phase2-hop-v2"
+
+# Required Phase 2 fields on every principal_chain wire entry.
+_PHASE2_HOP_REQUIRED = (
+    "principal_id",
+    "role",
+    "tenant",
+    "delegated_at",
+    "delegation_evidence_hash",
+    "delegator_id",
+    "signing_key_id",
+    "signature",
+    "not_after",
+)
+
+# action_binding required keys, see docs/design/phase2-trace-crypto.md
+# §action binding v2.
+_ACTION_BINDING_REQUIRED = (
+    "action_type",
+    "tenant",
+    "actor_id",
+    "resource",
+    "inputs_hash",
+    "workflow_id",
+    "policy_version",
+    "role_version",
+    "session_nonce",
+)
+
+_ORCHESTRATOR_ROOT_PRINCIPAL = "orchestrator-root"
+
+
 @dataclass(frozen=True)
 class AuthorizationTrace:
     trace_id: str
@@ -181,6 +240,8 @@ class AuthorizationTrace:
     parent_workflow_id: str | None
     principal_chain: tuple[dict[str, str], ...]
     evaluation_policy: EvaluationPolicy
+    action_binding: dict[str, str]
+    hop_signatures_version: str = HOP_SIGNATURES_VERSION
     schema_version: str = AUTHORIZATION_TRACE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -196,18 +257,55 @@ class AuthorizationTrace:
             raise ValueError("AuthorizationTrace.parent_workflow_id must be non-empty or None")
         if not self.principal_chain:
             raise ValueError("AuthorizationTrace.principal_chain must not be empty")
+        if self.hop_signatures_version != HOP_SIGNATURES_VERSION:
+            raise ValueError(f"AuthorizationTrace.hop_signatures_version must be {HOP_SIGNATURES_VERSION!r}")
+
+        if not isinstance(self.action_binding, dict):
+            raise ValueError("AuthorizationTrace.action_binding must be a dict")
+        missing_ab = [k for k in _ACTION_BINDING_REQUIRED if k not in self.action_binding]
+        if missing_ab:
+            raise ValueError(f"AuthorizationTrace.action_binding missing required fields: {missing_ab}")
+        normalized_ab: dict[str, str] = {}
+        for key in _ACTION_BINDING_REQUIRED:
+            value = self.action_binding[key]
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"AuthorizationTrace.action_binding[{key!r}] must be a non-empty string")
+            normalized_ab[key] = value
+        object.__setattr__(self, "action_binding", normalized_ab)
 
         normalized: list[dict[str, str]] = []
-        required = ("principal_id", "role", "tenant", "delegated_at", "delegation_evidence_hash")
         for entry in self.principal_chain:
-            item = {key: str(entry[key]) for key in required}
-            if any(not item[key] for key in required):
+            item = {key: str(entry[key]) for key in _PHASE2_HOP_REQUIRED}
+            if any(not item[key] for key in _PHASE2_HOP_REQUIRED):
                 raise ValueError("AuthorizationTrace.principal_chain entries must be non-empty")
             normalized.append(item)
         object.__setattr__(self, "principal_chain", tuple(normalized))
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AuthorizationTrace:
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        key_store: PrincipalKeyStore | None = None,
+        now: datetime | None = None,
+    ) -> AuthorizationTrace:
+        """Parse + validate a wire-format authorization trace.
+
+        When ``key_store`` is provided, every hop is verified against its
+        resolved :class:`KeyEntry` (Ed25519 signature, identity binding,
+        tenant binding, purpose, validity window, revocation, expiry,
+        TTL bound — see ``governance.crypto.hop_verify``).
+
+        When ``key_store`` is ``None``, signature bytes are not verified
+        against any key, but the wire payload MUST still carry the
+        Phase 2 fields (per-hop signature/signing_key_id/delegator_id/
+        not_after, action_binding, hop_signatures_version). A Phase 1
+        unsigned payload raises :class:`LegacyUnsignedTraceError`.
+        Because ``receipt.trace_hash`` covers the signature bytes,
+        tamper detection still survives the no-key-store call path —
+        this is the contract the chain-replay (``ChainHashAuditStore``)
+        relies on.
+        """
         workflow_scope = data.get("workflow_scope")
         receipt = data.get("receipt")
         if not isinstance(workflow_scope, dict) or not isinstance(receipt, dict):
@@ -216,6 +314,8 @@ class AuthorizationTrace:
         workflow_id = workflow_scope.get("workflow_id")
         parent_workflow_id = workflow_scope.get("parent_workflow_id")
         principal_chain = workflow_scope.get("principal_chain")
+        action_binding = workflow_scope.get("action_binding")
+        hop_signatures_version = workflow_scope.get("hop_signatures_version")
         trace_id = receipt.get("trace_id")
         schema_version = receipt.get("schema_version", AUTHORIZATION_TRACE_SCHEMA_VERSION)
         persisted_trace_hash = receipt.get("trace_hash")
@@ -225,17 +325,137 @@ class AuthorizationTrace:
         if not isinstance(principal_chain, list | tuple):
             raise ValueError("AuthorizationTrace.principal_chain must be a list")
 
+        # Phase 2 field presence check — distinguishes legacy unsigned
+        # traces (Phase 1 shape) from Phase 2 wire payloads. We treat
+        # the absence of action_binding + per-hop signature as the
+        # canonical legacy signal.
+        if action_binding is None and hop_signatures_version is None:
+            chain_lacks_sigs = all(isinstance(entry, dict) and "signature" not in entry for entry in principal_chain)
+            if chain_lacks_sigs:
+                raise LegacyUnsignedTraceError(
+                    "AuthorizationTrace wire payload is Phase 1 unsigned shape; "
+                    "Phase 2 requires per-hop signatures, action_binding, and "
+                    "hop_signatures_version"
+                )
+
+        if action_binding is None:
+            raise AuthorizationTraceIntegrityError("AuthorizationTrace.workflow_scope.action_binding is required")
+        if hop_signatures_version is None:
+            raise AuthorizationTraceIntegrityError(
+                "AuthorizationTrace.workflow_scope.hop_signatures_version is required"
+            )
+
         trace = cls(
             trace_id=str(trace_id),
             workflow_id=str(workflow_id),
             parent_workflow_id=None if parent_workflow_id is None else str(parent_workflow_id),
             principal_chain=tuple(dict(item) for item in principal_chain),
             evaluation_policy=data["evaluation_policy"],
+            action_binding=dict(action_binding),
+            hop_signatures_version=str(hop_signatures_version),
             schema_version=str(schema_version),
         )
         if str(persisted_trace_hash) != trace.trace_hash():
             raise AuthorizationTraceIntegrityError("AuthorizationTrace.receipt.trace_hash does not match trace payload")
+
+        # Chain continuity invariants (apply regardless of key_store).
+        seen_principals: set[str] = set()
+        seen_hop_indices: set[int] = set()
+        for index, entry in enumerate(trace.principal_chain):
+            delegator_id = entry["delegator_id"]
+            if index == 0:
+                if delegator_id != _ORCHESTRATOR_ROOT_PRINCIPAL:
+                    raise AuthorizationTraceIntegrityError(
+                        f"AuthorizationTrace.principal_chain[0].delegator_id must be "
+                        f"{_ORCHESTRATOR_ROOT_PRINCIPAL!r}, got {delegator_id!r}"
+                    )
+            else:
+                prev_principal = trace.principal_chain[index - 1]["principal_id"]
+                if delegator_id != prev_principal:
+                    raise AuthorizationTraceIntegrityError(
+                        f"AuthorizationTrace.principal_chain[{index}].delegator_id "
+                        f"{delegator_id!r} does not match prior hop's principal_id "
+                        f"{prev_principal!r}"
+                    )
+            if entry["principal_id"] in seen_principals:
+                raise AuthorizationTraceIntegrityError(
+                    f"AuthorizationTrace.principal_chain contains duplicate principal_id {entry['principal_id']!r}"
+                )
+            seen_principals.add(entry["principal_id"])
+            if index in seen_hop_indices:
+                raise AuthorizationTraceIntegrityError(
+                    f"AuthorizationTrace.principal_chain has duplicate hop_index {index}"
+                )
+            seen_hop_indices.add(index)
+
+        if key_store is not None:
+            trace._verify_signatures(key_store=key_store, now=now)
+
         return trace
+
+    def _verify_signatures(
+        self,
+        *,
+        key_store: PrincipalKeyStore,
+        now: datetime | None = None,
+    ) -> None:
+        """Verify every hop's Ed25519 signature against its KeyEntry.
+
+        Wraps the lower-level :mod:`governance.crypto.hop_verify` errors
+        into :class:`AuthorizationTraceIntegrityError` so callers have a
+        single exception type to catch.
+        """
+        # Local imports keep the crypto deps optional at import time —
+        # only loaded when a key_store is provided.
+        from governance.crypto.canonical import CanonicalizationError
+        from governance.crypto.hop_verify import (
+            HopVerificationError,
+            verify_hop_against_entry,
+        )
+        from governance.crypto.principal_keys import UnknownSigningKeyError
+
+        for index, entry in enumerate(self.principal_chain):
+            hop_payload = self._hop_signed_payload(index, entry)
+            try:
+                signature = base64.urlsafe_b64decode(_pad_b64(entry["signature"]))
+            except (ValueError, base64.binascii.Error) as exc:
+                raise AuthorizationTraceIntegrityError(f"hop {index} signature is not valid base64url") from exc
+            try:
+                key_entry = key_store.get(entry["signing_key_id"])
+            except UnknownSigningKeyError as exc:
+                raise AuthorizationTraceIntegrityError(
+                    f"hop {index} references unknown signing_key_id {entry['signing_key_id']!r}"
+                ) from exc
+            try:
+                verify_hop_against_entry(hop_payload, signature, key_entry, now=now)
+            except CanonicalizationError as exc:
+                raise AuthorizationTraceIntegrityError(f"hop {index} contains non-canonicalizable payload") from exc
+            except HopVerificationError as exc:
+                raise AuthorizationTraceIntegrityError(f"hop {index} signature verification failed: {exc}") from exc
+
+    def _hop_signed_payload(self, index: int, entry: dict[str, str]) -> dict[str, Any]:
+        """Reconstruct the canonical hop_payload that was signed.
+
+        See docs/design/phase2-trace-crypto.md §per-hop signed payload (v2).
+        """
+        return {
+            "alg": "Ed25519",
+            "key_version": 1,
+            "schema_version": HOP_SIGNATURES_VERSION,
+            "trace_id": self.trace_id,
+            "parent_workflow_id": self.parent_workflow_id,
+            "workflow_id": self.workflow_id,
+            "evaluation_policy": self.evaluation_policy,
+            "hop_index": index,
+            "delegator_id": entry["delegator_id"],
+            "delegatee_id": entry["principal_id"],
+            "role": entry["role"],
+            "tenant": entry["tenant"],
+            "delegated_at": entry["delegated_at"],
+            "not_after": entry["not_after"],
+            "delegation_evidence_hash": entry["delegation_evidence_hash"],
+            "action_binding": dict(self.action_binding),
+        }
 
     @property
     def trace_hash_value(self) -> str:
@@ -247,6 +467,8 @@ class AuthorizationTrace:
                 "workflow_id": self.workflow_id,
                 "parent_workflow_id": self.parent_workflow_id,
                 "principal_chain": [dict(entry) for entry in self.principal_chain],
+                "action_binding": dict(self.action_binding),
+                "hop_signatures_version": self.hop_signatures_version,
             },
             "evaluation_policy": self.evaluation_policy,
             "receipt": {
@@ -270,6 +492,12 @@ class AuthorizationTrace:
 
     def trace_hash(self) -> str:
         return sha256_json(self.payload_for_hash())
+
+
+def _pad_b64(value: str) -> str:
+    """Restore base64url padding (urlsafe_b64decode requires it)."""
+    padding = (-len(value)) % 4
+    return value + ("=" * padding)
 
 
 @dataclass(frozen=True)

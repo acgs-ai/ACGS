@@ -46,6 +46,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 strict = true
 python_version = "3.11"
+files = ["src/gove_zone"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
