@@ -22,3 +22,6 @@
 [submodule "external/openswarm"]
 	path = external/openswarm
 	url = https://github.com/VRSEN/OpenSwarm.git
+[submodule "packages/ca-legal-agent-skills"]
+	path = packages/ca-legal-agent-skills
+	url = https://github.com/dislovelhl/ca-legal-agent-skills.git

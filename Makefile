@@ -21,6 +21,7 @@ PYTHON_PACKAGES := \
 	packages/clinicalguard \
 	packages/agent-bus-analyzer \
 	packages/gove-zone \
+	packages/ca-legal-agent-skills \
 	acgs_governance_eval_mvp \
 	acgs-cft-governance-pack
 
@@ -82,15 +83,15 @@ build-py:
 test-py:
 	@set -e; \
 	$(MAKE) -C packages/acgs-lite test; \
-	for pkg in packages/Acgs-Swarm packages/clinicalguard packages/agent-bus-analyzer packages/gove-zone acgs_governance_eval_mvp acgs-cft-governance-pack; do \
+	for pkg in packages/Acgs-Swarm packages/clinicalguard packages/agent-bus-analyzer packages/gove-zone packages/ca-legal-agent-skills acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
 	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks; \
-	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks; \
+	$(UV) run ruff check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks packages/ca-legal-agent-skills/runtime; \
+	$(UV) run ruff format --check acgs_governance_eval_mvp acgs-cft-governance-pack packages/agent-bus-analyzer/src packages/agent-bus-analyzer/tests packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/benchmarks packages/ca-legal-agent-skills/runtime; \
 	$(MAKE) -C packages/acgs-lite lint; \
 	(cd packages/Acgs-Swarm && $(UV) run ruff check src/ && $(UV) run ruff format --check src/); \
 	(cd packages/clinicalguard && $(UV) run ruff check . && $(UV) run ruff format --check .)
