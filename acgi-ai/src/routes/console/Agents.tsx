@@ -1,12 +1,20 @@
 import { useState } from 'react'
 import { useAgents } from '../../api/hooks'
 import type { Agent } from '../../api/types'
-import { ConsoleError, ConsoleLoading, EmptyState, SearchToolbar, useTextFilter } from './shared'
+import {
+  CONSTITUTION_HASH,
+  ConsoleError,
+  ConsoleLoading,
+  EmptyState,
+  SearchToolbar,
+  useTextFilter,
+} from './shared'
 
 const agentFields = (a: Agent) => [a.id, a.name, a.role, a.lane, a.model, a.health, a.lastSeen]
 
 export function Agents() {
   const [query, setQuery] = useState('')
+  const [view, setView] = useState<'board' | 'table'>('board')
   const { data, isLoading, isError, refetch, isFetching } = useAgents()
   const filtered = useTextFilter(data, query, agentFields)
 
@@ -19,7 +27,58 @@ export function Agents() {
   }
 
   const total = data.length
-  const meta = `${filtered.length} of ${total} · ${isFetching ? 'refreshing' : 'live'} · 608508a9bd224290`
+
+  const meta = (
+    <span className="toolbar-meta-wrapper">
+      <span className="btn-group">
+        <button
+          type="button"
+          className={`btn ${view === 'board' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setView('board')}
+        >
+          Board
+        </button>
+        <button
+          type="button"
+          className={`btn ${view === 'table' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setView('table')}
+        >
+          Table
+        </button>
+      </span>
+      <span>
+        {filtered.length} of {total} · {isFetching ? 'refreshing' : 'live'} · {CONSTITUTION_HASH}
+      </span>
+    </span>
+  )
+
+  const renderAgentCard = (a: Agent) => (
+    <article className="agent-card" key={a.id}>
+      <div className="agent-card-head">
+        <h4>{a.name}</h4>
+        <span className={`pill ${a.health}`}>
+          {a.health === 'privileged' ? 'Privileged' : a.health}
+        </span>
+      </div>
+      <div className="agent-card-meta">
+        {a.id} · {a.model}
+      </div>
+      <div className="agent-card-body">
+        <strong>Role:</strong> {a.role}
+        <br />
+        <strong>Refusals (24h):</strong> {a.refusals24h.toLocaleString()}
+      </div>
+      <div className="agent-card-foot">
+        <span className="last-seen">Seen: {a.lastSeen}</span>
+        <span className="u-mono-cap-accent">active ›</span>
+      </div>
+    </article>
+  )
+
+  const proposers = filtered.filter((a) => a.lane === 'Proposer')
+  const validators = filtered.filter((a) => a.lane === 'Validator')
+  const executors = filtered.filter((a) => a.lane === 'Executor')
+  const custodians = filtered.filter((a) => a.lane === 'Custodian')
 
   return (
     <div>
@@ -33,6 +92,37 @@ export function Agents() {
 
       {filtered.length === 0 ? (
         <EmptyState query={query} label="agents" onClear={() => setQuery('')} />
+      ) : view === 'board' ? (
+        <div className="agent-board">
+          <div className="agent-lane">
+            <div className="agent-lane-head">
+              <span>Proposer</span>
+              <span>{proposers.length}</span>
+            </div>
+            {proposers.map(renderAgentCard)}
+          </div>
+          <div className="agent-lane">
+            <div className="agent-lane-head">
+              <span>Validator</span>
+              <span>{validators.length}</span>
+            </div>
+            {validators.map(renderAgentCard)}
+          </div>
+          <div className="agent-lane">
+            <div className="agent-lane-head">
+              <span>Executor</span>
+              <span>{executors.length}</span>
+            </div>
+            {executors.map(renderAgentCard)}
+          </div>
+          <div className="agent-lane">
+            <div className="agent-lane-head">
+              <span>Custodian</span>
+              <span>{custodians.length}</span>
+            </div>
+            {custodians.map(renderAgentCard)}
+          </div>
+        </div>
       ) : (
         <table className="c-table">
           <thead>

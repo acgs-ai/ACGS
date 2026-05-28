@@ -121,4 +121,14 @@ export const AGENTS: Agent[] = [
     health: 'confirmed',
     lastSeen: '14:09:10',
   },
+  {
+    id: 'A-13',
+    name: 'ca-legal-01',
+    role: 'Canadian legal AI agent',
+    lane: 'Executor',
+    model: 'sonnet 4.6',
+    refusals24h: 0,
+    health: 'confirmed',
+    lastSeen: '14:09:12',
+  },
 ]

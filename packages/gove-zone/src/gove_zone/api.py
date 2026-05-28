@@ -214,7 +214,17 @@ def handle_api_request(
                 "refusals24h": 1,
                 "health": "confirmed",
                 "lastSeen": "now",
-            }
+            },
+            {
+                "id": "ca-legal-01",
+                "name": "ca-legal-01",
+                "role": "Canadian legal AI agent",
+                "lane": "Executor",
+                "model": "sonnet 4.6",
+                "refusals24h": 0,
+                "health": "confirmed",
+                "lastSeen": "now",
+            },
         ]
     if method == "GET" and path == "/api/v1/overview":
         return 200, {
