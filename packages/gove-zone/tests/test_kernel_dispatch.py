@@ -16,6 +16,7 @@ function directly — that's the wiring proof per the review-handler-wiring rule
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,7 +31,7 @@ from gove_zone import (
 )
 
 
-def _kernel(tmp_path: Path, policy_obj) -> Kernel:
+def _kernel(tmp_path: Path, policy_obj: Any) -> Kernel:
     return Kernel(
         policy=policy_obj,
         audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),

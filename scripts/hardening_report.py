@@ -17,6 +17,7 @@ Usage:
     python scripts/hardening_report.py            # write report
     python scripts/hardening_report.py --print    # stdout only, no file
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,6 +74,7 @@ class DrillRecord:
 # Drills
 # ---------------------------------------------------------------------------
 
+
 def drill_drift_detection(repo_root: Path) -> DrillRecord:
     """Inject a marker into a temp file inside a synthetic git tree and
     confirm the verifier detects the resulting added/changed marker."""
@@ -98,18 +100,23 @@ def drill_drift_detection(repo_root: Path) -> DrillRecord:
         # Pin an empty baseline lock.
         result = subprocess.run(
             [sys.executable, str(script_dst), "--update"],
-            cwd=td_path, capture_output=True, text=True,
+            cwd=td_path,
+            capture_output=True,
+            text=True,
         )
         events.append({"step": "baseline_pin", "exit": result.returncode})
         if result.returncode != 0:
-            return DrillRecord("drift-detection", drill_id, "failed",
-                               started, dt.datetime.now(dt.UTC).isoformat(),
-                               [*events, {"step": "abort", "reason": result.stderr}])
+            return DrillRecord(
+                "drift-detection",
+                drill_id,
+                "failed",
+                started,
+                dt.datetime.now(dt.UTC).isoformat(),
+                [*events, {"step": "abort", "reason": result.stderr}],
+            )
 
         # Inject a synthetic marker.
-        (td_path / "policy.py").write_text(
-            "# Constitutional Hash: deadbeefcafebabe\nPOLICY = 1\n"
-        )
+        (td_path / "policy.py").write_text("# Constitutional Hash: deadbeefcafebabe\nPOLICY = 1\n")
         subprocess.run(["git", "add", "policy.py"], cwd=td_path, check=True)
         subprocess.run(["git", "commit", "-qm", "drift"], cwd=td_path, check=True)
         events.append({"step": "inject_marker", "file": "policy.py", "hash": "deadbeefcafebabe"})
@@ -117,24 +124,29 @@ def drill_drift_detection(repo_root: Path) -> DrillRecord:
         # Verifier must now fail with exit 1 and report ADDED.
         result = subprocess.run(
             [sys.executable, str(script_dst)],
-            cwd=td_path, capture_output=True, text=True,
+            cwd=td_path,
+            capture_output=True,
+            text=True,
         )
-        events.append({
-            "step": "verify_after_drift",
-            "exit": result.returncode,
-            "stdout_contains_ADDED": "ADDED" in result.stdout,
-        })
+        events.append(
+            {
+                "step": "verify_after_drift",
+                "exit": result.returncode,
+                "stdout_contains_ADDED": "ADDED" in result.stdout,
+            }
+        )
         passed = (
-            result.returncode == 1
-            and "ADDED" in result.stdout
-            and "policy.py" in result.stdout
+            result.returncode == 1 and "ADDED" in result.stdout and "policy.py" in result.stdout
         )
 
     finished = dt.datetime.now(dt.UTC).isoformat()
     return DrillRecord(
-        "drift-detection", drill_id,
+        "drift-detection",
+        drill_id,
         "passed" if passed else "failed",
-        started, finished, events,
+        started,
+        finished,
+        events,
     )
 
 
@@ -157,20 +169,25 @@ def drill_workflow_schema(repo_root: Path) -> DrillRecord:
         has_triggers = "on" in doc or True in doc
         has_jobs = isinstance(doc.get("jobs"), dict) and len(doc["jobs"]) > 0
         ok = has_triggers and has_jobs
-        events.append({
-            "workflow": wf.name,
-            "status": "ok" if ok else "missing-keys",
-            "has_triggers": has_triggers,
-            "has_jobs": has_jobs,
-        })
+        events.append(
+            {
+                "workflow": wf.name,
+                "status": "ok" if ok else "missing-keys",
+                "has_triggers": has_triggers,
+                "has_jobs": has_jobs,
+            }
+        )
         if not ok:
             all_pass = False
 
     finished = dt.datetime.now(dt.UTC).isoformat()
     return DrillRecord(
-        "workflow-schema", drill_id,
+        "workflow-schema",
+        drill_id,
         "passed" if all_pass else "failed",
-        started, finished, events,
+        started,
+        finished,
+        events,
     )
 
 
@@ -205,21 +222,30 @@ def drill_lock_integrity(repo_root: Path) -> DrillRecord:
             or not all(c in "0123456789abcdefABCDEF" for c in h)
         ):
             bad_entries.append({"path": path, "hash": h})
-    events.append({
-        "step": "entry_validation",
-        "bad_entries": bad_entries,
-        "count": len(data.get("hashes", {})),
-    })
+    events.append(
+        {
+            "step": "entry_validation",
+            "bad_entries": bad_entries,
+            "count": len(data.get("hashes", {})),
+        }
+    )
 
     finished = dt.datetime.now(dt.UTC).isoformat()
     passed = has_key and not bad_entries
-    return DrillRecord("lock-integrity", drill_id, "passed" if passed else "failed",
-                       started, finished, events)
+    return DrillRecord(
+        "lock-integrity",
+        drill_id,
+        "passed" if passed else "failed",
+        started,
+        finished,
+        events,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Checklist (DoD § from docs/PLAN-MONOREPO.md mapped to programmatic checks)
 # ---------------------------------------------------------------------------
+
 
 def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[ChecklistItem]:
     items: list[ChecklistItem] = []
@@ -227,12 +253,14 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
     # 1. Root files resolve broken ../../CLAUDE.md references
     claude_exists = (repo_root / "CLAUDE.md").is_file()
     agents_exists = (repo_root / "AGENTS.md").is_file()
-    items.append(ChecklistItem(
-        number=1,
-        description="Root CLAUDE.md + AGENTS.md exist (resolve ../../CLAUDE.md refs)",
-        status="pass" if (claude_exists and agents_exists) else "fail",
-        evidence=f"CLAUDE.md={claude_exists}, AGENTS.md={agents_exists}",
-    ))
+    items.append(
+        ChecklistItem(
+            number=1,
+            description="Root CLAUDE.md + AGENTS.md exist (resolve ../../CLAUDE.md refs)",
+            status="pass" if (claude_exists and agents_exists) else "fail",
+            evidence=f"CLAUDE.md={claude_exists}, AGENTS.md={agents_exists}",
+        )
+    )
 
     # 2. Single build command via Make / Turbo / uv workspace
     has_makefile = (repo_root / "Makefile").is_file()
@@ -240,110 +268,145 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
     has_pnpm_ws = (repo_root / "pnpm-workspace.yaml").is_file()
     has_pyproject = (repo_root / "pyproject.toml").is_file()
     all_present = has_makefile and has_turbo and has_pnpm_ws and has_pyproject
-    items.append(ChecklistItem(
-        number=2,
-        description=(
-            "Build orchestration installed (Makefile + turbo.json + "
-            "pnpm-workspace.yaml + pyproject.toml)"
-        ),
-        status="pass" if all_present else "fail",
-        evidence=(f"Makefile={has_makefile}, turbo.json={has_turbo}, "
-                  f"pnpm-workspace.yaml={has_pnpm_ws}, pyproject.toml={has_pyproject}"),
-    ))
+    items.append(
+        ChecklistItem(
+            number=2,
+            description=(
+                "Build orchestration installed "
+                "(Makefile + turbo.json + pnpm-workspace.yaml + pyproject.toml)"
+            ),
+            status="pass" if all_present else "fail",
+            evidence=(
+                f"Makefile={has_makefile}, turbo.json={has_turbo}, "
+                f"pnpm-workspace.yaml={has_pnpm_ws}, pyproject.toml={has_pyproject}"
+            ),
+        )
+    )
 
     # 3. uv workspace member list matches plan
     try:
         import tomllib
+
         root_proj = tomllib.loads((repo_root / "pyproject.toml").read_text())
         expected = {
-            "packages/acgs-lite", "packages/Acgs-Swarm", "packages/clinicalguard",
-            "acgs_governance_eval_mvp", "acgs-cft-governance-pack",
+            "packages/acgs-lite",
+            "packages/Acgs-Swarm",
+            "packages/clinicalguard",
+            "packages/gove-zone",
+            "packages/agent-bus-analyzer",
+            "acgs_governance_eval_mvp",
+            "acgs-cft-governance-pack",
         }
         declared = set(root_proj["tool"]["uv"]["workspace"]["members"])
-        items.append(ChecklistItem(
-            number=3,
-            description="uv workspace members match plan (5 packages)",
-            status="pass" if declared == expected else "fail",
-            evidence=f"declared={sorted(declared)}",
-        ))
+        items.append(
+            ChecklistItem(
+                number=3,
+                description=(
+                    "uv workspace members match current parent Python registry (7 packages)"
+                ),
+                status="pass" if declared == expected else "fail",
+                evidence=f"declared={sorted(declared)}",
+            )
+        )
     except Exception as e:
-        items.append(ChecklistItem(
-            number=3, description="uv workspace members", status="fail",
-            evidence=f"could not parse pyproject.toml: {e}",
-        ))
+        items.append(
+            ChecklistItem(
+                number=3,
+                description="uv workspace members",
+                status="fail",
+                evidence=f"could not parse pyproject.toml: {e}",
+            )
+        )
 
     # 4. Per-package CI workflows exist
     expected_workflows = [
         # Parent-tracked Python packages
-        "python-eval-mvp.yml", "python-cft-pack.yml", "python-hermes-bundle.yml",
+        "python-eval-mvp.yml",
+        "python-cft-pack.yml",
+        "python-hermes-bundle.yml",
         # Submodule-tracked Python packages (Phase 4 remainder — needs Phase 2)
-        "python-acgs-lite.yml", "python-acgs-swarm.yml", "python-clinicalguard.yml",
+        "python-acgs-lite.yml",
+        "python-acgs-swarm.yml",
+        "python-clinicalguard.yml",
         # Cross-cutting
         "constitutional-hash.yml",
     ]
     missing = [w for w in expected_workflows if not (repo_root / ".github/workflows" / w).is_file()]
-    items.append(ChecklistItem(
-        number=4,
-        description=(
-            f"Path-filtered CI for parent-tracked surfaces "
-            f"({len(expected_workflows)} workflows)"
-        ),
-        status="pass" if not missing else "fail",
-        evidence=f"missing={missing}" if missing else "all present",
-    ))
+    items.append(
+        ChecklistItem(
+            number=4,
+            description=(
+                "Path-filtered CI for parent-tracked surfaces "
+                f"({len(expected_workflows)} workflows)"
+            ),
+            status="pass" if not missing else "fail",
+            evidence=f"missing={missing}" if missing else "all present",
+        )
+    )
 
     # 5. Existing acgi-ai workflows untouched
-    untouched = (repo_root / ".github/workflows/console.yml").is_file() and \
-                (repo_root / ".github/workflows/marketing.yml").is_file()
-    items.append(ChecklistItem(
-        number=5,
-        description="Cloud Run + Vercel workflows (console.yml + marketing.yml) preserved",
-        status="pass" if untouched else "fail",
-        evidence=f"console.yml={'present' if untouched else 'missing'}",
-    ))
+    untouched = (repo_root / ".github/workflows/console.yml").is_file() and (
+        repo_root / ".github/workflows/marketing.yml"
+    ).is_file()
+    items.append(
+        ChecklistItem(
+            number=5,
+            description="Cloud Run + Vercel workflows (console.yml + marketing.yml) preserved",
+            status="pass" if untouched else "fail",
+            evidence=f"console.yml={'present' if untouched else 'missing'}",
+        )
+    )
 
     # 6. Constitutional-hash lock exists + well-formed
     lock_drill = next((d for d in drills if d.drill_type == "lock-integrity"), None)
-    items.append(ChecklistItem(
-        number=6,
-        description="Constitutional-hash lock baseline established",
-        status="pass" if lock_drill and lock_drill.status == "passed" else "fail",
-        evidence=f"drill={lock_drill.status if lock_drill else 'not-run'}",
-    ))
+    items.append(
+        ChecklistItem(
+            number=6,
+            description="Constitutional-hash lock baseline established",
+            status="pass" if lock_drill and lock_drill.status == "passed" else "fail",
+            evidence=f"drill={lock_drill.status if lock_drill else 'not-run'}",
+        )
+    )
 
     # 7. Drift drill (live exercise of the gate)
     drift = next((d for d in drills if d.drill_type == "drift-detection"), None)
-    items.append(ChecklistItem(
-        number=7,
-        description="Drift drill: synthetic marker injection detected by verifier",
-        status="pass" if drift and drift.status == "passed" else "fail",
-        evidence=(
-            f"drill={drift.drill_id if drift else 'not-run'}, "
-            f"status={drift.status if drift else 'n/a'}"
-        ),
-    ))
+    items.append(
+        ChecklistItem(
+            number=7,
+            description="Drift drill: synthetic marker injection detected by verifier",
+            status="pass" if drift and drift.status == "passed" else "fail",
+            evidence=(
+                f"drill={drift.drill_id if drift else 'not-run'}, "
+                f"status={drift.status if drift else 'n/a'}"
+            ),
+        )
+    )
 
     # 8. Workflow schema drill
     schema = next((d for d in drills if d.drill_type == "workflow-schema"), None)
-    items.append(ChecklistItem(
-        number=8,
-        description="All workflows parse and declare on:/jobs:",
-        status="pass" if schema and schema.status == "passed" else "fail",
-        evidence=(
-            f"drill={schema.drill_id if schema else 'not-run'}, "
-            f"status={schema.status if schema else 'n/a'}"
-        ),
-    ))
+    items.append(
+        ChecklistItem(
+            number=8,
+            description="All workflows parse and declare on:/jobs:",
+            status="pass" if schema and schema.status == "passed" else "fail",
+            evidence=(
+                f"drill={schema.drill_id if schema else 'not-run'}, "
+                f"status={schema.status if schema else 'n/a'}"
+            ),
+        )
+    )
 
     # 9. Plan recorded
-    _plan_path = repo_root / "docs/PLAN-MONOREPO.md"
-    _plan_size_kb = _plan_path.stat().st_size // 1024 if _plan_path.is_file() else 0
-    items.append(ChecklistItem(
-        number=9,
-        description="docs/PLAN-MONOREPO.md exists and records the multi-phase plan",
-        status="pass" if _plan_path.is_file() else "fail",
-        evidence=f"size_kb={_plan_size_kb}",
-    ))
+    plan_path = repo_root / "docs/PLAN-MONOREPO.md"
+    plan_size_kb = plan_path.stat().st_size // 1024 if plan_path.is_file() else 0
+    items.append(
+        ChecklistItem(
+            number=9,
+            description="docs/PLAN-MONOREPO.md exists and records the multi-phase plan",
+            status="pass" if plan_path.is_file() else "fail",
+            evidence=f"size_kb={plan_size_kb}",
+        )
+    )
 
     # 10. Phase 2 — submodule registration
     gitmodules = repo_root / ".gitmodules"
@@ -353,19 +416,25 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
             for line in gitmodules.read_text().splitlines()
             if line.strip().startswith("path = ")
         ]
-        items.append(ChecklistItem(
-            number=10,
-            description="Phase 2 (submodule registration) — landed",
-            status="pass",
-            evidence=f".gitmodules present — {len(sm_lines)} submodule(s) registered",
-        ))
+        items.append(
+            ChecklistItem(
+                number=10,
+                description="Phase 2 (submodule registration) — landed",
+                status="pass",
+                evidence=f".gitmodules present — {len(sm_lines)} submodule(s) registered",
+            )
+        )
     else:
-        items.append(ChecklistItem(
-            number=10,
-            description="Phase 2 (submodule registration) — deferred",
-            status="pending",
-            evidence=".gitmodules absent — packages/* tracked as nested repos invisible to parent",
-        ))
+        items.append(
+            ChecklistItem(
+                number=10,
+                description="Phase 2 (submodule registration) — deferred",
+                status="pending",
+                evidence=(
+                    ".gitmodules absent — packages/* tracked as nested repos invisible to parent"
+                ),
+            )
+        )
 
     return items
 
@@ -373,6 +442,7 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
 # ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
+
 
 def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
     now = dt.datetime.now(dt.UTC)
@@ -426,6 +496,7 @@ def render_report(items: list[ChecklistItem], drills: list[DrillRecord]) -> str:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+
 def run_drills(repo_root: Path) -> list[DrillRecord]:
     return [
         drill_drift_detection(repo_root),
@@ -454,8 +525,9 @@ def persist_report(text: str, reports_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--print", action="store_true",
-                        help="Print to stdout only; do not write files.")
+    parser.add_argument(
+        "--print", action="store_true", help="Print to stdout only; do not write files."
+    )
     args = parser.parse_args()
 
     drills = run_drills(REPO_ROOT)

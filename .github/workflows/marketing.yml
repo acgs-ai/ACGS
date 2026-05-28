@@ -12,6 +12,7 @@
 # discovers workflows from there. The acgi-ai app is in a subdirectory, so
 # defaults.run.working-directory pins all `run:` steps there. Path filters
 # are repo-root relative.
+# not production deployment proof
 
 name: marketing
 
@@ -21,13 +22,11 @@ on:
     paths-ignore:
       - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'acgi-ai/DEPLOY.md'
   push:
     branches: [master]
     paths-ignore:
       - 'acgi-ai/infra/**'
       - '.github/workflows/console.yml'
-      - 'acgi-ai/DEPLOY.md'
 
 concurrency:
   group: marketing-${{ github.ref }}
@@ -72,6 +71,9 @@ jobs:
       - name: Build (sanity check before Vercel takes over)
         run: pnpm build
 
+      - name: Readiness gate
+        run: pnpm test:all
+
       # ---- Vercel deploy: master pushes only ----
       # Originally this pipeline did a preview deploy on PRs too. That
       # requires VERCEL_TOKEN + VERCEL_ORG_ID + VERCEL_PROJECT_ID secrets;
@@ -95,8 +97,8 @@ jobs:
           if [ "$HAVE_TOKEN" = "true" ] && [ "$HAVE_ORG" = "true" ] && [ "$HAVE_PROJECT" = "true" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Vercel deploy skipped: set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable. Lint+build above already verified the bundle compiles."
+            echo "::error::Vercel production deploy blocked: set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable."
+            exit 1
           fi
 
       - name: Install Vercel CLI

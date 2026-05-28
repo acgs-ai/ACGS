@@ -20,6 +20,9 @@
       "recommended": true,
       "style": {
         "noDescendingSpecificity": "off"
+      },
+      "a11y": {
+        "useSemanticElements": "off"
       }
     }
   },

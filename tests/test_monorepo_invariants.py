@@ -74,6 +74,7 @@ EXPECTED_UV_MEMBERS = {
     "packages/Acgs-Swarm",
     "packages/clinicalguard",
     "packages/gove-zone",
+    "packages/agent-bus-analyzer",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
 }

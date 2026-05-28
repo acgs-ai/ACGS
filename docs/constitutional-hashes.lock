@@ -189,7 +189,7 @@
     "packages/acgs-lite/tests/test_synthesis_engine.py": "608508a9bd224290",
     "packages/acgs-lite/tests/test_validate_strict_per_call.py": "608508a9bd224290",
     "packages/acgs-lite/tests/test_workflow_action.py": "608508a9bd224290",
-    "packages/acgs-lite/tests/test_workflow_compiler.py": "608508a9bd224290",
-    "specs/001-enhanced-agent-bus-analysis/acceptance/2026-05-25-acceptance.md": "a"
+    "packages/acgs-lite/tests/test_workflow_compiler.py": "608508a9bd224290"
   }
 }
+
