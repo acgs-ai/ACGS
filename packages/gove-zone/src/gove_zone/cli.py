@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from gove_zone import __version__
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
 from gove_zone.decision import Decision
@@ -514,6 +515,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gove-zone",
         description="Gove Zone runtime governance: replay, setup, doctor, gate.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="show program's version number and exit",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     replay = subparsers.add_parser(
