@@ -1,9 +1,20 @@
 # gove-zone
 
-A minimal governed agent runtime — fail-closed governance, replayable
-receipts, and a tamper-evident audit chain for AI agent tool calls.
+A minimal **governance plane** for AI-agent execution — fail-closed
+governance, verifiable Decision Receipts, and a tamper-evident audit chain that
+sit immediately before high-risk side effects.
 
-> Status: Alpha (`0.1.0.dev0`). Local proof and production-shaped foundation only. NOT production-certified and NOT compliance-certified. Do not make live production deployment claims without evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for roadmap context.
+> **Core invariant: No valid Decision Receipt, no side effect.**
+
+gove-zone is **not an agent framework**. It is the enforcement layer an agent,
+MCP tool, workflow engine, CI runner, or custom executor calls *before* it acts.
+
+> Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
+> production-shaped foundation only. **NOT** production-certified and **NOT**
+> compliance-certified. Do not make live production deployment claims without
+> evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for
+> roadmap context, and `ARCHITECTURE.md` / `SECURITY.md` for the implemented
+> design and security boundary.
 
 ## Why this exists
 
@@ -18,6 +29,35 @@ Goal → Proposed Action → Governance Decision → Tool Execution or Denial
 
 If policy evaluation, receipt generation, or audit append fails, the action
 is **denied**. No exception path silently allows.
+
+## Receipt-gated execution (the invariant, proven)
+
+The governance check issues a verifiable `DecisionReceipt`; the executor runs
+the side effect **only** if the receipt verifies. Run the end-to-end proof —
+it asserts every rule and exits non-zero if any invariant is violated:
+
+```bash
+uv run --package gove-zone python \
+    packages/gove-zone/examples/receipt-gated-execution/demo.py
+```
+
+It demonstrates, against the real evaluator/issuer/executor/audit chain:
+allowed action executes · denied blocked · missing receipt blocked · tampered
+blocked · cross-tenant blocked · transformed action runs only as approved ·
+every decision leaves tamper-evident audit evidence.
+
+The same thread is covered as a test in `tests/test_end_to_end.py`.
+
+## Documentation
+
+| Topic | Doc |
+|---|---|
+| Architecture & components | `ARCHITECTURE.md` |
+| Security boundary & threat model | `SECURITY.md` |
+| Receipt schema & verification | `docs/decision-receipts.md` |
+| Governed execution flow | `docs/governed-execution.md` |
+| Audit evidence & chain | `docs/audit-evidence.md` |
+| Policy bundles & tenant binding | `docs/policy-bundles.md` |
 
 ## Install
 

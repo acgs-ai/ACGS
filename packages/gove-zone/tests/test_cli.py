@@ -126,3 +126,16 @@ def test_cli_proofpack_generates_files(
     assert results["missing_receipt_blocked"] is True
     assert results["tampered_receipt_blocked"] is True
     assert results["audit_chain_verified"] is True
+
+
+def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """--version is part of complete CLI surface (PR 1 acceptance)."""
+    from gove_zone import __version__
+
+    # action=version causes SystemExit(0) after printing to stdout
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+
+    out = capsys.readouterr().out
+    assert f"gove-zone {__version__}" in out

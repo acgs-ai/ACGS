@@ -114,6 +114,7 @@ def evaluate_tenant_action(
     request_id: str,
     actor: str,
     audit_store: ChainHashAuditStore,
+    expires_at: str = "",
 ) -> DecisionReceipt:
     """Securely evaluate a proposed action under tenant-isolated policies.
 
@@ -164,4 +165,5 @@ def evaluate_tenant_action(
         policy_bundle_id=policy_id,
         policy_hash=policy.version,
         request_id=request_id,
+        expires_at=expires_at,
     )

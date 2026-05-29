@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from gove_zone.decision import DecisionRecord, sha256_json
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def safe_result_hash(value: Any) -> str:
@@ -85,6 +90,7 @@ class DecisionReceipt:
     previous_audit_hash: str
     audit_event_hash: str
     subject: str = ""
+    expires_at: str = ""
     receipt_hash: str = ""
     signature: str = "unsigned_local"
 
@@ -123,6 +129,7 @@ class DecisionReceipt:
                 else self.approval_chain_summary
             ),
             "timestamp": self.timestamp,
+            "expires_at": self.expires_at,
             "previous_audit_hash": self.previous_audit_hash,
             "audit_event_hash": self.audit_event_hash,
             "receipt_hash": self.receipt_hash,
@@ -152,6 +159,7 @@ class DecisionReceipt:
             transformations=[dict(t) for t in d.get("transformations", [])],
             approval_chain_summary=dict(d.get("approval_chain_summary", {})),
             timestamp=d["timestamp"],
+            expires_at=d.get("expires_at", ""),
             previous_audit_hash=d["previous_audit_hash"],
             audit_event_hash=d["audit_event_hash"],
             receipt_hash=d.get("receipt_hash", ""),
@@ -182,6 +190,7 @@ class DecisionReceipt:
         subject: str = "",
         constraints: dict[str, Any] | None = None,
         approval_chain_summary: dict[str, Any] | None = None,
+        expires_at: str = "",
     ) -> DecisionReceipt:
         transformations: list[dict[str, Any]] = []
         if record.transformed_args:
@@ -208,6 +217,7 @@ class DecisionReceipt:
             transformations=transformations,
             approval_chain_summary=approval_chain_summary or {},
             timestamp=record.timestamp_iso,
+            expires_at=expires_at,
             previous_audit_hash=previous_audit_hash,
             audit_event_hash=audit_hash,
         )
@@ -224,6 +234,7 @@ class DecisionReceipt:
         expected_action: str | None = None,
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
+        now_iso: str | None = None,
     ) -> None:
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptValidationError
@@ -342,3 +353,28 @@ class DecisionReceipt:
                 f"Policy bundle ID mismatch: expected {expected_policy_bundle_id}, "
                 f"got {self.policy_bundle_id}"
             )
+
+        # 13. Expiry (only enforced when expires_at is set). expires_at is bound
+        # into receipt_hash, so a tampered expiry is already caught by check 2;
+        # this rejects a genuinely-issued receipt used past its lifetime. The
+        # clock is injectable so expiry is deterministically testable; in
+        # production it defaults to the real UTC wall clock. Fail-closed.
+        if self.expires_at:
+            current = now_iso if now_iso is not None else _now_iso()
+            # Compare timezone-aware datetimes, not strings: a lexicographic
+            # compare is wrong across UTC offsets and would fail OPEN (accept an
+            # expired receipt). Unparseable / mixed-awareness timestamps are
+            # treated as a validation failure, never silently accepted.
+            try:
+                current_dt = datetime.fromisoformat(current)
+                expires_dt = datetime.fromisoformat(self.expires_at)
+                is_expired = current_dt > expires_dt
+            except (ValueError, TypeError) as err:
+                raise ReceiptValidationError(
+                    f"Unparseable or mismatched expiry timestamp: "
+                    f"expires_at={self.expires_at!r}, now={current!r}"
+                ) from err
+            if is_expired:
+                raise ReceiptValidationError(
+                    f"Receipt expired at {self.expires_at} (now {current})"
+                )
