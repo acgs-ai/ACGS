@@ -152,7 +152,6 @@ const verificationAnchors = [
 check(
   verificationAnchors.every((anchor) => typeof anchor === 'string' && anchor.length > 0),
   'local verification anchors must remain enumerated.',
->>>>>>> feat/agent-bus-analyzer-frontend-tests
 )
 
 const distAssets = resolve(root, 'dist/assets')
