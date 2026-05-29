@@ -1,7 +1,11 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "CLAUDE_CODE_WORKFLOWS": "1"
+  },
   "permissions": {
     "allow": [
+      "Bash(gh pr merge:*)",
       "Bash(make:*)",
       "Bash(pnpm:*)",
       "Bash(uv:*)",
