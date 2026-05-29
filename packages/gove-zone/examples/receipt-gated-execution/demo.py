@@ -19,6 +19,8 @@ chain:
     5. cross-tenant receipt is blocked
     6. a transformed action runs ONLY as approved
     7. every decision left tamper-evident audit evidence
+    8. a signed receipt verifies with the public key and executes
+    9. a forged/recomputed receipt is rejected — no private key, no valid signature
 
 Status: foundational / Alpha. This proves the local invariant. It is NOT a
 production, compliance, or regulator-ready certification.
@@ -36,6 +38,7 @@ from gove_zone import (
     AuditEvent,
     ChainHashAuditStore,
     DecisionReceipt,
+    Ed25519Signer,
     GovernanceRequest,
     ProposedAction,
     ReceiptValidationError,
@@ -290,6 +293,74 @@ def main() -> int:
         print(f"    request_id={ev.request_id}  tenant={ev.tenant_id}  decision={ev.decision}")
         print(f"    action={ev.action_summary}  receipt_id={ev.receipt_id[:16]}…")
         print(f"    event_hash={ev.event_hash[:16]}…  prev_hash={ev.previous_hash[:16]}…")
+
+    # 8. SIGNED receipt: public-key verification closes the recomputed-receipt residual.
+    # Issue with a private key; gate verifies with the PUBLIC key only.
+    # Precondition for full closure: require_signature=True at the gate.
+    print("[8] Signed receipt verified with public key + executed")
+    signing_key = Ed25519Signer.generate()
+    verify_key = Ed25519Signer.from_public_bytes(signing_key.public_bytes())
+    req = _request("runtime.file.write", {"path": "signed-report.txt", "content": "ok"}, "req-sign")
+    signed_receipt = evaluate_tenant_action(
+        store=store,
+        tenant_id=req.tenant_id,
+        requester_tenant_id=req.tenant_id,
+        action=req.proposed_action.tool,
+        args=req.proposed_action.args,
+        execution_boundary=req.execution_boundary,
+        request_id=req.request_id,
+        actor=req.actor,
+        validator=VALIDATOR,
+        authority="tenant-A/write-grant",
+        audit_store=audit,
+        signer=signing_key,
+    )
+    if signed_receipt.signature_algorithm != "ed25519":
+        _fail(f"expected ed25519 signature, got {signed_receipt.signature_algorithm!r}")
+    tool = Tool()
+    execute_with_receipt(
+        tool_fn=tool.run,
+        args=req.proposed_action.args,
+        receipt=signed_receipt,
+        expected_tenant_id=TENANT,
+        expected_execution_boundary=BOUNDARY,
+        expected_action=req.proposed_action.tool,
+        verifier=verify_key,
+        require_signature=True,
+    )
+    if not tool.ran:
+        _fail("valid signed receipt did not reach execution")
+    _ok("signed receipt verified with public key + executed")
+
+    # 9. FORGED/RECOMPUTED receipt: attacker tampers a field + recomputes a consistent
+    # receipt_hash (the old unsigned residual), but cannot produce a valid signature
+    # without the private key — the stale signature fails the gate.
+    print("[9] Forged/recomputed receipt rejected — no private key, no valid signature")
+    forged_summary = dict(signed_receipt.approval_chain_summary)
+    forged_summary["proposer"] = "attacker"
+    forged = dataclasses.replace(
+        signed_receipt, actor="attacker", approval_chain_summary=forged_summary
+    )
+    forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    # The recomputed hash is internally consistent (passes hash check), but the
+    # signature still attests the ORIGINAL hash — it cannot match the new one.
+    tool = Tool()
+    try:
+        execute_with_receipt(
+            tool_fn=tool.run,
+            args=req.proposed_action.args,
+            receipt=forged,
+            expected_tenant_id=TENANT,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=req.proposed_action.tool,
+            verifier=verify_key,
+            require_signature=True,
+        )
+        _fail("forged/recomputed receipt reached execution")
+    except ReceiptValidationError as exc:
+        if tool.ran:
+            _fail("side effect ran despite forged receipt")
+        _ok(f"forged/recomputed receipt rejected: {exc} — no private key")
 
     print("\n\033[32mAll invariants held. No valid Decision Receipt, no side effect.\033[0m")
     print(f"(audit log: {audit.path})\n")

@@ -32,11 +32,13 @@ adds typing and ergonomics; it does not add a second enforcement path.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NewType
 
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.receipt import DecisionReceipt
+from gove_zone.signing import ReceiptSigner
 
 # An execution boundary is an opaque label for *where* an approved action may
 # run (e.g. "local-sandbox", "tenant-A/prod-egress"). It is a string today;
@@ -205,11 +207,15 @@ class ReceiptVerifier:
         expected_execution_boundary: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
+        verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+        require_signature: bool = False,
     ) -> None:
         self.expected_tenant_id = expected_tenant_id
         self.expected_execution_boundary = expected_execution_boundary
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
+        self.verifier = verifier
+        self.require_signature = require_signature
 
     def verify(
         self,
@@ -240,6 +246,8 @@ class ReceiptVerifier:
             expected_args=expected_args,
             expected_audit_hash=expected_audit_hash,
             expected_actor=expected_actor,
+            verifier=self.verifier,
+            require_signature=self.require_signature,
             now_iso=now_iso,
         )
 

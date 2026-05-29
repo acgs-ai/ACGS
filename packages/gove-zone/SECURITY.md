@@ -99,13 +99,47 @@ A receipt or policy bundle issued for one tenant cannot be used by another;
 missing tenant identity fails closed (`test_tenant_safety.py`). See
 `docs/policy-bundles.md`.
 
+## Opt-in Ed25519 receipt signing
+
+gove-zone supports asymmetric receipt signing as an opt-in capability. When
+engaged, it closes the recomputed-receipt residual: anyone can verify a receipt
+with the public key; only the private-key holder can produce a valid signature,
+so a recomputed-hash forgery is cryptographically infeasible.
+
+**How to engage.** Issue receipts with a private-key signer and verify at the
+gate with the matching public-key verifier plus ``require_signature=True``:
+
+```python
+signer  = Ed25519Signer.generate()
+receipt = evaluate_tenant_action(…, signer=signer)
+
+verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
+execute_with_receipt(…, verifier=verifier, require_signature=True)
+```
+
+A receipt that advertises a signature (``signature_algorithm != "none"``) is
+**always** verified cryptographically — presenting it without a verifier is a
+hard rejection, regardless of ``require_signature``.
+
+**Default deployments are unsigned.** Without an explicit ``signer`` at issuance
+and ``verifier + require_signature=True`` at the gate, receipts remain unsigned
+(``signature = "unsigned_local"``); integrity rests on ``receipt_hash`` and the
+audit chain as before.
+
+**Residuals not addressed by signing:**
+- **Private-key custody.** A compromised signing key lets an attacker issue
+  valid-looking receipts. Key custody is the operator's responsibility.
+- **Key distribution / trust establishment.** There is no PKI, certificate chain,
+  or trust-store bootstrapping. The verifier mapping is static; the operator must
+  manage it.
+- **Revocation.** A compromised key cannot be revoked; the operator must update
+  and redeploy the verifier mapping.
+
 ## What gove-zone does NOT do (security non-goals today)
 
-- **No cryptographic signatures.** `signature` is `unsigned_local`. Integrity
-  rests on `receipt_hash` + the audit chain, not public-key signatures. A
-  process that can compute `receipt_hash` can mint a "valid" local receipt —
-  receipt issuance is not yet authenticated. Signed/authenticated receipts are
-  roadmap.
+- **No PKI or key lifecycle management.** Ed25519 signing is point-to-point
+  (issuer ↔ gate); there is no certificate authority, trust chain, or revocation
+  infrastructure. Key distribution and custody are the operator's responsibility.
 - **No durable external audit sink.** The chain is local JSONL. WORM storage,
   SIEM shipping, and off-host append-only durability are roadmap.
 - **No bundle lifecycle / revocation.** No active/stale/revoked state, no

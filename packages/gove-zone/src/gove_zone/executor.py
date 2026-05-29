@@ -6,11 +6,12 @@ can be run.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.receipt import DecisionReceipt
+from gove_zone.signing import ReceiptSigner
 
 
 def execute_with_receipt(
@@ -25,6 +26,8 @@ def execute_with_receipt(
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
     expected_actor: str | None = None,
+    verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+    require_signature: bool = False,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -54,6 +57,8 @@ def execute_with_receipt(
         expected_policy_hash=expected_policy_hash,
         expected_policy_bundle_id=expected_policy_bundle_id,
         expected_actor=expected_actor,
+        verifier=verifier,
+        require_signature=require_signature,
     )
 
     return tool_fn(**args)
@@ -78,10 +83,14 @@ class GovernedExecutor:
         tenant_id: str,
         execution_boundary: str,
         expected_actor: str | None = None,
+        verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+        require_signature: bool = False,
     ) -> None:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
         self.expected_actor = expected_actor
+        self.verifier = verifier
+        self.require_signature = require_signature
         self.registry: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
@@ -97,13 +106,19 @@ class GovernedExecutor:
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
         expected_actor: str | None = None,
+        verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+        require_signature: bool | None = None,
     ) -> Any:
         if action not in self.registry:
             raise KeyError(f"Tool {action!r} not registered with executor")
         tool_fn = self.registry[action]
-        # Per-call expected_actor overrides the constructor default; both are
-        # optional so omitting everywhere is valid (falls back to weak heuristic).
+        # Per-call args override the constructor defaults; all are optional so
+        # omitting everywhere is valid (falls back to weak heuristic / unsigned).
         effective_actor = expected_actor if expected_actor is not None else self.expected_actor
+        effective_verifier = verifier if verifier is not None else self.verifier
+        effective_require = (
+            require_signature if require_signature is not None else self.require_signature
+        )
         return execute_with_receipt(
             tool_fn=tool_fn,
             args=args,
@@ -115,4 +130,6 @@ class GovernedExecutor:
             expected_policy_hash=expected_policy_hash,
             expected_policy_bundle_id=expected_policy_bundle_id,
             expected_actor=effective_actor,
+            verifier=effective_verifier,
+            require_signature=effective_require,
         )

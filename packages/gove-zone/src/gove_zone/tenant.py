@@ -7,6 +7,7 @@ from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import PolicyError, ReceiptValidationError
 from gove_zone.policy import Policy, RuleSetPolicy
 from gove_zone.receipt import DecisionReceipt, Validator
+from gove_zone.signing import ReceiptSigner
 from gove_zone.tool import ToolCall
 
 
@@ -117,6 +118,7 @@ def evaluate_tenant_action(
     authority: str,
     audit_store: ChainHashAuditStore,
     expires_at: str = "",
+    signer: ReceiptSigner | None = None,
 ) -> DecisionReceipt:
     """Securely evaluate a proposed action under tenant-isolated policies.
 
@@ -182,4 +184,5 @@ def evaluate_tenant_action(
         validator=validator,
         authority=authority,
         expires_at=expires_at,
+        signer=signer,
     )
