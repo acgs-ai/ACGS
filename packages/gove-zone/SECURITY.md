@@ -23,7 +23,15 @@ Execution is refused — never silently allowed — on every one of:
 - tenant mismatch, execution-boundary mismatch, action mismatch;
 - policy bundle id / policy hash mismatch;
 - an expired receipt (`expires_at` in the past);
-- a `TRANSFORM` whose approved arguments do not match the call.
+- an `ALLOW` whose executed arguments do not hash-match the arguments the
+  receipt was issued for, or a `TRANSFORM` whose executed arguments are not
+  exactly the approved transformed set (extra, missing, or altered fields);
+- a self-validated receipt (validator is the proposer), a missing validator
+  identity / role or authority binding, or — when the caller supplies its own
+  identity (`expected_actor`) — a receipt issued for a different principal or one
+  whose validator is the invoking principal;
+- an `approval_chain_summary` that disagrees with the bound validator / proposer
+  fields.
 
 In the issuing kernel: a policy that raises or times out becomes a `DENY`; an
 audit-append failure raises `AuditError`. No exception path resolves to "allow"
@@ -36,6 +44,54 @@ audit-append failure raises `AuditError`. No exception path resolves to "allow"
 - The audit log is an append-only hash chain; any edit, reorder, or truncation
   fails `verify_chain()` (`test_audit_chain*`, `test_audit_chain_corruption.py`).
 - Concurrent audit appends are serialized with `fcntl.flock` + `fsync`.
+
+## Role separation (MACI)
+
+A Decision Receipt binds two distinct principals: the **proposer** (`actor` — the
+agent that asked for the action) and the **validator** (`validator_id` +
+`validator_role` — the authority that approved it), plus the `authority` grant
+under which execution is permitted. All three are bound into `receipt_hash`.
+
+Separation is enforced at two points:
+
+- **Issuance.** `DecisionReceipt.from_record` (and `evaluate_tenant_action`)
+  refuse to mint a receipt whose validator equals the proposer. A self-validated
+  receipt cannot be created through the normal path.
+- **The gate.** When the caller passes its own identity as `expected_actor`
+  (recommended; `GovernedExecutor` carries it as construction context),
+  `verify()` rejects a receipt not issued for that caller and rejects one whose
+  validator is the invoking principal. `expected_actor` comes from the caller's
+  runtime context, never from the receipt, so a receipt author cannot satisfy it
+  by editing receipt fields.
+
+This is the kernel's MACI invariant: *an agent can propose an action but can
+never validate its own authority to execute it.*
+
+**Residual (honest scope).** When a caller omits `expected_actor`, the gate falls
+back to a weak heuristic that only catches a receipt whose `validator_id` and
+`actor` fields are literally identical; a forger who can recompute `receipt_hash`
+and sets `actor` to a phantom value while keeping the real proposer as
+`validator_id` is not caught on that path. Proposer-binding is therefore only as
+strong as the caller supplying `expected_actor`, and ultimately as strong as
+authenticated/signed issuance — which remains roadmap (see below). The
+separation is enforced-by-verifier and audited; it is **not** cryptographically
+unforgeable under host compromise.
+
+## Argument binding
+
+A receipt authorizes a specific tool *with specific arguments*, not the tool in
+general. The proposed arguments are hashed (`argument_hash`, bound into
+`receipt_hash`) at issuance. At the gate, `execute_with_receipt` passes the
+about-to-run arguments as `expected_args`, and `verify()` refuses execution
+unless they match: for `ALLOW`, the executed args must hash-match
+`argument_hash`; for `TRANSFORM`, they must be exactly the approved transformed
+set. A valid receipt for `write_file(path="/tmp/safe")` therefore cannot
+authorize `write_file(path="/etc/shadow")`.
+
+This binding is enforced at the gate (`execute_with_receipt` / `GovernedExecutor`
+always supply `expected_args`). A bare `DecisionReceipt.verify()` call with
+`expected_args=None` skips the argument comparison — verify the gate, or pass
+`expected_args`, when checking receipts directly.
 
 ## Multi-tenant isolation
 

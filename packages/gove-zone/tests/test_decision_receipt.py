@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from gove_zone import Decision, DecisionReceipt, DecisionRecord, ReceiptValidationError
+from gove_zone import Decision, DecisionReceipt, DecisionRecord, ReceiptValidationError, Validator
 
 
 def make_valid_receipt(
@@ -33,6 +33,8 @@ def make_valid_receipt(
         policy_hash="const-hash-val",
         request_id="req-unique-999",
         subject="test-subject",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
     )
     if transformations is not None:
         # Override transformations for malformed testing

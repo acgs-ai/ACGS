@@ -23,6 +23,7 @@ from gove_zone import (
     ReceiptValidationError,
     ReceiptVerifier,
     TenantPolicyBinding,
+    Validator,
 )
 
 
@@ -43,6 +44,8 @@ def _allow_receipt(tenant_id: str = "tenant-A") -> DecisionReceipt:
         policy_bundle_id="bundle-A",
         policy_hash="policy-hash",
         request_id="req-1",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
     )
 
 

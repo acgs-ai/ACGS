@@ -65,10 +65,38 @@ class Receipt:
 
 
 @dataclass(frozen=True)
+class Validator:
+    """MACI validating principal. Distinct from the proposer (ToolCall.actor).
+
+    A ``Validator`` issues the authority decision; the proposer never can. This
+    is the type/role boundary that structurally prevents self-validation: an
+    agent may *propose* an action but can never *validate* its own authority to
+    execute it. Fail-closed at construction — an empty id or role is rejected.
+    """
+
+    validator_id: str
+    role: str = "validator"
+
+    def __post_init__(self) -> None:
+        if not self.validator_id:
+            raise ValueError("Validator.validator_id is required (fail-closed)")
+        if not self.role:
+            raise ValueError("Validator.role is required (fail-closed)")
+
+
+@dataclass(frozen=True)
 class DecisionReceipt:
     """Canonical public Decision Receipt schema for AI-agent execution.
 
     Designed for deterministic serialisation, canonical hashing, and fail-closed validation.
+
+    MACI role separation: ``actor`` is the proposer (the ToolCall actor) while
+    ``validator_id`` / ``validator_role`` identify the distinct principal that
+    issued the authority decision, and ``authority`` is the grant it conferred.
+    These three fields are bound into ``receipt_hash`` (via ``to_dict``), enforcing
+    validator≠proposer at issuance and at the gate when the caller supplies its
+    identity via ``expected_actor``; not cryptographically unforgeable under host
+    compromise.
     """
 
     receipt_id: str
@@ -91,6 +119,10 @@ class DecisionReceipt:
     audit_event_hash: str
     subject: str = ""
     expires_at: str = ""
+    authority: str = ""
+    validator_id: str = ""
+    validator_role: str = ""
+    argument_hash: str = ""
     receipt_hash: str = ""
     signature: str = "unsigned_local"
 
@@ -130,6 +162,10 @@ class DecisionReceipt:
             ),
             "timestamp": self.timestamp,
             "expires_at": self.expires_at,
+            "authority": self.authority,
+            "validator_id": self.validator_id,
+            "validator_role": self.validator_role,
+            "argument_hash": self.argument_hash,
             "previous_audit_hash": self.previous_audit_hash,
             "audit_event_hash": self.audit_event_hash,
             "receipt_hash": self.receipt_hash,
@@ -160,6 +196,10 @@ class DecisionReceipt:
             approval_chain_summary=dict(d.get("approval_chain_summary", {})),
             timestamp=d["timestamp"],
             expires_at=d.get("expires_at", ""),
+            authority=d.get("authority", ""),
+            validator_id=d.get("validator_id", ""),
+            validator_role=d.get("validator_role", ""),
+            argument_hash=d.get("argument_hash", ""),
             previous_audit_hash=d["previous_audit_hash"],
             audit_event_hash=d["audit_event_hash"],
             receipt_hash=d.get("receipt_hash", ""),
@@ -187,15 +227,44 @@ class DecisionReceipt:
         policy_bundle_id: str,
         policy_hash: str,
         request_id: str,
+        *,
+        validator: Validator,
+        authority: str,
         subject: str = "",
         constraints: dict[str, Any] | None = None,
         approval_chain_summary: dict[str, Any] | None = None,
         expires_at: str = "",
     ) -> DecisionReceipt:
+        """Mint a receipt for *record*, binding a distinct MACI *validator*.
+
+        Fail-closed: the validator must differ from the proposer
+        (``record.actor``). A self-validated receipt — where the proposer would
+        also be its own authority — can never be minted. The proposer/validator
+        linkage is recorded in ``approval_chain_summary``.
+        """
+        from gove_zone.errors import ReceiptValidationError
+
+        proposer = record.actor or "anonymous"
+        if validator.validator_id == proposer:
+            raise ReceiptValidationError(
+                "self-validation forbidden: validator must differ from proposer "
+                f"(both are {proposer!r})"
+            )
+
         transformations: list[dict[str, Any]] = []
         if record.transformed_args:
             for k, v in record.transformed_args.items():
                 transformations.append({"field": k, "value": v})
+
+        linkage: dict[str, Any] = dict(approval_chain_summary or {})
+        linkage.update(
+            {
+                "proposer": proposer,
+                "validator_id": validator.validator_id,
+                "validator_role": validator.role,
+                "authority": authority,
+            }
+        )
 
         import dataclasses
 
@@ -203,7 +272,7 @@ class DecisionReceipt:
             receipt_id=record.event_id,
             request_id=request_id,
             tenant_id=tenant_id,
-            actor=record.actor or "anonymous",
+            actor=proposer,
             subject=subject,
             proposed_action=record.tool,
             declared_goal=record.goal or "",
@@ -215,9 +284,13 @@ class DecisionReceipt:
             matched_rules=list(record.matched_rules),
             constraints=constraints or {},
             transformations=transformations,
-            approval_chain_summary=approval_chain_summary or {},
+            approval_chain_summary=linkage,
             timestamp=record.timestamp_iso,
             expires_at=expires_at,
+            authority=authority,
+            validator_id=validator.validator_id,
+            validator_role=validator.role,
+            argument_hash=record.argument_hash,
             previous_audit_hash=previous_audit_hash,
             audit_event_hash=audit_hash,
         )
@@ -234,6 +307,9 @@ class DecisionReceipt:
         expected_action: str | None = None,
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
+        expected_validator_role: str | None = None,
+        expected_authority: str | None = None,
+        expected_actor: str | None = None,
         now_iso: str | None = None,
     ) -> None:
         from gove_zone.decision import Decision
@@ -254,6 +330,10 @@ class DecisionReceipt:
             "timestamp",
             "previous_audit_hash",
             "audit_event_hash",
+            "validator_id",
+            "validator_role",
+            "authority",
+            "argument_hash",
         ]
         for field_name in required_fields:
             val = getattr(self, field_name)
@@ -269,6 +349,51 @@ class DecisionReceipt:
                 f"Altered field or invalid hash: receipt_hash mismatch. "
                 f"Expected {expected_hash}, got {self.receipt_hash}"
             )
+
+        # 2b. MACI actor-anchor check (authoritative when caller supplies identity).
+        # expected_actor is the identity of the INVOKING PRINCIPAL at the gate,
+        # supplied from outside the receipt (like expected_tenant_id), so a
+        # receipt author cannot satisfy it by editing the receipt's own fields.
+        # Two enforcement steps when expected_actor is provided:
+        #   (i)  actor mismatch  — this receipt was not issued for this caller.
+        #   (ii) self-validation — the caller IS the validator, so the caller
+        #        would be authorising its own action.
+        if expected_actor is not None:
+            if self.actor != expected_actor:
+                raise ReceiptValidationError(
+                    f"actor mismatch: receipt not issued for this caller "
+                    f"(expected {expected_actor!r}, got {self.actor!r})"
+                )
+            if self.validator_id == expected_actor:
+                raise ReceiptValidationError(
+                    f"self-validation: validator is the invoking principal ({expected_actor!r})"
+                )
+
+        # 2c. Naive self-validation fallback (heuristic only, no expected_actor).
+        # Catches only the obvious case where validator_id and actor on the
+        # receipt happen to be identical. A forger who sets actor to a phantom
+        # value while keeping validator_id as the real proposer bypasses this
+        # check; real proposer-binding requires expected_actor above (and
+        # ultimately authenticated/signed issuance, which is roadmap).
+        if self.validator_id == self.actor:
+            raise ReceiptValidationError(
+                f"self-validation: validator must differ from proposer (both are {self.actor!r})"
+            )
+
+        # 2d. approval_chain_summary consistency: the issued summary must agree
+        # with the top-level validator_id and actor fields, which are bound into
+        # receipt_hash. Divergence means the receipt was either constructed
+        # inconsistently or the summary was hand-edited after hashing.
+        acs = self.approval_chain_summary if isinstance(self.approval_chain_summary, dict) else {}
+        if acs:
+            if acs.get("validator_id") != self.validator_id:
+                raise ReceiptValidationError(
+                    "approval_chain_summary.validator_id disagrees with receipt"
+                )
+            if acs.get("proposer") != self.actor:
+                raise ReceiptValidationError(
+                    "approval_chain_summary.proposer disagrees with receipt"
+                )
 
         # 3. Unknown decisions
         try:
@@ -338,6 +463,39 @@ class DecisionReceipt:
                         f"got '{expected_args[f]}'"
                     )
 
+            # 10c. Exact-match binding for TRANSFORM — symmetric with ALLOW (#10b).
+            # A governed TRANSFORM must fully specify what runs; fields left
+            # unspecified would execute un-approved, which is the same class of
+            # hole the ALLOW argument_hash check closes. transformed_args is the
+            # complete approved execution set by construction (from_record turns
+            # every key of DecisionRecord.transformed_args into a transformations
+            # entry), so the executed args must equal that set exactly.
+            approved = {tx["field"]: tx["value"] for tx in self.transformations}
+            if dict(expected_args) != approved:
+                raise ReceiptValidationError(
+                    "transform mismatch: executed arguments do not exactly match the approved "
+                    "transformed arguments (extra, missing, or altered fields)"
+                )
+
+        # 10b. ALLOW argument binding: for ALLOW decisions, verify that the args
+        # the gate is about to execute were exactly what the receipt authorized.
+        # argument_hash is sha256_json(dict(args)) — same canonicalization as
+        # ToolCall.argument_hash(). This closes the substitution gap: a valid
+        # ALLOW receipt for write_file(path=/tmp/safe) cannot authorize
+        # write_file(path=/etc/shadow). Only triggered when expected_args is
+        # provided (execute_with_receipt always provides it). Not enforced on
+        # TRANSFORM because the executed args are the transformed args, which
+        # differ from the original proposed args that argument_hash covers;
+        # the transform-field check (#10) already binds TRANSFORM execution.
+        if self.decision == Decision.ALLOW.value and expected_args is not None:
+            from gove_zone.decision import sha256_json as _sha256_json
+
+            computed_arg_hash = _sha256_json(dict(expected_args))
+            if self.argument_hash != computed_arg_hash:
+                raise ReceiptValidationError(
+                    "argument mismatch: receipt not issued for these arguments"
+                )
+
         # 11. Policy hash mismatch
         if expected_policy_hash is not None and self.policy_hash != expected_policy_hash:
             raise ReceiptValidationError(
@@ -352,6 +510,19 @@ class DecisionReceipt:
             raise ReceiptValidationError(
                 f"Policy bundle ID mismatch: expected {expected_policy_bundle_id}, "
                 f"got {self.policy_bundle_id}"
+            )
+
+        # 12b. Validator role mismatch (optional)
+        if expected_validator_role is not None and self.validator_role != expected_validator_role:
+            raise ReceiptValidationError(
+                f"Validator role mismatch: expected {expected_validator_role}, "
+                f"got {self.validator_role}"
+            )
+
+        # 12c. Authority mismatch (optional)
+        if expected_authority is not None and self.authority != expected_authority:
+            raise ReceiptValidationError(
+                f"Authority mismatch: expected {expected_authority}, got {self.authority}"
             )
 
         # 13. Expiry (only enforced when expires_at is set). expires_at is bound

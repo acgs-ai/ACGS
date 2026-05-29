@@ -15,8 +15,10 @@ from gove_zone import (
     ReceiptValidationError,
     RuleSetPolicy,
     TenantPolicyStore,
+    Validator,
     evaluate_tenant_action,
     execute_with_receipt,
+    sha256_json,
 )
 
 
@@ -71,6 +73,8 @@ def test_missing_tenant_fails_closed(
             execution_boundary="sandbox",
             request_id="req-1",
             actor="actor-1",
+            validator=Validator("validator-1"),
+            authority="tenant-A/write-grant",
             audit_store=audit_store,
         )
     assert "Tenant identification missing" in str(exc_info.value)
@@ -90,6 +94,8 @@ def test_missing_bundle_fails_closed(
             execution_boundary="sandbox",
             request_id="req-1",
             actor="actor-1",
+            validator=Validator("validator-1"),
+            authority="tenant-A/write-grant",
             audit_store=audit_store,
         )
     assert "Tenant bundle missing for tenant-A" in str(exc_info.value)
@@ -99,7 +105,7 @@ def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool="runtime.file.write",
-        argument_hash="hash",
+        argument_hash=sha256_json({"path": "test.txt"}),
         policy_version="v1",
         event_id="ev_1",
     )
@@ -112,6 +118,8 @@ def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
         policy_bundle_id="bundle-A",
         policy_hash="policy-hash-A",
         request_id="req-1",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
     )
 
     # Executing for tenant-B raises ReceiptValidationError
@@ -131,7 +139,7 @@ def test_policy_hash_mismatch_fails_closed() -> None:
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool="runtime.file.write",
-        argument_hash="hash",
+        argument_hash=sha256_json({"path": "test.txt"}),
         policy_version="v1",
         event_id="ev_1",
     )
@@ -144,6 +152,8 @@ def test_policy_hash_mismatch_fails_closed() -> None:
         policy_bundle_id="bundle-A",
         policy_hash="policy-hash-A",
         request_id="req-1",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
     )
 
     # Executing with mismatched policy hash raises ReceiptValidationError

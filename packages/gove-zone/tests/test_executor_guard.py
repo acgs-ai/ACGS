@@ -12,6 +12,7 @@ from gove_zone import (
     DecisionRecord,
     GovernedExecutor,
     ReceiptValidationError,
+    Validator,
     execute_with_receipt,
 )
 
@@ -27,17 +28,24 @@ class SideEffectTracker:
         return "success"
 
 
+_DEFAULT_ALLOW_ARGS: dict[str, Any] = {"path": "safe.txt"}
+
+
 def make_test_receipt(
     decision: str = "allow",
     transformations: list[dict[str, Any]] | None = None,
     tenant_id: str = "tenant-A",
     execution_boundary: str = "local-sandbox",
     action: str = "runtime.file.write",
+    args: dict[str, Any] | None = None,
 ) -> DecisionReceipt:
+    from gove_zone.decision import sha256_json
+
+    effective_args = args if args is not None else _DEFAULT_ALLOW_ARGS
     record = DecisionRecord(
         decision=Decision(decision),
         tool=action,
-        argument_hash="hash123",
+        argument_hash=sha256_json(effective_args),
         policy_version="v1",
         event_id="ev_abc",
         transformed_args={"path": "transformed.txt"} if decision == "transform" else None,
@@ -51,6 +59,8 @@ def make_test_receipt(
         policy_bundle_id="policy-bundle",
         policy_hash="policy-hash",
         request_id="req-123",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
     )
     if transformations is not None:
         import dataclasses
@@ -228,7 +238,7 @@ def test_governed_executor_workflow() -> None:
     executor = GovernedExecutor(tenant_id="tenant-A", execution_boundary="local-sandbox")
     executor.register("runtime.file.write", tracker.run_tool)
 
-    receipt = make_test_receipt("allow")
+    receipt = make_test_receipt("allow", args={"path": "test.txt"})
     res = executor.execute("runtime.file.write", {"path": "test.txt"}, receipt)
     assert res == "success"
     assert tracker.called

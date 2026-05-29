@@ -9,7 +9,7 @@ import dataclasses
 
 import pytest
 
-from gove_zone import Decision, DecisionReceipt, DecisionRecord, ReceiptValidationError
+from gove_zone import Decision, DecisionReceipt, DecisionRecord, ReceiptValidationError, Validator
 
 
 def _receipt(expires_at: str = "") -> DecisionReceipt:
@@ -29,6 +29,8 @@ def _receipt(expires_at: str = "") -> DecisionReceipt:
         policy_bundle_id="bundle-A",
         policy_hash="policy-hash",
         request_id="req-1",
+        validator=Validator("validator-1"),
+        authority="tenant-A/write-grant",
         expires_at=expires_at,
     )
 

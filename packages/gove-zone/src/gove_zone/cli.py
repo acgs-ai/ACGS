@@ -263,7 +263,10 @@ def _proofpack(args: argparse.Namespace) -> int:
     from gove_zone.errors import ReceiptValidationError
     from gove_zone.executor import execute_with_receipt
     from gove_zone.policy import RuleSetPolicy
+    from gove_zone.receipt import Validator
     from gove_zone.tenant import TenantPolicyStore, evaluate_tenant_action
+
+    council = Validator("constitutional-council")
 
     # 1. Setup output directory
     dist_dir = Path("dist-govern-zone-proofpack")
@@ -332,6 +335,8 @@ def _proofpack(args: argparse.Namespace) -> int:
         execution_boundary="local-sandbox",
         request_id="req-allowed",
         actor="compliance-officer",
+        validator=council,
+        authority="tenant-A/write-grant",
         audit_store=audit_store,
     )
     (receipts_dir / "allowed_receipt.json").write_text(allowed_receipt.to_json(), encoding="utf-8")
@@ -358,6 +363,8 @@ def _proofpack(args: argparse.Namespace) -> int:
         execution_boundary="local-sandbox",
         request_id="req-denied",
         actor="compromised-agent",
+        validator=council,
+        authority="tenant-A/write-grant",
         audit_store=audit_store,
     )
     (receipts_dir / "denied_receipt.json").write_text(denied_receipt.to_json(), encoding="utf-8")
@@ -391,6 +398,8 @@ def _proofpack(args: argparse.Namespace) -> int:
         execution_boundary="local-sandbox",
         request_id="req-transformed",
         actor="compliance-officer",
+        validator=council,
+        authority="tenant-A/write-grant",
         audit_store=audit_store,
     )
     (receipts_dir / "transformed_receipt.json").write_text(

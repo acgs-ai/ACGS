@@ -31,12 +31,16 @@ from gove_zone import (
     ReceiptVerifier,
     RuleSetPolicy,
     TenantPolicyStore,
+    Validator,
     evaluate_tenant_action,
     execute_with_receipt,
 )
 from gove_zone.tenant import TransformPolicy
 
 BOUNDARY = "local-sandbox"
+# A distinct MACI validating principal — never the proposer ("agent-1").
+VALIDATOR = Validator("constitutional-council")
+AUTHORITY = "tenant-A/write-grant"
 
 
 class SideEffect:
@@ -84,6 +88,8 @@ def _issue(
         execution_boundary=request.execution_boundary,
         request_id=request.request_id,
         actor=request.actor,
+        validator=VALIDATOR,
+        authority=AUTHORITY,
         audit_store=audit,
     )
 
@@ -235,6 +241,8 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         execution_boundary=BOUNDARY,
         request_id="req-expired",
         actor="agent-1",
+        validator=VALIDATOR,
+        authority=AUTHORITY,
         audit_store=audit,
         expires_at="2020-01-01T00:00:00+00:00",  # unambiguously in the past
     )
@@ -264,6 +272,8 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         execution_boundary=BOUNDARY,
         request_id="req-live",
         actor="agent-1",
+        validator=VALIDATOR,
+        authority=AUTHORITY,
         audit_store=audit,
         expires_at="2999-01-01T00:00:00+00:00",
     )

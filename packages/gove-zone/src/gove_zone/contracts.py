@@ -218,11 +218,16 @@ class ReceiptVerifier:
         expected_action: str | None = None,
         expected_args: dict[str, Any] | None = None,
         expected_audit_hash: str | None = None,
+        expected_actor: str | None = None,
         now_iso: str | None = None,
     ) -> None:
         """Raise :class:`ReceiptValidationError` unless *receipt* authorizes the action.
 
         Fail-closed on ``None`` (no receipt → no side effect).
+
+        Pass ``expected_actor`` (the invoking principal's identity from the caller's
+        runtime context) to anchor the MACI self-validation check against an identity
+        the receipt author cannot forge by editing receipt fields.
         """
         if receipt is None:
             raise ReceiptValidationError("No receipt provided for governed execution")
@@ -234,6 +239,7 @@ class ReceiptVerifier:
             expected_action=expected_action,
             expected_args=expected_args,
             expected_audit_hash=expected_audit_hash,
+            expected_actor=expected_actor,
             now_iso=now_iso,
         )
 
@@ -244,6 +250,7 @@ class ReceiptVerifier:
         expected_action: str | None = None,
         expected_args: dict[str, Any] | None = None,
         expected_audit_hash: str | None = None,
+        expected_actor: str | None = None,
         now_iso: str | None = None,
     ) -> bool:
         """Boolean form of :meth:`verify` — never raises, returns False on any failure."""
@@ -253,6 +260,7 @@ class ReceiptVerifier:
                 expected_action=expected_action,
                 expected_args=expected_args,
                 expected_audit_hash=expected_audit_hash,
+                expected_actor=expected_actor,
                 now_iso=now_iso,
             )
             return True

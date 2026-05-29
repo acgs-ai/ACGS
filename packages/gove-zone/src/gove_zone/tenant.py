@@ -4,9 +4,9 @@ from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.decision import Decision, DecisionRecord
-from gove_zone.errors import PolicyError
+from gove_zone.errors import PolicyError, ReceiptValidationError
 from gove_zone.policy import Policy, RuleSetPolicy
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.tool import ToolCall
 
 
@@ -113,16 +113,30 @@ def evaluate_tenant_action(
     execution_boundary: str,
     request_id: str,
     actor: str,
+    validator: Validator,
+    authority: str,
     audit_store: ChainHashAuditStore,
     expires_at: str = "",
 ) -> DecisionReceipt:
     """Securely evaluate a proposed action under tenant-isolated policies.
+
+    MACI role separation: *actor* is the proposer; *validator* is the distinct
+    principal that issues the authority decision, and *authority* is the grant
+    it confers. The binding guard in :meth:`DecisionReceipt.from_record` is the
+    authoritative check that proposer and validator differ; the early guard here
+    just fails closed sooner with a clearer error.
 
     Fails closed immediately if tenant context is missing/mismatched or
     the active policy bundle cannot be loaded.
     """
     if not tenant_id or not requester_tenant_id:
         raise PolicyError("Tenant identification missing")
+    if validator.validator_id == actor:
+        # Same type as the authoritative from_record guard, so callers can catch
+        # self-validation consistently regardless of which layer rejects it.
+        raise ReceiptValidationError(
+            f"self-validation forbidden: validator must differ from proposer (both are {actor!r})"
+        )
 
     try:
         policy = store.load_bundle(tenant_id, requester_tenant_id)
@@ -165,5 +179,7 @@ def evaluate_tenant_action(
         policy_bundle_id=policy_id,
         policy_hash=policy.version,
         request_id=request_id,
+        validator=validator,
+        authority=authority,
         expires_at=expires_at,
     )
