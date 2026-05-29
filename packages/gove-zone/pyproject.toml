@@ -26,11 +26,13 @@ gove-zone-api = "gove_zone.api:main"
 
 [project.optional-dependencies]
 schema = ["pydantic>=2.0"]
+crypto = ["cryptography>=42"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
+    "cryptography>=42",
 ]
 
 [tool.hatch.build.targets.wheel]

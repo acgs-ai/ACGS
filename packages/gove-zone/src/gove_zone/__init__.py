@@ -32,6 +32,7 @@ from gove_zone.errors import (
     GoveZoneError,
     PolicyError,
     ReceiptValidationError,
+    SigningError,
     UnknownToolError,
 )
 from gove_zone.evaluation import (
@@ -77,6 +78,12 @@ from gove_zone.replay import (
     replay_call,
     replay_event,
 )
+from gove_zone.signing import (
+    Ed25519Signer,
+    NullSigner,
+    ReceiptSigner,
+    make_signer,
+)
 from gove_zone.smoke import run_smoke
 from gove_zone.tenant import (
     TenantPolicyStore,
@@ -104,6 +111,7 @@ __all__ = [
     "EvaluationResult",
     "EvaluationScenario",
     "DenyAllPolicy",
+    "Ed25519Signer",
     "EscalateError",
     "ExecutionBoundary",
     "GateMode",
@@ -112,6 +120,7 @@ __all__ = [
     "GovernedExecutor",
     "GoveZoneError",
     "Kernel",
+    "NullSigner",
     "PathBoundaryPolicy",
     "Policy",
     "PolicyBundleRef",
@@ -119,10 +128,12 @@ __all__ = [
     "PolicyError",
     "ProposedAction",
     "Receipt",
+    "ReceiptSigner",
     "ReceiptValidationError",
     "ReceiptVerifier",
     "ReplayResult",
     "RuleSetPolicy",
+    "SigningError",
     "TenantPolicyBinding",
     "TenantPolicyStore",
     "TransformPolicy",
@@ -143,6 +154,7 @@ __all__ = [
     "load_evaluation_suite",
     "canonical_json",
     "find_event",
+    "make_signer",
     "new_event_id",
     "normalize_path_context",
     "receipt_to_governed_action",
