@@ -27,7 +27,7 @@ Execution is refused — never silently allowed — on every one of:
   receipt was issued for, or a `TRANSFORM` whose executed arguments are not
   exactly the approved transformed set (extra, missing, or altered fields);
 - a self-validated receipt (validator is the proposer), a missing validator
-  identity / role or authority binding, or — when the caller supplies its own
+  identity / role or authority binding, or — the gate requires the caller's own
   identity (`expected_actor`) — a receipt issued for a different principal or one
   whose validator is the invoking principal;
 - an `approval_chain_summary` that disagrees with the bound validator / proposer
@@ -57,25 +57,35 @@ Separation is enforced at two points:
 - **Issuance.** `DecisionReceipt.from_record` (and `evaluate_tenant_action`)
   refuse to mint a receipt whose validator equals the proposer. A self-validated
   receipt cannot be created through the normal path.
-- **The gate.** When the caller passes its own identity as `expected_actor`
-  (recommended; `GovernedExecutor` carries it as construction context),
-  `verify()` rejects a receipt not issued for that caller and rejects one whose
-  validator is the invoking principal. `expected_actor` comes from the caller's
-  runtime context, never from the receipt, so a receipt author cannot satisfy it
-  by editing receipt fields.
+- **The gate.** The gate surfaces — `execute_with_receipt`, `GovernedExecutor`,
+  and `ReceiptVerifier` — now **require** `expected_actor` (the caller's own
+  identity). Omitting it raises (`TypeError` for a missing kwarg,
+  `ReceiptValidationError` for an empty string) rather than silently downgrading
+  to a weaker check. `verify()` then rejects a receipt not issued for that caller
+  and rejects one whose validator is the invoking principal. `expected_actor`
+  comes from the caller's runtime context, never from the receipt, so a receipt
+  author cannot satisfy it by editing receipt fields. The strong caller-anchored
+  check is therefore the default at every gate, not an opt-in.
 
 This is the kernel's MACI invariant: *an agent can propose an action but can
 never validate its own authority to execute it.*
 
-**Residual (honest scope).** When a caller omits `expected_actor`, the gate falls
-back to a weak heuristic that only catches a receipt whose `validator_id` and
-`actor` fields are literally identical; a forger who can recompute `receipt_hash`
+**Residual (honest scope).** The weak heuristic — which only catches a receipt
+whose `validator_id` and `actor` fields are literally identical — is **no longer
+reachable through the gate**: every gated path requires `expected_actor`, so the
+strong actor-anchored check always runs. The heuristic survives solely as
+residual defense-in-depth for direct `DecisionReceipt.verify()` callers who pass
+no `expected_actor`; against that path, a forger who recomputes `receipt_hash`
 and sets `actor` to a phantom value while keeping the real proposer as
-`validator_id` is not caught on that path. Proposer-binding is therefore only as
-strong as the caller supplying `expected_actor`, and ultimately as strong as
-authenticated/signed issuance — which remains roadmap (see below). The
-separation is enforced-by-verifier and audited; it is **not** cryptographically
-unforgeable under host compromise.
+`validator_id` is still not caught. Requiring the anchor relocates trust to the
+integrator: it does **not** manufacture an authenticated proposer identity the
+architecture lacks. Unsigned-default proposer-binding is therefore only as strong
+as the integrator's external authentication of the caller; the actual
+cryptographic closure is **signed issuance** (`require_signature=True` + a
+trusted public-key verifier — see *Opt-in Ed25519 receipt signing* below), which
+is the recommended production posture. The separation is enforced-by-verifier and
+audited; it is **not** cryptographically unforgeable under host compromise on the
+unsigned path.
 
 ## Argument binding
 

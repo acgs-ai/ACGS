@@ -117,7 +117,11 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
     assert receipt.decision == "allow"
 
     # The gate verifies before the side effect can run.
-    verifier = ReceiptVerifier(expected_tenant_id="tenant-A", expected_execution_boundary=BOUNDARY)
+    verifier = ReceiptVerifier(
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary=BOUNDARY,
+        expected_actor="agent-1",
+    )
     verifier.verify(
         receipt,
         expected_action="runtime.file.write",
@@ -132,6 +136,7 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
         expected_tenant_id="tenant-A",
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
+        expected_actor="agent-1",
     )
     assert result == "executed"
     assert side.ran
@@ -157,6 +162,7 @@ def test_missing_receipt_blocks_side_effect() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor="agent-1",
         )
     assert not side.ran
 
@@ -178,6 +184,7 @@ def test_denied_receipt_blocks_but_still_audits(tmp_path: Path) -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor="agent-1",
         )
     assert not side.ran
     # A denial is still a decision: it must leave audit evidence.
@@ -202,6 +209,7 @@ def test_tampered_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
+            expected_actor="agent-1",
         )
     assert not side.ran
 
@@ -222,6 +230,7 @@ def test_cross_tenant_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_tenant_id="tenant-B",
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor="agent-1",
         )
     assert not side.ran
 
@@ -259,6 +268,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
             expected_tenant_id="tenant-A",
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor="agent-1",
         )
     assert not side.ran
 
@@ -285,6 +295,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         expected_tenant_id="tenant-A",
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
+        expected_actor="agent-1",
     )
     assert side.ran
 
@@ -308,6 +319,7 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
             expected_tenant_id="tenant-A",
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor="agent-1",
         )
     assert not side.ran
 
@@ -320,6 +332,7 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
         expected_tenant_id="tenant-A",
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
+        expected_actor="agent-1",
     )
     assert result == "executed"
     assert side.ran

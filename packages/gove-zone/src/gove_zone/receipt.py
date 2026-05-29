@@ -96,8 +96,14 @@ class DecisionReceipt:
     ``validator_id`` / ``validator_role`` identify the distinct principal that
     issued the authority decision, and ``authority`` is the grant it conferred.
     These three fields are bound into ``receipt_hash`` (via ``to_dict``), enforcing
-    validator≠proposer at issuance and at the gate when the caller supplies its
-    identity via ``expected_actor``.
+    validator≠proposer at issuance and at the gate. The gate surfaces
+    (:func:`gove_zone.executor.execute_with_receipt`,
+    :class:`gove_zone.executor.GovernedExecutor`,
+    :class:`gove_zone.contracts.ReceiptVerifier`) now *require* ``expected_actor``,
+    so the strong caller-anchored check (2b below) is the default — omission fails
+    loudly rather than silently downgrading. ``verify()`` itself keeps
+    ``expected_actor`` optional; the weak ``validator_id == actor`` fallback (2c)
+    remains as residual defense-in-depth for direct ``verify()`` callers only.
 
     Ed25519 asymmetric signing closes the recomputed-receipt residual **when
     engaged**: ``signature`` is a private-key signature over ``receipt_hash``; the
@@ -445,12 +451,17 @@ class DecisionReceipt:
                     f"self-validation: validator is the invoking principal ({expected_actor!r})"
                 )
 
-        # 2c. Naive self-validation fallback (heuristic only, no expected_actor).
-        # Catches only the obvious case where validator_id and actor on the
-        # receipt happen to be identical. A forger who sets actor to a phantom
-        # value while keeping validator_id as the real proposer bypasses this
-        # check; real proposer-binding requires expected_actor above (and
-        # ultimately authenticated/signed issuance, which is roadmap).
+        # 2c. Naive self-validation fallback — RESIDUAL defense-in-depth only.
+        # The gate surfaces (execute_with_receipt / GovernedExecutor /
+        # ReceiptVerifier) now REQUIRE expected_actor, so 2b above is the
+        # authoritative proposer-binding check on every gated path; this fallback
+        # is no longer reachable through the gate with the anchor omitted. It
+        # survives solely for direct verify() callers who pass no expected_actor.
+        # It catches only the obvious case where validator_id and actor on the
+        # receipt are identical. A forger who sets actor to a phantom value while
+        # keeping validator_id as the real proposer bypasses THIS check; real
+        # proposer-binding requires expected_actor above (and ultimately
+        # authenticated/signed issuance, which is roadmap).
         if self.validator_id == self.actor:
             raise ReceiptValidationError(
                 f"self-validation: validator must differ from proposer (both are {self.actor!r})"

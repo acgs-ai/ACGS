@@ -55,6 +55,13 @@ BOUNDARY = "local-sandbox"
 TENANT = "tenant-A"
 # A distinct MACI validating principal — never the proposer ("agent-1").
 VALIDATOR = Validator("constitutional-council")
+# The invoking principal's identity, supplied to the gate as expected_actor.
+# In production this comes from the AUTHENTICATED session / runtime context
+# (the principal the host already authenticated), NOT from the request body or
+# the receipt — using req.actor here would be circular: an attacker who controls
+# the request could set it to match a forged receipt. Modelling it as a separate
+# constant makes the trust boundary explicit.
+CALLER_IDENTITY = "agent-1"
 
 
 class Tool:
@@ -127,7 +134,11 @@ def main() -> int:
     )
     store.store_bundle(TENANT, allow_bundle)
 
-    verifier = ReceiptVerifier(expected_tenant_id=TENANT, expected_execution_boundary=BOUNDARY)
+    verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=CALLER_IDENTITY,
+    )
 
     print("\ngove-zone — receipt-gated execution proof")
     print("Invariant: No valid Decision Receipt, no side effect.\n")
@@ -153,10 +164,11 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
-        # Anchor: the invoking principal supplies its own identity from runtime
-        # context (not read from the receipt) so the gate can reject a forged
-        # receipt where validator_id == this actor.
-        expected_actor=req.actor,
+        # Anchor: the invoking principal supplies its own AUTHENTICATED identity
+        # from runtime context (CALLER_IDENTITY) — never req.actor, which an
+        # attacker could set to match a forged receipt. The gate rejects a forged
+        # receipt where validator_id == this caller, or one issued for someone else.
+        expected_actor=CALLER_IDENTITY,
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")
@@ -178,6 +190,7 @@ def main() -> int:
             expected_tenant_id=TENANT,
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor=CALLER_IDENTITY,
         )
         _fail("denied receipt reached execution")
     except ReceiptValidationError as exc:
@@ -197,6 +210,7 @@ def main() -> int:
             expected_tenant_id=TENANT,
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor=CALLER_IDENTITY,
         )
         _fail("missing receipt reached execution")
     except ReceiptValidationError as exc:
@@ -216,6 +230,7 @@ def main() -> int:
             expected_tenant_id=TENANT,
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
+            expected_actor=CALLER_IDENTITY,
         )
         _fail("tampered receipt reached execution")
     except ReceiptValidationError as exc:
@@ -234,6 +249,7 @@ def main() -> int:
             expected_tenant_id="tenant-B",  # a different tenant's executor
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor=CALLER_IDENTITY,
         )
         _fail("tenant-A receipt authorized a tenant-B executor")
     except ReceiptValidationError as exc:
@@ -257,6 +273,7 @@ def main() -> int:
             expected_tenant_id=TENANT,
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
+            expected_actor=CALLER_IDENTITY,
         )
         _fail("un-approved original args reached execution")
     except ReceiptValidationError:
@@ -272,6 +289,7 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
+        expected_actor=CALLER_IDENTITY,
     )
     if not tool.ran or tool.args != {"path": "transformed.txt"}:
         _fail("approved transformed action did not run as approved")
@@ -325,6 +343,7 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_action=req.proposed_action.tool,
+        expected_actor=CALLER_IDENTITY,
         verifier=verify_key,
         require_signature=True,
     )
@@ -353,6 +372,7 @@ def main() -> int:
             expected_tenant_id=TENANT,
             expected_execution_boundary=BOUNDARY,
             expected_action=req.proposed_action.tool,
+            expected_actor=CALLER_IDENTITY,
             verifier=verify_key,
             require_signature=True,
         )

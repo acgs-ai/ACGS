@@ -198,6 +198,13 @@ class ReceiptVerifier:
     This adds **no** new enforcement logic: every check still lives in
     ``DecisionReceipt.verify``. A ``None`` receipt is rejected here, mirroring
     :func:`gove_zone.executor.execute_with_receipt`.
+
+    ``expected_actor`` (the invoking principal's identity) is **required** at
+    construction as the default anchor for the MACI proposer-binding check, and
+    may be overridden per-call. Construction with no ``expected_actor`` is a
+    ``TypeError``; an empty string fails closed with ``ReceiptValidationError``.
+    This keeps the strong check the default at this gate, with no silent
+    downgrade to the weak ``validator_id == actor`` heuristic.
     """
 
     def __init__(
@@ -205,13 +212,19 @@ class ReceiptVerifier:
         *,
         expected_tenant_id: str,
         expected_execution_boundary: str,
+        expected_actor: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
     ) -> None:
+        if not expected_actor or not expected_actor.strip():
+            raise ReceiptValidationError(
+                "expected_actor is required for ReceiptVerifier (fail-closed)"
+            )
         self.expected_tenant_id = expected_tenant_id
         self.expected_execution_boundary = expected_execution_boundary
+        self.expected_actor = expected_actor
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
         self.verifier = verifier
@@ -231,12 +244,19 @@ class ReceiptVerifier:
 
         Fail-closed on ``None`` (no receipt → no side effect).
 
-        Pass ``expected_actor`` (the invoking principal's identity from the caller's
-        runtime context) to anchor the MACI self-validation check against an identity
-        the receipt author cannot forge by editing receipt fields.
+        The MACI proposer-binding anchor defaults to the construction-time
+        ``expected_actor``; pass ``expected_actor`` here to override it per-call.
+        The anchor — the invoking principal's identity from the caller's runtime
+        context — cannot be forged by editing receipt fields. The effective
+        anchor must be non-empty or it fails closed.
         """
         if receipt is None:
             raise ReceiptValidationError("No receipt provided for governed execution")
+        effective_actor = expected_actor if expected_actor is not None else self.expected_actor
+        if not effective_actor or not effective_actor.strip():
+            raise ReceiptValidationError(
+                "expected_actor is required for governed verification (fail-closed)"
+            )
         receipt.verify(
             expected_tenant_id=self.expected_tenant_id,
             expected_execution_boundary=self.expected_execution_boundary,
@@ -245,7 +265,7 @@ class ReceiptVerifier:
             expected_action=expected_action,
             expected_args=expected_args,
             expected_audit_hash=expected_audit_hash,
-            expected_actor=expected_actor,
+            expected_actor=effective_actor,
             verifier=self.verifier,
             require_signature=self.require_signature,
             now_iso=now_iso,

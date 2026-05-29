@@ -92,6 +92,7 @@ def _run_gate(
     verifier: Any,
     require_signature: bool,
     args: dict[str, Any] | None = None,
+    expected_actor: str = "agent-1",
 ) -> Any:
     return execute_with_receipt(
         tool_fn=side_effect.run,
@@ -100,6 +101,7 @@ def _run_gate(
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
+        expected_actor=expected_actor,
         verifier=verifier,
         require_signature=require_signature,
     )
@@ -310,6 +312,7 @@ def test_governed_executor_enforces_require_signature() -> None:
     executor = GovernedExecutor(
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
+        expected_actor="agent-1",
         require_signature=True,
     )
     executor.register(ACTION, side_effect.run)
@@ -338,6 +341,7 @@ def test_receipt_verifier_threads_signature_params() -> None:
     rv = ReceiptVerifier(
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
+        expected_actor="agent-1",
         verifier=verifier_key,
         require_signature=True,
     )
