@@ -70,7 +70,7 @@ from gove_zone.policy import (
     RuleSetPolicy,
     new_event_id,
 )
-from gove_zone.receipt import DecisionReceipt, Receipt, safe_result_hash
+from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
 from gove_zone.replay import (
     ReplayResult,
     find_event,
@@ -129,6 +129,7 @@ __all__ = [
     "ToolCall",
     "ToolRegistry",
     "UnknownToolError",
+    "Validator",
     "__version__",
     "agentdojo_scenarios_from_fixture",
     "emit_receipt_for_hook",

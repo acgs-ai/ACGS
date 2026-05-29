@@ -42,6 +42,7 @@ from gove_zone import (
     ReceiptVerifier,
     RuleSetPolicy,
     TenantPolicyStore,
+    Validator,
     evaluate_tenant_action,
     execute_with_receipt,
 )
@@ -49,6 +50,8 @@ from gove_zone.tenant import TransformPolicy
 
 BOUNDARY = "local-sandbox"
 TENANT = "tenant-A"
+# A distinct MACI validating principal — never the proposer ("agent-1").
+VALIDATOR = Validator("constitutional-council")
 
 
 class Tool:
@@ -87,6 +90,8 @@ def _issue(
         execution_boundary=request.execution_boundary,
         request_id=request.request_id,
         actor=request.actor,
+        validator=VALIDATOR,
+        authority="tenant-A/write-grant",
         audit_store=audit,
     )
 
@@ -145,6 +150,10 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
+        # Anchor: the invoking principal supplies its own identity from runtime
+        # context (not read from the receipt) so the gate can reject a forged
+        # receipt where validator_id == this actor.
+        expected_actor=req.actor,
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")

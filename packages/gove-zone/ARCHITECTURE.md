@@ -23,7 +23,7 @@ the action only if the receipt verifies.
 | `policy.py` | `Policy` ABC + concrete policies (`RuleSetPolicy`, `BoundaryPolicy`, `CompositePolicy`, …). |
 | `kernel.py` | The dispatch loop: evaluate → record → execute/deny. Fail-closed on policy error, timeout, and audit failure. |
 | `audit.py` | `ChainHashAuditStore` — append-only, hash-chained, `fcntl`-locked JSONL audit log. |
-| `receipt.py` | `DecisionReceipt` (public schema + `verify()`) and `Receipt` (kernel proof-of-decision). |
+| `receipt.py` | `DecisionReceipt` (public schema + `verify()`), `Receipt` (kernel proof-of-decision), and `Validator` (the MACI validating principal, distinct from the proposing `actor`). |
 | `executor.py` | `execute_with_receipt` / `GovernedExecutor` — the receipt-gated runner. |
 | `tenant.py` | `TenantPolicyStore` + `evaluate_tenant_action` — tenant-isolated issuance. |
 | `contracts.py` | Typed named-contract vocabulary (additive): `GovernanceRequest`, `ProposedAction`, `ExecutionBoundary`, `PolicyBundleRef`, `TenantPolicyBinding`, `ReceiptVerifier`, `AuditEvent`. |
@@ -56,13 +56,15 @@ including refusals — leaves evidence.
 
 **In the kernel:** tool-call interception, the four-verdict decision model,
 fail-closed execution, hash-chained audit, replayable receipts, tenant
-isolation, a typed contract surface.
+isolation, MACI role separation (validator ≠ proposer, enforced at issuance and
+at the gate — see `SECURITY.md`), a typed contract surface.
 
 **Explicitly out (roadmap or separate packages):** YAML constitution loading,
-LangGraph/Phoenix/CrewAI integrations, separation-of-powers enforcement,
-circuit breakers, compliance frameworks, swarm/debate coordination, signed
-receipts, bundle lifecycle state. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the
-monorepo for roadmap context.
+LangGraph/Phoenix/CrewAI integrations, circuit breakers, compliance frameworks,
+swarm/debate coordination, signed/authenticated receipts (today role separation
+is enforced-by-verifier and audited, not cryptographically unforgeable), bundle
+lifecycle state. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the monorepo for roadmap
+context.
 
 ## Verification
 
