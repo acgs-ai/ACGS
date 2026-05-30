@@ -60,6 +60,7 @@ from gove_zone.integration import (
     tool_calls_from_hook_payload,
 )
 from gove_zone.kernel import Kernel
+from gove_zone.plan import WorkflowAuthorization
 from gove_zone.policy import (
     AllowAllPolicy,
     BoundaryPolicy,
@@ -148,6 +149,7 @@ __all__ = [
     "ToolRegistry",
     "UnknownToolError",
     "Validator",
+    "WorkflowAuthorization",
     "WorkflowDAG",
     "WorkflowExecutor",
     "WorkflowStep",

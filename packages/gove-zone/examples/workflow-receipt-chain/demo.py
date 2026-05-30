@@ -42,6 +42,7 @@ from gove_zone import (
     GovernedExecutor,
     ReceiptValidationError,
     Validator,
+    WorkflowAuthorization,
     WorkflowDAG,
     WorkflowExecutor,
     WorkflowStep,
@@ -54,6 +55,9 @@ TENANT = "tenant-A"
 BOUNDARY = "local-sandbox"
 ACTOR = "agent-1"
 VALIDATOR = Validator("constitutional-council")
+# Plan validator distinct from every step actor (ACTOR) and the runner (ACTOR),
+# so the cross-level (b) separation holds for this clean chain.
+PLAN_VALIDATOR = Validator("plan-council")
 AUTHORITY = "tenant-A/write-grant"
 WORKFLOW_ID = "wf-run-1"
 
@@ -112,6 +116,20 @@ def main() -> int:
     )
     dag.validate()
 
+    # Plan-level governance: a distinct plan validator authorizes the DAG. The
+    # workflow executor now REQUIRES this authorization (breaking change); every
+    # step receipt is bound to it via authorization_hash.
+    authorization = WorkflowAuthorization.from_plan(
+        dag.dag_hash(),
+        workflow_id=WORKFLOW_ID,
+        plan_proposer=ACTOR,
+        plan_validator=PLAN_VALIDATOR,
+        authority=AUTHORITY,
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        declared_goal="fetch, transform, and write",
+    )
+
     args_by_step = {
         "fetch": {"url": "https://example/data"},
         "transform": {"op": "normalize"},
@@ -136,6 +154,7 @@ def main() -> int:
                 predecessor_step_ids=step.predecessor_step_ids,
                 predecessor_receipt_hashes=pred_hashes,
                 dag_hash=dag.dag_hash(),
+                authorization_hash=authorization.authorization_hash,
             )
         return envelopes
 
@@ -144,7 +163,12 @@ def main() -> int:
         g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
         for sid, step in dag.steps.items():
             g.register(step.action, tools[sid].run)
-        return WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g), tools
+        return (
+            WorkflowExecutor(
+                workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=authorization
+            ),
+            tools,
+        )
 
     # 1. In-order gated execution.
     print("[1] DAG executes in topological order under valid step receipts")
@@ -168,6 +192,7 @@ def main() -> int:
         predecessor_step_ids=("fetch",),
         predecessor_receipt_hashes={"fetch": "deadbeef"},
         dag_hash=dag.dag_hash(),
+        authorization_hash=authorization.authorization_hash,
     )
     try:
         wf.execute_step("transform", args_by_step["transform"], t_env)
@@ -188,6 +213,7 @@ def main() -> int:
         predecessor_step_ids=(),
         predecessor_receipt_hashes={},
         dag_hash=dag.dag_hash(),
+        authorization_hash=authorization.authorization_hash,
     )
     try:
         wf.execute_step("fetch", args_by_step["fetch"], cross_env)
@@ -214,6 +240,7 @@ def main() -> int:
         predecessor_step_ids=(),
         predecessor_receipt_hashes={},
         dag_hash=altered_dag.dag_hash(),  # bound to a DIFFERENT plan
+        authorization_hash=authorization.authorization_hash,
     )
     try:
         wf.execute_step("fetch", args_by_step["fetch"], tampered_env)
@@ -227,7 +254,7 @@ def main() -> int:
     print("[5] Offline replay verifies the recorded good chain")
     envelopes = build_chain()
     try:
-        verify_workflow_replay(dag, list(envelopes.values()))
+        verify_workflow_replay(dag, list(envelopes.values()), authorization=authorization)
         _ok("replay verified: chain is internally consistent + topologically faithful")
     except ReceiptValidationError as exc:
         _fail(f"replay rejected a good chain: {exc}")
@@ -237,7 +264,7 @@ def main() -> int:
     chain = list(envelopes.values())
     chain[0] = dataclasses.replace(chain[0], workflow_id="other-run")  # stale hash
     try:
-        verify_workflow_replay(dag, chain)
+        verify_workflow_replay(dag, chain, authorization=authorization)
         _fail("replay accepted a tampered chain")
     except ReceiptValidationError as exc:
         _ok(f"tampered chain rejected: {exc}")

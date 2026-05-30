@@ -25,7 +25,8 @@ the action only if the receipt verifies.
 | `audit.py` | `ChainHashAuditStore` — append-only, hash-chained, `fcntl`-locked JSONL audit log. |
 | `receipt.py` | `DecisionReceipt` (public schema + `verify()`), `Receipt` (kernel proof-of-decision), and `Validator` (the MACI validating principal, distinct from the proposing `actor`). |
 | `executor.py` | `execute_with_receipt` / `GovernedExecutor` — the receipt-gated runner. |
-| `workflow.py` | `WorkflowDAG` / `WorkflowStep` / `WorkflowStepReceipt` / `WorkflowExecutor` / `verify_workflow_replay` — the workflow layer: per-step governance + ledger-enforced ordering over a declared DAG, composed on top of the single-action gate (core untouched). |
+| `plan.py` | `WorkflowAuthorization` — the plan layer: a distinct plan validator's MACI authorization of a `WorkflowDAG` (`from_plan` fail-closes on plan self-validation; `compute_authorization_hash` binds `dag_hash`/proposer/validator/alg/key_id; optional Ed25519 signing). |
+| `workflow.py` | `WorkflowDAG` / `WorkflowStep` / `WorkflowStepReceipt` / `WorkflowExecutor` / `verify_workflow_replay` — the workflow layer: per-step governance + ledger-enforced ordering over a declared DAG, executed only under a required `WorkflowAuthorization`, composed on top of the single-action gate (core untouched). |
 | `tenant.py` | `TenantPolicyStore` + `evaluate_tenant_action` — tenant-isolated issuance. |
 | `contracts.py` | Typed named-contract vocabulary (additive): `GovernanceRequest`, `ProposedAction`, `ExecutionBoundary`, `PolicyBundleRef`, `TenantPolicyBinding`, `ReceiptVerifier`, `AuditEvent`. |
 | `replay.py` | Reconstruct + re-check decisions from the audit log. |
@@ -68,6 +69,28 @@ step's side effect can never fire ahead of the rejection. A per-run `ledger`
 integrity, one shared `dag_hash`/`workflow_id`, topological consistency, and each
 inner receipt's independent validity. See `docs/workflow-receipt-chain.md` and
 the "Workflow receipt chaining" section of `SECURITY.md` for the honest scope.
+
+## Plan layer (additive)
+
+`plan.py` makes the workflow **plan** a governed object, growing the invariant to
+add *"no authorized plan, no workflow step executes."* A **plan proposer**
+proposes the DAG; a **distinct plan validator** authorizes it (`from_plan`,
+fail-closed on plan self-validation), producing a `WorkflowAuthorization` whose
+`authorization_hash` binds `dag_hash` + proposer + validator + signing
+alg/key_id. `WorkflowStepReceipt` gains an `authorization_hash` (bound into
+`compute_step_hash`) tying each step to a *specific* authorized plan — this stops
+cross-plan step lifting. `WorkflowExecutor` now **requires** the authorization
+(breaking change, no silent-ungoverned path) and verifies it on **every**
+`execute_step` (checks A–E: authorization integrity, plan binding, plan MACI +
+runner anchor, step→authorization binding, cross-level separation) before the
+existing envelope checks and the atomic inner gate. The cross-level rule is
+**strict separation (b)**: no principal is both a proposer (plan or any step) and
+a validator (plan or any step); the runner (`governed.expected_actor`) is seeded
+as a proposer and so can never be any validator. `verify_workflow_replay` takes
+the authorization and re-checks its integrity + plan MACI + every step's
+`authorization_hash` + cross-level separation over the recorded set (no runner
+offline). See `docs/plan-level-governance.md` and the "Plan-level governance"
+section of `SECURITY.md` for the honest scope.
 
 ## Design boundaries
 
