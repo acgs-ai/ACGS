@@ -81,6 +81,7 @@ def test_executor_refuses_no_receipt() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "No receipt provided" in str(exc_info.value)
     assert not tracker.called
@@ -102,6 +103,7 @@ def test_executor_refuses_malformed_receipt() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "Missing or empty required field" in str(exc_info.value)
     assert not tracker.called
@@ -123,6 +125,7 @@ def test_executor_refuses_tampered_receipt() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "receipt_hash mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -140,6 +143,7 @@ def test_executor_refuses_denied_receipt() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "Denied receipt cannot authorize execution" in str(exc_info.value)
     assert not tracker.called
@@ -157,6 +161,7 @@ def test_executor_refuses_escalated_receipt() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "Escalated receipt cannot authorize execution" in str(exc_info.value)
     assert not tracker.called
@@ -174,6 +179,7 @@ def test_executor_refuses_wrong_tenant() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "Tenant mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -193,6 +199,7 @@ def test_executor_refuses_transform_mismatch() -> None:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="anonymous",
         )
     assert "Transform mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -209,6 +216,7 @@ def test_executor_allows_valid_allowed_receipt() -> None:
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
+        expected_actor="anonymous",
     )
     assert res == "success"
     assert tracker.called
@@ -227,6 +235,7 @@ def test_executor_allows_valid_transformed_receipt() -> None:
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
+        expected_actor="anonymous",
     )
     assert res == "success"
     assert tracker.called
@@ -235,7 +244,9 @@ def test_executor_allows_valid_transformed_receipt() -> None:
 
 def test_governed_executor_workflow() -> None:
     tracker = SideEffectTracker()
-    executor = GovernedExecutor(tenant_id="tenant-A", execution_boundary="local-sandbox")
+    executor = GovernedExecutor(
+        tenant_id="tenant-A", execution_boundary="local-sandbox", expected_actor="anonymous"
+    )
     executor.register("runtime.file.write", tracker.run_tool)
 
     receipt = make_test_receipt("allow", args={"path": "test.txt"})

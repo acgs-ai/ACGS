@@ -347,6 +347,7 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
+        expected_actor="compliance-officer",
     )
     conformance_results["allowed_action_executed"] = res == "executed" and tool.called
 
@@ -376,6 +377,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="compromised-agent",
         )
     except ReceiptValidationError:
         conformance_results["denied_action_blocked"] = not tool_denied.called
@@ -416,6 +418,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="compliance-officer",
         )
     except ReceiptValidationError:
         mismatch_blocked = True
@@ -428,6 +431,7 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
+        expected_actor="compliance-officer",
     )
     conformance_results["transformed_action_executed"] = (
         mismatch_blocked
@@ -446,6 +450,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="compliance-officer",
         )
     except ReceiptValidationError:
         conformance_results["missing_receipt_blocked"] = not tool_no_receipt.called
@@ -463,6 +468,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
+            expected_actor="compliance-officer",
         )
     except ReceiptValidationError:
         conformance_results["tampered_receipt_blocked"] = not tool_tampered.called

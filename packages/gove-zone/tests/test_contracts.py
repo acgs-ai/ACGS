@@ -97,7 +97,9 @@ def test_tenant_policy_binding_requires_tenant() -> None:
 
 def test_verifier_accepts_valid_receipt() -> None:
     verifier = ReceiptVerifier(
-        expected_tenant_id="tenant-A", expected_execution_boundary="local-sandbox"
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
     )
     verifier.verify(_allow_receipt(), expected_action="runtime.file.write")
     assert verifier.is_valid(_allow_receipt(), expected_action="runtime.file.write")
@@ -105,7 +107,9 @@ def test_verifier_accepts_valid_receipt() -> None:
 
 def test_verifier_rejects_none_receipt() -> None:
     verifier = ReceiptVerifier(
-        expected_tenant_id="tenant-A", expected_execution_boundary="local-sandbox"
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
     )
     with pytest.raises(ReceiptValidationError, match="No receipt provided"):
         verifier.verify(None)
@@ -114,7 +118,9 @@ def test_verifier_rejects_none_receipt() -> None:
 
 def test_verifier_rejects_wrong_tenant() -> None:
     verifier = ReceiptVerifier(
-        expected_tenant_id="tenant-B", expected_execution_boundary="local-sandbox"
+        expected_tenant_id="tenant-B",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
     )
     with pytest.raises(ReceiptValidationError, match="Tenant mismatch"):
         verifier.verify(_allow_receipt(tenant_id="tenant-A"))
@@ -122,7 +128,9 @@ def test_verifier_rejects_wrong_tenant() -> None:
 
 def test_verifier_rejects_tampered_receipt() -> None:
     verifier = ReceiptVerifier(
-        expected_tenant_id="tenant-A", expected_execution_boundary="local-sandbox"
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
     )
     tampered = dataclasses.replace(_allow_receipt(), actor="mallory")
     with pytest.raises(ReceiptValidationError, match="receipt_hash mismatch"):

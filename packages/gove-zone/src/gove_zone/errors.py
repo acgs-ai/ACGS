@@ -19,6 +19,17 @@ class ReceiptValidationError(GoveZoneError):
     """Raised when a DecisionReceipt validation fails."""
 
 
+class SigningError(GoveZoneError):
+    """Raised for signer construction / key / missing-dependency problems.
+
+    NOTE: signature *verification failures at the gate* raise
+    :class:`ReceiptValidationError`, not this — they stay on the single
+    fail-closed receipt-verification path. ``SigningError`` covers issuance-side
+    and configuration faults: missing ``crypto`` extra, malformed key bytes, or
+    attempting to ``sign`` with a verify-only signer.
+    """
+
+
 class DeniedError(GoveZoneError):
     """Raised when a dispatch is denied by policy or fail-closed fallback."""
 

@@ -9,11 +9,13 @@ are the unit of replay (see :mod:`gove_zone.replay`).
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from gove_zone.decision import DecisionRecord, sha256_json
+from gove_zone.signing import ReceiptSigner
 
 
 def _now_iso() -> str:
@@ -94,9 +96,29 @@ class DecisionReceipt:
     ``validator_id`` / ``validator_role`` identify the distinct principal that
     issued the authority decision, and ``authority`` is the grant it conferred.
     These three fields are bound into ``receipt_hash`` (via ``to_dict``), enforcing
-    validator≠proposer at issuance and at the gate when the caller supplies its
-    identity via ``expected_actor``; not cryptographically unforgeable under host
-    compromise.
+    validator≠proposer at issuance and at the gate. The gate surfaces
+    (:func:`gove_zone.executor.execute_with_receipt`,
+    :class:`gove_zone.executor.GovernedExecutor`,
+    :class:`gove_zone.contracts.ReceiptVerifier`) now *require* ``expected_actor``,
+    so the strong caller-anchored check (2b below) is the default — omission fails
+    loudly rather than silently downgrading. ``verify()`` itself keeps
+    ``expected_actor`` optional; the weak ``validator_id == actor`` fallback (2c)
+    remains as residual defense-in-depth for direct ``verify()`` callers only.
+
+    Ed25519 asymmetric signing closes the recomputed-receipt residual **when
+    engaged**: ``signature`` is a private-key signature over ``receipt_hash``; the
+    gate verifies it with the matching public key. ``signature_algorithm`` and
+    ``signing_key_id`` are bound into ``receipt_hash`` (anti-downgrade: an attacker
+    cannot change the algorithm or key without breaking the hash), while
+    ``signature`` itself stays OUT of ``compute_hash`` (the signature signs the
+    hash). An unsigned receipt keeps ``signature_algorithm="none"``,
+    ``signing_key_id=""``, ``signature="unsigned_local"``.
+
+    **Precondition for closure.** The residual is closed only when receipts are
+    issued with a private-key signer AND the gate is configured with a matching
+    public-key verifier plus ``require_signature=True``. Default deployments are
+    unsigned. Residuals not addressed: private-key custody, key distribution /
+    trust establishment, and revocation (no PKI; the verifier map is static).
     """
 
     receipt_id: str
@@ -124,6 +146,8 @@ class DecisionReceipt:
     validator_role: str = ""
     argument_hash: str = ""
     receipt_hash: str = ""
+    signature_algorithm: str = "none"
+    signing_key_id: str = ""
     signature: str = "unsigned_local"
 
     def to_dict(self) -> dict[str, Any]:
@@ -168,6 +192,8 @@ class DecisionReceipt:
             "argument_hash": self.argument_hash,
             "previous_audit_hash": self.previous_audit_hash,
             "audit_event_hash": self.audit_event_hash,
+            "signature_algorithm": self.signature_algorithm,
+            "signing_key_id": self.signing_key_id,
             "receipt_hash": self.receipt_hash,
             "signature": self.signature,
         }
@@ -203,6 +229,8 @@ class DecisionReceipt:
             previous_audit_hash=d["previous_audit_hash"],
             audit_event_hash=d["audit_event_hash"],
             receipt_hash=d.get("receipt_hash", ""),
+            signature_algorithm=d.get("signature_algorithm", "none"),
+            signing_key_id=d.get("signing_key_id", ""),
             signature=d.get("signature", "unsigned_local"),
         )
 
@@ -234,6 +262,7 @@ class DecisionReceipt:
         constraints: dict[str, Any] | None = None,
         approval_chain_summary: dict[str, Any] | None = None,
         expires_at: str = "",
+        signer: ReceiptSigner | None = None,
     ) -> DecisionReceipt:
         """Mint a receipt for *record*, binding a distinct MACI *validator*.
 
@@ -241,6 +270,12 @@ class DecisionReceipt:
         (``record.actor``). A self-validated receipt — where the proposer would
         also be its own authority — can never be minted. The proposer/validator
         linkage is recorded in ``approval_chain_summary``.
+
+        If *signer* is provided, its ``algorithm`` and ``key_id`` are bound into
+        ``receipt_hash`` (anti-downgrade) and ``signature`` is the signer's
+        signature over the hash. With ``signer=None`` (default) the receipt is
+        unsigned (``signature_algorithm="none"``, ``signature="unsigned_local"``),
+        fully backward-compatible.
         """
         from gove_zone.errors import ReceiptValidationError
 
@@ -293,9 +328,14 @@ class DecisionReceipt:
             argument_hash=record.argument_hash,
             previous_audit_hash=previous_audit_hash,
             audit_event_hash=audit_hash,
+            signature_algorithm=signer.algorithm if signer is not None else "none",
+            signing_key_id=signer.key_id if signer is not None else "",
         )
+        # Compute the hash AFTER alg+key_id are set so they bind into it
+        # (anti-downgrade), THEN sign that hash so the signature attests it.
         h = receipt.compute_hash()
-        return dataclasses.replace(receipt, receipt_hash=h)
+        signature = signer.sign(h.encode("utf-8")) if signer is not None else "unsigned_local"
+        return dataclasses.replace(receipt, receipt_hash=h, signature=signature)
 
     def verify(
         self,
@@ -310,6 +350,8 @@ class DecisionReceipt:
         expected_validator_role: str | None = None,
         expected_authority: str | None = None,
         expected_actor: str | None = None,
+        verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+        require_signature: bool = False,
         now_iso: str | None = None,
     ) -> None:
         from gove_zone.decision import Decision
@@ -350,6 +392,46 @@ class DecisionReceipt:
                 f"Expected {expected_hash}, got {self.receipt_hash}"
             )
 
+        # 2a. Asymmetric signature check. Placed AFTER the receipt_hash check
+        # because the signature attests an intact hash: a tampered field is caught
+        # above before we trust the signature. Fail-closed: a verification
+        # *failure* raises ReceiptValidationError (stays on the single gate path),
+        # never SigningError.
+        #
+        # Two distinct failure modes with distinct semantics:
+        #
+        #   (i)  ``require_signature=True`` + ``algorithm=="none"``: the gate
+        #        demands a signed receipt but this one is unsigned → reject.
+        #        ``require_signature`` governs ONLY unsigned receipts.
+        #
+        #   (ii) ``algorithm != "none"``: the receipt CLAIMS a signature. It MUST
+        #        be verified, period — regardless of ``require_signature``. A signed
+        #        receipt presented without a verifier is rejected. This is the
+        #        fail-closed rule: a receipt that advertises a signature cannot
+        #        silently skip cryptographic verification.
+        #
+        # signature_algorithm and signing_key_id are bound into receipt_hash, so
+        # an attacker cannot downgrade the algorithm or swap the key without
+        # breaking check 2 above.
+        if require_signature and self.signature_algorithm == "none":
+            raise ReceiptValidationError("unsigned receipt rejected: signature required")
+        if self.signature_algorithm != "none":
+            # Resolve the verifier — a missing verifier is a hard rejection here
+            # (the receipt claims a signature; we must check it).
+            resolved: ReceiptSigner | None
+            if isinstance(verifier, Mapping):
+                if self.signing_key_id not in verifier:
+                    raise ReceiptValidationError("unknown signing key")
+                resolved = verifier[self.signing_key_id]
+            elif verifier is not None:
+                resolved = verifier
+            else:
+                raise ReceiptValidationError("signed receipt requires a configured verifier")
+            if resolved.algorithm != self.signature_algorithm:
+                raise ReceiptValidationError("signature algorithm mismatch")
+            if not resolved.verify(self.receipt_hash.encode("utf-8"), self.signature):
+                raise ReceiptValidationError("invalid signature")
+
         # 2b. MACI actor-anchor check (authoritative when caller supplies identity).
         # expected_actor is the identity of the INVOKING PRINCIPAL at the gate,
         # supplied from outside the receipt (like expected_tenant_id), so a
@@ -369,12 +451,17 @@ class DecisionReceipt:
                     f"self-validation: validator is the invoking principal ({expected_actor!r})"
                 )
 
-        # 2c. Naive self-validation fallback (heuristic only, no expected_actor).
-        # Catches only the obvious case where validator_id and actor on the
-        # receipt happen to be identical. A forger who sets actor to a phantom
-        # value while keeping validator_id as the real proposer bypasses this
-        # check; real proposer-binding requires expected_actor above (and
-        # ultimately authenticated/signed issuance, which is roadmap).
+        # 2c. Naive self-validation fallback — RESIDUAL defense-in-depth only.
+        # The gate surfaces (execute_with_receipt / GovernedExecutor /
+        # ReceiptVerifier) now REQUIRE expected_actor, so 2b above is the
+        # authoritative proposer-binding check on every gated path; this fallback
+        # is no longer reachable through the gate with the anchor omitted. It
+        # survives solely for direct verify() callers who pass no expected_actor.
+        # It catches only the obvious case where validator_id and actor on the
+        # receipt are identical. A forger who sets actor to a phantom value while
+        # keeping validator_id as the real proposer bypasses THIS check; real
+        # proposer-binding requires expected_actor above (and ultimately
+        # authenticated/signed issuance, which is roadmap).
         if self.validator_id == self.actor:
             raise ReceiptValidationError(
                 f"self-validation: validator must differ from proposer (both are {self.actor!r})"

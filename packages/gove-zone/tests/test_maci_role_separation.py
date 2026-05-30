@@ -28,7 +28,9 @@ from gove_zone import (
     Decision,
     DecisionReceipt,
     DecisionRecord,
+    GovernedExecutor,
     ReceiptValidationError,
+    ReceiptVerifier,
     RuleSetPolicy,
     TenantPolicyStore,
     Validator,
@@ -172,6 +174,9 @@ def test_gate_refuses_forged_self_validated_receipt(tmp_path: Path) -> None:
             expected_audit_hash=forged.audit_event_hash,
             expected_policy_hash=forged.policy_hash,
             expected_policy_bundle_id=forged.policy_bundle_id,
+            # Anchor matches the receipt's proposer; the forged validator_id==actor
+            # trips the self-validation check (2b sub-check (ii)).
+            expected_actor="agent-1",
         )
     assert not side.ran  # the side effect was NEVER executed
 
@@ -227,6 +232,9 @@ def test_missing_validator_fields_fail_closed(tmp_path: Path) -> None:
                 expected_tenant_id=TENANT,
                 expected_execution_boundary=BOUNDARY,
                 expected_action=ACTION,
+                # Anchor matches the proposer; the missing-field check (#1) fires
+                # first regardless, so this stays a missing-field test.
+                expected_actor="agent-1",
             )
         assert not side.ran
 
@@ -287,11 +295,19 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
     The bypass: forge a receipt where ``validator_id`` is the REAL proposer
     (e.g. "agent-1") but ``actor`` is changed to a phantom value (e.g. "phantom").
     Because ``validator_id != actor`` on the receipt, the naive 2c check passes.
-    Only the caller-anchored 2b check — which compares ``validator_id`` against
+    Only the caller-anchored 2b check — which compares ``actor`` against
     ``expected_actor`` supplied from outside the receipt — can catch this.
 
-    This test MUST FAIL (ReceiptValidationError not raised) if expected_actor is
-    removed from execute_with_receipt, proving the anchor is load-bearing.
+    ISOLATION: the forged ``approval_chain_summary`` is made internally consistent
+    with the forged identity (``validator_id="agent-1"``, ``proposer="phantom"``),
+    so check 2d (summary↔receipt agreement) is SATISFIED and does NOT pre-empt the
+    check under test. With 2c not firing (validator_id != actor) and 2d satisfied,
+    the ONLY remaining guard is 2b sub-check (i): actor "phantom" != anchor
+    "agent-1". The match is pinned to "actor mismatch" so the test fails for the
+    right reason — not incidentally via a stale summary tripping 2d.
+
+    This test MUST FAIL (ReceiptValidationError not raised) if check 2b is removed,
+    proving the anchor is load-bearing.
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
@@ -300,21 +316,35 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
     # Mint a legitimate receipt for the real proposer "agent-1".
     minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
 
-    # Forge: set validator_id to the real proposer, change actor to a phantom,
-    # then recompute a CONSISTENT hash so the receipt_hash check passes.
-    forged = dataclasses.replace(minted, validator_id="agent-1", actor="phantom")
+    # Forge: set validator_id to the real proposer, change actor to a phantom.
+    # Also rewrite approval_chain_summary so it stays internally consistent with
+    # the forged identity — this satisfies check 2d so it cannot pre-empt 2b.
+    forged_summary = dict(minted.approval_chain_summary)
+    forged_summary["validator_id"] = "agent-1"
+    forged_summary["proposer"] = "phantom"
+    forged = dataclasses.replace(
+        minted,
+        validator_id="agent-1",
+        actor="phantom",
+        approval_chain_summary=forged_summary,
+    )
+    # Recompute a CONSISTENT hash so the receipt_hash check (2) passes.
     forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
-    # Confirm: naive check (validator_id == actor) would NOT catch this.
+    # Confirm: naive check 2c (validator_id == actor) would NOT catch this.
     assert forged.validator_id != forged.actor  # "agent-1" != "phantom"
-    # Confirm: hash is internally consistent.
+    # Confirm: hash is internally consistent (check 2 passes).
     assert forged.compute_hash() == forged.receipt_hash
+    # Confirm: check 2d is satisfied — summary agrees with the forged top-level fields.
+    assert forged.approval_chain_summary.get("validator_id") == forged.validator_id
+    assert forged.approval_chain_summary.get("proposer") == forged.actor
 
     side = SideEffect()
     args = {"path": "safe.txt", "content": "hi"}
-    # The gate rejects via check 2b. Because actor="phantom" != expected_actor="agent-1",
-    # the actor-mismatch sub-check fires first. Both sub-checks in 2b enforce the
-    # invariant; the important assertion is that the gate raises and the tool never runs.
-    with pytest.raises(ReceiptValidationError, match="actor mismatch|self-validation"):
+    # ONLY check 2b can deny: actor "phantom" != expected_actor "agent-1" trips
+    # the actor-mismatch sub-check (i). 2c does not fire (validator_id != actor),
+    # 2d is satisfied. The match is pinned to "actor mismatch" so the assertion is
+    # meaningful — 2b is the sole guard.
+    with pytest.raises(ReceiptValidationError, match="actor mismatch"):
         execute_with_receipt(
             tool_fn=side.run,
             args=args,
@@ -323,8 +353,7 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             # The invoking principal identifies itself as "agent-1".
-            # Check (i): actor mismatch (phantom != agent-1) → reject.
-            # Check (ii) would fire if actor matched: validator_id==expected_actor → reject.
+            # 2b sub-check (i): actor mismatch (phantom != agent-1) → reject.
             expected_actor="agent-1",
         )
     assert not side.ran  # side effect was NEVER executed
@@ -444,3 +473,93 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
             expected_actor="agent-1",  # actor == expected_actor, so (i) does not fire
         )
     assert not side.ran  # side effect was NEVER executed
+
+
+def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: Path) -> None:
+    """DEFAULT-PATH GATE PROOF — the strong 2b anchor fires through the
+    CONSTRUCTION context, not only when expected_actor is passed inline.
+
+    GovernedExecutor now requires ``expected_actor`` at construction. This test
+    proves the actor-rewrite forgery (validator_id = real proposer, actor =
+    phantom; naive 2c does NOT catch it because validator_id != actor) is rejected
+    on the DEFAULT production path — the executor is built with the anchor as
+    construction context and ``execute`` is called with NO per-call expected_actor.
+    Unsigned, no signer: this is the previously-untested default posture.
+
+    ISOLATION: the forged ``approval_chain_summary`` is made internally consistent
+    with the forged identity (``validator_id="agent-1"``, ``proposer="phantom"``)
+    so check 2d (summary↔receipt agreement) is SATISFIED and does NOT pre-empt the
+    check under test. With 2c not firing and 2d satisfied, the ONLY remaining guard
+    is 2b sub-check (i): actor "phantom" != anchor "agent-1". The match is pinned to
+    "actor mismatch" so the test fails for the right reason — not incidentally.
+    """
+    store = TenantPolicyStore(tmp_path / "pol")
+    store.store_bundle(TENANT, _allow_policy())
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+
+    # Build the executor with the anchor as CONSTRUCTION CONTEXT (no per-call override).
+    side = SideEffect()
+    executor = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor="agent-1",  # authenticated caller identity, supplied once
+    )
+    executor.register(ACTION, side.run)
+
+    # Mint a real UNSIGNED receipt for proposer "agent-1", distinct validator.
+    minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+
+    # Forge: validator_id = real proposer "agent-1", actor = phantom. Also rewrite
+    # approval_chain_summary so it stays internally consistent with the forged
+    # identity — this satisfies check 2d so it cannot pre-empt 2b. Then recompute a
+    # consistent hash so the hash check (2) passes AND the naive 2c passes
+    # (validator_id "agent-1" != actor "phantom").
+    forged_summary = dict(minted.approval_chain_summary)
+    forged_summary["validator_id"] = "agent-1"
+    forged_summary["proposer"] = "phantom"
+    forged = dataclasses.replace(
+        minted,
+        validator_id="agent-1",
+        actor="phantom",
+        approval_chain_summary=forged_summary,
+    )
+    forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    assert forged.compute_hash() == forged.receipt_hash  # hash check would PASS
+    assert forged.validator_id != forged.actor  # naive 2c would NOT catch this
+    # Check 2d is satisfied — summary agrees with the forged top-level fields.
+    assert forged.approval_chain_summary.get("validator_id") == forged.validator_id
+    assert forged.approval_chain_summary.get("proposer") == forged.actor
+
+    args = {"path": "safe.txt", "content": "hi"}
+    # NO per-call expected_actor — the gate uses the construction-context anchor.
+    # ONLY check 2b can deny: actor "phantom" != anchor "agent-1" → "actor mismatch".
+    with pytest.raises(ReceiptValidationError, match="actor mismatch"):
+        executor.execute(ACTION, args, forged)
+    assert not side.ran  # the side effect was NEVER executed
+
+
+def test_gate_construction_requires_expected_actor(tmp_path: Path) -> None:
+    """REGRESSION GUARD — the gate surfaces REQUIRE ``expected_actor``.
+
+    Constructing GovernedExecutor / ReceiptVerifier with NO ``expected_actor``
+    is a TypeError (required kwarg, no default). Passing ``expected_actor=""``
+    fails closed with ReceiptValidationError. This locks in the new default
+    posture: anyone who reverts the required-param change makes this test fail.
+    """
+    # Missing the required kwarg → TypeError (no default).
+    with pytest.raises(TypeError):
+        GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        ReceiptVerifier(  # type: ignore[call-arg]
+            expected_tenant_id=TENANT, expected_execution_boundary=BOUNDARY
+        )
+
+    # Empty-string anchor → fail-closed ReceiptValidationError at construction.
+    with pytest.raises(ReceiptValidationError, match="expected_actor is required"):
+        GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor="")
+    with pytest.raises(ReceiptValidationError, match="expected_actor is required"):
+        ReceiptVerifier(
+            expected_tenant_id=TENANT,
+            expected_execution_boundary=BOUNDARY,
+            expected_actor="",
+        )
