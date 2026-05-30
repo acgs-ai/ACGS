@@ -91,6 +91,13 @@ from gove_zone.tenant import (
     evaluate_tenant_action,
 )
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
+from gove_zone.workflow import (
+    WorkflowDAG,
+    WorkflowExecutor,
+    WorkflowStep,
+    WorkflowStepReceipt,
+    verify_workflow_replay,
+)
 
 __version__ = "0.1.0.dev0"
 
@@ -141,6 +148,10 @@ __all__ = [
     "ToolRegistry",
     "UnknownToolError",
     "Validator",
+    "WorkflowDAG",
+    "WorkflowExecutor",
+    "WorkflowStep",
+    "WorkflowStepReceipt",
     "__version__",
     "agentdojo_scenarios_from_fixture",
     "emit_receipt_for_hook",
@@ -166,4 +177,5 @@ __all__ = [
     "sha256_json",
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
+    "verify_workflow_replay",
 ]

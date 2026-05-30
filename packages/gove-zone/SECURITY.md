@@ -145,6 +145,48 @@ audit chain as before.
 - **Revocation.** A compromised key cannot be revoked; the operator must update
   and redeploy the verifier mapping.
 
+## Workflow receipt chaining
+
+`workflow.py` extends the per-action gate to a declared DAG of steps. Each step's
+execution is gated by a `WorkflowStepReceipt` that wraps a fully valid inner
+`DecisionReceipt` (verified by the unchanged single-action gate) and binds it to
+a workflow position. The envelope's `step_receipt_hash` covers `workflow_id`,
+`step_id`, sorted predecessors, predecessor receipt hashes, `dag_hash`, the
+signing algorithm/key id, **and the inner receipt's `receipt_hash`** — so a
+tampered envelope or a swapped inner receipt is detected. `signature` signs that
+hash and stays out of it, identical to the inner receipt's discipline.
+
+**Order is load-bearing.** `WorkflowExecutor.execute_step` completes every
+envelope check — present, hash, signature (when engaged), workflow binding, DAG
+binding (`dag_hash` + step membership + declared-predecessor match), no-replay,
+and predecessor satisfaction — **before** the atomic inner gate-and-execute. The
+single-action gate verifies-and-executes in one call, so if the inner gate ran
+first, a reordered or cross-workflow step's side effect would fire before the
+envelope rejection. Every negative-path test asserts the side effect did not run.
+
+**What it proves.** A step ran in the approved order, with approved arguments,
+under a valid per-step receipt bound to the approved plan. The per-run `ledger`
+(trusted runtime state) is what detects replay, reordering, and
+predecessor-substitution.
+
+**Honest scope (residuals).**
+- Workflow chaining adds **no** cryptographic guarantee beyond the per-step
+  receipts and their envelopes.
+- **Plan-level governance is out of scope** for this increment: the DAG is **not**
+  a separately proposer≠validator-authorized object. `dag_hash` is a consistency
+  binding, not an authority decision over the plan. A future `WorkflowAuthorization`
+  receipt with its own MACI separation would govern the DAG itself.
+- **Unsigned `verify_workflow_replay()` proves internal chain consistency and
+  topological faithfulness, NOT unforgeability**: an attacker who can recompute
+  envelope hashes (and re-sign, if they hold the key) can produce a consistent
+  chain. Envelope signing (`ReceiptSigner`) is the closure for cross-workflow and
+  ordering integrity — and only when engaged — exactly as Ed25519 closes the inner
+  recomputed-receipt residual.
+- The ledger's substitution/reorder detection rests on it being trusted runtime
+  state; offline replay has no ledger and relies on envelope integrity (hashes,
+  and signatures when engaged).
+- Under host compromise, the same residuals as the single-action gate apply.
+
 ## What gove-zone does NOT do (security non-goals today)
 
 - **No PKI or key lifecycle management.** Ed25519 signing is point-to-point

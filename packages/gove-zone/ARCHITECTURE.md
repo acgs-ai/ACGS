@@ -25,6 +25,7 @@ the action only if the receipt verifies.
 | `audit.py` | `ChainHashAuditStore` — append-only, hash-chained, `fcntl`-locked JSONL audit log. |
 | `receipt.py` | `DecisionReceipt` (public schema + `verify()`), `Receipt` (kernel proof-of-decision), and `Validator` (the MACI validating principal, distinct from the proposing `actor`). |
 | `executor.py` | `execute_with_receipt` / `GovernedExecutor` — the receipt-gated runner. |
+| `workflow.py` | `WorkflowDAG` / `WorkflowStep` / `WorkflowStepReceipt` / `WorkflowExecutor` / `verify_workflow_replay` — the workflow layer: per-step governance + ledger-enforced ordering over a declared DAG, composed on top of the single-action gate (core untouched). |
 | `tenant.py` | `TenantPolicyStore` + `evaluate_tenant_action` — tenant-isolated issuance. |
 | `contracts.py` | Typed named-contract vocabulary (additive): `GovernanceRequest`, `ProposedAction`, `ExecutionBoundary`, `PolicyBundleRef`, `TenantPolicyBinding`, `ReceiptVerifier`, `AuditEvent`. |
 | `replay.py` | Reconstruct + re-check decisions from the audit log. |
@@ -51,6 +52,22 @@ caller ── execute_with_receipt / ReceiptVerifier ─────────
 
 The audit append happens **before** any side effect, so every decision —
 including refusals — leaves evidence.
+
+## Workflow layer (additive)
+
+`workflow.py` extends the single-action invariant to a multi-step DAG without
+changing the audited core. A `WorkflowStepReceipt` envelope wraps a fully valid
+inner `DecisionReceipt` and binds it to a workflow position (`workflow_id`,
+`step_id`, `dag_hash`, predecessor hashes). `WorkflowExecutor.execute_step` runs
+**all** envelope checks (present, hash, signature, workflow binding, DAG binding,
+no-replay, predecessor satisfaction) **before** delegating the atomic
+gate-and-execute to `GovernedExecutor.execute` — so a reordered or cross-workflow
+step's side effect can never fire ahead of the rejection. A per-run `ledger`
+(trusted runtime state) enforces ordering and single-execution.
+`verify_workflow_replay` re-checks a recorded run offline (no ledger): envelope
+integrity, one shared `dag_hash`/`workflow_id`, topological consistency, and each
+inner receipt's independent validity. See `docs/workflow-receipt-chain.md` and
+the "Workflow receipt chaining" section of `SECURITY.md` for the honest scope.
 
 ## Design boundaries
 
