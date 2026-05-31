@@ -172,10 +172,11 @@ predecessor-substitution.
 **Honest scope (residuals).**
 - Workflow chaining adds **no** cryptographic guarantee beyond the per-step
   receipts and their envelopes.
-- **Plan-level governance is out of scope** for this increment: the DAG is **not**
-  a separately proposer≠validator-authorized object. `dag_hash` is a consistency
-  binding, not an authority decision over the plan. A future `WorkflowAuthorization`
-  receipt with its own MACI separation would govern the DAG itself.
+- **Plan-level governance is the next layer up** (see "Plan-level governance"
+  below): a `WorkflowAuthorization` makes the DAG a proposer≠validator-authorized
+  object. Within *this* workflow-chaining section, `dag_hash` is still only a
+  consistency binding, not an authority decision; the plan authority decision
+  lives in `plan.py`.
 - **Unsigned `verify_workflow_replay()` proves internal chain consistency and
   topological faithfulness, NOT unforgeability**: an attacker who can recompute
   envelope hashes (and re-sign, if they hold the key) can produce a consistent
@@ -185,6 +186,68 @@ predecessor-substitution.
 - The ledger's substitution/reorder detection rests on it being trusted runtime
   state; offline replay has no ledger and relies on envelope integrity (hashes,
   and signatures when engaged).
+- Under host compromise, the same residuals as the single-action gate apply.
+
+## Plan-level governance
+
+`plan.py` makes the workflow **plan** a governed object. The invariant grows to
+add: *"no authorized plan, no workflow step executes."* A **plan proposer**
+proposes the DAG; a **distinct plan validator** authorizes it (a
+`WorkflowAuthorization`), and `WorkflowExecutor` runs steps only under that
+authorization.
+
+**The authorization.** `WorkflowAuthorization.authorization_hash` binds `dag_hash`
+(the exact plan), `plan_proposer`, `plan_validator_id`, and the signing
+algorithm/key id (anti-downgrade); `signature` signs that hash and stays out of
+it. `from_plan` is fail-closed: it refuses to mint a self-validated plan
+(`plan_validator_id == plan_proposer`). Each `WorkflowStepReceipt` carries an
+`authorization_hash` bound into its own hash, tying the step to a *specific*
+authorized plan.
+
+**The gate.** `WorkflowExecutor` now **requires** the authorization — a missing
+authorization is a construction-time error, not a silent downgrade — and verifies
+it on **every** `execute_step` (it is independently callable), before the existing
+envelope checks and the atomic inner gate. The checks, in order: (A) authorization
+integrity (hash + signature when engaged); (B) plan binding (`workflow_id`,
+`dag_hash`, tenant, boundary, expiry); (C) plan MACI + runner anchor
+(`plan_validator_id` ≠ `plan_proposer` **and** ≠ the runner —
+`governed.expected_actor`, taken from runtime context, never the authorization);
+(D) step→authorization binding (`step_receipt.authorization_hash` must match);
+(E) **cross-level separation, strict (b)** — `proposers = {plan_proposer, runner}
+∪ {step actors}` must stay disjoint from `validators = {plan_validator_id} ∪ {step
+validator_ids}`. There are two collusion shapes, and (E) is independently
+load-bearing for the second: (i) a step **proposer** that is also the plan
+**validator** — since a step proposer is the inner `actor`, pinned to the runner
+by the inner gate, this is *the runner validating its own plan*, already caught by
+(C); (ii) a step **validator** that is also the plan **proposer** — not pinned to
+the runner and caught by no other check, so (E) is the **sole** guard against the
+side effect for this case. Every negative-path test asserts the side effect did
+not run.
+
+**What it proves.** Plan-level role separation enforced by the verifier: proposer
+≠ validator over the *plan*, steps bound to an authorized plan, and no principal
+proposing and validating anywhere in the workflow. Cross-plan step lifting (a step
+minted under authorization A replayed under B) is rejected by (D); cross-plan
+authorization reuse by (B).
+
+**Honest scope (residuals).**
+- This adds **no** cryptographic guarantee beyond the authorization receipt and
+  its signature. Unsigned authorizations are tamper-evident (hash) but forgeable
+  by a party who can recompute the hash; **signing** (`ReceiptSigner`) is the
+  closure, exactly as Ed25519 closes the inner recomputed-receipt residual, and
+  only when engaged.
+- **Not multi-agent governance.** No mutual authentication between agents, no
+  delegation chains, no distinct cryptographic agent identities. Principals are
+  opaque strings; the cross-level check proves *distinctness of strings*, not
+  *authenticated identity*. Multi-agent governance is a separate future increment.
+- **`workflow_id` is a nonce.** The authorization binds it; the integrator MUST
+  NOT reuse a `workflow_id` across runs, or an old authorization (and its step
+  receipts) could replay. The executor enforces single-execution *within* a run
+  via the ledger, but cannot detect reuse across separate executor instances.
+- **Replay has no runner.** The runner is runtime-only and deliberately not in the
+  authorization, so `verify_workflow_replay` enforces plan MACI (validator ≠
+  proposer) and cross-level separation over the recorded set, but **not** the
+  runner anchor.
 - Under host compromise, the same residuals as the single-action gate apply.
 
 ## What gove-zone does NOT do (security non-goals today)
