@@ -38,7 +38,7 @@ defaults:
 
 jobs:
   test:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       matrix:

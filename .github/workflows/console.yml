@@ -91,7 +91,7 @@ defaults:
 
 jobs:
   build:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       image: ${{ steps.image.outputs.uri }}
