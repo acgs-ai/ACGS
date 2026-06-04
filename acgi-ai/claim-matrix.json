@@ -70,7 +70,10 @@
     {
       "id": "audit-retention",
       "surface": "privacy",
-      "sourceFiles": ["src/routes/Privacy.tsx", "src/routes/console/BusAnalysis.tsx"],
+      "sourceFiles": [
+        "src/routes/Privacy.tsx",
+        "src/routes/console/BusAnalysis.tsx"
+      ],
       "allowedWording": "Audit-retention language is a product target backed by local design/config evidence; production retention proof requires live storage policy and legal review.",
       "evidenceState": "external_required",
       "evidence": [
@@ -114,9 +117,40 @@
       "publicDeployAllowed": false
     },
     {
+      "id": "gove-zone-runtime-governance-plane",
+      "surface": "marketing",
+      "sourceFiles": [
+        "src/routes/Marketing.tsx"
+      ],
+      "allowedWording": "gove-zone may be described as an alpha runtime governance plane for receipt-gated agent execution where a valid Decision Receipt gates side effects; proof-pack output is local runtime evidence with explicit production, assurance, signing, MACI, and sandboxing caveats.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "packages/gove-zone/ARCHITECTURE.md",
+          "anchor": "No valid Decision Receipt, no side effect."
+        },
+        {
+          "file": "packages/gove-zone/SECURITY.md",
+          "anchor": "Execution is refused \u2014 never silently allowed"
+        },
+        {
+          "file": "packages/gove-zone/src/gove_zone/cli.py",
+          "anchor": "This conformance proof pack provides local verification that no-receipt and"
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
+    },
+    {
       "id": "production-auth-boundary",
       "surface": "console",
-      "sourceFiles": ["src/lib/session.ts", "src/routes/Login.tsx", "src/surfaces/console/App.tsx"],
+      "sourceFiles": [
+        "src/lib/session.ts",
+        "src/routes/Login.tsx",
+        "src/surfaces/console/App.tsx"
+      ],
       "allowedWording": "Production demo-session paths are locally blocked; real OIDC or server-cookie auth remains required before production use.",
       "evidenceState": "external_required",
       "evidence": [
@@ -141,7 +175,11 @@
     {
       "id": "console-csp-and-headers",
       "surface": "console-security",
-      "sourceFiles": ["infra/Caddyfile", "scripts/postdeploy-verify.sh", "src/routes/Security.tsx"],
+      "sourceFiles": [
+        "infra/Caddyfile",
+        "scripts/postdeploy-verify.sh",
+        "src/routes/Security.tsx"
+      ],
       "allowedWording": "Console header and CSP behavior is locked by local configuration checks and postdeploy verification; live proof must come from the deployed origin and the security page must keep that distinction visible.",
       "evidenceState": "config",
       "evidence": [
@@ -166,7 +204,10 @@
     {
       "id": "font-provenance",
       "surface": "marketing-console",
-      "sourceFiles": ["src/fonts.css", "public/static/fonts/AGENTS.md"],
+      "sourceFiles": [
+        "src/fonts.css",
+        "public/static/fonts/AGENTS.md"
+      ],
       "allowedWording": "Self-hosted font files have a committed SHA-256 manifest and CSS reference check; license attribution remains documented separately.",
       "evidenceState": "config",
       "evidence": [
@@ -191,7 +232,11 @@
     {
       "id": "bus-proxy-boundary",
       "surface": "console",
-      "sourceFiles": ["infra/Caddyfile", "src/api/client.ts", "src/api/hooks.ts"],
+      "sourceFiles": [
+        "infra/Caddyfile",
+        "src/api/client.ts",
+        "src/api/hooks.ts"
+      ],
       "allowedWording": "The console origin has a same-origin bus proxy contract that fails closed without an upstream; live bus integration still requires a configured governed bus.",
       "evidenceState": "config",
       "evidence": [
@@ -216,7 +261,11 @@
     {
       "id": "wcag-manual-evidence",
       "surface": "marketing-console",
-      "sourceFiles": ["src/App.css", "src/index.css", "src/routes/Console.tsx"],
+      "sourceFiles": [
+        "src/App.css",
+        "src/index.css",
+        "src/routes/Console.tsx"
+      ],
       "allowedWording": "Accessibility work can reference local design and styling safeguards; WCAG conformance wording requires axe evidence plus signed manual screen-reader review.",
       "evidenceState": "manual_required",
       "evidence": [

@@ -69,6 +69,12 @@ stronger wording.
 | `wcag-manual-evidence` | Local accessibility foundation plus required manual screen-reader evidence |
 | `soc2-roadmap` | Roadmap/control-mapping wording only, no attestation or certification claim |
 
+## Launch Thesis Claim
+
+| Claim ID | Evidence boundary |
+| --- | --- |
+| `gove-zone-runtime-governance-plane` | Alpha receipt-gated runtime governance claim, backed by package architecture/security docs and proof-pack command source; local runtime evidence only, with production, assurance, signing, MACI, and sandboxing caveats attached |
+
 ## Update Procedure
 
 1. Edit public copy with conservative wording first.

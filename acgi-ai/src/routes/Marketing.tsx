@@ -25,84 +25,78 @@ const ASTERISM = '⁂'
 const capabilities = [
   {
     n: '01',
-    title: 'Constitutions that compile',
+    title: 'Receipt gate before side effects',
     body:
-      'Author the rules in plain prose with citations to primary sources. ' +
-      'The compiler emits an enforceable runtime artifact, signed by hash, ' +
-      'that the bus refuses to load if it has drifted by a single byte.',
+      'An agent proposes an action; gove-zone evaluates a deterministic rule-set policy ' +
+      'and issues a Decision Receipt. Executors run only when that specific receipt verifies.',
   },
   {
     n: '02',
-    title: 'Separation of powers',
+    title: 'Tamper-evident receipts',
     body:
-      'Proposer, Validator, and Executor are distinct lanes. No agent ' +
-      'validates its own output; no model is trusted to mark its own work. ' +
-      'MACI separation is structural, not advisory.',
+      'Every allow, denial, and transform is recorded before execution in a hash-chained ' +
+      'audit log, so readers can detect edits, reordering, or truncation of the local chain.',
   },
   {
     n: '03',
-    title: 'Fail closed',
+    title: 'Replayable, bounded proof',
     body:
-      'When the policy engine cannot reach a decision, the action is denied. ' +
-      'There is no fail-open branch in the bus, the gateway, or the worker. ' +
-      'Every refusal is recorded with a citation and a hash.',
+      'Replay verifies the recorded receipt, policy binding, and audit chain. It is local ' +
+      'runtime evidence, not production approval, tool sandboxing, or certification.',
   },
 ]
 
 const coverage = [
-  ['EU AI Act', 'Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy', 'v1.0'],
-  ['SR 11-7', '§V model risk · §VII validation · §VIII development', 'v2011'],
-  ['HIPAA', '§164.502 minimum necessary · §164.514 de-identification', 'v2024'],
-  ['GDPR', 'Art. 22 automated decisions · Art. 25 by-design', 'v2018'],
-  ['SOC 2', 'CC6 logical access · CC7 system operations', 'v2017'],
-  ['ISO/IEC 42001', 'Cl. 8 operations · Cl. 9 evaluation', 'v2023'],
+  ['allowed_action_executed', 'Valid ALLOW receipt lets the safe action execute.', 'pass'],
+  ['denied_action_blocked', 'Denied action is blocked before the side effect.', 'pass'],
+  ['transformed_action_executed', 'TRANSFORM runs only with approved arguments.', 'pass'],
+  ['missing_receipt_blocked', 'No receipt means no execution.', 'pass'],
+  ['tampered_receipt_blocked', 'Receipt tampering is refused at the gate.', 'pass'],
+  ['audit_chain_verified', 'The emitted local audit chain verifies.', 'pass'],
 ]
 
-const tiers = [
+const launchDockets = [
   {
-    tag: 'Open',
-    name: 'Foundation',
-    price: '0',
-    unit: '/ self-hosted',
+    tag: 'Package',
+    name: 'gove-zone alpha',
+    state: 'source workspace',
     feat: false,
     bullets: [
-      'acgs-lite SDK, full source',
-      'Constitution compiler + audit log',
-      'MACI separation primitives',
-      'Single-tenant, single environment',
-      'Community channel support',
+      'Developed as a local workspace package',
+      'Not yet published to PyPI',
+      'Kernel modules: decision → receipt → audit → replay',
+      'Deterministic policy bundles / rule-set policy',
+      'Operators provide the tool sandbox',
     ],
     cta: 'Read the spec',
   },
   {
-    tag: 'Team',
-    name: 'Governed',
-    price: '4,800',
-    unit: '/ month',
+    tag: 'Evidence',
+    name: 'Proof pack',
+    state: 'local pass',
     feat: true,
     bullets: [
-      'Hosted enhanced agent bus',
-      'Five governed agents, two custodial roles',
-      'EU AI Act + SR 11-7 + HIPAA modules',
-      'Constitutional hash attestation',
-      'Eight-hour incident response SLA',
+      'Safe action executes after valid receipt',
+      'Denied, missing, and tampered receipts block',
+      'Transformed arguments bind exactly',
+      'Hash-chained local audit verifies',
+      'Proof is local runtime evidence only',
     ],
-    cta: 'Schedule a review',
+    cta: 'Inspect the proof',
   },
   {
-    tag: 'Enterprise',
-    name: 'Sovereign',
-    price: 'On request',
-    unit: '',
+    tag: 'Release',
+    name: 'Public gates',
+    state: 'blocked until true',
     feat: false,
     bullets: [
-      'Federated bus across regions',
-      'Air-gapped deployment supported',
-      'Dafny / MACI proof artifacts',
-      'Privilege-boundary attestation',
-      'Named architect + 24/7 paging',
+      'Publish to PyPI or document from-source install',
+      'Re-run proofpack on the release commit',
+      'Re-run the full gove-zone and CaLegal suites',
+      'Attach the proofpack bundle as release evidence',
+      'Keep Ed25519 and MACI caveats with the claims',
     ],
-    cta: 'Schedule a review',
+    cta: 'Review gates',
   },
 ]
 
@@ -156,7 +150,7 @@ export function Marketing() {
             >
               Products
             </a>
-            <a href="#pricing">Pricing</a>
+            <a href="#pricing">Release gates</a>
             <a
               href="/console"
               onClick={(e) => {
@@ -179,7 +173,7 @@ export function Marketing() {
             </a>
           </div>
           <a className="m-nav-cta" href="#book">
-            Schedule a review <ArrowRight size={14} strokeWidth={1.75} />
+            Review proof <ArrowRight size={14} strokeWidth={1.75} />
           </a>
         </nav>
 
@@ -190,19 +184,20 @@ export function Marketing() {
                 <span className="asterism" aria-hidden>
                   {ASTERISM}
                 </span>
-                Vol. I · Constitutional governance for AI agents
+                ACGS launch thesis · gove-zone alpha package
               </span>
               <h1>
-                The publishing house that ships <em>governance</em>.
+                Agents can reason freely. They cannot <em>execute</em> freely.
               </h1>
               <p className="m-hero-lede">
-                ACGS maps regulatory prose — the EU AI Act, SR 11-7, HIPAA, GDPR — into runtime
-                artifacts, citations, and evidence workflows for governed agents. Constitutions are
-                authored, compiled, hashed, and checked before privileged actions proceed.
+                ACGS is the umbrella project. gove-zone is its alpha runtime governance package for
+                receipt-gated agent execution: no valid Decision Receipt, no side effect. It sits
+                immediately before tools run; operators still own the sandbox, deployment controls,
+                key custody, and external assurance.
               </p>
               <div className="m-hero-actions">
-                <a className="btn btn-primary" href="#book">
-                  Schedule a review <ArrowRight size={16} strokeWidth={1.8} />
+                <a className="btn btn-primary" href="#coverage">
+                  Inspect the proofpack <ArrowRight size={16} strokeWidth={1.8} />
                 </a>
                 <a
                   className="btn btn-secondary"
@@ -220,43 +215,48 @@ export function Marketing() {
             <aside className="m-hero-aside">
               <figure className="m-code">
                 <figcaption className="m-code-head">
-                  <span>constitution.acgs · v3.1.0</span>
-                  <span>608508a9bd224290</span>
+                  <span>gove-zone proofpack · local run</span>
+                  <span>status: pass</span>
                 </figcaption>
                 <pre>
-                  <span className="c">{'// Article IV — Privileged work product'}</span>
+                  <span className="c">{'// Release evidence, not certification'}</span>
                   {'\n'}
-                  <span className="k">rule</span> <span className="s">"matter.disclosure"</span>{' '}
                   {'{'}
                   {'\n'}
                   {'  '}
-                  <span className="k">when</span>
-                  {'  agent.role == '}
-                  <span className="s">"public"</span>
+                  <span className="k">"status"</span>
+                  {': '}
+                  <span className="s">"pass"</span>
+                  {','}
                   {'\n'}
                   {'  '}
-                  <span className="k">when</span>
-                  {'  payload.contains('}
-                  <span className="s">"matter_id"</span>
-                  {')'}
+                  <span className="k">"allowed_action_executed"</span>
+                  {': true,'}
                   {'\n'}
                   {'  '}
-                  <span className="k">deny</span>
-                  {'  '}
-                  <span className="s">"privilege boundary"</span>
+                  <span className="k">"denied_action_blocked"</span>
+                  {': true,'}
                   {'\n'}
                   {'  '}
-                  <span className="k">cite</span>
+                  <span className="k">"missing_receipt_blocked"</span>
+                  {': true,'}
+                  {'\n'}
                   {'  '}
-                  <span className="s">"§164.502(b)"</span>
+                  <span className="k">"tampered_receipt_blocked"</span>
+                  {': true,'}
+                  {'\n'}
+                  {'  '}
+                  <span className="k">"audit_chain_verified"</span>
+                  {': true'}
                   {'\n'}
                   {'}'}
                 </pre>
               </figure>
               <blockquote className="m-pull">
-                The page is a poster, not a document. Every refusal we emit is countersigned by a
-                section number from a primary source.
-                <cite>— ACGS, Decisions Log §3</cite>
+                The claim is narrow by design: a receipt gate before side effects, with local
+                proofpack evidence and explicit limits. It is not a production, compliance, or
+                third-party assurance claim.
+                <cite>— gove-zone security boundary</cite>
               </blockquote>
             </aside>
           </header>
@@ -268,13 +268,14 @@ export function Marketing() {
           {/* Capabilities */}
           <section id="capabilities" aria-labelledby="cap-h">
             <p className="m-product-definition">
-              ACGS is a policy compiler and enforcement layer for regulated AI agents, binding
-              citations, roles, and refusal rules into the runtime path.
+              ACGS leads externally; gove-zone is the package you run. The present-tense claim is
+              deliberately narrow: an alpha runtime governance plane for receipt-gated agent
+              execution.
             </p>
             <div className="m-sec-head">
               <span className="num">I · Platform</span>
               <h2 id="cap-h">
-                An <em>operating constitution</em> for systems that decide on behalf of people.
+                A <em>receipt gate</em> before agent side effects.
               </h2>
             </div>
 
@@ -588,18 +589,18 @@ export function Marketing() {
           {/* Coverage */}
           <section id="coverage" aria-labelledby="cov-h">
             <div className="m-sec-head">
-              <span className="num">III · Coverage</span>
+              <span className="num">III · Proof pack</span>
               <h2 id="cov-h">
-                <em>Cited</em>, not claimed.
+                Local proof says <em>pass</em>, with boundaries attached.
               </h2>
             </div>
             <div className="m-coverage">
               <table>
                 <thead>
                   <tr>
-                    <th>Framework</th>
-                    <th>Sections enforced</th>
-                    <th>Version</th>
+                    <th>Check</th>
+                    <th>What it demonstrates</th>
+                    <th>Current result</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -619,24 +620,21 @@ export function Marketing() {
             {ASTERISM} {ASTERISM} {ASTERISM}
           </div>
 
-          {/* Pricing */}
+          {/* Release gates */}
           <section id="pricing" aria-labelledby="pricing-h">
             <div className="m-sec-head">
-              <span className="num">IV · Pricing</span>
+              <span className="num">IV · Release gates</span>
               <h2 id="pricing-h">
-                Three editions. <em>One</em> constitutional hash.
+                Ship the <em>evidence</em>, not an adjective.
               </h2>
             </div>
             <div className="m-pricing">
-              {tiers.map((t) => (
+              {launchDockets.map((t) => (
                 <article className={`m-tier ${t.feat ? 'feat' : ''}`} key={t.name}>
                   <span className="t-tag">{t.tag}</span>
                   <h3 className="t-name">{t.name}</h3>
                   <div className="t-price">
-                    <span className="t-price-num">
-                      {t.price.startsWith('On') ? t.price : `$${t.price}`}
-                    </span>
-                    <span className="t-price-unit">{t.unit}</span>
+                    <span className="t-price-num">{t.state}</span>
                   </div>
                   <hr />
                   <ul>
@@ -660,14 +658,14 @@ export function Marketing() {
             <div className="m-sec-head">
               <span className="num">V · Conversation</span>
               <h2 id="book-h">
-                We schedule by <em>matter</em>, not by funnel stage.
+                Review the <em>receipt path</em> before the launch.
               </h2>
             </div>
             <div className="m-conversation">
               <p>
-                Tell us what you are deploying, which framework you answer to, and which decisions
-                an agent has to make on your behalf. We will send back a one-page reading that names
-                the rules we would compile and the refusals we would emit. No deck. No funnel.
+                Bring the commit, proofpack bundle, and claims map. The review should name exactly
+                which side effects are receipt-gated today, which caveats travel with the claim, and
+                which release gates remain blocked before stronger public wording ships.
               </p>
               <p className="m-conversation-follow">
                 Mail{' '}
@@ -688,11 +686,11 @@ export function Marketing() {
               acgs <em>{ASTERISM}</em>
             </div>
             <div className="m-foot-addr">
-              {`Anthropic Constitutional Governance System
-A monograph that runs in production.
+              {`ACGS / gove-zone
+Alpha runtime governance plane.
 
-Filed under: AI safety, regulated AI,
-legal technology vertical.`}
+No valid Decision Receipt,
+no side effect.`}
             </div>
           </div>
           <div>
@@ -705,7 +703,7 @@ legal technology vertical.`}
                 <a href="#coverage">Coverage</a>
               </li>
               <li>
-                <a href="#pricing">Pricing</a>
+                <a href="#pricing">Release gates</a>
               </li>
               <li>
                 <a
@@ -732,13 +730,13 @@ legal technology vertical.`}
             </ul>
           </div>
           <div>
-            <h4>Editions</h4>
+            <h4>Dockets</h4>
             <ul>
-              <li>Foundation (open)</li>
-              <li>Governed (team)</li>
-              <li>Sovereign (enterprise)</li>
-              <li>LegalGuard (vertical)</li>
-              <li>ClinicalGuard (vertical)</li>
+              <li>gove-zone alpha</li>
+              <li>Proof pack</li>
+              <li>Release gates</li>
+              <li>CaLegal companion</li>
+              <li>Legal claim review</li>
             </ul>
           </div>
           <div>
