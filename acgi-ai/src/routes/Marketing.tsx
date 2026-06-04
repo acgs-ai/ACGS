@@ -196,9 +196,10 @@ export function Marketing() {
                 The publishing house that ships <em>governance</em>.
               </h1>
               <p className="m-hero-lede">
-                ACGS maps regulatory prose — the EU AI Act, SR 11-7, HIPAA, GDPR — into runtime
-                artifacts, citations, and evidence workflows for governed agents. Constitutions are
-                authored, compiled, hashed, and checked before privileged actions proceed.
+                Agents can reason freely; they cannot execute freely. gove-zone is a fail-closed
+                gate that sits between an agent's decision and its side effect — no valid Decision
+                Receipt, no side effect — with a tamper-evident, hash-chained audit trail you can
+                replay. It is alpha; receipt signing is opt-in and default deployments are unsigned.
               </p>
               <div className="m-hero-actions">
                 <a className="btn btn-primary" href="#book">
@@ -268,8 +269,10 @@ export function Marketing() {
           {/* Capabilities */}
           <section id="capabilities" aria-labelledby="cap-h">
             <p className="m-product-definition">
-              ACGS is a policy compiler and enforcement layer for regulated AI agents, binding
-              citations, roles, and refusal rules into the runtime path.
+              ACGS is a policy compiler and enforcement layer for regulated AI agents, binding the
+              specific action and its specific arguments — under a proposer-distinct-from-validator
+              receipt — into the runtime path. Proof, not adjectives: the claims here are the output
+              of a command you can run, with caveats stated, not buried.
             </p>
             <div className="m-sec-head">
               <span className="num">I · Platform</span>
