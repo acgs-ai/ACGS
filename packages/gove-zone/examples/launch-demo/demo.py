@@ -167,7 +167,7 @@ def main() -> int:
     print(f"    decision        : {r.decision}")
     print(f"    tenant / actor  : {TENANT} / {r.actor}")
     print(f"    validator       : {VALIDATOR.validator_id} (≠ proposer — MACI)")
-    print(f"    action          : runtime.file.write")
+    print("    action          : runtime.file.write")
     print(f"    argument_hash   : {r.argument_hash[:24]}…  (binds the exact args)")
     print(f"    receipt_hash    : {r.receipt_hash[:24]}…")
     print(f"    signature       : {r.signature} ({r.signature_algorithm})")
