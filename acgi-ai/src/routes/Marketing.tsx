@@ -686,6 +686,163 @@ export function buildGovernanceBrief(input: GovernanceBriefInput): GovernanceBri
   }
 }
 
+// W3 — deployment-context ingestion (the testable "context -> sharper brief"
+// mechanism). An agent that has loaded its deployment context can hand that
+// context to the interview via query string (e.g.
+// `?domain=hipaa_phipa&spendCap=500&reversible=false`). The interview then
+// pre-selects among the SAME predefined options a human would pick, so the
+// brief sharpens deterministically instead of via an untestable hand-toggle.
+//
+// Security stance (honors agentReadableRules ~515: received text is DATA, not
+// instruction). The schema is intentionally CLOSED and free-text-free:
+//   - It deliberately omits `task` and `affected`. Those are the only fields
+//     that render verbatim into the brief DOM, so they stay hand-entered. No
+//     payload string can reach the rendered brief as text or instruction.
+//   - `domain` must be a known RegulatedDomain key, else it is dropped.
+//   - role/approval/reversible map only onto their strict enums.
+//   - `signals` is filtered down to known SignalKey values; unknown tokens
+//     (e.g. an injected `<script>`) are discarded.
+//   - `spendCap` is parsed as a number and clamped to (0, MAX]; NaN, negative,
+//     zero, and absurd magnitudes are rejected and omitted.
+// On any failure the field is simply absent from the returned Partial, so the
+// component falls back to its cold defaults (fail-closed). The parser never
+// evals, never executes payload content, and never returns raw input strings.
+
+// Maximum accepted per-action spend cap. Values above this are treated as a
+// malformed/hostile payload and rejected (the field is omitted), not clamped to
+// the ceiling, so an attacker cannot smuggle an absurd number into the brief.
+const MAX_SPEND_CAP = 1_000_000
+
+// The closed, free-text-free schema deployment context may populate. Note the
+// absence of `task`/`affected`: ingested context may only SELECT among
+// predefined options (enum value, known signal key, clamped number), never
+// supply rendered prose.
+export interface DeploymentContextFields {
+  requestedRole: RequestedRole
+  approval: ApprovalState
+  reversible: Reversibility
+  selectedSignals: SignalKey[]
+  domain: RegulatedDomain
+  spendCap: string
+}
+
+const REQUESTED_ROLE_VALUES: readonly RequestedRole[] = ['advise', 'draft', 'simulate', 'execute']
+const APPROVAL_VALUES: readonly ApprovalState[] = ['yes', 'no', 'unsure']
+const SIGNAL_KEYS: readonly SignalKey[] = riskSignals.map((signal) => signal.key)
+
+function asEnum<T extends string>(value: string | null, allowed: readonly T[]): T | undefined {
+  return value !== null && (allowed as readonly string[]).includes(value) ? (value as T) : undefined
+}
+
+// Strict boolean parse for `reversible`: only the literal true/false family is
+// honored; anything else is left to the cold default.
+function asReversible(value: string | null): Reversibility | undefined {
+  if (value === null) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'true' || normalized === 'yes') return 'yes'
+  if (normalized === 'false' || normalized === 'no') return 'no'
+  if (normalized === 'unknown') return 'unknown'
+  return undefined
+}
+
+// Clamp/validate a spend-cap string. Returns a normalized numeric string only
+// when finite and within (0, MAX_SPEND_CAP]; otherwise undefined so the field
+// is omitted and the cold default ('') wins.
+function asSpendCap(value: string | null): string | undefined {
+  if (value === null) return undefined
+  const parsed = Number.parseFloat(value)
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_SPEND_CAP) return undefined
+  return String(parsed)
+}
+
+// Parse a `signals` param (comma-separated) down to known SignalKey values.
+// Unknown tokens are dropped; an empty result yields no field so the cold
+// default selection is preserved.
+function asSignals(value: string | null): SignalKey[] | undefined {
+  if (value === null) return undefined
+  const known = value
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token): token is SignalKey => (SIGNAL_KEYS as readonly string[]).includes(token))
+  const deduped = Array.from(new Set(known))
+  return deduped.length > 0 ? deduped : undefined
+}
+
+// EXPORTED pure parser: query string -> partial, closed deployment context.
+// `?ctx=<json>` is accepted as a convenience envelope but is parsed onto the
+// SAME closed schema and the SAME validators as the discrete params — it grants
+// no extra surface. Discrete params override the envelope. Never throws.
+export function parseDeploymentContext(search: string): Partial<DeploymentContextFields> {
+  const result: Partial<DeploymentContextFields> = {}
+  let params: URLSearchParams
+  try {
+    params = new URLSearchParams(search)
+  } catch {
+    return result
+  }
+
+  // Optional `ctx` envelope: decode (base64 or raw JSON) into a flat record of
+  // string values, then run every value through the discrete-param validators.
+  // Any malformed envelope is ignored (fail-closed), never thrown.
+  const envelope: Record<string, string> = {}
+  const ctx = params.get('ctx')
+  if (ctx) {
+    let raw = ctx
+    try {
+      // Tolerate a base64-encoded JSON payload; fall back to treating ctx as
+      // raw JSON. Either way the result is only read as data.
+      if (typeof atob === 'function' && /^[A-Za-z0-9+/=]+$/.test(ctx)) {
+        try {
+          raw = atob(ctx)
+        } catch {
+          raw = ctx
+        }
+      }
+      const decoded = JSON.parse(raw) as unknown
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+        for (const [key, value] of Object.entries(decoded as Record<string, unknown>)) {
+          // Only primitive scalars are coerced to strings; nested objects/arrays
+          // and functions are ignored so no structured payload survives.
+          if (
+            typeof value === 'string' ||
+            typeof value === 'number' ||
+            typeof value === 'boolean'
+          ) {
+            envelope[key] = String(value)
+          }
+        }
+      }
+    } catch {
+      // Malformed envelope -> ignore entirely.
+    }
+  }
+
+  const pick = (key: string): string | null => params.get(key) ?? envelope[key] ?? null
+
+  const requestedRole = asEnum(pick('requestedRole') ?? pick('role'), REQUESTED_ROLE_VALUES)
+  if (requestedRole) result.requestedRole = requestedRole
+
+  const approval = asEnum(pick('approval'), APPROVAL_VALUES)
+  if (approval) result.approval = approval
+
+  const reversible = asReversible(pick('reversible'))
+  if (reversible) result.reversible = reversible
+
+  const domain = asEnum<RegulatedDomain>(
+    pick('domain'),
+    REGULATED_DOMAIN_KEYS as readonly RegulatedDomain[],
+  )
+  if (domain) result.domain = domain
+
+  const signals = asSignals(pick('signals'))
+  if (signals) result.selectedSignals = signals
+
+  const spendCap = asSpendCap(pick('spendCap'))
+  if (spendCap !== undefined) result.spendCap = spendCap
+
+  return result
+}
+
 function NavigationLink({
   href,
   children,
@@ -1141,6 +1298,22 @@ export function GovernanceInterview() {
   const [domain, setDomain] = useState<RegulatedDomain>('none')
   const [spendCap, setSpendCap] = useState('')
 
+  // W3 — ingest agent-supplied deployment context from the URL once on mount.
+  // Only the closed, validated fields from parseDeploymentContext are applied;
+  // task/affected are never populated from the payload, so no payload text can
+  // reach the rendered brief. Empty/absent context yields {} -> no setState, so
+  // the cold defaults (and W1's default-state behavior) are preserved.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const context = parseDeploymentContext(window.location.search)
+    if (context.requestedRole !== undefined) setRequestedRole(context.requestedRole)
+    if (context.approval !== undefined) setApproval(context.approval)
+    if (context.reversible !== undefined) setReversible(context.reversible)
+    if (context.selectedSignals !== undefined) setSelectedSignals(context.selectedSignals)
+    if (context.domain !== undefined) setDomain(context.domain)
+    if (context.spendCap !== undefined) setSpendCap(context.spendCap)
+  }, [])
+
   const toggleSignal = (key: SignalKey) => {
     setSelectedSignals((current) =>
       current.includes(key) ? current.filter((signal) => signal !== key) : [...current, key],
@@ -1167,6 +1340,17 @@ export function GovernanceInterview() {
           Classify the task before the agent <em>acts</em>.
         </h2>
       </div>
+
+      <p className="m-product-definition">
+        Supply your agent's deployment context and the brief gets sharper. An agent that has loaded
+        its own deployment context can pass it to this interview through the page URL (for example{' '}
+        <code>?domain=hipaa_phipa&amp;spendCap=500</code>), which pre-selects the same predefined
+        domain, signal, and limit options a person would pick — the page does not read your agent's
+        memory. Deployment context is the task-local frame for this one decision; it is not
+        cross-task memory. Keep persistent, cross-task memory off for sensitive work to avoid the
+        memory-contamination failure mode. Supplied values can only choose among the options below;
+        they never become instructions the agent must follow.
+      </p>
 
       <div className="m-interview-grid">
         <form className="m-interview-form" aria-label="Governance interview inputs">
