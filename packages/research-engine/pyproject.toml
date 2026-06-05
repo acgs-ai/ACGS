@@ -1,0 +1,51 @@
+[project]
+name = "delve"
+version = "0.1.0"
+description = "A self-deepening research engine: fan-out research, persistent citation-backed knowledge graph, adversarial verification, loop-until-dry."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Martin" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Real backends are optional extras; the core engine runs offline with fakes.
+anthropic = ["anthropic>=0.40"]
+exa = ["exa-py>=1.0"]
+tavily = ["tavily-python>=0.5"]
+all = ["anthropic>=0.40", "exa-py>=1.0", "tavily-python>=0.5"]
+
+[project.scripts]
+delve = "delve.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/delve"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["delve"]
+strict = true
+
+[[tool.mypy.overrides]]
+# Optional provider SDKs are imported lazily and only when their extra is
+# installed; treat them as untyped so --strict doesn't require their stubs.
+module = ["anthropic.*", "exa_py.*", "tavily.*"]
+ignore_missing_imports = true
