@@ -26,6 +26,20 @@
       }
     },
     {
+      "src": "/llms.txt",
+      "dest": "/llms.txt",
+      "headers": {
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "src": "/governance-framework.txt",
+      "dest": "/governance-framework.txt",
+      "headers": {
+        "Content-Type": "text/plain; charset=utf-8"
+      }
+    },
+    {
       "src": "/(.*)",
       "dest": "/"
     }
