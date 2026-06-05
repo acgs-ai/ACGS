@@ -6,7 +6,13 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { Marketing } from '../../routes/Marketing'
+import {
+  AgentReadable,
+  FailureModesPage,
+  FounderNarrative,
+  GovernancePatternsPage,
+  Marketing,
+} from '../../routes/Marketing'
 import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
@@ -73,6 +79,30 @@ const privacyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/privacy',
   component: Privacy,
+})
+
+const founderRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/founder',
+  component: FounderNarrative,
+})
+
+const failureModesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/failure-modes',
+  component: FailureModesPage,
+})
+
+const governancePatternsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/governance-patterns',
+  component: GovernancePatternsPage,
+})
+
+const agentReadableRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-readable',
+  component: AgentReadable,
 })
 
 const trustRoute = createRoute({
@@ -142,6 +172,10 @@ function MarketingNotFoundRoute() {
 const routeTree = rootRoute.addChildren([
   indexRoute,
   privacyRoute,
+  founderRoute,
+  failureModesRoute,
+  governancePatternsRoute,
+  agentReadableRoute,
   trustRoute,
   securityRoute,
   productIndexRoute,
