@@ -12,6 +12,7 @@ import {
   domainProfile,
   REGULATED_DOMAIN_KEYS,
 } from '../src/lib/governance-domains.ts'
+import { AGENT_READABLE_RULES } from '../src/lib/governance-framework.ts'
 
 const failures = []
 
@@ -69,6 +70,17 @@ check(
   framework.includes('not legal advice'),
   'governance-framework.txt must carry the "not legal advice" framing.',
 )
+
+// (c2) Framework-rules drift guard: every AGENT_READABLE_RULES item from the
+// shared single source of truth must reach the generated llms.txt framework
+// section. A future rules edit that does not propagate into the artifact fails
+// here, so the in-browser interview and the static surface can never diverge.
+for (const rule of AGENT_READABLE_RULES) {
+  check(
+    llms.includes(rule),
+    `llms.txt framework section must include the shared AGENT_READABLE_RULES item (drift check): ${rule}`,
+  )
+}
 
 // (d) Negative assertion: framework-only, NOT a personalized brief. A filled
 // brief is produced only by the in-browser calculator and would contain a

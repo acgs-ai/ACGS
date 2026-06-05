@@ -294,6 +294,16 @@ check(
     packageJson.scripts['test:all'].includes('pnpm run test:msw-node'),
   'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:tthw, test:e2e-http, test:browser-evidence, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
 )
+check(
+  typeof packageJson.scripts?.['test:all'] === 'string' &&
+    packageJson.scripts['test:all'].includes('pnpm run test:unit'),
+  'package.json test:all must include test:unit so the vitest suite cannot be silently dropped from CI.',
+)
+check(
+  typeof packageJson.scripts?.['test:all'] === 'string' &&
+    packageJson.scripts['test:all'].includes('pnpm run test:agent-assets'),
+  'package.json test:all must include test:agent-assets so the agent-readable governance asset gate cannot be silently dropped from CI.',
+)
 
 for (const [label, workflow] of [
   ['console.yml', consoleWorkflow],
