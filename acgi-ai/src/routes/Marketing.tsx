@@ -1,5 +1,12 @@
 import { ArrowRight, Menu, X } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
+import {
+  domainProfile,
+  domainSignalBoundary,
+  domainWeightDelta,
+  REGULATED_DOMAIN_KEYS,
+  type RegulatedDomain,
+} from '../lib/governance-domains'
 import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
 import {
@@ -542,6 +549,143 @@ function signalByKey(key: SignalKey): RiskSignal {
   return riskSignals.find((signal) => signal.key === key) ?? riskSignals[0]
 }
 
+interface GovernanceBriefInput {
+  task: string
+  affected: string
+  requestedRole: RequestedRole
+  approval: ApprovalState
+  reversible: Reversibility
+  selectedSignals: SignalKey[]
+  domain: RegulatedDomain
+  spendCap: string
+}
+
+interface GovernanceBrief {
+  task: string
+  affected: string
+  requestedRole: RequestedRole
+  level: RiskLevel
+  mode: AgentMode
+  permittedActions: string[]
+  boundaries: string[]
+  humanChecks: string[]
+  logging: string
+  doNotAllow: string[]
+  stopConditions: string[]
+  nextStep: string
+  domainLabel: string
+  obligations: string[]
+  domainDisclaimer: string
+  spendLimit: string | null
+}
+
+// Pure governance scorer + brief builder. Extracted from GovernanceInterview so
+// the persona diff and the C5 regression guard can assert on substantive fields
+// without DOM brittleness. The regulated-domain axis is additive: with
+// domain='none' and no spend cap, the substantive fields (level, mode,
+// permittedActions, boundaries, humanChecks, logging, doNotAllow,
+// stopConditions, nextStep) are identical to the pre-axis interview.
+export function buildGovernanceBrief(input: GovernanceBriefInput): GovernanceBrief {
+  const { requestedRole, approval, reversible, selectedSignals, domain } = input
+  const selectedSignalDetails = selectedSignals.map(signalByKey)
+  const baseScore = selectedSignalDetails.reduce((total, signal) => total + signal.weight, 0)
+  const score = baseScore + domainWeightDelta(domain, selectedSignals)
+  const requestedExecution = requestedRole === 'execute'
+  const hasBlockedExecutionSignal = selectedSignalDetails.some((signal) => signal.blockedIfExecute)
+  const blocked =
+    (requestedExecution && hasBlockedExecutionSignal && approval !== 'yes') ||
+    (requestedExecution && reversible !== 'yes' && score >= 8)
+  const level: RiskLevel = blocked
+    ? 'blocked'
+    : score >= 10
+      ? 'high'
+      : score >= 5
+        ? 'medium'
+        : 'low'
+  const mode = modeFor(level, requestedRole)
+  const boundaries = selectedSignalDetails.map((signal) =>
+    domainSignalBoundary(domain, signal.key, signal.boundary),
+  )
+  const stopConditions = [
+    'Authority or approver is unclear.',
+    'The task expands beyond the approved scope.',
+    'A tool result conflicts with the plan or evidence.',
+    'Required verification fails or cannot be run.',
+    'The action becomes irreversible, public, financial, credential-bearing, or production-impacting without fresh approval.',
+  ]
+
+  const doNotAllow = [
+    'Do not assume available tools equal permission to act.',
+    'Do not expose credentials, private data, or regulated records to prompts or memory.',
+    'Do not claim legal, security, compliance, or production readiness authority.',
+    'Do not execute irreversible, payment, IAM, account, or production actions without explicit scoped human approval.',
+  ]
+
+  const permittedActions =
+    mode === 'fail-closed'
+      ? ['Clarify authority, draft a safer plan, and request human review.']
+      : mode === 'approval-required'
+        ? [
+            'Draft the plan, run safe checks, simulate where possible, and pause before real action.',
+          ]
+        : mode === 'sandboxed'
+          ? ['Run dry-runs, branch-only code changes, local simulations, and reversible checks.']
+          : mode === 'draft-only'
+            ? ['Draft recommendations, briefs, copy, code proposals, and checklists for review.']
+            : ['Explain options, ask clarifying questions, and recommend safer next steps.']
+
+  const humanChecks =
+    level === 'low'
+      ? ['Human review recommended before publishing or connecting tools.']
+      : [
+          'A named human owner must approve scope, permissions, and release.',
+          'A separate reviewer should inspect high-risk output before execution.',
+          'Approval must be fresh, explicit, and tied to the exact action.',
+        ]
+
+  const logging =
+    level === 'low'
+      ? 'Capture task summary, assumptions, and recommendation.'
+      : 'Capture task, authority, selected mode, tool calls, evidence, approval, refusal reasons, stop events, and final recommendation as a decision receipt.'
+
+  const nextStep =
+    level === 'blocked'
+      ? 'Stop execution. Convert the task to advise-only or obtain explicit human authority with a rollback plan.'
+      : level === 'high'
+        ? 'Prepare a review packet and require approval before tool execution.'
+        : level === 'medium'
+          ? 'Run in sandbox or draft-only mode and log evidence before escalation.'
+          : 'Proceed with advise-only or draft-only assistance; escalate if new risks appear.'
+
+  const profile = domainProfile(domain)
+  const parsedCap = Number.parseFloat(input.spendCap)
+  const spendLimit =
+    Number.isFinite(parsedCap) && parsedCap > 0
+      ? `Actions above $${parsedCap.toLocaleString('en-US')} require fresh human approval.`
+      : null
+
+  return {
+    task: input.task.trim() || 'Describe the current agent task before allowing action.',
+    affected:
+      input.affected.trim() ||
+      'Affected people, systems, accounts, data, or public surfaces not yet specified.',
+    requestedRole,
+    level,
+    mode,
+    permittedActions,
+    boundaries,
+    humanChecks,
+    logging,
+    doNotAllow,
+    stopConditions,
+    nextStep,
+    domainLabel: profile.label,
+    obligations: profile.obligations,
+    domainDisclaimer: profile.disclaimer,
+    spendLimit,
+  }
+}
+
 function NavigationLink({
   href,
   children,
@@ -987,80 +1131,15 @@ function PlatformBlueprint() {
   )
 }
 
-function GovernanceInterview() {
+export function GovernanceInterview() {
   const [task, setTask] = useState('')
   const [affected, setAffected] = useState('')
   const [requestedRole, setRequestedRole] = useState<RequestedRole>('draft')
   const [approval, setApproval] = useState<ApprovalState>('unsure')
   const [reversible, setReversible] = useState<Reversibility>('unknown')
   const [selectedSignals, setSelectedSignals] = useState<SignalKey[]>(['tools', 'code'])
-
-  const selectedSignalDetails = selectedSignals.map(signalByKey)
-  const score = selectedSignalDetails.reduce((total, signal) => total + signal.weight, 0)
-  const requestedExecution = requestedRole === 'execute'
-  const hasBlockedExecutionSignal = selectedSignalDetails.some((signal) => signal.blockedIfExecute)
-  const blocked =
-    (requestedExecution && hasBlockedExecutionSignal && approval !== 'yes') ||
-    (requestedExecution && reversible !== 'yes' && score >= 8)
-  const level: RiskLevel = blocked
-    ? 'blocked'
-    : score >= 10
-      ? 'high'
-      : score >= 5
-        ? 'medium'
-        : 'low'
-  const mode = modeFor(level, requestedRole)
-  const boundaries = selectedSignalDetails.map((signal) => signal.boundary)
-  const stopConditions = [
-    'Authority or approver is unclear.',
-    'The task expands beyond the approved scope.',
-    'A tool result conflicts with the plan or evidence.',
-    'Required verification fails or cannot be run.',
-    'The action becomes irreversible, public, financial, credential-bearing, or production-impacting without fresh approval.',
-  ]
-
-  const doNotAllow = [
-    'Do not assume available tools equal permission to act.',
-    'Do not expose credentials, private data, or regulated records to prompts or memory.',
-    'Do not claim legal, security, compliance, or production readiness authority.',
-    'Do not execute irreversible, payment, IAM, account, or production actions without explicit scoped human approval.',
-  ]
-
-  const permittedActions =
-    mode === 'fail-closed'
-      ? ['Clarify authority, draft a safer plan, and request human review.']
-      : mode === 'approval-required'
-        ? [
-            'Draft the plan, run safe checks, simulate where possible, and pause before real action.',
-          ]
-        : mode === 'sandboxed'
-          ? ['Run dry-runs, branch-only code changes, local simulations, and reversible checks.']
-          : mode === 'draft-only'
-            ? ['Draft recommendations, briefs, copy, code proposals, and checklists for review.']
-            : ['Explain options, ask clarifying questions, and recommend safer next steps.']
-
-  const humanChecks =
-    level === 'low'
-      ? ['Human review recommended before publishing or connecting tools.']
-      : [
-          'A named human owner must approve scope, permissions, and release.',
-          'A separate reviewer should inspect high-risk output before execution.',
-          'Approval must be fresh, explicit, and tied to the exact action.',
-        ]
-
-  const logging =
-    level === 'low'
-      ? 'Capture task summary, assumptions, and recommendation.'
-      : 'Capture task, authority, selected mode, tool calls, evidence, approval, refusal reasons, stop events, and final recommendation as a decision receipt.'
-
-  const nextStep =
-    level === 'blocked'
-      ? 'Stop execution. Convert the task to advise-only or obtain explicit human authority with a rollback plan.'
-      : level === 'high'
-        ? 'Prepare a review packet and require approval before tool execution.'
-        : level === 'medium'
-          ? 'Run in sandbox or draft-only mode and log evidence before escalation.'
-          : 'Proceed with advise-only or draft-only assistance; escalate if new risks appear.'
+  const [domain, setDomain] = useState<RegulatedDomain>('none')
+  const [spendCap, setSpendCap] = useState('')
 
   const toggleSignal = (key: SignalKey) => {
     setSelectedSignals((current) =>
@@ -1068,22 +1147,17 @@ function GovernanceInterview() {
     )
   }
 
-  const brief = {
-    task: task.trim() || 'Describe the current agent task before allowing action.',
-    affected:
-      affected.trim() ||
-      'Affected people, systems, accounts, data, or public surfaces not yet specified.',
+  const brief = buildGovernanceBrief({
+    task,
+    affected,
     requestedRole,
-    level,
-    mode,
-    permittedActions,
-    boundaries,
-    humanChecks,
-    logging,
-    doNotAllow,
-    stopConditions,
-    nextStep,
-  }
+    approval,
+    reversible,
+    selectedSignals,
+    domain,
+    spendCap,
+  })
+  const level = brief.level
 
   return (
     <section className="m-hub-interview" id="interview" aria-labelledby="interview-h">
@@ -1150,6 +1224,33 @@ function GovernanceInterview() {
             </label>
           </div>
 
+          <div className="m-field-row">
+            <label>
+              <span>Regulatory domain</span>
+              <select
+                value={domain}
+                onChange={(event) => setDomain(event.target.value as RegulatedDomain)}
+              >
+                {REGULATED_DOMAIN_KEYS.map((key) => (
+                  <option value={key} key={key}>
+                    {domainProfile(key).label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Spend cap (USD per action)</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={spendCap}
+                onChange={(event) => setSpendCap(event.target.value)}
+                placeholder="Optional, e.g. 500"
+              />
+            </label>
+          </div>
+
           <fieldset>
             <legend>Risk signals</legend>
             <div className="m-risk-grid">
@@ -1201,6 +1302,32 @@ function GovernanceInterview() {
                 </ul>
               </dd>
             </div>
+            <div>
+              <dt>Regulatory domain</dt>
+              <dd>{brief.domainLabel}</dd>
+            </div>
+            {brief.obligations.length > 0 ? (
+              <div>
+                <dt>Domain obligations</dt>
+                <dd>
+                  <ul>
+                    {brief.obligations.map((obligation) => (
+                      <li key={obligation}>{obligation}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Domain claim boundary</dt>
+              <dd>{brief.domainDisclaimer}</dd>
+            </div>
+            {brief.spendLimit ? (
+              <div>
+                <dt>Spend limit</dt>
+                <dd>{brief.spendLimit}</dd>
+              </div>
+            ) : null}
             <div>
               <dt>Human checks</dt>
               <dd>
