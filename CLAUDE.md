@@ -55,6 +55,8 @@ parent repo.
 | Frontend deploy contract | `acgi-ai/DEPLOY.md` |
 | Frontend design contract | `acgi-ai/DESIGN.md` |
 | Automation policies | `automation/policies/` |
+| Documented solutions (bugs, patterns, workflow learnings) | `docs/solutions/` — by category, YAML frontmatter (`module`, `tags`, `problem_type`) |
+| Shared domain vocabulary | `CONCEPTS.md` |
 
 ## Verification
 
