@@ -375,7 +375,7 @@ surfaces. Each section links to its source:
 - [Common workflows](common-workflows.md) — the evaluate / wire / review / adapt / claim flows
 - [Concept pages](README.md#concepts) — authority model, decision receipts, evidence bundles, fail-closed enforcement, audit replay, tool boundaries
 - [CLI reference](reference/cli.md) — `setup`, `doctor`, `smoke`, `gate` (run `--help` for the full list)
-- In-repo runnable examples under `packages/gove-zone/examples/` — `receipt-gated-execution`, `plan-level-governance`, `workflow-receipt-chain`, `runtime_hook_demo.py`, `write_file_guard.py`
+- In-repo runnable examples under `packages/gove-zone/examples/` — `receipt-gated-execution/demo.py`, `plan-level-governance/demo.py`, `workflow-receipt-chain/demo.py`, `runtime_hook_demo.py`, `write_file_guard.py`
 
 ## Claim boundary
 
