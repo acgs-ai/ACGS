@@ -78,7 +78,9 @@ from gove_zone.replay import (
     find_event,
     replay_call,
     replay_event,
+    replay_from_side_store,
 )
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -140,6 +142,7 @@ __all__ = [
     "ReceiptValidationError",
     "ReceiptVerifier",
     "ReplayResult",
+    "ReplaySideStore",
     "RuleSetPolicy",
     "SigningError",
     "TenantPolicyBinding",
@@ -174,6 +177,7 @@ __all__ = [
     "record_to_governed_action",
     "replay_call",
     "replay_event",
+    "replay_from_side_store",
     "run_smoke",
     "safe_result_hash",
     "sha256_json",

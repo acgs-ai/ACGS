@@ -56,6 +56,13 @@ def test_instructions_render_markdown_with_audit_path(in_project: Path) -> None:
     assert "GOVE_ZONE_GATE_MODE=enforce" in md  # mentioned as the toggle
 
 
+def test_instructions_document_replay_side_store_opt_in(in_project: Path) -> None:
+    md = instructions(enforce=False)
+    assert "Replay re-derivation (opt-in)" in md
+    assert "ReplaySideStore" in md
+    assert "gove-zone replay --audit" in md
+
+
 def test_cli_doctor_passes_in_writable_env(
     in_project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

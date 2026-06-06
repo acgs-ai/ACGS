@@ -18,6 +18,8 @@ from gove_zone import (
     replay_call,
     replay_event,
 )
+from gove_zone.replay import replay_from_side_store
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.tool import ToolCall
 
 
@@ -135,3 +137,99 @@ def test_replay_event_uses_audit_only(tmp_path: Path) -> None:
 def test_find_event_returns_none_for_missing(tmp_path: Path) -> None:
     audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
     assert find_event(audit, "ev_does_not_exist") is None
+
+
+def _seed(tmp_path: Path, policy: BoundaryPolicy, args: dict[str, object]) -> tuple[Kernel, str]:
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    side_store = ReplaySideStore(tmp_path / "replay.jsonl")
+    k = Kernel(policy=policy, audit=audit, side_store=side_store)
+
+    @k.tool("send")
+    def send(**kwargs: object) -> None:
+        return None
+
+    try:
+        _, receipt = k.dispatch("send", args)
+        return k, receipt.record.event_id
+    except Exception as exc:  # DeniedError carries the record
+        return k, exc.record.event_id  # type: ignore[attr-defined]
+
+
+def test_side_store_happy_rederivation(tmp_path: Path) -> None:
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k, event_id = _seed(tmp_path, policy, {"body": "hello"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    result = replay_from_side_store(event, side, policy)
+    assert result.matches is True
+    assert result.replayed_decision is Decision.ALLOW
+    assert result.argument_hash_match is True
+    assert result.policy_version_match is True
+    assert result.event_id == event_id
+
+
+def test_side_store_deny_rederivation(tmp_path: Path) -> None:
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k, event_id = _seed(tmp_path, policy, {"body": "this is secret"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    result = replay_from_side_store(event, side, policy)
+    assert result.matches is True
+    assert result.replayed_decision is Decision.DENY
+
+
+def test_side_store_tamper_cross_check(tmp_path: Path) -> None:
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k, event_id = _seed(tmp_path, policy, {"body": "hello"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    side["args"] = {"body": "tampered"}  # corrupt the side record only
+    result = replay_from_side_store(event, side, policy)
+    assert result.matches is False
+    assert result.argument_hash_match is False
+    assert "argument_hash" in result.reason
+
+
+def test_side_store_policy_version_mismatch(tmp_path: Path) -> None:
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k, event_id = _seed(tmp_path, policy, {"body": "hello"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    other = BoundaryPolicy(forbidden_keywords=["different"])
+    result = replay_from_side_store(event, side, other)
+    assert result.policy_version_match is False
+    assert result.matches is False
+
+
+def test_side_store_args_now_trip_changed_policy(tmp_path: Path) -> None:
+    """A changed policy that would now DENY surfaces a non-matching re-derivation."""
+    policy = BoundaryPolicy(forbidden_keywords=["never-matches"])
+    k, event_id = _seed(tmp_path, policy, {"body": "danger"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    changed = BoundaryPolicy(forbidden_keywords=["danger"])
+    result = replay_from_side_store(event, side, changed)
+    assert result.matches is False
+    assert result.replayed_decision is Decision.DENY
+
+
+def test_side_store_allow_rederives_under_original_policy(tmp_path: Path) -> None:
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k, event_id = _seed(tmp_path, policy, {"body": "safe text"})
+    event = find_event(k.audit, event_id)
+    side = k.side_store.get(event_id)  # type: ignore[union-attr]
+    assert event is not None and side is not None
+
+    result = replay_from_side_store(event, side, policy)
+    assert result.matches is True
+    assert result.replayed_decision is Decision.ALLOW

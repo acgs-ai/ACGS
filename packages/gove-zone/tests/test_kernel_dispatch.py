@@ -22,6 +22,7 @@ import pytest
 
 from gove_zone import (
     AllowAllPolicy,
+    BoundaryPolicy,
     ChainHashAuditStore,
     Decision,
     DeniedError,
@@ -29,6 +30,9 @@ from gove_zone import (
     Kernel,
     UnknownToolError,
 )
+from gove_zone.replay import replay_call
+from gove_zone.replay_store import ReplaySideStore
+from gove_zone.tool import ToolCall
 
 
 def _kernel(tmp_path: Path, policy_obj: Any) -> Kernel:
@@ -124,3 +128,149 @@ def test_tool_registry_rejects_duplicate_names(tmp_path: Path) -> None:
         @k.tool("dup")
         def second() -> None:
             return None
+
+
+def test_default_off_creates_no_side_store_and_behaves_identically(tmp_path: Path) -> None:
+    """With no side_store, dispatch is unchanged and no side-store file appears."""
+    k = _kernel(tmp_path, AllowAllPolicy())
+
+    @k.tool("echo")
+    def echo(msg: str) -> str:
+        return msg.upper()
+
+    result, receipt = k.dispatch("echo", {"msg": "hi"})
+
+    assert result == "HI"
+    assert receipt.record.decision is Decision.ALLOW
+    assert not (tmp_path / "replay.jsonl").exists()
+    assert list(tmp_path.glob("*.jsonl")) == [tmp_path / "audit.jsonl"]
+
+
+def test_opt_in_allow_writes_side_record_matching_receipt(tmp_path: Path) -> None:
+    side_store = ReplaySideStore(tmp_path / "replay.jsonl")
+    k = Kernel(
+        policy=BoundaryPolicy(forbidden_keywords=["secret"]),
+        audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),
+        side_store=side_store,
+    )
+
+    @k.tool("send")
+    def send(body: str) -> None:
+        return None
+
+    _, receipt = k.dispatch("send", {"body": "hello"})
+
+    side = side_store.get(receipt.record.event_id)
+    assert side is not None
+    assert side["args"] == {"body": "hello"}
+    assert side["argument_hash"] == receipt.record.argument_hash
+    assert side["policy_version"] == receipt.record.policy_version
+    assert side["decision"] == receipt.record.decision.value
+
+
+def test_opt_in_deny_still_writes_side_record(tmp_path: Path) -> None:
+    side_store = ReplaySideStore(tmp_path / "replay.jsonl")
+    k = Kernel(
+        policy=DenyAllPolicy(reason="blocked"),
+        audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),
+        side_store=side_store,
+    )
+
+    @k.tool("side_effect")
+    def side_effect() -> None:
+        return None
+
+    with pytest.raises(DeniedError) as exc_info:
+        k.dispatch("side_effect", {"x": 1})
+
+    event_id = exc_info.value.record.event_id
+    side = side_store.get(event_id)
+    assert side is not None
+    assert side["decision"] == "deny"
+    assert side["args"] == {"x": 1}
+
+
+def test_side_record_matches_audit_event_fields(tmp_path: Path) -> None:
+    side_store = ReplaySideStore(tmp_path / "replay.jsonl")
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    k = Kernel(
+        policy=BoundaryPolicy(forbidden_keywords=["secret"]),
+        audit=audit,
+        side_store=side_store,
+    )
+
+    @k.tool("send")
+    def send(body: str) -> None:
+        return None
+
+    _, receipt = k.dispatch("send", {"body": "hello"})
+    events = list(audit.iter_events())
+    assert len(events) == 1
+    event = events[0]
+    side = side_store.get(receipt.record.event_id)
+    assert side is not None
+    assert side["event_id"] == event["event_id"]
+    assert side["argument_hash"] == event["argument_hash"]
+    assert side["policy_version"] == event["policy_version"]
+    assert side["decision"] == event["decision"]
+
+
+def test_redacted_call_tombstones_side_store_but_not_chain(tmp_path: Path) -> None:
+    side_store = ReplaySideStore(
+        tmp_path / "replay.jsonl",
+        redact=lambda c: "id_rsa" in str(c.args),
+    )
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    k = Kernel(
+        policy=AllowAllPolicy(),
+        audit=audit,
+        side_store=side_store,
+    )
+
+    @k.tool("write_file")
+    def write_file(path: str) -> str:
+        return path
+
+    _, receipt = k.dispatch("write_file", {"path": "id_rsa"})
+
+    side = side_store.get(receipt.record.event_id)
+    assert side == {"event_id": receipt.record.event_id, "redacted": True}
+
+    events = list(audit.iter_events())
+    assert events[0]["argument_hash"] == receipt.record.argument_hash
+    assert audit.verify_chain()["valid"] is True
+
+
+def test_side_store_record_feeds_replay_call(tmp_path: Path) -> None:
+    """The write path produces a record the replay re-derivation can consume."""
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    side_store = ReplaySideStore(tmp_path / "replay.jsonl")
+    k = Kernel(
+        policy=policy,
+        audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),
+        side_store=side_store,
+    )
+
+    @k.tool("send")
+    def send(body: str) -> None:
+        return None
+
+    _, receipt = k.dispatch("send", {"body": "hello"})
+    side = side_store.get(receipt.record.event_id)
+    assert side is not None
+
+    reconstructed = ToolCall(
+        name=side["tool"],
+        args=dict(side["args"]),
+        goal=side["goal"],
+        actor=side["actor"],
+        path=tuple(side["path"]),
+        state=dict(side["state"]),
+    )
+    replayed = replay_call(
+        reconstructed,
+        expected_decision=receipt.record.decision,
+        policy=policy,
+        expected_policy_version=receipt.record.policy_version,
+    )
+    assert replayed.matches is True
