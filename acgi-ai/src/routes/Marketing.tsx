@@ -1374,7 +1374,9 @@ export function Marketing() {
           <p className="m-hero-lede">
             Built from years of failed AI-agent experiments, this governance hub helps users and
             agents identify risks, set permissions, and choose safer operating patterns before
-            action.
+            action. Its core rule, enforced by the gove-zone runtime: no valid Decision Receipt, no
+            side effect — privileged actions are checked and receipted before they run, not audited
+            after.
           </p>
           <div className="m-hero-actions">
             <a className="btn btn-primary" href="#interview">
