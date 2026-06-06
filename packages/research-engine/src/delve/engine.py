@@ -62,7 +62,9 @@ class Engine:
         event = {"wave": self.graph.wave, "type": etype, **data}
         self.events.append(event)
         if self.config.trajectory_path is not None:
-            with open(self.config.trajectory_path, "a", encoding="utf-8") as fh:
+            tp = Path(self.config.trajectory_path)
+            tp.parent.mkdir(parents=True, exist_ok=True)
+            with tp.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def _fan_out(self, items: Sequence[_T], fn: Callable[[_T], _R]) -> list[_R]:

@@ -44,7 +44,7 @@ class AnthropicLLM(LLMClient):
 
         text = "".join(getattr(block, "text", "") for block in getattr(response, "content", []))
         usage = getattr(response, "usage", None)
-        in_tokens = int(getattr(usage, "input_tokens", estimate_tokens(prompt)))
-        out_tokens = int(getattr(usage, "output_tokens", estimate_tokens(text)))
+        in_tokens = int(getattr(usage, "input_tokens", None) or estimate_tokens(prompt))
+        out_tokens = int(getattr(usage, "output_tokens", None) or estimate_tokens(text))
         self._record_usage(self.model, in_tokens, out_tokens)
         return text
