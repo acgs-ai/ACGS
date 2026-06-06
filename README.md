@@ -2,7 +2,17 @@ ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. 
 
 # ACGS / gove-zone
 
+![status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
+![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![docs: acgs.ai](https://img.shields.io/badge/docs-acgs.ai-blue.svg)](https://acgs.ai/docs)
+[![GitHub stars](https://img.shields.io/github/stars/dislovelhl/ACGS?style=social)](https://github.com/dislovelhl/ACGS)
+
 > **Core invariant: No valid Decision Receipt, no side effect.**
+
+> Alpha (`gove-zone` reports `0.1.0.dev0`). Badges reflect declared metadata, not a
+> production, compliance, or certification claim — see
+> [What this repository is not claiming](#what-this-repository-is-not-claiming).
 
 ACGS is not another agent framework. It is the missing execution membrane between AI-agent reasoning and real-world change: file writes, API calls, database updates, emails, payments, deployments, MCP tools, shell commands, and any other side effect that should require explicit authority.
 
