@@ -245,9 +245,7 @@ def test_cli_replay_deny_rederivation_success(
     assert payload["replayed_decision"] == "deny"
 
 
-def test_cli_replay_no_side_record(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_replay_no_side_record(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     audit_path, side_path, bundle_path, event_id = _seed_chain_and_side_store(
         tmp_path, args={"content": "safe"}, path="repo/public/file"
     )
@@ -275,9 +273,7 @@ def test_cli_replay_no_side_record(
     assert rc == 0  # chain verified; re-derivation not attempted
 
 
-def test_cli_replay_redacted_event(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cli_replay_redacted_event(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bundle_path = _write_replay_bundle(tmp_path)
     audit_path = tmp_path / "audit.jsonl"
     side_path = tmp_path / "replay.jsonl"
