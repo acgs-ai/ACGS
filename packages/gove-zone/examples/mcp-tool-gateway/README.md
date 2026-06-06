@@ -38,9 +38,6 @@ preserves by lifting `arguments["path"]`.
 # from the monorepo root
 uv run --package gove-zone python \
     packages/gove-zone/examples/mcp-tool-gateway/demo.py
-
-# or with the package venv
-.venv-ci/bin/python examples/mcp-tool-gateway/demo.py
 ```
 
 `python demo.py` exits 0, writes only to a tempdir, and prints step-by-step

@@ -46,15 +46,15 @@ From the package root (`packages/gove-zone`):
 ```bash
 # Self-test: runs ALLOW + DENY cases and asserts the exit-code contract.
 # Exits 0 iff the gate behaved correctly (allow -> 0, deny -> non-zero).
-.venv-ci/bin/python examples/ci-deployment-gate/demo.py
+uv run --package gove-zone python examples/ci-deployment-gate/demo.py
 
 # Single-payload mode (what a CI step calls): exit code is the gate's verdict.
-.venv-ci/bin/python examples/ci-deployment-gate/demo.py \
+uv run --package gove-zone python examples/ci-deployment-gate/demo.py \
   --payload '{"action":"deploy","environment":"prod","image":"svc@sha256:abc","proposer":"ci-bot","approver":"release-manager"}'
 echo "exit=$?"   # -> non-zero: prod deploy denied, pipeline fails closed
 
 # A staging deploy with a distinct approver is allowed (exit 0):
-.venv-ci/bin/python examples/ci-deployment-gate/demo.py \
+uv run --package gove-zone python examples/ci-deployment-gate/demo.py \
   --payload '{"action":"deploy","environment":"staging","image":"svc@sha256:abc","proposer":"ci-bot","approver":"release-manager"}'
 echo "exit=$?"   # -> 0: staging deploy allowed
 
@@ -88,9 +88,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install gove-zone
-        # The gate needs ONLY gove-zone installed. This example file ships in the
-        # repo you just checked out, so install it from the workspace path:
-        run: pip install ./packages/gove-zone
+        # The gate needs ONLY gove-zone installed, WITH the crypto extra — the
+        # production profile signs receipts (Ed25519), which lives in [crypto].
+        # This example file ships in the repo you just checked out:
+        run: pip install './packages/gove-zone[crypto]'
 
       - name: Governance gate (fail closed on denied deploy)
         env:
