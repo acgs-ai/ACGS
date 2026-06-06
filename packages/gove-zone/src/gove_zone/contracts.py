@@ -36,7 +36,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NewType
 
-from gove_zone.errors import ReceiptValidationError
+from gove_zone.errors import (
+    PRODUCTION_NO_VERIFIER_MSG,
+    ProductionProfileError,
+    ReceiptValidationError,
+)
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
 
@@ -205,6 +209,15 @@ class ReceiptVerifier:
     ``TypeError``; an empty string fails closed with ``ReceiptValidationError``.
     This keeps the strong check the default at this gate, with no silent
     downgrade to the weak ``validator_id == actor`` heuristic.
+
+    **Production profile is the default.** ``require_signature`` defaults to
+    ``True``. A verifier constructed in this posture with no ``verifier`` fails
+    closed loud (:class:`~gove_zone.errors.ProductionProfileError`) when
+    :meth:`verify` runs. For the explicit unsigned dev mode, construct with
+    ``require_signature=False`` (or feed a
+    :meth:`gove_zone.profile.GovernanceProfile.dev` bundle). :meth:`is_valid`
+    still returns ``False`` in that misconfiguration because
+    ``ProductionProfileError`` subclasses ``ReceiptValidationError``.
     """
 
     def __init__(
@@ -216,7 +229,7 @@ class ReceiptVerifier:
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
-        require_signature: bool = False,
+        require_signature: bool = True,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -252,6 +265,8 @@ class ReceiptVerifier:
         """
         if receipt is None:
             raise ReceiptValidationError("No receipt provided for governed execution")
+        if self.require_signature and self.verifier is None:
+            raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
         effective_actor = expected_actor if expected_actor is not None else self.expected_actor
         if not effective_actor or not effective_actor.strip():
             raise ReceiptValidationError(

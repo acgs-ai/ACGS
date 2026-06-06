@@ -31,6 +31,7 @@ from gove_zone.errors import (
     EscalateError,
     GoveZoneError,
     PolicyError,
+    ProductionProfileError,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
@@ -72,6 +73,7 @@ from gove_zone.policy import (
     RuleSetPolicy,
     new_event_id,
 )
+from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
 from gove_zone.replay import (
     ReplayResult,
@@ -126,6 +128,7 @@ __all__ = [
     "ExecutionBoundary",
     "GateMode",
     "GateModeError",
+    "GovernanceProfile",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
@@ -136,6 +139,7 @@ __all__ = [
     "PolicyBundleRef",
     "PolicyRule",
     "PolicyError",
+    "ProductionProfileError",
     "ProposedAction",
     "Receipt",
     "ReceiptSigner",

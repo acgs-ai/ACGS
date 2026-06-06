@@ -354,6 +354,16 @@ class DecisionReceipt:
         require_signature: bool = False,
         now_iso: str | None = None,
     ) -> None:
+        """Low-level receipt verification primitive.
+
+        NOTE: ``require_signature`` defaults to ``False`` here — this is the bare
+        primitive. The secure production posture (default ``require_signature=True``)
+        lives at the gate surfaces — :func:`gove_zone.executor.execute_with_receipt`,
+        :class:`gove_zone.executor.GovernedExecutor`, and
+        :class:`gove_zone.contracts.ReceiptVerifier`. Authorize side effects through
+        those, not by calling this directly; a bare ``verify(...)`` opts into the
+        unsigned posture.
+        """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptValidationError
 

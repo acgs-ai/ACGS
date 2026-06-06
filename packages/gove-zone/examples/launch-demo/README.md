@@ -26,9 +26,10 @@ uv run --package gove-zone python packages/gove-zone/examples/launch-demo/demo.p
 
 - **Alpha** (`0.1.0.dev0`). Proves the *local* invariant; **not** a production,
   compliance, or regulator-ready certification.
-- Runs **unsigned by default** (receipts are `unsigned_local`). Ed25519 signing is
-  opt-in — see `../../SECURITY.md` and the comprehensive
-  `../receipt-gated-execution/demo.py` (scenarios 8–9) for the signed path.
+- This demo runs in explicit **dev mode** (`require_signature=False`; receipts are
+  `unsigned_local`). The library default is the signed **production profile** — see
+  `../../SECURITY.md` and `../receipt-gated-execution/demo.py` (scenarios 8–9) for the
+  signed path.
 - The registered tool is a stand-in. gove-zone decides *whether* and *with which
   arguments* an action runs; it does **not** sandbox the side effect. Run your
   tools in your own sandbox.

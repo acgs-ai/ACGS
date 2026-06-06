@@ -1,4 +1,4 @@
-"""Asymmetric receipt signing — opt-in closure of the recomputed-receipt residual.
+"""Asymmetric receipt signing — the production-profile closure of the recomputed-receipt residual.
 
 The receipt schema binds goal/action/authority/validator/args/policy/boundary
 into ``receipt_hash``. But a hash is recomputable: any process that can rebuild
@@ -11,7 +11,11 @@ can sign, so a recomputed-hash forgery is cryptographically infeasible.
   (a) receipts are issued with a private-key signer (``from_record(signer=…)``), AND
   (b) the gate is configured with a matching public-key verifier AND
       ``require_signature=True``.
-Default deployments are unsigned; operators must engage signing explicitly.
+This is the **default** posture: the production profile
+(``GovernanceProfile.production`` / unset ``GOVE_ZONE_PROFILE``) makes the gates
+default to ``require_signature=True``, and a production gate with no verifier fails
+closed loud. The unsigned path is the explicit dev-mode opt-out
+(``GovernanceProfile.dev`` / ``require_signature=False``).
 
 **Residuals this mechanism does NOT address:**
   - Private-key **custody**: if the signing key is compromised, an attacker can
