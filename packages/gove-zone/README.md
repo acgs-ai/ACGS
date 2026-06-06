@@ -67,12 +67,60 @@ every decision leaves tamper-evident audit evidence.
 
 The same thread is covered as a test in `tests/test_end_to_end.py`.
 
+## When should I use gove-zone?
+
+gove-zone is a narrow enforcement layer, not a platform. It earns its place when
+you need *verifiable proof, gated before the act* — and it is the wrong tool when
+you need breadth.
+
+**Use gove-zone if**
+
+- You need machine-checkable proof that a **specific tool call, with specific
+  arguments**, was authorized by policy *before* it ran — not logged after.
+- You operate under a **fail-closed** mandate: if governance cannot decide, the
+  action is denied, never silently allowed.
+- You want an **append-only, tamper-evident audit chain** a third party can
+  replay and verify offline, without re-running your policy.
+- You need **proposer ≠ validator** separation (MACI): the agent requesting an
+  action cannot also be the authority that approves it.
+- You already own **authentication and tool sandboxing**, and need the
+  governance decision in the last mile before execution — inside an MCP server,
+  a LangGraph / OpenAI-Agents tool, a CI/deploy step, or a custom executor.
+- You want **cryptographic non-repudiation** of decisions: the default
+  production profile signs receipts (Ed25519), so a recomputed-hash forgery is
+  infeasible without the key.
+- You are **multi-tenant** and need one tenant's policy/receipt to be unusable
+  in another's execution context.
+
+**Do NOT use gove-zone if**
+
+- You want an **agent framework**. gove-zone has no planner and no orchestration
+  of its own; integrate it *into* your framework, don't replace it.
+- You expect **policies to be written for you**. Policies are explicit (rules /
+  code); you author them.
+- You need a turnkey **PKI, key rotation, or revocation** service. Production
+  signing is point-to-point; key custody, distribution, and rotation are yours
+  to operate (see `SECURITY.md` → *Ed25519 receipt signing*).
+- Your threat model is **a compromised host**. An attacker who can write the
+  audit file and run the issuer can forge a consistent local chain; the chain
+  proves tamper-evidence to *readers*, not unforgeability under host compromise.
+- You need **human-in-the-loop approval resolution today**. `ESCALATE` blocks
+  the action but does not yet route to an approver.
+- You need **production / compliance certification**. gove-zone is alpha
+  (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
+  certification.
+
+For the full boundary — what is enforced, what is explicitly out of scope, and
+what you must supply externally — see the one-page
+[threat model](docs/threat-model.md) and the deeper [`SECURITY.md`](SECURITY.md).
+
 ## Documentation
 
 | Topic | Doc |
 |---|---|
 | Architecture & components | `ARCHITECTURE.md` |
-| Security boundary & threat model | `SECURITY.md` |
+| Threat model (one page: prevents / does not / supply externally) | `docs/threat-model.md` |
+| Security boundary (deep) | `SECURITY.md` |
 | Receipt schema & verification | `docs/decision-receipts.md` |
 | Governed execution flow | `docs/governed-execution.md` |
 | Audit evidence & chain | `docs/audit-evidence.md` |
