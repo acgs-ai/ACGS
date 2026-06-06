@@ -50,7 +50,10 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} --clear .venv
-          uv pip install --python .venv/bin/python --editable '.[dev]'
+          # `dev` is a PEP 735 [dependency-groups] entry, NOT a [project.optional-
+          # dependencies] extra, so `.[dev]` installs nothing (uv warns "no extra
+          # named dev") and .venv/bin/ruff is missing → exit 127. Install the group.
+          uv pip install --python .venv/bin/python --editable . --group dev
 
       - name: Lint
         run: |
