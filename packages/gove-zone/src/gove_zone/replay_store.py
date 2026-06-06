@@ -103,7 +103,16 @@ class ReplaySideStore:
         return found
 
     def iter_records(self) -> Iterable[dict[str, Any]]:
-        """Yield every persisted record dict in write order."""
+        """Yield every persisted record dict in write order.
+
+        Malformed or non-object lines are skipped rather than raised. This store
+        is a non-authoritative lookup table — integrity comes from the audit
+        chain cross-check at replay time, not from the side-store itself. A
+        corrupt line therefore must not break lookups of other events; a missing
+        or unparseable target record simply surfaces as ``get() -> None``, which
+        :func:`gove_zone.replay.replay_from_side_store` callers treat as an
+        honest event-only fallback rather than a claimed re-derivation.
+        """
         if not self.path.exists():
             return
         with self.path.open("r", encoding="utf-8") as fh:
@@ -111,6 +120,9 @@ class ReplaySideStore:
                 clean = line.strip()
                 if not clean:
                     continue
-                entry = json.loads(clean)
+                try:
+                    entry = json.loads(clean)
+                except json.JSONDecodeError:
+                    continue
                 if isinstance(entry, dict):
                     yield entry

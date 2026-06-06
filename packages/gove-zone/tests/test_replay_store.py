@@ -121,6 +121,29 @@ def test_multiple_events_each_resolve(tmp_path: Path) -> None:
         assert got["args"] == {"i": i}
 
 
+def test_malformed_line_is_skipped_not_raised(tmp_path: Path) -> None:
+    """A corrupt line must not break lookups of other (valid) events.
+
+    Integrity comes from the audit-chain cross-check at replay time, not from
+    the side-store, so a malformed line is skipped rather than crashing get().
+    """
+    path = tmp_path / "replay.jsonl"
+    store = ReplaySideStore(path)
+    call = ToolCall(name="noop", args={"i": 1})
+    store.append(call, _record(call, "ev_good"))
+
+    # Corrupt the store by appending a non-JSON line after a valid record.
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("{not valid json\n")
+
+    # The valid record is still retrievable; the bad line is skipped.
+    got = store.get("ev_good")
+    assert got is not None
+    assert got["args"] == {"i": 1}
+    # A lookup that would have to scan past the corrupt line returns None, not raise.
+    assert store.get("ev_absent") is None
+
+
 def test_empty_state_and_path_round_trip(tmp_path: Path) -> None:
     store = ReplaySideStore(tmp_path / "replay.jsonl")
     call = ToolCall(name="ping", args={})
