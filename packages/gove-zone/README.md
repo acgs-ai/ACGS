@@ -288,19 +288,46 @@ store.verify_chain()
 
 ## Replay (what it actually verifies)
 
-```bash
-gove-zone replay --event <event_id> --audit audit.jsonl
+`gove-zone replay --audit CHAIN --event E` verifies the audit chain: the hash
+chain is intact, the event exists, and its recorded hash matches. It does **not**
+re-run the policy by default, because the audit chain stores only
+`argument_hash` — never raw arguments. That hash-only property is a deliberate
+privacy and chain-size guarantee.
+
+To get **true re-derivation** — re-run the original policy against the original
+arguments and confirm the recorded verdict still holds — enable the opt-in
+raw-args side-store and supply the original policy at replay time:
+
+```python
+from gove_zone import Kernel, ReplaySideStore
+
+kernel = Kernel(
+    policy=policy,
+    audit=ChainHashAuditStore(".gove-zone/audit.jsonl"),
+    side_store=ReplaySideStore(".gove-zone/replay.jsonl"),  # off by default
+)
 ```
 
-Be precise about scope: this verifies **chain integrity + event presence +
-policy-version match** — it re-walks the hash chain, confirms the `event_id`
-exists, and checks the recorded `audit_hash`. It does **not** re-execute the
-policy, because the audit chain stores only `argument_hash`, never raw
-arguments. Full decision re-derivation (rerunning the policy to confirm it
-still produces the same verdict) requires retaining the raw args in a
-side-store and calling `replay_call(...)`; the audit chain alone is
-intentionally insufficient for that. Without `--audit`, `replay` returns
-hash-only evidence and `verified: false`.
+```bash
+gove-zone replay --audit .gove-zone/audit.jsonl \
+  --side-store .gove-zone/replay.jsonl \
+  --policy-bundle policy.bundle.json \
+  --event EV
+# → {... "rederived": true, "rederivation_status": "verified", "replayed_decision": "deny"}
+```
+
+The side-store is a **separate file** from the audit chain — the chain stays
+byte-for-byte hash-only. Replay cross-checks each side record's raw args against
+the chain's recorded `argument_hash`; any drift fails the re-derivation
+(`rederivation_status: "argument-hash-mismatch"`) rather than passing silently.
+Re-derivation also requires the supplied policy's version to match the recorded
+`policy_version` (else `"policy-version-mismatch"`).
+
+Honest fallback: with no `--side-store`/`--policy-bundle`, or for a **redacted**
+event (`rederivation_status: "redacted"`) or one absent from the side-store
+(`"no-side-record"`), replay reports the chain result only and never claims a
+re-derivation it cannot perform. Redaction is fail-safe: sensitive calls are
+stored as tombstones carrying no raw args.
 
 ## Runtime-hook integration
 

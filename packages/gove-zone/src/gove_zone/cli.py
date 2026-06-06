@@ -21,7 +21,9 @@ from gove_zone.integration import (
     emit_receipts_for_hook,
     resolve_gate_mode_path,
 )
-from gove_zone.policy import RuleSetPolicy
+from gove_zone.policy import Policy, RuleSetPolicy
+from gove_zone.replay import replay_from_side_store
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.setup import (
     detect_environment,
     generate_config,
@@ -43,6 +45,51 @@ def _find_event(
         if event.get("event_id") == event_id:
             return event
     return None
+
+
+def _rederive(
+    event: dict[str, Any] | None,
+    side_record: dict[str, Any] | None,
+    policy: Policy,
+) -> dict[str, Any]:
+    """Attempt true re-derivation and return the JSON-ready re-derivation block.
+
+    ``attempted`` is False when there is no usable raw side record (missing or
+    redacted), so the caller can fall back to today's event-only exit semantics.
+    """
+    if side_record is None or event is None:
+        return {
+            "attempted": False,
+            "rederived": False,
+            "rederivation_status": "no-side-record",
+            "replayed_decision": None,
+            "policy_version_match": False,
+        }
+    if side_record.get("redacted") is True:
+        return {
+            "attempted": False,
+            "rederived": False,
+            "rederivation_status": "redacted",
+            "replayed_decision": None,
+            "policy_version_match": False,
+        }
+
+    result = replay_from_side_store(event, side_record, policy)
+    if not result.argument_hash_match:
+        status = "argument-hash-mismatch"
+    elif not result.policy_version_match:
+        status = "policy-version-mismatch"
+    elif result.matches:
+        status = "verified"
+    else:
+        status = "decision-mismatch"
+    return {
+        "attempted": True,
+        "rederived": result.matches,
+        "rederivation_status": status,
+        "replayed_decision": result.replayed_decision.value,
+        "policy_version_match": result.policy_version_match,
+    }
 
 
 def _replay(args: argparse.Namespace) -> int:
@@ -70,22 +117,45 @@ def _replay(args: argparse.Namespace) -> int:
     hash_matches = args.audit_hash is None or actual_hash == args.audit_hash
     verified = bool(chain["valid"] and event is not None and hash_matches)
 
-    _emit(
-        {
-            **base,
-            "audit": str(audit_path),
-            "status": "verified" if verified else "failed",
-            "verified": verified,
-            "chain_valid": chain["valid"],
-            "checked": chain["checked"],
-            "event_found": event is not None,
-            "actual_audit_hash": actual_hash,
-            "decision": event.get("decision") if event is not None else None,
-            "policy_version": (event.get("policy_version") if event is not None else None),
-            "failures": chain["failures"],
-        }
-    )
-    return 0 if verified else 1
+    payload: dict[str, Any] = {
+        **base,
+        "audit": str(audit_path),
+        "status": "verified" if verified else "failed",
+        "verified": verified,
+        "chain_valid": chain["valid"],
+        "checked": chain["checked"],
+        "event_found": event is not None,
+        "actual_audit_hash": actual_hash,
+        "decision": event.get("decision") if event is not None else None,
+        "policy_version": (event.get("policy_version") if event is not None else None),
+        "failures": chain["failures"],
+    }
+
+    side_store_path = getattr(args, "side_store", None)
+    policy_bundle = getattr(args, "policy_bundle", None)
+
+    # Re-derivation surface. Loading the bundle is a hook-style configuration
+    # step: an invalid bundle exits 2 (mirrors `_gate`), never an allow.
+    policy: Policy | None = None
+    if policy_bundle is not None:
+        try:
+            policy = RuleSetPolicy.load(policy_bundle)
+        except Exception as exc:  # noqa: BLE001 — bad replay config must not pass
+            print(f"replay: failed to load policy bundle: {exc}", file=sys.stderr)
+            return 2
+
+    rederivation_attempted = False
+    if side_store_path is not None and policy is not None:
+        side_record = ReplaySideStore(side_store_path).get(args.event)
+        block = _rederive(event, side_record, policy)
+        rederivation_attempted = bool(block.pop("attempted"))
+        payload.update(block)
+
+    _emit(payload)
+
+    rederived = bool(payload.get("rederived", False))
+    overall = verified and (rederived if rederivation_attempted else True)
+    return 0 if overall else 1
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -550,6 +620,20 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument(
         "--audit-hash",
         help="expected audit event hash from a receipt or console action",
+    )
+    replay.add_argument(
+        "--side-store",
+        help=(
+            "path to a ReplaySideStore JSONL; with --policy-bundle, re-runs the "
+            "policy against the retained raw args for true decision re-derivation"
+        ),
+    )
+    replay.add_argument(
+        "--policy-bundle",
+        help=(
+            "RuleSetPolicy JSON bundle used to re-derive the decision; invalid "
+            "bundles exit 2 (re-derivation needs --side-store too)"
+        ),
     )
     replay.set_defaults(func=_replay)
 
