@@ -24,6 +24,12 @@ dependencies = []
 gove-zone = "gove_zone.cli:main"
 gove-zone-api = "gove_zone.api:main"
 
+[project.urls]
+Homepage = "https://acgs.ai"
+Documentation = "https://acgs.ai/docs"
+Repository = "https://github.com/dislovelhl/ACGS"
+Issues = "https://github.com/dislovelhl/ACGS/issues"
+
 [project.optional-dependencies]
 schema = ["pydantic>=2.0"]
 crypto = ["cryptography>=42"]
