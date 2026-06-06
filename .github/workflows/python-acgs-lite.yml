@@ -61,17 +61,25 @@ jobs:
           git submodule sync -- packages/acgs-lite
           git submodule update --init --recursive -- packages/acgs-lite
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'packages/acgs-lite/pyproject.toml'
 
+      # actions/setup-python@v5 has no prebuilt CPython for this self-hosted
+      # runner's OS, so it fails with "version not found for this operating
+      # system" (notably on the 3.10 published-floor lane). Provision the
+      # matrix Python with uv — the same self-contained pattern already used by
+      # python-agent-bus-analyzer.yml / python-eval-mvp.yml — and put the venv
+      # on PATH so the Makefile's `python3 -m ruff/mypy/pytest` resolves to it.
+      - name: Provision Python ${{ matrix.python-version }} via uv
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          echo "${{ github.workspace }}/packages/acgs-lite/.venv/bin" >> "$GITHUB_PATH"
+
       - name: Install (dev extras)
-        run: uv pip install --system --no-config --editable '.[dev,mcp]'
+        run: uv pip install --python .venv/bin/python --no-config --editable '.[dev,mcp]'
 
       - name: Lint
         run: make lint
