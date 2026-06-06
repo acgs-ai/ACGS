@@ -49,7 +49,7 @@ jobs:
         # invocations are unambiguous.
         run: |
           uv python install ${{ matrix.python-version }}
-          uv venv --python ${{ matrix.python-version }} .venv
+          uv venv --python ${{ matrix.python-version }} --clear .venv
           uv pip install --python .venv/bin/python --editable '.[dev]'
 
       - name: Lint

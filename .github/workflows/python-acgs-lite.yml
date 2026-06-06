@@ -75,7 +75,7 @@ jobs:
       - name: Provision Python ${{ matrix.python-version }} via uv
         run: |
           uv python install ${{ matrix.python-version }}
-          uv venv --python ${{ matrix.python-version }} .venv
+          uv venv --python ${{ matrix.python-version }} --clear .venv
           echo "${{ github.workspace }}/packages/acgs-lite/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install (dev extras)
