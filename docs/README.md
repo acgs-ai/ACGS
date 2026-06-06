@@ -1,56 +1,42 @@
-# ACGS documentation
+# ACGS documentation index
 
-This directory contains claim-safe project documentation for ACGS as a framework-neutral governance boundary. Start with the introduction and quickstart, then use the concept and reference pages for implementation review.
+ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
 
-## Start here
+Core invariant: **No valid Decision Receipt, no side effect.**
 
-- [Introduction](introduction.md)
-- [Quickstart](quickstart.md)
-- [Common workflows](common-workflows.md)
-- [Prompt library](prompt-library.md)
+## Best entry points
 
-## Concepts
+- [START_HERE](START_HERE.md) — 10-minute path.
+- [PROOF_PATH](PROOF_PATH.md) — canonical proof narrative.
+- [HUMAN_GUIDE](HUMAN_GUIDE.md) — evaluator/buyer/developer guide.
+- [QUICKSTART](QUICKSTART.md) — copy-paste commands.
+- [DEMO_SCRIPT](DEMO_SCRIPT.md) — five-minute demo.
 
-- [Authority model](concepts/authority-model.md)
-- [Decision receipts](concepts/decision-receipts.md)
-- [Evidence bundles](concepts/evidence-bundles.md)
-- [Fail-closed enforcement](concepts/fail-closed-enforcement.md)
-- [Audit replay](concepts/audit-replay.md)
-- [Tool boundaries](concepts/tool-boundaries.md)
+## Technical contract
 
-## Skills
+- [ARCHITECTURE](ARCHITECTURE.md)
+- [DECISION_RECEIPT_SPEC](DECISION_RECEIPT_SPEC.md)
+- [SECURITY_MODEL](SECURITY_MODEL.md)
+- [INTEGRATION_GUIDE](INTEGRATION_GUIDE.md)
+- [COMPARISON](COMPARISON.md)
 
-- [Overview](skills/overview.md)
-- [Creating skills](skills/creating-skills.md)
-- [Skill schema](skills/skill-schema.md)
-- [Best practices](skills/best-practices.md)
+## Claim discipline and adoption
 
-## Hooks or runtime
+- [CLAIMS](CLAIMS.md)
+- [ROADMAP](ROADMAP.md)
+- [GLOSSARY](GLOSSARY.md)
+- [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
+- [ADOPTION_GUIDE](ADOPTION_GUIDE.md)
 
-- [Overview](hooks-or-runtime/overview.md)
-- [Configuration](hooks-or-runtime/configuration.md)
-- [Examples](hooks-or-runtime/examples.md)
-- [Reference](hooks-or-runtime/reference.md)
+## Existing reference areas
 
-## MCP
-
-- [Overview](mcp/overview.md)
-- [Quickstart](mcp/quickstart.md)
-- [Examples](mcp/examples.md)
-
-## Reference
-
-- [CLI](reference/cli.md)
-- [API](reference/api.md)
-- [Policy schema](reference/policy-schema.md)
-- [Receipt schema](reference/receipt-schema.md)
-
-## Troubleshooting
-
-- [Common issues](troubleshooting/common-issues.md)
-- [Error codes](troubleshooting/error-codes.md)
-- [Security and privacy](troubleshooting/security-privacy.md)
+- `concepts/` — authority, decision receipts, evidence bundles, fail-closed enforcement, audit replay, tool boundaries.
+- `reference/` — API, CLI, policy schema, receipt schema.
+- `hooks-or-runtime/` — runtime hook configuration and reference.
+- `mcp/` — MCP overview, quickstart, examples.
+- `adr/` — architecture decisions.
+- `troubleshooting/` — common issues and security/privacy notes.
 
 ## Claim boundary
 
-Local receipts, smoke tests, and lint output are readiness evidence. They are not production deployment proof or compliance certification unless the matching live/external evidence is present.
+Local receipts, smoke tests, and lint output are readiness evidence. They are not production deployment proof or compliance certification unless matching live/external evidence is present.
