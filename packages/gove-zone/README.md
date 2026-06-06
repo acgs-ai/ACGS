@@ -9,6 +9,25 @@ sit immediately before high-risk side effects.
 gove-zone is **not an agent framework**. It is the enforcement layer an agent,
 MCP tool, workflow engine, CI runner, or custom executor calls *before* it acts.
 
+> **Naming.** `gove-zone` is the governed-runtime **kernel**. It lives inside
+> the **govern-zone** workspace (the ACGS monorepo) at `packages/gove-zone/`.
+> `govern-zone` is the whole platform; `gove-zone` is this enforcement core —
+> the two names are deliberate (workspace vs. package), not a typo.
+
+### Prove it in 30 seconds
+
+No agent host, network call, production credential, or external service:
+
+```bash
+uv run --package gove-zone gove-zone smoke
+```
+
+It emits claim-bounded JSON proving a safe `write_file` was **allowed**, an
+`id_rsa` path write was **denied before any side effect**, and both decisions
+verify as a hash-linked audit chain — then exits non-zero if any check fails.
+See [One-command smoke proof](#one-command-smoke-proof) for the full output and
+`--audit` evidence retention.
+
 > Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
 > production-shaped foundation only. **NOT** production-certified and **NOT**
 > compliance-certified. Do not make live production deployment claims without
