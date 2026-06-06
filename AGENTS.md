@@ -87,6 +87,7 @@ parent repo.
 | Frontend plan | `acgi-ai/PLAN.md` |
 | Monorepo history | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |
+| Documented solutions (past bugs, practices, workflow patterns) | `docs/solutions/` — by category, with YAML frontmatter (`module`, `tags`, `problem_type`) |
 | Deploy contract | `acgi-ai/DEPLOY.md` |
 | Design contract | `acgi-ai/DESIGN.md` |
 

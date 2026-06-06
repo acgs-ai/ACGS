@@ -51,6 +51,7 @@ parent repo.
 | Frontend completion plan | `PLAN.md` |
 | Monorepo unification plan | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |
+| Documented solutions (past bugs, practices, workflow patterns) | `docs/solutions/` — by category, with YAML frontmatter (`module`, `tags`, `problem_type`) |
 | CI workflows | `.github/workflows/` |
 | Frontend deploy contract | `acgi-ai/DEPLOY.md` |
 | Frontend design contract | `acgi-ai/DESIGN.md` |

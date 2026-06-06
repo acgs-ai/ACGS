@@ -9,6 +9,25 @@ sit immediately before high-risk side effects.
 gove-zone is **not an agent framework**. It is the enforcement layer an agent,
 MCP tool, workflow engine, CI runner, or custom executor calls *before* it acts.
 
+> **Naming.** `gove-zone` is the governed-runtime **kernel**. It lives inside
+> the **govern-zone** workspace (the ACGS monorepo) at `packages/gove-zone/`.
+> `govern-zone` is the whole platform; `gove-zone` is this enforcement core —
+> the two names are deliberate (workspace vs. package), not a typo.
+
+### Prove it in 30 seconds
+
+No agent host, network call, production credential, or external service:
+
+```bash
+uv run --package gove-zone gove-zone smoke
+```
+
+It emits claim-bounded JSON proving a safe `write_file` was **allowed**, an
+`id_rsa` path write was **denied before any side effect**, and both decisions
+verify as a hash-linked audit chain — then exits non-zero if any check fails.
+See [One-command smoke proof](#one-command-smoke-proof) for the full output and
+`--audit` evidence retention.
+
 > Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
 > production-shaped foundation only. **NOT** production-certified and **NOT**
 > compliance-certified. Do not make live production deployment claims without
@@ -266,6 +285,49 @@ Two events tampered with after the fact:
 store.verify_chain()
 # → {"valid": False, "checked": N, "failures": [...]}
 ```
+
+## Replay (what it actually verifies)
+
+`gove-zone replay --audit CHAIN --event E` verifies the audit chain: the hash
+chain is intact, the event exists, and its recorded hash matches. It does **not**
+re-run the policy by default, because the audit chain stores only
+`argument_hash` — never raw arguments. That hash-only property is a deliberate
+privacy and chain-size guarantee.
+
+To get **true re-derivation** — re-run the original policy against the original
+arguments and confirm the recorded verdict still holds — enable the opt-in
+raw-args side-store and supply the original policy at replay time:
+
+```python
+from gove_zone import Kernel, ReplaySideStore
+
+kernel = Kernel(
+    policy=policy,
+    audit=ChainHashAuditStore(".gove-zone/audit.jsonl"),
+    side_store=ReplaySideStore(".gove-zone/replay.jsonl"),  # off by default
+)
+```
+
+```bash
+gove-zone replay --audit .gove-zone/audit.jsonl \
+  --side-store .gove-zone/replay.jsonl \
+  --policy-bundle policy.bundle.json \
+  --event EV
+# → {... "rederived": true, "rederivation_status": "verified", "replayed_decision": "deny"}
+```
+
+The side-store is a **separate file** from the audit chain — the chain stays
+byte-for-byte hash-only. Replay cross-checks each side record's raw args against
+the chain's recorded `argument_hash`; any drift fails the re-derivation
+(`rederivation_status: "argument-hash-mismatch"`) rather than passing silently.
+Re-derivation also requires the supplied policy's version to match the recorded
+`policy_version` (else `"policy-version-mismatch"`).
+
+Honest fallback: with no `--side-store`/`--policy-bundle`, or for a **redacted**
+event (`rederivation_status: "redacted"`) or one absent from the side-store
+(`"no-side-record"`), replay reports the chain result only and never claims a
+re-derivation it cannot perform. Redaction is fail-safe: sensitive calls are
+stored as tombstones carrying no raw args.
 
 ## Runtime-hook integration
 

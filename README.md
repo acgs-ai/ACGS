@@ -5,6 +5,11 @@ frontend console work, and integration-ready governance packages. The current
 repo is a monorepo: root files coordinate setup and verification; individual
 packages own their runtime contracts.
 
+The governed-runtime **kernel** is `packages/gove-zone/` (Python module
+`gove_zone`) — the fail-closed enforcement core that policy-checks every tool
+call before it runs. The near-identical names are deliberate: `govern-zone` is
+the whole workspace; `gove-zone` is that one enforcement package, not a typo.
+
 Use `MONOREPO.md` as the package registry,
 `docs/governance-stack-index.md` as the policy/evidence ownership map, and
 `AGENTS.md` / package-local `AGENTS.md` or `CLAUDE.md` files as the agent
