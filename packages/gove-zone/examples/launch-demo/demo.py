@@ -133,6 +133,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor=CALLER_IDENTITY,
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")
@@ -154,6 +155,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # explicit dev mode (unsigned)
         )
         _fail("denied action reached execution")
     except ReceiptValidationError as exc:

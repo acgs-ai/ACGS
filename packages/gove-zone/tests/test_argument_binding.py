@@ -113,6 +113,7 @@ def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran  # side effect was NEVER executed
 
@@ -141,6 +142,7 @@ def test_allow_receipt_executes_for_matching_args(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert result == "executed"
     assert side.ran
@@ -183,6 +185,7 @@ def test_argument_hash_bound_into_receipt_hash(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -222,6 +225,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -236,6 +240,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert result == "executed"
     assert side.ran
@@ -280,6 +285,7 @@ def test_transform_receipt_rejects_extra_executed_field(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran  # side effect was NEVER executed
 
@@ -334,6 +340,7 @@ def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
             expected_action=ACTION,
             # Hand-built record has no actor → proposer resolves to "anonymous".
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -363,6 +370,7 @@ def test_transform_exact_match_passes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert result == "executed"
     assert side.ran

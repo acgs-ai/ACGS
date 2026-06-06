@@ -177,6 +177,7 @@ def test_gate_refuses_forged_self_validated_receipt(tmp_path: Path) -> None:
             # Anchor matches the receipt's proposer; the forged validator_id==actor
             # trips the self-validation check (2b sub-check (ii)).
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
         )
     assert not side.ran  # the side effect was NEVER executed
 
@@ -206,6 +207,7 @@ def test_happy_path_distinct_validator_executes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",  # anchor: caller supplies its own identity
+        require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
     )
     assert result == "executed"
     assert side.ran
@@ -235,6 +237,7 @@ def test_missing_validator_fields_fail_closed(tmp_path: Path) -> None:
                 # Anchor matches the proposer; the missing-field check (#1) fires
                 # first regardless, so this stays a missing-field test.
                 expected_actor="agent-1",
+                require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
             )
         assert not side.ran
 
@@ -355,6 +358,7 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
             # The invoking principal identifies itself as "agent-1".
             # 2b sub-check (i): actor mismatch (phantom != agent-1) → reject.
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
         )
     assert not side.ran  # side effect was NEVER executed
 
@@ -384,6 +388,7 @@ def test_gate_refuses_receipt_for_wrong_caller(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-2",  # different principal invoking the gate
+            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
         )
     assert not side.ran
 
@@ -471,6 +476,7 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",  # actor == expected_actor, so (i) does not fire
+            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
         )
     assert not side.ran  # side effect was NEVER executed
 
@@ -503,6 +509,7 @@ def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: P
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor="agent-1",  # authenticated caller identity, supplied once
+        require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
     )
     executor.register(ACTION, side.run)
 

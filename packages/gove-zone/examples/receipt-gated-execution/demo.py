@@ -138,6 +138,7 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_actor=CALLER_IDENTITY,
+        require_signature=False,  # dev mode ([8]/[9] show the signed default)
     )
 
     print("\ngove-zone — receipt-gated execution proof")
@@ -169,6 +170,7 @@ def main() -> int:
         # attacker could set to match a forged receipt. The gate rejects a forged
         # receipt where validator_id == this caller, or one issued for someone else.
         expected_actor=CALLER_IDENTITY,
+        require_signature=False,  # dev mode ([8]/[9] show the signed default)
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")
@@ -191,6 +193,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # dev mode ([8]/[9] show the signed default)
         )
         _fail("denied receipt reached execution")
     except ReceiptValidationError as exc:
@@ -211,6 +214,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # dev mode ([8]/[9] show the signed default)
         )
         _fail("missing receipt reached execution")
     except ReceiptValidationError as exc:
@@ -231,6 +235,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # dev mode ([8]/[9] show the signed default)
         )
         _fail("tampered receipt reached execution")
     except ReceiptValidationError as exc:
@@ -250,6 +255,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # dev mode ([8]/[9] show the signed default)
         )
         _fail("tenant-A receipt authorized a tenant-B executor")
     except ReceiptValidationError as exc:
@@ -274,6 +280,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
+            require_signature=False,  # dev mode ([8]/[9] show the signed default)
         )
         _fail("un-approved original args reached execution")
     except ReceiptValidationError:
@@ -290,6 +297,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor=CALLER_IDENTITY,
+        require_signature=False,  # dev mode ([8]/[9] show the signed default)
     )
     if not tool.ran or tool.args != {"path": "transformed.txt"}:
         _fail("approved transformed action did not run as approved")
