@@ -32,6 +32,7 @@ const publicFiles = [
   'src/routes/Marketing.tsx',
   'src/routes/Privacy.tsx',
   'src/routes/ProductSurfaces.tsx',
+  'src/lib/governance-domains.ts',
 ]
 const forbiddenPublicPhrases = [
   {

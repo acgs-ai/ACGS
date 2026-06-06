@@ -130,6 +130,33 @@ check(
   '/consolefoo must remain a marketing SPA path, not a console redirect.',
 )
 
+// Agent-readable static governance surface (W2). Each must resolve to its own
+// static-file route, NOT the SPA fallback, and sit after the console redirects
+// but before the fallback so an ordinary marketing path still falls through.
+const agentAssetRoutes = [
+  ['/llms.txt', '/llms.txt'],
+  ['/governance-framework.txt', '/governance-framework.txt'],
+]
+for (const [path, dest] of agentAssetRoutes) {
+  const route = routeFor(routes, path)
+  check(Boolean(route), `${path} must resolve to an explicit Vercel route.`)
+  check(
+    route?.dest === dest,
+    `${path} must serve the static file ${dest}, not rewrite to the SPA.`,
+  )
+  check(route?.dest !== '/', `${path} must not resolve to the SPA fallback rewrite.`)
+  const index = routeIndex(routes, (candidate) => routeRegex(candidate).test(path))
+  check(
+    index > consoleWildcardIndex,
+    `${path} route must come after the console redirects.`,
+  )
+  check(index < fallbackIndex, `${path} route must come before the SPA fallback.`)
+  check(
+    route?.headers?.['Content-Type'] === 'text/plain; charset=utf-8',
+    `${path} must pin Content-Type: text/plain; charset=utf-8.`,
+  )
+}
+
 check(
   packageJson.scripts?.['test:vercel-routes'] === 'node scripts/check-vercel-routes.mjs',
   'package.json must expose test:vercel-routes for marketing edge route verification.',
