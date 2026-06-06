@@ -56,17 +56,22 @@ jobs:
           git submodule sync -- packages/Acgs-Swarm
           git submodule update --init --recursive -- packages/Acgs-Swarm
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: 'packages/Acgs-Swarm/pyproject.toml'
 
+      # See python-acgs-lite.yml: actions/setup-python@v5 has no prebuild for
+      # this self-hosted runner's OS. Provision the matrix Python with uv and
+      # put the venv on PATH so `python -m ruff/pytest` resolves to it.
+      - name: Provision Python ${{ matrix.python-version }} via uv
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} --clear .venv
+          echo "${{ github.workspace }}/packages/Acgs-Swarm/.venv/bin" >> "$GITHUB_PATH"
+
       - name: Install (dev extras)
-        run: uv pip install --system --no-config --no-sources --editable '.[dev]'
+        run: uv pip install --python .venv/bin/python --no-config --no-sources --editable '.[dev]'
 
       - name: Lint
         run: python -m ruff check src/
