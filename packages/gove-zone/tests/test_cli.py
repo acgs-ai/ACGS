@@ -9,8 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from gove_zone import ChainHashAuditStore, Decision, DecisionRecord, sha256_json
+from gove_zone import (
+    ChainHashAuditStore,
+    Decision,
+    DecisionRecord,
+    DeniedError,
+    Kernel,
+    RuleSetPolicy,
+    sha256_json,
+)
 from gove_zone.cli import main
+from gove_zone.replay_store import ReplaySideStore
 
 
 def _record(event_id: str) -> DecisionRecord:
@@ -126,6 +135,264 @@ def test_cli_proofpack_generates_files(
     assert results["missing_receipt_blocked"] is True
     assert results["tampered_receipt_blocked"] is True
     assert results["audit_chain_verified"] is True
+
+
+def _write_replay_bundle(tmp_path: Path) -> Path:
+    bundle_path = tmp_path / "policy.bundle.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "id": "replay-test/v1",
+                "rules": [
+                    {
+                        "id": "BLOCK_SECRETS",
+                        "effect": "deny",
+                        "tools": ["write"],
+                        "path_prefix": "repo/secrets",
+                        "reason": "secret paths are blocked",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return bundle_path
+
+
+def _seed_chain_and_side_store(
+    tmp_path: Path,
+    *,
+    args: dict[str, object],
+    path: str,
+) -> tuple[Path, Path, Path, str]:
+    """Dispatch one call through a kernel with a side-store; return paths + id."""
+    bundle_path = _write_replay_bundle(tmp_path)
+    audit_path = tmp_path / "audit.jsonl"
+    side_path = tmp_path / "replay.jsonl"
+    policy = RuleSetPolicy.load(bundle_path)
+    k = Kernel(
+        policy=policy,
+        audit=ChainHashAuditStore(audit_path),
+        side_store=ReplaySideStore(side_path),
+    )
+
+    @k.tool("write")
+    def write(**kwargs: object) -> str:
+        return "ok"
+
+    try:
+        _, receipt = k.dispatch("write", args, path=path)
+        event_id = receipt.record.event_id
+    except DeniedError as exc:
+        event_id = exc.record.event_id
+    return audit_path, side_path, bundle_path, event_id
+
+
+def test_cli_replay_rederivation_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, side_path, bundle_path, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "safe"}, path="repo/public/file"
+    )
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(side_path),
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["rederived"] is True
+    assert payload["rederivation_status"] == "verified"
+    assert payload["replayed_decision"] == "allow"
+    assert payload["policy_version_match"] is True
+
+
+def test_cli_replay_deny_rederivation_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, side_path, bundle_path, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "secret"}, path="repo/secrets/key"
+    )
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(side_path),
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["rederived"] is True
+    assert payload["rederivation_status"] == "verified"
+    assert payload["replayed_decision"] == "deny"
+
+
+def test_cli_replay_no_side_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, side_path, bundle_path, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "safe"}, path="repo/public/file"
+    )
+    # An event that exists in the chain but not the side-store.
+    empty_side = tmp_path / "empty-replay.jsonl"
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(empty_side),
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rederivation_status"] == "no-side-record"
+    assert payload["rederived"] is False
+    assert payload["chain_valid"] is True
+    assert rc == 0  # chain verified; re-derivation not attempted
+
+
+def test_cli_replay_redacted_event(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bundle_path = _write_replay_bundle(tmp_path)
+    audit_path = tmp_path / "audit.jsonl"
+    side_path = tmp_path / "replay.jsonl"
+    policy = RuleSetPolicy.load(bundle_path)
+    k = Kernel(
+        policy=policy,
+        audit=ChainHashAuditStore(audit_path),
+        side_store=ReplaySideStore(side_path, redact=lambda c: True),
+    )
+
+    @k.tool("write")
+    def write(**kwargs: object) -> str:
+        return "ok"
+
+    _, receipt = k.dispatch("write", {"content": "safe"}, path="repo/public/file")
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            receipt.record.event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(side_path),
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rederivation_status"] == "redacted"
+    assert payload["rederived"] is False
+    assert rc == 0
+
+
+def test_cli_replay_bad_policy_bundle_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, side_path, _bundle, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "safe"}, path="repo/public/file"
+    )
+    bad_bundle = tmp_path / "bad.json"
+    bad_bundle.write_text("{ not valid json", encoding="utf-8")
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(side_path),
+            "--policy-bundle",
+            str(bad_bundle),
+        ]
+    )
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "failed to load policy bundle" in err
+
+
+def test_cli_replay_backward_compatible_without_new_flags(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, _side, _bundle, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "safe"}, path="repo/public/file"
+    )
+
+    rc = main(["replay", "--event", event_id, "--audit", str(audit_path)])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["status"] == "verified"
+    assert payload["verified"] is True
+    # No re-derivation keys leak into the today-keys-only path.
+    assert "rederived" not in payload
+    assert "rederivation_status" not in payload
+
+
+def test_cli_replay_tamper_argument_hash_mismatch(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, side_path, bundle_path, event_id = _seed_chain_and_side_store(
+        tmp_path, args={"content": "safe"}, path="repo/public/file"
+    )
+    # Mutate the side-store record's args only; the chain stays intact.
+    record = ReplaySideStore(side_path).get(event_id)
+    assert record is not None
+    record["args"] = {"content": "tampered"}
+    side_path.write_text(
+        json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(
+        [
+            "replay",
+            "--event",
+            event_id,
+            "--audit",
+            str(audit_path),
+            "--side-store",
+            str(side_path),
+            "--policy-bundle",
+            str(bundle_path),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rederivation_status"] == "argument-hash-mismatch"
+    assert payload["rederived"] is False
+    assert rc != 0
 
 
 def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
