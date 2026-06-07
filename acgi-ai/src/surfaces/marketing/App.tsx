@@ -5,8 +5,14 @@ import {
   Outlet,
   RouterProvider,
 } from '@tanstack/react-router'
-import { lazy, Suspense, useEffect } from 'react'
-import { Marketing } from '../../routes/Marketing'
+import { useEffect } from 'react'
+import {
+  AgentReadable,
+  FailureModesPage,
+  FounderNarrative,
+  GovernancePatternsPage,
+  Marketing,
+} from '../../routes/Marketing'
 import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
@@ -73,6 +79,30 @@ const privacyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/privacy',
   component: Privacy,
+})
+
+const founderRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/founder',
+  component: FounderNarrative,
+})
+
+const failureModesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/failure-modes',
+  component: FailureModesPage,
+})
+
+const governancePatternsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/governance-patterns',
+  component: GovernancePatternsPage,
+})
+
+const agentReadableRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-readable',
+  component: AgentReadable,
 })
 
 const trustRoute = createRoute({
@@ -142,6 +172,10 @@ function MarketingNotFoundRoute() {
 const routeTree = rootRoute.addChildren([
   indexRoute,
   privacyRoute,
+  founderRoute,
+  failureModesRoute,
+  governancePatternsRoute,
+  agentReadableRoute,
   trustRoute,
   securityRoute,
   productIndexRoute,
@@ -154,24 +188,8 @@ const routeTree = rootRoute.addChildren([
 
 const router = createRouter({ routeTree })
 
-// Lazy + flag-gated: the copilot tree (panel + @ag-ui/client) is a separate
-// chunk. The flag gates runtime MOUNT only — the chunk is still emitted by the
-// build and counts toward the 200 KiB marketing budget (+44.5 KiB → 174.1/200);
-// it is just not downloaded until mounted. See docs/COPILOTKIT_FRONTEND_PLAN.md.
-const CopilotMount = lazy(() => import('../../copilot/CopilotMount'))
-const copilotEnabled = import.meta.env.VITE_COPILOT_ENABLED === 'true'
-
 function App() {
-  return (
-    <>
-      <RouterProvider router={router} />
-      {copilotEnabled && (
-        <Suspense fallback={null}>
-          <CopilotMount />
-        </Suspense>
-      )}
-    </>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App

@@ -126,10 +126,14 @@ def _inner_receipt(
 
 
 def _governed(tool: Tool, action: str, *, actor: str = ACTOR) -> GovernedExecutor:
+    # Inner step receipts in these workflow tests are unsigned; envelope and
+    # authorization signing are exercised separately via WorkflowExecutor's own
+    # require_signature. Run the inner gate in explicit dev mode.
     g = GovernedExecutor(
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor=actor,
+        require_signature=False,
     )
     g.register(action, tool.run)
     return g
@@ -272,7 +276,12 @@ def test_happy_path_multistep_executes_in_order() -> None:
     dag = _three_step_dag()
     tool = Tool()
     # One GovernedExecutor with all three actions registered.
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        require_signature=False,  # explicit dev mode: unsigned inner step receipt
+    )
     for sid in ("fetch", "transform", "write"):
         g.register(dag.steps[sid].action, tool.run)
     auth = _auth(dag)
@@ -579,7 +588,12 @@ def test_declared_predecessors_mismatch_rejected_tool_not_called() -> None:
     """Envelope declares predecessors that don't match the DAG → step 5."""
     dag = _three_step_dag()
     tool = Tool()
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        require_signature=False,  # explicit dev mode: unsigned inner step receipt
+    )
     g.register("runtime.data.transform", tool.run)
     auth = _auth(dag)
     wf = WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=auth)
@@ -628,7 +642,12 @@ def test_reorder_predecessor_not_run_rejected_tool_not_called() -> None:
     """transform executed before fetch → step 7 (predecessor not in ledger)."""
     dag = _three_step_dag()
     tool = Tool()
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        require_signature=False,  # explicit dev mode: unsigned inner step receipt
+    )
     g.register("runtime.data.transform", tool.run)
     auth = _auth(dag)
     wf = WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=auth)
@@ -656,7 +675,12 @@ def test_predecessor_substitution_rejected_tool_not_called() -> None:
     dag = _three_step_dag()
     fetch_tool = Tool("fetch")
     transform_tool = Tool("transform")
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        require_signature=False,  # explicit dev mode: unsigned inner step receipt
+    )
     g.register("runtime.http.get", fetch_tool.run)
     g.register("runtime.data.transform", transform_tool.run)
     auth = _auth(dag)

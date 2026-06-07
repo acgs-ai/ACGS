@@ -10,6 +10,7 @@ distinguish "model returned garbage" from "topic exhausted".
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,9 +31,15 @@ class ParseError(ValueError):
 def extract_json(text: str) -> Any:
     """Return the first top-level JSON array/object embedded in ``text``.
 
-    Tolerates code fences and surrounding prose by balance-scanning from the
-    first ``[`` or ``{`` to its matching close (string-aware).
+    Prefers the contents of a fenced ```` ```json ```` block when present, so
+    prose that happens to contain brackets — e.g. a ``[1]`` citation, which is
+    itself valid JSON — cannot be mistaken for the payload. Otherwise tolerates
+    surrounding prose by balance-scanning from the first ``[`` or ``{`` to its
+    matching close (string-aware).
     """
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fence:
+        text = fence.group(1)
     start = next((i for i, ch in enumerate(text) if ch in "[{"), None)
     if start is None:
         raise ParseError(f"no JSON structure found in: {text[:120]!r}")
@@ -71,9 +78,17 @@ _DATA_DELIMITERS = ("<<<FINDINGS", ">>>END_FINDINGS", "<<<SOURCES", ">>>END_SOUR
 
 def _strip_delimiters(text: str) -> str:
     """Remove our data-block delimiter tokens from untrusted content so a
-    malicious finding/snippet cannot close the block and inject instructions."""
-    for token in _DATA_DELIMITERS:
-        text = text.replace(token, "")
+    malicious finding/snippet cannot close the block and inject instructions.
+
+    Repeats to a fixed point: a single replace pass can be defeated by a crafted
+    string that *reconstructs* a delimiter once the inner match is removed (e.g.
+    ``<<<FIND`` + ``<<<FINDINGS`` + ``INGS`` collapses back to ``<<<FINDINGS``).
+    Each pass strictly shrinks the text, so the loop terminates."""
+    prev = None
+    while prev != text:
+        prev = text
+        for token in _DATA_DELIMITERS:
+            text = text.replace(token, "")
     return text
 
 
@@ -144,10 +159,12 @@ class Analyst:
                 continue
             support: list[Citation] = []
             finding_ids: list[str] = []
-            for idx in item.get("supports", []):
-                if isinstance(idx, int) and 0 <= idx < len(findings):
-                    support.extend(findings[idx].citations)
-                    finding_ids.append(findings[idx].id)
+            supports = item.get("supports")
+            if isinstance(supports, list):
+                for idx in supports:
+                    if isinstance(idx, int) and 0 <= idx < len(findings):
+                        support.extend(findings[idx].citations)
+                        finding_ids.append(findings[idx].id)
             if not finding_ids:
                 # Garbled/empty refs. Only attribute when provenance is
                 # unambiguous (a single finding); otherwise leave unsupported

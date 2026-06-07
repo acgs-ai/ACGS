@@ -79,11 +79,11 @@ no `expected_actor`; against that path, a forger who recomputes `receipt_hash`
 and sets `actor` to a phantom value while keeping the real proposer as
 `validator_id` is still not caught. Requiring the anchor relocates trust to the
 integrator: it does **not** manufacture an authenticated proposer identity the
-architecture lacks. Unsigned-default proposer-binding is therefore only as strong
+architecture lacks. Unsigned (dev-mode) proposer-binding is therefore only as strong
 as the integrator's external authentication of the caller; the actual
 cryptographic closure is **signed issuance** (`require_signature=True` + a
-trusted public-key verifier — see *Opt-in Ed25519 receipt signing* below), which
-is the recommended production posture. The separation is enforced-by-verifier and
+trusted public-key verifier — see *Ed25519 receipt signing* below), which
+is the default production posture. The separation is enforced-by-verifier and
 audited; it is **not** cryptographically unforgeable under host compromise on the
 unsigned path.
 
@@ -109,15 +109,26 @@ A receipt or policy bundle issued for one tenant cannot be used by another;
 missing tenant identity fails closed (`test_tenant_safety.py`). See
 `docs/policy-bundles.md`.
 
-## Opt-in Ed25519 receipt signing
+## Ed25519 receipt signing (default in the production profile)
 
-gove-zone supports asymmetric receipt signing as an opt-in capability. When
-engaged, it closes the recomputed-receipt residual: anyone can verify a receipt
-with the public key; only the private-key holder can produce a valid signature,
-so a recomputed-hash forgery is cryptographically infeasible.
+gove-zone signs Decision Receipts with asymmetric keys **by default**: the
+production profile — the secure default posture — requires a verified signature
+at the gate (``require_signature=True``). Signing closes the recomputed-receipt
+residual: anyone can verify a receipt with the public key; only the private-key
+holder can produce a valid signature, so a recomputed-hash forgery is
+cryptographically infeasible.
 
-**How to engage.** Issue receipts with a private-key signer and verify at the
-gate with the matching public-key verifier plus ``require_signature=True``:
+Select the posture explicitly with ``GovernanceProfile.production()`` (the
+default) or ``GovernanceProfile.dev()``, or via the ``GOVE_ZONE_PROFILE``
+environment variable (``production`` | ``dev``; unset → production). A gate that
+runs under the production profile with no verifier configured fails closed loud
+(``ProductionProfileError``) — it never silently downgrades and never
+auto-generates an ephemeral key.
+
+**How it works.** Issue receipts with a private-key signer and verify at the
+gate with the matching public-key verifier. ``require_signature=True`` is the
+**default** at the gate surfaces (``execute_with_receipt``, ``GovernedExecutor``,
+``ReceiptVerifier``); it is shown explicitly below for clarity:
 
 ```python
 signer  = Ed25519Signer.generate()
@@ -131,10 +142,13 @@ A receipt that advertises a signature (``signature_algorithm != "none"``) is
 **always** verified cryptographically — presenting it without a verifier is a
 hard rejection, regardless of ``require_signature``.
 
-**Default deployments are unsigned.** Without an explicit ``signer`` at issuance
-and ``verifier + require_signature=True`` at the gate, receipts remain unsigned
-(``signature = "unsigned_local"``); integrity rests on ``receipt_hash`` and the
-audit chain as before.
+**Dev mode is explicitly unsigned.** The dev profile
+(``GovernanceProfile.dev()`` / ``require_signature=False``) is the deliberate
+opt-out: without a ``signer`` at issuance and a ``verifier`` at the gate,
+receipts remain unsigned (``signature = "unsigned_local"``) and integrity rests
+on ``receipt_hash`` and the audit chain alone. Dev mode is a conscious choice,
+not a silent default — the secure production posture is what you get unless you
+ask for less.
 
 **Residuals not addressed by signing:**
 - **Private-key custody.** A compromised signing key lets an attacker issue
