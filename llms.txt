@@ -1,0 +1,90 @@
+# ACGS llms.txt
+
+Project summary: ACGS is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+
+Core invariant: No valid Decision Receipt, no side effect.
+
+Do not describe this project as an agent framework. It complements agent frameworks, MCP, guardrails, sandboxes, IAM, and model safety systems by governing whether side effects may execute.
+
+## Canonical docs
+
+- README.md — landing page and proof path.
+- docs/START_HERE.md — best 10-minute path for humans and agents.
+- docs/PROOF_PATH.md — central proof narrative.
+- docs/HUMAN_GUIDE.md — evaluator and buyer guide.
+- docs/ARCHITECTURE.md — runtime architecture and trust boundaries.
+- docs/DECISION_RECEIPT_SPEC.md — public receipt contract.
+- docs/SECURITY_MODEL.md — threat model.
+- docs/CLAIMS.md — claim-to-evidence ledger and non-claims.
+- docs/QUICKSTART.md — copy-paste working path.
+- docs/DEMO_SCRIPT.md — five-minute demo script.
+- docs/INTEGRATION_GUIDE.md — where to install the gate.
+- docs/COMPARISON.md — honest comparison with MCP, agent frameworks, guardrails, sandboxing, IAM, audit logs, and policy engines.
+- docs/ROADMAP.md — staged roadmap with acceptance tests.
+- docs/GLOSSARY.md — shared vocabulary.
+- docs/REVIEW_CHECKLIST.md — human/agent review checklist.
+- docs/ADOPTION_GUIDE.md — adoption and contribution guide.
+
+## Quickstart path
+
+```bash
+tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
+uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --package gove-zone python examples/tamper_demo/demo.py
+uv run python -m pytest tests/docs --import-mode=importlib -q
+```
+
+## Important source files
+
+- packages/gove-zone/src/gove_zone/kernel.py — policy-before-execution dispatch loop.
+- packages/gove-zone/src/gove_zone/receipt.py — DecisionReceipt schema and validation.
+- packages/gove-zone/src/gove_zone/executor.py — receipt-gated side-effect runner.
+- packages/gove-zone/src/gove_zone/audit.py — chain-hash JSONL audit store.
+- packages/gove-zone/src/gove_zone/replay.py — replay verification helpers.
+- packages/gove-zone/src/gove_zone/replay_store.py — raw-argument side-store for strong replay.
+- packages/gove-zone/src/gove_zone/signing.py — opt-in Ed25519 signing.
+- packages/gove-zone/src/gove_zone/policy.py — policy engine and rule-set policy bundles.
+- packages/gove-zone/src/gove_zone/tenant.py — tenant policy store and receipt issuance.
+- packages/gove-zone/src/gove_zone/integration.py — hook/MCP/function-call adapter shapes.
+- packages/gove-zone/src/gove_zone/cli.py — smoke/proofpack/replay/policy/eval CLI.
+
+## Important tests
+
+- packages/gove-zone/tests/test_executor_guard.py
+- packages/gove-zone/tests/test_decision_receipt.py
+- packages/gove-zone/tests/test_argument_binding.py
+- packages/gove-zone/tests/test_receipt_expiry.py
+- packages/gove-zone/tests/test_receipt_signing.py
+- packages/gove-zone/tests/test_audit_chain.py
+- packages/gove-zone/tests/test_audit_chain_corruption.py
+- packages/gove-zone/tests/test_replay.py
+- packages/gove-zone/tests/test_fail_closed.py
+- packages/gove-zone/tests/test_fail_closed_gaps.py
+- packages/gove-zone/tests/test_policy_bundle_io.py
+- packages/gove-zone/tests/test_integration_hook.py
+- packages/gove-zone/tests/test_integration_gaps.py
+- tests/docs/test_docs_and_examples.py
+
+## Integration examples
+
+- examples/python_tool_gate/
+- examples/mcp_tool_gate/
+- examples/agent_framework_gate/
+- examples/ci_deploy_gate/
+- examples/tamper_demo/
+- packages/gove-zone/examples/receipt-gated-execution/
+
+## Non-claims
+
+- Not production-certified.
+- Not compliance-certified.
+- Not regulator-approved.
+- Not a replacement for content moderation.
+- Not a replacement for sandboxing.
+- Not a complete IAM/RBAC/PKI/key-custody system.
+- Not a full formal-verification system.
+- Not proof that a live agent host is already enforcing the gate.
+
+## Glossary
+
+See docs/GLOSSARY.md for ACGS, gove-zone, Decision Receipt, side effect, fail-closed, executor, actor, validator, policy bundle, authority, audit replay, proof pack, MCP, guardrail, orchestration, receipt-gated execution, and tamper-evident evidence.
