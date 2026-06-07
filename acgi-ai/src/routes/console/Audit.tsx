@@ -6,8 +6,8 @@ import { ConsoleError, ConsoleLoading, EmptyState, SearchToolbar, useTextFilter 
 type EvaluationSourceCopy = { label: string; note: string }
 
 const EVALUATION_SOURCE_LABEL: Record<EvaluationEvidenceSource, EvaluationSourceCopy> = {
-  'gove-zone': {
-    label: 'gove-zone local eval',
+  acgs: {
+    label: 'ACGS local eval',
     note: 'Policy-bundle replay from the governed runtime evaluation adapter.',
   },
   agentdojo: {
