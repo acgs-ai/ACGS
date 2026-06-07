@@ -58,6 +58,7 @@ def main() -> int:
     receipt = issue_receipt(ARGS)
 
     result = execute_with_receipt(
+        require_signature=False,  # local unsigned dev-mode demo (explicit GovernanceProfile.dev posture)
         tool_fn=side_effect.write_file,
         args=ARGS,
         receipt=receipt,
@@ -70,6 +71,7 @@ def main() -> int:
     missing_blocked = False
     try:
         execute_with_receipt(
+            require_signature=False,
             tool_fn=side_effect.write_file,
             args=ARGS,
             receipt=None,

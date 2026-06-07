@@ -67,6 +67,7 @@ def main() -> int:
         side = SideEffect()
 
         result = execute_with_receipt(
+            require_signature=False,  # local unsigned dev-mode demo (explicit GovernanceProfile.dev posture)
             tool_fn=side.run,
             args=ARGS,
             receipt=receipt,
@@ -83,6 +84,7 @@ def main() -> int:
         tampered = dataclasses.replace(receipt, proposed_action="runtime.shell.run")
         try:
             execute_with_receipt(
+                require_signature=False,
                 tool_fn=side.run,
                 args=ARGS,
                 receipt=tampered,
@@ -97,6 +99,7 @@ def main() -> int:
         arg_mismatch_blocked = False
         try:
             execute_with_receipt(
+                require_signature=False,
                 tool_fn=side.run,
                 args={"path": "different.txt", "content": "approved"},
                 receipt=receipt,

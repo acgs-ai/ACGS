@@ -48,6 +48,7 @@ def issue_receipt(args: dict[str, Any]) -> DecisionReceipt:
 class FrameworkToolWrapper:
     def __init__(self, action: str, fn: Callable[..., Any]) -> None:
         self.executor = GovernedExecutor(
+            require_signature=False,  # local unsigned dev-mode demo (explicit GovernanceProfile.dev posture)
             tenant_id=TENANT,
             execution_boundary=BOUNDARY,
             expected_actor=ACTOR,
