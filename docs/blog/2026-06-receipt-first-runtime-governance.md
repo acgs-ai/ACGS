@@ -85,7 +85,7 @@ Receipt-first flips both:
   and on what evidence?" is answerable after the fact from the chain itself.
   (`replay.py`; `test_replay.py`.)
 
-For higher-assurance contexts, receipts can be **signed** with opt-in Ed25519,
+Receipts are **signed** with Ed25519 — the default gate requires a verified signature (an explicit dev mode opts out to unsigned for local proof),
 so authority is cryptographically attributable rather than merely recorded.
 (`signing.py`; `test_receipt_signing.py`.)
 

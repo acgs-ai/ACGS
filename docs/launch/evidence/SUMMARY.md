@@ -13,10 +13,11 @@ All numbers below are literal command output, captured in this directory.
   Ed25519 signing tests are active.
   - Without `cryptography`: 231 passed + 9 skipped (signing tests skip; the
     `test_receipt_signing` module is import-skipped). This is why the prior
-    handoff's "256" and a bare run's "240" differ — the delta is the opt-in
-    signing surface, not a regression.
+    handoff's "256" and a bare run's "240" differ — the delta is the optional
+    crypto-extra signing tests, not a regression.
 - Proof-pack receipts are `signature: "unsigned_local"` / `signature_algorithm:
-  "none"` — i.e. **unsigned by default**, consistent with signing being opt-in.
+  "none"` because the proof pack runs the dev profile; the default gate
+  (`require_signature=True`) rejects unsigned receipts.
 
 ## CaLegal companion (`ca-legal-agent-skills`)
 

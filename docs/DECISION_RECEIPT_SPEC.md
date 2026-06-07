@@ -85,9 +85,9 @@ Evidence: `receipt.py`, `tests/test_maci_role_separation.py`.
 
 ## Signature behavior
 
-Default local mode is unsigned: `signature_algorithm="none"`, `signature="unsigned_local"`. This is for development/local proof. It is not a production signing claim.
+Two distinct defaults apply. **At issuance**, a receipt minted without a configured signer is unsigned: `signature_algorithm="none"`, `signature="unsigned_local"` — for development/local proof, not a production signing claim. **At the gate**, the default is `require_signature=True` (the secure production posture): an unsigned receipt is rejected, and a gate configured with no verifier fails closed. Running unsigned requires explicitly selecting dev mode (`GovernanceProfile.dev()` / `require_signature=False`).
 
-Opt-in signing uses Ed25519:
+Ed25519 signing:
 
 - signer signs `receipt_hash` with a private key;
 - executor verifies with the trusted public key;

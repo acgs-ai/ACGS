@@ -44,7 +44,7 @@ uv run python -m pytest tests/docs --import-mode=importlib -q
 - packages/gove-zone/src/gove_zone/audit.py — chain-hash JSONL audit store.
 - packages/gove-zone/src/gove_zone/replay.py — replay verification helpers.
 - packages/gove-zone/src/gove_zone/replay_store.py — raw-argument side-store for strong replay.
-- packages/gove-zone/src/gove_zone/signing.py — opt-in Ed25519 signing.
+- packages/gove-zone/src/gove_zone/signing.py — Ed25519 receipt signing (required by the default gate).
 - packages/gove-zone/src/gove_zone/policy.py — policy engine and rule-set policy bundles.
 - packages/gove-zone/src/gove_zone/tenant.py — tenant policy store and receipt issuance.
 - packages/gove-zone/src/gove_zone/integration.py — hook/MCP/function-call adapter shapes.

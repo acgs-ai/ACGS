@@ -56,7 +56,7 @@ For the fastest guided path, start at [`docs/START_HERE.md`](docs/START_HERE.md)
 | Actor/action/argument/policy binding | `packages/gove-zone/tests/test_argument_binding.py`, `test_tenant_safety.py`, `test_receipt_expiry.py` |
 | Tamper-evident audit chain | `packages/gove-zone/src/gove_zone/audit.py`; `packages/gove-zone/tests/test_audit_chain.py`, `test_audit_chain_corruption.py` |
 | Replay and side-store re-derivation | `packages/gove-zone/src/gove_zone/replay.py`; `packages/gove-zone/tests/test_replay.py` |
-| Opt-in Ed25519 signing | `packages/gove-zone/src/gove_zone/signing.py`; `packages/gove-zone/tests/test_receipt_signing.py` |
+| Ed25519 signing (gate-required by default) | `packages/gove-zone/src/gove_zone/signing.py`; `packages/gove-zone/tests/test_receipt_signing.py` |
 | Runtime/MCP/function-call adapter shapes | `packages/gove-zone/src/gove_zone/integration.py`; `packages/gove-zone/tests/test_integration_hook.py`, `test_integration_gaps.py` |
 | Local proof pack | `gove-zone proofpack`; `packages/gove-zone/tests/test_cli.py` |
 

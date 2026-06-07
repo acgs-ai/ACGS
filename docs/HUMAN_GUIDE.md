@@ -74,14 +74,14 @@ That receipt can be checked before execution and reviewed after incidents.
 - actor/action/argument/policy/tenant/boundary/expiry binding;
 - tamper-evident JSONL audit chain;
 - replay helpers and optional raw-argument side store;
-- opt-in Ed25519 signing mode;
+- Ed25519 signing mode (required by the default gate; dev mode opts out to unsigned);
 - local proof pack and demos;
 - adapter parsing for hook/MCP/function-call payload shapes.
 
 ## Current limitations
 
 - Local JSONL audit storage is not WORM/off-host durability.
-- Signing is opt-in; unsigned local mode is not a production signing claim.
+- The default gate requires a verified signature and fails closed without one; explicit dev mode opts out to unsigned local mode, which is not a production signing claim.
 - No PKI, certificate chain, revocation, or managed key custody.
 - No complete IAM/RBAC system.
 - No compliance certification or regulator approval.
