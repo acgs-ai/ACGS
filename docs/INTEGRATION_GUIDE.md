@@ -3,7 +3,7 @@
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
 
-ACGS / gove-zone belongs immediately before side effects.
+ACGS belongs immediately before side effects.
 
 The model may request an action, but the executor must enforce the receipt gate.
 

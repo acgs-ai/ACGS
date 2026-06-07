@@ -1,6 +1,6 @@
-ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
 
-# ACGS / gove-zone
+# ACGS
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 ![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)

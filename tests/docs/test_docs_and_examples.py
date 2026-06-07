@@ -62,7 +62,7 @@ def test_required_docs_exist_and_carry_core_invariant() -> None:
 def test_readme_opening_and_non_claims() -> None:
     text = _read("README.md")
     assert text.startswith(
-        "ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects."
+        "ACGS is a receipt-gated governance layer for AI-agent side effects."
     )
     for phrase in (
         "not production-certified",
