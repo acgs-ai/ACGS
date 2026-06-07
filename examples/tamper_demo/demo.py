@@ -77,6 +77,7 @@ def main() -> int:
             expected_audit_hash=receipt.audit_event_hash,
             expected_policy_hash="tamper-demo-policy/v1",
             expected_policy_bundle_id="tamper-demo-policy",
+            require_signature=False,  # dev-mode — local unsigned demo
         )
 
         tampered_blocked = False
@@ -90,6 +91,7 @@ def main() -> int:
                 expected_execution_boundary=BOUNDARY,
                 expected_action=ACTION,
                 expected_actor=ACTOR,
+                require_signature=False,  # dev-mode — local unsigned demo
             )
         except ReceiptValidationError:
             tampered_blocked = True
@@ -104,6 +106,7 @@ def main() -> int:
                 expected_execution_boundary=BOUNDARY,
                 expected_action=ACTION,
                 expected_actor=ACTOR,
+                require_signature=False,  # dev-mode — local unsigned demo
             )
         except ReceiptValidationError:
             arg_mismatch_blocked = True
