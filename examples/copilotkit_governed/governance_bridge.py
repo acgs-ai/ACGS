@@ -25,6 +25,7 @@ the audit anchor, not yet an executor gate.
 
 from __future__ import annotations
 
+import dataclasses
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -85,19 +86,40 @@ class BridgePolicy(Policy):
 _POLICY = BridgePolicy()
 
 
-def admit_action(action: str, args: dict[str, Any]) -> dict[str, Any]:
+def admit_action(action: Any, args: Any) -> dict[str, Any]:
     """Decide whether *action* may run. Fail closed: anything other than a
-    clean ALLOW returns no ``receiptAuditHash``."""
+    clean ALLOW returns no ``receiptAuditHash``.
+
+    Input is validated here, not only at the HTTP edge, so a malformed call can
+    never fall through to ALLOW: ``action`` must be a non-empty string and
+    ``args`` must be an object. ``action``/``args`` are typed ``Any`` precisely
+    because callers (and the network) may pass anything; this function is the
+    single fail-closed gate that rejects it.
+    """
     try:
+        if not isinstance(action, str) or not action.strip():
+            return {"decision": "deny", "reason": "action must be a non-empty string"}
+        if not isinstance(args, dict):
+            return {"decision": "deny", "reason": "args must be an object"}
+
         call = ToolCall(name=action, args=dict(args), actor=ACTOR)
         record = _POLICY.evaluate(call)
+        # The policy returns a bare record; inject caller context the way the
+        # kernel's _attach_context does, so the minted receipt is bound to ACTOR
+        # rather than the "anonymous" default and can be verified for this caller.
+        record = dataclasses.replace(
+            record,
+            goal=call.goal,
+            actor=call.actor,
+            path=call.path,
+            state_hash=call.state_hash(),
+            decision_request_hash=call.decision_request_hash(),
+        )
 
         if record.decision is Decision.ALLOW:
             event = ChainHashAuditStore(_AUDIT_PATH).append(record)
             audit_hash = str(event["event_hash"])
-            # Issuing the receipt proves it is well-formed; we return the same
-            # anchored hash the client checks for.
-            DecisionReceipt.from_record(
+            receipt = DecisionReceipt.from_record(
                 record=record,
                 audit_hash=audit_hash,
                 previous_audit_hash=str(event["previous_hash"]),
@@ -109,6 +131,10 @@ def admit_action(action: str, args: dict[str, Any]) -> dict[str, Any]:
                 validator=Validator("governance-bridge"),
                 authority="tenant-A/copilot-tool-grant",
             )
+            # Prove the receipt is well-formed AND issued for this caller before
+            # returning its anchor hash. A verify failure raises and is caught
+            # below, so the client fails closed (no hash).
+            receipt.verify(expected_actor=ACTOR, expected_action=action)
             return {"decision": "allow", "receiptAuditHash": audit_hash, "reason": record.reason}
 
         if record.decision is Decision.ESCALATE:
@@ -129,11 +155,10 @@ def build_app() -> Any:
 
     @app.post("/admit")
     async def admit(payload: dict[str, Any]) -> dict[str, Any]:
-        action = str(payload.get("action", ""))
-        args = payload.get("args") or {}
-        if not isinstance(args, dict):
-            return {"decision": "deny", "reason": "args must be an object"}
-        return admit_action(action, args)
+        # Delegate all validation to admit_action (the single fail-closed gate).
+        # Do not coerce here: str(payload.get("action", "")) would turn a
+        # non-string action into a passable string and bypass the guard.
+        return admit_action(payload.get("action"), payload.get("args"))
 
     return app
 
