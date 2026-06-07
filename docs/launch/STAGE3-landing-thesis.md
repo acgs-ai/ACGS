@@ -110,14 +110,14 @@ output of a command you can run.
 | `audit_chain_verified` | ✅ true |
 
 Audit chain: `verification.json` → `valid: true`, `failures: []`. The proof pack
-writes receipts (unsigned `unsigned_local` by default — see the signing caveat in
-§6), the `audit.jsonl` chain, and a `limitations.md` — real artifacts, attachable
+writes receipts (the local proof pack runs the unsigned dev profile — see §6),
+the `audit.jsonl` chain, and a `limitations.md` — real artifacts, attachable
 as release evidence.
 
 **Tests:** 250+ gove-zone tests green, **0 failing** (kernel, receipt, audit-chain
 corruption, replay, MACI role separation). The Ed25519 signing tests are active
-only when the optional `cryptography` dependency is installed — consistent with
-signing being opt-in (see caveat below). The CaLegal companion
+only when the optional `cryptography` dependency is installed (the `crypto`
+extra). The CaLegal companion
 (`ca-legal-agent-skills`) ships the same fail-closed / audit-hash / replay
 governance contract with its own governance core green.
 
@@ -140,9 +140,10 @@ The honesty is the positioning. These are stated up front, not buried.
 
 - **Alpha** (`0.1.0.dev0`) — a production-shaped foundation, **not** production-,
   compliance-, or regulator-certified.
-- **Ed25519 signing is opt-in.** It is real and closes the recomputed-receipt
-  residual — but default deployments are **unsigned**; integrity then rests on
-  `receipt_hash` + the audit chain. It is never on by default.
+- **Ed25519 signing is the default in the production profile.** It closes the
+  recomputed-receipt residual; the explicit dev mode (`GovernanceProfile.dev()` /
+  `require_signature=False`) opts out to unsigned, where integrity then rests on
+  `receipt_hash` + the audit chain. The secure posture is the default, not an opt-in.
 - **No PKI, CA, trust chain, key custody, or revocation.** Signing is
   point-to-point; key management is the operator's responsibility.
 - **No side-effect sandboxing.** gove-zone decides *whether* and *with which
@@ -187,7 +188,7 @@ exactly where it isn't (execution).
 | Argument binding (`/tmp/safe` ≠ `/etc/shadow`) | SAY | `SECURITY.md` §"Argument binding" |
 | Tool-format normalizers | SAY | `integration.py` |
 | Proposer ≠ validator role separation | SAY (kernel) | `SECURITY.md` §"Role separation (MACI)" |
-| Ed25519 signing | **CAVEAT** — opt-in, unsigned default | `SECURITY.md` §"Opt-in Ed25519 receipt signing" |
+| Ed25519 signing | SAY — signed by default (production profile); dev mode opts out | `SECURITY.md` §"Ed25519 receipt signing (default in the production profile)" |
 | Broader MACI phases | **CAVEAT** — roadmap | `MACI-ROADMAP.md` |
 | "policy bundles" (not "compile-time policies") | **CAVEAT** — wording | §6 |
 | proofpack 6/6 + chain verified | SAY (evidence) | `dist-govern-zone-proofpack/` |
