@@ -98,7 +98,8 @@ test-py:
 	$(MAKE) -C packages/acgs-lite test; \
 	for pkg in packages/Acgs-Swarm packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; do \
 	  echo "==> test $$pkg"; \
-	  (cd $$pkg && $(UV) run python -m pytest --import-mode=importlib) || exit $$?; \
+	  extra=""; if [ "$$pkg" = "packages/gove-zone" ]; then extra="--extra crypto"; fi; \
+	  (cd $$pkg && $(UV) run $$extra python -m pytest --import-mode=importlib) || exit $$?; \
 	done
 
 lint-py:
