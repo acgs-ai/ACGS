@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+# These demos deliberately run under the production signed profile and generate
+# an in-process Ed25519 keypair, so they require the optional ``crypto`` extra
+# (``cryptography``). Skip cleanly when it is absent rather than hard-failing in
+# a minimal install; a crypto-extra CI lane exercises them for real.
+pytest.importorskip("cryptography", reason="signed-receipt example demos require the optional 'crypto' extra")
+
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 # Demos that run to a clean exit 0 with no arguments and no stdin.
