@@ -103,6 +103,8 @@
     "test:playwright": "playwright test --config=playwright.config.ts"
   },
   "dependencies": {
+    "@ag-ui/client": "^0.0.55",
+    "@ag-ui/core": "^0.0.55",
     "@tanstack/react-query": "^5.100.8",
     "@tanstack/react-router": "^1.169.1",
     "class-variance-authority": "^0.7.1",
