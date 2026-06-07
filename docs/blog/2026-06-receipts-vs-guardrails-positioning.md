@@ -73,7 +73,7 @@ A Decision Receipt closes it by collapsing two systems into one object:
   and corrupting an entry breaks verification
   ([`docs/CLAIMS.md`](../CLAIMS.md), `audit.py`).
 - **Decisions are replayable** where the raw call context is retained, so "what
-  was allowed, and on what evidence?" is answerable from the chain itself.
+  was allowed, and on what evidence?" is verifiable.
 - For higher-assurance contexts, **opt-in Ed25519 signing** makes authority
   cryptographically attributable rather than merely recorded.
 

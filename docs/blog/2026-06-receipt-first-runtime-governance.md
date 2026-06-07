@@ -81,8 +81,8 @@ Receipt-first flips both:
 - The audit chain is **tamper-evident**: decisions are hash-linked, and
   corrupting an entry breaks verification. (`audit.py`; `test_audit_chain.py`,
   `test_audit_chain_corruption.py`.)
-- Decisions are **replayable** and side-store-derivable, so "what was allowed,
-  and on what evidence?" is answerable after the fact from the chain itself.
+- Decisions are **replayable** where the raw call context is retained, so "what
+  was allowed, and on what evidence?" is verifiable.
   (`replay.py`; `test_replay.py`.)
 
 For higher-assurance contexts, receipts can be **signed** with opt-in Ed25519,
