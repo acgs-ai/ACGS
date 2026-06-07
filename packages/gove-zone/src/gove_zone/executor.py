@@ -9,7 +9,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from gove_zone.errors import ReceiptValidationError
+from gove_zone.errors import (
+    PRODUCTION_NO_VERIFIER_MSG,
+    ProductionProfileError,
+    ReceiptValidationError,
+)
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
 
@@ -27,7 +31,7 @@ def execute_with_receipt(
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
-    require_signature: bool = False,
+    require_signature: bool = True,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -36,6 +40,15 @@ def execute_with_receipt(
     - Receipt verification fails (altered, tampered, invalid hashes, wrong tenant/boundary)
     - Receipt is denied or escalated
     - Transformations in a TRANSFORM receipt do not match execution arguments
+
+    **Production profile is the default.** ``require_signature`` defaults to
+    ``True`` — the secure "production profile" posture: an unsigned receipt is
+    rejected and a signed receipt is cryptographically verified against
+    ``verifier``. A production gate invoked with no ``verifier`` fails closed loud
+    (:class:`~gove_zone.errors.ProductionProfileError`) naming both exits, rather
+    than silently downgrading or auto-generating a key. To run the explicit
+    unsigned "dev mode", pass ``require_signature=False`` (or resolve a
+    :meth:`gove_zone.profile.GovernanceProfile.dev` bundle).
 
     ``expected_actor`` (the invoking principal's identity, from the caller's
     runtime context — NOT read from the receipt) is **required**. It anchors the
@@ -52,6 +65,8 @@ def execute_with_receipt(
         raise ReceiptValidationError(
             "expected_actor is required for governed execution (fail-closed)"
         )
+    if require_signature and verifier is None:
+        raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
     if receipt is None:
         raise ReceiptValidationError("No receipt provided for governed execution")
 
@@ -89,6 +104,13 @@ class GovernedExecutor:
     editing receipt fields. There is no silent downgrade to the weak
     ``validator_id == actor`` heuristic (check 2c) through this gate; 2c remains
     only as residual defense for direct :meth:`DecisionReceipt.verify` calls.
+
+    **Production profile is the default.** ``require_signature`` defaults to
+    ``True``. An executor constructed in this posture with no ``verifier`` (and
+    none supplied per-call) fails closed loud
+    (:class:`~gove_zone.errors.ProductionProfileError`) when ``execute`` runs.
+    For the explicit unsigned dev mode, construct with ``require_signature=False``
+    (or feed a :meth:`gove_zone.profile.GovernanceProfile.dev` bundle).
     """
 
     def __init__(
@@ -98,7 +120,7 @@ class GovernedExecutor:
         execution_boundary: str,
         expected_actor: str,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
-        require_signature: bool = False,
+        require_signature: bool = True,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(

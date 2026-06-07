@@ -263,6 +263,39 @@
       "reviewer": "legal-owner-required",
       "nextReviewDate": "2026-06-30",
       "publicDeployAllowed": false
+    },
+    {
+      "id": "receipt-gated-execution",
+      "surface": "marketing",
+      "sourceFiles": ["src/routes/Marketing.tsx"],
+      "allowedWording": "gove-zone is an alpha-stage, fail-closed governance gate enforcing a single receipt-gate invariant: no valid Decision Receipt, no side effect, with a tamper-evident hash-chained audit trail and replayable decisions; Ed25519 receipt signing is opt-in and default deployments are unsigned, and this is an engineering draft, not a production, compliance, or regulatory assurance.",
+      "evidenceState": "config",
+      "evidence": [
+        {
+          "file": "packages/gove-zone/SECURITY.md",
+          "anchor": "No valid Decision Receipt, no side effect."
+        },
+        {
+          "file": "packages/gove-zone/SECURITY.md",
+          "anchor": "The audit log is an append-only hash chain"
+        },
+        {
+          "file": "packages/gove-zone/SECURITY.md",
+          "anchor": "Default deployments are unsigned."
+        },
+        {
+          "file": "docs/launch/STAGE3-landing-thesis.md",
+          "anchor": "replayable against policy via receipt"
+        },
+        {
+          "file": "docs/launch/STAGE3-landing-thesis.md",
+          "anchor": "Ed25519 signing is opt-in."
+        }
+      ],
+      "owner": "engineering",
+      "reviewer": "legal-owner-required",
+      "nextReviewDate": "2026-06-30",
+      "publicDeployAllowed": false
     }
   ]
 }

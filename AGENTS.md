@@ -41,6 +41,7 @@ If `/home/martin/.Codex/scripts/*` exists in your environment, it may be the equ
 | `acgs_governance_eval_mvp/` | Evaluation/governance MVP | Python package. |
 | `acgs-cft-governance-pack/` | Infrastructure governance pack | Python package. |
 | `docs/` | Claim-safe documentation | Do not edit sealed/hash-marked files without the regeneration path. |
+| `docs/solutions/` | Documented solutions (past bugs, practices, workflow patterns) | By category, with YAML frontmatter (`module`, `tags`, `problem_type`). |
 | `examples/` | Root integration examples | Must be lightweight, local-only, and runnable. |
 | `tests/docs/` | Documentation/example smoke checks | Keep docs from rotting. |
 

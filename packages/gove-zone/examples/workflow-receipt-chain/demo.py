@@ -160,7 +160,12 @@ def main() -> int:
 
     def fresh_executor() -> tuple[WorkflowExecutor, dict[str, Tool]]:
         tools = {sid: Tool(sid) for sid in dag.steps}
-        g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=ACTOR)
+        g = GovernedExecutor(
+            tenant_id=TENANT,
+            execution_boundary=BOUNDARY,
+            expected_actor=ACTOR,
+            require_signature=False,  # explicit dev mode (unsigned inner receipt)
+        )
         for sid, step in dag.steps.items():
             g.register(step.action, tools[sid].run)
         return (

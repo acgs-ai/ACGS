@@ -327,6 +327,11 @@ def _smoke(args: argparse.Namespace) -> int:
 
 
 def _proofpack(args: argparse.Namespace) -> int:
+    # This conformance proofpack exercises the allow/deny/transform/tamper gate
+    # behavior with UNSIGNED receipts — it runs the gate in explicit dev mode
+    # (require_signature=False) so it stays self-contained and key-free. The
+    # production profile (signed receipts, the default for execute_with_receipt)
+    # is demonstrated separately in examples/receipt-gated-execution/demo.py.
     import shutil
 
     from gove_zone.audit import ChainHashAuditStore
@@ -418,6 +423,7 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="compliance-officer",
+        require_signature=False,  # dev-mode conformance proofpack (unsigned)
     )
     conformance_results["allowed_action_executed"] = res == "executed" and tool.called
 
@@ -448,6 +454,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compromised-agent",
+            require_signature=False,  # dev-mode conformance proofpack (unsigned)
         )
     except ReceiptValidationError:
         conformance_results["denied_action_blocked"] = not tool_denied.called
@@ -489,6 +496,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
+            require_signature=False,  # dev-mode conformance proofpack (unsigned)
         )
     except ReceiptValidationError:
         mismatch_blocked = True
@@ -502,6 +510,7 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="compliance-officer",
+        require_signature=False,  # dev-mode conformance proofpack (unsigned)
     )
     conformance_results["transformed_action_executed"] = (
         mismatch_blocked
@@ -521,6 +530,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
+            require_signature=False,  # dev-mode conformance proofpack (unsigned)
         )
     except ReceiptValidationError:
         conformance_results["missing_receipt_blocked"] = not tool_no_receipt.called
@@ -539,6 +549,7 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
+            require_signature=False,  # dev-mode conformance proofpack (unsigned)
         )
     except ReceiptValidationError:
         conformance_results["tampered_receipt_blocked"] = not tool_tampered.called
