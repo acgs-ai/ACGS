@@ -68,7 +68,7 @@ stronger wording.
 | `bus-proxy-boundary` | Same-origin `/api/*` bus proxy, schema-version header, and fail-closed upstream |
 | `wcag-manual-evidence` | Local accessibility foundation plus required manual screen-reader evidence |
 | `soc2-roadmap` | Roadmap/control-mapping wording only, no attestation or certification claim |
-| `receipt-gated-execution` | Governed (legal-review-pending) marketing claim: fail-closed receipt-gate invariant, tamper-evident hash-chained audit, and replay, with mandatory alpha + opt-in-signing/default-unsigned caveats; locally proven (`config`), not cleared public copy |
+| `receipt-gated-execution` | Governed (legal-review-pending) marketing claim: fail-closed receipt-gate invariant, tamper-evident hash-chained audit, and replay, with mandatory alpha caveat + the signing posture (default gate requires a verified signature; explicit dev mode opts out to unsigned); locally proven (`config`), not cleared public copy |
 
 ## Update Procedure
 

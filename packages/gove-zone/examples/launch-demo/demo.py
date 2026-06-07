@@ -19,8 +19,10 @@ audit chain, and replay engine. Any violated invariant exits non-zero.
 
 Status: foundational / Alpha (0.1.0.dev0). This proves the LOCAL invariant.
 It is NOT a production, compliance, or regulator-ready certification. The demo
-runs UNSIGNED by default (receipts are ``unsigned_local``); Ed25519 signing is
-opt-in (see SECURITY.md). The registered "tool" is a stand-in — gove-zone decides
+explicitly selects the unsigned dev profile (``GovernanceProfile.dev()``), so
+receipts are ``unsigned_local``; the library default is the signed production
+gate (``require_signature=True``, fail-closed without a verifier — see
+SECURITY.md). The registered "tool" is a stand-in — gove-zone decides
 *whether* and *with which arguments* it runs; it does not sandbox the side effect.
 """
 
