@@ -21,7 +21,7 @@ Where the neutrality actually lives in code: `packages/gove-zone/src/gove_zone/i
 | Plain Python tool wrapper | Shipped + tested | `examples/python_tool_gate/`, `executor.py`, `tests/test_executor_guard.py` |
 | Runtime hooks (`tool_name`/`tool_input`, e.g. Claude/Codex-style) | Shipped + tested | `integration.py` (first parse branch), `tests/test_integration_hook.py`, `packages/gove-zone/examples/runtime_hook_demo.py` |
 | MCP `tools/call` | Shipped + tested | `integration.py`, `examples/mcp_tool_gate/`, `docs/mcp/` |
-| OpenAI function-call / Responses shapes | Shipped + tested (shape parse) | `integration.py` (`_responses_function_call_items`), `examples/agent_framework_gate/` |
+| OpenAI function-call / Responses shapes | Shipped (shape parse); example is generic | `integration.py` (`_responses_function_call_items`); parse tested in `tests/test_integration_hook.py`; `examples/agent_framework_gate/` is a generic gate, not an OpenAI-named live integration |
 | OpenAI-Chat / LangChain `tool_calls` shape | Shipped (shape parse); example is generic | `integration.py` `tool_calls` branch — parse is tested; no LangChain-named example yet |
 | CI/CD deploy gate | Shipped + tested | `examples/ci_deploy_gate/` |
 | Generic HTTP side-effect API | Pattern | `INTEGRATION_GUIDE.md` snippet; no shipped server example |

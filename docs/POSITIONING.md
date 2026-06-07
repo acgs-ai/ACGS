@@ -28,7 +28,7 @@ What is **not** yet true, stated plainly so the neutrality claim stays honest:
 
 ## The one-line version
 
-Built-in platform governance answers "are my agents on *this* platform behaving?" ACGS answers "can I prove, in one portable format I own, that *any* agent — on any platform — was authorized before it acted?" The second question is the one a neutral layer is positioned to answer across platforms.
+Built-in platform governance answers "are my agents on *this* platform behaving?" ACGS answers "can I prove, in one vendor-neutral format I own, that an agent — on any platform I wire the gate into — was authorized before it acted?" The second question is the one a neutral layer is positioned to answer across platforms. (Verifying that record across *independent* hosts is the cross-host portability work still on the [roadmap](ROADMAP.md).)
 
 ## What this note is not
 
