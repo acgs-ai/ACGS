@@ -7,6 +7,8 @@ ACGS / gove-zone belongs immediately before side effects.
 
 The model may request an action, but the executor must enforce the receipt gate.
 
+For which runtimes are shipped-and-tested versus illustrative patterns versus roadmap, see [`INTEGRATION_MATRIX.md`](INTEGRATION_MATRIX.md). The placement is the same for all of them; only the proof depth differs.
+
 ## Put the gate before
 
 - filesystem writes;
@@ -74,6 +76,8 @@ MCP client -> gateway receives tools/call -> ACGS governance/receipt -> executor
 
 ## OpenAI Agents-style tool wrapper
 
+> Illustrative placement pattern using the generic framework gate. A tested, OpenAI-Agents-named conformance adapter is on the [roadmap](ROADMAP.md), not shipped — see [`INTEGRATION_MATRIX.md`](INTEGRATION_MATRIX.md).
+
 Runnable generic example:
 
 ```bash
@@ -91,6 +95,8 @@ The model output can contain a function/tool call. The bridge must not call the 
 
 ## LangGraph-style node/tool wrapper
 
+> Illustrative placement pattern, not a tested adapter. LangGraph conformance tests are on the [roadmap](ROADMAP.md) — see [`INTEGRATION_MATRIX.md`](INTEGRATION_MATRIX.md).
+
 Use the same boundary at the graph node that performs the side effect:
 
 ```python
@@ -103,6 +109,8 @@ def deploy_node(state):
 The graph can decide when to request governance, but the side-effect node enforces the gate.
 
 ## Generic HTTP API gate
+
+> Illustrative placement pattern; no shipped server example yet (see [`INTEGRATION_MATRIX.md`](INTEGRATION_MATRIX.md)).
 
 A side-effect API should require a receipt alongside the action request:
 
