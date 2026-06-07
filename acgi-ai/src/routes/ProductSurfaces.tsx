@@ -2,7 +2,6 @@ import { ArrowRight } from 'lucide-react'
 import type { FeatureStatus } from '../components/governance/FeatureStatusBadge'
 import { FeatureStatusBadge } from '../components/governance/FeatureStatusBadge'
 import { GovernedClaim } from '../components/governance/GovernedClaim'
-import { ProofChip } from '../components/governance/ProofChip'
 import { navigate } from '../lib/navigate'
 
 const STATUS_MAP: Record<string, FeatureStatus> = {
@@ -388,7 +387,7 @@ export function ProductIndex() {
       <a className="skip-link" href="#main-content">
         Skip to product content
       </a>
-      <main id="main-content" className="product-surface" tabIndex={-1}>
+      <main id="main-content" className="product-surface" tabIndex={-1} data-theme="control-plane">
         <div className="product-shell">
           <ProductNav />
           <header className="product-hero">
@@ -439,7 +438,7 @@ export function ProductSurface({ path }: { path: string }) {
       <a className="skip-link" href="#main-content">
         Skip to product content
       </a>
-      <main id="main-content" className="product-surface" tabIndex={-1}>
+      <main id="main-content" className="product-surface" tabIndex={-1} data-theme="control-plane">
         <div className="product-shell">
           <ProductNav current={product.slug} />
           <header className="product-hero product-hero-detail">
@@ -529,11 +528,12 @@ export function ProductSurface({ path }: { path: string }) {
             {product.evidence.length > 0 && (
               <div className="product-evidence-claims">
                 <GovernedClaim
-                  claim={product.evidence[0]}
+                  claim={product.deck}
                   status={toFeatureStatus(product.status)}
-                  proofType="receipt"
+                  proofType="docs"
+                  proofUrl={`/products/${product.slug}`}
+                  version={`Vol. ${product.folio}`}
                 />
-                {product.evidence.length > 1 && <ProofChip proofType="audit_chain" />}
               </div>
             )}
           </section>

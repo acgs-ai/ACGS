@@ -244,7 +244,7 @@
 }
 .btn-rust {
   background: var(--accent);
-  color: var(--paper);
+  color: var(--accent-on);
 }
 .btn-rust:hover {
   background: var(--accent-2);
@@ -4618,6 +4618,13 @@
   border: 1px solid var(--line-softer);
   border-radius: var(--radius-lg);
   overflow: hidden;
+}
+
+.product-evidence-claims {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-2xl);
 }
 
 .product-grid {
