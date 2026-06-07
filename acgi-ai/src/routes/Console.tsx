@@ -253,7 +253,7 @@ export function Console({ path }: { path: string }) {
   }, [navOpen])
 
   return (
-    <div className={`console${navOpen ? ' nav-open' : ''}`}>
+    <div className={`console${navOpen ? ' nav-open' : ''}`} data-theme="control-plane">
       <a className="skip-link" href="#console-main-content">
         Skip to console content
       </a>
