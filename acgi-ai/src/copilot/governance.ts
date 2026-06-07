@@ -6,8 +6,13 @@
  * Receipt) authorises execution; anything else — DENY, ESCALATE, a transport
  * error, or a malformed response — is treated as "do not execute".
  *
- * This mirrors the kernel invariant proven in `examples/copilotkit_governed/`:
- *   "No valid Decision Receipt, no side effect."
+ * This is the cooperating client half of the governed-tool path, following the
+ * same fail-closed contract as the kernel invariant proven in
+ * `examples/copilotkit_governed/`: "No valid Decision Receipt, no side effect."
+ * It does NOT by itself enforce that invariant — a client can only honour the
+ * decision, not guarantee it. True enforcement requires executing the side
+ * effect server-side behind a receipt gate (Phase-2 `execute_with_receipt`);
+ * until then this client is trusted to obey, not relied on to compel.
  *
  * CSP note: the request targets a same-origin path (`/api/governance/admit`),
  * which `connect-src 'self'` permits on both surfaces. The LLM provider and the
