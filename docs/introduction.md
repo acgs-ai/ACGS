@@ -2,7 +2,7 @@
 
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
-ACGS is not a coding agent, and it is not tied to one vendor's stack. It is the vendor-neutral, fail-closed governance boundary that decides whether any agent is authorized to act, records the decision in a portable receipt, and makes the result replayable — the same way no matter which framework, model, or protocol issued the call.
+ACGS is not a coding agent, and it is not tied to one vendor's stack. It is the vendor-neutral, fail-closed governance boundary that decides whether any agent is authorized to act, records the decision in a vendor-neutral receipt format, and makes the result replayable — applying the same boundary check regardless of which framework, model, or protocol issued the call, at the support tiers documented in the [integration matrix](INTEGRATION_MATRIX.md).
 
 Modern agent stacks increasingly expose local customization surfaces: skills, hooks, memory, MCP servers, CLI workflows, and runtime tool adapters. Those surfaces are useful, but they do not by themselves prove legitimate authority before a side effect happens. ACGS positions the governance decision below the agent and above the side-effectful tool.
 
