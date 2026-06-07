@@ -1,4 +1,4 @@
-ACGS is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a portable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a vendor-neutral Decision Receipt, and makes executors fail closed without a valid receipt.
 
 # ACGS
 
@@ -24,7 +24,7 @@ The `gove-zone` package (`packages/gove-zone`, Python module `gove_zone`) is the
 |---|---|
 | What is it? | A vendor-neutral, receipt-gated governance layer for AI-agent side effects. |
 | What problem does it solve? | Agents can request powerful tools faster than teams can prove authority, policy, auditability, and replay. ACGS moves that proof before execution. |
-| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one portable receipt format apply across runtimes. A single platform governing its own agents has an inherent conflict of interest in offering that even-handedness across rival platforms; ACGS privileges none. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
+| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one vendor-neutral receipt format apply across the runtimes ACGS supports. A team on several platforms often wants governance evidence held outside any one of them, in a format it controls; ACGS is that independent layer and privileges none. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
 | Core invariant | **No valid Decision Receipt, no side effect.** |
 | Why it matters | Tool calls can mutate files, systems, money, data, or infrastructure. A natural-language model may request an action; the executor must enforce the receipt gate. |
 | Proof path | Run the smoke proof, run the receipt-gated execution demo, inspect the proof pack, then tamper with receipts/audit evidence and observe failure. |
