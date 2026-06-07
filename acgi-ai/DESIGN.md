@@ -202,6 +202,8 @@ Risk pills are semantic and restricted to confirmed, partial, blocked, and privi
 
 Product pages use the same primitives as marketing: product-nav, product-hero, product-docket, product-stat-grid, product-brief, and product-evidence-list. Console pages use c-side, c-banner, c-topbar, c-heartbeat, c-table, c-toolbar, c-receipt, and the same button primitives.
 
+Six governance components live under `src/components/governance/` and are always imported directly from their component file — there is no barrel export. `DecisionBadge` (`gz-badge`) renders the runtime outcome of a governed action (ALLOW / DENY / REVIEW_REQUIRED / TRANSFORM / ERROR) using a dot-plus-label pattern; import `Decision` from the same file. `FeatureStatusBadge` (`gz-fstatus`) renders the maturity of a feature or claim (verified / partial / in-progress / roadmap / unverified / needs-review / not-supported / deprecated) as a pill with a shaped dot that distinguishes unproven states; import `FeatureStatus` from the same file. `ProofChip` (`gz-proofchip`) is a link to a proof artifact; when `href` is absent it renders a fail-closed "No proof artifact" state — never pass a page-internal anchor as `href`. `GovernedClaim` (`gz-claim`) wraps a product claim with a `FeatureStatusBadge` and a `ProofChip`; it passes `proofUrl` to `ProofChip` only when status is `verified` or `partial`. `ReceiptCard` (`gz-rcard`) is the core receipt object: actor, capability, decision, policy, reason, hash chain, and optional replay/export actions; import `ReceiptCardData` from the same file. `HashChainViewer` (`gz-chain`) renders previous → current → next hash links with a chain-verification status; a `broken` status renders a fail-closed warning. All six components are theme-adaptive: their CSS reads only `--gz-*` token aliases and the semantic status tokens (`--allow`, `--deny`, `--verified`, etc.), which resolve to warm-paper values on the editorial surface and to dark control-plane values under `[data-theme="control-plane"]` — no hardcoded hex in any component rule.
+
 ## Platform UX blueprint
 
 The leading-platform target is a visual workbench that makes agent governance easy to operate without hiding risk. The public marketing UI and `/console/workbench` use the same product principle: **work queue → trace graph → evaluation panel → human release gate → evidence room**.
@@ -262,7 +264,7 @@ Don't:
 
 - Introduce a second accent color.
 - Use purple/violet/indigo gradients or generic SaaS blue.
-- Use dark mode for the privileged console.
+- Apply `[data-theme="control-plane"]` to the editorial landing or the parchment privilege boundary — it is the console and product surface register only.
 - Hide or animate privilege boundaries.
 - Replace legal/governance copy with vague trust-marketing language.
 - Use large shadows, glossy cards, bubble radii, or decorative status colors.
