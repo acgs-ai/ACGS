@@ -4,11 +4,11 @@
 
 A fair objection: *"Agent governance is becoming a built-in feature of every agent platform. Why is this a separate thing?"*
 
-The answer is not that ACGS does more than a platform's built-in governance. It is that ACGS occupies a position a platform vendor **structurally cannot**: vendor neutrality. This note states the case from evidence, and names no competitor.
+The answer is not that ACGS does more than a platform's built-in governance — those controls can be excellent. It is that ACGS occupies a position a single platform is **not structurally placed to offer**: even-handed neutrality *across the platforms themselves*. This note states the case from evidence, and names no competitor.
 
 ## The structural argument
 
-A vendor that ships agents and also governs those agents is grading its own homework. That can be perfectly good engineering — but it cannot be *neutral*, because the governor and the governed are the same party. The moment a team runs agents on more than one platform, "let each platform govern its own agents" means the governance evidence is fragmented across vendors, in vendor-shaped formats, owned by the parties being audited.
+A vendor that ships agents and also governs those agents has a built-in conflict of interest: the governor and the governed are the same party. That says nothing about the quality of its engineering — only about its position. And the moment a team runs agents on more than one platform, "let each platform govern its own agents" fragments the governance evidence across vendors, in vendor-shaped formats, held by the parties being audited. A neutral layer outside the platforms is what removes both the conflict and the fragmentation.
 
 ACGS is the layer a team reaches for *precisely because* it does not want to hand any one platform the authority to govern the agents it runs on three other platforms. That is a different job from any single platform's built-in controls, and it is why neutrality is the product, not a feature checkbox.
 
@@ -28,7 +28,7 @@ What is **not** yet true, stated plainly so the neutrality claim stays honest:
 
 ## The one-line version
 
-Built-in platform governance answers "are my agents on *this* platform behaving?" ACGS answers "can I prove, in one portable format I own, that *any* agent — on any platform — was authorized before it acted?" The second question is the one a neutral vendor can answer and a platform vendor cannot.
+Built-in platform governance answers "are my agents on *this* platform behaving?" ACGS answers "can I prove, in one portable format I own, that *any* agent — on any platform — was authorized before it acted?" The second question is the one a neutral layer is positioned to answer across platforms.
 
 ## What this note is not
 
