@@ -71,3 +71,14 @@ export default defineConfig([
   },
 ])
 ```
+
+## Local buyer-evidence
+
+The console package ships a local buyer-evidence gallery for review packets; it is a local artifact, not hosted Storybook or production deployment proof.
+
+```bash
+pnpm run evidence:build
+pnpm run test:buyer-evidence
+```
+
+Use `evidence:build` to generate the dependency-free gallery and `test:buyer-evidence` to validate the artifact contract before handing off the local buyer-evidence packet.

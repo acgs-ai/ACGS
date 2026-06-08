@@ -110,3 +110,14 @@ make lint-docs
 ```
 
 Use `make verify` for broad root validation when the full mixed workspace is intended to be gated.
+
+## Local buyer-evidence gallery
+
+For acgi-ai buyer-review packets, use the local buyer-evidence gallery commands from `acgi-ai/`:
+
+```bash
+pnpm run evidence:build
+pnpm run test:buyer-evidence
+```
+
+The `evidence:build` script produces a dependency-free local buyer-evidence artifact, and `test:buyer-evidence` validates the artifact contract. This is local review evidence only; it is not hosted Storybook, production deployment proof, or a compliance certification.
