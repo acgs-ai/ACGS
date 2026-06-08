@@ -14,9 +14,12 @@ Covers:
 
 from __future__ import annotations
 
+import builtins
 import json
 import multiprocessing
 from pathlib import Path
+
+import pytest
 
 from gove_zone import (
     GENESIS_HASH,
@@ -35,6 +38,29 @@ def _record(event_id: str, tool: str = "write_file") -> DecisionRecord:
         policy_version="v0",
         event_id=event_id,
     )
+
+
+def test_append_fails_closed_without_lock_primitive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No POSIX ``fcntl`` and no Windows ``msvcrt`` -> append refuses rather than
+    writing an unserialized event. Fail-closed, never a silent unsafe append."""
+    real_import = builtins.__import__
+
+    def _no_lock_import(name: str, *args: object, **kwargs: object) -> object:
+        if name in {"fcntl", "msvcrt"}:
+            raise ModuleNotFoundError(name)
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", _no_lock_import)
+
+    audit_path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(audit_path)
+    with pytest.raises(RuntimeError, match="file-lock primitive"):
+        store.append(_record("e1"))
+
+    # Fail-closed: the refused append left no event in the chain.
+    assert not audit_path.exists() or audit_path.stat().st_size == 0
 
 
 def test_empty_chain_has_genesis_hash(tmp_path: Path) -> None:
