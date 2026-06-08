@@ -26,6 +26,7 @@ the audit anchor, not yet an executor gate.
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,7 @@ BOUNDARY = "copilotkit-bridge/local"
 
 # One audit chain per process; each ALLOW appends and chains from the previous.
 _AUDIT_PATH = Path(tempfile.mkdtemp(prefix="copilot-bridge-")) / "admit-audit.jsonl"
+_AUDIT_LOCK = threading.Lock()
 
 
 class BridgePolicy(Policy):
@@ -93,22 +95,23 @@ def admit_action(action: str, args: dict[str, Any]) -> dict[str, Any]:
         record = _POLICY.evaluate(call)
 
         if record.decision is Decision.ALLOW:
-            event = ChainHashAuditStore(_AUDIT_PATH).append(record)
-            audit_hash = str(event["event_hash"])
-            # Issuing the receipt proves it is well-formed; we return the same
-            # anchored hash the client checks for.
-            DecisionReceipt.from_record(
-                record=record,
-                audit_hash=audit_hash,
-                previous_audit_hash=str(event["previous_hash"]),
-                tenant_id=TENANT,
-                execution_boundary=BOUNDARY,
-                policy_bundle_id="copilotkit-bridge-policy",
-                policy_hash=record.policy_version,
-                request_id=f"req-{record.event_id}",
-                validator=Validator("governance-bridge"),
-                authority="tenant-A/copilot-tool-grant",
-            )
+            with _AUDIT_LOCK:
+                event = ChainHashAuditStore(_AUDIT_PATH).append(record)
+                audit_hash = str(event["event_hash"])
+                # Issuing the receipt proves it is well-formed; we return the same
+                # anchored hash the client checks for.
+                DecisionReceipt.from_record(
+                    record=record,
+                    audit_hash=audit_hash,
+                    previous_audit_hash=str(event["previous_hash"]),
+                    tenant_id=TENANT,
+                    execution_boundary=BOUNDARY,
+                    policy_bundle_id="copilotkit-bridge-policy",
+                    policy_hash=record.policy_version,
+                    request_id=f"req-{record.event_id}",
+                    validator=Validator("governance-bridge"),
+                    authority="tenant-A/copilot-tool-grant",
+                )
             return {"decision": "allow", "receiptAuditHash": audit_hash, "reason": record.reason}
 
         if record.decision is Decision.ESCALATE:
