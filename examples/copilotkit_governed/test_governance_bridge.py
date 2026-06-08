@@ -45,6 +45,34 @@ def test_escalate_has_no_receipt() -> None:
     assert "receiptAuditHash" not in out
 
 
+def test_default_audit_path_is_shared_temp_file() -> None:
+    import tempfile
+    from pathlib import Path
+
+    from examples.copilotkit_governed import governance_bridge
+
+    expected = Path(tempfile.gettempdir()) / "copilot-bridge-audit.jsonl"
+    assert governance_bridge._AUDIT_PATH == expected
+
+
+def test_forbidden_matching_ignores_dict_keys() -> None:
+    out = admit_action(
+        "runtime.file.write",
+        {"secrets/path_label": "public/report.json", "content": "ok"},
+    )
+    assert out["decision"] == "allow"
+    assert HEX64.match(out["receiptAuditHash"])
+
+
+def test_forbidden_matching_checks_nested_string_values() -> None:
+    out = admit_action(
+        "runtime.file.write",
+        {"paths": ["public/report.json", {"target": "/home/u/.ssh/authorized_keys"}]},
+    )
+    assert out["decision"] == "deny"
+    assert "receiptAuditHash" not in out
+
+
 # --- wired /admit route (dispatcher-level) ----------------------------------
 
 
@@ -128,6 +156,13 @@ def test_non_dict_args_denied() -> None:
 
 def test_route_missing_action_fails_closed() -> None:
     res = _client().post("/admit", json={"args": {"path": "a"}})
+    body = res.json()
+    assert body["decision"] == "deny"
+    assert "receiptAuditHash" not in body
+
+
+def test_route_null_action_fails_closed() -> None:
+    res = _client().post("/admit", json={"action": None, "args": {}})
     body = res.json()
     assert body["decision"] == "deny"
     assert "receiptAuditHash" not in body

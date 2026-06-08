@@ -26,6 +26,7 @@ the audit anchor, not yet an executor gate.
 from __future__ import annotations
 
 import dataclasses
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -45,8 +46,13 @@ ACTOR = "copilotkit-copilot"
 TENANT = "tenant-A"
 BOUNDARY = "copilotkit-bridge/local"
 
-# One audit chain per process; each ALLOW appends and chains from the previous.
-_AUDIT_PATH = Path(tempfile.mkdtemp(prefix="copilot-bridge-")) / "admit-audit.jsonl"
+# One shared local audit chain; each ALLOW appends and chains from the previous.
+# COPILOT_AUDIT_PATH lets tests/operators isolate the local proof file without
+# creating import-time temp directories or split per-worker chains.
+_AUDIT_ENV = os.getenv("COPILOT_AUDIT_PATH")
+_AUDIT_PATH = (
+    Path(_AUDIT_ENV) if _AUDIT_ENV else Path(tempfile.gettempdir()) / "copilot-bridge-audit.jsonl"
+)
 
 
 class BridgePolicy(Policy):
@@ -62,12 +68,29 @@ class BridgePolicy(Policy):
     def version(self) -> str:
         return "copilotkit-bridge-policy/v1"
 
+    def _first_forbidden_value(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            lowered = value.lower()
+            return next((kw for kw in self.FORBIDDEN if kw in lowered), None)
+        if isinstance(value, dict):
+            for child in value.values():
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        elif isinstance(value, (list, tuple, set)):
+            for child in value:
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        return None
+
     def evaluate(self, call: ToolCall) -> DecisionRecord:
-        blob = sha256_json(dict(call.args))
-        lowered = str(sorted(dict(call.args).items())).lower()
-        matched = [kw for kw in self.FORBIDDEN if kw in lowered]
-        if matched:
-            decision, reason = Decision.DENY, f"forbidden arg: {matched[0]}"
+        args = dict(call.args)
+        blob = sha256_json(args)
+        matched_kw = self._first_forbidden_value(args)
+        matched = [matched_kw] if matched_kw else []
+        if matched_kw:
+            decision, reason = Decision.DENY, f"forbidden arg: {matched_kw}"
         elif call.name in self.HUMAN_IN_THE_LOOP_TOOLS:
             decision, reason = Decision.ESCALATE, "human-in-the-loop approval required"
         else:
