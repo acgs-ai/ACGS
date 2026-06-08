@@ -70,18 +70,35 @@ class CopilotKitDemoPolicy(Policy):
     #: CopilotKit would surface through its human-in-the-loop UI.
     HUMAN_IN_THE_LOOP_TOOLS = frozenset({"runtime.payment.send"})
 
-    #: Forbidden substrings (case-insensitive) in the canonical-JSON args.
+    #: Forbidden substrings (case-insensitive) in string argument values.
     FORBIDDEN = ("/.ssh/", "id_rsa", "secrets/")
 
     @property
     def version(self) -> str:
         return "copilotkit-demo-policy/v1"
 
-    def evaluate(self, call: ToolCall) -> DecisionRecord:
-        args_blob = sha256_json(dict(call.args))
-        lowered = json.dumps(dict(call.args), sort_keys=True).lower()
+    def _first_forbidden_value(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            lowered = value.lower()
+            return next((kw for kw in self.FORBIDDEN if kw in lowered), None)
+        if isinstance(value, dict):
+            for child in value.values():
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        elif isinstance(value, (list, tuple, set)):
+            for child in value:
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        return None
 
-        matched = [kw for kw in self.FORBIDDEN if kw in lowered]
+    def evaluate(self, call: ToolCall) -> DecisionRecord:
+        args = dict(call.args)
+        args_blob = sha256_json(args)
+
+        matched_kw = self._first_forbidden_value(args)
+        matched = [matched_kw] if matched_kw else []
         if matched:
             decision, reason = Decision.DENY, f"forbidden arg: {matched[0]}"
         elif call.name in self.HUMAN_IN_THE_LOOP_TOOLS:

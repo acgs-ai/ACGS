@@ -35,6 +35,7 @@ export interface AdmissionResult {
 }
 
 const ADMIT_ENDPOINT = '/api/governance/admit'
+const ADMIT_TIMEOUT_MS = 5000
 
 /**
  * Ask ACGS whether `actionName` with `args` may execute.
@@ -46,11 +47,15 @@ export async function admitAction(
   actionName: string,
   args: Record<string, unknown>,
 ): Promise<AdmissionResult> {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), ADMIT_TIMEOUT_MS)
+
   try {
     const response = await fetch(ADMIT_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: actionName, args }),
+      signal: controller.signal,
     })
 
     if (!response.ok) {
@@ -68,7 +73,14 @@ export async function admitAction(
   } catch (error) {
     return {
       decision: 'deny',
-      reason: error instanceof Error ? error.message : 'governance bridge unreachable',
+      reason:
+        error instanceof Error && error.name === 'AbortError'
+          ? 'governance bridge timed out'
+          : error instanceof Error
+            ? error.message
+            : 'governance bridge unreachable',
     }
+  } finally {
+    globalThis.clearTimeout(timeout)
   }
 }
