@@ -1010,6 +1010,12 @@
   letter-spacing: 0.04em;
 }
 
+/* The non-priced tier ("On request") carries no unit; render it as a calmer
+   label so it stops masquerading as a giant numeral beside the priced tiers. */
+.t-price:has(.t-price-unit:empty) .t-price-num {
+  font-size: 30px;
+}
+
 .m-tier hr {
   border: 0;
   border-top: 1px solid var(--line-softer);
@@ -1039,6 +1045,12 @@
   font-style: italic;
   color: var(--accent);
   margin-top: -2px;
+}
+
+/* Pin the CTA to the card floor so the three buttons share one baseline
+   regardless of how many bullets a tier lists. */
+.m-tier .btn {
+  margin-top: auto;
 }
 
 /* footer — address-block (Stripe Press inspired) */
