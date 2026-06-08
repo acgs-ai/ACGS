@@ -429,7 +429,7 @@
 /* workbench blueprint — visualized operator work, same editorial primitives */
 .m-workbench {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.38fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3xl);
   margin-top: 32px;
   align-items: start;
@@ -518,11 +518,33 @@
 }
 
 .m-workbench-panel {
+  columns: 248px 4;
+  column-gap: var(--space-3xl);
   padding: 26px 24px 28px;
   border: 1px solid var(--line-softer);
   border-top: 2px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--paper-2);
+}
+
+/* Intro furniture spans every column; each launch-ops rail then masonry-packs
+   into the editorial columns below. Replaces the former ~12k-px aside wall
+   with a compact poster grid without removing any contract-mandated rail. */
+.m-workbench-panel > .folio-no,
+.m-workbench-panel > h3,
+.m-workbench-panel > p {
+  column-span: all;
+}
+
+.m-workbench-panel > ul {
+  column-span: all;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.m-workbench-panel > section {
+  break-inside: avoid;
 }
 
 .m-workbench-panel .folio-no {
