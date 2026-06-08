@@ -152,3 +152,10 @@ workflow job -> request governance -> receipt -> deploy step verifies -> deploy 
 - Do not accept unsigned receipts in production-adjacent paths unless the risk is explicitly accepted and documented.
 - Do not describe hook observe mode as enforcement.
 - Do not put the gate only in a planner; put it where the side effect would happen.
+
+## Contributing an adapter or policy bundle
+
+To teach ACGS a new framework's tool-call shape, or to contribute a reviewed policy bundle, follow the step-by-step runbooks:
+
+- [`runbooks/add-a-runtime-adapter.md`](runbooks/add-a-runtime-adapter.md) — extend the normalizer, keep batches fail-closed (`runtime.malformed_batch`), and add the gate-level tests a parser-only unit test cannot replace.
+- [`runbooks/add-a-policy-bundle.md`](runbooks/add-a-policy-bundle.md) — `RuleSetPolicy` bundle shape (`deny`/`escalate` plus exemptions) and its fixture and gate tests.
