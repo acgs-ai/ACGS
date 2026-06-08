@@ -257,7 +257,7 @@ export type CompileActionRequest = {
 // ─── Audit ────────────────────────────────────────────────────────────────
 
 export type EvaluationEvidenceStatus = 'passed' | 'failed'
-export type EvaluationEvidenceSource = 'gove-zone' | 'agentdojo' | 'injecagent' | 'toolemu'
+export type EvaluationEvidenceSource = 'acgs' | 'agentdojo' | 'injecagent' | 'toolemu'
 
 export type EvaluationEvidenceApi = {
   source: EvaluationEvidenceSource

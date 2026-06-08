@@ -1,6 +1,18 @@
 import { useActionProof } from '../../api/hooks'
+import type { DecisionOutcome } from '../../api/types'
+import type { Decision } from '../../components/governance/DecisionBadge'
+import { HashChainViewer } from '../../components/governance/HashChainViewer'
+import type { ReceiptCardData } from '../../components/governance/ReceiptCard'
+import { ReceiptCard } from '../../components/governance/ReceiptCard'
 import { navigate } from '../../lib/navigate'
 import { ConsoleError, ConsoleLoading } from './shared'
+
+const OUTCOME_TO_DECISION: Record<DecisionOutcome, Decision> = {
+  allowed: 'ALLOW',
+  denied: 'DENY',
+  transformed: 'TRANSFORM',
+  escalated: 'REVIEW_REQUIRED',
+}
 
 type AuditProofProps = {
   receiptId: string
@@ -34,6 +46,19 @@ export function AuditProof({ receiptId }: AuditProofProps) {
   const { data } = proof
   const action = data.action
   const signature = data.evidenceSignature
+
+  const receiptCardData: ReceiptCardData = {
+    receipt_id: data.receiptId,
+    actor: action.agent,
+    capability: action.action,
+    decision: OUTCOME_TO_DECISION[action.outcome],
+    policy_id: data.policyPath,
+    reason: action.plainReason,
+    previous_hash: '',
+    receipt_hash: data.receiptHash,
+    side_effect_executed: data.toolExecuted,
+    replayable: false,
+  }
   const proofFields = [
     ['Receipt hash', data.receiptHash],
     ['Trace', data.traceId],
@@ -113,6 +138,13 @@ export function AuditProof({ receiptId }: AuditProofProps) {
             <pre>{action.after}</pre>
           </div>
         </div>
+
+        <HashChainViewer
+          receiptHash={data.receiptHash}
+          status={data.hashChainVerified ? 'verified' : 'broken'}
+        />
+
+        <ReceiptCard receipt={receiptCardData} />
 
         <div className="receipt-proof-packet">
           <div>
