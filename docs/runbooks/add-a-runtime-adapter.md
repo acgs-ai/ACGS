@@ -22,7 +22,7 @@ the framework any new authority.
 > executor / CLI), **not** the adapter, enforces this. An adapter only
 > translates payload shape. If your parser is never reached by the gate path
 > (below), it is dead code — see the handler-wiring rule in
-> `~/.claude/rules/review-handler-wiring.md`.
+> `.claude/rules/review-handler-wiring.md`.
 
 ---
 
