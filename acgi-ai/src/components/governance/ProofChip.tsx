@@ -30,7 +30,7 @@ export function ProofChip({
     return <span className="gz-proofchip gz-proofchip--missing">No proof artifact</span>
   }
   return (
-    <a className="gz-proofchip" href={href}>
+    <a className="gz-proofchip" href={href} target="_blank" rel="noopener noreferrer">
       <span className="ptype">{label ?? TYPE_LABEL[proofType]}</span>
       {lastVerified ? (
         <>

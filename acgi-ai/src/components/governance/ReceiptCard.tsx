@@ -59,29 +59,37 @@ export function ReceiptCard({
         </div>
         <div className="gz-rcard-field">
           <dt>Previous hash</dt>
-          <dd className="mono tabular">{receipt.previous_hash}</dd>
+          <dd className="mono tabular">{receipt.previous_hash || '—'}</dd>
         </div>
         <div className="gz-rcard-field">
           <dt>Receipt hash</dt>
           <dd className="mono tabular">{receipt.receipt_hash}</dd>
         </div>
       </dl>
-      <footer className="gz-rcard-foot">
-        <button type="button" className="gz-rcard-act primary" onClick={onOpen}>
-          Open
-        </button>
-        <button
-          type="button"
-          className="gz-rcard-act"
-          onClick={onReplay}
-          disabled={!receipt.replayable}
-        >
-          {receipt.replayable ? 'Replay' : 'Not replayable'}
-        </button>
-        <button type="button" className="gz-rcard-act" onClick={onExport}>
-          Export
-        </button>
-      </footer>
+      {(onOpen || onReplay || onExport) && (
+        <footer className="gz-rcard-foot">
+          {onOpen && (
+            <button type="button" className="gz-rcard-act primary" onClick={onOpen}>
+              Open
+            </button>
+          )}
+          {onReplay && (
+            <button
+              type="button"
+              className="gz-rcard-act"
+              onClick={onReplay}
+              disabled={!receipt.replayable}
+            >
+              {receipt.replayable ? 'Replay' : 'Not replayable'}
+            </button>
+          )}
+          {onExport && (
+            <button type="button" className="gz-rcard-act" onClick={onExport}>
+              Export
+            </button>
+          )}
+        </footer>
+      )}
     </article>
   )
 }

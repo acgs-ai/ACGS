@@ -33,7 +33,9 @@ export function DecisionBadge({
   size?: 'sm' | 'md'
   children?: ReactNode
 }) {
-  const cls = ['gz-badge', `gz-badge--${VARIANT[decision]}`]
+  const variant = VARIANT[decision] ?? 'error'
+  const label = LABEL[decision] ?? 'Error'
+  const cls = ['gz-badge', `gz-badge--${variant}`]
   if (size === 'sm') cls.push('gz-badge--sm')
-  return <span className={cls.join(' ')}>{children ?? LABEL[decision]}</span>
+  return <span className={cls.join(' ')}>{children ?? label}</span>
 }

@@ -2,6 +2,7 @@ import { ArrowRight } from 'lucide-react'
 import type { FeatureStatus } from '../components/governance/FeatureStatusBadge'
 import { FeatureStatusBadge } from '../components/governance/FeatureStatusBadge'
 import { GovernedClaim } from '../components/governance/GovernedClaim'
+import { ProofChip } from '../components/governance/ProofChip'
 import { navigate } from '../lib/navigate'
 
 const STATUS_MAP: Record<string, FeatureStatus> = {
@@ -528,12 +529,15 @@ export function ProductSurface({ path }: { path: string }) {
             {product.evidence.length > 0 && (
               <div className="product-evidence-claims">
                 <GovernedClaim
-                  claim={product.deck}
+                  claim={product.evidence[0]}
                   status={toFeatureStatus(product.status)}
-                  proofType="docs"
-                  proofUrl={`/products/${product.slug}`}
+                  proofType="receipt"
+                  proofUrl="/console/audit"
                   version={`Vol. ${product.folio}`}
                 />
+                {product.evidence.length > 1 && (
+                  <ProofChip proofType="audit_chain" href="/console/audit" />
+                )}
               </div>
             )}
           </section>
