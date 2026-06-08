@@ -888,7 +888,6 @@
   border-radius: var(--radius-lg);
   background: var(--paper-2);
   overflow: hidden;
-  box-shadow: 0 4px 20px -2px rgba(26, 26, 26, 0.03), 0 2px 6px -1px rgba(26, 26, 26, 0.02);
   overflow-x: auto;
 }
 
@@ -957,21 +956,21 @@
 }
 
 .type-regulatory {
-  background: rgba(61, 107, 74, 0.08);
+  background: color-mix(in srgb, var(--risk-lo) 8%, transparent);
   color: var(--risk-lo);
-  border: 1px solid rgba(61, 107, 74, 0.15);
+  border: 1px solid color-mix(in srgb, var(--risk-lo) 15%, transparent);
 }
 
 .type-federal {
-  background: rgba(118, 82, 13, 0.08);
+  background: color-mix(in srgb, var(--risk-mid) 8%, transparent);
   color: var(--risk-mid);
-  border: 1px solid rgba(118, 82, 13, 0.15);
+  border: 1px solid color-mix(in srgb, var(--risk-mid) 15%, transparent);
 }
 
 .type-standard {
-  background: rgba(26, 26, 26, 0.05);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
   color: var(--ink-2);
-  border: 1px solid rgba(26, 26, 26, 0.08);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .m-sections-cell {
@@ -1000,8 +999,6 @@
   background: var(--accent-soft);
   color: var(--accent-2);
   border-color: var(--accent-soft);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(184, 66, 46, 0.08);
 }
 
 .m-version-cell {
