@@ -5,7 +5,7 @@ import {
   Outlet,
   RouterProvider,
 } from '@tanstack/react-router'
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import {
   AgentReadable,
   FailureModesPage,
@@ -188,8 +188,24 @@ const routeTree = rootRoute.addChildren([
 
 const router = createRouter({ routeTree })
 
+// Lazy + flag-gated: the copilot tree (panel + @ag-ui/client) is a separate
+// chunk. The flag gates runtime MOUNT only — the chunk is still emitted by the
+// build and counts toward the 200 KiB marketing budget (+44.5 KiB → 174.1/200);
+// it is just not downloaded until mounted. See docs/COPILOTKIT_FRONTEND_PLAN.md.
+const CopilotMount = lazy(() => import('../../copilot/CopilotMount'))
+const copilotEnabled = import.meta.env.VITE_COPILOT_ENABLED === 'true'
+
 function App() {
-  return <RouterProvider router={router} />
+  return (
+    <>
+      <RouterProvider router={router} />
+      {copilotEnabled && (
+        <Suspense fallback={null}>
+          <CopilotMount />
+        </Suspense>
+      )}
+    </>
+  )
 }
 
 export default App
