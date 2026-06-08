@@ -4,8 +4,8 @@ export const AUDIT_EVENTS: AuditEvent[] = [
   {
     ts: '2026-05-25 15:42:10',
     posture: 'confirmed',
-    ev: 'gove-zone eval report ingested',
-    src: 'evaluation-ingestor · gove-zone eval',
+    ev: 'ACGS eval report ingested',
+    src: 'evaluation-ingestor · ACGS eval',
     hash: 'sha256:2d8c91e4b7a0 · ev-9f42',
     matter: 'agentdojo-mini',
     evaluationEvidence: {
@@ -26,7 +26,7 @@ export const AUDIT_EVENTS: AuditEvent[] = [
   {
     ts: '2026-05-25 15:43:02',
     posture: 'confirmed',
-    ev: 'gove-zone eval report ingested',
+    ev: 'ACGS eval report ingested',
     src: 'evaluation-ingestor · injecagent adapter',
     hash: 'sha256:9ac0e213b44d · ev-a17c',
     matter: 'injecagent-mini',
@@ -48,7 +48,7 @@ export const AUDIT_EVENTS: AuditEvent[] = [
   {
     ts: '2026-05-25 15:44:18',
     posture: 'confirmed',
-    ev: 'gove-zone eval report ingested',
+    ev: 'ACGS eval report ingested',
     src: 'evaluation-ingestor · toolemu adapter',
     hash: 'sha256:5f01cc8a3912 · ev-bd73',
     matter: 'toolemu-high-stakes-mini',

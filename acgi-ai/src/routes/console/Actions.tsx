@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useGovernedActions, useTestAction } from '../../api/hooks'
 import type { DecisionOutcome, GovernedAction, Posture } from '../../api/types'
+import type { Decision } from '../../components/governance/DecisionBadge'
+import { DecisionBadge } from '../../components/governance/DecisionBadge'
 import { navigate } from '../../lib/navigate'
 import {
   ConsoleError,
@@ -29,6 +31,13 @@ const OUTCOME_PILL: Record<DecisionOutcome, { label: string; posture: Posture }>
   denied: { label: 'Denied', posture: 'blocked' },
   transformed: { label: 'Transformed', posture: 'privileged' },
   escalated: { label: 'Escalated', posture: 'partial' },
+}
+
+const OUTCOME_DECISION: Record<DecisionOutcome, Decision> = {
+  allowed: 'ALLOW',
+  denied: 'DENY',
+  transformed: 'TRANSFORM',
+  escalated: 'REVIEW_REQUIRED',
 }
 
 const STAT_OUTCOMES: ReadonlyArray<{ outcome: DecisionOutcome; sub: string }> = [
@@ -119,7 +128,9 @@ export function Actions() {
                   className={`action-card ${action.id === active.id ? 'active' : ''}`}
                   onClick={() => setActiveId(action.id)}
                 >
-                  <span className={`pill ${pill.posture}`}>{pill.label}</span>
+                  <DecisionBadge decision={OUTCOME_DECISION[action.outcome]}>
+                    {pill.label}
+                  </DecisionBadge>
                   <strong>{action.agent}</strong>
                   <span>
                     {action.action} → {action.target}
@@ -138,9 +149,9 @@ export function Actions() {
                   {active.agent} <em>→</em> {active.action}
                 </h2>
               </div>
-              <span className={`pill ${OUTCOME_PILL[active.outcome].posture}`}>
+              <DecisionBadge decision={OUTCOME_DECISION[active.outcome]}>
                 {OUTCOME_PILL[active.outcome].label}
-              </span>
+              </DecisionBadge>
             </div>
 
             <div className="action-explain-grid">

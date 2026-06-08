@@ -11,7 +11,7 @@ export const E2E_HTTP_SHELL_ROUTES = [
   '/',
   '/products/legalguard',
   '/products/governance-eval',
-  '/products/gove-zone',
+  '/products/acgs',
   '/login?next=%2Fconsole%2Fagents',
 ]
 

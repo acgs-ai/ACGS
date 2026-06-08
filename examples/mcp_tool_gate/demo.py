@@ -75,6 +75,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action=call.name,
         expected_actor=ACTOR,
+        require_signature=False,  # dev-mode — local unsigned demo
     )
 
     missing_blocked = False
@@ -88,6 +89,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action=call.name,
             expected_actor=ACTOR,
+            require_signature=False,  # dev-mode — local unsigned demo
         )
     except ReceiptValidationError:
         missing_blocked = True
