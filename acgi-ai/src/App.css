@@ -65,10 +65,10 @@
 /* nav */
 .m-nav {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3xl);
-  padding: 28px 0 24px;
+  padding: 16px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -105,6 +105,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
   padding: 10px 18px;
   background: var(--ink);
   color: var(--paper);
@@ -173,7 +174,7 @@
   letter-spacing: -0.02em;
   margin-top: 32px;
   color: var(--ink);
-  max-width: 14ch;
+  max-width: 18ch;
   /* Keep the italic-rust word from orphaning on its own line as the
      viewport flexes between the 56px and 96px clamp endpoints. Same
      reasoning as F6 on .login-h1. */
@@ -204,6 +205,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  white-space: nowrap;
   padding: 12px 20px;
   font-family: var(--font-sans);
   font-weight: 500;
@@ -882,55 +884,150 @@
 /* coverage / framework table */
 .m-coverage {
   margin-top: 32px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line-soft);
-  /* F-A8 — middle "Sections enforced" cell holds a 50+ char mono citation
-     chain (e.g. "Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy").
-     Without containment the table widens past the viewport at <720px and
-     forces document-level horizontal scroll. Scope the overflow here. */
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+  overflow: hidden;
+  box-shadow: 0 4px 20px -2px rgba(26, 26, 26, 0.03), 0 2px 6px -1px rgba(26, 26, 26, 0.02);
   overflow-x: auto;
 }
 
 .m-coverage table {
   width: 100%;
-  min-width: 560px;
-}
-
-.m-coverage th,
-.m-coverage td {
-  padding: 15px 20px;
-  text-align: left;
-  border-bottom: 1px solid var(--line-softer);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  min-width: 680px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .m-coverage th {
+  padding: 18px 24px;
+  text-align: left;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-  font-weight: 500;
-  border-bottom-color: var(--line-soft);
+  font-weight: 600;
+  background: var(--paper-3);
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.m-coverage td:first-child {
+.m-coverage td {
+  padding: 18px 24px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-softer);
+  background: var(--paper);
+  vertical-align: middle;
+  transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.m-coverage tr:last-child td {
+  border-bottom: none;
+}
+
+.m-framework-cell {
+  width: 25%;
+}
+
+.m-framework-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.m-framework-name {
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
   font-family: var(--font-sans);
-  font-size: 14px;
-  letter-spacing: 0;
+  font-size: 15px;
+  letter-spacing: -0.015em;
 }
 
-.m-coverage td:nth-child(2) {
-  color: var(--ink-3);
+.m-framework-type {
+  display: inline-flex;
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1.2;
 }
-.m-coverage td:last-child {
+
+.type-regulatory {
+  background: rgba(61, 107, 74, 0.08);
+  color: var(--risk-lo);
+  border: 1px solid rgba(61, 107, 74, 0.15);
+}
+
+.type-federal {
+  background: rgba(118, 82, 13, 0.08);
+  color: var(--risk-mid);
+  border: 1px solid rgba(118, 82, 13, 0.15);
+}
+
+.type-standard {
+  background: rgba(26, 26, 26, 0.05);
+  color: var(--ink-2);
+  border: 1px solid rgba(26, 26, 26, 0.08);
+}
+
+.m-sections-cell {
+  width: 60%;
+}
+
+.m-sections-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.m-section-badge {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  background: var(--paper-2);
+  border: 1px solid var(--line-softer);
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: default;
+}
+
+.m-section-badge:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: var(--accent-soft);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(184, 66, 46, 0.08);
+}
+
+.m-version-cell {
+  width: 15%;
   text-align: right;
 }
-.m-coverage tbody tr:hover {
+
+.m-version-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--paper-3);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-coverage-row td {
+  border-left: 3px solid transparent;
+}
+
+.m-coverage-row:hover td {
   background: var(--paper-2);
+  border-left-color: var(--accent);
 }
 
 /* pricing */
@@ -969,11 +1066,11 @@
 }
 .m-tier.feat .btn-primary {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--paper);
 }
 .m-tier.feat .btn-primary:hover {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--paper);
   border-color: var(--accent-2);
 }
 

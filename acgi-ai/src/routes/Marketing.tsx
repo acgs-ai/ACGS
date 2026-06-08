@@ -50,13 +50,44 @@ const capabilities = [
 ]
 
 const coverage = [
-  ['EU AI Act', 'Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy', 'v1.0'],
-  ['SR 11-7', '§V model risk · §VII validation · §VIII development', 'v2011'],
-  ['HIPAA', '§164.502 minimum necessary · §164.514 de-identification', 'v2024'],
-  ['GDPR', 'Art. 22 automated decisions · Art. 25 by-design', 'v2018'],
-  ['SOC 2', 'CC6 logical access · CC7 system operations', 'v2017'],
-  ['ISO/IEC 42001', 'Cl. 8 operations · Cl. 9 evaluation', 'v2023'],
+  {
+    framework: 'EU AI Act',
+    sections: ['Art. 9 risk', 'Art. 14 oversight', 'Art. 15(4) accuracy'],
+    version: 'v1.0',
+    type: 'Regulatory'
+  },
+  {
+    framework: 'SR 11-7',
+    sections: ['§V model risk', '§VII validation', '§VIII development'],
+    version: 'v2011',
+    type: 'Federal'
+  },
+  {
+    framework: 'HIPAA',
+    sections: ['§164.502 minimum necessary', '§164.514 de-identification'],
+    version: 'v2024',
+    type: 'Regulatory'
+  },
+  {
+    framework: 'GDPR',
+    sections: ['Art. 22 automated decisions', 'Art. 25 by-design'],
+    version: 'v2018',
+    type: 'Regulatory'
+  },
+  {
+    framework: 'SOC 2',
+    sections: ['CC6 logical access', 'CC7 system operations'],
+    version: 'v2017',
+    type: 'Standard'
+  },
+  {
+    framework: 'ISO/IEC 42001',
+    sections: ['Cl. 8 operations', 'Cl. 9 evaluation'],
+    version: 'v2023',
+    type: 'Standard'
+  },
 ]
+
 
 const tiers = [
   {
@@ -73,6 +104,7 @@ const tiers = [
       'Community channel support',
     ],
     cta: 'Read the spec',
+    href: '/products',
   },
   {
     tag: 'Team',
@@ -87,7 +119,8 @@ const tiers = [
       'Constitutional hash attestation',
       'Eight-hour incident response SLA',
     ],
-    cta: 'Schedule a review',
+    cta: 'Inspect governed controls',
+    href: '#workbench',
   },
   {
     tag: 'Enterprise',
@@ -102,7 +135,8 @@ const tiers = [
       'Privilege-boundary attestation',
       'Named architect + 24/7 paging',
     ],
-    cta: 'Schedule a review',
+    cta: 'Map sovereign scope',
+    href: '#coverage',
   },
 ]
 
@@ -178,8 +212,8 @@ export function Marketing() {
               Sign in
             </a>
           </div>
-          <a className="m-nav-cta" href="#book">
-            Schedule a review <ArrowRight size={14} strokeWidth={1.75} />
+          <a className="m-nav-cta" href="#coverage">
+            Read proof path <ArrowRight size={14} strokeWidth={1.75} />
           </a>
         </nav>
 
@@ -196,9 +230,8 @@ export function Marketing() {
                 The publishing house that ships <em>governance</em>.
               </h1>
               <p className="m-hero-lede">
-                ACGS maps regulatory prose — the EU AI Act, SR 11-7, HIPAA, GDPR — into runtime
-                artifacts, citations, and evidence workflows for governed agents. Constitutions are
-                authored, compiled, hashed, and checked before privileged actions proceed.
+                ACGS compiles regulatory prose into hashed policy so agents prove, refuse, or
+                escalate before privileged execution.
               </p>
               <div className="m-hero-actions">
                 <a className="btn btn-primary" href="#book">
@@ -224,7 +257,7 @@ export function Marketing() {
                   <span>608508a9bd224290</span>
                 </figcaption>
                 <pre>
-                  <span className="c">{'// Article IV — Privileged work product'}</span>
+                  <span className="c">{'// Article IV / Privileged work product'}</span>
                   {'\n'}
                   <span className="k">rule</span> <span className="s">"matter.disclosure"</span>{' '}
                   {'{'}
@@ -256,7 +289,7 @@ export function Marketing() {
               <blockquote className="m-pull">
                 The page is a poster, not a document. Every refusal we emit is countersigned by a
                 section number from a primary source.
-                <cite>— ACGS, Decisions Log §3</cite>
+                <cite>ACGS, Decisions Log §3</cite>
               </blockquote>
             </aside>
           </header>
@@ -604,10 +637,23 @@ export function Marketing() {
                 </thead>
                 <tbody>
                   {coverage.map((row) => (
-                    <tr key={row[0]}>
-                      <td>{row[0]}</td>
-                      <td>{row[1]}</td>
-                      <td>{row[2]}</td>
+                    <tr key={row.framework} className="m-coverage-row">
+                      <td className="m-framework-cell">
+                        <div className="m-framework-info">
+                          <span className="m-framework-name">{row.framework}</span>
+                          <span className={`m-framework-type type-${row.type.toLowerCase()}`}>{row.type}</span>
+                        </div>
+                      </td>
+                      <td className="m-sections-cell">
+                        <div className="m-sections-list">
+                          {row.sections.map((section, idx) => (
+                            <span key={idx} className="m-section-badge">{section}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="m-version-cell">
+                        <span className="m-version-badge">{row.version}</span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -644,7 +690,7 @@ export function Marketing() {
                       <li key={b}>{b}</li>
                     ))}
                   </ul>
-                  <a className="btn btn-primary" href="#book">
+                  <a className="btn btn-primary" href={t.href}>
                     {t.cta} <ArrowRight size={15} strokeWidth={1.8} />
                   </a>
                 </article>
