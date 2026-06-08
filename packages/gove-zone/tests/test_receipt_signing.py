@@ -229,10 +229,29 @@ def test_unsigned_receipt_allowed_when_not_required() -> None:
 
 
 def test_unsigned_rejected_when_required() -> None:
-    """An unsigned receipt is rejected when the gate requires a signature."""
+    """An unsigned receipt is rejected when a configured production gate requires a
+    signature. A verifier is supplied (so the production-no-verifier loud guard does
+    not pre-empt this); the receipt itself is unsigned, so require_signature rejects it.
+    """
+    verifier = Ed25519Signer.generate()
     receipt = _issue(None)
     side_effect = SideEffect()
     with pytest.raises(ReceiptValidationError, match="unsigned receipt rejected"):
+        _run_gate(receipt, side_effect, verifier=verifier, require_signature=True)
+    assert side_effect.ran is False
+
+
+def test_production_default_no_verifier_fails_loud() -> None:
+    """DEFAULT-FLIP PROOF: production posture (require_signature=True) with NO verifier
+    configured fails closed LOUD, naming the dev opt-out, before any receipt content is
+    trusted. This is the no-key-configured exit, distinct from "unsigned receipt rejected"
+    (which needs a verifier present).
+    """
+    from gove_zone import ProductionProfileError
+
+    receipt = _issue(None)
+    side_effect = SideEffect()
+    with pytest.raises(ProductionProfileError, match="requires a signer/verifier"):
         _run_gate(receipt, side_effect, verifier=None, require_signature=True)
     assert side_effect.ran is False
 
@@ -308,11 +327,16 @@ def test_governed_executor_enforces_require_signature() -> None:
     only execute_with_receipt. Constructor defaults + per-call override both
     route to the gate.
     """
+    # A configured production executor: require_signature=True WITH a verifier, so
+    # the production-no-verifier loud guard does not pre-empt the require_signature path.
+    signer = Ed25519Signer.generate()
+    verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
     side_effect = SideEffect()
     executor = GovernedExecutor(
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor="agent-1",
+        verifier=verifier,
         require_signature=True,
     )
     executor.register(ACTION, side_effect.run)
@@ -322,11 +346,9 @@ def test_governed_executor_enforces_require_signature() -> None:
         executor.execute(ACTION, ARGS, unsigned)
     assert side_effect.ran is False
 
-    # A signed receipt with the matching verifier supplied per-call executes.
-    signer = Ed25519Signer.generate()
-    verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
+    # A signed receipt matching the configured verifier executes.
     signed = _issue(signer)
-    result = executor.execute(ACTION, ARGS, signed, verifier=verifier)
+    result = executor.execute(ACTION, ARGS, signed)
     assert result == "SIDE EFFECT EXECUTED"
     assert side_effect.ran is True
 

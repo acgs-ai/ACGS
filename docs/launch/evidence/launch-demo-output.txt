@@ -1,0 +1,31 @@
+
+gove-zone — launch demo
+Invariant: No valid Decision Receipt, no side effect.
+
+[1] A safe action runs — under a valid receipt
+  ✓ safe write executed → 'SIDE EFFECT EXECUTED'
+
+[2] An unsafe action is blocked — before the side effect fires
+  ✓ shell.exec blocked, side effect never fired: Denied receipt cannot authorize execution
+
+[3] The Decision Receipt that authorized the safe action
+    decision        : allow
+    tenant / actor  : tenant-A / agent-1
+    validator       : constitutional-council (≠ proposer — MACI)
+    action          : runtime.file.write
+    argument_hash   : 33a71b8732c035fe2008a523…  (binds the exact args)
+    receipt_hash    : 48178d6914257ca3ae696b1a…
+    signature       : unsigned_local (none)
+  ✓ a receipt authorizes a specific action with specific arguments
+
+[4] Every decision left tamper-evident audit evidence
+  ✓ audit chain verified: 2 hash-chained events, 0 failures
+
+[5] Replay — the record matches what the policy says should have happened
+  ✓ ALLOW replays to ALLOW (args + policy agree): matches=True
+  ✓ DENY replays to DENY: matches=True
+
+All five beats held. No valid Decision Receipt, no side effect.
+(audit log: /tmp/claude-1000/gove-zone-launch-demo-qbeuot_r/audit.jsonl)
+
+demo exit=0

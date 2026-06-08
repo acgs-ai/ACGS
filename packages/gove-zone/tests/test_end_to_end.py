@@ -121,6 +121,7 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
         expected_tenant_id="tenant-A",
         expected_execution_boundary=BOUNDARY,
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     verifier.verify(
         receipt,
@@ -137,6 +138,7 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert result == "executed"
     assert side.ran
@@ -163,6 +165,7 @@ def test_missing_receipt_blocks_side_effect() -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -185,6 +188,7 @@ def test_denied_receipt_blocks_but_still_audits(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
     # A denial is still a decision: it must leave audit evidence.
@@ -210,6 +214,7 @@ def test_tampered_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -231,6 +236,7 @@ def test_cross_tenant_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -269,6 +275,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -296,6 +303,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert side.ran
 
@@ -320,6 +328,7 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert not side.ran
 
@@ -333,6 +342,7 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
+        require_signature=False,  # explicit dev mode (unsigned)
     )
     assert result == "executed"
     assert side.ran

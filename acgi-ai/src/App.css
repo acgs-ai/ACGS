@@ -5406,3 +5406,443 @@
   color: var(--deny);
   line-height: 1.45;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * §5.1.A AI Agent Governance Hub
+ * ───────────────────────────────────────────────────────────────────────── */
+.m-hub-hero .m-hero-actions > a:not(.btn) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 12px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.m-hub-hero .m-hero-actions > a:not(.btn):hover {
+  background: var(--paper-2);
+}
+
+.m-hub-cockpit .m-code pre {
+  white-space: pre-wrap;
+}
+
+.m-hub-cards .m-card h3 {
+  max-width: 18ch;
+}
+
+.m-hub-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 0.55fr);
+  gap: var(--space-3xl);
+  margin-top: 32px;
+  align-items: stretch;
+}
+
+.m-hub-panel {
+  padding: 30px 28px;
+  border: 1px solid var(--line-softer);
+  border-top: 2px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+}
+
+.m-hub-panel h3,
+.m-brief h3,
+.m-failure-card h3,
+.m-pattern-card h3,
+.m-agent-grid h3 {
+  margin-top: 12px;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.m-hub-panel p,
+.m-pattern-card p {
+  margin-top: 16px;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.62;
+  color: var(--ink-3);
+}
+
+.m-hub-list-panel ul,
+.m-pattern-card ul {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.m-hub-list-panel li,
+.m-pattern-card li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.m-hub-list-panel li::before,
+.m-pattern-card li::before {
+  content: "⁂";
+  margin-top: -2px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-style: italic;
+}
+
+.m-hub-interview {
+  margin-top: 76px;
+}
+
+.m-interview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(360px, 0.62fr);
+  gap: var(--space-3xl);
+  margin-top: 32px;
+  align-items: start;
+}
+
+.m-interview-form,
+.m-brief,
+.m-failure-card,
+.m-pattern-card,
+.m-agent-grid > article {
+  padding: 26px 24px 28px;
+  border: 1px solid var(--line-softer);
+  border-top: 2px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+}
+
+.m-interview-form {
+  display: grid;
+  gap: 18px;
+}
+
+.m-interview-form label,
+.m-interview-form fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.m-interview-form label > span,
+.m-interview-form legend {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.m-interview-form textarea,
+.m-interview-form select {
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.m-interview-form textarea {
+  min-height: 104px;
+  resize: vertical;
+  padding: 12px 14px;
+}
+
+.m-interview-form select {
+  min-height: 44px;
+  padding: 10px 12px;
+}
+
+.m-interview-form fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.m-field-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.m-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.m-risk-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+}
+
+.m-risk-check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.m-risk-check span {
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+
+.m-brief {
+  position: sticky;
+  top: 20px;
+  background: var(--paper);
+}
+
+.m-risk-pill {
+  display: inline-flex;
+  width: fit-content;
+  padding: 7px 10px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.m-risk-pill.is-low {
+  color: var(--risk-lo);
+}
+
+.m-risk-pill.is-medium {
+  color: var(--risk-mid);
+}
+
+.m-risk-pill.is-high,
+.m-risk-pill.is-blocked {
+  color: var(--risk-hi);
+}
+
+.m-brief dl,
+.m-failure-card dl,
+.m-pattern-card dl {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 0;
+}
+
+.m-brief dl > div,
+.m-failure-card dl > div,
+.m-pattern-card dl > div {
+  display: grid;
+  gap: 5px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-brief dt,
+.m-failure-card dt,
+.m-pattern-card dt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.m-brief dd,
+.m-failure-card dd,
+.m-pattern-card dd {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.m-brief ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.m-failure-grid,
+.m-pattern-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xl);
+  margin-top: 32px;
+}
+
+.m-failure-card .folio-no,
+.m-pattern-card .folio-no,
+.m-agent-grid .folio-no {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+}
+
+.m-failure-card h3,
+.m-pattern-card h3 {
+  font-size: 27px;
+}
+
+.m-pattern-card ul {
+  padding-top: 14px;
+  border-top: 1px solid var(--line-softer);
+}
+
+.m-agent-readable,
+.m-page-hero {
+  margin-top: 76px;
+}
+
+.m-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2xl);
+  margin-top: 32px;
+}
+
+.m-agent-grid > article {
+  background: var(--paper-2);
+}
+
+.m-agent-grid ol {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding-left: 20px;
+  font-family: var(--font-serif);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.m-agent-instruction {
+  margin-top: 18px;
+  font-family: var(--font-serif);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.m-agent-output pre {
+  margin-top: 32px;
+  padding: 24px;
+  overflow-x: auto;
+  border: 1px solid var(--line-softer);
+  border-top: 2px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.m-section-link {
+  margin-top: 24px;
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+.m-section-link a {
+  color: var(--ink);
+  border-bottom: 1px solid var(--accent);
+}
+
+.m-disclaimer {
+  padding-bottom: 84px;
+}
+
+.m-page-hero {
+  padding: 74px 0 34px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.m-page-hero h1 {
+  max-width: 12ch;
+  margin-top: 28px;
+  font-family: var(--font-display);
+  font-size: clamp(56px, 8vw, 90px);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.m-page-hero h1 em {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.m-story {
+  display: grid;
+  gap: 18px;
+  max-width: 74ch;
+  margin-top: 34px;
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+@media (max-width: 1100px) {
+  .m-interview-grid,
+  .m-hub-split {
+    grid-template-columns: 1fr;
+  }
+
+  .m-brief {
+    position: static;
+  }
+
+  .m-failure-grid,
+  .m-pattern-grid,
+  .m-agent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .m-field-row,
+  .m-risk-grid,
+  .m-failure-grid,
+  .m-pattern-grid,
+  .m-agent-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .m-hub-interview,
+  .m-agent-readable,
+  .m-page-hero {
+    margin-top: 52px;
+  }
+
+  .m-page-hero {
+    padding-top: 52px;
+  }
+}

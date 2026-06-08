@@ -485,14 +485,56 @@ def test_enforce_mode_raises_on_failure(
     bad.write_text("not a directory")
     monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(bad / "child" / "audit.jsonl"))
     monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "enforce")
+    # Dev profile so the production-signer guard does not short-circuit before the
+    # emission-failure path this test is named for.
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
 
     assert current_gate_mode() is GateMode.ENFORCE
-    with pytest.raises(GateModeError):
+    with pytest.raises(GateModeError, match="receipt emission failed under enforce mode"):
         emit_receipt_for_hook(
             _edit_payload(),
             action_kind="edit",
             actor="test-actor",
         )
+
+
+def test_enforce_mode_production_no_signer_fails_loud(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ENFORCE + production profile (the default; GOVE_ZONE_PROFILE unset) + no signer
+    # threaded into the passive auditor must fail closed LOUD, before any emission.
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "enforce")
+    monkeypatch.delenv("GOVE_ZONE_PROFILE", raising=False)
+
+    assert current_gate_mode() is GateMode.ENFORCE
+    with pytest.raises(GateModeError, match="requires a configured signer"):
+        emit_receipt_for_hook(
+            _edit_payload(),
+            action_kind="edit",
+            actor="test-actor",
+        )
+
+
+def test_enforce_mode_dev_profile_emits_unsigned(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ENFORCE proceeds under the explicit dev profile: the passive auditor emits an
+    # unsigned audit-anchor Receipt rather than failing closed (signing stays
+    # orthogonal to GateMode).
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "enforce")
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
+
+    assert current_gate_mode() is GateMode.ENFORCE
+    receipt = emit_receipt_for_hook(
+        _edit_payload(),
+        action_kind="edit",
+        actor="test-actor",
+    )
+
+    assert receipt is not None
+    assert (project_dir / ".gove-zone" / "audit.jsonl").exists()
 
 
 def test_audit_path_resolution_precedence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

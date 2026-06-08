@@ -31,6 +31,7 @@ from gove_zone.errors import (
     EscalateError,
     GoveZoneError,
     PolicyError,
+    ProductionProfileError,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
@@ -72,13 +73,16 @@ from gove_zone.policy import (
     RuleSetPolicy,
     new_event_id,
 )
+from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
 from gove_zone.replay import (
     ReplayResult,
     find_event,
     replay_call,
     replay_event,
+    replay_from_side_store,
 )
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -124,6 +128,7 @@ __all__ = [
     "ExecutionBoundary",
     "GateMode",
     "GateModeError",
+    "GovernanceProfile",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
@@ -134,12 +139,14 @@ __all__ = [
     "PolicyBundleRef",
     "PolicyRule",
     "PolicyError",
+    "ProductionProfileError",
     "ProposedAction",
     "Receipt",
     "ReceiptSigner",
     "ReceiptValidationError",
     "ReceiptVerifier",
     "ReplayResult",
+    "ReplaySideStore",
     "RuleSetPolicy",
     "SigningError",
     "TenantPolicyBinding",
@@ -174,6 +181,7 @@ __all__ = [
     "record_to_governed_action",
     "replay_call",
     "replay_event",
+    "replay_from_side_store",
     "run_smoke",
     "safe_result_hash",
     "sha256_json",

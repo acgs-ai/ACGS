@@ -113,9 +113,10 @@ def test_workspace_member_item_tracks_current_registry():
     items = hr.build_checklist(ROOT, drills)
     workspace = next(i for i in items if i.number == 3)
     assert workspace.status == "pass"
-    assert "7 packages" in workspace.description
+    assert "8 packages" in workspace.description
     assert "packages/gove-zone" in workspace.evidence
     assert "packages/agent-bus-analyzer" in workspace.evidence
+    assert "packages/research-engine" in workspace.evidence
     assert "packages/clinicalguard" in workspace.evidence
 
 
