@@ -103,8 +103,9 @@ truth for "where help is wanted.")
 - **Contribute a reviewed policy bundle** for a common scenario (read-only file
   access, allow-listed HTTP egress, DB read vs. write separation). The
   `RuleSetPolicy` shape already exists; add the bundle + a fixture test that
-  proves the intended allow/deny/escalate decisions. *Touch:*
-  `packages/gove-zone/` policy examples + tests.
+  proves the intended allow/deny/escalate decisions. Follow
+  [`docs/runbooks/add-a-policy-bundle.md`](docs/runbooks/add-a-policy-bundle.md).
+  *Touch:* `packages/gove-zone/` policy examples + tests.
 - **Add an evaluation scenario fixture** for the existing AgentDojo /
   InjecAgent / ToolEmu adapters (`gove-zone eval --benchmark-format ...`) and
   assert the expected decision-mismatch metrics. *Touch:*
@@ -116,11 +117,15 @@ The hook adapter already normalizes Claude/Codex-style, MCP `tools/call`,
 function-call, OpenAI Responses/Chat, and LangChain payloads in
 `gove_zone.integration` (see the `tool_call_from_hook_payload` /
 `tool_calls_from_hook_payload` pattern). Adding one more framework is a
-self-contained contribution:
+self-contained contribution. Follow
+[`docs/runbooks/add-a-runtime-adapter.md`](docs/runbooks/add-a-runtime-adapter.md) —
+it names where to extend (there is no adapter registry), the fail-closed
+`runtime.malformed_batch` rule, and the exact gate-level tests to add (a
+parser-only unit test is not sufficient):
 
-- **CrewAI tool-call normalization** + dispatcher-level test.
-- **AutoGen tool-call normalization** + dispatcher-level test.
-- **LlamaIndex tool-call normalization** + dispatcher-level test.
+- **CrewAI tool-call normalization** + gate-level enforcement test.
+- **AutoGen tool-call normalization** + gate-level enforcement test.
+- **LlamaIndex tool-call normalization** + gate-level enforcement test.
 
 Each must follow the existing fail-closed rule: a recognized multi-call
 container with an unparseable child fails closed as `runtime.malformed_batch`.
