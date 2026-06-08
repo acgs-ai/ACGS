@@ -60,6 +60,7 @@ const consoleWildcardIndex = routeIndex(
   routes,
   (route) => route.src === '/console/(.*)' && route.status === 308,
 )
+const filesystemIndex = routeIndex(routes, (route) => route.handle === 'filesystem')
 const fallbackIndex = routeIndex(routes, (route) => route.src === '/(.*)' && route.dest === '/')
 
 check(vercelJson.buildCommand === 'pnpm build:marketing', 'vercel.json must build marketing only.')
@@ -78,12 +79,24 @@ check(
   '/console/(.*) redirect must follow the exact /console redirect.',
 )
 check(
+  filesystemIndex > consoleWildcardIndex,
+  'filesystem handle must follow the explicit /console redirects so existing static assets are served before SPA fallback.',
+)
+check(
+  fallbackIndex > filesystemIndex,
+  'SPA fallback route must follow handle: filesystem so Vercel does not rewrite /assets/* to index.html.',
+)
+check(
   fallbackIndex === routes.length - 1,
   'SPA fallback route must be the final vercel.json route.',
 )
 check(
-  denyIndex >= 0 && consoleExactIndex >= 0 && consoleWildcardIndex >= 0 && fallbackIndex >= 0,
-  'vercel.json routes must include internal-doc deny, /console redirect, /console/(.*) redirect, and SPA fallback.',
+  denyIndex >= 0 &&
+    consoleExactIndex >= 0 &&
+    consoleWildcardIndex >= 0 &&
+    filesystemIndex >= 0 &&
+    fallbackIndex >= 0,
+  'vercel.json routes must include internal-doc deny, /console redirect, /console/(.*) redirect, filesystem handle, and SPA fallback.',
 )
 
 const consoleExact = routes[consoleExactIndex] ?? {}

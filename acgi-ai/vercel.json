@@ -26,6 +26,9 @@
       }
     },
     {
+      "handle": "filesystem"
+    },
+    {
       "src": "/(.*)",
       "dest": "/"
     }

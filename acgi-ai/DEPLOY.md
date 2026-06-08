@@ -143,6 +143,7 @@ marketing project — see §7):
       "status": 308,
       "headers": { "Location": "https://console.acgs.ai/console/$1" }
     },
+    { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/" }
   ],
   "headers": [
@@ -171,9 +172,12 @@ marketing project — see §7):
   that an evaluator who clicks "Open the console" from a deep marketing
   link lands on the privileged origin, not on a marketing-side
   rendering. The internal-doc 404 route must stay before those redirects,
-  and the SPA fallback must stay last. This means `Marketing.tsx`'s "Open the console" CTA must
-  point at `https://console.acgs.ai/console`, not at a relative `/console`
-  href, in the production build.
+  `handle: "filesystem"` must stay before the SPA fallback so hashed
+  `/assets/*` files are served as files instead of rewritten to
+  `index.html`, and the SPA fallback must stay last. This means
+  `Marketing.tsx`'s "Open the console" CTA must point at
+  `https://console.acgs.ai/console`, not at a relative `/console` href, in
+  the production build.
 - Marketing analytics are acceptable here. Plausible / Fathom / Vercel
   Web Analytics — pick one. Do not deploy the same script bundle on the
   console origin (§4).
