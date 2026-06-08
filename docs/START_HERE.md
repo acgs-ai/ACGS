@@ -1,8 +1,8 @@
-# START HERE — ACGS in 10 minutes
+# START HERE — ACGS / gove-zone in 10 minutes
 
 ## 60-second explanation
 
-ACGS is a receipt-gated governance layer for AI-agent side effects. It does not replace agent frameworks, MCP, guardrails, sandboxes, IAM, or model safety systems. It sits between an agent's request and the executor's side effect.
+ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It does not replace agent frameworks, MCP, guardrails, sandboxes, IAM, or model safety systems. It sits between an agent's request and the executor's side effect.
 
 The invariant is:
 

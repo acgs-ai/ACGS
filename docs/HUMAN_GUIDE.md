@@ -6,11 +6,11 @@ Audience: developers, funders, buyers, reviewers, contributors, and security eva
 
 Agent systems increasingly connect model reasoning to tools that change the world: files, APIs, databases, infrastructure, payment systems, email, queues, CI/CD, and MCP servers. A model can propose an action, but proposal is not authority. Without a separate execution gate, teams often discover unauthorized or poorly-evidenced tool calls only after the side effect has already happened.
 
-ACGS moves the governance decision before execution and makes the decision inspectable afterward.
+ACGS / gove-zone moves the governance decision before execution and makes the decision inspectable afterward.
 
 ## What ACGS is
 
-ACGS is a receipt-gated execution membrane. It evaluates a proposed side effect against policy, authority, identity, action, arguments, tenant, boundary, and evidence requirements. It emits a Decision Receipt and an audit event. The executor runs only when the receipt verifies.
+ACGS / gove-zone is a receipt-gated execution membrane. It evaluates a proposed side effect against policy, authority, identity, action, arguments, tenant, boundary, and evidence requirements. It emits a Decision Receipt and an audit event. The executor runs only when the receipt verifies.
 
 Core invariant:
 

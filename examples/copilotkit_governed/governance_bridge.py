@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,7 @@ _AUDIT_ENV = os.getenv("COPILOT_AUDIT_PATH")
 _AUDIT_PATH = (
     Path(_AUDIT_ENV) if _AUDIT_ENV else Path(tempfile.gettempdir()) / "copilot-bridge-audit.jsonl"
 )
+_AUDIT_LOCK = threading.Lock()
 
 
 class BridgePolicy(Policy):
@@ -140,24 +142,25 @@ def admit_action(action: Any, args: Any) -> dict[str, Any]:
         )
 
         if record.decision is Decision.ALLOW:
-            event = ChainHashAuditStore(_AUDIT_PATH).append(record)
-            audit_hash = str(event["event_hash"])
-            receipt = DecisionReceipt.from_record(
-                record=record,
-                audit_hash=audit_hash,
-                previous_audit_hash=str(event["previous_hash"]),
-                tenant_id=TENANT,
-                execution_boundary=BOUNDARY,
-                policy_bundle_id="copilotkit-bridge-policy",
-                policy_hash=record.policy_version,
-                request_id=f"req-{record.event_id}",
-                validator=Validator("governance-bridge"),
-                authority="tenant-A/copilot-tool-grant",
-            )
-            # Prove the receipt is well-formed AND issued for this caller before
-            # returning its anchor hash. A verify failure raises and is caught
-            # below, so the client fails closed (no hash).
-            receipt.verify(expected_actor=ACTOR, expected_action=action)
+            with _AUDIT_LOCK:
+                event = ChainHashAuditStore(_AUDIT_PATH).append(record)
+                audit_hash = str(event["event_hash"])
+                receipt = DecisionReceipt.from_record(
+                    record=record,
+                    audit_hash=audit_hash,
+                    previous_audit_hash=str(event["previous_hash"]),
+                    tenant_id=TENANT,
+                    execution_boundary=BOUNDARY,
+                    policy_bundle_id="copilotkit-bridge-policy",
+                    policy_hash=record.policy_version,
+                    request_id=f"req-{record.event_id}",
+                    validator=Validator("governance-bridge"),
+                    authority="tenant-A/copilot-tool-grant",
+                )
+                # Prove the receipt is well-formed AND issued for this caller before
+                # returning its anchor hash. A verify failure raises and is caught
+                # below, so the client fails closed (no hash).
+                receipt.verify(expected_actor=ACTOR, expected_action=action)
             return {"decision": "allow", "receiptAuditHash": audit_hash, "reason": record.reason}
 
         if record.decision is Decision.ESCALATE:

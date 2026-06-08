@@ -22,7 +22,9 @@ REQUIRED_DOCS = [
     "docs/QUICKSTART.md",
     "docs/DEMO_SCRIPT.md",
     "docs/INTEGRATION_GUIDE.md",
+    "docs/INTEGRATION_MATRIX.md",
     "docs/COMPARISON.md",
+    "docs/POSITIONING.md",
     "docs/ROADMAP.md",
     "docs/GLOSSARY.md",
     "docs/REVIEW_CHECKLIST.md",
@@ -62,7 +64,7 @@ def test_required_docs_exist_and_carry_core_invariant() -> None:
 def test_readme_opening_and_non_claims() -> None:
     text = _read("README.md")
     assert text.startswith(
-        "ACGS is a receipt-gated governance layer for AI-agent side effects."
+        "ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects."
     )
     for phrase in (
         "not production-certified",
@@ -74,6 +76,29 @@ def test_readme_opening_and_non_claims() -> None:
         "not a full formal-verification system",
     ):
         assert phrase.lower() in text.lower()
+
+
+def test_neutrality_wording_stays_claim_safe() -> None:
+    """Guard the repositioning: neutrality copy must scope to supported tiers and
+    must not reintroduce present-tense universal portability overclaims.
+
+    Cross-host receipt portability is roadmap (docs/CLAIMS.md), so blanket
+    "any platform / no matter which runtime" wording would overclaim it.
+    """
+    surfaces = ("README.md", "docs/introduction.md", "docs/POSITIONING.md")
+    banned = (
+        "no matter which runtime",
+        "any agent — on any platform",
+        "any agent - on any platform",
+        "any agent on any platform",
+    )
+    for rel in surfaces:
+        lowered = _read(rel).lower()
+        for phrase in banned:
+            assert phrase not in lowered, f"{rel}: overbroad portability claim '{phrase}'"
+    # Neutrality copy must point readers at the tier/claim evidence, not just assert.
+    for rel in ("README.md", "docs/introduction.md"):
+        assert "integration_matrix.md" in _read(rel).lower(), rel
 
 
 def test_claim_ledger_has_explicit_non_claims() -> None:

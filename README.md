@@ -1,6 +1,6 @@
-ACGS is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
 
-# ACGS
+# ACGS / gove-zone
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 ![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
@@ -14,16 +14,17 @@ ACGS is a receipt-gated governance layer for AI-agent side effects. It enforces 
 > production, compliance, or certification claim — see
 > [What this repository is not claiming](#what-this-repository-is-not-claiming).
 
-ACGS is not another agent framework. It is the missing execution membrane between AI-agent reasoning and real-world change: file writes, API calls, database updates, emails, payments, deployments, MCP tools, shell commands, and any other side effect that should require explicit authority.
+ACGS is not another agent framework, and it is not owned by one. It is the vendor-neutral execution membrane between AI-agent reasoning and real-world change: file writes, API calls, database updates, emails, payments, deployments, MCP tools, shell commands, and any other side effect that should require explicit authority. Because the gate sits *below* whatever framework issued the call, the same policy decision and the same vendor-neutral Decision Receipt format describe a governed action regardless of which framework issued it — across the runtimes ACGS supports, at the proof tiers in [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — and ACGS privileges none of them.
 
-The `gove-zone` package (`packages/gove-zone`, Python module `gove_zone`) is the local governed-runtime kernel inside this ACGS / govern-zone monorepo. Agent frameworks, MCP servers, OpenAI-style tool calls, LangGraph nodes, CI jobs, and custom executors can keep doing orchestration; ACGS answers the narrower question: **is this exact actor allowed to run this exact action with these exact arguments under this exact policy evidence?**
+The `gove-zone` package (`packages/gove-zone`, Python module `gove_zone`) is the local governed-runtime kernel inside this ACGS / govern-zone monorepo. Agent frameworks, MCP servers, hook hosts, function-call/tool-call bridges, CI jobs, and custom executors can keep doing orchestration; ACGS answers the narrower question: **is this exact actor allowed to run this exact action with these exact arguments under this exact policy evidence?** See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) for which runtimes are supported, at what proof depth.
 
 ## First screen: what to do
 
 | Question | Short answer |
 |---|---|
-| What is it? | A receipt-gated governance layer for AI-agent side effects. |
+| What is it? | A vendor-neutral, receipt-gated governance layer for AI-agent side effects. |
 | What problem does it solve? | Agents can request powerful tools faster than teams can prove authority, policy, auditability, and replay. ACGS moves that proof before execution. |
+| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one common receipt format apply to every caller wired through it — runtime support is tiered, not uniform (see the integration matrix). When a platform both ships and governs its agents, the governor and the governed are the same party — a structural position, not a knock on its engineering; a plane outside the platforms avoids that, and ACGS privileges no runtime. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
 | Core invariant | **No valid Decision Receipt, no side effect.** |
 | Why it matters | Tool calls can mutate files, systems, money, data, or infrastructure. A natural-language model may request an action; the executor must enforce the receipt gate. |
 | Proof path | Run the smoke proof, run the receipt-gated execution demo, inspect the proof pack, then tamper with receipts/audit evidence and observe failure. |
@@ -95,7 +96,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 3. [`docs/DECISION_RECEIPT_SPEC.md`](docs/DECISION_RECEIPT_SPEC.md) — public contract for integrators.
 4. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — threat model and current protections.
 5. [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) — where to put the gate in your stack.
-6. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
+6. [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — supported runtimes by proof tier (shipped / pattern / roadmap).
+7. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
 
 ## Development status
 

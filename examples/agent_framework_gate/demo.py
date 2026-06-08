@@ -51,7 +51,7 @@ class FrameworkToolWrapper:
             tenant_id=TENANT,
             execution_boundary=BOUNDARY,
             expected_actor=ACTOR,
-            require_signature=False,  # dev-mode — local unsigned demo
+            require_signature=False,  # dev-mode: local unsigned demo
         )
         self.executor.register(action, fn)
         self.action = action

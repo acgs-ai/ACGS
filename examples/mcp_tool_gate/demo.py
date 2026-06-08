@@ -67,6 +67,7 @@ def main() -> int:
     receipt = issue_receipt(call.name, dict(call.args))
 
     result = execute_with_receipt(
+        require_signature=False,  # dev-mode: local unsigned demo
         tool_fn=tool.run,
         args=dict(call.args),
         receipt=receipt,
@@ -80,6 +81,7 @@ def main() -> int:
     missing_blocked = False
     try:
         execute_with_receipt(
+            require_signature=False,  # dev-mode: local unsigned demo
             tool_fn=tool.run,
             args=dict(call.args),
             receipt=None,

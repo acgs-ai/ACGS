@@ -21,6 +21,7 @@ from gove_zone.audit import ChainHashAuditStore
 from gove_zone.integration import (
     GateMode,
     GateModeError,
+    _tool_name_and_input_from_payload,
     current_gate_mode,
     emit_receipt_for_hook,
     resolve_audit_path,
@@ -574,3 +575,45 @@ def test_gate_adapter_appends_mcp_payload_receipt(project_dir: Path) -> None:
     events = [json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()]
     assert events[-1]["tool"] == "runtime.repo.apply_patch"
     assert events[-1]["path"] == ["src", "gove_zone", "integration.py"]
+
+
+# --- Neutrality: the generic, no-privileged-default parse path -----------------
+# These guard the claim that the gate treats every caller the same (see
+# docs/INTEGRATION_MATRIX.md and docs/CLAIMS.md "Gate position is
+# framework-neutral"). They call the private resolver directly so the
+# (name, args) tuple isolates each branch without the runtime.* prefix that
+# the public tool_call_from_hook_payload adds via _runtime_context_from_payload.
+
+
+def test_tool_name_and_input_resolves_top_level_name_args_generic_shape() -> None:
+    """Generic bridge payload ``{name, args}`` with no wrapper resolves directly."""
+    name, args = _tool_name_and_input_from_payload(
+        {"name": "file.write", "args": {"path": "repo/out.txt", "content": "data"}}
+    )
+    assert name == "file.write"
+    assert args == {"path": "repo/out.txt", "content": "data"}
+
+
+def test_tool_name_and_input_resolves_tool_dict_name_args_generic_shape() -> None:
+    """Generic bridge payload ``{tool: {name, args}}`` resolves via the tool dict."""
+    name, args = _tool_name_and_input_from_payload(
+        {"tool": {"name": "shell.run", "args": {"command": "echo hi"}}}
+    )
+    assert name == "shell.run"
+    assert args == {"command": "echo hi"}
+
+
+def test_tool_name_and_input_hook_style_wins_over_top_level_name() -> None:
+    """Hook style (``tool_name``) is checked first: no runtime is the privileged
+    default, but resolution order is deterministic — the hook branch wins even
+    when a generic top-level ``name`` is also present."""
+    name, args = _tool_name_and_input_from_payload(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/README.md", "new_string": "x"},
+            "name": "file.write",
+            "args": {"path": "other.txt", "content": "y"},
+        }
+    )
+    assert name == "Edit"
+    assert args == {"file_path": "/repo/README.md", "new_string": "x"}

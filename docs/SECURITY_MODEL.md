@@ -28,6 +28,31 @@ Status: alpha/local proof. This document is a threat model, not a certification 
 | Policy timeout/hang | Executor waits forever or eventually allows after stale evaluation. | Optional `policy_timeout` converts timeout to DENY. | `test_fail_closed_gaps.py`. | Timeout is configurable, not globally required. | Secure profile defaults. |
 | Audit append failure | Side effect runs without durable evidence. | Kernel raises `AuditError` before execution. | `test_fail_closed.py`, `test_audit_chain_corruption.py`. | Local disk availability and durability are operator concerns. | Durable/off-host audit sink. |
 
+## Deployment hardening — defaults that matter
+
+The kernel ships safe-by-inspection but **dev-permissive by default**. Two defaults
+must be changed for a production posture; both are accepted limitations of the local
+alpha, not bugs:
+
+- **Signing is off by default.** `require_signature` defaults to `False`
+  (`executor.py`, `contracts.py`). In that mode verification checks only the local
+  SHA-256 `receipt_hash`, which is recomputable under host compromise (see the
+  *Tampered receipt* and *Unsigned dev mode misuse* rows). **Production MUST set
+  `require_signature=True` with a trusted verifier** (`signing.py`,
+  `test_receipt_signing.py`). Unsigned mode is dev-only proof and must not be
+  described as production signing.
+- **No anti-replay nonce.** Verification is stateless: there is no consumed-receipt
+  registry or nonce, so a valid `ALLOW` receipt can be replayed until its
+  `expires_at` (see the *Replay attempt* row). `replay.py` is *deterministic/audit*
+  replay, not anti-replay enforcement. This is an accepted limitation of the local
+  kernel. Mitigations available today: set a short `expires_at`, use the workflow
+  ledger for workflow paths, and retain side-store proof packs for strong replay.
+  A global nonce/revocation registry is roadmap, not shipped.
+
+Also operator-tunable and off/optional by default: `expires_at` (no global
+revocation list) and `policy_timeout` (hang → DENY only when configured). Set both
+for a hardened deployment.
+
 ## Security-sensitive files
 
 - `packages/gove-zone/src/gove_zone/receipt.py`

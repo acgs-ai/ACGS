@@ -73,6 +73,31 @@ def test_forbidden_matching_checks_nested_string_values() -> None:
     assert "receiptAuditHash" not in out
 
 
+def test_allow_path_uses_audit_lock(monkeypatch) -> None:
+    from examples.copilotkit_governed import governance_bridge
+
+    class RecordingLock:
+        def __init__(self) -> None:
+            self.entries = 0
+
+        def __enter__(self):
+            self.entries += 1
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    lock = RecordingLock()
+    monkeypatch.setattr(governance_bridge, "_AUDIT_LOCK", lock, raising=False)
+
+    out = governance_bridge.admit_action(
+        "runtime.file.write", {"path": "evidence/locked.json", "content": "ok"}
+    )
+
+    assert out["decision"] == "allow"
+    assert lock.entries == 1
+
+
 # --- wired /admit route (dispatcher-level) ----------------------------------
 
 

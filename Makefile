@@ -129,6 +129,7 @@ typecheck-py:
 
 lint-docs:
 	python3 scripts/check_governance_stack_index.py
+	$(MAKE) -C packages/ai-governance-research validate
 
 platform-readiness:
 	$(UV) run python scripts/platform_readiness_report.py

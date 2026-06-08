@@ -1,6 +1,6 @@
 # ACGS documentation index
 
-ACGS / gove-zone is a receipt-gated governance layer for AI-agent side effects. It enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
 
 Core invariant: **No valid Decision Receipt, no side effect.**
 
@@ -18,11 +18,13 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [DECISION_RECEIPT_SPEC](DECISION_RECEIPT_SPEC.md)
 - [SECURITY_MODEL](SECURITY_MODEL.md)
 - [INTEGRATION_GUIDE](INTEGRATION_GUIDE.md)
+- [INTEGRATION_MATRIX](INTEGRATION_MATRIX.md) — supported runtimes by proof tier
 - [COMPARISON](COMPARISON.md)
 
 ## Claim discipline and adoption
 
 - [CLAIMS](CLAIMS.md)
+- [POSITIONING](POSITIONING.md) — why a neutral governance layer is a category, not a feature
 - [ROADMAP](ROADMAP.md)
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
