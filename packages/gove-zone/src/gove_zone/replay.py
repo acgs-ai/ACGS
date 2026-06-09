@@ -145,12 +145,23 @@ def replay_from_side_store(
             reason="side-store argument_hash does not match audit chain",
         )
 
-    result = replay_call(
-        call,
-        expected_decision=original,
-        policy=policy,
-        expected_policy_version=event.get("policy_version"),
-    )
+    try:
+        result = replay_call(
+            call,
+            expected_decision=original,
+            policy=policy,
+            expected_policy_version=event.get("policy_version"),
+        )
+    except Exception as exc:
+        return ReplayResult(
+            event_id=event_id,
+            matches=False,
+            original_decision=original,
+            replayed_decision=original,
+            policy_version_match=False,
+            argument_hash_match=True,
+            reason=f"policy re-derivation raised: {exc}",
+        )
     return replace(result, event_id=event_id)
 
 
@@ -256,7 +267,17 @@ def replay_bundle(
         # kernel produced it, normalize only the nondeterministic identity
         # fields to the recorded values, and compare canonical JSON bytes.
         call = _call_from_side_record(event, side_record)
-        fresh = policy.evaluate(call)
+        try:
+            fresh = policy.evaluate(call)
+        except Exception as exc:
+            mismatches.append(
+                {
+                    "event_id": event_id,
+                    "type": "replay_policy_error",
+                    "detail": str(exc),
+                }
+            )
+            continue
         fresh = replace(
             fresh,
             goal=call.goal,
@@ -288,7 +309,7 @@ def replay_bundle(
         events_matched += 1
 
     return {
-        "valid": chain_valid and not mismatches,
+        "valid": chain_valid and not mismatches and events_matched == events_total,
         "chain_valid": chain_valid,
         "events_total": events_total,
         "events_matched": events_matched,
