@@ -155,6 +155,11 @@ lint-docs:
 	python3 scripts/check_governance_stack_index.py
 	$(MAKE) -C packages/ai-governance-research validate
 
+# Root docs + examples smoke: claim-safety invariants + runnable example demos
+# (each EXAMPLE_SCRIPTS demo is executed and must exit 0 with status:"pass").
+test-docs:
+	$(UV) run python -m pytest tests/docs --import-mode=importlib -q
+
 platform-readiness:
 	$(UV) run python scripts/platform_readiness_report.py
 
@@ -170,7 +175,7 @@ production-launch-preflight: release-evidence
 # ---- Combined ----
 
 build: build-js build-py
-test: test-js test-py
+test: test-js test-py test-docs
 lint: lint-js lint-py lint-docs
 typecheck: typecheck-js typecheck-py
 
