@@ -8,7 +8,7 @@ have happened given these arguments."
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
@@ -87,6 +87,58 @@ def replay_call(
         argument_hash_match=record.argument_hash == arg_hash,
         reason=record.reason,
     )
+
+
+def replay_from_side_store(
+    event: dict[str, Any],
+    side_record: dict[str, Any],
+    policy: Policy,
+) -> ReplayResult:
+    """Re-derive a decision from an audit *event* + its raw-args *side_record*.
+
+    Reconstructs the original :class:`~gove_zone.tool.ToolCall` from the
+    side-store record, then:
+
+    1. **Tamper cross-check (R4):** the reconstructed call must hash to the
+       *audit event's* recorded ``argument_hash`` — the chain, not the side
+       record, is the source of truth. A mismatch means the side-store drifted
+       from the chain and is reported as a failed re-derivation.
+    2. **Re-derivation (R3, R5):** delegate to :func:`replay_call`, which re-runs
+       *policy* against the call and confirms the decision and policy version
+       match what the chain recorded.
+
+    Callers must not pass a redacted/tombstone ``side_record`` (it carries no raw
+    args); those fall back to :func:`replay_event` instead.
+    """
+    event_id = str(event.get("event_id", ""))
+    original = Decision(event["decision"])
+    call = ToolCall(
+        name=str(event.get("tool", "")),
+        args=dict(side_record.get("args", {})),
+        goal=str(side_record.get("goal", "")),
+        actor=str(side_record.get("actor", "")),
+        path=tuple(side_record.get("path", ()) or ()),
+        state=dict(side_record.get("state", {})),
+    )
+
+    if call.argument_hash() != event.get("argument_hash"):
+        return ReplayResult(
+            event_id=event_id,
+            matches=False,
+            original_decision=original,
+            replayed_decision=original,
+            policy_version_match=event.get("policy_version") == policy.version,
+            argument_hash_match=False,
+            reason="side-store argument_hash does not match audit chain",
+        )
+
+    result = replay_call(
+        call,
+        expected_decision=original,
+        policy=policy,
+        expected_policy_version=event.get("policy_version"),
+    )
+    return replace(result, event_id=event_id)
 
 
 def find_event(store: ChainHashAuditStore, event_id: str) -> dict[str, Any] | None:
