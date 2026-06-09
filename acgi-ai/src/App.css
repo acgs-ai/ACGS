@@ -1059,7 +1059,7 @@
   color: var(--accent-soft);
 }
 .m-tier.feat hr {
-  border-color: rgba(250, 250, 247, 0.12);
+  border-color: color-mix(in srgb, var(--paper) 12%, transparent);
 }
 .m-tier.feat .btn-primary {
   background: var(--accent);
@@ -1247,7 +1247,7 @@
 }
 
 .m-foot-bar {
-  border-top: 1px solid rgba(250, 250, 247, 0.1);
+  border-top: 1px solid color-mix(in srgb, var(--paper) 10%, transparent);
   padding: 20px 0;
   display: flex;
   justify-content: space-between;
@@ -1492,7 +1492,7 @@
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(26, 26, 26, 0.4);
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
   border: 0;
   padding: 0;
   cursor: pointer;
@@ -2518,6 +2518,8 @@
   font-size: 13px;
 }
 
+/* DESIGN.md depth = paper layering + hairline rules, not gradients. Per-panel
+   semantics carried by a left rule (accent/rust/ink), matching .login-interstitial. */
 .workbench-cutover-summary,
 .workbench-blocker-summary,
 .workbench-live-summary,
@@ -2529,40 +2531,19 @@
   margin-top: 18px;
   padding: 18px;
   border: 1px solid var(--line-softer);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
-    var(--paper);
+  background: var(--paper-2);
 }
 
-.workbench-live-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 6%, transparent), transparent 38%),
-    var(--paper);
-}
-
-.workbench-blocker-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 5%, transparent), transparent 40%),
-    var(--paper);
-}
-
+.workbench-live-summary,
+.workbench-blocker-summary,
 .workbench-command-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 4%, transparent), transparent 42%),
-    var(--paper);
-}
-
-.workbench-storybook-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 42%),
-    var(--paper);
+  border-left-color: var(--rust);
 }
 
 .workbench-assurance-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 36%),
-    var(--paper);
+  border-left-color: var(--ink);
 }
 
 .workbench-cutover-summary > div:first-child,
@@ -4320,7 +4301,6 @@
   border-left: 4px solid var(--accent);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--paper-2) 86%, var(--accent) 14%);
-  box-shadow: var(--shadow-soft);
   padding: 20px 22px;
   display: grid;
   gap: 14px;
