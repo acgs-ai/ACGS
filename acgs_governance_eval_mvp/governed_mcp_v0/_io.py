@@ -99,6 +99,26 @@ def _load_constitution(targets: RuntimeTargets) -> tuple[dict[str, Any], str]:
     return constitution, sha256_json(constitution)
 
 
+def write_constitution_registry(targets: RuntimeTargets) -> Path:
+    """Generate the pinned constitution-hash registry from the live constitution.
+
+    Writes a canonical JSON list containing the sha256_json hash of the
+    current constitution to ``targets.constitution_registry_path`` and
+    returns that path. Regenerable at any time — analogous to
+    ``docs/constitutional-hashes.lock`` at the monorepo root. Raises if the
+    constitution itself is unreadable (never pins a registry blindly).
+    """
+    _constitution, constitution_hash = _load_constitution(targets)
+    registry_path = targets.constitution_registry_path
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    with registry_path.open("w", encoding="utf-8") as handle:
+        handle.write(canonical_json([constitution_hash]))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return registry_path
+
+
 def _last_audit_hash(path: Path) -> str:
     if not path.exists():
         return GENESIS_HASH
