@@ -297,3 +297,81 @@
   color: var(--muted);
   letter-spacing: 0.04em;
 }
+
+/* ── Governed copilot (component-scoped; CSP-clean, no inline styles) ───── */
+.copilot-launcher {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+}
+
+.copilot-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  max-height: 70vh;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.copilot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.copilot-log {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.copilot-msg {
+  font-family: var(--font-runtime);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.copilot-msg-pending {
+  color: var(--muted);
+}
+
+.copilot-msg-error {
+  color: var(--risk-lo);
+}
+
+.copilot-form {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.copilot-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-family: var(--font-runtime);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}

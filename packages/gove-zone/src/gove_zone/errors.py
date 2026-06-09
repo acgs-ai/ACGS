@@ -24,6 +24,30 @@ class ReceiptValidationError(GoveZoneError):
     """Raised when a DecisionReceipt validation fails."""
 
 
+class ProductionProfileError(ReceiptValidationError):
+    """Raised when a gate runs under the production profile (the default) but is
+    not configured to enforce a signature — i.e. ``require_signature=True`` with
+    no verifier supplied.
+
+    Subclasses :class:`ReceiptValidationError` deliberately: it must stay on the
+    single fail-closed receipt-verification path so that callers catching
+    ``ReceiptValidationError`` (e.g. :meth:`gove_zone.contracts.ReceiptVerifier.is_valid`)
+    keep their existing contract. The message names both exits — configure a
+    verifier/signer, or explicitly select the dev profile
+    (``GovernanceProfile.dev()`` / ``require_signature=False``) — so the secure
+    default never auto-generates an ephemeral key (which would be false security).
+    """
+
+
+PRODUCTION_NO_VERIFIER_MSG = (
+    "production profile requires a signer/verifier: this gate runs with "
+    "require_signature=True but no verifier was configured. Configure a "
+    "public-key verifier (and a private-key signer at issuance), or explicitly "
+    "select the dev profile (GovernanceProfile.dev() / pass require_signature=False) "
+    "for unsigned operation. The gate will NOT auto-generate an ephemeral key."
+)
+
+
 class SigningError(GoveZoneError):
     """Raised for signer construction / key / missing-dependency problems.
 

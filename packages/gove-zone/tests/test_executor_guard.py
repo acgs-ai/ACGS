@@ -82,6 +82,7 @@ def test_executor_refuses_no_receipt() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "No receipt provided" in str(exc_info.value)
     assert not tracker.called
@@ -104,6 +105,7 @@ def test_executor_refuses_malformed_receipt() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "Missing or empty required field" in str(exc_info.value)
     assert not tracker.called
@@ -126,6 +128,7 @@ def test_executor_refuses_tampered_receipt() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "receipt_hash mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -144,6 +147,7 @@ def test_executor_refuses_denied_receipt() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "Denied receipt cannot authorize execution" in str(exc_info.value)
     assert not tracker.called
@@ -162,6 +166,7 @@ def test_executor_refuses_escalated_receipt() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "Escalated receipt cannot authorize execution" in str(exc_info.value)
     assert not tracker.called
@@ -180,6 +185,7 @@ def test_executor_refuses_wrong_tenant() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "Tenant mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -200,6 +206,7 @@ def test_executor_refuses_transform_mismatch() -> None:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode: this case tests non-signing behavior
         )
     assert "Transform mismatch" in str(exc_info.value)
     assert not tracker.called
@@ -217,6 +224,7 @@ def test_executor_allows_valid_allowed_receipt() -> None:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="anonymous",
+        require_signature=False,  # explicit dev mode: this case tests non-signing behavior
     )
     assert res == "success"
     assert tracker.called
@@ -236,6 +244,7 @@ def test_executor_allows_valid_transformed_receipt() -> None:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="anonymous",
+        require_signature=False,  # explicit dev mode: this case tests non-signing behavior
     )
     assert res == "success"
     assert tracker.called
@@ -244,8 +253,13 @@ def test_executor_allows_valid_transformed_receipt() -> None:
 
 def test_governed_executor_workflow() -> None:
     tracker = SideEffectTracker()
+    # Explicit dev mode: this case exercises the registry/execute plumbing with an
+    # unsigned receipt, not the production-signed default.
     executor = GovernedExecutor(
-        tenant_id="tenant-A", execution_boundary="local-sandbox", expected_actor="anonymous"
+        tenant_id="tenant-A",
+        execution_boundary="local-sandbox",
+        expected_actor="anonymous",
+        require_signature=False,
     )
     executor.register("runtime.file.write", tracker.run_tool)
 
@@ -253,3 +267,49 @@ def test_governed_executor_workflow() -> None:
     res = executor.execute("runtime.file.write", {"path": "test.txt"}, receipt)
     assert res == "success"
     assert tracker.called
+
+
+def test_executor_production_default_rejects_unsigned_no_verifier() -> None:
+    """DEFAULT-FLIP PROOF: with no require_signature argument, the gate runs in the
+    production profile (require_signature=True). An unsigned receipt with no verifier
+    configured fails closed LOUD, naming the dev opt-out, and the side effect never runs.
+    """
+    from gove_zone import ProductionProfileError
+
+    tracker = SideEffectTracker()
+    receipt = make_test_receipt("allow")
+    with pytest.raises(ProductionProfileError) as exc_info:
+        execute_with_receipt(
+            tool_fn=tracker.run_tool,
+            args={"path": "safe.txt"},
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="runtime.file.write",
+            expected_actor="anonymous",
+            # NOTE: no require_signature, no verifier — production profile is the default.
+        )
+    assert "production profile requires a signer/verifier" in str(exc_info.value)
+    assert "GovernanceProfile.dev()" in str(exc_info.value)
+    assert not tracker.called
+
+
+def test_governed_executor_production_default_rejects_unsigned() -> None:
+    """DEFAULT-FLIP PROOF for GovernedExecutor: constructed with no require_signature,
+    it defaults to the production profile and fails closed loud on an unsigned receipt
+    with no verifier.
+    """
+    from gove_zone import ProductionProfileError
+
+    tracker = SideEffectTracker()
+    executor = GovernedExecutor(
+        tenant_id="tenant-A",
+        execution_boundary="local-sandbox",
+        expected_actor="anonymous",
+        # NOTE: no require_signature — production profile is the default.
+    )
+    executor.register("runtime.file.write", tracker.run_tool)
+    receipt = make_test_receipt("allow", args={"path": "test.txt"})
+    with pytest.raises(ProductionProfileError):
+        executor.execute("runtime.file.write", {"path": "test.txt"}, receipt)
+    assert not tracker.called

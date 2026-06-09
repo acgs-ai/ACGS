@@ -3,6 +3,11 @@
 
 # ACGS-Governed Hermes: In-Context Procedure Execution with Runtime Governance
 
+Supplemented by: `docs/design/sandbox-isolation-and-call-time-governance.md` —
+how an externally provisioned agent sandbox composes with the call-time
+interception described here (provisioning isolation is a separate layer; ACGS
+ships none of it).
+
 ## 1. Executive summary
 
 When a defined procedure fits in context, frontier models can self-orchestrate that procedure from a system prompt without external node routing. This pattern is increasingly viable as model context windows grow and instruction-following improves, and it eliminates a class of orchestration overhead (extra LLM calls per node, framework coupling, mid-conversation graph state) for procedures that don't otherwise benefit from external routing. But self-orchestration does not solve runtime governance. The model can reason about a procedure end-to-end yet still propose unsafe tool calls, write to protected paths, or self-attest compliance for actions it should not have taken.

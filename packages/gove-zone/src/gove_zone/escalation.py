@@ -224,7 +224,11 @@ def resume_with_receipt(
 
     The caller must have registered the tool under ``pending.record.tool`` on
     *executor*, and *executor* must carry the same tenant/boundary as the
-    receipt.
+    receipt. The executor's signing posture also flows through: a production
+    executor (the default, ``require_signature=True``) needs a verifier and a
+    signed approval, else it fails closed with
+    :class:`~gove_zone.errors.ProductionProfileError`; construct a dev executor
+    (``require_signature=False``) for unsigned operation.
     """
     return executor.execute(
         pending.record.tool,

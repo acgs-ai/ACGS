@@ -1,9 +1,12 @@
 """Append-only JSONL audit store with hash chaining.
 
 Ported from ``acgs_governance_eval_mvp/governance/audit/jsonl_chain.py``.
-Process-safe via ``fcntl.flock`` when that lock primitive is available. Importing
-the package does not require ``fcntl``; append support on platforms without a
-safe lock primitive remains deferred.
+Process-safe via a standard-library file lock: ``fcntl.flock`` on POSIX and
+``msvcrt.locking`` on Windows. Importing the package requires neither; the lock
+primitive is resolved lazily at append time. A host exposing neither primitive
+fails closed at append rather than writing without serialization. The POSIX
+path is exercised by ``test_concurrent_appends_preserve_chain_integrity``; the
+Windows path uses stdlib ``msvcrt`` and is not exercised on POSIX CI.
 
 Chain rules:
 
@@ -38,20 +41,51 @@ class AuditChainError(AuditError):
 
 @contextmanager
 def _exclusive_file_lock(lock_fh: TextIO) -> Generator[None, None, None]:
-    """Hold an exclusive process lock for platforms with ``fcntl`` support."""
+    """Hold an exclusive cross-process lock on the sidecar lock file.
+
+    POSIX hosts use ``fcntl.flock`` (advisory whole-file lock). Windows hosts
+    use ``msvcrt.locking`` (a mandatory byte-range lock on the first byte).
+    Both serialize concurrent appenders so two writes never produce sibling
+    events sharing a ``previous_hash``. Both primitives are in the standard
+    library, so this adds no runtime dependency. A host exposing neither fails
+    closed with a clear error rather than appending without serialization.
+    """
     try:
         import fcntl
+    except ModuleNotFoundError:
+        fcntl = None  # type: ignore[assignment]
+
+    if fcntl is not None:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        return
+
+    try:
+        import msvcrt
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "ChainHashAuditStore append requires a platform file-lock primitive; "
-            "fcntl is unavailable on this host, so audit append support is deferred."
+            "ChainHashAuditStore append requires a platform file-lock primitive "
+            "(POSIX fcntl or Windows msvcrt); neither is available on this host, "
+            "so audit append cannot be serialized safely and is refused."
         ) from exc
 
-    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+    # Windows: lock the first byte. ``msvcrt.locking`` locks ``nbytes`` from the
+    # current position and can lock a region beyond EOF, so an empty lock file is
+    # fine. NOTE a semantic divergence from POSIX: ``LK_LOCK`` retries ~10 times
+    # at 1s intervals and then raises ``OSError`` — it does not block
+    # indefinitely like ``fcntl.flock(LOCK_EX)``. Under sustained (>~10s)
+    # contention a Windows appender therefore fails closed (raises before
+    # ``yield``, so no unserialized or partial append) rather than waiting.
+    lock_fh.seek(0)
+    msvcrt.locking(lock_fh.fileno(), msvcrt.LK_LOCK, 1)
     try:
         yield
     finally:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+        lock_fh.seek(0)
+        msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 class ChainHashAuditStore:

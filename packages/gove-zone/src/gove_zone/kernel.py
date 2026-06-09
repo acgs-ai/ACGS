@@ -36,6 +36,7 @@ from gove_zone.errors import (
 from gove_zone.escalation import PendingApproval
 from gove_zone.policy import Policy, new_event_id
 from gove_zone.receipt import Receipt, safe_result_hash
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 
 
@@ -64,6 +65,7 @@ class Kernel:
         registry: ToolRegistry | None = None,
         actor: str = "anonymous",
         policy_timeout: float | None = None,
+        side_store: ReplaySideStore | None = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
@@ -73,6 +75,12 @@ class Kernel:
         # seconds or the kernel synthesizes a fail-closed DENY. None
         # preserves the unbounded synchronous path (default).
         self.policy_timeout = policy_timeout
+        # Opt-in raw-args side-store. When None (default) the kernel writes
+        # nothing extra and behaves byte-for-byte as before. When set, every
+        # dispatch additionally persists the raw call so replay can re-derive
+        # the decision. It never affects the audit chain, the returned receipt,
+        # or the decision — strictly additive.
+        self.side_store = side_store
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator to register a tool under *name*.
@@ -215,6 +223,13 @@ class Kernel:
             payload = self.audit.append(record)
         except Exception as exc:
             raise AuditError(f"audit append failed for {record.event_id}: {exc}") from exc
+
+        # Additive raw-args side-store write. The audit chain is the source of
+        # truth and is already recorded; a side-store failure must never corrupt
+        # the audit contract or change the decision, so it is suppressed.
+        if self.side_store is not None:
+            with contextlib.suppress(Exception):
+                self.side_store.append(call, record)
 
         return record, str(payload["event_hash"])
 

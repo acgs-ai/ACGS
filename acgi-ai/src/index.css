@@ -39,6 +39,8 @@
   --accent: #b8422e; /* WCAG AA rust — single brand accent */
   --accent-2: #8f361e;
   --accent-soft: #f4e2d8;
+  --accent-on: #fafaf7; /* text/icon ON a rust fill — stays light in BOTH registers
+                         * (intentionally NOT remapped under control-plane) */
 
   --boundary: #f3ead4; /* parchment — privilege */
   --boundary-ink: #5a4111; /* AAA contrast 7.96:1 on --boundary at 11.5px */
@@ -93,6 +95,106 @@
     "calt" 1;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* =========================================================================
+ * Decision & feature status colors — signal, not decoration.
+ * Two tunings: editorial (on warm paper, below) and control-plane (bright on
+ * near-black, under [data-theme="control-plane"]). Badges read
+ * `color: var(--allow)` with a low-alpha color-mix fill so one rule adapts to
+ * whichever theme scope it renders inside (DESIGN.md §2.6).
+ * ========================================================================= */
+:root {
+  /* Decision states */
+  --allow: #2f7d3a; /* ALLOW — green, AA on paper */
+  --deny: #c0392b; /* DENY — red */
+  --review: #8a5a12; /* REVIEW_REQUIRED — amber/mustard */
+  --transform: #2a5db0; /* TRANSFORM — blue */
+
+  /* Feature / claim states */
+  --roadmap: #6b4ea8; /* ROADMAP / planned — purple (status-only, never decorative) */
+  --unverified: #6b6b6b; /* UNVERIFIED — gray */
+  --deprecated: #8a6a66; /* DEPRECATED — muted red-gray */
+  --verified: var(--allow);
+  --partial: var(--review);
+
+  /* =======================================================================
+   * --gz-* semantic surface aliases (editorial / light default).
+   * They map onto the warm-paper palette so control-plane components work on
+   * the editorial landing too. The [data-theme="control-plane"] scope below
+   * overrides only these aliases to flip a subtree dark.
+   * ======================================================================= */
+  --gz-bg: var(--paper);
+  --gz-surface: var(--paper-2);
+  --gz-surface-2: var(--paper-3);
+  --gz-surface-3: var(--paper-3);
+  --gz-line: var(--line-softer);
+  --gz-line-strong: var(--line);
+  --gz-fg: var(--ink);
+  --gz-fg-2: var(--ink-2);
+  --gz-fg-3: var(--muted);
+  --gz-brand: var(--accent);
+  --gz-brand-2: var(--accent-2);
+}
+
+/* =========================================================================
+ * Control-plane dark register (DESIGN.md §2.6). Apply
+ * data-theme="control-plane" to a subtree (console shell, product surface) to
+ * flip --gz-* surfaces dark and brighten status. The editorial landing stays
+ * warm paper. The parchment privilege boundary remains structural in dark.
+ * ========================================================================= */
+[data-theme="control-plane"] {
+  --gz-bg: #0d0f14; /* near-black, faint cool tint */
+  --gz-surface: #151823; /* slate card */
+  --gz-surface-2: #1b1f2b; /* raised slate */
+  --gz-surface-3: #232838; /* hover / selected */
+  --gz-line: #272c39; /* hairline border */
+  --gz-line-strong: #39414f; /* strong rule */
+  --gz-fg: #e7e9ee; /* primary text */
+  --gz-fg-2: #aab1bf; /* secondary text */
+  --gz-fg-3: #6c7382; /* muted / mono labels */
+  --gz-brand: #e07a5a; /* brightened rust on dark */
+  --gz-brand-2: #c8623f;
+
+  /* status — bright, control-plane tuned */
+  --allow: #3fb950;
+  --deny: #f85149;
+  --review: #e3b341;
+  --transform: #58a6ff;
+  --roadmap: #a371f7;
+  --unverified: #8b949e;
+  --deprecated: #b08c87;
+  --verified: var(--allow);
+  --partial: var(--review);
+
+  /* Base-token remap (DESIGN.md §2.6). The console/product rules use only the
+   * warm-paper aliases (--paper/--ink/--line/--accent) and carry NO hardcoded
+   * hex, so remapping those aliases onto the --gz-* dark surfaces flips the
+   * whole subtree dark with no per-rule changes. The parchment privilege
+   * boundary (--boundary*) is intentionally NOT remapped — it stays a warm
+   * structural strip on dark (DESIGN.md §4.3). */
+  --paper: var(--gz-bg);
+  --paper-2: var(--gz-surface);
+  --paper-3: var(--gz-surface-2);
+  --card: var(--gz-surface);
+  --ink: var(--gz-fg);
+  --ink-2: var(--gz-fg-2);
+  --ink-3: var(--gz-fg-2);
+  --muted: var(--gz-fg-3);
+  --muted-2: var(--gz-fg-3);
+  --line: var(--gz-line-strong);
+  --line-soft: var(--gz-line);
+  --line-softer: var(--gz-line);
+  --accent: var(--gz-brand);
+  --accent-2: var(--gz-brand-2);
+  --accent-soft: color-mix(in srgb, var(--gz-brand) 20%, transparent);
+
+  /* Risk pills brightened for legibility on near-black (map to bright status). */
+  --risk-lo: var(--allow);
+  --risk-mid: var(--review);
+  --risk-hi: var(--deny);
+
+  color-scheme: dark;
 }
 
 /* =========================================================================

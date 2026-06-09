@@ -1,0 +1,8 @@
+{
+  "allowed_action_executed": true,
+  "denied_action_blocked": true,
+  "transformed_action_executed": true,
+  "missing_receipt_blocked": true,
+  "tampered_receipt_blocked": true,
+  "audit_chain_verified": true
+}

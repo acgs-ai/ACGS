@@ -97,9 +97,23 @@ def _approve(pending: PendingApproval, audit: ChainHashAuditStore, **over) -> De
     return approve_escalation(pending, **kw)
 
 
-def _executor(*, tenant: str = TENANT, boundary: str = BOUNDARY, actor: str = PROPOSER):
+def _executor(
+    *,
+    tenant: str = TENANT,
+    boundary: str = BOUNDARY,
+    actor: str = PROPOSER,
+    require_signature: bool = False,
+):
+    # Default to the explicit unsigned dev profile: these tests exercise the
+    # actor/argument/tenant/decision gate logic, not signature verification.
+    # The signed-path test passes require_signature=True + a verifier per-call.
     fn, calls = _spy()
-    ex = GovernedExecutor(tenant_id=tenant, execution_boundary=boundary, expected_actor=actor)
+    ex = GovernedExecutor(
+        tenant_id=tenant,
+        execution_boundary=boundary,
+        expected_actor=actor,
+        require_signature=require_signature,
+    )
     ex.register("write_file", fn)
     return ex, calls
 
@@ -259,11 +273,34 @@ def test_signed_approval_roundtrips(tmp_path):
 
 
 def test_unsigned_approval_rejected_when_signature_required(tmp_path):
+    # Gate configured to verify signatures (verifier present), but the approval is
+    # unsigned -> verify check 2a rejects it. (A verifier is supplied so we reach
+    # verify rather than the production-misconfig guard, which the next test covers.)
     err, audit = _escalated(tmp_path)
     receipt = _approve(err.pending, audit)  # unsigned
+    verifier = Ed25519Signer.generate(key_id="kv")
     ex, calls = _executor()
     with pytest.raises(ReceiptValidationError, match="signature required"):
-        resume_with_receipt(ex, err.pending, receipt, require_signature=True)
+        resume_with_receipt(ex, err.pending, receipt, verifier=verifier, require_signature=True)
+    assert calls == []
+
+
+def test_production_executor_without_verifier_fails_closed(tmp_path):
+    # Production profile is the executor default (require_signature=True). Resuming
+    # through it with no verifier configured fails closed LOUD (ProductionProfileError,
+    # a ReceiptValidationError subclass) rather than silently downgrading — the bridge
+    # inherits the secure default.
+    err, audit = _escalated(tmp_path)
+    receipt = _approve(err.pending, audit)
+    fn, calls = _spy()
+    ex = GovernedExecutor(
+        tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=PROPOSER
+    )  # production default: require_signature=True, no verifier
+    ex.register("write_file", fn)
+    with pytest.raises(
+        ReceiptValidationError, match="production profile requires a signer/verifier"
+    ):
+        resume_with_receipt(ex, err.pending, receipt)
     assert calls == []
 
 
@@ -295,6 +332,7 @@ def test_resume_anchors_expected_actor_to_proposer(tmp_path):
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor="executor-default-not-the-proposer",
+        require_signature=False,
     )
     ex.register("write_file", fn)
     result = resume_with_receipt(ex, err.pending, receipt)
@@ -312,7 +350,12 @@ def test_resume_rejects_receipt_issued_for_different_proposer(tmp_path):
     receipt_x = _approve(err_x.pending, audit)  # actor == agent-x
     err_y, _ = _escalated(tmp_path, actor="agent-y")  # same tool+args, proposer agent-y
     fn, calls = _spy()
-    ex = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor="agent-y")
+    ex = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor="agent-y",
+        require_signature=False,
+    )
     ex.register("write_file", fn)
     with pytest.raises(ReceiptValidationError, match="actor mismatch"):
         resume_with_receipt(ex, err_y.pending, receipt_x)
@@ -332,7 +375,12 @@ def test_known_limitation_single_approval_is_replayable(tmp_path):
     err, audit = _escalated(tmp_path)
     receipt = _approve(err.pending, audit)
     fn, calls = _spy()
-    ex = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=PROPOSER)
+    ex = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=PROPOSER,
+        require_signature=False,
+    )
     ex.register("write_file", fn)
     for _ in range(3):
         assert resume_with_receipt(ex, err.pending, receipt) == "wrote /tmp/safe"

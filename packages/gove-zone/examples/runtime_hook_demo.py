@@ -78,6 +78,12 @@ def main() -> int:
 
         _banner("3. Enforce mode + bad audit path: fail closed")
         os.environ["GOVE_ZONE_GATE_MODE"] = "enforce"
+        # The passive runtime-hook auditor emits unsigned audit-anchor Receipts.
+        # Under the production profile (the default), ENFORCE mode would fail closed
+        # loud because no signer is threaded into emit_receipt_for_hook. This beat
+        # isolates the GateMode emission-failure behavior, so explicitly select the
+        # dev profile — signing is orthogonal to GateMode.
+        os.environ["GOVE_ZONE_PROFILE"] = "dev"
         os.environ["GOVE_ZONE_AUDIT_PATH"] = "/proc/1/cannot/write/audit.jsonl"
         print(f"gate mode  : {current_gate_mode().value}")
         try:

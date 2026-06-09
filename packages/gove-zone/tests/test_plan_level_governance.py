@@ -91,7 +91,14 @@ def _inner_receipt(
 
 
 def _governed(tool: Tool, action: str, *, actor: str = RUNNER) -> GovernedExecutor:
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=actor)
+    # Inner step receipts here are unsigned; authorization/envelope signing is
+    # exercised separately. Run the inner gate in explicit dev mode.
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=actor,
+        require_signature=False,
+    )
     g.register(action, tool.run)
     return g
 
@@ -679,7 +686,12 @@ def test_cross_level_separation_persists_across_steps() -> None:
     )
     dag.validate()
     tool = Tool()
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=RUNNER)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=RUNNER,
+        require_signature=False,  # explicit dev mode: unsigned inner step receipt
+    )
     g.register("runtime.act", tool.run)
     # plan_proposer P (≠ runner) is a seeded proposer; a later step validated by P
     # is cross-level collusion. Distinct plan_validator keeps plan MACI + runner

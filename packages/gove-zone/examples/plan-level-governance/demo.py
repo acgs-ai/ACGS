@@ -163,7 +163,12 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
 
     def fresh_executor(auth: WorkflowAuthorization) -> tuple[WorkflowExecutor, dict[str, Tool]]:
         tools = {sid: Tool(sid) for sid in dag.steps}
-        g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=RUNNER)
+        g = GovernedExecutor(
+            tenant_id=TENANT,
+            execution_boundary=BOUNDARY,
+            expected_actor=RUNNER,
+            require_signature=False,  # explicit dev mode (unsigned inner receipt)
+        )
         for sid, step in dag.steps.items():
             g.register(step.action, tools[sid].run)
         return WorkflowExecutor(
@@ -182,7 +187,12 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
 
     # 2. Missing authorization: the executor cannot even be constructed.
     print("[2] A missing authorization cannot construct the executor (fail-closed)")
-    g = GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=RUNNER)
+    g = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=RUNNER,
+        require_signature=False,  # explicit dev mode (unsigned inner receipt)
+    )
     g.register("runtime.http.get", Tool("fetch").run)
     try:
         WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g)  # type: ignore[call-arg]

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+uv.lock
+
+# Engine runtime artifacts (knowledge graphs, briefs)
+*.delve.json
+runs/
+
+# OMC session runtime (keep .omc/ultragoal plan + ledger)
+.omc/state/
+.omc/logs/

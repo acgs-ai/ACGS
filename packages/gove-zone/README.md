@@ -9,6 +9,25 @@ sit immediately before high-risk side effects.
 gove-zone is **not an agent framework**. It is the enforcement layer an agent,
 MCP tool, workflow engine, CI runner, or custom executor calls *before* it acts.
 
+> **Naming.** `gove-zone` is the governed-runtime **kernel**. It lives inside
+> the **govern-zone** workspace (the ACGS monorepo) at `packages/gove-zone/`.
+> `govern-zone` is the whole platform; `gove-zone` is this enforcement core —
+> the two names are deliberate (workspace vs. package), not a typo.
+
+### Prove it in 30 seconds
+
+No agent host, network call, production credential, or external service:
+
+```bash
+uv run --package gove-zone gove-zone smoke
+```
+
+It emits claim-bounded JSON proving a safe `write_file` was **allowed**, an
+`id_rsa` path write was **denied before any side effect**, and both decisions
+verify as a hash-linked audit chain — then exits non-zero if any check fails.
+See [One-command smoke proof](#one-command-smoke-proof) for the full output and
+`--audit` evidence retention.
+
 > Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
 > production-shaped foundation only. **NOT** production-certified and **NOT**
 > compliance-certified. Do not make live production deployment claims without
@@ -48,12 +67,60 @@ every decision leaves tamper-evident audit evidence.
 
 The same thread is covered as a test in `tests/test_end_to_end.py`.
 
+## When should I use gove-zone?
+
+gove-zone is a narrow enforcement layer, not a platform. It earns its place when
+you need *verifiable proof, gated before the act* — and it is the wrong tool when
+you need breadth.
+
+**Use gove-zone if**
+
+- You need machine-checkable proof that a **specific tool call, with specific
+  arguments**, was authorized by policy *before* it ran — not logged after.
+- You operate under a **fail-closed** mandate: if governance cannot decide, the
+  action is denied, never silently allowed.
+- You want an **append-only, tamper-evident audit chain** a third party can
+  replay and verify offline, without re-running your policy.
+- You need **proposer ≠ validator** separation (MACI): the agent requesting an
+  action cannot also be the authority that approves it.
+- You already own **authentication and tool sandboxing**, and need the
+  governance decision in the last mile before execution — inside an MCP server,
+  a LangGraph / OpenAI-Agents tool, a CI/deploy step, or a custom executor.
+- You want **cryptographic non-repudiation** of decisions: the default
+  production profile signs receipts (Ed25519), so a recomputed-hash forgery is
+  infeasible without the key.
+- You are **multi-tenant** and need one tenant's policy/receipt to be unusable
+  in another's execution context.
+
+**Do NOT use gove-zone if**
+
+- You want an **agent framework**. gove-zone has no planner and no orchestration
+  of its own; integrate it *into* your framework, don't replace it.
+- You expect **policies to be written for you**. Policies are explicit (rules /
+  code); you author them.
+- You need a turnkey **PKI, key rotation, or revocation** service. Production
+  signing is point-to-point; key custody, distribution, and rotation are yours
+  to operate (see `SECURITY.md` → *Ed25519 receipt signing*).
+- Your threat model is **a compromised host**. An attacker who can write the
+  audit file and run the issuer can forge a consistent local chain; the chain
+  proves tamper-evidence to *readers*, not unforgeability under host compromise.
+- You need **human-in-the-loop approval resolution today**. `ESCALATE` blocks
+  the action but does not yet route to an approver.
+- You need **production / compliance certification**. gove-zone is alpha
+  (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
+  certification.
+
+For the full boundary — what is enforced, what is explicitly out of scope, and
+what you must supply externally — see the one-page
+[threat model](docs/threat-model.md) and the deeper [`SECURITY.md`](SECURITY.md).
+
 ## Documentation
 
 | Topic | Doc |
 |---|---|
 | Architecture & components | `ARCHITECTURE.md` |
-| Security boundary & threat model | `SECURITY.md` |
+| Threat model (one page: prevents / does not / supply externally) | `docs/threat-model.md` |
+| Security boundary (deep) | `SECURITY.md` |
 | Receipt schema & verification | `docs/decision-receipts.md` |
 | Governed execution flow | `docs/governed-execution.md` |
 | Audit evidence & chain | `docs/audit-evidence.md` |
@@ -266,6 +333,49 @@ Two events tampered with after the fact:
 store.verify_chain()
 # → {"valid": False, "checked": N, "failures": [...]}
 ```
+
+## Replay (what it actually verifies)
+
+`gove-zone replay --audit CHAIN --event E` verifies the audit chain: the hash
+chain is intact, the event exists, and its recorded hash matches. It does **not**
+re-run the policy by default, because the audit chain stores only
+`argument_hash` — never raw arguments. That hash-only property is a deliberate
+privacy and chain-size guarantee.
+
+To get **true re-derivation** — re-run the original policy against the original
+arguments and confirm the recorded verdict still holds — enable the opt-in
+raw-args side-store and supply the original policy at replay time:
+
+```python
+from gove_zone import Kernel, ReplaySideStore
+
+kernel = Kernel(
+    policy=policy,
+    audit=ChainHashAuditStore(".gove-zone/audit.jsonl"),
+    side_store=ReplaySideStore(".gove-zone/replay.jsonl"),  # off by default
+)
+```
+
+```bash
+gove-zone replay --audit .gove-zone/audit.jsonl \
+  --side-store .gove-zone/replay.jsonl \
+  --policy-bundle policy.bundle.json \
+  --event EV
+# → {... "rederived": true, "rederivation_status": "verified", "replayed_decision": "deny"}
+```
+
+The side-store is a **separate file** from the audit chain — the chain stays
+byte-for-byte hash-only. Replay cross-checks each side record's raw args against
+the chain's recorded `argument_hash`; any drift fails the re-derivation
+(`rederivation_status: "argument-hash-mismatch"`) rather than passing silently.
+Re-derivation also requires the supplied policy's version to match the recorded
+`policy_version` (else `"policy-version-mismatch"`).
+
+Honest fallback: with no `--side-store`/`--policy-bundle`, or for a **redacted**
+event (`rederivation_status: "redacted"`) or one absent from the side-store
+(`"no-side-record"`), replay reports the chain result only and never claims a
+re-derivation it cannot perform. Redaction is fail-safe: sensitive calls are
+stored as tombstones carrying no raw args.
 
 ## Runtime-hook integration
 

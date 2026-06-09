@@ -162,7 +162,7 @@ export const FRAMEWORK_INTEGRATION_RAIL = [
     source: 'Claude/Codex-style · MCP-style · OpenAI Responses',
     proof: 'tool_call_from_hook_payload',
     body: 'Translate common agent-framework tool-call shapes into one governed request before policy decisions run.',
-    route: '/products/gove-zone',
+    route: '/products/acgs',
     cta: 'Open runtime path',
   },
   {
@@ -202,7 +202,7 @@ export const AGENT_FRAMEWORK_STARTER_KITS = [
       'uv run --package gove-zone gove-zone gate --event-file openai-responses-tool-call.json --policy-bundle policy.bundle.json',
     proof: 'responses.output[].type=function_call',
     next: 'Pick payload → run gate → attach receipt before a tool side effect.',
-    route: '/products/gove-zone',
+    route: '/products/acgs',
     cta: 'Open runtime path',
   },
   {
