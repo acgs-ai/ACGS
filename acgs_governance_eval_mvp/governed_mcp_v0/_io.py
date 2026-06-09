@@ -15,8 +15,12 @@ from hashlib import sha256
 from pathlib import Path
 from typing import IO, Any
 
+from governance.audit.jsonl_chain import UnsafeAuditStorageError, _refuse_unreliable_fs
+
 from .constants import GENESIS_HASH
 from .models import RuntimeTargets
+
+__all__ = ["UnsafeAuditStorageError", "canonical_json", "sha256_json"]
 
 
 def canonical_json(value: Any) -> str:
@@ -58,9 +62,16 @@ def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
 def _evidence_lock(audit_path: Path) -> IO[str]:
     """Serialize evidence writers with a sidecar POSIX lock file.
 
+    Refuses to acquire the lock — before any side effect, including the
+    parent-directory mkdir — when the audit path resolves to a filesystem
+    whose fcntl LOCK_EX semantics are unreliable (NFS, CIFS, FUSE,
+    Gluster, Ceph). Raises ``UnsafeAuditStorageError`` so the unreliable
+    mount fails closed with zero evidence bytes written.
+
     TODO: ``fcntl`` is POSIX-only; Windows fallback is out of scope because
     the package CI runs on Linux.
     """
+    _refuse_unreliable_fs(audit_path)
     lock_path = audit_path.with_suffix(audit_path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as handle:
