@@ -65,10 +65,10 @@
 /* nav */
 .m-nav {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3xl);
-  padding: 28px 0 24px;
+  padding: 16px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -105,6 +105,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
   padding: 10px 18px;
   background: var(--ink);
   color: var(--paper);
@@ -173,7 +174,7 @@
   letter-spacing: -0.02em;
   margin-top: 32px;
   color: var(--ink);
-  max-width: 14ch;
+  max-width: 18ch;
   /* Keep the italic-rust word from orphaning on its own line as the
      viewport flexes between the 56px and 96px clamp endpoints. Same
      reasoning as F6 on .login-h1. */
@@ -204,6 +205,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  white-space: nowrap;
   padding: 12px 20px;
   font-family: var(--font-sans);
   font-weight: 500;
@@ -429,7 +431,7 @@
 /* workbench blueprint — visualized operator work, same editorial primitives */
 .m-workbench {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.38fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3xl);
   margin-top: 32px;
   align-items: start;
@@ -518,11 +520,33 @@
 }
 
 .m-workbench-panel {
+  columns: 248px 4;
+  column-gap: var(--space-3xl);
   padding: 26px 24px 28px;
   border: 1px solid var(--line-softer);
   border-top: 2px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--paper-2);
+}
+
+/* Intro furniture spans every column; each launch-ops rail then masonry-packs
+   into the editorial columns below. Replaces the former ~12k-px aside wall
+   with a compact poster grid without removing any contract-mandated rail. */
+.m-workbench-panel > .folio-no,
+.m-workbench-panel > h3,
+.m-workbench-panel > p {
+  column-span: all;
+}
+
+.m-workbench-panel > ul {
+  column-span: all;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.m-workbench-panel > section {
+  break-inside: avoid;
 }
 
 .m-workbench-panel .folio-no {
@@ -860,55 +884,147 @@
 /* coverage / framework table */
 .m-coverage {
   margin-top: 32px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line-soft);
-  /* F-A8 — middle "Sections enforced" cell holds a 50+ char mono citation
-     chain (e.g. "Art. 9 risk · Art. 14 oversight · Art. 15(4) accuracy").
-     Without containment the table widens past the viewport at <720px and
-     forces document-level horizontal scroll. Scope the overflow here. */
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+  overflow: hidden;
   overflow-x: auto;
 }
 
 .m-coverage table {
   width: 100%;
-  min-width: 560px;
-}
-
-.m-coverage th,
-.m-coverage td {
-  padding: 15px 20px;
-  text-align: left;
-  border-bottom: 1px solid var(--line-softer);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  min-width: 680px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .m-coverage th {
+  padding: 18px 24px;
+  text-align: left;
+  font-family: var(--font-sans);
   font-size: 11px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
-  font-weight: 500;
-  border-bottom-color: var(--line-soft);
+  font-weight: 600;
+  background: var(--paper-3);
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.m-coverage td:first-child {
+.m-coverage td {
+  padding: 18px 24px;
+  text-align: left;
+  border-bottom: 1px solid var(--line-softer);
+  background: var(--paper);
+  vertical-align: middle;
+  transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.m-coverage tr:last-child td {
+  border-bottom: none;
+}
+
+.m-framework-cell {
+  width: 25%;
+}
+
+.m-framework-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.m-framework-name {
   color: var(--ink);
-  font-weight: 500;
+  font-weight: 600;
   font-family: var(--font-sans);
-  font-size: 14px;
-  letter-spacing: 0;
+  font-size: 15px;
+  letter-spacing: -0.015em;
 }
 
-.m-coverage td:nth-child(2) {
-  color: var(--ink-3);
+.m-framework-type {
+  display: inline-flex;
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1.2;
 }
-.m-coverage td:last-child {
+
+.type-regulatory {
+  background: color-mix(in srgb, var(--risk-lo) 8%, transparent);
+  color: var(--risk-lo);
+  border: 1px solid color-mix(in srgb, var(--risk-lo) 15%, transparent);
+}
+
+.type-federal {
+  background: color-mix(in srgb, var(--risk-mid) 8%, transparent);
+  color: var(--risk-mid);
+  border: 1px solid color-mix(in srgb, var(--risk-mid) 15%, transparent);
+}
+
+.type-standard {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink-2);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.m-sections-cell {
+  width: 60%;
+}
+
+.m-sections-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.m-section-badge {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-3);
+  background: var(--paper-2);
+  border: 1px solid var(--line-softer);
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: default;
+}
+
+.m-section-badge:hover {
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  border-color: var(--accent-soft);
+}
+
+.m-version-cell {
+  width: 15%;
   text-align: right;
 }
-.m-coverage tbody tr:hover {
+
+.m-version-badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--paper-3);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-coverage-row td {
+  border-left: 3px solid transparent;
+}
+
+.m-coverage-row:hover td {
   background: var(--paper-2);
+  border-left-color: var(--accent);
 }
 
 /* pricing */
@@ -943,15 +1059,15 @@
   color: var(--accent-soft);
 }
 .m-tier.feat hr {
-  border-color: rgba(250, 250, 247, 0.12);
+  border-color: color-mix(in srgb, var(--paper) 12%, transparent);
 }
 .m-tier.feat .btn-primary {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--paper);
 }
 .m-tier.feat .btn-primary:hover {
   background: var(--accent);
-  color: var(--ink);
+  color: var(--paper);
   border-color: var(--accent-2);
 }
 
@@ -988,6 +1104,12 @@
   letter-spacing: 0.04em;
 }
 
+/* The non-priced tier ("On request") carries no unit; render it as a calmer
+   label so it stops masquerading as a giant numeral beside the priced tiers. */
+.t-price:has(.t-price-unit:empty) .t-price-num {
+  font-size: 30px;
+}
+
 .m-tier hr {
   border: 0;
   border-top: 1px solid var(--line-softer);
@@ -1017,6 +1139,12 @@
   font-style: italic;
   color: var(--accent);
   margin-top: -2px;
+}
+
+/* Pin the CTA to the card floor so the three buttons share one baseline
+   regardless of how many bullets a tier lists. */
+.m-tier .btn {
+  margin-top: auto;
 }
 
 /* footer — address-block (Stripe Press inspired) */
@@ -1119,7 +1247,7 @@
 }
 
 .m-foot-bar {
-  border-top: 1px solid rgba(250, 250, 247, 0.1);
+  border-top: 1px solid color-mix(in srgb, var(--paper) 10%, transparent);
   padding: 20px 0;
   display: flex;
   justify-content: space-between;
@@ -1364,7 +1492,7 @@
   display: none;
   position: fixed;
   inset: 0;
-  background: rgba(26, 26, 26, 0.4);
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
   border: 0;
   padding: 0;
   cursor: pointer;
@@ -2390,6 +2518,8 @@
   font-size: 13px;
 }
 
+/* DESIGN.md depth = paper layering + hairline rules, not gradients. Per-panel
+   semantics carried by a left rule (accent/rust/ink), matching .login-interstitial. */
 .workbench-cutover-summary,
 .workbench-blocker-summary,
 .workbench-live-summary,
@@ -2401,40 +2531,19 @@
   margin-top: 18px;
   padding: 18px;
   border: 1px solid var(--line-softer);
+  border-left: 3px solid var(--accent);
   border-radius: var(--radius-lg);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
-    var(--paper);
+  background: var(--paper-2);
 }
 
-.workbench-live-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 6%, transparent), transparent 38%),
-    var(--paper);
-}
-
-.workbench-blocker-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 5%, transparent), transparent 40%),
-    var(--paper);
-}
-
+.workbench-live-summary,
+.workbench-blocker-summary,
 .workbench-command-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--rust) 4%, transparent), transparent 42%),
-    var(--paper);
-}
-
-.workbench-storybook-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 42%),
-    var(--paper);
+  border-left-color: var(--rust);
 }
 
 .workbench-assurance-summary {
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--ink) 5%, transparent), transparent 36%),
-    var(--paper);
+  border-left-color: var(--ink);
 }
 
 .workbench-cutover-summary > div:first-child,
@@ -4192,7 +4301,6 @@
   border-left: 4px solid var(--accent);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--paper-2) 86%, var(--accent) 14%);
-  box-shadow: var(--shadow-soft);
   padding: 20px 22px;
   display: grid;
   gap: 14px;
