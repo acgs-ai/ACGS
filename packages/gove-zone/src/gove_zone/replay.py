@@ -12,8 +12,10 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
-from gove_zone.decision import Decision, sha256_json
+from gove_zone.decision import Decision, canonical_json, sha256_json
+from gove_zone.errors import AuditError
 from gove_zone.policy import Policy
+from gove_zone.replay_store import ReplaySideStore
 from gove_zone.tool import ToolCall
 
 
@@ -89,6 +91,24 @@ def replay_call(
     )
 
 
+def _call_from_side_record(event: dict[str, Any], side_record: dict[str, Any]) -> ToolCall:
+    """Reconstruct the original :class:`ToolCall` from an audit *event* plus
+    its raw-args *side_record*.
+
+    The tool name comes from the tamper-evident audit event; everything the
+    chain deliberately does not retain (raw args, state, path, actor, goal)
+    comes from the side-store record.
+    """
+    return ToolCall(
+        name=str(event.get("tool", "")),
+        args=dict(side_record.get("args", {})),
+        goal=str(side_record.get("goal", "")),
+        actor=str(side_record.get("actor", "")),
+        path=tuple(side_record.get("path", ()) or ()),
+        state=dict(side_record.get("state", {})),
+    )
+
+
 def replay_from_side_store(
     event: dict[str, Any],
     side_record: dict[str, Any],
@@ -112,14 +132,7 @@ def replay_from_side_store(
     """
     event_id = str(event.get("event_id", ""))
     original = Decision(event["decision"])
-    call = ToolCall(
-        name=str(event.get("tool", "")),
-        args=dict(side_record.get("args", {})),
-        goal=str(side_record.get("goal", "")),
-        actor=str(side_record.get("actor", "")),
-        path=tuple(side_record.get("path", ()) or ()),
-        state=dict(side_record.get("state", {})),
-    )
+    call = _call_from_side_record(event, side_record)
 
     if call.argument_hash() != event.get("argument_hash"):
         return ReplayResult(
@@ -139,6 +152,149 @@ def replay_from_side_store(
         expected_policy_version=event.get("policy_version"),
     )
     return replace(result, event_id=event_id)
+
+
+def replay_bundle(
+    store: ChainHashAuditStore,
+    side_store: ReplaySideStore,
+    policy: Policy,
+) -> dict[str, Any]:
+    """Bundle-scope replay equivalence over an entire audit chain.
+
+    Re-derives **every** decision in *store* (in chain order) from the raw
+    arguments retained in *side_store*, and byte-compares each re-derived
+    decision payload against what the chain recorded. This is the strongest
+    offline integrity artifact the kernel offers: chain integrity (hash links),
+    side-store/chain consistency (argument-hash cross-check), and full policy
+    re-derivation (decision + canonical-JSON byte equivalence) in one verdict.
+
+    Per event:
+
+    1. Fetch the side record. Missing or redacted/tombstone records cannot be
+       re-derived; they fall back to :func:`replay_event` (policy-version-only)
+       and are counted as *degraded*, never as *matched*.
+    2. Cross-check + semantic re-derivation via :func:`replay_from_side_store`
+       (argument-hash against the chain, decision + policy version re-run).
+    3. Byte equivalence: re-run ``policy.evaluate`` on the reconstructed call,
+       re-attach the kernel-owned context exactly as ``Kernel.dispatch`` does
+       (goal/actor/path/state_hash/decision_request_hash), pin the two
+       nondeterministic identity fields (``event_id``, ``timestamp_iso``) to
+       the recorded values, then require ``canonical_json`` of the re-derived
+       record to be byte-identical to the recorded event payload (the event
+       minus its chain fields ``previous_hash``/``event_hash``).
+
+    Returns a dict with ``valid`` (bool), ``chain_valid`` (bool),
+    ``events_total``, ``events_matched``, ``events_degraded`` (ints), and
+    ``mismatches`` (list of per-event detail dicts). Fail-closed: an invalid
+    chain, an unreadable chain, or any single mismatch makes ``valid`` False.
+    """
+    mismatches: list[dict[str, Any]] = []
+    events_total = 0
+    events_matched = 0
+    events_degraded = 0
+
+    try:
+        chain = store.verify_chain()
+        events = list(store.iter_events())
+    except AuditError as exc:
+        return {
+            "valid": False,
+            "chain_valid": False,
+            "events_total": 0,
+            "events_matched": 0,
+            "events_degraded": 0,
+            "mismatches": [{"event_id": None, "type": "chain_unreadable", "detail": str(exc)}],
+        }
+
+    chain_valid = bool(chain["valid"])
+    for failure in chain["failures"]:
+        mismatches.append(
+            {
+                "event_id": failure.get("event_id"),
+                "type": f"chain_{failure.get('type', 'failure')}",
+                "detail": failure,
+            }
+        )
+
+    for event in events:
+        events_total += 1
+        event_id = str(event.get("event_id", ""))
+        side_record = side_store.get(event_id)
+
+        if side_record is None or side_record.get("redacted"):
+            # Honest degradation: no raw args retained, so only the
+            # policy-version check is possible. Never counted as matched.
+            fallback = replay_event(event, policy)
+            if fallback.matches:
+                events_degraded += 1
+            else:
+                mismatches.append(
+                    {
+                        "event_id": event_id,
+                        "type": "degraded_policy_version_mismatch",
+                        "detail": fallback.to_dict(),
+                    }
+                )
+            continue
+
+        semantic = replay_from_side_store(event, side_record, policy)
+        if not semantic.matches:
+            mismatches.append(
+                {
+                    "event_id": event_id,
+                    "type": (
+                        "argument_hash_mismatch"
+                        if not semantic.argument_hash_match
+                        else "decision_mismatch"
+                    ),
+                    "detail": semantic.to_dict(),
+                }
+            )
+            continue
+
+        # Byte equivalence: re-derive the full DecisionRecord the way the
+        # kernel produced it, normalize only the nondeterministic identity
+        # fields to the recorded values, and compare canonical JSON bytes.
+        call = _call_from_side_record(event, side_record)
+        fresh = policy.evaluate(call)
+        fresh = replace(
+            fresh,
+            goal=call.goal,
+            actor=call.actor,
+            path=call.path,
+            state_hash=call.state_hash(),
+            decision_request_hash=call.decision_request_hash(),
+            event_id=event_id,
+            timestamp_iso=str(event.get("timestamp_iso", "")),
+        )
+        recorded_payload = {
+            k: v for k, v in event.items() if k not in ("previous_hash", "event_hash")
+        }
+        recorded_bytes = canonical_json(recorded_payload).encode("utf-8")
+        rederived_bytes = canonical_json(fresh.to_dict()).encode("utf-8")
+        if rederived_bytes != recorded_bytes:
+            mismatches.append(
+                {
+                    "event_id": event_id,
+                    "type": "byte_mismatch",
+                    "detail": {
+                        "recorded": recorded_payload,
+                        "rederived": fresh.to_dict(),
+                    },
+                }
+            )
+            continue
+
+        events_matched += 1
+
+    return {
+        "valid": chain_valid and not mismatches,
+        "chain_valid": chain_valid,
+        "events_total": events_total,
+        "events_matched": events_matched,
+        "events_degraded": events_degraded,
+        "mismatches": mismatches,
+    }
 
 
 def find_event(store: ChainHashAuditStore, event_id: str) -> dict[str, Any] | None:
