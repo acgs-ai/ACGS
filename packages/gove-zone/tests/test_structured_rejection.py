@@ -28,6 +28,7 @@ from gove_zone import (
     rejection_dict,
     sha256_json,
 )
+from gove_zone.rejection import _FAIL_CLOSED_REASON
 from gove_zone.tool import ToolCall
 
 
@@ -136,7 +137,7 @@ def test_denied_envelope_shape(tmp_path) -> None:
     # pinned to the actual bound value, not merely "truthy"
     assert env["decision_request_hash"] == err.record.decision_request_hash
     assert env["decision_request_hash"]  # bound at dispatch, non-empty
-    assert env["allowed_alternatives"] == []
+    assert "allowed_alternatives" not in env  # omitted until PR-2 computes it
     assert "approval" not in env  # deny carries no resume affordance
     assert ran == []  # DENY executed no side effect
 
@@ -215,6 +216,40 @@ def test_fail_closed_synth_deny_projects(tmp_path) -> None:
     assert env["resolution"] == "revise_and_retry"
     assert env["policy_version"] == "fail-closed/policy-raised"
     assert any("POLICY_ERROR" in r for r in env["matched_rules"])
+    # reason is redacted on fail-closed records — exception text never reaches the agent
+    assert env["reason"] == _FAIL_CLOSED_REASON
+    assert "boom" not in env["reason"]
+    # ...but the audit-retained record keeps the full exception-derived reason
+    assert "boom" in ei.value.record.reason
+
+
+def test_fail_closed_reason_redacts_exception_arg_leak(tmp_path) -> None:
+    """A policy whose exception message embeds a raw arg value must NOT leak it.
+
+    On the fail-closed synth-DENY path the kernel sets ``reason=f'...{exc}'``; if
+    the exception echoes an argument, the verbatim ``record.reason`` carries it.
+    The envelope redacts ``reason``, so the agent-facing channel is leak-safe by
+    construction — the value survives only in the audit-retained ``record.reason``.
+    """
+    sentinel = "ARG-SENTINEL-fec1c3a9d8b04127"
+
+    class _ArgEchoRaisingPolicy(Policy):
+        @property
+        def version(self) -> str:
+            return "test-arg-echo-raising/v1"
+
+        def evaluate(self, call: ToolCall) -> DecisionRecord:
+            raise RuntimeError(f"schema validation failed for {call.args.get('secret')}")
+
+    kernel = _kernel_with(_ArgEchoRaisingPolicy(), tmp_path)
+    with pytest.raises(DeniedError) as ei:
+        kernel.dispatch("do.thing", {"secret": sentinel}, goal="g")
+    err = ei.value
+    env = err.to_rejection_dict()
+
+    assert sentinel in err.record.reason  # kernel synthesized it into the record (audit keeps it)
+    assert env["reason"] == _FAIL_CLOSED_REASON  # ...but the envelope redacts it
+    assert sentinel not in json.dumps(env)  # the value never reaches the agent
 
 
 def test_envelope_does_not_leak_arg_values(tmp_path) -> None:
@@ -254,7 +289,6 @@ def test_envelope_does_not_leak_arg_values(tmp_path) -> None:
         "audit_hash",
         "resumable",
         "resolution",
-        "allowed_alternatives",
         "approval",
     }
     assert set(env) <= record_keys | control_keys

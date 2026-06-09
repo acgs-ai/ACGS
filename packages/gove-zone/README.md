@@ -474,8 +474,8 @@ except DeniedError as exc:
     rejection = exc.to_rejection_dict()
     # {"status": "deny", "outcome": "denied", "resumable": False,
     #  "resolution": "revise_and_retry", "reason": ..., "matched_rules": [...],
-    #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...,
-    #  "allowed_alternatives": []}
+    #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...}
+    # (allowed_alternatives is omitted until PR-2 computes it — see Notes)
 ```
 
 `ESCALATE` is **not** a dead-end — its envelope is `resumable` and advertises the
@@ -497,17 +497,22 @@ receipt-verifying gate.
 - Pure projection — no decision is made and nothing is mutated. The envelope
   carries `decision_request_hash` / `audit_hash` (never raw arguments), no
   `state_hash`, and no `transformed_args`.
-- The only free-text field is the policy-authored `reason`. **Keep policy
-  `reason` strings non-sensitive** — they surface to callers, as they already do
-  in the audit chain and the console projection.
+- `reason` has two provenances. On a **policy** verdict it is *policy-authored*
+  free text, surfaced verbatim — **keep policy `reason` strings non-sensitive**
+  (they also reach the audit chain and the console). On a **fail-closed fallback**
+  verdict (`policy_version` starts with `fail-closed/` — the policy raised or timed
+  out), `reason` would be derived from the raising exception and could echo raw
+  arguments, so the envelope **redacts** it to a fixed safe summary; the error
+  class stays in `matched_rules` and the full reason is retained in the audit chain.
 - `resumable` tracks the *actual* affordance: it is `True` iff a
   `PendingApproval` is attached, which the kernel does on every `ESCALATE`. For
   an `EscalateError` built outside the kernel, both `resumable` and
   `approval.pending` are `False` — gate the resume call on either; they never
   disagree.
-- `allowed_alternatives` is provisional: `[]` means *"not yet computed"*, to be
-  populated by a future capability-discovery (`simulate`) primitive — not a claim
-  that no alternative is permitted.
+- `allowed_alternatives` is **omitted** until a future capability-discovery
+  (`simulate`, PR-2) primitive computes it. Absence means *"not computed"*; a
+  present list (even empty) will mean *"computed"* — so the key never carries an
+  in-band ambiguity between "unknown" and "none permitted".
 
 ## Auto-setup
 
