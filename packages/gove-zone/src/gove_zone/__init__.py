@@ -35,6 +35,11 @@ from gove_zone.errors import (
     SigningError,
     UnknownToolError,
 )
+from gove_zone.escalation import (
+    PendingApproval,
+    approve_escalation,
+    resume_with_receipt,
+)
 from gove_zone.evaluation import (
     EvaluationReport,
     EvaluationResult,
@@ -130,6 +135,7 @@ __all__ = [
     "Kernel",
     "NullSigner",
     "PathBoundaryPolicy",
+    "PendingApproval",
     "Policy",
     "PolicyBundleRef",
     "PolicyRule",
@@ -156,6 +162,7 @@ __all__ = [
     "WorkflowStepReceipt",
     "__version__",
     "agentdojo_scenarios_from_fixture",
+    "approve_escalation",
     "emit_receipt_for_hook",
     "emit_receipts_for_hook",
     "evaluate_policy_scenarios",
@@ -174,6 +181,7 @@ __all__ = [
     "record_to_governed_action",
     "replay_call",
     "replay_event",
+    "resume_with_receipt",
     "run_smoke",
     "safe_result_hash",
     "sha256_json",

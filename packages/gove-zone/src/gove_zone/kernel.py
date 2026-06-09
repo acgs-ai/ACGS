@@ -33,6 +33,7 @@ from gove_zone.errors import (
     EscalateError,
     UnknownToolError,
 )
+from gove_zone.escalation import PendingApproval
 from gove_zone.policy import Policy, new_event_id
 from gove_zone.receipt import Receipt, safe_result_hash
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
@@ -128,7 +129,11 @@ class Kernel:
         if record.decision is Decision.DENY:
             raise DeniedError(record, audit_hash)
         if record.decision is Decision.ESCALATE:
-            raise EscalateError(record, audit_hash)
+            raise EscalateError(
+                record,
+                audit_hash,
+                pending=PendingApproval(record, audit_hash, dict(call.args)),
+            )
         if record.decision is Decision.TRANSFORM:
             if record.transformed_args is None:
                 # Policy bug: TRANSFORM without args. Fail closed.
