@@ -8,7 +8,12 @@ anchors the decision. Callers can catch the specific type or the
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from gove_zone.decision import DecisionRecord
+
+if TYPE_CHECKING:
+    from gove_zone.escalation import PendingApproval
 
 
 class GoveZoneError(Exception):
@@ -64,11 +69,24 @@ class DeniedError(GoveZoneError):
 
 
 class EscalateError(GoveZoneError):
-    """Raised when a dispatch needs external (e.g. human) approval."""
+    """Raised when a dispatch needs external (e.g. human) approval.
 
-    def __init__(self, record: DecisionRecord, audit_hash: str) -> None:
+    ``pending`` carries the :class:`~gove_zone.escalation.PendingApproval` needed
+    to later approve and resume the escalated call. It is optional and defaults
+    to ``None`` so existing ``EscalateError(record, audit_hash)`` call sites keep
+    working; the kernel populates it on every ESCALATE dispatch.
+    """
+
+    def __init__(
+        self,
+        record: DecisionRecord,
+        audit_hash: str,
+        *,
+        pending: PendingApproval | None = None,
+    ) -> None:
         self.record = record
         self.audit_hash = audit_hash
+        self.pending = pending
         super().__init__(f"escalated by policy {record.policy_version!r}: {record.reason}")
 
 
