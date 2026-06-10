@@ -170,9 +170,7 @@ def test_simulate_predicts_allow(tmp_path) -> None:
 
 
 def test_simulate_predicts_deny(tmp_path) -> None:
-    kernel, ran = _kernel(
-        BoundaryPolicy(forbidden_keywords=["forbidden"], rule_id="P-D"), tmp_path
-    )
+    kernel, ran = _kernel(BoundaryPolicy(forbidden_keywords=["forbidden"], rule_id="P-D"), tmp_path)
     args = {"trigger": "this is forbidden"}
     before = kernel.audit.last_hash()
 
