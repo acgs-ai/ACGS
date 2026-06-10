@@ -165,6 +165,47 @@ class Kernel:
         )
         return result, receipt
 
+    def simulate(
+        self,
+        tool_name: str,
+        args: Mapping[str, Any] | None = None,
+        *,
+        goal: str = "",
+        path: str | Sequence[str] | None = None,
+        state: Mapping[str, Any] | None = None,
+    ) -> DecisionRecord:
+        """Predict the governance decision for a call **without** executing or
+        recording it — read-only capability discovery ("would this be allowed?").
+
+        Runs the exact same policy evaluation and fail-closed synthesis as
+        :meth:`dispatch` (via the shared :meth:`_evaluate_only`), so the returned
+        :class:`~gove_zone.decision.DecisionRecord` is the verdict ``dispatch``
+        *would* reach for the same input — letting a caller (e.g. a denied agent)
+        discover the decision before producing any side effect.
+
+        Side-effect-free **at the kernel level**: no ``tool_fn`` is invoked, no
+        ``audit.append`` and no side-store write occur, so the audit chain is
+        unchanged. The returned record is **not** anchored in the audit chain (its
+        ``event_id`` was never appended) — it is a prediction, not a receipt, and
+        must never be presented as authorization to execute.
+
+        Raises :class:`UnknownToolError` if the tool is not registered, mirroring
+        :meth:`dispatch` so the prediction is faithful for unregistered tools too.
+        (It cannot guarantee a user-supplied ``policy.evaluate`` is itself pure; it
+        guarantees the *kernel* performs no execution or audit mutation.)
+        """
+        if not self.registry.has(tool_name):
+            raise UnknownToolError(tool_name)
+        call = ToolCall(
+            name=tool_name,
+            args=dict(args or {}),
+            goal=goal,
+            actor=self.actor,
+            path=normalize_path_context(path),
+            state=dict(state or {}),
+        )
+        return self._evaluate_only(call)
+
     def _attach_context(self, record: DecisionRecord, call: ToolCall) -> DecisionRecord:
         return dataclasses.replace(
             record,
@@ -175,11 +216,17 @@ class Kernel:
             decision_request_hash=call.decision_request_hash(),
         )
 
-    def _evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
-        """Evaluate policy + append to audit. Fail-closed on both steps.
+    def _evaluate_only(self, call: ToolCall) -> DecisionRecord:
+        """Evaluate policy under the fail-closed watchdog and attach kernel
+        context, WITHOUT appending to the audit chain or executing the tool.
 
-        - If policy.evaluate raises or times out, synthesize a DENY record and try to append it.
-        - If audit.append raises, surface :class:`AuditError`.
+        Shared by :meth:`dispatch` (which then appends and executes) and
+        :meth:`simulate` (which does neither), so a simulated prediction uses the
+        exact same evaluation + fail-closed synthesis as a real dispatch.
+
+        - policy raises -> synthesize a ``fail-closed/policy-raised`` DENY
+        - policy times out -> synthesize a ``fail-closed/policy-timeout`` DENY
+        - TRANSFORM without ``transformed_args`` -> DENY (malformed)
         """
         try:
             record = self._evaluate_with_watchdog(call)
@@ -217,7 +264,14 @@ class Kernel:
                 )
         # Inject kernel-owned context into the policy's record so callers don't
         # have to thread it through every policy implementation.
-        record = self._attach_context(record, call)
+        return self._attach_context(record, call)
+
+    def _evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
+        """Evaluate (fail-closed) then append the decision to the audit chain.
+
+        Surfaces :class:`AuditError` if the append fails.
+        """
+        record = self._evaluate_only(call)
 
         try:
             payload = self.audit.append(record)
