@@ -305,6 +305,27 @@ The fixture file is local JSON:
 }
 ```
 
+## Dry-run: would this be allowed?
+
+`Kernel.simulate(...)` predicts the governance decision for a call **without
+executing the tool or writing to the audit chain** — read-only capability
+discovery, so an agent can ask "would this be allowed?" before producing a side
+effect (e.g. after a DENY, to find a variant that passes).
+
+```python
+record = kernel.simulate("matter.fetch", {"matter_id": "M-1"}, goal="...")
+record.decision        # Decision.ALLOW / DENY / ESCALATE / TRANSFORM
+record.matched_rules   # why
+# No tool ran; kernel.audit.last_hash() is unchanged.
+```
+
+It runs the **same** policy evaluation and fail-closed synthesis as `dispatch`
+(shared internally), so the predicted `decision` is the one `dispatch` would
+reach for the same input. The returned `DecisionRecord` is a *prediction, not a
+receipt* — it is never appended to the audit chain and must never be presented as
+authorization to execute. `simulate` raises `UnknownToolError` for an
+unregistered tool, exactly like `dispatch`.
+
 ## Hello, audit chain
 
 ```python
