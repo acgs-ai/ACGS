@@ -187,11 +187,16 @@ def test_malformed_requests_are_rejected_without_dispatch(tmp_path) -> None:
     kernel, ran = _kernel(AllowAllPolicy(), tmp_path)
     before = kernel.audit.last_hash()
     for bad in (
+        ["tools/call"],  # JSON-RPC batch (top-level array)
+        "tools/call",
+        None,
         {"method": "resources/read", "params": {"name": "notes.write"}},
         {"method": "tools/call", "params": "nope"},
         {"method": "tools/call", "params": {"arguments": {}}},
         {"method": "tools/call", "params": {"name": ""}},
         {"method": "tools/call", "params": {"name": "notes.write", "arguments": [1]}},
+        {"method": "tools/call", "params": {"name": "notes.write", "arguments": []}},
+        {"method": "tools/call", "params": {"name": "notes.write", "arguments": 0}},
     ):
         result = mcp_tools_call(kernel, bad)
         assert result["isError"] is True, bad
@@ -238,3 +243,57 @@ def test_path_argument_reaches_path_policies(tmp_path) -> None:
     assert allowed["isError"] is False
     # The lifted path context did not mutate the tool's actual arguments.
     assert ran == [{"path": "/tmp/ok", "data": "x"}]
+
+
+def test_list_segmented_path_cannot_evade_path_policy(tmp_path) -> None:
+    # Security-review finding: lifting only str paths would let
+    # {"path": ["etc", "passwd"]} reach the tool while PathBoundaryPolicy saw
+    # an empty path context. Sequences must be lifted too.
+    from gove_zone import PathBoundaryPolicy
+
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    kernel = Kernel(
+        policy=PathBoundaryPolicy(blocked_prefixes=["/etc"]),
+        audit=audit,
+        actor="mcp-agent",
+    )
+    ran: list[dict] = []
+
+    @kernel.tool("file.write")
+    def write_file(**kwargs: object) -> str:
+        ran.append(dict(kwargs))
+        return "ok"
+
+    denied = mcp_tools_call(kernel, _call("file.write", {"path": ["etc", "passwd"], "data": "x"}))
+    assert denied["isError"] is True
+    assert denied["_meta"]["gove_zone"]["status"] == "deny"
+    assert ran == []
+
+
+class _RedactPolicy(Policy):
+    @property
+    def version(self) -> str:
+        return "test-transform/v1"
+
+    def evaluate(self, call: ToolCall) -> DecisionRecord:
+        transformed = dict(call.args)
+        transformed["text"] = "[REDACTED]"
+        return DecisionRecord(
+            decision=Decision.TRANSFORM,
+            tool=call.name,
+            argument_hash=sha256_json(dict(call.args)),
+            policy_version=self.version,
+            event_id=new_event_id(),
+            matched_rules=("T:redact",),
+            reason="redacted before execution",
+            transformed_args=transformed,
+        )
+
+
+def test_transform_executes_with_transformed_args(tmp_path) -> None:
+    kernel, ran = _kernel(_RedactPolicy(), tmp_path)
+    result = mcp_tools_call(kernel, _call("notes.write", {"text": "raw secret"}))
+    assert result["isError"] is False
+    assert result["_meta"]["gove_zone"]["decision"] == "transform"
+    # The tool received the TRANSFORMED args, not the originals.
+    assert ran == [{"text": "[REDACTED]"}]

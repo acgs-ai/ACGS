@@ -24,8 +24,9 @@ This module is dependency-free by design (gove-zone ships zero runtime
 dependencies): it operates on already-parsed request ``dict``\\s and returns
 result ``dict``\\s. Transport — stdio JSON-RPC framing, an ``mcp``-SDK server,
 HTTP — is the caller's concern; wrap these handlers in the transport of your
-choice. ``examples/mcp-tool-gateway`` shows the end-to-end pattern including a
-signed execution gate.
+choice. ``examples/mcp-tool-gateway`` shows the equivalent hand-rolled
+end-to-end pattern (including a signed execution gate); this module packages
+the ``tools/call`` mapping it demonstrates.
 
 The eval-grade ``governed_mcp_v0`` package (in ``acgs_governance_eval_mvp``)
 predates this binding and keeps its hand-wired admission for benchmark
@@ -74,11 +75,17 @@ def mcp_tools_call(kernel: Kernel, request: Mapping[str, Any]) -> dict[str, Any]
     Returns the MCP ``tools/call`` *result* payload (the caller wraps it in its
     JSON-RPC envelope).
 
-    If ``arguments`` carries a ``path`` entry it is additionally lifted into
-    the governed call's path context (mirroring
-    :mod:`gove_zone.integration`) so path-boundary policies can match it;
-    the argument itself still reaches the tool unchanged.
+    If ``arguments`` carries a ``path`` entry shaped like a path (a string or
+    a sequence of segments) it is additionally lifted into the governed call's
+    path context so path-boundary policies can match it — sequences included,
+    so a list-segmented path cannot slip past a :class:`PathBoundaryPolicy`
+    that a string path would have triggered. The argument itself still reaches
+    the tool unchanged.
     """
+    if not isinstance(request, Mapping):
+        # A JSON-RPC batch (top-level array) or any non-object request: reject
+        # as a result, never as an uncaught exception at the trust boundary.
+        return _error("malformed tools/call request: request is not a mapping")
     method = request.get("method")
     if method is not None and method != "tools/call":
         return _error(f"unsupported method {method!r}; this binding handles tools/call")
@@ -88,16 +95,23 @@ def mcp_tools_call(kernel: Kernel, request: Mapping[str, Any]) -> dict[str, Any]
     tool_name = params.get("name")
     if not isinstance(tool_name, str) or not tool_name:
         return _error("malformed tools/call request: missing tool name")
-    arguments = params.get("arguments") or {}
+    arguments = params.get("arguments")
+    if arguments is None:
+        arguments = {}
     if not isinstance(arguments, Mapping):
         return _error("malformed tools/call request: arguments is not a mapping")
 
+    # Lift any path-shaped value (str OR sequence — normalize_path_context
+    # stringifies segments) into the governed path context. Lifting only str
+    # would let a list-segmented path evade a PathBoundaryPolicy while the
+    # tool still received it (found by PR-5 security review).
     path = arguments.get("path")
+    lifted = path if isinstance(path, (str, list, tuple)) else None
     try:
         result, receipt = kernel.dispatch(
             tool_name,
             arguments,
-            path=path if isinstance(path, str) else None,
+            path=lifted,
         )
     except UnknownToolError:
         # Structural admission: not in the registry == not callable. No audit

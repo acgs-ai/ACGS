@@ -521,8 +521,8 @@ mcp_tools_call(kernel, {"method": "tools/call",
   `resumable` and self-corrects.
 - **Dependency-free.** The binding consumes parsed request dicts and returns
   result dicts; stdio/JSON-RPC framing or an `mcp`-SDK server is the caller's
-  transport choice. `examples/mcp-tool-gateway/` shows the end-to-end pattern
-  including a signed execution gate.
+  transport choice. `examples/mcp-tool-gateway/` shows the equivalent
+  hand-rolled end-to-end pattern (including a signed execution gate).
 - The eval-grade `governed_mcp_v0` (in `acgs_governance_eval_mvp`) is
   benchmark harness only — new production MCP tools register on a kernel and
   route through this module.
