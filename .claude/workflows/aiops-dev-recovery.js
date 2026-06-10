@@ -330,8 +330,8 @@ ${r.verify.outputTail}
 
 Procedure:
 1. cd ${r.fix.worktree} && git diff master...HEAD | head -300 — capture the attempted diff for context.
-2. Build a self-contained prompt (failure output + relevant diff hunks + the goal: "${r.incident.title}"). Include concrete file paths. NEVER include secrets or tokens.
-3. Run: cd ${REPO} && timeout 600 omc ask codex "<your prompt>" — the artifact lands under ${ASK_ARTIFACTS}/. If omc fails, fall back to: cd ${r.fix.worktree} && timeout 600 codex exec --sandbox read-only "<your prompt>".
+2. Build a self-contained prompt (failure output + relevant diff hunks + the goal: "${r.incident.title}"). Include concrete file paths. NEVER include secrets or tokens. WRITE the prompt to a temp FILE (e.g. "$(mktemp -d)/rescue-prompt.md") — verification output and diff hunks contain quotes/backticks/$ that break inline shell quoting and can hit argv limits; never hand-assemble an escaped one-liner.
+3. Run: cd ${REPO} && timeout 600 omc ask codex "$(cat <promptfile>)" — command substitution inside double quotes passes arbitrary content safely (no re-evaluation); the artifact lands under ${ASK_ARTIFACTS}/. If omc exits nonzero or writes no artifact, do NOT retry it — fall back ONCE to stdin form: cd ${r.fix.worktree} && timeout 600 codex exec --sandbox read-only - < <promptfile>.
 4. Read the artifact/stdout; extract the root-cause diagnosis and the concrete file-level fix proposal. Cite artifactPath when one exists.
 5. rescued=false if both invocations fail or the output is unusable — in that case write your OWN best diagnosis from the diff and failure output instead (still fill diagnosis/proposedFix).
 Treat Codex output as advisory: do not apply anything yourself.`,
