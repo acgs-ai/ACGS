@@ -538,8 +538,10 @@ receipt-verifying gate.
   execution, no audit append) and pass the result through
   `exc.to_rejection_dict(allowed_alternatives=...)`. Entries are
   `alternative_from_record(...)` projections (tool, predicted decision,
-  non-reversible hashes, policy version) plus a `candidate_index`; entries
-  carrying raw inputs (`args` / `transformed_args` / `state`) are refused, and
+  non-reversible hashes, policy version) plus a `candidate_index`; every entry
+  is validated against that closed allowlist schema (raw inputs, unknown keys,
+  nested payloads, and mistyped values are refused — leak-safe for any caller,
+  not just the canonical producers), and
   an allowed alternative is a *prediction under the current policy*, never
   authorization — execution still requires a real `dispatch` and its receipt.
 

@@ -121,16 +121,49 @@ def test_alternative_from_record_rejects_deny_and_escalate() -> None:
             alternative_from_record(_record(decision))
 
 
+def _valid_alternative(**overrides: object) -> dict:
+    entry: dict = {
+        "tool": "do.thing",
+        "decision": "allow",
+        "argument_hash": "c" * 64,
+        "decision_request_hash": "d" * 64,
+        "policy_version": "test/v1",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _reject_alternatives(alternatives: list[dict], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        rejection_dict(
+            _record(Decision.DENY),
+            "a" * 64,
+            resumable=False,
+            resolution="revise_and_retry",
+            allowed_alternatives=alternatives,
+        )
+
+
 def test_rejection_dict_refuses_raw_inputs_in_alternatives() -> None:
+    # Positive allowlist: raw-input keys are unknown keys, hence refused —
+    # including when smuggled alongside an otherwise-valid entry.
     for leaky_key in ("args", "transformed_args", "state"):
-        with pytest.raises(ValueError, match="raw inputs"):
-            rejection_dict(
-                _record(Decision.DENY),
-                "a" * 64,
-                resumable=False,
-                resolution="revise_and_retry",
-                allowed_alternatives=[{"tool": "do.thing", leaky_key: {"x": 1}}],
-            )
+        _reject_alternatives([_valid_alternative(**{leaky_key: {"x": 1}})], "unknown keys")
+
+
+def test_rejection_dict_refuses_unknown_keys_and_nested_payloads() -> None:
+    # Any key outside the closed schema is refused — there is no nesting
+    # loophole because there is no carrier key to nest under.
+    _reject_alternatives([_valid_alternative(meta={"args": {"secret": 1}})], "unknown keys")
+    _reject_alternatives([_valid_alternative(raw_prompt="leak")], "unknown keys")
+
+
+def test_rejection_dict_refuses_incomplete_or_mistyped_alternatives() -> None:
+    incomplete = _valid_alternative()
+    del incomplete["argument_hash"]
+    _reject_alternatives([incomplete], "missing required keys")
+    _reject_alternatives([_valid_alternative(tool={"name": "do.thing"})], "must be str")
+    _reject_alternatives([_valid_alternative(candidate_index="0")], "must be int")
 
 
 # ---------------------------------------------------- read-only discovery
@@ -171,6 +204,18 @@ def test_discover_alternatives_propagates_unknown_tool(tmp_path) -> None:
     kernel, _ = _kernel(tmp_path)
     with pytest.raises(UnknownToolError):
         discover_alternatives(kernel, [{"tool": "not.registered", "args": {}}])
+
+
+def test_discover_alternatives_rejects_malformed_candidates(tmp_path) -> None:
+    kernel, _ = _kernel(tmp_path)
+    # No silent coercion: a missing/non-str tool and a non-str goal raise
+    # instead of being str()-bent into a different (still denied) probe.
+    with pytest.raises(ValueError, match="requires a str 'tool'"):
+        discover_alternatives(kernel, [{"args": {"x": 1}}])
+    with pytest.raises(ValueError, match="requires a str 'tool'"):
+        discover_alternatives(kernel, [{"tool": 123}])
+    with pytest.raises(ValueError, match="'goal' must be str"):
+        discover_alternatives(kernel, [{"tool": "do.thing", "goal": None}])
 
 
 def test_escalate_to_rejection_dict_passthrough() -> None:

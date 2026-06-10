@@ -33,7 +33,7 @@ The ``reason`` field has two provenances and is handled accordingly:
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gove_zone.decision import Decision, DecisionRecord
 
@@ -61,9 +61,24 @@ _FAIL_CLOSED_REASON = (
 #: Decisions that make a simulated candidate an *available* alternative.
 _ALTERNATIVE_OUTCOMES = (Decision.ALLOW, Decision.TRANSFORM)
 
-#: Keys an ``allowed_alternatives`` entry must never carry — raw inputs would
-#: break the envelope's leak-safe-by-construction posture.
-_ALTERNATIVE_FORBIDDEN_KEYS = ("args", "transformed_args", "state")
+#: The complete schema of an ``allowed_alternatives`` entry: key -> required
+#: value type. A positive allowlist (not a blocklist) so the envelope's
+#: leak-safe posture holds for *any* caller, not just the canonical
+#: :func:`alternative_from_record` / :func:`discover_alternatives` producers —
+#: raw inputs (``args``/``transformed_args``/``state``), nested payloads, and
+#: unknown keys are all rejected, by construction.
+_ALTERNATIVE_SCHEMA: dict[str, type] = {
+    "tool": str,
+    "decision": str,
+    "argument_hash": str,
+    "decision_request_hash": str,
+    "policy_version": str,
+    "candidate_index": int,
+}
+
+#: Entry keys that may be omitted (``alternative_from_record`` alone does not
+#: know the candidate's position; ``discover_alternatives`` adds it).
+_ALTERNATIVE_OPTIONAL_KEYS = frozenset({"candidate_index"})
 
 
 class SupportsSimulate(Protocol):
@@ -109,12 +124,13 @@ def rejection_dict(
 
     ``allowed_alternatives`` keeps its tri-state contract: when the caller has
     not computed alternatives (``None``, the default) the key is **omitted** —
-    absence means *"not computed"*. A passed list (possibly empty) is included
-    verbatim and unambiguously means *"computed"* (empty == "none permitted").
-    Entries are expected to come from :func:`alternative_from_record` /
-    :func:`discover_alternatives`; entries carrying raw inputs (``args``,
-    ``transformed_args``, ``state``) raise :class:`ValueError` so the envelope's
-    leak posture holds by construction, not by caller discipline.
+    absence means *"not computed"*. A passed list (possibly empty) means
+    *"computed"* (empty == "none permitted"). Every entry is validated against
+    the closed :data:`_ALTERNATIVE_SCHEMA` allowlist — exactly the keys
+    :func:`alternative_from_record` / :func:`discover_alternatives` produce,
+    with the expected scalar types — so raw inputs, nested payloads, and
+    unknown keys raise :class:`ValueError` and the envelope's leak posture
+    holds by construction for any caller, not just the canonical producers.
     """
     if record.decision not in _OUTCOME:
         raise ValueError(
@@ -139,17 +155,36 @@ def rejection_dict(
     if approval is not None:
         payload["approval"] = approval
     if allowed_alternatives is not None:
-        alternatives = [dict(alternative) for alternative in allowed_alternatives]
-        for alternative in alternatives:
-            leaked = [key for key in _ALTERNATIVE_FORBIDDEN_KEYS if key in alternative]
-            if leaked:
-                raise ValueError(
-                    "allowed_alternatives entries must not carry raw inputs "
-                    f"(forbidden keys: {leaked}); pass "
-                    "alternative_from_record(...) projections instead"
-                )
+        alternatives = [_validated_alternative(alternative) for alternative in allowed_alternatives]
         payload["allowed_alternatives"] = alternatives
     return payload
+
+
+def _validated_alternative(alternative: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate one ``allowed_alternatives`` entry against the closed schema.
+
+    Positive allowlist: unknown keys (including raw inputs like ``args``),
+    missing required keys, and non-scalar values all raise :class:`ValueError`
+    — the leak posture must not depend on caller discipline.
+    """
+    entry = dict(alternative)
+    unknown = sorted(set(entry) - set(_ALTERNATIVE_SCHEMA))
+    if unknown:
+        raise ValueError(
+            f"allowed_alternatives entry carries unknown keys {unknown}; only "
+            f"{sorted(_ALTERNATIVE_SCHEMA)} are permitted — pass "
+            "alternative_from_record(...) / discover_alternatives(...) projections"
+        )
+    missing = sorted(set(_ALTERNATIVE_SCHEMA) - _ALTERNATIVE_OPTIONAL_KEYS - set(entry))
+    if missing:
+        raise ValueError(f"allowed_alternatives entry is missing required keys {missing}")
+    for key, expected_type in _ALTERNATIVE_SCHEMA.items():
+        if key in entry and not isinstance(entry[key], expected_type):
+            raise ValueError(
+                f"allowed_alternatives entry key {key!r} must be "
+                f"{expected_type.__name__}, got {type(entry[key]).__name__}"
+            )
+    return entry
 
 
 def alternative_from_record(record: DecisionRecord) -> dict[str, Any]:
@@ -183,33 +218,45 @@ def alternative_from_record(record: DecisionRecord) -> dict[str, Any]:
 
 def discover_alternatives(
     kernel: SupportsSimulate,
-    candidates: Iterable[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     """Simulate candidate call variants and collect the ones that would pass.
 
-    For each candidate — a mapping with ``tool`` (required) and optionally
-    ``args`` / ``goal`` / ``path`` / ``state``, mirroring
+    For each candidate — a mapping with ``tool`` (required, ``str``) and
+    optionally ``args`` / ``goal`` / ``path`` / ``state``, mirroring
     :meth:`~gove_zone.kernel.Kernel.simulate` — runs a read-only simulation and
     keeps the candidates whose predicted decision is ``ALLOW`` or ``TRANSFORM``.
     Each kept entry is :func:`alternative_from_record` plus ``candidate_index``
-    (the candidate's position) so the caller can map a verdict back to the
-    variant it supplied without the envelope echoing raw arguments.
+    (the candidate's position in ``candidates``) so the caller can map a
+    verdict back to the variant it supplied without the envelope echoing raw
+    arguments. ``candidates`` is a :class:`~collections.abc.Sequence` (not a
+    one-shot iterable) precisely so that index remains resolvable afterwards.
 
     Read-only at the kernel level (inherits :meth:`simulate`'s guarantee): no
     tool executes and the audit chain is unchanged. The result is a
     *prediction* under the current policy, not authorization — execution still
     requires a real :meth:`dispatch` and its receipt.
 
-    Unregistered tools propagate :class:`~gove_zone.errors.UnknownToolError`
-    (mirroring ``simulate``) rather than being silently dropped, so a typo'd
-    candidate surfaces instead of vanishing from the allowed set.
+    Malformed candidates raise :class:`ValueError` (missing/non-``str``
+    ``tool`` or non-``str`` ``goal``) and unregistered tools propagate
+    :class:`~gove_zone.errors.UnknownToolError` (mirroring ``simulate``) —
+    nothing is silently dropped or coerced, so a typo'd candidate surfaces
+    instead of vanishing from the allowed set.
     """
     alternatives: list[dict[str, Any]] = []
     for index, candidate in enumerate(candidates):
+        tool = candidate.get("tool")
+        if not isinstance(tool, str):
+            raise ValueError(
+                f"candidate {index} requires a str 'tool' key, got {type(tool).__name__}"
+            )
+        goal = candidate.get("goal", "")
+        if not isinstance(goal, str):
+            raise ValueError(f"candidate {index} 'goal' must be str, got {type(goal).__name__}")
         record = kernel.simulate(
-            str(candidate["tool"]),
+            tool,
             candidate.get("args"),
-            goal=str(candidate.get("goal", "")),
+            goal=goal,
             path=candidate.get("path"),
             state=candidate.get("state"),
         )
@@ -218,3 +265,14 @@ def discover_alternatives(
             entry["candidate_index"] = index
             alternatives.append(entry)
     return alternatives
+
+
+if TYPE_CHECKING:
+    # Type-only conformance proof: if Kernel.simulate's signature ever drifts
+    # from SupportsSimulate, mypy fails here — inside the package's own mypy
+    # gate — instead of at some downstream caller. No runtime import occurs,
+    # so the errors → rejection → kernel cycle never materializes.
+    from gove_zone.kernel import Kernel
+
+    def _kernel_satisfies_supports_simulate(kernel: Kernel) -> SupportsSimulate:
+        return kernel
