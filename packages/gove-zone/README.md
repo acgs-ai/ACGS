@@ -492,6 +492,41 @@ Set with one command: `gove-zone enable --enforce` (or `--observe`).
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/audit.jsonl`
 3. `$PWD/.gove-zone/audit.jsonl`
 
+## MCP binding (structural admission)
+
+`gove_zone.mcp` maps MCP `tools/call` / `tools/list` onto a `Kernel`, so the
+MCP surface inherits `Kernel.dispatch`'s gating *structurally*:
+
+```python
+from gove_zone import Kernel, mcp_tools_call, mcp_tools_list
+
+kernel = Kernel(policy=policy, audit=audit, actor="mcp-agent")
+
+@kernel.tool("notes.write")
+def write_note(text: str) -> dict: ...
+
+mcp_tools_list(kernel)   # {"tools": [{"name": "notes.write"}]} — the registry IS the list
+mcp_tools_call(kernel, {"method": "tools/call",
+                        "params": {"name": "notes.write", "arguments": {"text": "hi"}}})
+```
+
+- **No hand-wired admission.** There is no per-tool `admit` call and no
+  safe-tool bypass: an unregistered tool cannot run
+  (`UnknownToolError` → `isError: true`), and a registered one cannot skip
+  policy evaluation + audit append. Forgetting to register a tool makes it
+  *unavailable*, never silently allowed.
+- **Denials are machine-readable.** DENY/ESCALATE return `isError: true` with
+  the full structured rejection envelope in `_meta.gove_zone` (see the section
+  below) — the calling agent reads `resolution` / `matched_rules` /
+  `resumable` and self-corrects.
+- **Dependency-free.** The binding consumes parsed request dicts and returns
+  result dicts; stdio/JSON-RPC framing or an `mcp`-SDK server is the caller's
+  transport choice. `examples/mcp-tool-gateway/` shows the equivalent
+  hand-rolled end-to-end pattern (including a signed execution gate).
+- The eval-grade `governed_mcp_v0` (in `acgs_governance_eval_mvp`) is
+  benchmark harness only — new production MCP tools register on a kernel and
+  route through this module.
+
 ## Structured rejections (agent self-correction)
 
 When a dispatch is denied or escalated the kernel raises a typed error
