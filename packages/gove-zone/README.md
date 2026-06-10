@@ -592,6 +592,49 @@ receipt-verifying gate.
   an allowed alternative is a *prediction under the current policy*, never
   authorization — execution still requires a real `dispatch` and its receipt.
 
+## Single-use receipts (approve once, run once)
+
+`DecisionReceipt.verify` is stateless — it proves a receipt is *valid*, not
+*fresh*, so on its own one valid receipt authorizes N executions. To make
+"approved once" mean "executed at most once", give the gate a
+`ReceiptConsumptionLedger` (opt-in; stdlib-only, same cross-process file lock
+as the audit chain):
+
+```python
+from gove_zone import GovernedExecutor, ReceiptAlreadyUsedError, ReceiptConsumptionLedger
+
+ledger = ReceiptConsumptionLedger("consumed.jsonl")
+executor = GovernedExecutor(
+    tenant_id="tenant-acme",
+    execution_boundary="prod/api",
+    expected_actor="agent-x",
+    verifier=verifier,
+    consumption_ledger=ledger,
+)
+executor.execute("write_file", args, receipt)   # runs; the receipt is burned
+executor.execute("write_file", args, receipt)   # ReceiptAlreadyUsedError, no side effect
+```
+
+`resume_with_receipt(..., consumption_ledger=ledger)` takes the same ledger, so
+an ESCALATE → approve → resume approval cannot be replayed into a second run.
+
+**Semantics.**
+
+- The consumption key is the receipt's `audit_event_hash` — **one
+  audit-anchored decision authorizes at most one execution**. Re-minting a
+  receipt variant from the same approval event does not grant a second run,
+  and a signed receipt cannot be re-keyed (the anchor is signed content).
+- **Burn-before-execute**: the ledger entry is fsync'd under an exclusive
+  cross-process lock after `verify` passes and before the tool runs.
+  Concurrent presenters serialize; exactly one executes.
+- **At-most-once, not exactly-once**: a tool failure after the burn does not
+  un-burn the receipt — recovery is a fresh decision/approval, never a silent
+  replay window. Verification failures burn nothing.
+- **Fail-closed ledger**: an unreadable or corrupt ledger refuses execution
+  (`ConsumptionLedgerError`) instead of degrading to stateless verification.
+  Both error types subclass `ReceiptValidationError`, so existing callers
+  treat replay refusal as the validation failure it is.
+
 ## Auto-setup
 
 ```bash

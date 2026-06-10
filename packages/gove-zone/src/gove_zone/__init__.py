@@ -10,6 +10,7 @@ from gove_zone.benchmark_adapters import (
     injecagent_scenarios_from_fixture,
     load_benchmark_suite,
 )
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.contracts import (
     AuditEvent,
     ExecutionBoundary,
@@ -27,11 +28,13 @@ from gove_zone.decision import (
 )
 from gove_zone.errors import (
     AuditError,
+    ConsumptionLedgerError,
     DeniedError,
     EscalateError,
     GoveZoneError,
     PolicyError,
     ProductionProfileError,
+    ReceiptAlreadyUsedError,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
@@ -127,6 +130,7 @@ __all__ = [
     "BoundaryPolicy",
     "ChainHashAuditStore",
     "CompositePolicy",
+    "ConsumptionLedgerError",
     "Decision",
     "DecisionRecord",
     "DecisionReceipt",
@@ -155,6 +159,8 @@ __all__ = [
     "ProductionProfileError",
     "ProposedAction",
     "Receipt",
+    "ReceiptAlreadyUsedError",
+    "ReceiptConsumptionLedger",
     "ReceiptSigner",
     "ReceiptValidationError",
     "ReceiptVerifier",
