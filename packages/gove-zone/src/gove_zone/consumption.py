@@ -62,7 +62,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gove_zone.audit import _exclusive_file_lock
+from gove_zone._locking import _exclusive_file_lock
 from gove_zone.errors import (
     ConsumptionLedgerError,
     ReceiptAlreadyUsedError,
