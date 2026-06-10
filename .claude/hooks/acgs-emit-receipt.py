@@ -2,20 +2,34 @@
 """govern-zone PreToolUse hook — emit one governance receipt per mutating
 runtime action through the canonical ``gove_zone.integration`` adapter.
 
-Matched on ``Edit | Write | MultiEdit`` and selected ``Bash`` workflow
-commands by ``.claude/settings.json``.
+Matched on ``Edit | Write | MultiEdit | NotebookEdit`` and selected ``Bash``
+workflow commands by ``.claude/settings.json``. Scope note: Bash commands
+that do not match the orchestration classifier (autopilot / ralph / team)
+are deliberately out of audit scope — they exit 0 unaudited by design; the
+governed surfaces are file mutations and agent-orchestration commands.
+Concurrent sessions appending to the same audit chain serialize on a
+blocking POSIX ``flock`` (latency under fan-out, never a lockout).
 
-Behavior is governed by ``GOVE_ZONE_GATE_MODE``:
+Gate-mode resolution is delegated to the library
+(:func:`gove_zone.integration.current_gate_mode` — env var, then the
+``.gove-zone/gate.mode`` file, then the fail-closed ``enforce`` default), so
+this hook inherits enforce-by-default and the file-based opt-in instead of
+re-implementing its own env-only check (issue #111 / PR-3b):
 
-* unset / ``observe`` (default): fail-open. Import or emission failures
-  exit 0 and swallow the error. Preserves existing behavior.
-* ``enforce``: fail-closed. Import or emission failures exit non-zero with
-  a stderr diagnostic, blocking the tool call until the operator fixes
-  the audit pipeline. Set this to make the gate auditable.
+* ``enforce`` (the default): fail-closed. Import, parse, or emission
+  failures exit 2 with a stderr diagnostic, blocking the tool call until
+  the operator fixes the audit pipeline.
+* ``observe`` (explicit opt-in): fail-open. Failures exit 0 and swallow
+  the error.
+* If the gate mode itself cannot be resolved (``gove_zone`` not
+  importable), the hook fails CLOSED — an unauditable action is blocked,
+  not waved through.
 
 No ``sys.path`` manipulation: the hook relies on ``gove-zone`` being
-installed in the active interpreter's environment (workspace ``uv sync``
-or ``pip install -e packages/gove-zone``).
+installed in the active interpreter's environment. ``.claude/settings.json``
+pins the interpreter to the project venv
+(``$CLAUDE_PROJECT_DIR/.venv/bin/python``) and exits 2 when the venv is
+missing — run ``uv sync`` first.
 """
 
 from __future__ import annotations
@@ -26,7 +40,19 @@ import sys
 
 
 def _gate_enforce() -> bool:
-    return (os.environ.get("GOVE_ZONE_GATE_MODE") or "").strip().lower() == "enforce"
+    """Delegate to the library resolver; fail closed when it cannot be loaded.
+
+    The single source of truth for gate mode is
+    :func:`gove_zone.integration.current_gate_mode` (enforce-by-default,
+    file-based observe opt-in). If that cannot even be imported, the mode is
+    unresolvable — treat as enforce so an unauditable action never slips
+    through fail-open.
+    """
+    try:
+        from gove_zone.integration import GateMode, current_gate_mode
+    except Exception:
+        return True
+    return current_gate_mode() is GateMode.ENFORCE
 
 
 def _classify(tool_name: str, tool_input: dict) -> str | None:
@@ -102,8 +128,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as exc:  # last-resort guard
-        if (os.environ.get("GOVE_ZONE_GATE_MODE") or "").strip().lower() == "enforce":
-            print(f"gove-zone hook: top-level failure: {exc!r}", file=sys.stderr)
-            sys.exit(2)
-        sys.exit(0)
+    except Exception as exc:  # last-resort guard — fail closed, do not guess
+        print(f"gove-zone hook: top-level failure: {exc!r}", file=sys.stderr)
+        sys.exit(2)
