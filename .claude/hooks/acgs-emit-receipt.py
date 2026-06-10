@@ -2,8 +2,13 @@
 """govern-zone PreToolUse hook — emit one governance receipt per mutating
 runtime action through the canonical ``gove_zone.integration`` adapter.
 
-Matched on ``Edit | Write | MultiEdit`` and selected ``Bash`` workflow
-commands by ``.claude/settings.json``.
+Matched on ``Edit | Write | MultiEdit | NotebookEdit`` and selected ``Bash``
+workflow commands by ``.claude/settings.json``. Scope note: Bash commands
+that do not match the orchestration classifier (autopilot / ralph / team)
+are deliberately out of audit scope — they exit 0 unaudited by design; the
+governed surfaces are file mutations and agent-orchestration commands.
+Concurrent sessions appending to the same audit chain serialize on a
+blocking POSIX ``flock`` (latency under fan-out, never a lockout).
 
 Gate-mode resolution is delegated to the library
 (:func:`gove_zone.integration.current_gate_mode` — env var, then the

@@ -269,6 +269,32 @@ def test_hook_end_to_end_production_without_signer_blocks(tmp_path: Path) -> Non
     assert "signer" in proc.stderr
 
 
+def test_settings_launcher_fails_closed_when_venv_missing(tmp_path: Path) -> None:
+    # Behavioral proof for the deployed launcher string itself (not just a
+    # substring assert): run the EXACT command from settings.json via bash
+    # with a project dir that has no .venv — the guard must exit 2 before
+    # any interpreter is exec'd.
+    settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    command = next(
+        hook["command"]
+        for entry in settings.get("hooks", {}).get("PreToolUse", [])
+        for hook in entry.get("hooks", [])
+        if "acgs-emit-receipt.py" in hook.get("command", "")
+    )
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GOVE_ZONE_")}
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)  # no .venv here
+    proc = subprocess.run(
+        ["bash", "-c", command],
+        input="",
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=60,
+    )
+    assert proc.returncode == 2
+    assert "venv missing" in proc.stderr
+
+
 def test_settings_json_pins_venv_python_and_dev_profile() -> None:
     settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     commands = [
