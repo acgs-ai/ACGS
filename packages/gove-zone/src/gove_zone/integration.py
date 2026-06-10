@@ -93,7 +93,10 @@ _LOGGER = logging.getLogger("gove_zone.integration")
 
 
 def _log_observe_opt_in(source: str) -> None:
-    _LOGGER.info("gove-zone gate mode: observe (explicit opt-in via %s)", source)
+    # WARNING so the downgrade surfaces on stderr even with no logging config
+    # (logging's last-resort handler emits WARNING+). This is a logger record
+    # only — it is NOT appended to the audit chain.
+    _LOGGER.warning("gove-zone gate mode DOWNGRADED to observe (explicit opt-in via %s)", source)
 
 
 def current_gate_mode() -> GateMode:
@@ -105,8 +108,10 @@ def current_gate_mode() -> GateMode:
 
     Fail-closed: an unset, unreadable, or unrecognized mode resolves to
     :attr:`GateMode.ENFORCE` — never silently to observe. Observation-only
-    mode is an explicit opt-in and is logged when selected, so an
-    allow-all-and-record posture is always a visible, deliberate choice.
+    mode is an explicit opt-in; selecting it emits a WARNING through the
+    ``gove_zone.integration`` logger (visible on stderr by default via
+    logging's last-resort handler — but a logger record only, not an
+    audit-chain event).
     """
     raw = (os.environ.get("GOVE_ZONE_GATE_MODE") or "").strip().lower()
     if raw == GateMode.ENFORCE.value:

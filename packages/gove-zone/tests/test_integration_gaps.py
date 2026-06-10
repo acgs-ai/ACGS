@@ -93,6 +93,20 @@ def test_gate_mode_unknown_values_fail_closed(
     monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "yolo")
     mode_file.write_text("observe\n", encoding="utf-8")
     assert current_gate_mode() is GateMode.OBSERVE
+    # ... and to a valid file enforce just the same.
+    mode_file.write_text("enforce\n", encoding="utf-8")
+    assert current_gate_mode() is GateMode.ENFORCE
+
+
+def test_gate_mode_unreadable_file_fails_closed(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A gate.mode path that exists but cannot be read as a file (here: it is a
+    # directory, which raises OSError on read) must resolve to ENFORCE.
+    monkeypatch.delenv("GOVE_ZONE_GATE_MODE", raising=False)
+    mode_path = in_project / ".gove-zone" / "gate.mode"
+    mode_path.mkdir(parents=True, exist_ok=True)
+    assert current_gate_mode() is GateMode.ENFORCE
 
 
 def test_env_var_overrides_gate_mode_file(

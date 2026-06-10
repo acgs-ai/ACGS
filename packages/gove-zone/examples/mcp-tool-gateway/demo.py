@@ -163,9 +163,9 @@ def handle_mcp_call(
     # --- Gate 1: in-band audited policy decision -----------------------------
     # The hook adapter parses the MCP shape, hashes the raw arguments, and lifts
     # arguments["path"] into the governed ToolCall.path so PathBoundaryPolicy can
-    # match it. We leave GateMode at its default (observe): the production-profile
-    # unsigned-anchor fail-closed only triggers under ENFORCE mode, and this
-    # passive audit anchor is legitimately unsigned (signing lives at gate 2).
+    # match it. GateMode stays at its default — now ENFORCE — and main() pins
+    # GOVE_ZONE_PROFILE=dev to acknowledge that this passive gate-1 audit anchor
+    # is legitimately unsigned (signing lives at gate 2).
     policy = PathBoundaryPolicy(blocked_prefixes=PROTECTED_PREFIXES)
     receipt: Receipt | None = emit_receipt_for_hook(
         request,
@@ -173,7 +173,7 @@ def handle_mcp_call(
         actor=ACTOR,
         policy=policy,
     )
-    assert receipt is not None, "observe-mode emission must produce an audit anchor"
+    assert receipt is not None, "gate-1 emission must produce an audit anchor"
     audit_hash = receipt.audit_hash
 
     if receipt.record.decision is not Decision.ALLOW:

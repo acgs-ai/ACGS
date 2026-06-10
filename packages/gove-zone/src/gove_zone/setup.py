@@ -198,7 +198,9 @@ def instructions(*, enforce: bool = False) -> str:
     cfg = generate_config(enforce=enforce)
     fragment = json.dumps(cfg["claude_code"]["settings_fragment"], indent=2)
     mode_line = (
-        "Run with `GOVE_ZONE_GATE_MODE=enforce` to make the gate fail-closed."
+        "The gate is fail-closed (`enforce`) by default. Pin it explicitly with "
+        "`GOVE_ZONE_GATE_MODE=enforce` (so a stray gate.mode file cannot opt out), "
+        "or opt into fail-open observation with `gove-zone enable --observe`."
         if not enforce
         else "`GOVE_ZONE_GATE_MODE=enforce` is set: any emission failure exits non-zero."
     )

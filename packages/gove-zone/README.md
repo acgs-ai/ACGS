@@ -480,8 +480,11 @@ Set with one command: `gove-zone enable --enforce` (or `--observe`).
 > explicitly with `GOVE_ZONE_GATE_MODE=observe` or
 > `gove-zone enable --observe`; otherwise emission failures (e.g. an
 > unwritable audit path) now surface as `GateModeError` instead of being
-> silently swallowed. The opt-in is logged via the
-> `gove_zone.integration` logger.
+> silently swallowed. The opt-in emits a WARNING via the
+> `gove_zone.integration` logger (a logger record, not an audit-chain
+> event). Scope: this default lives in `current_gate_mode()` — a runtime
+> host that resolves gate mode itself (e.g. a hook that only reads the
+> env var) must delegate to `current_gate_mode()` to inherit it.
 
 **Audit path resolution (in order):**
 
