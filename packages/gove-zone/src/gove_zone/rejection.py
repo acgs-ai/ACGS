@@ -82,8 +82,7 @@ def rejection_dict(
     """
     if record.decision not in _OUTCOME:
         raise ValueError(
-            "rejection_dict only projects DENY/ESCALATE records, "
-            f"got {record.decision!r}"
+            f"rejection_dict only projects DENY/ESCALATE records, got {record.decision!r}"
         )
     reason = record.reason
     if record.policy_version.startswith(_FAIL_CLOSED_PREFIX):

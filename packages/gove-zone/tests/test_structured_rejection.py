@@ -308,9 +308,7 @@ def test_reason_is_the_only_value_bearing_channel(tmp_path) -> None:
     env = ei.value.to_rejection_dict()
 
     assert secret in env["reason"]  # the one by-design value channel
-    leaked_elsewhere = {
-        k: v for k, v in env.items() if k != "reason" and secret in json.dumps(v)
-    }
+    leaked_elsewhere = {k: v for k, v in env.items() if k != "reason" and secret in json.dumps(v)}
     assert leaked_elsewhere == {}  # nowhere else
 
 
