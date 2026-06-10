@@ -90,7 +90,7 @@
           },
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "PY=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$PY\" ] || { echo 'gove-zone hook: project venv missing - run uv sync' >&2; exit 2; }; GOVE_ZONE_PROFILE=dev exec \"$PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       },
@@ -99,7 +99,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "PY=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$PY\" ] || { echo 'gove-zone hook: project venv missing - run uv sync' >&2; exit 2; }; GOVE_ZONE_PROFILE=dev exec \"$PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       }

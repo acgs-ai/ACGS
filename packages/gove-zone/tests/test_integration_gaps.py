@@ -14,7 +14,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,6 +36,7 @@ from gove_zone.policy import Policy, new_event_id
 from gove_zone.tool import ToolCall
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+HOOK_PATH = REPO_ROOT / ".claude" / "hooks" / "acgs-emit-receipt.py"
 
 
 @pytest.fixture
@@ -174,3 +179,106 @@ def test_cli_enable_writes_gate_mode_file(
 
 def test_resolve_gate_mode_path_uses_project_dir(in_project: Path) -> None:
     assert resolve_gate_mode_path() == in_project / ".gove-zone" / "gate.mode"
+
+
+# ---------------------------------------------------------------------------
+# PR-3b (#111): the hook delegates gate-mode resolution to the library and
+# fails CLOSED when the mode is unresolvable; settings.json pins the project
+# venv interpreter and the dev profile.
+# ---------------------------------------------------------------------------
+
+_EDIT_PAYLOAD = {"tool_name": "Edit", "tool_input": {"file_path": "/tmp/x", "new_string": "y"}}
+
+
+def _load_hook_module():
+    spec = importlib.util.spec_from_file_location("acgs_emit_receipt_hook", HOOK_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_hook_gate_enforce_delegates_to_library(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = _load_hook_module()
+    # Library default (post-#110) is enforce — the hook inherits it.
+    assert hook._gate_enforce() is True
+    # Explicit env observe opt-in is honored through the same resolver.
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "observe")
+    assert hook._gate_enforce() is False
+    # ... and the file-based opt-in too (the old env-only check ignored it).
+    monkeypatch.delenv("GOVE_ZONE_GATE_MODE")
+    mode_file = in_project / ".gove-zone" / "gate.mode"
+    mode_file.parent.mkdir(parents=True, exist_ok=True)
+    mode_file.write_text("observe\n", encoding="utf-8")
+    assert hook._gate_enforce() is False
+
+
+def test_hook_fails_closed_when_gate_mode_unresolvable(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hook = _load_hook_module()
+    # Poisoning sys.modules makes `from gove_zone.integration import ...`
+    # raise — the unresolvable-mode path must be enforce, never fail-open.
+    monkeypatch.setitem(sys.modules, "gove_zone.integration", None)
+    assert hook._gate_enforce() is True
+
+
+def _run_hook(tmp_path: Path, env_extra: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GOVE_ZONE_")}
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    env.update(env_extra)
+    return subprocess.run(
+        [sys.executable, str(HOOK_PATH)],
+        input=json.dumps(_EDIT_PAYLOAD),
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=60,
+    )
+
+
+def test_hook_end_to_end_emits_receipt_under_enforce_default(tmp_path: Path) -> None:
+    # Dispatcher-level wiring proof: payload → hook process → adapter → audit
+    # chain, under the enforce default (no GOVE_ZONE_GATE_MODE anywhere).
+    proc = _run_hook(tmp_path, {"GOVE_ZONE_PROFILE": "dev"})
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / ".gove-zone" / "audit.jsonl").exists()
+
+
+def test_hook_end_to_end_blocks_on_emission_failure(tmp_path: Path) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    proc = _run_hook(
+        tmp_path,
+        {
+            "GOVE_ZONE_PROFILE": "dev",
+            "GOVE_ZONE_AUDIT_PATH": str(blocker / "child" / "audit.jsonl"),
+        },
+    )
+    assert proc.returncode == 2
+    assert "enforce" in proc.stderr
+
+
+def test_hook_end_to_end_production_without_signer_blocks(tmp_path: Path) -> None:
+    # This is why settings.json pins GOVE_ZONE_PROFILE=dev: the passive
+    # auditor emits unsigned anchors, which production+enforce refuses.
+    proc = _run_hook(tmp_path, {})
+    assert proc.returncode == 2
+    assert "signer" in proc.stderr
+
+
+def test_settings_json_pins_venv_python_and_dev_profile() -> None:
+    settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    commands = [
+        hook.get("command", "")
+        for entry in settings.get("hooks", {}).get("PreToolUse", [])
+        for hook in entry.get("hooks", [])
+        if "acgs-emit-receipt.py" in hook.get("command", "")
+    ]
+    assert len(commands) >= 2  # Edit|Write|MultiEdit matcher + Bash matcher
+    for command in commands:
+        assert ".venv/bin/python" in command, command  # interpreter pinned to project venv
+        assert "GOVE_ZONE_PROFILE=dev" in command, command  # unsigned auditing acknowledged
+        assert "exit 2" in command, command  # missing venv fails closed, not open
