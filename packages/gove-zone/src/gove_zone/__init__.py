@@ -66,6 +66,7 @@ from gove_zone.integration import (
     tool_calls_from_hook_payload,
 )
 from gove_zone.kernel import Kernel
+from gove_zone.mcp import mcp_tools_call, mcp_tools_list
 from gove_zone.plan import WorkflowAuthorization
 from gove_zone.policy import (
     AllowAllPolicy,
@@ -190,6 +191,8 @@ __all__ = [
     "canonical_json",
     "find_event",
     "make_signer",
+    "mcp_tools_call",
+    "mcp_tools_list",
     "new_event_id",
     "normalize_path_context",
     "receipt_to_governed_action",
