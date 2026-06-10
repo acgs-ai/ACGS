@@ -14,12 +14,10 @@ jobs:
   claude:
     if: |
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-        coalesce(
-          github.event.comment.author_association,
-          github.event.review.author_association,
-          github.event.issue.author_association,
-          github.event.pull_request.author_association
-        )
+        github.event.comment.author_association ||
+        github.event.review.author_association ||
+        github.event.issue.author_association ||
+        github.event.pull_request.author_association
       ) &&
       (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
