@@ -496,7 +496,7 @@ except DeniedError as exc:
     # {"status": "deny", "outcome": "denied", "resumable": False,
     #  "resolution": "revise_and_retry", "reason": ..., "matched_rules": [...],
     #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...}
-    # (allowed_alternatives is omitted until PR-2 computes it — see Notes)
+    # (allowed_alternatives is omitted unless you compute it — see Notes)
 ```
 
 `ESCALATE` is **not** a dead-end — its envelope is `resumable` and advertises the
@@ -530,10 +530,20 @@ receipt-verifying gate.
   an `EscalateError` built outside the kernel, both `resumable` and
   `approval.pending` are `False` — gate the resume call on either; they never
   disagree.
-- `allowed_alternatives` is **omitted** until a future capability-discovery
-  (`simulate`, PR-2) primitive computes it. Absence means *"not computed"*; a
-  present list (even empty) will mean *"computed"* — so the key never carries an
-  in-band ambiguity between "unknown" and "none permitted".
+- `allowed_alternatives` is **omitted by default**. Absence means *"not
+  computed"*; a present list (even empty) means *"computed"* — so the key never
+  carries an in-band ambiguity between "unknown" and "none permitted". To
+  compute it, probe candidate variants with the read-only
+  `discover_alternatives(kernel, candidates)` (backed by `kernel.simulate` — no
+  execution, no audit append) and pass the result through
+  `exc.to_rejection_dict(allowed_alternatives=...)`. Entries are
+  `alternative_from_record(...)` projections (tool, predicted decision,
+  non-reversible hashes, policy version) plus a `candidate_index`; every entry
+  is validated against that closed allowlist schema (raw inputs, unknown keys,
+  nested payloads, and mistyped values are refused — leak-safe for any caller,
+  not just the canonical producers), and
+  an allowed alternative is a *prediction under the current policy*, never
+  authorization — execution still requires a real `dispatch` and its receipt.
 
 ## Auto-setup
 

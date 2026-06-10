@@ -80,7 +80,11 @@ from gove_zone.policy import (
 )
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
-from gove_zone.rejection import rejection_dict
+from gove_zone.rejection import (
+    alternative_from_record,
+    discover_alternatives,
+    rejection_dict,
+)
 from gove_zone.replay import (
     ReplayResult,
     find_event,
@@ -171,7 +175,9 @@ __all__ = [
     "WorkflowStepReceipt",
     "__version__",
     "agentdojo_scenarios_from_fixture",
+    "alternative_from_record",
     "approve_escalation",
+    "discover_alternatives",
     "emit_receipt_for_hook",
     "emit_receipts_for_hook",
     "evaluate_policy_scenarios",
