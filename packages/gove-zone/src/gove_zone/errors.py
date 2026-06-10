@@ -8,6 +8,7 @@ anchors the decision. Callers can catch the specific type or the
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from gove_zone.decision import DecisionRecord
@@ -68,18 +69,27 @@ class DeniedError(GoveZoneError):
         self.audit_hash = audit_hash
         super().__init__(f"denied by policy {record.policy_version!r}: {record.reason}")
 
-    def to_rejection_dict(self) -> dict[str, Any]:
+    def to_rejection_dict(
+        self,
+        *,
+        allowed_alternatives: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Machine-readable rejection envelope for a calling agent.
 
         Deny is terminal for *this* call: the resolution hint is
         ``revise_and_retry`` and ``resumable`` is ``False``. Pure projection of
         the deciding record — see :func:`gove_zone.rejection.rejection_dict`.
+
+        ``allowed_alternatives`` (from
+        :func:`gove_zone.rejection.discover_alternatives`) is passed through to
+        the envelope; ``None`` keeps the key omitted ("not computed").
         """
         return rejection_dict(
             self.record,
             self.audit_hash,
             resumable=False,
             resolution=REVISE_AND_RETRY,
+            allowed_alternatives=allowed_alternatives,
         )
 
 
@@ -104,7 +114,11 @@ class EscalateError(GoveZoneError):
         self.pending = pending
         super().__init__(f"escalated by policy {record.policy_version!r}: {record.reason}")
 
-    def to_rejection_dict(self) -> dict[str, Any]:
+    def to_rejection_dict(
+        self,
+        *,
+        allowed_alternatives: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Machine-readable rejection envelope for a calling agent.
 
         Escalation is **not** a dead-end: ``approval`` advertises the
@@ -118,6 +132,10 @@ class EscalateError(GoveZoneError):
         ``False`` and ``approval.pending`` agrees). A consumer can therefore gate
         the resume call on either ``resumable`` or ``approval.pending`` without
         the two ever disagreeing.
+
+        ``allowed_alternatives`` (from
+        :func:`gove_zone.rejection.discover_alternatives`) is passed through to
+        the envelope; ``None`` keeps the key omitted ("not computed").
         """
         has_pending = self.pending is not None
         return rejection_dict(
@@ -126,6 +144,7 @@ class EscalateError(GoveZoneError):
             resumable=has_pending,
             resolution=HUMAN_APPROVAL,
             approval={"via": "approve_escalation", "pending": has_pending},
+            allowed_alternatives=allowed_alternatives,
         )
 
 

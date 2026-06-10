@@ -6,7 +6,10 @@ carrying the deciding :class:`~gove_zone.decision.DecisionRecord`. This module
 projects that record into a small, stable JSON envelope a *calling agent* can
 read to self-correct — the agent-facing twin of
 :func:`gove_zone.frontend_contract.record_to_governed_action`, which targets the
-human console. It is pure projection: it makes no decision and mutates nothing.
+human console. The envelope builders are pure projection: they make no decision
+and mutate nothing. :func:`discover_alternatives` additionally drives the
+read-only :meth:`~gove_zone.kernel.Kernel.simulate` primitive to fill
+``allowed_alternatives`` — still no execution and no audit mutation.
 
 Fail-closed leak posture: the envelope only *reads* an already-decided record. It
 carries ``decision_request_hash`` / ``audit_hash`` (non-reversible commitments)
@@ -29,7 +32,8 @@ The ``reason`` field has two provenances and is handled accordingly:
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Protocol
 
 from gove_zone.decision import Decision, DecisionRecord
 
@@ -54,6 +58,33 @@ _FAIL_CLOSED_REASON = (
     "see matched_rules for the error class and the audit chain for full detail"
 )
 
+#: Decisions that make a simulated candidate an *available* alternative.
+_ALTERNATIVE_OUTCOMES = (Decision.ALLOW, Decision.TRANSFORM)
+
+#: Keys an ``allowed_alternatives`` entry must never carry — raw inputs would
+#: break the envelope's leak-safe-by-construction posture.
+_ALTERNATIVE_FORBIDDEN_KEYS = ("args", "transformed_args", "state")
+
+
+class SupportsSimulate(Protocol):
+    """Structural type for :func:`discover_alternatives` — anything exposing the
+    read-only :meth:`gove_zone.kernel.Kernel.simulate` signature qualifies.
+
+    Declared structurally (not as ``Kernel``) so this module keeps importing
+    only :mod:`gove_zone.decision`: ``errors`` imports this module and
+    ``kernel`` imports ``errors``, so a nominal ``Kernel`` import would cycle.
+    """
+
+    def simulate(
+        self,
+        tool_name: str,
+        args: Mapping[str, Any] | None = None,
+        *,
+        goal: str = "",
+        path: str | Sequence[str] | None = None,
+        state: Mapping[str, Any] | None = None,
+    ) -> DecisionRecord: ...
+
 
 def rejection_dict(
     record: DecisionRecord,
@@ -62,6 +93,7 @@ def rejection_dict(
     resumable: bool,
     resolution: str,
     approval: dict[str, Any] | None = None,
+    allowed_alternatives: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Project a non-ALLOW decision into the agent-facing rejection envelope.
 
@@ -75,10 +107,14 @@ def rejection_dict(
     ``reason`` is redacted for fail-closed-fallback records (see module docstring)
     so an exception-derived reason cannot leak raw arguments to the caller.
 
-    ``allowed_alternatives`` is **omitted** until a capability-discovery primitive
-    (PR-2 ``simulate``) computes it. Absence therefore means *"not computed"*; a
-    present list (possibly empty) will unambiguously mean *"computed"* — so the
-    key never carries an in-band ambiguity between those two states.
+    ``allowed_alternatives`` keeps its tri-state contract: when the caller has
+    not computed alternatives (``None``, the default) the key is **omitted** —
+    absence means *"not computed"*. A passed list (possibly empty) is included
+    verbatim and unambiguously means *"computed"* (empty == "none permitted").
+    Entries are expected to come from :func:`alternative_from_record` /
+    :func:`discover_alternatives`; entries carrying raw inputs (``args``,
+    ``transformed_args``, ``state``) raise :class:`ValueError` so the envelope's
+    leak posture holds by construction, not by caller discipline.
     """
     if record.decision not in _OUTCOME:
         raise ValueError(
@@ -102,4 +138,83 @@ def rejection_dict(
     }
     if approval is not None:
         payload["approval"] = approval
+    if allowed_alternatives is not None:
+        alternatives = [dict(alternative) for alternative in allowed_alternatives]
+        for alternative in alternatives:
+            leaked = [key for key in _ALTERNATIVE_FORBIDDEN_KEYS if key in alternative]
+            if leaked:
+                raise ValueError(
+                    "allowed_alternatives entries must not carry raw inputs "
+                    f"(forbidden keys: {leaked}); pass "
+                    "alternative_from_record(...) projections instead"
+                )
+        payload["allowed_alternatives"] = alternatives
     return payload
+
+
+def alternative_from_record(record: DecisionRecord) -> dict[str, Any]:
+    """Project an ALLOW/TRANSFORM :class:`DecisionRecord` (typically returned by
+    :meth:`~gove_zone.kernel.Kernel.simulate`) into an ``allowed_alternatives``
+    entry.
+
+    Fail-closed twin of :func:`rejection_dict`'s guard: only ``ALLOW`` /
+    ``TRANSFORM`` records project; a ``DENY``/``ESCALATE`` record raises
+    :class:`ValueError` rather than silently advertising a rejected call as an
+    available alternative.
+
+    Leak posture matches the envelope: the entry carries the tool name, the
+    predicted decision, non-reversible commitments (``argument_hash``,
+    ``decision_request_hash``) and ``policy_version`` — never raw arguments and
+    never ``transformed_args``.
+    """
+    if record.decision not in _ALTERNATIVE_OUTCOMES:
+        raise ValueError(
+            "alternative_from_record only projects ALLOW/TRANSFORM records, "
+            f"got {record.decision!r}"
+        )
+    return {
+        "tool": record.tool,
+        "decision": record.decision.value,
+        "argument_hash": record.argument_hash,
+        "decision_request_hash": record.decision_request_hash,
+        "policy_version": record.policy_version,
+    }
+
+
+def discover_alternatives(
+    kernel: SupportsSimulate,
+    candidates: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Simulate candidate call variants and collect the ones that would pass.
+
+    For each candidate — a mapping with ``tool`` (required) and optionally
+    ``args`` / ``goal`` / ``path`` / ``state``, mirroring
+    :meth:`~gove_zone.kernel.Kernel.simulate` — runs a read-only simulation and
+    keeps the candidates whose predicted decision is ``ALLOW`` or ``TRANSFORM``.
+    Each kept entry is :func:`alternative_from_record` plus ``candidate_index``
+    (the candidate's position) so the caller can map a verdict back to the
+    variant it supplied without the envelope echoing raw arguments.
+
+    Read-only at the kernel level (inherits :meth:`simulate`'s guarantee): no
+    tool executes and the audit chain is unchanged. The result is a
+    *prediction* under the current policy, not authorization — execution still
+    requires a real :meth:`dispatch` and its receipt.
+
+    Unregistered tools propagate :class:`~gove_zone.errors.UnknownToolError`
+    (mirroring ``simulate``) rather than being silently dropped, so a typo'd
+    candidate surfaces instead of vanishing from the allowed set.
+    """
+    alternatives: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates):
+        record = kernel.simulate(
+            str(candidate["tool"]),
+            candidate.get("args"),
+            goal=str(candidate.get("goal", "")),
+            path=candidate.get("path"),
+            state=candidate.get("state"),
+        )
+        if record.decision in _ALTERNATIVE_OUTCOMES:
+            entry = alternative_from_record(record)
+            entry["candidate_index"] = index
+            alternatives.append(entry)
+    return alternatives
