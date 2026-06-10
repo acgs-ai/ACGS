@@ -234,11 +234,15 @@ def main() -> int:
         scratch_path = Path(scratch)
         # Pin every gove-zone path inside the tempdir: the hook auditor writes
         # $CLAUDE_PROJECT_DIR/.gove-zone/audit.jsonl; without this it would write
-        # under cwd. Clear GateMode/Profile so we exercise the DEFAULT posture.
+        # under cwd. GateMode stays at its default — which is now ENFORCE
+        # (fail-closed). The passive gate-1 auditor emits unsigned audit-anchor
+        # receipts, so under enforcement it must explicitly acknowledge that via
+        # the dev profile; the EXECUTION gate below still runs the full
+        # production profile with signed receipts.
         os.environ["CLAUDE_PROJECT_DIR"] = scratch
         os.environ.pop("GOVE_ZONE_AUDIT_PATH", None)
         os.environ.pop("GOVE_ZONE_GATE_MODE", None)
-        os.environ.pop("GOVE_ZONE_PROFILE", None)
+        os.environ["GOVE_ZONE_PROFILE"] = "dev"
 
         # Lead with the production profile (the secure default): signed receipts
         # required at the execution gate. Generate an Ed25519 keypair in-demo —

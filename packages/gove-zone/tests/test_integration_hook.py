@@ -432,7 +432,11 @@ def test_tool_calls_from_hook_payload_returns_malformed_batch_for_responses_outp
     }
 
 
-def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> None:
+def test_observe_mode_appends_receipt_and_chain_verifies(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Observe is no longer the default — it is an explicit opt-in (PR-3).
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "observe")
     receipt = emit_receipt_for_hook(
         _edit_payload(),
         action_kind="edit",
@@ -460,6 +464,29 @@ def test_observe_mode_appends_receipt_and_chain_verifies(project_dir: Path) -> N
     assert verdict["valid"] is True
 
 
+def test_default_mode_is_enforce_and_gates_on_failure(
+    project_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit R1 acceptance: with NO gate mode configured (no env, no file), an
+    emission failure is gated — raised, not silently swallowed — proven through
+    the adapter entry point, not a unit call."""
+    bad = project_dir / "audit-blocker"
+    bad.write_text("not a directory")
+    monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(bad / "child" / "audit.jsonl"))
+    # Dev profile so the production-signer guard does not short-circuit before
+    # the emission-failure path; the mode default is what is under test.
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
+
+    assert current_gate_mode() is GateMode.ENFORCE
+    with pytest.raises(GateModeError, match="receipt emission failed under enforce mode"):
+        emit_receipt_for_hook(
+            _edit_payload(),
+            action_kind="edit",
+            actor="test-actor",
+        )
+
+
 def test_observe_mode_swallows_internal_failure(
     project_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -468,6 +495,8 @@ def test_observe_mode_swallows_internal_failure(
     bad = project_dir / "audit-blocker"
     bad.write_text("not a directory")
     monkeypatch.setenv("GOVE_ZONE_AUDIT_PATH", str(bad / "child" / "audit.jsonl"))
+    # Observe is no longer the default — it is an explicit opt-in.
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "observe")
 
     assert current_gate_mode() is GateMode.OBSERVE
     result = emit_receipt_for_hook(
@@ -553,7 +582,12 @@ def test_audit_path_resolution_precedence(tmp_path: Path, monkeypatch: pytest.Mo
     assert resolve_audit_path() == tmp_path / ".gove-zone" / "audit.jsonl"
 
 
-def test_gate_adapter_appends_mcp_payload_receipt(project_dir: Path) -> None:
+def test_gate_adapter_appends_mcp_payload_receipt(
+    project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Subject is MCP payload adaptation; dev profile acknowledges unsigned
+    # runtime-hook auditing under the (new) enforce default.
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
     receipt = emit_receipt_for_hook(
         {
             "method": "tools/call",

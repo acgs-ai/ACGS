@@ -54,7 +54,7 @@ class EnvironmentReport:
     gove_zone_version: str | None
     audit_path: str
     runtime_hosts: list[str] = field(default_factory=list)
-    gate_mode: str = "observe"
+    gate_mode: str = "enforce"  # mirrors the library fail-closed default
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

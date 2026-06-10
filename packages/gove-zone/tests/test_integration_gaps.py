@@ -67,11 +67,32 @@ def test_settings_json_wires_hook_to_edit_and_bash_matchers() -> None:
 
 
 def test_gate_mode_file_fallback(in_project: Path) -> None:
-    assert current_gate_mode() is GateMode.OBSERVE
+    # Fail-closed default: nothing configured -> ENFORCE (audit R1 / PR-3).
+    assert current_gate_mode() is GateMode.ENFORCE
     mode_file = in_project / ".gove-zone" / "gate.mode"
     mode_file.parent.mkdir(parents=True, exist_ok=True)
     mode_file.write_text("enforce\n", encoding="utf-8")
     assert current_gate_mode() is GateMode.ENFORCE
+    # Observe is an explicit file-level opt-in, honored as such.
+    mode_file.write_text("observe\n", encoding="utf-8")
+    assert current_gate_mode() is GateMode.OBSERVE
+
+
+def test_gate_mode_unknown_values_fail_closed(
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An unrecognized mode anywhere must resolve to ENFORCE, never observe.
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "yolo")
+    assert current_gate_mode() is GateMode.ENFORCE
+    monkeypatch.delenv("GOVE_ZONE_GATE_MODE")
+    mode_file = in_project / ".gove-zone" / "gate.mode"
+    mode_file.parent.mkdir(parents=True, exist_ok=True)
+    mode_file.write_text("garbage\n", encoding="utf-8")
+    assert current_gate_mode() is GateMode.ENFORCE
+    # A garbage env value falls through to a valid file opt-in.
+    monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "yolo")
+    mode_file.write_text("observe\n", encoding="utf-8")
+    assert current_gate_mode() is GateMode.OBSERVE
 
 
 def test_env_var_overrides_gate_mode_file(
@@ -101,8 +122,11 @@ class _AlwaysDenyPolicy(Policy):
 
 
 def test_emit_receipt_for_hook_accepts_custom_policy_and_emits_deny(
-    in_project: Path,
+    in_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Under the (new) enforce default, unsigned runtime-hook auditing needs the
+    # dev profile; the subject here is the custom-policy DENY emission.
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
     receipt = emit_receipt_for_hook(
         {"tool_name": "Edit", "tool_input": {"file_path": "/x"}},
         action_kind="edit",

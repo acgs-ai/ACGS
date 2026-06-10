@@ -15,11 +15,13 @@ We map it onto:
 3. A :class:`~gove_zone.receipt.Receipt` (the audit anchor) appended to a
    :class:`~gove_zone.audit.ChainHashAuditStore`.
 
-The adapter is observation-by-default: it records what Claude (or any other
-runtime) is about to do, because the runtime itself owns allow/deny. In
-``GOVE_ZONE_GATE_MODE=enforce`` it fails closed — missing audit store,
-import failure, or emission failure raises rather than silently dropping
-the receipt.
+The adapter is **fail-closed by default**: with no gate mode configured it
+runs in ``enforce`` mode, where a missing audit store, import failure, or
+emission failure raises rather than silently dropping the receipt — an
+unrecognized or unreadable mode also resolves to ``enforce``. Observation-only
+mode (record but never block, because the runtime itself owns allow/deny) is
+an explicit, logged opt-in via ``GOVE_ZONE_GATE_MODE=observe`` or an
+``observe`` line in the gate-mode file.
 
 Hooks MUST go through this module rather than calling kernel/audit
 primitives directly. The contract here is the integration boundary; the
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 from enum import StrEnum
 from pathlib import Path
@@ -86,22 +89,36 @@ def _read_gate_mode_file() -> str | None:
         return None
 
 
+_LOGGER = logging.getLogger("gove_zone.integration")
+
+
+def _log_observe_opt_in(source: str) -> None:
+    _LOGGER.info("gove-zone gate mode: observe (explicit opt-in via %s)", source)
+
+
 def current_gate_mode() -> GateMode:
     """Resolve gate mode in this order:
 
-    1. ``$GOVE_ZONE_GATE_MODE``
+    1. ``$GOVE_ZONE_GATE_MODE`` ("observe" or "enforce")
     2. ``$CLAUDE_PROJECT_DIR/.gove-zone/gate.mode`` (single line, "observe" or "enforce")
-    3. default ``observe``
+    3. default ``enforce``
+
+    Fail-closed: an unset, unreadable, or unrecognized mode resolves to
+    :attr:`GateMode.ENFORCE` — never silently to observe. Observation-only
+    mode is an explicit opt-in and is logged when selected, so an
+    allow-all-and-record posture is always a visible, deliberate choice.
     """
     raw = (os.environ.get("GOVE_ZONE_GATE_MODE") or "").strip().lower()
     if raw == GateMode.ENFORCE.value:
         return GateMode.ENFORCE
     if raw == GateMode.OBSERVE.value:
+        _log_observe_opt_in("environment variable GOVE_ZONE_GATE_MODE")
         return GateMode.OBSERVE
     file_mode = _read_gate_mode_file()
-    if file_mode == GateMode.ENFORCE.value:
-        return GateMode.ENFORCE
-    return GateMode.OBSERVE
+    if file_mode == GateMode.OBSERVE.value:
+        _log_observe_opt_in(f"gate-mode file {resolve_gate_mode_path()}")
+        return GateMode.OBSERVE
+    return GateMode.ENFORCE
 
 
 def resolve_audit_path() -> Path:
