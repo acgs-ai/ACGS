@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.executor import GovernedExecutor
@@ -120,14 +121,17 @@ def approve_escalation(
     recomputed-receipt residual, pass a private-key ``signer`` and resume with
     ``require_signature=True`` plus the matching verifier.
 
-    Limitations (inherited from the stateless gate; tracked for a follow-up
-    single-use change):
+    Limitations:
 
-    * **Approvals are not single-use.** ``DecisionReceipt.verify`` holds no
-      memory of prior uses, so one approval receipt can be resumed more than
-      once — exactly as an ordinary kernel ALLOW receipt can. "Approved once"
-      does NOT imply "executed once". Bound the window with ``expires_at`` (or
-      pin ``expected_audit_hash`` at resume) until a used-receipt ledger exists.
+    * **Approvals are single-use only when the resume gate carries a ledger.**
+      ``DecisionReceipt.verify`` holds no memory of prior uses, so without one
+      an approval receipt can be resumed more than once — exactly as an
+      ordinary kernel ALLOW receipt can. For "approved once, executed once",
+      pass a :class:`~gove_zone.consumption.ReceiptConsumptionLedger` to
+      :func:`resume_with_receipt` (or construct the executor with one): the
+      approval's audit anchor is burned before the side effect and a replay
+      raises :class:`~gove_zone.errors.ReceiptAlreadyUsedError`. ``expires_at``
+      remains useful as a time bound on the *first* use.
     * **Re-approving the same pending reuses the approval ``event_id``**
       (``<original>:approved``), so two approvals of one escalation are not
       individually addressable via ``event_id`` lookup. The hash chain is not
@@ -213,6 +217,7 @@ def resume_with_receipt(
     expected_audit_hash: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool | None = None,
+    consumption_ledger: ReceiptConsumptionLedger | None = None,
 ) -> Any:
     """Resume an approved escalation by executing through the existing gate.
 
@@ -229,6 +234,13 @@ def resume_with_receipt(
     signed approval, else it fails closed with
     :class:`~gove_zone.errors.ProductionProfileError`; construct a dev executor
     (``require_signature=False``) for unsigned operation.
+
+    For "approved once, executed once", pass ``consumption_ledger`` (or
+    construct *executor* with one): the approval receipt's audit anchor is
+    burned atomically after verification and before the side effect, so a
+    second resume of the same approval raises
+    :class:`~gove_zone.errors.ReceiptAlreadyUsedError` instead of re-running
+    the tool.
     """
     return executor.execute(
         pending.record.tool,
@@ -240,4 +252,5 @@ def resume_with_receipt(
         expected_audit_hash=expected_audit_hash,
         verifier=verifier,
         require_signature=require_signature,
+        consumption_ledger=consumption_ledger,
     )

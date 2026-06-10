@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
     ProductionProfileError,
@@ -32,6 +33,7 @@ def execute_with_receipt(
     expected_policy_bundle_id: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = True,
+    consumption_ledger: ReceiptConsumptionLedger | None = None,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -60,6 +62,18 @@ def execute_with_receipt(
     this does not manufacture an authenticated identity the architecture lacks —
     signed issuance (``require_signature=True`` + a trusted verifier) is the
     cryptographic closure.
+
+    ``consumption_ledger`` (opt-in) makes the receipt **single-use**:
+    ``verify`` alone is stateless, so without a ledger one valid receipt
+    authorizes N executions. When a
+    :class:`~gove_zone.consumption.ReceiptConsumptionLedger` is supplied, the
+    receipt's audit anchor is atomically burned *after* verification passes
+    and *before* the tool runs — a replay raises
+    :class:`~gove_zone.errors.ReceiptAlreadyUsedError` with no side effect,
+    and concurrent presenters serialize on the ledger lock so at most one
+    executes. At-most-once semantics: a tool failure after the burn does NOT
+    un-burn the receipt; recovery is a fresh decision/approval. Verification
+    failures burn nothing.
     """
     if not expected_actor or not expected_actor.strip():
         raise ReceiptValidationError(
@@ -87,6 +101,12 @@ def execute_with_receipt(
         require_signature=require_signature,
     )
 
+    # Burn-before-execute: consume only after verify passes (a failed
+    # presentation must not waste the approval), but before the side effect
+    # (so a concurrent replay loses the ledger race, not the execution race).
+    if consumption_ledger is not None:
+        consumption_ledger.consume(receipt)
+
     return tool_fn(**args)
 
 
@@ -111,6 +131,13 @@ class GovernedExecutor:
     (:class:`~gove_zone.errors.ProductionProfileError`) when ``execute`` runs.
     For the explicit unsigned dev mode, construct with ``require_signature=False``
     (or feed a :meth:`gove_zone.profile.GovernanceProfile.dev` bundle).
+
+    ``consumption_ledger`` follows the same per-call-override pattern, with one
+    sharp edge: a per-call ledger **replaces** (never augments) the constructor
+    ledger for that call, and burns recorded in one store are invisible to the
+    other — always pass the same logical store. Passing ``None`` per-call falls
+    back to the constructor ledger, so a per-call argument can never silently
+    *disable* single-use enforcement.
     """
 
     def __init__(
@@ -121,6 +148,7 @@ class GovernedExecutor:
         expected_actor: str,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
+        consumption_ledger: ReceiptConsumptionLedger | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -131,6 +159,7 @@ class GovernedExecutor:
         self.expected_actor = expected_actor
         self.verifier = verifier
         self.require_signature = require_signature
+        self.consumption_ledger = consumption_ledger
         self.registry: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
@@ -148,6 +177,7 @@ class GovernedExecutor:
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool | None = None,
+        consumption_ledger: ReceiptConsumptionLedger | None = None,
     ) -> Any:
         if action not in self.registry:
             raise KeyError(f"Tool {action!r} not registered with executor")
@@ -164,6 +194,9 @@ class GovernedExecutor:
         effective_require = (
             require_signature if require_signature is not None else self.require_signature
         )
+        effective_ledger = (
+            consumption_ledger if consumption_ledger is not None else self.consumption_ledger
+        )
         return execute_with_receipt(
             tool_fn=tool_fn,
             args=args,
@@ -177,4 +210,5 @@ class GovernedExecutor:
             expected_actor=effective_actor,
             verifier=effective_verifier,
             require_signature=effective_require,
+            consumption_ledger=effective_ledger,
         )

@@ -41,6 +41,48 @@ class ProductionProfileError(ReceiptValidationError):
     """
 
 
+class ReceiptAlreadyUsedError(ReceiptValidationError):
+    """Raised when a receipt presented at the gate was already consumed.
+
+    A :class:`~gove_zone.consumption.ReceiptConsumptionLedger` keys consumption
+    on the receipt's ``audit_event_hash`` — one audit-anchored decision
+    authorizes at most one execution. Subclasses
+    :class:`ReceiptValidationError` deliberately (the
+    :class:`ProductionProfileError` precedent): replay refusal stays on the
+    single fail-closed receipt-verification path, so every existing caller
+    that treats ``ReceiptValidationError`` as "execution refused" handles
+    replay correctly with no new catch site.
+    """
+
+    def __init__(self, audit_event_hash: str = "", ledger_path: str = "") -> None:
+        self.audit_event_hash = audit_event_hash
+        self.ledger_path = ledger_path
+        super().__init__(
+            "receipt already consumed: audit anchor "
+            f"{self.audit_event_hash!r} is burned in the consumption ledger "
+            f"({self.ledger_path}). One approval authorizes at most one "
+            "execution — obtain a fresh decision/approval to run again."
+        )
+
+    def __reduce__(self) -> tuple[type[ReceiptAlreadyUsedError], tuple[str, str]]:
+        # BaseException pickling replays ``args`` (the rendered message) into
+        # ``__init__``; rebuild from the structured fields instead so the error
+        # survives multiprocessing/ProcessPoolExecutor boundaries intact.
+        return (type(self), (self.audit_event_hash, self.ledger_path))
+
+
+class ConsumptionLedgerError(ReceiptValidationError):
+    """Raised when the consumption ledger cannot prove a receipt is fresh —
+    unreadable file, corrupt line, or a failed write of the consumption entry.
+
+    Subclasses :class:`ReceiptValidationError` deliberately (the
+    :class:`ProductionProfileError` precedent): if single-use cannot be
+    *proven*, execution is refused on the same fail-closed path as any other
+    receipt-validation failure rather than silently degrading to stateless
+    (replayable) verification.
+    """
+
+
 PRODUCTION_NO_VERIFIER_MSG = (
     "production profile requires a signer/verifier: this gate runs with "
     "require_signature=True but no verifier was configured. Configure a "
