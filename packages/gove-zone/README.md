@@ -104,8 +104,10 @@ you need breadth.
 - Your threat model is **a compromised host**. An attacker who can write the
   audit file and run the issuer can forge a consistent local chain; the chain
   proves tamper-evidence to *readers*, not unforgeability under host compromise.
-- You need **human-in-the-loop approval resolution today**. `ESCALATE` blocks
-  the action but does not yet route to an approver.
+- You need a **turnkey approval queue / UI**. `ESCALATE` blocks the action and
+  the kernel surfaces a *resumable* pending approval (`approve_escalation` →
+  `resume_with_receipt`), but routing it to a human reviewer — the queue, the
+  notification, the UI — is yours to build.
 - You need **production / compliance certification**. gove-zone is alpha
   (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
   certification.
@@ -456,6 +458,61 @@ Set with one command: `gove-zone enable --enforce` (or `--observe`).
 1. `$GOVE_ZONE_AUDIT_PATH`
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/audit.jsonl`
 3. `$PWD/.gove-zone/audit.jsonl`
+
+## Structured rejections (agent self-correction)
+
+When a dispatch is denied or escalated the kernel raises a typed error
+(`DeniedError` / `EscalateError`) carrying the deciding `DecisionRecord`. Both
+expose `to_rejection_dict()` — a small, stable JSON envelope a *calling agent*
+can read to self-correct, the machine-facing twin of the human-console
+projection (`record_to_governed_action`):
+
+```python
+try:
+    kernel.dispatch("matter.fetch", {"matter_id": "M-1"}, goal="...")
+except DeniedError as exc:
+    rejection = exc.to_rejection_dict()
+    # {"status": "deny", "outcome": "denied", "resumable": False,
+    #  "resolution": "revise_and_retry", "reason": ..., "matched_rules": [...],
+    #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...}
+    # (allowed_alternatives is omitted until PR-2 computes it — see Notes)
+```
+
+`ESCALATE` is **not** a dead-end — its envelope is `resumable` and advertises the
+human-approval resume path:
+
+```python
+except EscalateError as exc:
+    rejection = exc.to_rejection_dict()
+    # {... "resumable": True, "resolution": "human_approval",
+    #  "approval": {"via": "approve_escalation", "pending": True}}
+```
+
+The host routes that to a human, who approves via `approve_escalation(...)` →
+`resume_with_receipt(...)`; execution still runs only through the
+receipt-verifying gate.
+
+**Notes.**
+
+- Pure projection — no decision is made and nothing is mutated. The envelope
+  carries `decision_request_hash` / `audit_hash` (never raw arguments), no
+  `state_hash`, and no `transformed_args`.
+- `reason` has two provenances. On a **policy** verdict it is *policy-authored*
+  free text, surfaced verbatim — **keep policy `reason` strings non-sensitive**
+  (they also reach the audit chain and the console). On a **fail-closed fallback**
+  verdict (`policy_version` starts with `fail-closed/` — the policy raised or timed
+  out), `reason` would be derived from the raising exception and could echo raw
+  arguments, so the envelope **redacts** it to a fixed safe summary; the error
+  class stays in `matched_rules` and the full reason is retained in the audit chain.
+- `resumable` tracks the *actual* affordance: it is `True` iff a
+  `PendingApproval` is attached, which the kernel does on every `ESCALATE`. For
+  an `EscalateError` built outside the kernel, both `resumable` and
+  `approval.pending` are `False` — gate the resume call on either; they never
+  disagree.
+- `allowed_alternatives` is **omitted** until a future capability-discovery
+  (`simulate`, PR-2) primitive computes it. Absence means *"not computed"*; a
+  present list (even empty) will mean *"computed"* — so the key never carries an
+  in-band ambiguity between "unknown" and "none permitted".
 
 ## Auto-setup
 

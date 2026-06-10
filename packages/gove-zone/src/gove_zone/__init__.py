@@ -80,6 +80,7 @@ from gove_zone.policy import (
 )
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
+from gove_zone.rejection import rejection_dict
 from gove_zone.replay import (
     ReplayResult,
     find_event,
@@ -187,6 +188,7 @@ __all__ = [
     "normalize_path_context",
     "receipt_to_governed_action",
     "record_to_governed_action",
+    "rejection_dict",
     "replay_bundle",
     "replay_call",
     "replay_event",
