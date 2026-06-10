@@ -255,8 +255,8 @@ def _enable(args: argparse.Namespace) -> int:
     """Flip the gate mode for this project by writing ``.gove-zone/gate.mode``.
 
     Provides a single, agent-followable surface — no env-var juggling, no
-    settings.json edits — to turn the gate from observe (fail-open) into
-    enforce (fail-closed) or back again.
+    settings.json edits — to pin the (default) fail-closed enforce mode or
+    explicitly opt into observe (fail-open).
     """
     mode = GateMode.ENFORCE if args.enforce else GateMode.OBSERVE
     path = resolve_gate_mode_path()

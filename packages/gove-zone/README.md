@@ -463,16 +463,28 @@ emit_receipt_for_hook(payload, action_kind="edit", actor="me", policy=MyPolicy()
 
 **Gate mode resolution (in order):**
 
-1. `$GOVE_ZONE_GATE_MODE`
+1. `$GOVE_ZONE_GATE_MODE` (`observe` or `enforce`)
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/gate.mode` (single line: `observe` or `enforce`)
-3. default `observe`
+3. default `enforce` — fail-closed: an unset, unreadable, or unrecognized
+   mode gates; it never silently falls back to observe
 
 Set with one command: `gove-zone enable --enforce` (or `--observe`).
 
 | Mode | Behavior on emission failure |
 |---|---|
-| `observe` (default) | Returns `None`; existing fail-open contract preserved. |
-| `enforce` | Raises `GateModeError`; hooks MUST exit non-zero. |
+| `enforce` (default) | Raises `GateModeError`; hooks MUST exit non-zero. |
+| `observe` (explicit opt-in, logged) | Returns `None`; fail-open — only because the host runtime owns allow/deny. |
+
+> **Migration (enforce-by-default).** Earlier releases defaulted to
+> `observe`. If your hooks relied on that fail-open default, opt in
+> explicitly with `GOVE_ZONE_GATE_MODE=observe` or
+> `gove-zone enable --observe`; otherwise emission failures (e.g. an
+> unwritable audit path) now surface as `GateModeError` instead of being
+> silently swallowed. The opt-in emits a WARNING via the
+> `gove_zone.integration` logger (a logger record, not an audit-chain
+> event). Scope: this default lives in `current_gate_mode()` — a runtime
+> host that resolves gate mode itself (e.g. a hook that only reads the
+> env var) must delegate to `current_gate_mode()` to inherit it.
 
 **Audit path resolution (in order):**
 
