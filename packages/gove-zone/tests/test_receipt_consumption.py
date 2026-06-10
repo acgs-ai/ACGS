@@ -14,6 +14,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import multiprocessing
+import pickle
+import sys
 from pathlib import Path
 
 import pytest
@@ -314,6 +316,11 @@ def _consume_worker(ledger_path: str, receipt_json: str, results) -> None:
         results.put("replayed")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fork start method is POSIX-only; the lock primitive itself has a "
+    "Windows path (msvcrt) exercised by the single-process tests",
+)
 def test_concurrent_consumers_single_winner(tmp_path: Path) -> None:
     # N processes race to consume the same receipt: the exclusive file lock
     # serializes check-then-append, so exactly one wins and every loser gets
@@ -335,3 +342,78 @@ def test_concurrent_consumers_single_winner(tmp_path: Path) -> None:
     outcomes = [results.get(timeout=5) for _ in range(8)]
     assert outcomes.count("consumed") == 1
     assert outcomes.count("replayed") == 7
+
+
+# --- review-hardening regressions ---------------------------------------------
+
+
+def test_signed_receipt_rekey_rejected_before_ledger(tmp_path):
+    # The consumption key (audit_event_hash) is signed content: re-anchoring a
+    # signed receipt to dodge a burned key invalidates the signature, so the
+    # gate rejects during verify — BEFORE consume — and the tool never re-runs.
+    pytest.importorskip("cryptography")
+    from gove_zone import Ed25519Signer
+
+    err, audit = _escalated(tmp_path)
+    assert err.pending is not None
+    signer = Ed25519Signer.generate()
+    verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
+    receipt = _approve(err.pending, audit, signer=signer)
+
+    ledger = ReceiptConsumptionLedger(tmp_path / "consumed.jsonl")
+    fn, calls = _spy()
+    ex = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=PROPOSER,
+        verifier=verifier,
+        require_signature=True,
+        consumption_ledger=ledger,
+    )
+    ex.register("write_file", fn)
+
+    assert resume_with_receipt(ex, err.pending, receipt) == "wrote /tmp/safe"
+    assert calls == ["/tmp/safe"]
+
+    rekeyed = dataclasses.replace(receipt, audit_event_hash="0" * 64)
+    rekeyed = dataclasses.replace(rekeyed, receipt_hash=rekeyed.compute_hash())
+    with pytest.raises(ReceiptValidationError) as ei:
+        resume_with_receipt(ex, err.pending, rekeyed)
+    # Rejected by signature/hash verification, not by the ledger: the forged
+    # anchor was never burned and the tool ran exactly once.
+    assert not isinstance(ei.value, ReceiptAlreadyUsedError)
+    assert calls == ["/tmp/safe"]
+    assert not ledger.is_consumed("0" * 64)
+
+
+def test_per_call_none_falls_back_to_constructor_ledger(tmp_path):
+    # A per-call consumption_ledger=None must NOT disable single-use: it falls
+    # back to the constructor ledger, so the replay still fails closed.
+    pending, receipt, _ = _approved(tmp_path)
+    ledger = ReceiptConsumptionLedger(tmp_path / "consumed.jsonl")
+    ex, calls = _executor(ledger=ledger)
+
+    assert (
+        ex.execute("write_file", dict(pending.args), receipt, consumption_ledger=None)
+        == "wrote /tmp/safe"
+    )
+    with pytest.raises(ReceiptAlreadyUsedError):
+        ex.execute("write_file", dict(pending.args), receipt, consumption_ledger=None)
+    assert calls == ["/tmp/safe"]
+
+
+def test_already_used_error_survives_pickle(tmp_path):
+    # Gates may run inside multiprocessing workers: the replay refusal must
+    # cross process boundaries intact, not morph into an unpickling error.
+    pending, receipt, _ = _approved(tmp_path)
+    ledger = ReceiptConsumptionLedger(tmp_path / "consumed.jsonl")
+    ledger.consume(receipt)
+    with pytest.raises(ReceiptAlreadyUsedError) as ei:
+        ledger.consume(receipt)
+
+    clone = pickle.loads(pickle.dumps(ei.value))
+    assert isinstance(clone, ReceiptAlreadyUsedError)
+    assert isinstance(clone, ReceiptValidationError)
+    assert clone.audit_event_hash == receipt.audit_event_hash
+    assert clone.ledger_path == str(ledger.path)
+    assert "already consumed" in str(clone)

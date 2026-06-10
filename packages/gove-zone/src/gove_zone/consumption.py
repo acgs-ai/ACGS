@@ -89,6 +89,13 @@ class ReceiptConsumptionLedger:
     the same standard-library file-lock primitive as
     :class:`~gove_zone.audit.ChainHashAuditStore` (``fcntl.flock`` on POSIX,
     ``msvcrt.locking`` on Windows) — no runtime dependency added.
+
+    Durability matches the audit store: entry bytes are fsync'd before the
+    lock is released, which survives *process* crashes. On a brand-new ledger
+    file the parent **directory entry** is not fsync'd, so a whole-machine
+    power loss immediately after the very first burn can lose the file. Treat
+    the ledger with the same placement and permissions as the audit chain —
+    its entries carry the same decision metadata (actor, action, tenant).
     """
 
     def __init__(self, path: str | Path) -> None:
@@ -128,22 +135,33 @@ class ReceiptConsumptionLedger:
         }
 
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
-            if self._scan_consumed(key):
-                raise ReceiptAlreadyUsedError(receipt=receipt, ledger_path=self.path)
-            line = (
-                json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n"
-            )
-            try:
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
-                    fh.flush()
-                    os.fsync(fh.fileno())
-            except OSError as exc:
-                raise ConsumptionLedgerError(
-                    f"could not record receipt consumption in {self.path}: {exc}; "
-                    "refusing execution (fail-closed)"
-                ) from exc
+        try:
+            with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+                if self._scan_consumed(key):
+                    raise ReceiptAlreadyUsedError(key, str(self.path))
+                line = (
+                    json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                    + "\n"
+                )
+                try:
+                    with self.path.open("a", encoding="utf-8") as fh:
+                        fh.write(line)
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                except OSError as exc:
+                    raise ConsumptionLedgerError(
+                        f"could not record receipt consumption in {self.path}: {exc}; "
+                        "refusing execution (fail-closed)"
+                    ) from exc
+        except ReceiptValidationError:
+            raise  # ReceiptAlreadyUsedError / ConsumptionLedgerError pass through
+        except OSError as exc:
+            # Opening or locking the sidecar failed (e.g. flock ENOLCK, Windows
+            # lock contention timeout): same taxonomy as any other ledger fault.
+            raise ConsumptionLedgerError(
+                f"could not acquire the consumption ledger lock {lock_path}: {exc}; "
+                "refusing execution (fail-closed)"
+            ) from exc
         return entry
 
     def is_consumed(self, audit_event_hash: str) -> bool:
@@ -151,7 +169,9 @@ class ReceiptConsumptionLedger:
 
         Point-in-time only: a concurrent :meth:`consume` may land immediately
         after this returns ``False``. Gates must rely on :meth:`consume` —
-        which re-checks under the exclusive lock — never on this helper.
+        which re-checks under the exclusive lock — never on this helper. The
+        read is unlocked, so a torn read of an in-flight append can also
+        surface as a transient :class:`~gove_zone.errors.ConsumptionLedgerError`.
         """
         return self._scan_consumed(audit_event_hash)
 

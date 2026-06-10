@@ -131,6 +131,13 @@ class GovernedExecutor:
     (:class:`~gove_zone.errors.ProductionProfileError`) when ``execute`` runs.
     For the explicit unsigned dev mode, construct with ``require_signature=False``
     (or feed a :meth:`gove_zone.profile.GovernanceProfile.dev` bundle).
+
+    ``consumption_ledger`` follows the same per-call-override pattern, with one
+    sharp edge: a per-call ledger **replaces** (never augments) the constructor
+    ledger for that call, and burns recorded in one store are invisible to the
+    other — always pass the same logical store. Passing ``None`` per-call falls
+    back to the constructor ledger, so a per-call argument can never silently
+    *disable* single-use enforcement.
     """
 
     def __init__(
