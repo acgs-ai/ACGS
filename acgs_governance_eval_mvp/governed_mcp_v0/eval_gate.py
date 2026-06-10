@@ -210,8 +210,13 @@ def loop_missing_constitution_fails_closed(tmp_path: Path) -> None:
     assert updated.messages[-1]["status"] == "deny"
     assert "fail closed" in updated.messages[-1]["reason"]
     assert not (targets.fs_dir / "blocked.txt").exists()
+    # The receipt was stamped constitution_hash="missing" because the
+    # constitution is gone; the replay verifier must reject such a bundle
+    # (it cannot be cross-checked against any allowed constitution hash).
     replay = verify_replay_bundle(targets)
-    assert replay.valid, replay.failures
+    assert not replay.valid
+    assert any("constitution_hash_missing" in failure for failure in replay.failures)
+    assert any("constitution_unreadable_for_hash_crosscheck" in failure for failure in replay.failures)
 
 
 def loop_shell_allowlist_is_deterministic(tmp_path: Path) -> None:

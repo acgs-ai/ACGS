@@ -80,7 +80,6 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor=ACTOR,
-        require_signature=False,  # dev-mode — local unsigned demo
     )
 
     prod_denied = False
@@ -94,7 +93,6 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor=ACTOR,
-            require_signature=False,  # dev-mode — local unsigned demo
         )
     except ReceiptValidationError:
         prod_denied = True

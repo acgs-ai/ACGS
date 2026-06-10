@@ -84,6 +84,7 @@ from gove_zone.rejection import rejection_dict
 from gove_zone.replay import (
     ReplayResult,
     find_event,
+    replay_bundle,
     replay_call,
     replay_event,
     replay_from_side_store,
@@ -188,6 +189,7 @@ __all__ = [
     "receipt_to_governed_action",
     "record_to_governed_action",
     "rejection_dict",
+    "replay_bundle",
     "replay_call",
     "replay_event",
     "replay_from_side_store",

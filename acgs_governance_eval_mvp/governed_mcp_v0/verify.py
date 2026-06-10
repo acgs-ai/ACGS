@@ -17,6 +17,7 @@ from typing import Any
 
 from ._io import (
     _contains,
+    _load_constitution,
     _read_json,
     _resolve_fixture_path,
     sha256_json,
@@ -122,10 +123,49 @@ def _verify_allowed_effect(
             failures.append(f"audit line {line_number}: github_effect_missing_or_mismatched")
 
 
+def _load_allowed_constitution_hashes(
+    targets: RuntimeTargets,
+    failures: list[str],
+) -> set[str]:
+    """Resolve the set of constitution hashes a receipt may legitimately carry.
+
+    Fail-closed: any unreadable or malformed source records a failure and
+    returns the empty set, so no receipt hash can match — the bundle is
+    rejected rather than silently passed.
+
+    Precedence:
+    1. ``targets.constitution_registry_path`` — pinned JSON list of hashes.
+    2. Singleton set derived from the live constitution via sha256_json.
+    """
+    registry_path = targets.constitution_registry_path
+    if registry_path.exists():
+        try:
+            with registry_path.open("r", encoding="utf-8") as handle:
+                value = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            failures.append("constitution_registry_unreadable")
+            return set()
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(isinstance(item, str) and item and item != "missing" for item in value)
+        ):
+            failures.append("constitution_registry_malformed")
+            return set()
+        return set(value)
+    try:
+        _constitution, constitution_hash = _load_constitution(targets)
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+        failures.append("constitution_unreadable_for_hash_crosscheck")
+        return set()
+    return {constitution_hash}
+
+
 def verify_replay_bundle(targets: RuntimeTargets) -> ReplayResult:
     failures: list[str] = []
     previous_hash = GENESIS_HASH
     checked = 0
+    allowed_constitution_hashes = _load_allowed_constitution_hashes(targets, failures)
     if not targets.audit_path.exists():
         return ReplayResult(valid=False, checked_events=0, failures=["missing audit.jsonl"])
     with targets.audit_path.open("r", encoding="utf-8") as handle:
@@ -173,6 +213,15 @@ def verify_replay_bundle(targets: RuntimeTargets) -> ReplayResult:
                 missing = sorted(required.difference(receipt))
                 if missing:
                     failures.append(f"audit line {line_number}: receipt_missing_fields={','.join(missing)}")
+                receipt_constitution_hash = receipt.get("constitution_hash")
+                if (
+                    not isinstance(receipt_constitution_hash, str)
+                    or not receipt_constitution_hash
+                    or receipt_constitution_hash == "missing"
+                ):
+                    failures.append(f"audit line {line_number}: constitution_hash_missing")
+                elif receipt_constitution_hash not in allowed_constitution_hashes:
+                    failures.append(f"audit line {line_number}: constitution_hash_not_in_registry")
                 receipt_core = dict(receipt)
                 receipt_event_hash = receipt_core.pop("event_hash", None)
                 if sha256_json(receipt_core) != event.get("receipt_hash"):

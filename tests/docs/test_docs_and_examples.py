@@ -38,6 +38,7 @@ EXAMPLE_SCRIPTS = [
     "examples/agent_framework_gate/demo.py",
     "examples/ci_deploy_gate/demo.py",
     "examples/tamper_demo/demo.py",
+    "examples/dynamic_swarm/demo.py",
 ]
 
 EXAMPLE_READMES = [
@@ -46,6 +47,7 @@ EXAMPLE_READMES = [
     "examples/agent_framework_gate/README.md",
     "examples/ci_deploy_gate/README.md",
     "examples/tamper_demo/README.md",
+    "examples/dynamic_swarm/README.md",
 ]
 
 
