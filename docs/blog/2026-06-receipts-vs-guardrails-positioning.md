@@ -72,8 +72,9 @@ A Decision Receipt closes it by collapsing two systems into one object:
 - **The audit chain is tamper-evident**: local audit events are hash-chained,
   and corrupting an entry breaks verification
   ([`docs/CLAIMS.md`](../CLAIMS.md), `audit.py`).
-- **Decisions are replayable** where the raw call context is retained, so "what
-  was allowed, and on what evidence?" is verifiable.
+- **Decisions are replayable** when raw call context is retained: replay
+  helpers can re-derive the decision, while the audit chain alone proves
+  tamper evidence and policy-version continuity.
 - For higher-assurance contexts, **opt-in Ed25519 signing** makes authority
   cryptographically attributable rather than merely recorded.
 
