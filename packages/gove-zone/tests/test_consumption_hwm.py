@@ -17,7 +17,14 @@ from __future__ import annotations
 
 import dataclasses
 
-from gove_zone import ReceiptConsumptionLedger
+import pytest
+
+from gove_zone import (
+    GENESIS_HASH,
+    ConsumptionLedgerError,
+    ReceiptAlreadyUsedError,
+    ReceiptConsumptionLedger,
+)
 
 
 @dataclasses.dataclass
@@ -183,4 +190,41 @@ def test_consume_after_seal_advances_checkpoint(tmp_path):
     ledger.consume(_FakeReceipt(_anchor("z")))
     assert ledger.checkpoint_hash() != sealed_hwm
     assert ledger.checkpoint_hash() == _read_last_entry_hash(path)
+    assert ledger.verify_ledger()["valid"] is True
+
+
+# --- fail-closed + edge cases -------------------------------------------------
+
+
+def test_checkpoint_write_failure_fails_burn_closed(tmp_path, monkeypatch):
+    # The security-load-bearing path: if the sidecar write fails, consume() must
+    # raise (refuse execution) — and because the entry is already durable, the
+    # receipt stays burned, so there is no replay window. (Guards the subtle
+    # ConsumptionLedgerError <: ReceiptValidationError routing in consume().)
+    path = tmp_path / "consumed.jsonl"
+    ledger = ReceiptConsumptionLedger(path, checkpoint=True)
+
+    def _boom(*_a, **_k):
+        raise OSError("simulated sidecar replace failure")
+
+    monkeypatch.setattr("gove_zone.consumption.os.replace", _boom)
+    with pytest.raises(ConsumptionLedgerError):
+        ledger.consume(_FakeReceipt(_anchor("a")))
+
+    # Entry already fsync'd before the checkpoint write -> receipt stays burned.
+    assert path.exists()
+    assert ledger.is_consumed(_anchor("a"))
+
+    # With the failure cleared, a retry of the same receipt still refuses
+    # (already burned) and never re-runs the side effect — no replay window.
+    monkeypatch.undo()
+    with pytest.raises(ReceiptAlreadyUsedError):
+        ledger.consume(_FakeReceipt(_anchor("a")))
+
+
+def test_seal_empty_ledger_with_checkpoint(tmp_path):
+    path = tmp_path / "consumed.jsonl"
+    ledger = ReceiptConsumptionLedger(path, checkpoint=True)
+    ledger.seal()  # nothing to seal
+    assert ledger.checkpoint_hash() == GENESIS_HASH
     assert ledger.verify_ledger()["valid"] is True
