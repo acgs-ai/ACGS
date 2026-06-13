@@ -12,7 +12,9 @@ from typing import Any
 from gove_zone import __version__
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
+from gove_zone.errors import ConsumptionLedgerError
 from gove_zone.evaluation import evaluate_policy_scenarios
 from gove_zone.integration import (
     GateMode,
@@ -156,6 +158,36 @@ def _replay(args: argparse.Namespace) -> int:
     rederived = bool(payload.get("rederived", False))
     overall = verified and (rederived if rederivation_attempted else True)
     return 0 if overall else 1
+
+
+def _verify_ledger(args: argparse.Namespace) -> int:
+    """Verify the tamper-evidence hash chain of a consumption ledger.
+
+    Mirrors ``replay --audit``'s chain-verification surface for the
+    enforcement-side single-use record: prints the
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.verify_ledger`
+    report and exits non-zero when the ledger is not ``valid``. A corrupt /
+    unreadable ledger exits 2 (it cannot be verified), distinct from a readable
+    ledger that fails integrity (exit 1).
+    """
+    ledger = ReceiptConsumptionLedger(Path(args.ledger))
+    try:
+        report = ledger.verify_ledger(expected_last_hash=args.expected_last_hash)
+    except ConsumptionLedgerError as exc:
+        print(f"verify-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "ledger": str(args.ledger),
+            "valid": report["valid"],
+            "checked": report["checked"],
+            "unverified_legacy": report["unverified_legacy"],
+            "last_hash": report["last_hash"],
+            "failures": report["failures"],
+        }
+    )
+    return 0 if report["valid"] else 1
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -647,6 +679,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     replay.set_defaults(func=_replay)
+
+    verify_ledger = subparsers.add_parser(
+        "verify-ledger",
+        help="verify the tamper-evidence hash chain of a consumption ledger",
+    )
+    verify_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to verify",
+    )
+    verify_ledger.add_argument(
+        "--expected-last-hash",
+        default=None,
+        help=(
+            "optional external high-water-mark (last entry_hash); a mismatch "
+            "flags tail truncation, which chaining alone cannot detect"
+        ),
+    )
+    verify_ledger.set_defaults(func=_verify_ledger)
 
     setup = subparsers.add_parser(
         "setup",
