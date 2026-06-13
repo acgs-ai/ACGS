@@ -43,7 +43,7 @@ Packages in the `uv` workspace:
 
 | Package | Path | PyPI status |
 |---|---|---|
-| `acgs-lite` | `packages/acgs-lite/` | Published (v2.10.0) |
+| `acgs-lite` | `packages/acgs-lite/` | Published |
 | `Acgs-Swarm` | `packages/Acgs-Swarm/` | Research; not published |
 | `clinicalguard` | `packages/clinicalguard/` | Internal |
 | `legalguard` | `packages/legalguard/` | Internal |
@@ -91,7 +91,7 @@ is viable. The dual-workspace approach keeps each tool in its own domain.
 ### Vendoring submodule packages as path dependencies
 
 Rejected. Path dependencies prevent independent PyPI publishing. `acgs-lite`
-is already published at v2.10.0. Breaking its independent release cadence
+is already published on PyPI. Breaking its independent release cadence
 would require coordinated version bumps across all consumers. Submodules
 preserve independent versioning.
 
