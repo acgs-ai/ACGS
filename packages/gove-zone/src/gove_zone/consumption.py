@@ -178,7 +178,9 @@ class ReceiptConsumptionLedger:
                 # Advance the high-water-mark inside the same lock, after the
                 # entry is durable. A crash in the tiny window between the two
                 # fsyncs leaves the sidecar one entry behind, which verify reports
-                # as a (conservative) last_hash_mismatch — never a missed tamper.
+                # as a conservative last_hash_mismatch. The only undetected case
+                # is a truncation that lands exactly on the lagged entry — already
+                # subsumed by the shared-storage caveat in the class docstring.
                 if self.checkpoint:
                     self._write_checkpoint(str(entry["entry_hash"]))
         except ReceiptValidationError:
