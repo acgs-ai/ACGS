@@ -242,3 +242,33 @@ def test_concurrent_burns_count_exactly(tmp_path):
     for t in threads:
         t.join()
     assert ledger.observability().consumed == n
+
+
+# --- fail-closed hardening ----------------------------------------------------
+
+
+def test_throwing_log_handler_does_not_swallow_replay_error(tmp_path):
+    # Hardening the side-channel invariant: even a misbehaving logging handler
+    # must NOT mask the fail-closed ReceiptAlreadyUsedError. stdlib logging
+    # swallows handler emit() errors (logging.raiseExceptions only prints to
+    # stderr), so the security exception still escapes and the replay still
+    # counts. Also confirms the log is emitted off the file lock (handler runs
+    # in the except clause after the lock is released).
+    class _BoomHandler(logging.Handler):
+        def emit(self, record):
+            raise RuntimeError("logging handler blew up")
+
+    logger = logging.getLogger(_LOGGER_NAME)
+    handler = _BoomHandler()
+    logger.addHandler(handler)
+    try:
+        ledger = ReceiptConsumptionLedger(tmp_path / "consumed.jsonl")
+        ledger.consume(_FakeReceipt(_anchor("a")))
+        with pytest.raises(ReceiptAlreadyUsedError):
+            ledger.consume(_FakeReceipt(_anchor("a")))
+        # Counted despite the handler exploding (counter bumped inside the lock,
+        # before the log is even attempted).
+        assert ledger.observability().replays_blocked == 1
+        assert ledger.observability().consumed == 1
+    finally:
+        logger.removeHandler(handler)
