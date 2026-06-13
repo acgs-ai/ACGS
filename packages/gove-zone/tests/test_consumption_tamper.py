@@ -163,7 +163,52 @@ def test_verify_reorder_detected(tmp_path):
     _write_lines(path, [records[0], records[2], records[1]])
     report = ReceiptConsumptionLedger(path).verify_ledger()
     assert report["valid"] is False
-    assert any(f["type"] == "previous_hash_mismatch" for f in report["failures"])
+    assert report["checked"] == 3
+    assert sum(1 for f in report["failures"] if f["type"] == "previous_hash_mismatch") >= 1
+
+
+def test_verify_legacy_after_chain_detected(tmp_path):
+    # The un-burn downgrade vector: append an UNCHAINED line after chained
+    # entries to make a deletion look like a benign legacy tail. It must be
+    # flagged, not silently absorbed into ``unverified_legacy``.
+    path = tmp_path / "consumed.jsonl"
+    _seed(path, 2)
+    records = _read_lines(path)
+    legacy_tail = {
+        "consumed_key": _anchor("z"),
+        "receipt_hash": "rh-z",
+        "request_id": "r",
+        "tenant_id": "t",
+        "actor": "a",
+        "proposed_action": "write_file",
+        "consumed_at": "2026-01-01T00:00:00+00:00",
+    }
+    _write_lines(path, [*records, legacy_tail])
+    report = ReceiptConsumptionLedger(path).verify_ledger()
+    assert report["valid"] is False
+    assert any(f["type"] == "legacy_after_chain" for f in report["failures"])
+
+
+def test_verify_full_strip_to_legacy_caught_by_high_water_mark(tmp_path):
+    # Stripping every chain field off a previously-chained ledger makes it look
+    # all-legacy: verify_ledger() alone reports checked==0 (it cannot tell a
+    # genuine pre-chaining ledger from a maliciously stripped one). The external
+    # high-water-mark — the same defense documented for tail truncation — catches
+    # it, because the walked tail collapses to GENESIS.
+    path = tmp_path / "consumed.jsonl"
+    ledger = _seed(path, 3)
+    real_last = ledger.verify_ledger()["last_hash"]
+    stripped = [
+        {k: v for k, v in r.items() if k not in ("previous_hash", "entry_hash")}
+        for r in _read_lines(path)
+    ]
+    _write_lines(path, stripped)
+    bare = ReceiptConsumptionLedger(path)
+
+    assert bare.verify_ledger()["checked"] == 0  # the limitation, made explicit
+    report = bare.verify_ledger(expected_last_hash=real_last)
+    assert report["valid"] is False
+    assert any(f["type"] == "last_hash_mismatch" for f in report["failures"])
 
 
 def test_verify_content_edit_detected(tmp_path):
