@@ -1,6 +1,6 @@
 ---
 title: "feat: Tamper-evident consumption ledger (hash-chained single-use record)"
-status: active
+status: completed
 type: feat
 date: 2026-06-13
 target_repo: gove-zone (packages/gove-zone) — plan against master, NOT docs/campaign-launch-drafts
