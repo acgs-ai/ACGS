@@ -103,9 +103,16 @@ class ReceiptConsumptionLedger:
     its entries carry the same decision metadata (actor, action, tenant).
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, checkpoint: bool = False) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Opt-in durable high-water-mark: when True, every burn advances a
+        # ``<ledger>.hwm`` sidecar holding the latest ``entry_hash`` so
+        # :meth:`verify_ledger` can detect tail truncation without an
+        # externally-supplied ``expected_last_hash``. Off by default — no sidecar
+        # is written and behavior is unchanged.
+        self.checkpoint = checkpoint
+        self._hwm_path = self.path.with_suffix(self.path.suffix + ".hwm")
 
     def consume(self, receipt: DecisionReceipt) -> dict[str, Any]:
         """Atomically burn *receipt*; raise if it was already burned.
@@ -168,6 +175,12 @@ class ReceiptConsumptionLedger:
                         f"could not record receipt consumption in {self.path}: {exc}; "
                         "refusing execution (fail-closed)"
                     ) from exc
+                # Advance the high-water-mark inside the same lock, after the
+                # entry is durable. A crash in the tiny window between the two
+                # fsyncs leaves the sidecar one entry behind, which verify reports
+                # as a (conservative) last_hash_mismatch — never a missed tamper.
+                if self.checkpoint:
+                    self._write_checkpoint(str(entry["entry_hash"]))
         except ReceiptValidationError:
             raise  # ReceiptAlreadyUsedError / ConsumptionLedgerError pass through
         except OSError as exc:
@@ -253,6 +266,43 @@ class ReceiptConsumptionLedger:
             last_hash = entry_hash if isinstance(entry_hash, str) and entry_hash else GENESIS_HASH
         return already, last_hash
 
+    def _write_checkpoint(self, entry_hash: str) -> None:
+        """Atomically advance the ``<ledger>.hwm`` sidecar to *entry_hash*.
+
+        Temp write + ``os.replace`` + fsync, so a crash can never leave a
+        half-written high-water-mark. Called only from inside the burn/seal lock.
+        """
+        tmp_path = self._hwm_path.with_suffix(self._hwm_path.suffix + ".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                fh.write(entry_hash + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._hwm_path)
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise ConsumptionLedgerError(
+                f"could not write consumption high-water-mark {self._hwm_path}: {exc}; "
+                "refusing execution (fail-closed)"
+            ) from exc
+
+    def checkpoint_hash(self) -> str | None:
+        """Return the persisted high-water-mark ``entry_hash``, or ``None``.
+
+        ``None`` when no ``<ledger>.hwm`` sidecar exists (checkpointing was never
+        enabled, or nothing has been burned yet). :meth:`verify_ledger` consults
+        this automatically when no explicit ``expected_last_hash`` is passed.
+        """
+        if not self._hwm_path.exists():
+            return None
+        try:
+            value = self._hwm_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConsumptionLedgerError(
+                f"could not read consumption high-water-mark {self._hwm_path}: {exc}"
+            ) from exc
+        return value or None
+
     def verify_ledger(self, expected_last_hash: str | None = None) -> dict[str, Any]:
         """Re-walk the ledger and report tamper-evidence integrity.
 
@@ -323,11 +373,16 @@ class ReceiptConsumptionLedger:
 
             previous = entry_hash
 
-        if expected_last_hash is not None and previous != expected_last_hash:
+        # An explicit argument wins; otherwise fall back to the persisted
+        # high-water-mark so tail truncation is caught with no external state.
+        effective_expected = (
+            expected_last_hash if expected_last_hash is not None else self.checkpoint_hash()
+        )
+        if effective_expected is not None and previous != effective_expected:
             failures.append(
                 {
                     "type": "last_hash_mismatch",
-                    "expected": expected_last_hash,
+                    "expected": effective_expected,
                     "actual": previous,
                 }
             )
@@ -338,6 +393,7 @@ class ReceiptConsumptionLedger:
             "failures": failures,
             "last_hash": previous,
             "unverified_legacy": unverified_legacy,
+            "checkpoint": effective_expected,
         }
 
     def reconcile(self, audit_store: ChainHashAuditStore) -> dict[str, Any]:
@@ -441,6 +497,9 @@ class ReceiptConsumptionLedger:
                         f"could not seal consumption ledger {self.path}: {exc}; "
                         "original ledger left intact"
                     ) from exc
+                # Keep the high-water-mark consistent with the freshly sealed tail.
+                if self.checkpoint:
+                    self._write_checkpoint(previous)
         except ConsumptionLedgerError:
             raise
         except OSError as exc:
