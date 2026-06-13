@@ -19,7 +19,7 @@
    `packages/`. `packages/acgs-lite`, `packages/Acgs-Swarm`, `packages/clinicalguard`
    are nested git repos. There is no `.gitmodules`. Each package's `CLAUDE.md`
    references `../../CLAUDE.md` and that file does not exist.
-2. **`acgs-lite` is published to PyPI** (v2.10.0). Downstreams pin `acgs-lite>=2.8.1`.
+2. **`acgs-lite` is published to PyPI**. Downstreams pin `acgs-lite>=2.8.1`.
    The workspace must NOT break PyPI consumers; local cross-linking is dev-mode only.
 3. **The frontend (`acgi-ai/`) is the only thing with parent CI.** Workflows
    `console.yml` + `marketing.yml` deploy to GCP Cloud Run via WIF. They must keep
