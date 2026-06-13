@@ -56,6 +56,7 @@ contract if a deployment outgrows it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -207,10 +208,14 @@ class ReceiptConsumptionLedger:
                 # own lock so concurrent burns never fork the chain.
                 already, last_hash = self._scan_for_consume(key)
                 if already:
-                    # Observe the blocked replay, then raise. Logging/counting is
-                    # a side effect of the refusal — it never replaces or
-                    # suppresses it (logging cannot, by design, raise).
-                    self._record_replay_blocked(key)
+                    # Count the blocked replay inside the lock (cheap, no I/O),
+                    # then raise. The WARNING is emitted AFTER the file lock is
+                    # released (the ``except ReceiptAlreadyUsedError`` below) so a
+                    # slow/blocking logging handler can never amplify lock-hold
+                    # time for other presenters. Counting/logging is a side
+                    # effect of the refusal — it never replaces or suppresses it.
+                    with self._obs_lock:
+                        self._replays_blocked += 1
                     raise ReceiptAlreadyUsedError(key, str(self.path))
                 entry["previous_hash"] = last_hash
                 # Hash over the entry WITHOUT ``entry_hash`` (it is not present
@@ -239,8 +244,14 @@ class ReceiptConsumptionLedger:
                 # subsumed by the shared-storage caveat in the class docstring.
                 if self.checkpoint:
                     self._write_checkpoint(str(entry["entry_hash"]))
+        except ReceiptAlreadyUsedError as exc:
+            # File lock already released by the with-exit before this runs, so
+            # the WARNING I/O is off the hot path. The error still escapes
+            # unchanged — fail-closed is preserved.
+            self._log_replay_blocked(exc.audit_event_hash)
+            raise
         except ReceiptValidationError:
-            raise  # ReceiptAlreadyUsedError / ConsumptionLedgerError pass through
+            raise  # ConsumptionLedgerError / bare ReceiptValidationError pass through
         except OSError as exc:
             # Opening or locking the sidecar failed (e.g. flock ENOLCK, Windows
             # lock contention timeout): same taxonomy as any other ledger fault.
@@ -264,11 +275,26 @@ class ReceiptConsumptionLedger:
         """
         return self._scan_consumed(audit_event_hash)
 
-    def _record_replay_blocked(self, key: str) -> None:
-        """Count + log a blocked replay. Side channel only — never gates."""
-        with self._obs_lock:
-            self._replays_blocked += 1
-        _LOGGER.warning(
+    @staticmethod
+    def _safe_warning(msg: str, *args: object) -> None:
+        """Emit a WARNING that can NEVER propagate into the enforcement path.
+
+        Observability is a side channel. stdlib does not wrap a custom handler's
+        ``emit()`` (only built-in handlers self-guard via ``handleError``), so a
+        misbehaving handler whose ``emit`` raises would otherwise escape and
+        *replace* the fail-closed security exception (e.g. turn a clean
+        ``ReceiptAlreadyUsedError`` into an unhandled ``RuntimeError``). Swallow
+        it here — ``Exception`` only, so ``KeyboardInterrupt``/``SystemExit``
+        still propagate.
+        """
+        with contextlib.suppress(Exception):
+            _LOGGER.warning(msg, *args)
+
+    def _log_replay_blocked(self, key: str) -> None:
+        """Log a blocked replay. Side channel only — emitted after the file lock
+        is released so handler I/O never amplifies lock-hold time; the counter is
+        bumped separately inside the lock (see :meth:`consume`)."""
+        self._safe_warning(
             "gove-zone consumption replay BLOCKED: audit anchor %s is already "
             "burned in %s (one approval authorizes at most one execution)",
             key,
@@ -279,7 +305,7 @@ class ReceiptConsumptionLedger:
         """Count + log a failed ``verify_ledger``. Called only when failures > 0."""
         with self._obs_lock:
             self._verify_failures += 1
-        _LOGGER.warning(
+        self._safe_warning(
             "gove-zone consumption ledger verify FAILED: %d finding(s) %s in %s",
             len(failures),
             sorted({str(f.get("type")) for f in failures}),
@@ -290,7 +316,7 @@ class ReceiptConsumptionLedger:
         """Count + log a failed ``reconcile``. Called only when unmatched > 0."""
         with self._obs_lock:
             self._reconcile_unmatched += 1
-        _LOGGER.warning(
+        self._safe_warning(
             "gove-zone consumption ledger reconcile FAILED: %d forged/orphan "
             "burn(s) (consumed_key matches no audit event) in %s",
             len(unmatched),
