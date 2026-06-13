@@ -402,3 +402,90 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
 
     out = capsys.readouterr().out
     assert f"gove-zone {__version__}" in out
+
+
+# --- verify-ledger: tamper-evidence verification surface ----------------------
+
+
+class _LedgerReceipt:
+    """Minimal stand-in exposing only what ``consume`` reads."""
+
+    def __init__(self, anchor: str) -> None:
+        self.audit_event_hash = anchor
+        self.request_id = "req"
+        self.tenant_id = "tenant"
+        self.actor = "agent"
+        self.proposed_action = "write_file"
+
+    def compute_hash(self) -> str:
+        return "rh-" + self.audit_event_hash[:8]
+
+
+def _seed_ledger(path: Path, n: int):
+    from gove_zone import ReceiptConsumptionLedger
+
+    ledger = ReceiptConsumptionLedger(path)
+    for i in range(n):
+        ledger.consume(_LedgerReceipt(str(i).ljust(64, "0")))
+    return ledger
+
+
+def test_cli_verify_ledger_registered() -> None:
+    # Handler-wiring: the verb must be registered on the parser, not just defined.
+    from gove_zone.cli import build_parser
+
+    parser = build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    assert "verify-ledger" in subparsers_action.choices
+
+
+def test_cli_verify_ledger_clean(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "consumed.jsonl"
+    _seed_ledger(path, 3)
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["valid"] is True
+    assert payload["checked"] == 3
+    assert payload["unverified_legacy"] == 0
+
+
+def test_cli_verify_ledger_detects_tamper(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "consumed.jsonl"
+    _seed_ledger(path, 3)
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    # Drop the middle entry: a non-zero exit and a recorded failure.
+    path.write_text(
+        "".join(json.dumps(r, sort_keys=True) + "\n" for r in [records[0], records[2]]),
+        encoding="utf-8",
+    )
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert payload["failures"]
+
+
+def test_cli_verify_ledger_corrupt_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "consumed.jsonl"
+    path.write_text("this is not json\n", encoding="utf-8")
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    assert rc == 2
+    assert "verify-ledger" in capsys.readouterr().err
+
+
+def test_cli_verify_ledger_missing_file_is_empty_valid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "never-written.jsonl"
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["checked"] == 0
+    assert payload["valid"] is True

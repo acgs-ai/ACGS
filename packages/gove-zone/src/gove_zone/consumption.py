@@ -63,6 +63,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gove_zone._locking import _exclusive_file_lock
+from gove_zone.audit import GENESIS_HASH
+from gove_zone.decision import sha256_json
 from gove_zone.errors import (
     ConsumptionLedgerError,
     ReceiptAlreadyUsedError,
@@ -70,6 +72,8 @@ from gove_zone.errors import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from gove_zone.receipt import DecisionReceipt
 
 __all__ = ["ReceiptConsumptionLedger"]
@@ -137,8 +141,18 @@ class ReceiptConsumptionLedger:
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         try:
             with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
-                if self._scan_consumed(key):
+                # One locked scan does both jobs: detect replay AND capture the
+                # tail's entry_hash to chain onto — mirroring
+                # ``ChainHashAuditStore.append`` reading the last hash inside its
+                # own lock so concurrent burns never fork the chain.
+                already, last_hash = self._scan_for_consume(key)
+                if already:
                     raise ReceiptAlreadyUsedError(key, str(self.path))
+                entry["previous_hash"] = last_hash
+                # Hash over the entry WITHOUT ``entry_hash`` (it is not present
+                # yet), so ``consumed_key`` and every other field — including the
+                # chain link — is bound into the digest.
+                entry["entry_hash"] = sha256_json(entry)
                 line = (
                     json.dumps(entry, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
                     + "\n"
@@ -175,10 +189,17 @@ class ReceiptConsumptionLedger:
         """
         return self._scan_consumed(audit_event_hash)
 
-    def _scan_consumed(self, key: str) -> bool:
-        """Scan the ledger for *key*; fail closed on any unreadable state."""
+    def _iter_records(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        """Yield ``(line_number, record)`` for each entry; fail closed on any
+        unreadable or malformed state.
+
+        Single parse path shared by :meth:`_scan_consumed`,
+        :meth:`_scan_for_consume`, :meth:`verify_ledger`, and :meth:`seal`, so
+        every reader surfaces the same :class:`~gove_zone.errors.ConsumptionLedgerError`
+        taxonomy on a corrupt ledger rather than leaking a raw decode error.
+        """
         if not self.path.exists():
-            return False
+            return
         try:
             with self.path.open("r", encoding="utf-8") as fh:
                 for line_number, line in enumerate(fh, start=1):
@@ -199,11 +220,178 @@ class ReceiptConsumptionLedger:
                             "is not a JSON object; cannot prove receipt freshness, "
                             "refusing execution (fail-closed)"
                         )
-                    if record.get("consumed_key") == key:
-                        return True
+                    yield line_number, record
         except OSError as exc:
             raise ConsumptionLedgerError(
                 f"could not read consumption ledger {self.path}: {exc}; "
                 "cannot prove receipt freshness, refusing execution (fail-closed)"
             ) from exc
+
+    def _scan_consumed(self, key: str) -> bool:
+        """Scan the ledger for *key*; fail closed on any unreadable state."""
+        for _line_number, record in self._iter_records():
+            if record.get("consumed_key") == key:
+                return True
         return False
+
+    def _scan_for_consume(self, key: str) -> tuple[bool, str]:
+        """Single locked scan: return ``(already_consumed, tail_entry_hash)``.
+
+        ``tail_entry_hash`` is the last entry's ``entry_hash`` to chain the next
+        burn onto, or :data:`~gove_zone.audit.GENESIS_HASH` when the file is
+        empty or its final entry is a pre-chaining legacy line (no
+        ``entry_hash``). Mirrors ``ChainHashAuditStore._read_last_hash_from_disk``
+        but folds the replay check into the same pass the lock already requires.
+        """
+        already = False
+        last_hash = GENESIS_HASH
+        for _line_number, record in self._iter_records():
+            if record.get("consumed_key") == key:
+                already = True
+            entry_hash = record.get("entry_hash")
+            last_hash = entry_hash if isinstance(entry_hash, str) and entry_hash else GENESIS_HASH
+        return already, last_hash
+
+    def verify_ledger(self, expected_last_hash: str | None = None) -> dict[str, Any]:
+        """Re-walk the ledger and report tamper-evidence integrity.
+
+        Twin of :meth:`~gove_zone.audit.ChainHashAuditStore.verify_chain`,
+        adapted for in-place migration: leading pre-chaining entries (no
+        ``entry_hash``) are counted as ``unverified_legacy`` and skipped, then
+        the chained tail is verified link-by-link. Returns::
+
+            {valid, checked, failures, last_hash, unverified_legacy}
+
+        ``failures`` are typed dicts: ``previous_hash_mismatch`` (delete /
+        reorder), ``entry_hash_mismatch`` (content tamper),
+        ``legacy_after_chain`` (an unchained line interleaved into the chained
+        tail), and — when *expected_last_hash* is supplied —
+        ``last_hash_mismatch`` (tail truncation against an external
+        high-water-mark; chaining alone cannot detect a shorter valid tail).
+
+        A finding, not a gate: this returns a report and never raises on tamper.
+        An unreadable / corrupt-JSON ledger still raises
+        :class:`~gove_zone.errors.ConsumptionLedgerError` (same contract as
+        :meth:`_scan_consumed`).
+        """
+        previous = GENESIS_HASH
+        checked = 0
+        unverified_legacy = 0
+        failures: list[dict[str, Any]] = []
+        seen_chained = False
+
+        for line_number, record in self._iter_records():
+            entry_hash = record.get("entry_hash")
+            if not isinstance(entry_hash, str) or not entry_hash:
+                if seen_chained:
+                    failures.append(
+                        {
+                            "type": "legacy_after_chain",
+                            "line": line_number,
+                            "consumed_key": record.get("consumed_key"),
+                        }
+                    )
+                else:
+                    unverified_legacy += 1
+                continue
+
+            seen_chained = True
+            checked += 1
+            claimed_previous = record.get("previous_hash")
+            if claimed_previous != previous:
+                failures.append(
+                    {
+                        "type": "previous_hash_mismatch",
+                        "consumed_key": record.get("consumed_key"),
+                        "expected": previous,
+                        "actual": claimed_previous,
+                    }
+                )
+
+            payload = {k: v for k, v in record.items() if k != "entry_hash"}
+            recomputed = sha256_json(payload)
+            if entry_hash != recomputed:
+                failures.append(
+                    {
+                        "type": "entry_hash_mismatch",
+                        "consumed_key": record.get("consumed_key"),
+                        "expected": recomputed,
+                        "actual": entry_hash,
+                    }
+                )
+
+            previous = entry_hash
+
+        if expected_last_hash is not None and previous != expected_last_hash:
+            failures.append(
+                {
+                    "type": "last_hash_mismatch",
+                    "expected": expected_last_hash,
+                    "actual": previous,
+                }
+            )
+
+        return {
+            "valid": len(failures) == 0,
+            "checked": checked,
+            "failures": failures,
+            "last_hash": previous,
+            "unverified_legacy": unverified_legacy,
+        }
+
+    def seal(self) -> dict[str, Any]:
+        """Establish a full hash chain over an existing ledger's contents.
+
+        One-time, operator-invoked migration for ledgers that predate chaining
+        (or mix legacy and chained lines): reads every entry in file order under
+        the exclusive lock, strips any existing chain fields, and recomputes a
+        fresh chain (``previous_hash``/``entry_hash``) over the current content,
+        then atomically replaces the file (temp write + ``os.replace`` + fsync)
+        so a crash mid-seal cannot leave a partial file. Never called by
+        :meth:`consume`; idempotent (re-sealing a sealed ledger reproduces the
+        same chain). Returns ``{sealed, last_hash}``.
+
+        Note: ``seal`` establishes tamper-evidence over *current* contents — it
+        cannot retroactively prove entries weren't deleted before it ran.
+        """
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        try:
+            with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+                previous = GENESIS_HASH
+                sealed_lines: list[str] = []
+                for _line_number, record in self._iter_records():
+                    payload = {
+                        k: v for k, v in record.items() if k not in ("previous_hash", "entry_hash")
+                    }
+                    payload["previous_hash"] = previous
+                    payload["entry_hash"] = sha256_json(payload)
+                    previous = payload["entry_hash"]
+                    sealed_lines.append(
+                        json.dumps(
+                            payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                        )
+                    )
+
+                tmp_path = self.path.with_suffix(self.path.suffix + ".seal-tmp")
+                try:
+                    with tmp_path.open("w", encoding="utf-8") as fh:
+                        for line in sealed_lines:
+                            fh.write(line + "\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp_path, self.path)
+                except OSError as exc:
+                    # os.replace is atomic: on failure the original file is
+                    # untouched. Remove the orphan temp so a retry is clean.
+                    tmp_path.unlink(missing_ok=True)
+                    raise ConsumptionLedgerError(
+                        f"could not seal consumption ledger {self.path}: {exc}; "
+                        "original ledger left intact"
+                    ) from exc
+        except ConsumptionLedgerError:
+            raise
+        except OSError as exc:
+            raise ConsumptionLedgerError(
+                f"could not acquire the consumption ledger lock {lock_path}: {exc}; seal aborted"
+            ) from exc
+        return {"sealed": len(sealed_lines), "last_hash": previous}
