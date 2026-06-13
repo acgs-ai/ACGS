@@ -1,5 +1,5 @@
 import { ArrowRight, Menu, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { type MouseEvent, useEffect, useState } from 'react'
 import { useHashScroll } from '../lib/hashScroll'
 import { navigate } from '../lib/navigate'
 import {
@@ -21,6 +21,16 @@ import {
 } from './workbench-content'
 
 const ASTERISM = '⁂'
+
+// Same-surface SPA navigation: cancel the default full-page load, run an
+// optional after-hook (e.g. close the mobile nav), then hand off to the router.
+function internalNav(to: string, after?: () => void) {
+  return (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    after?.()
+    navigate(to)
+  }
+}
 
 const capabilities = [
   {
@@ -180,35 +190,14 @@ export function Marketing() {
             <a href="#capabilities">Platform</a>
             <a href="#workbench">Workbench</a>
             <a href="#coverage">Coverage</a>
-            <a
-              href="/products"
-              onClick={(e) => {
-                e.preventDefault()
-                closeNav()
-                navigate('/products')
-              }}
-            >
+            <a href="/products" onClick={internalNav('/products', closeNav)}>
               Products
             </a>
             <a href="#pricing">Pricing</a>
-            <a
-              href="/console"
-              onClick={(e) => {
-                e.preventDefault()
-                closeNav()
-                navigate('/console')
-              }}
-            >
+            <a href="/console" onClick={internalNav('/console', closeNav)}>
               Console
             </a>
-            <a
-              href="/login"
-              onClick={(e) => {
-                e.preventDefault()
-                closeNav()
-                navigate('/login')
-              }}
-            >
+            <a href="/login" onClick={internalNav('/login', closeNav)}>
               Sign in
             </a>
           </div>
@@ -240,10 +229,7 @@ export function Marketing() {
                 <a
                   className="btn btn-secondary"
                   href="/console/agents"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/console/agents')
-                  }}
+                  onClick={internalNav('/console/agents')}
                 >
                   Open the console
                 </a>
@@ -754,24 +740,12 @@ legal technology vertical.`}
                 <a href="#pricing">Pricing</a>
               </li>
               <li>
-                <a
-                  href="/products"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/products')
-                  }}
-                >
+                <a href="/products" onClick={internalNav('/products')}>
                   Product atlas
                 </a>
               </li>
               <li>
-                <a
-                  href="/console/agents"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/console/agents')
-                  }}
-                >
+                <a href="/console/agents" onClick={internalNav('/console/agents')}>
                   Console
                 </a>
               </li>
@@ -791,57 +765,27 @@ legal technology vertical.`}
             <h4>Reading room</h4>
             <ul>
               <li>
-                <a
-                  href="/privacy"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/privacy')
-                  }}
-                >
+                <a href="/privacy" onClick={internalNav('/privacy')}>
                   Privacy &amp; subprocessors
                 </a>
               </li>
               <li>
-                <a
-                  href="/trust"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/trust')
-                  }}
-                >
+                <a href="/trust" onClick={internalNav('/trust')}>
                   Trust center
                 </a>
               </li>
               <li>
-                <a
-                  href="/security"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/security')
-                  }}
-                >
+                <a href="/security" onClick={internalNav('/security')}>
                   Security
                 </a>
               </li>
               <li>
-                <a
-                  href="/console/audit"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/console/audit')
-                  }}
-                >
+                <a href="/console/audit" onClick={internalNav('/console/audit')}>
                   Audit trail
                 </a>
               </li>
               <li>
-                <a
-                  href="/console/compile"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/console/compile')
-                  }}
-                >
+                <a href="/console/compile" onClick={internalNav('/console/compile')}>
                   Change history
                 </a>
               </li>
@@ -854,13 +798,7 @@ legal technology vertical.`}
                 </a>
               </li>
               <li>
-                <a
-                  href="/login"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate('/login')
-                  }}
-                >
+                <a href="/login" onClick={internalNav('/login')}>
                   Sign in
                 </a>
               </li>

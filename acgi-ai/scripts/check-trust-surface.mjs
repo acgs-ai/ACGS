@@ -22,6 +22,14 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+// Footer links to privileged routes must wire same-surface SPA navigation, not
+// rely on a plain href. Accepts either the inline navigate('/x') form or the
+// shared internalNav('/x') handler factory (Marketing.tsx nav-handler dedup).
+function mustWireSpaNav(source, path, label) {
+  const wired = source.includes(`navigate('${path}')`) || source.includes(`internalNav('${path}')`)
+  check(wired, `${label} must wire SPA navigation to ${JSON.stringify(path)} via navigate('${path}') or internalNav('${path}').`)
+}
+
 const packageJson = JSON.parse(read('package.json'))
 const marketingApp = read('src/surfaces/marketing/App.tsx')
 const marketing = read('src/routes/Marketing.tsx')
@@ -51,8 +59,8 @@ mustContain(marketingApp, 'component: Security', 'marketing App route tree')
 
 mustContain(marketing, 'href="/trust"', 'marketing footer')
 mustContain(marketing, 'href="/security"', 'marketing footer')
-mustContain(marketing, "navigate('/trust')", 'marketing footer')
-mustContain(marketing, "navigate('/security')", 'marketing footer')
+mustWireSpaNav(marketing, '/trust', 'marketing footer')
+mustWireSpaNav(marketing, '/security', 'marketing footer')
 mustContain(privacy, 'href="/subprocessors.xml"', 'privacy subprocessor disclosure')
 
 mustContain(trust, 'Engineering draft pending legal review', 'Trust page')
