@@ -74,6 +74,7 @@ from gove_zone.errors import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from gove_zone.audit import ChainHashAuditStore
     from gove_zone.receipt import DecisionReceipt
 
 __all__ = ["ReceiptConsumptionLedger"]
@@ -337,6 +338,58 @@ class ReceiptConsumptionLedger:
             "failures": failures,
             "last_hash": previous,
             "unverified_legacy": unverified_legacy,
+        }
+
+    def reconcile(self, audit_store: ChainHashAuditStore) -> dict[str, Any]:
+        """Cross-check every burn against the audit chain (forged-burn detection).
+
+        Hash-chaining proves the ledger was not edited *internally*, but not that
+        a ``consumed_key`` was ever a *real* decision. This walks the ledger and
+        confirms each ``consumed_key`` is an ``event_hash`` actually present in
+        *audit_store* — catching an **orphan / forged burn**: an entry keyed on a
+        hash that anchors no audit event (e.g. a fabricated burn written to deny a
+        legitimate receipt, or a burn whose audit event was dropped).
+
+        *audit_store* is duck-typed — any object exposing
+        ``iter_events()`` yielding dicts with an ``event_hash`` works (the kernel
+        passes a :class:`~gove_zone.audit.ChainHashAuditStore`). It is supplied
+        per call rather than held on the ledger, so reconciliation stays an
+        explicit operator/periodic check and adds no constructor coupling.
+
+        Returns ``{valid, checked, unmatched, audit_events}`` — a report, not a
+        gate (mirrors :meth:`verify_ledger`). ``unmatched`` lists the offending
+        ``consumed_key``s. An unreadable / corrupt ledger still raises
+        :class:`~gove_zone.errors.ConsumptionLedgerError`.
+
+        Limitation: this proves a burn maps to a real audit event; it does not
+        prove the *reverse* (that every authorized decision was burned), nor does
+        it detect tail truncation — those remain the high-water-mark's job.
+        """
+        valid_hashes = {
+            event["event_hash"]
+            for event in audit_store.iter_events()
+            if isinstance(event.get("event_hash"), str)
+        }
+
+        checked = 0
+        unmatched: list[dict[str, Any]] = []
+        for line_number, record in self._iter_records():
+            checked += 1
+            key = record.get("consumed_key")
+            if key not in valid_hashes:
+                unmatched.append(
+                    {
+                        "consumed_key": key,
+                        "line": line_number,
+                        "receipt_hash": record.get("receipt_hash"),
+                    }
+                )
+
+        return {
+            "valid": len(unmatched) == 0,
+            "checked": checked,
+            "unmatched": unmatched,
+            "audit_events": len(valid_hashes),
         }
 
     def seal(self) -> dict[str, Any]:
