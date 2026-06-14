@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
+import { Ask } from '../../routes/Ask'
 import {
   AgentReadable,
   FailureModesPage,
@@ -13,7 +14,6 @@ import {
   GovernancePatternsPage,
   Marketing,
 } from '../../routes/Marketing'
-import { Ask } from '../../routes/Ask'
 import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'

@@ -9,7 +9,7 @@ import {
   Search,
   Sparkles,
 } from 'lucide-react'
-import { type ReactNode, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useRef, useState } from 'react'
 import { navigate } from '../lib/navigate'
 import './ask.css'
 
@@ -51,22 +51,29 @@ const KNOWLEDGE: Entry[] = [
       body: (
         <>
           <p>
-            <strong>ACGS / gove-zone is a local receipt-gated governance layer for AI-agent side
-            effects.</strong> It sits below agent reasoning and above side-effectful tools: the
-            agent may plan or request an action, but the governed executor decides whether it
-            actually runs.{cite(1)}
+            <strong>
+              ACGS / gove-zone is a local receipt-gated governance layer for AI-agent side effects.
+            </strong>{' '}
+            It sits below agent reasoning and above side-effectful tools: the agent may plan or
+            request an action, but the governed executor decides whether it actually runs.{cite(1)}
           </p>
           <p>
-            The core invariant is simple — <strong>no valid Decision Receipt, no side effect.</strong>{' '}
-            The governed executor fails closed without a valid receipt.{cite(2)}
+            The core invariant is simple —{' '}
+            <strong>no valid Decision Receipt, no side effect.</strong> The governed executor fails
+            closed without a valid receipt.{cite(2)}
           </p>
         </>
       ),
       sources: [
-        { title: 'gove-zone kernel & executor', kind: 'source · packages/gove-zone', href: '/products' },
+        {
+          title: 'gove-zone kernel & executor',
+          kind: 'source · packages/gove-zone',
+          href: '/products',
+        },
         { title: 'Decision Receipt spec', kind: 'docs · DECISION_RECEIPT_SPEC', href: '/products' },
       ],
-      limitation: 'This is a local kernel, not a managed production service. ACGS is not compliance-certified.',
+      limitation:
+        'This is a local kernel, not a managed production service. ACGS is not compliance-certified.',
       related: [
         'How does receipt-gated execution work?',
         'What happens when an action is denied?',
@@ -76,25 +83,37 @@ const KNOWLEDGE: Entry[] = [
   },
   {
     id: 'receipt-gating',
-    match: ['receipt', 'how does receipt', 'gated execution', 'how does gating', 'decision receipt'],
+    match: [
+      'receipt',
+      'how does receipt',
+      'gated execution',
+      'how does gating',
+      'decision receipt',
+    ],
     answer: {
       body: (
         <>
           <p>
             Policy is evaluated <strong>before</strong> execution. Kernel dispatch evaluates policy
-            before the registered tool runs, and emits a Decision Receipt describing the
-            verdict.{cite(1)}
+            before the registered tool runs, and emits a Decision Receipt describing the verdict.
+            {cite(1)}
           </p>
           <p>
             Receipts <strong>bind the actor, action, and exact arguments</strong> the executor
             checks, so a receipt issued for one call cannot authorise a different one. Gated
-            execution rejects a missing receipt, and receipt field tampering is hash-detected.{cite(2)}{cite(3)}
+            execution rejects a missing receipt, and receipt field tampering is hash-detected.
+            {cite(2)}
+            {cite(3)}
           </p>
         </>
       ),
       sources: [
         { title: 'executor.py — gate', kind: 'source · test_executor_guard', href: '/products' },
-        { title: 'receipt.py — binding', kind: 'source · test_argument_binding', href: '/products' },
+        {
+          title: 'receipt.py — binding',
+          kind: 'source · test_argument_binding',
+          href: '/products',
+        },
         { title: 'tamper demo', kind: 'example · examples/tamper_demo', href: '/products' },
       ],
       limitation:
@@ -172,8 +191,8 @@ const KNOWLEDGE: Entry[] = [
         <>
           <p>
             <strong>Signing is opt-in; verification is unsigned by default.</strong> Out of the box
-            only the local SHA-256 hash is checked, which is recomputable under host
-            compromise.{cite(1)}
+            only the local SHA-256 hash is checked, which is recomputable under host compromise.
+            {cite(1)}
           </p>
           <p>
             Opt-in <strong>Ed25519 receipt signing</strong> is implemented for local trusted-key
@@ -184,15 +203,15 @@ const KNOWLEDGE: Entry[] = [
       ),
       sources: [
         { title: 'signing.py — Ed25519', kind: 'source · test_receipt_signing', href: '/products' },
-        { title: 'contracts.py — require_signature', kind: 'source · default False', href: '/products' },
+        {
+          title: 'contracts.py — require_signature',
+          kind: 'source · default False',
+          href: '/products',
+        },
       ],
       limitation:
         'Signing is opt-in with no PKI, key custody, or revocation. Unsigned dev mode is the default and must not be presented as a production claim.',
-      related: [
-        'Can a receipt be reused?',
-        'Is the audit trail tamper-evident?',
-        'What is ACGS?',
-      ],
+      related: ['Can a receipt be reused?', 'Is the audit trail tamper-evident?', 'What is ACGS?'],
     },
   },
   {
@@ -207,13 +226,17 @@ const KNOWLEDGE: Entry[] = [
           </p>
           <p>
             It is <strong>off by default</strong>: <code>verify</code> itself stays stateless, so
-            without a ledger a valid <code>ALLOW</code> receipt is reusable until it
-            expires.{cite(2)}
+            without a ledger a valid <code>ALLOW</code> receipt is reusable until it expires.
+            {cite(2)}
           </p>
         </>
       ),
       sources: [
-        { title: 'consumption.py — ledger', kind: 'source · test_receipt_consumption', href: '/products' },
+        {
+          title: 'consumption.py — ledger',
+          kind: 'source · test_receipt_consumption',
+          href: '/products',
+        },
         { title: 'SECURITY_MODEL', kind: 'docs · consumption tamper', href: '/products' },
       ],
       limitation:
@@ -242,7 +265,8 @@ const FALLBACK: Answer = {
     </>
   ),
   sources: [{ title: 'Claim ledger', kind: 'docs · CLAIMS.md', href: '/products' }],
-  limitation: 'Answers are authored and conservative by design — this surface is a UI demonstration, not a live assistant.',
+  limitation:
+    'Answers are authored and conservative by design — this surface is a UI demonstration, not a live assistant.',
   related: [
     'What is ACGS?',
     'How does receipt-gated execution work?',
@@ -290,7 +314,10 @@ export function Ask() {
     const trimmed = question.trim()
     if (!trimmed) return
     seq.current += 1
-    setThread((prev) => [...prev, { id: seq.current, question: trimmed, answer: resolveAnswer(trimmed) }])
+    setThread((prev) => [
+      ...prev,
+      { id: seq.current, question: trimmed, answer: resolveAnswer(trimmed) },
+    ])
     setDraft('')
   }
 
@@ -299,59 +326,56 @@ export function Ask() {
     setDraft('')
   }
 
-  const composer = useMemo(
-    () => (
-      <form
-        className="ask-form"
-        onSubmit={(e) => {
-          e.preventDefault()
-          ask(draft)
-        }}
-      >
-        <div className="ask-box">
-          <textarea
-            className="ask-input"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                ask(draft)
-              }
-            }}
-            placeholder="Ask anything about ACGS governance…"
-            aria-label="Ask a governance question"
-            rows={2}
-          />
-          <div className="ask-box-row">
-            <div className="ask-modes">
-              <button type="button" className="ask-mode" aria-label="Attach (demo)" disabled>
-                <Paperclip size={14} strokeWidth={1.8} />
-              </button>
-              {MODES.map((m) => {
-                const Icon = m.icon
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    className={`ask-mode${mode === m.id ? ' is-active' : ''}`}
-                    onClick={() => setMode(m.id)}
-                    aria-pressed={mode === m.id}
-                  >
-                    <Icon size={14} strokeWidth={1.8} />
-                    {m.label}
-                  </button>
-                )
-              })}
-            </div>
-            <button type="submit" className="ask-submit" disabled={!draft.trim()} aria-label="Ask">
-              <ArrowUp size={18} strokeWidth={2.2} />
+  const composer = (
+    <form
+      className="ask-form"
+      onSubmit={(e) => {
+        e.preventDefault()
+        ask(draft)
+      }}
+    >
+      <div className="ask-box">
+        <textarea
+          className="ask-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              ask(draft)
+            }
+          }}
+          placeholder="Ask anything about ACGS governance…"
+          aria-label="Ask a governance question"
+          rows={2}
+        />
+        <div className="ask-box-row">
+          <div className="ask-modes">
+            <button type="button" className="ask-mode" aria-label="Attach (demo)" disabled>
+              <Paperclip size={14} strokeWidth={1.8} />
             </button>
+            {MODES.map((m) => {
+              const Icon = m.icon
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`ask-mode${mode === m.id ? ' is-active' : ''}`}
+                  onClick={() => setMode(m.id)}
+                  aria-pressed={mode === m.id}
+                >
+                  <Icon size={14} strokeWidth={1.8} />
+                  {m.label}
+                </button>
+              )
+            })}
           </div>
+          <button type="submit" className="ask-submit" disabled={!draft.trim()} aria-label="Ask">
+            <ArrowUp size={18} strokeWidth={2.2} />
+          </button>
         </div>
-      </form>
-    ),
-    [draft, mode],
+      </div>
+    </form>
   )
 
   return (
