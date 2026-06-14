@@ -295,9 +295,7 @@ function resolveAnswer(question: string): Answer {
   for (const entry of KNOWLEDGE) {
     if (entry.match.some((m) => q.includes(m))) return entry.answer
   }
-  // Single-word fallbacks for terse prompts.
-  const found = KNOWLEDGE.find((entry) => entry.match.some((m) => q.split(/\s+/).includes(m)))
-  return found ? found.answer : FALLBACK
+  return FALLBACK
 }
 
 type Turn = { id: number; question: string; answer: Answer }
@@ -392,7 +390,7 @@ export function Ask() {
         </button>
 
         <nav className="ask-nav" aria-label="Workspace">
-          <button type="button" className="ask-nav-item is-active">
+          <button type="button" className="ask-nav-item is-active" aria-current="page">
             <Search size={17} strokeWidth={1.8} />
             Ask
           </button>

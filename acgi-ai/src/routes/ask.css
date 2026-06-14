@@ -435,10 +435,13 @@
   padding: 0 1px;
 }
 
+/* Neutral paper-layer callout — status hues are reserved for signal, not
+ * decoration (DESIGN.md §2.6), so the limitation note uses a hairline rule
+ * and a paper surface rather than the amber --review token. */
 .ask-limit {
   padding: var(--space-md) var(--space-lg);
-  border-left: 2px solid var(--review);
-  background: color-mix(in srgb, var(--review) 8%, transparent);
+  border-left: 2px solid var(--line-soft);
+  background: var(--paper-2);
   border-radius: var(--radius-sm);
   font-size: 0.86rem;
   line-height: 1.5;
