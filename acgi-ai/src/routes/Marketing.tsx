@@ -625,6 +625,9 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             {navOpen ? <X size={18} strokeWidth={1.8} /> : <Menu size={18} strokeWidth={1.8} />}
           </button>
           <div className="m-nav-links" id="m-nav-links">
+            <NavigationLink href="/ask" onNavigate={() => setNavOpen(false)}>
+              Ask
+            </NavigationLink>
             <a href="/#interview">Interview</a>
             <NavigationLink href="/founder" onNavigate={() => setNavOpen(false)}>
               Founder
