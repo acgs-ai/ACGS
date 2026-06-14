@@ -25,7 +25,7 @@
 3. **The boundary primitive is partial.** `acgs-lite/src/acgs_lite/constitution/boundaries.py`
    blocks free-text actions, not structured tool-call arguments. Needs reshaping.
 4. **The tool-interception core does not exist.** It must be written.
-5. **`acgs-lite` is published on PyPI (v2.10.0)** and has downstream consumers.
+5. **`acgs-lite` is published on PyPI** and has downstream consumers.
    It cannot be deleted or restructured destructively. The kernel ships as a
    *new* package that `acgs-lite` may later depend on, not the other way around.
 6. **Constitutional hashes are sealed.** Files with `# Constitutional Hash:`
