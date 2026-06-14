@@ -182,6 +182,19 @@ Title rule: each product or console H1 gets exactly one italic rust word. Exampl
 
 The base unit is 4px. Marketing and product atlas pages use a 1200px shell, asymmetric hero composition, editorial cards, and asterism section breaks. Console pages use a 276px sidebar, flexible main panel, and 280px status rail. Matter-bearing or privileged products place the parchment boundary before sensitive content.
 
+### Ask surface carve-out (`/ask`)
+
+The `/ask` route is the one explicit, owner-approved exception to the
+asymmetric-hero rule. It is a conversational governance Q&A surface modeled on a
+search-assistant layout: a left workspace rail, a **centered prompt hero**, and a
+threaded answer view with sourced cards and follow-ups. This centered
+composition is intentional and permitted **only on `/ask`** — do not propagate
+it to the landing, product atlas, or console surfaces. It still obeys every
+non-visual contract: ACGS tokens only (no hardcoded hex), no inline `style`,
+self-hosted fonts, hairline borders instead of shadows, and the rust accent as
+the single brand color. Answer copy is grounded in `docs/CLAIMS.md` public
+wording so the surface never overclaims.
+
 Spacing should feel compact and deliberate. Cards use 24px padding by default, tables use dense mono headers, and product evidence lists use grid lines rather than shadows. Border radius is restrained: 4px for buttons, 6px for inputs, 8px for cards, and pill radius only for semantic pills.
 
 ## Elevation & Depth

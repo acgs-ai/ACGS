@@ -13,6 +13,7 @@ import {
   GovernancePatternsPage,
   Marketing,
 } from '../../routes/Marketing'
+import { Ask } from '../../routes/Ask'
 import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
@@ -73,6 +74,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: Marketing,
+})
+
+const askRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ask',
+  component: Ask,
 })
 
 const privacyRoute = createRoute({
@@ -171,6 +178,7 @@ function MarketingNotFoundRoute() {
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  askRoute,
   privacyRoute,
   founderRoute,
   failureModesRoute,

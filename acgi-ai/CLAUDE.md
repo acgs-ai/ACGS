@@ -141,7 +141,7 @@ The fallback stack falls through to named families (`Helvetica Neue`, `Arial`,
 ## What not to add
 
 - Purple / violet / indigo gradients
-- Centred hero compositions
+- Centred hero compositions (except the `/ask` surface — see DESIGN.md "Ask surface carve-out")
 - 3-column icon-in-circle feature grids
 - Generic SaaS stock photography
 - Tailwind utility classes in JSX (the build accepts them; the design
