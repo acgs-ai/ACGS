@@ -56,8 +56,12 @@ contract if a deployment outgrows it.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -77,7 +81,30 @@ if TYPE_CHECKING:
     from gove_zone.audit import ChainHashAuditStore
     from gove_zone.receipt import DecisionReceipt
 
-__all__ = ["ReceiptConsumptionLedger"]
+__all__ = ["LedgerObservability", "ReceiptConsumptionLedger"]
+
+# Process-logger for the ledger's security-negative events (blocked replays,
+# failed verify/reconcile). Mirrors ``gove_zone.integration`` — a *logger record
+# only*, never appended to the audit chain — and is the SIEM / stderr
+# integration point (WARNING surfaces via logging's last-resort handler even
+# with no configured handler). Quiet by default; zero behavior change.
+_LOGGER = logging.getLogger("gove_zone.consumption")
+
+
+@dataclass(frozen=True)
+class LedgerObservability:
+    """Immutable point-in-time snapshot of a ledger's security counters.
+
+    Returned by :meth:`ReceiptConsumptionLedger.observability`. ``consumed`` is
+    the denominator (successful burns); the other three count the
+    security-negative events the ledger is meant to surface. Frozen so a caller
+    holding an old snapshot cannot corrupt a later read.
+    """
+
+    consumed: int = 0
+    replays_blocked: int = 0
+    verify_failures: int = 0
+    reconcile_unmatched: int = 0
 
 
 class ReceiptConsumptionLedger:
@@ -113,6 +140,32 @@ class ReceiptConsumptionLedger:
         # is written and behavior is unchanged.
         self.checkpoint = checkpoint
         self._hwm_path = self.path.with_suffix(self.path.suffix + ".hwm")
+        # In-process security counters (a side channel for scraping/assertions,
+        # never on the enforcement path). Guarded by their own lock because
+        # ``verify_ledger``/``reconcile`` run lock-free and may race a concurrent
+        # ``consume``; this lock is always acquired alone or *inside* the file
+        # lock (never the reverse), so it introduces no lock-ordering cycle.
+        self._obs_lock = threading.Lock()
+        self._consumed = 0
+        self._replays_blocked = 0
+        self._verify_failures = 0
+        self._reconcile_unmatched = 0
+
+    def observability(self) -> LedgerObservability:
+        """Return an immutable snapshot of this instance's security counters.
+
+        Per-instance and process-local: a fresh ledger over the same file starts
+        at zero (the durable, fleet-wide surface is the ``gove_zone.consumption``
+        logger, which a SIEM consumes). Cheap and lock-guarded; safe to scrape
+        concurrently with burns.
+        """
+        with self._obs_lock:
+            return LedgerObservability(
+                consumed=self._consumed,
+                replays_blocked=self._replays_blocked,
+                verify_failures=self._verify_failures,
+                reconcile_unmatched=self._reconcile_unmatched,
+            )
 
     def consume(self, receipt: DecisionReceipt) -> dict[str, Any]:
         """Atomically burn *receipt*; raise if it was already burned.
@@ -155,6 +208,14 @@ class ReceiptConsumptionLedger:
                 # own lock so concurrent burns never fork the chain.
                 already, last_hash = self._scan_for_consume(key)
                 if already:
+                    # Count the blocked replay inside the lock (cheap, no I/O),
+                    # then raise. The WARNING is emitted AFTER the file lock is
+                    # released (the ``except ReceiptAlreadyUsedError`` below) so a
+                    # slow/blocking logging handler can never amplify lock-hold
+                    # time for other presenters. Counting/logging is a side
+                    # effect of the refusal — it never replaces or suppresses it.
+                    with self._obs_lock:
+                        self._replays_blocked += 1
                     raise ReceiptAlreadyUsedError(key, str(self.path))
                 entry["previous_hash"] = last_hash
                 # Hash over the entry WITHOUT ``entry_hash`` (it is not present
@@ -183,8 +244,14 @@ class ReceiptConsumptionLedger:
                 # subsumed by the shared-storage caveat in the class docstring.
                 if self.checkpoint:
                     self._write_checkpoint(str(entry["entry_hash"]))
+        except ReceiptAlreadyUsedError as exc:
+            # File lock already released by the with-exit before this runs, so
+            # the WARNING I/O is off the hot path. The error still escapes
+            # unchanged — fail-closed is preserved.
+            self._log_replay_blocked(exc.audit_event_hash)
+            raise
         except ReceiptValidationError:
-            raise  # ReceiptAlreadyUsedError / ConsumptionLedgerError pass through
+            raise  # ConsumptionLedgerError / bare ReceiptValidationError pass through
         except OSError as exc:
             # Opening or locking the sidecar failed (e.g. flock ENOLCK, Windows
             # lock contention timeout): same taxonomy as any other ledger fault.
@@ -192,6 +259,9 @@ class ReceiptConsumptionLedger:
                 f"could not acquire the consumption ledger lock {lock_path}: {exc}; "
                 "refusing execution (fail-closed)"
             ) from exc
+        # Count only a fully committed burn (entry durable, lock released cleanly).
+        with self._obs_lock:
+            self._consumed += 1
         return entry
 
     def is_consumed(self, audit_event_hash: str) -> bool:
@@ -204,6 +274,54 @@ class ReceiptConsumptionLedger:
         surface as a transient :class:`~gove_zone.errors.ConsumptionLedgerError`.
         """
         return self._scan_consumed(audit_event_hash)
+
+    @staticmethod
+    def _safe_warning(msg: str, *args: object) -> None:
+        """Emit a WARNING that can NEVER propagate into the enforcement path.
+
+        Observability is a side channel. stdlib does not wrap a custom handler's
+        ``emit()`` (only built-in handlers self-guard via ``handleError``), so a
+        misbehaving handler whose ``emit`` raises would otherwise escape and
+        *replace* the fail-closed security exception (e.g. turn a clean
+        ``ReceiptAlreadyUsedError`` into an unhandled ``RuntimeError``). Swallow
+        it here — ``Exception`` only, so ``KeyboardInterrupt``/``SystemExit``
+        still propagate.
+        """
+        with contextlib.suppress(Exception):
+            _LOGGER.warning(msg, *args)
+
+    def _log_replay_blocked(self, key: str) -> None:
+        """Log a blocked replay. Side channel only — emitted after the file lock
+        is released so handler I/O never amplifies lock-hold time; the counter is
+        bumped separately inside the lock (see :meth:`consume`)."""
+        self._safe_warning(
+            "gove-zone consumption replay BLOCKED: audit anchor %s is already "
+            "burned in %s (one approval authorizes at most one execution)",
+            key,
+            self.path,
+        )
+
+    def _record_verify_failures(self, failures: list[dict[str, Any]]) -> None:
+        """Count + log a failed ``verify_ledger``. Called only when failures > 0."""
+        with self._obs_lock:
+            self._verify_failures += 1
+        self._safe_warning(
+            "gove-zone consumption ledger verify FAILED: %d finding(s) %s in %s",
+            len(failures),
+            sorted({str(f.get("type")) for f in failures}),
+            self.path,
+        )
+
+    def _record_reconcile_unmatched(self, unmatched: list[dict[str, Any]]) -> None:
+        """Count + log a failed ``reconcile``. Called only when unmatched > 0."""
+        with self._obs_lock:
+            self._reconcile_unmatched += 1
+        self._safe_warning(
+            "gove-zone consumption ledger reconcile FAILED: %d forged/orphan "
+            "burn(s) (consumed_key matches no audit event) in %s",
+            len(unmatched),
+            self.path,
+        )
 
     def _iter_records(self) -> Iterator[tuple[int, dict[str, Any]]]:
         """Yield ``(line_number, record)`` for each entry; fail closed on any
@@ -389,6 +507,9 @@ class ReceiptConsumptionLedger:
                 }
             )
 
+        if failures:
+            self._record_verify_failures(failures)
+
         return {
             "valid": len(failures) == 0,
             "checked": checked,
@@ -442,6 +563,9 @@ class ReceiptConsumptionLedger:
                         "receipt_hash": record.get("receipt_hash"),
                     }
                 )
+
+        if unmatched:
+            self._record_reconcile_unmatched(unmatched)
 
         return {
             "valid": len(unmatched) == 0,
