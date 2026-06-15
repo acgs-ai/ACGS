@@ -184,6 +184,36 @@ marketing project — see §7):
 - Google Fonts CDN may continue to load on this origin
   (`DESIGN.md §2.2`). The privilege concern is scoped to the console.
 
+### §3a Marketing surface — Cloudflare Pages (active provider)
+
+Cloudflare Pages is the **active marketing deploy provider**; Vercel (above) is
+retired. The design stays provider-agnostic, so the routing + header contract is
+the same — it is just expressed in Cloudflare's static-config files instead of
+`vercel.json`:
+
+- **Routing** — `acgi-ai/infra/cloudflare/_redirects`: `/console` and `/console/*`
+  hard-308 to `https://console.acgs.ai` (privilege boundary), internal `*.md`
+  docs 404, and a trailing `/* /index.html 200` SPA fallback. Cloudflare serves
+  existing static assets before the 200 rewrite, so hashed `/assets/*` are served
+  as files (the `handle: "filesystem"` equivalent).
+- **Headers/CSP** — `acgi-ai/infra/cloudflare/_headers`: byte-identical to the
+  `vercel.json` marketing block (report-only CSP, HSTS, nosniff, SAMEORIGIN,
+  referrer, permissions, immutable `/assets/*` cache). `pnpm test:marketing-csp`
+  asserts the two stay identical so they cannot drift. The console's *enforced*
+  CSP is unaffected — it is served by Caddy on the Cloud Run origin (§5), not here.
+- **Config** — `acgi-ai/wrangler.toml` (project `acgs-marketing`, output `dist/`).
+- **Build** — `pnpm build:marketing` → `dist/`, then
+  `cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/` before deploy.
+- **Deploy workflow** — repo-root `.github/workflows/marketing-cloudflare.yml`:
+  verify on PR, gated production deploy on push to `master`.
+- **Required secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+- **Required human setup:** create the `acgs-marketing` Pages project, set its
+  production branch to `master`, configure a GitHub `production` Environment with
+  required reviewers (the `environment: production` gate is decorative without it),
+  then add the two secrets. Deploy is BLOCKED (loud `::error::`) until the secrets exist.
+- **Deploy status:** `gh run list -w marketing-cloudflare -L 1`.
+- **Health check:** the production URL returns 200 on `/`.
+
 ---
 
 ## §4 Console surface — `console.acgs.ai`

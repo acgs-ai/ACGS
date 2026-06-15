@@ -1,0 +1,15 @@
+# Cloudflare Pages — marketing surface (acgi-ai). Static SPA, no Pages Functions.
+#
+# Build: `pnpm build:marketing` (output: dist/). Then copy the header/redirect
+# parity files in and deploy:
+#   cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/
+#   pnpm dlx wrangler pages deploy --branch=master
+# (the GitHub workflow marketing-cloudflare.yml does exactly this on master push).
+#
+# The Cloudflare Pages project's *production branch* must be set to `master` so a
+# --branch=master deploy publishes to production. `name` below must match the
+# Pages project a human creates in the Cloudflare dashboard.
+
+name = "acgs-marketing"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-06-14"

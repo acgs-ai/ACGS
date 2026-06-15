@@ -169,14 +169,18 @@ file-change detection works at repo-root scope.
 Production domains are pending DNS/ACME provisioning per `PLAN.md §5.6`
 (formerly Phase 5, now Phase 6 after the /autoplan reorder).
 
-### Marketing surface (Vercel)
+### Marketing surface (Cloudflare Pages)
 
-- **Platform:** Vercel
-- **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the Vercel preview from `vercel ls --prod`)
-- **Deploy workflow:** repo-root `.github/workflows/marketing.yml`
-- **Deploy trigger:** auto on push to `master`; preview on PR
-- **Required secrets:** `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
-- **Deploy status command:** `vercel ls --prod | head -3` (run from `acgi-ai/`)
+Cloudflare Pages is the active marketing provider (Vercel retired — see `DEPLOY.md §3a`).
+
+- **Platform:** Cloudflare Pages (project `acgs-marketing`; config `wrangler.toml` + `infra/cloudflare/{_headers,_redirects}`)
+- **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the `*.pages.dev` from the Cloudflare dashboard)
+- **Deploy workflow:** repo-root `.github/workflows/marketing-cloudflare.yml` (gated production deploy on push to `master`)
+- **Verify workflow:** repo-root `.github/workflows/marketing.yml` is now PR/verify-only (lint + build + `test:all`), no deploy
+- **Deploy trigger:** auto on push to `master`; PRs verify only
+- **Required secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (deploy BLOCKED until set)
+- **Required human setup:** create the `acgs-marketing` Pages project, set its production branch to `master`, configure a GitHub `production` Environment with required reviewers, then add the secrets (`DEPLOY.md §3a`)
+- **Deploy status command:** `gh run list -w marketing-cloudflare -L 1`
 - **Health check URL:** the production URL (200 OK on `/`)
 
 ### Console surface (Cloud Run + Caddy)

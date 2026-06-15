@@ -70,6 +70,51 @@ check(
   'package.json test:all must include test:marketing-csp.',
 )
 
+// --- Cloudflare Pages header parity (DEPLOY.md §3/§5) ---
+// The Cloudflare deploy (marketing-cloudflare.yml) ships headers from
+// acgi-ai/infra/cloudflare/_headers instead of vercel.json. Assert it carries the
+// IDENTICAL report-only CSP so the two provider configs cannot silently drift.
+const cfHeaders = read('infra/cloudflare/_headers')
+// HTTP header names are case-insensitive — match accordingly so a re-cased header
+// can't slip past parity (and the enforced-CSP guard below).
+const cfReportOnlyMatch = cfHeaders.match(/^[ \t]*Content-Security-Policy-Report-Only:[ \t]*(.+)$/im)
+const cfReportOnlyLine = cfReportOnlyMatch ? cfReportOnlyMatch[0] : ''
+const cfCspValue = cfReportOnlyMatch ? cfReportOnlyMatch[1].trim() : ''
+check(
+  cfReportOnlyLine.length > 0,
+  'infra/cloudflare/_headers must set Content-Security-Policy-Report-Only for marketing.',
+)
+check(
+  // `Policy\s*:` only matches an ENFORCED header; the report-only line has
+  // `-Report-Only` between "Policy" and the colon, so it is not caught here.
+  !/^[ \t]*Content-Security-Policy[ \t]*:/im.test(cfHeaders),
+  'infra/cloudflare/_headers must not enforce Content-Security-Policy before the cutover plan lands.',
+)
+check(
+  cfCspValue === reportOnlyCsp.trim(),
+  'Cloudflare _headers report-only CSP must be byte-identical to vercel.json (no drift).',
+)
+check(
+  !cfReportOnlyLine.includes("'unsafe-inline'"),
+  'Cloudflare _headers report-only CSP must not normalize unsafe-inline.',
+)
+check(
+  !/googleapis|gstatic/.test(cfReportOnlyLine),
+  'Cloudflare _headers report-only CSP must preserve the same-origin font story.',
+)
+for (const securityHeader of [
+  'Strict-Transport-Security:',
+  'X-Content-Type-Options: nosniff',
+  'X-Frame-Options: SAMEORIGIN',
+  'Referrer-Policy: strict-origin-when-cross-origin',
+  'Permissions-Policy:',
+]) {
+  check(
+    cfHeaders.includes(securityHeader),
+    `Cloudflare _headers must include security header: ${securityHeader}`,
+  )
+}
+
 if (failures.length > 0) {
   console.error('Marketing CSP check failed:')
   for (const failure of failures) {
