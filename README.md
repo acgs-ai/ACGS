@@ -88,6 +88,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 | `docs/` | Human and agent documentation, claim ledger, architecture, proof path, integration guide. |
 | `examples/` | Root runnable governance examples for integrators. |
 | `tests/docs/` | Documentation/example smoke tests and link checks. |
+| [`MONOREPO.md`](MONOREPO.md) | Workspace registry: what exists and where each package is gated. |
+| [`docs/governance-stack-index.md`](docs/governance-stack-index.md) | Governance stack index mapping the layered components and proofs. |
 
 ## Read next
 
