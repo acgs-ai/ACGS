@@ -14,8 +14,10 @@
 #        CONSOLE_AUTH_UPSTREAM       (edge auth/forward-auth upstream for /console*)
 #        CONSOLE_BUS_UPSTREAM        (same-origin governed bus/gateway upstream)
 #
-# The console image is built and pushed on every PR (so previews can run
-# against a real revision) but only deployed to production on push-to-master.
+# PRs run verification only (lint + TS/Vite build) — no image is pushed.
+# Image publication and Cloud Run deploy happen only on push-to-master, in
+# the gated `publish`/`deploy` jobs that require `production` environment
+# human approval.
 #
 # Workflow lives at repo root (.github/workflows/) — GitHub Actions only
 # discovers workflows from there. The acgi-ai app is in a subdirectory, so
@@ -92,9 +94,10 @@ defaults:
 jobs:
   build:
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 15
-    outputs:
-      image: ${{ steps.image.outputs.uri }}
+    # test:all + build:console + evidence build + artifact uploads; on the shared
+    # self-hosted runner this can run long under concurrent-PR contention (15m was
+    # too tight — the job was cancelled mid cache-save teardown after all steps passed).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -143,30 +146,54 @@ jobs:
           path: acgi-ai/dist
           if-no-files-found: error
 
-      # ---- Image build + push: master pushes only ----
-      # PRs run Lint + Build above as verification; only pushes to master
-      # authenticate to GCP and push an image. This keeps PRs unblocked
-      # when GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT secrets
-      # aren't yet configured (which causes the auth action to abort with
-      # "must specify exactly one of workload_identity_provider or
-      # credentials_json").
+  # ---- Image build + push: master pushes only, human-gated ----
+  # SPLIT OUT of `build` so image publication is itself gated by the
+  # `production` GitHub environment. PRs run the `build` job above as
+  # verification and never reach this job (`if: push`), so PRs stay
+  # unblocked when GCP secrets aren't configured.
+  #
+  # `needs: build` preserves the prior implicit ordering — the image push
+  # used to run AFTER `test:all` + `lint` in the same job, so it was gated
+  # on verification passing. Keeping `needs: build` keeps that gate: a
+  # failed readiness/lint/build job blocks this job (and the image push).
+  #
+  # `environment: production` makes GitHub require a configured human
+  # reviewer to approve before this job runs — no auto-push of an
+  # externally-visible image on master push. Move GCP_* secrets to the
+  # `production` environment scope (not repo-wide) so they only resolve
+  # inside this gated context.
+  #
+  # Fail-closed: if GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT
+  # are absent the `auth` step aborts ("must specify exactly one of
+  # workload_identity_provider or credentials_json") and all later steps
+  # short-circuit under the default success() gating — no partial-secret
+  # path pushes an image.
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    environment: production
+    runs-on: [self-hosted, Linux, X64]
+    # docker build + push to Artifact Registry can run long on the shared runner.
+    timeout-minutes: 25
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    steps:
+      - uses: actions/checkout@v4
+
       - id: auth
         name: Auth to GCP via WIF
-        if: github.event_name == 'push'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Configure docker auth
-        if: github.event_name == 'push'
         run: |
           gcloud auth configure-docker \
             "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
 
       - name: Compute image URI
         id: image
-        if: github.event_name == 'push'
         run: |
           SHA="${GITHUB_SHA::12}"
           URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/acgi-console:${SHA}"
@@ -174,10 +201,8 @@ jobs:
           echo "Image URI: $URI"
 
       - uses: docker/setup-buildx-action@v3
-        if: github.event_name == 'push'
 
       - name: Build & push image
-        if: github.event_name == 'push'
         uses: docker/build-push-action@v6
         with:
           # Dockerfile uses `COPY package.json pnpm-lock.yaml ./` and
@@ -189,9 +214,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Cloud Run deploy: master pushes only, human-gated.
+  # `needs: [build, publish]` — consumes the console-dist artifact from
+  # `build` (post-deploy verification) AND the image URI from `publish`.
+  # `environment: production` requires a (second) human approval to enter
+  # the environment before any `gcloud run services replace` side effect.
+  # Same fail-closed WIF behavior: absent GCP secrets abort the `auth`
+  # step and short-circuit the deploy.
   deploy:
-    needs: build
+    needs: [build, publish]
     if: github.event_name == 'push'
+    environment: production
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -218,7 +251,7 @@ jobs:
           BUS_UPSTREAM: ${{ secrets.CONSOLE_BUS_UPSTREAM }}
         run: |
           BUILD_ID="${GITHUB_SHA::12}"
-          IMAGE_URI="${{ needs.build.outputs.image }}"
+          IMAGE_URI="${{ needs.publish.outputs.image }}"
           node scripts/render-cloudrun-service.mjs \
             --env "${DEPLOY_ENV}" \
             --image "${IMAGE_URI}" \
