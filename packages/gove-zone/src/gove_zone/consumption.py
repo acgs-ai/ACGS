@@ -40,6 +40,21 @@ Fail-closed properties
 * **An unreadable or corrupt ledger refuses execution.** If the ledger cannot
   prove a receipt is fresh, the gate does not run the tool
   (:class:`~gove_zone.errors.ConsumptionLedgerError`).
+* **A ledger deleted or truncated below its checkpoint refuses execution.**
+  With checkpointing on (``checkpoint=True``), a wiped or below-HWM ledger no
+  longer reads as "nothing consumed" — which would silently reopen every burned
+  receipt for replay. The persisted ``<ledger>.hwm`` proves a committed tail
+  existed; if that high-water-mark ``entry_hash`` is absent from the current file
+  the gate fails closed. **Scope of this enforcement-time check (read carefully):**
+  it tests HWM/tail *presence*, not full chain *linkage*. It catches **wholesale
+  deletion** and **tail truncation below the HWM**, but NOT deletion of an
+  *interior* (non-tail) burned entry while the HWM tail stays intact — that
+  reopens the deleted entry's receipt at ``consume()`` and is caught only by the
+  out-of-band :meth:`verify_ledger` chain check (``previous_hash_mismatch``).
+  Interior deletion needs only ledger write, not a sidecar rewrite. Without
+  checkpointing (the default) there is no HWM, so no deletion is caught — enable
+  ``checkpoint=True`` (ideally with the sidecar on more-protected/append-only
+  storage), and run :meth:`verify_ledger` periodically for full tamper coverage.
 
 The ledger is **opt-in** at the gate (``consumption_ledger=...``): existing
 deployments are unchanged until they pass one. It is an enforcement-side
@@ -361,12 +376,47 @@ class ReceiptConsumptionLedger:
                 "cannot prove receipt freshness, refusing execution (fail-closed)"
             ) from exc
 
+    def _assert_checkpoint_present(self, hwm: str | None, hwm_seen: bool) -> None:
+        """Fail closed when a persisted high-water-mark points at an entry the
+        ledger no longer contains.
+
+        Closes the deletion/truncation fail-OPEN: a missing or below-HWM ledger
+        used to read as "nothing consumed", silently reopening every burned
+        receipt for replay. When checkpointing is on, the ``<ledger>.hwm`` sidecar
+        proves a committed tail existed; if its ``entry_hash`` is absent from the
+        current file, the ledger was truncated or deleted below the high-water-mark
+        and cannot prove receipt freshness — refuse rather than reopen. Tolerant of
+        the documented one-entry HWM lag after a crash (the HWM is BEHIND the
+        ledger, so its hash is still present).
+
+        This is a *presence* check, not a chain-linkage check: it catches wholesale
+        deletion and tail-truncation-below-HWM, but NOT deletion of an interior
+        (non-tail) burned entry while the HWM tail survives (that needs only a
+        ledger write and is caught only by the out-of-band :meth:`verify_ledger`
+        ``previous_hash_mismatch``). A no-op when checkpointing is off (no HWM) —
+        the opt-in contract is unchanged.
+        """
+        if hwm is not None and not hwm_seen:
+            raise ConsumptionLedgerError(
+                f"consumption ledger {self.path} no longer contains its checkpointed "
+                f"high-water-mark entry {hwm[:12]}...; it was truncated or deleted "
+                "below the high-water-mark and cannot prove receipt freshness; "
+                "refusing execution (fail-closed)"
+            )
+
     def _scan_consumed(self, key: str) -> bool:
-        """Scan the ledger for *key*; fail closed on any unreadable state."""
+        """Scan the ledger for *key*; fail closed on any unreadable state or on a
+        ledger truncated below its high-water-mark."""
+        hwm = self.checkpoint_hash() if self.checkpoint else None
+        found = False
+        hwm_seen = False
         for _line_number, record in self._iter_records():
             if record.get("consumed_key") == key:
-                return True
-        return False
+                found = True
+            if hwm is not None and record.get("entry_hash") == hwm:
+                hwm_seen = True
+        self._assert_checkpoint_present(hwm, hwm_seen)
+        return found
 
     def _scan_for_consume(self, key: str) -> tuple[bool, str]:
         """Single locked scan: return ``(already_consumed, tail_entry_hash)``.
@@ -376,14 +426,21 @@ class ReceiptConsumptionLedger:
         empty or its final entry is a pre-chaining legacy line (no
         ``entry_hash``). Mirrors ``ChainHashAuditStore._read_last_hash_from_disk``
         but folds the replay check into the same pass the lock already requires.
+        Fails closed (via :meth:`_assert_checkpoint_present`) if the ledger has
+        been truncated/deleted below its persisted high-water-mark.
         """
+        hwm = self.checkpoint_hash() if self.checkpoint else None
         already = False
+        hwm_seen = False
         last_hash = GENESIS_HASH
         for _line_number, record in self._iter_records():
             if record.get("consumed_key") == key:
                 already = True
             entry_hash = record.get("entry_hash")
             last_hash = entry_hash if isinstance(entry_hash, str) and entry_hash else GENESIS_HASH
+            if hwm is not None and entry_hash == hwm:
+                hwm_seen = True
+        self._assert_checkpoint_present(hwm, hwm_seen)
         return already, last_hash
 
     def _write_checkpoint(self, entry_hash: str) -> None:
