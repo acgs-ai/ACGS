@@ -413,10 +413,12 @@ class ReceiptConsumptionLedger:
         enabled, or nothing has been burned yet). :meth:`verify_ledger` consults
         this automatically when no explicit ``expected_last_hash`` is passed.
         """
-        if not self._hwm_path.exists():
-            return None
         try:
             value = self._hwm_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            # No checkpoint written yet (or removed between calls). Treat a missing
+            # sidecar as "no high-water-mark" without a TOCTOU exists()/read race.
+            return None
         except OSError as exc:
             raise ConsumptionLedgerError(
                 f"could not read consumption high-water-mark {self._hwm_path}: {exc}"

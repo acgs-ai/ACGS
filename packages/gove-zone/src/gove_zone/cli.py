@@ -14,7 +14,7 @@ from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
-from gove_zone.errors import ConsumptionLedgerError
+from gove_zone.errors import AuditError, ConsumptionLedgerError
 from gove_zone.evaluation import evaluate_policy_scenarios
 from gove_zone.integration import (
     GateMode,
@@ -195,7 +195,10 @@ def _verify_ledger(args: argparse.Namespace) -> int:
     if args.audit is not None:
         try:
             recon = ledger.reconcile(ChainHashAuditStore(Path(args.audit)))
-        except ConsumptionLedgerError as exc:
+        except (ConsumptionLedgerError, AuditError) as exc:
+            # reconcile() walks the audit chain via iter_events(), which raises
+            # AuditChainError (an AuditError) on a corrupt/malformed audit log —
+            # report it fail-closed instead of crashing with a raw traceback.
             print(f"verify-ledger: {exc}", file=sys.stderr)
             return 2
         reconcile_ok = recon["valid"]
