@@ -94,7 +94,10 @@ defaults:
 jobs:
   build:
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 15
+    # test:all + build:console + evidence build + artifact uploads; on the shared
+    # self-hosted runner this can run long under concurrent-PR contention (15m was
+    # too tight — the job was cancelled mid cache-save teardown after all steps passed).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -170,7 +173,8 @@ jobs:
     if: github.event_name == 'push'
     environment: production
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 15
+    # docker build + push to Artifact Registry can run long on the shared runner.
+    timeout-minutes: 25
     outputs:
       image: ${{ steps.image.outputs.uri }}
     steps:
