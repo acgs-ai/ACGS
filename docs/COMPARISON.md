@@ -83,3 +83,45 @@ Sources, verified as of June 2026:
 - Copilot Control System — <https://learn.microsoft.com/en-us/microsoft-365/copilot/copilot-control-system/security-governance>
 - Azure AI Foundry Guardrails — <https://learn.microsoft.com/en-us/azure/foundry/guardrails/guardrails-overview>
 - Agent Governance Toolkit — <https://github.com/microsoft/agent-governance-toolkit> and <https://microsoft.github.io/agent-governance-toolkit/tutorials/04-audit-and-compliance/>
+
+## Collaboration platforms with built-in compliance (e.g. Mattermost)
+
+Team-collaboration platforms increasingly ship governance suites *and* AI agents.
+Mattermost is a representative, open-source example. Its governance is largely
+*complementary* to a receipt gate: it operates at a different point on the action
+timeline. Entries dated to when they were verified (June 2026); most features are
+Enterprise/Enterprise-Advanced-gated, not in the MIT Team Edition.
+
+| Mattermost capability | Layer | Governs | First-class portable per-decision receipt? |
+|---|---|---|---|
+| Audit logging (Beta) | Observability | Records API/mmctl events to file/syslog/TCP | No — JSON log entries, not per-decision |
+| Compliance export / e-discovery | Archive | Daily export to CSV / Actiance / Global Relay for downstream supervision | No — message archive, not authorization |
+| Data retention + Legal Hold | Lifecycle | Preserve/expire data; Legal Hold *Secret* verifies file authenticity | No — preserves data; Secret proves files, not decisions |
+| RBAC + ABAC (Ent. Advanced) | Authorization | Roles/schemes; attribute-based channel + some action gating | No — grants access, no decision artifact |
+| Mattermost Agents — MCP tool policy | Agent execution gate | Per-tool **allow / require-approval / disable** + inherited user RBAC | No — token-usage logs + OTel traces |
+
+The compliance stack (audit, export, retention, legal hold) is **archive-centric
+and after-the-fact** — it records and preserves; it does not authorize a side
+effect before it runs, and there is no fail-closed gate on human or agent actions.
+The one genuine pre-execution control is **Mattermost Agents' per-MCP-tool
+approval policy** — admins set each tool to allow, require approval, or disable.
+That is real human-in-the-loop gating and deserves acknowledgement as prior art.
+The evidenced difference is *resolution and artifact*: it is a coarse per-*tool*
+toggle, not evaluation of the specific action **plus arguments** against a policy
+bundle; it has no fail-closed default (MCP can't be globally disabled from the
+console); and it produces no signed, portable decision receipt a relying party can
+verify before accepting the action. ACGS / gove-zone's narrower bet is exactly
+that finer-grained, fail-closed, receipt-emitting gate at the `tools/call`
+boundary — which is also a natural composition seam: the same Mattermost Agents
+MCP surface is a candidate reference integration for the gate (see
+[`ROADMAP.md`](ROADMAP.md)). Contrast by evidence, not a knock — a receipt gate
+and Mattermost's compliance suite stack cleanly.
+
+Sources, verified as of June 2026:
+
+- Audit logging — <https://docs.mattermost.com/administration-guide/manage/logging.html>
+- Compliance export / e-discovery — <https://docs.mattermost.com/administration-guide/comply/compliance-export.html>
+- Data retention — <https://docs.mattermost.com/administration-guide/comply/data-retention-policy.html>
+- Legal hold — <https://docs.mattermost.com/administration-guide/comply/legal-hold.html>
+- Advanced permissions / ABAC — <https://docs.mattermost.com/administration-guide/manage/admin/attribute-based-access-control.html>
+- Mattermost Agents (MCP tool approval) — <https://docs.mattermost.com/agents/docs/admin_guide.html>
