@@ -14,7 +14,7 @@ from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
-from gove_zone.errors import ConsumptionLedgerError
+from gove_zone.errors import AuditError, ConsumptionLedgerError
 from gove_zone.evaluation import evaluate_policy_scenarios
 from gove_zone.integration import (
     GateMode,
@@ -169,6 +169,11 @@ def _verify_ledger(args: argparse.Namespace) -> int:
     report and exits non-zero when the ledger is not ``valid``. A corrupt /
     unreadable ledger exits 2 (it cannot be verified), distinct from a readable
     ledger that fails integrity (exit 1).
+
+    With ``--audit PATH`` it also reconciles every burn against that audit
+    chain (forged-burn detection via
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.reconcile`) and
+    folds the reconcile result into the exit code.
     """
     ledger = ReceiptConsumptionLedger(Path(args.ledger))
     try:
@@ -177,17 +182,35 @@ def _verify_ledger(args: argparse.Namespace) -> int:
         print(f"verify-ledger: {exc}", file=sys.stderr)
         return 2
 
-    _emit(
-        {
-            "ledger": str(args.ledger),
-            "valid": report["valid"],
-            "checked": report["checked"],
-            "unverified_legacy": report["unverified_legacy"],
-            "last_hash": report["last_hash"],
-            "failures": report["failures"],
+    payload: dict[str, Any] = {
+        "ledger": str(args.ledger),
+        "valid": report["valid"],
+        "checked": report["checked"],
+        "unverified_legacy": report["unverified_legacy"],
+        "last_hash": report["last_hash"],
+        "failures": report["failures"],
+    }
+
+    reconcile_ok = True
+    if args.audit is not None:
+        try:
+            recon = ledger.reconcile(ChainHashAuditStore(Path(args.audit)))
+        except (ConsumptionLedgerError, AuditError) as exc:
+            # reconcile() walks the audit chain via iter_events(), which raises
+            # AuditChainError (an AuditError) on a corrupt/malformed audit log —
+            # report it fail-closed instead of crashing with a raw traceback.
+            print(f"verify-ledger: {exc}", file=sys.stderr)
+            return 2
+        reconcile_ok = recon["valid"]
+        payload["reconcile"] = {
+            "valid": recon["valid"],
+            "checked": recon["checked"],
+            "audit_events": recon["audit_events"],
+            "unmatched": recon["unmatched"],
         }
-    )
-    return 0 if report["valid"] else 1
+
+    _emit(payload)
+    return 0 if (report["valid"] and reconcile_ok) else 1
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -695,6 +718,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "optional external high-water-mark (last entry_hash); a mismatch "
             "flags tail truncation, which chaining alone cannot detect"
+        ),
+    )
+    verify_ledger.add_argument(
+        "--audit",
+        default=None,
+        help=(
+            "optional audit JSONL path; also reconciles every burn against the "
+            "chain's event_hashes (forged-burn detection) and folds the result "
+            "into the exit code"
         ),
     )
     verify_ledger.set_defaults(func=_verify_ledger)

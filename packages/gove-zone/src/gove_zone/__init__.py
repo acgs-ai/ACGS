@@ -10,7 +10,7 @@ from gove_zone.benchmark_adapters import (
     injecagent_scenarios_from_fixture,
     load_benchmark_suite,
 )
-from gove_zone.consumption import ReceiptConsumptionLedger
+from gove_zone.consumption import LedgerObservability, ReceiptConsumptionLedger
 from gove_zone.contracts import (
     AuditEvent,
     ExecutionBoundary,
@@ -160,6 +160,7 @@ __all__ = [
     "ProposedAction",
     "Receipt",
     "ReceiptAlreadyUsedError",
+    "LedgerObservability",
     "ReceiptConsumptionLedger",
     "ReceiptSigner",
     "ReceiptValidationError",

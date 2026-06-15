@@ -489,3 +489,39 @@ def test_cli_verify_ledger_missing_file_is_empty_valid(
     assert rc == 0
     assert payload["checked"] == 0
     assert payload["valid"] is True
+
+
+def _seed_audit_and_ledger(tmp_path: Path, forged: bool):
+    from gove_zone import ChainHashAuditStore, ReceiptConsumptionLedger
+
+    audit_path = tmp_path / "audit.jsonl"
+    ledger_path = tmp_path / "consumed.jsonl"
+    audit = ChainHashAuditStore(audit_path)
+    real = [audit.append(_record(f"ev{i}"))["event_hash"] for i in range(2)]
+    ledger = ReceiptConsumptionLedger(ledger_path)
+    ledger.consume(_LedgerReceipt(real[0]))
+    ledger.consume(_LedgerReceipt("f" * 64 if forged else real[1]))
+    return audit_path, ledger_path
+
+
+def test_cli_verify_ledger_reconcile_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, ledger_path = _seed_audit_and_ledger(tmp_path, forged=False)
+    rc = main(["verify-ledger", "--ledger", str(ledger_path), "--audit", str(audit_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["reconcile"]["valid"] is True
+    assert payload["reconcile"]["checked"] == 2
+    assert payload["reconcile"]["unmatched"] == []
+
+
+def test_cli_verify_ledger_reconcile_detects_forged_burn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, ledger_path = _seed_audit_and_ledger(tmp_path, forged=True)
+    rc = main(["verify-ledger", "--ledger", str(ledger_path), "--audit", str(audit_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["reconcile"]["valid"] is False
+    assert any(u["consumed_key"] == "f" * 64 for u in payload["reconcile"]["unmatched"])
