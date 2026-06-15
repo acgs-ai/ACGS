@@ -1,0 +1,22 @@
+# Marketing surface — Cloudflare Pages header parity (DEPLOY.md §5).
+#
+# These headers mirror vercel.json's marketing block byte-for-byte. The CSP is
+# REPORT-ONLY for marketing; the console CSP is ENFORCED and served by Caddy on
+# the Cloud Run origin (§4) — it is NOT configured here. `pnpm test:marketing-csp`
+# asserts this block stays identical to vercel.json's report-only CSP, so the two
+# provider configs cannot silently drift.
+#
+# This file is copied into dist/ at deploy time by
+# .github/workflows/marketing-cloudflare.yml (it is intentionally NOT in public/,
+# which would leak it into the console build).
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: SAMEORIGIN
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; report-uri https://csp-report.acgs.ai/marketing

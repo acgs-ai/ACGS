@@ -1,0 +1,26 @@
+# Marketing surface — Cloudflare Pages routing parity (DEPLOY.md §3, vercel.json).
+#
+# Cloudflare evaluates these top-to-bottom, first match wins. Existing static
+# assets (hashed /assets/*, index.html, fonts) are served as files BEFORE the
+# 200 SPA rewrite, so the catch-all only handles client-side routes. Keep the
+# SPA fallback LAST.
+#
+# Copied into dist/ at deploy time by marketing-cloudflare.yml (not in public/).
+
+# Privilege boundary — /console is a SEPARATE, privileged origin. Hard 308 so a
+# deep marketing link to the console lands on console.acgs.ai, never a
+# marketing-side render. Marketing.tsx's "Open the console" CTA points at the
+# absolute console URL in production; this is defense-in-depth (DEPLOY.md §3).
+/console        https://console.acgs.ai/console          308
+/console/*      https://console.acgs.ai/console/:splat    308
+
+# Internal docs must 404, never fall through to the SPA shell. The marketing
+# build already strips these (vite removeInternalDocs); this matches vercel.json's
+# explicit 404 posture as defense-in-depth.
+/AGENTS.md      /404.html   404
+/CLAUDE.md      /404.html   404
+/DESIGN.md      /404.html   404
+/DEPLOY.md      /404.html   404
+
+# SPA client-side routing fallback — MUST stay last.
+/*              /index.html  200

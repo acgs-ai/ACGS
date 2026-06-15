@@ -28,9 +28,11 @@ function mustNotContain(source, needle, label) {
 
 const packageJson = JSON.parse(read('package.json'))
 const marketingWorkflowPath = '.github/workflows/marketing.yml'
+const marketingCfWorkflowPath = '.github/workflows/marketing-cloudflare.yml'
 const consoleWorkflowPath = '.github/workflows/console.yml'
 const productionDeployCheckPath = 'scripts/check-production-deploy-contract.mjs'
 const marketingWorkflow = readRepo(marketingWorkflowPath)
+const marketingCfWorkflow = readRepo(marketingCfWorkflowPath)
 const consoleWorkflow = readRepo(consoleWorkflowPath)
 const deploy = read('DEPLOY.md')
 const readiness = readRepo('docs/integration-readiness-task-map.md')
@@ -58,43 +60,58 @@ check(
   'package.json test:contract must include production deploy contract verification.',
 )
 
-for (const needle of [
-  'name: marketing',
-  'if: github.event_name ==',
-  'Check Vercel secrets present',
-  'HAVE_TOKEN',
-  'HAVE_ORG',
-  'HAVE_PROJECT',
-  'available=true',
-  '::error::Vercel production deploy blocked',
-  'not production deployment proof',
-  'exit 1',
-  'Install Vercel CLI',
-  'vercel pull --yes',
-  'vercel build --prod',
-  'vercel deploy --prebuilt --prod',
-]) {
+// Marketing PRODUCTION deploy moved from Vercel (marketing.yml) to Cloudflare Pages
+// (marketing-cloudflare.yml). The fail-closed contract now lives in the Cloudflare
+// workflow; marketing.yml is reduced to a PR/verify-only gate.
+check(
+  existsSync(resolve(repoRoot, marketingCfWorkflowPath)),
+  `${marketingCfWorkflowPath} must exist.`,
+)
+
+// marketing.yml must remain a verify gate and must NOT carry a production deploy.
+for (const needle of ['name: marketing', 'not production deployment proof', 'pnpm test:all']) {
   mustContain(marketingWorkflow, needle, marketingWorkflowPath)
 }
-
-for (const needle of ['::warning::Vercel deploy skipped', 'available=false']) {
+for (const needle of [
+  'vercel deploy --prebuilt --prod',
+  'vercel build --prod',
+  'Install Vercel CLI',
+]) {
   mustNotContain(marketingWorkflow, needle, marketingWorkflowPath)
 }
 
-for (const [stepName, command] of [
-  ['Install Vercel CLI', 'pnpm add -g vercel@latest'],
-  ['Pull Vercel environment', 'vercel pull --yes'],
-  ['Build for Vercel', 'vercel build --prod'],
-  ['Deploy', 'vercel deploy --prebuilt --prod'],
+// Cloudflare Pages production deploy must fail closed when secrets are absent.
+for (const needle of [
+  'name: marketing-cloudflare',
+  "if: github.event_name == 'push'",
+  'Check Cloudflare secrets present',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
+  'HAVE_TOKEN',
+  'HAVE_ACCOUNT',
+  'available=true',
+  '::error::Cloudflare Pages deploy blocked',
+  'exit 1',
+  'environment: production',
+  'cloudflare/wrangler-action@v3',
+  'pages deploy --branch=master',
 ]) {
-  const stepPattern = new RegExp(
-    `name:\\s+${stepName}[\\s\\S]*if: github\\.event_name == 'push' && steps\\.vercel_auth\\.outputs\\.available == 'true'[\\s\\S]*${command.replaceAll(
-      ' ',
-      '\\s+',
-    )}`,
-  )
-  check(stepPattern.test(marketingWorkflow), `${marketingWorkflowPath} must gate ${stepName}.`)
+  mustContain(marketingCfWorkflow, needle, marketingCfWorkflowPath)
 }
+
+// Must fail closed (exit 1) when secrets are missing — never silently skip.
+for (const needle of ['::warning::', 'available=false']) {
+  mustNotContain(marketingCfWorkflow, needle, marketingCfWorkflowPath)
+}
+
+// The Cloudflare deploy step must be gated on secret availability.
+const cfDeployPattern = new RegExp(
+  `name:\\s+Deploy to Cloudflare Pages[\\s\\S]*if:\\s+steps\\.cf_auth\\.outputs\\.available == 'true'[\\s\\S]*pages\\s+deploy`,
+)
+check(
+  cfDeployPattern.test(marketingCfWorkflow),
+  `${marketingCfWorkflowPath} must gate the Cloudflare deploy on secret availability.`,
+)
 
 for (const needle of [
   'name: console',
