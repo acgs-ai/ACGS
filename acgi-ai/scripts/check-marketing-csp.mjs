@@ -75,15 +75,19 @@ check(
 // acgi-ai/infra/cloudflare/_headers instead of vercel.json. Assert it carries the
 // IDENTICAL report-only CSP so the two provider configs cannot silently drift.
 const cfHeaders = read('infra/cloudflare/_headers')
-const cfReportOnlyLine =
-  cfHeaders.split('\n').find((line) => line.includes('Content-Security-Policy-Report-Only:')) ?? ''
-const cfCspValue = cfReportOnlyLine.split('Content-Security-Policy-Report-Only:')[1]?.trim() ?? ''
+// HTTP header names are case-insensitive — match accordingly so a re-cased header
+// can't slip past parity (and the enforced-CSP guard below).
+const cfReportOnlyMatch = cfHeaders.match(/^[ \t]*Content-Security-Policy-Report-Only:[ \t]*(.+)$/im)
+const cfReportOnlyLine = cfReportOnlyMatch ? cfReportOnlyMatch[0] : ''
+const cfCspValue = cfReportOnlyMatch ? cfReportOnlyMatch[1].trim() : ''
 check(
   cfReportOnlyLine.length > 0,
   'infra/cloudflare/_headers must set Content-Security-Policy-Report-Only for marketing.',
 )
 check(
-  !/^\s*Content-Security-Policy:/m.test(cfHeaders),
+  // `Policy\s*:` only matches an ENFORCED header; the report-only line has
+  // `-Report-Only` between "Policy" and the colon, so it is not caught here.
+  !/^[ \t]*Content-Security-Policy[ \t]*:/im.test(cfHeaders),
   'infra/cloudflare/_headers must not enforce Content-Security-Policy before the cutover plan lands.',
 )
 check(

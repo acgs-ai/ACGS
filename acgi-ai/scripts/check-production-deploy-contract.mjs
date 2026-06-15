@@ -106,7 +106,7 @@ for (const needle of ['::warning::', 'available=false']) {
 
 // The Cloudflare deploy step must be gated on secret availability.
 const cfDeployPattern = new RegExp(
-  `name:\\s+Deploy to Cloudflare Pages[\\s\\S]*if:\\s+steps\\.cf_auth\\.outputs\\.available == 'true'[\\s\\S]*pages\\s+deploy`,
+  `name:\\s+Deploy to Cloudflare Pages[\\s\\S]*if:\\s*steps\\.cf_auth\\.outputs\\.available\\s*==\\s*['"]true['"][\\s\\S]*pages\\s+deploy`,
 )
 check(
   cfDeployPattern.test(marketingCfWorkflow),

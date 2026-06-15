@@ -14,13 +14,22 @@
 /console        https://console.acgs.ai/console          308
 /console/*      https://console.acgs.ai/console/:splat    308
 
-# Internal docs must 404, never fall through to the SPA shell. The marketing
-# build already strips these (vite removeInternalDocs); this matches vercel.json's
-# explicit 404 posture as defense-in-depth.
-/AGENTS.md      /404.html   404
-/CLAUDE.md      /404.html   404
-/DESIGN.md      /404.html   404
-/DEPLOY.md      /404.html   404
+# Internal docs must 404, never fall through to the SPA shell. The build strips
+# AGENTS/CLAUDE/DESIGN/DEPLOY (vite removeInternalDocs) and root-level docs are not
+# copied into dist at all; these rules are defense-in-depth so any internal doc that
+# is ever shipped returns 404 instead of the SPA shell (README.md stays public).
+/AGENTS.md             /404.html   404
+/CLAUDE.md             /404.html   404
+/DESIGN.md             /404.html   404
+/DESIGN-legacy.md      /404.html   404
+/DEPLOY.md             /404.html   404
+/ARCHITECTURE.md       /404.html   404
+/INTEGRATING.md        /404.html   404
+/GETTING_STARTED.md    /404.html   404
+/A11Y.md               /404.html   404
+/CLAIM_VALIDATION.md   /404.html   404
+/PLAN.md               /404.html   404
+/PRODUCTION-LAUNCH.md  /404.html   404
 
 # SPA client-side routing fallback — MUST stay last.
 /*              /index.html  200

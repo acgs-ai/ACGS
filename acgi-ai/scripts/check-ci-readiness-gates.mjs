@@ -335,7 +335,8 @@ before(consoleWorkflow, 'pnpm test:all', 'Deploy to Cloud Run', 'console.yml')
 // job `needs: verify`, and the verify job runs the full `pnpm test:all` readiness gate, so
 // the gate precedes deploy. The Vercel path (marketing.yml) is retired to verify-only.
 check(
-  /needs:\s*verify/.test(marketingCfWorkflow),
+  // accept both the scalar (`needs: verify`) and YAML array (`needs: [verify]`) forms
+  /needs:\s*(?:verify\b|\[[^\]]*\bverify\b[^\]]*\])/.test(marketingCfWorkflow),
   'marketing-cloudflare.yml deploy job must depend on the verify (readiness gate) job.',
 )
 before(
