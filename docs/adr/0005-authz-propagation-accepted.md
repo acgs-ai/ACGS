@@ -24,26 +24,33 @@ network-timeout fail-closed behavior.
 
 Accept authorization propagation as the Phase 2 direction for this roadmap. The
 benchmark artifact is committed at `.benchmarks/propagation-gate-week2.json` with
-verdict `PASS`.
+verdict `PASS`, regenerable with
+`cd packages/gove-zone && uv run --extra dev python -m benchmarks.emit_gate_artifact`.
+The latency-overhead metric is noise-dominated — both benchmark arms perform
+identical bounded work, so a single run swings widely (observed roughly
+-20%..+17% on a loaded machine) and can spuriously trip the threshold. The
+committed artifact therefore records the **median of 5 runs**, and the figures
+below are descriptive (not re-pinned, to avoid the ADR drifting from the
+artifact again).
 
-Measured values:
+Measured values (authoritative record: the committed artifact):
 
 | Metric | Threshold | Measured |
-|---|---:|---:|
-| Mean latency overhead | <= 15% | 4.211% |
-| p95 latency overhead | <= 25% | 4.211% |
-| Token-consumption overhead | <= 10% | 0.571% |
-| Heap growth | <= 5MB | 1.529MB |
-| Timeout fail-closed latency | <= 500ms | 451.193ms |
+|---|---:|---|
+| Mean latency overhead | <= 15% | within threshold (timing-dependent; see artifact / ADR-0006) |
+| p95 latency overhead | <= 25% | within threshold (timing-dependent; see artifact / ADR-0006) |
+| Token-consumption overhead | <= 10% | 0.571% (deterministic) |
+| Heap growth | <= 5MB | ~1.6MB (deterministic) |
+| Timeout fail-closed latency | <= 500ms | ~451ms (deterministic) |
 
-Additional benchmark context from the artifact:
+Additional benchmark context: absolute per-chain latencies are
+environment-/load-dependent (~12ms on a quiet machine, 100ms+ under contention)
+— see the committed artifact for the current run. The earlier ADR revision quoted
+identical mean/p95 latencies; that was the duplication bug corrected in ADR-0006.
+Deterministic context that reproduces:
 
 | Metric | Measured |
 |---|---:|
-| Propagation mean latency | 11.996ms |
-| Token baseline mean latency | 11.511ms |
-| Propagation p95 latency | 11.996ms |
-| Token baseline p95 latency | 11.511ms |
 | Propagation token units | 427710 |
 | Token baseline token units | 425280 |
 

@@ -1,0 +1,31 @@
+{
+  "gate": "propagation-overhead-week2",
+  "verdict": "PASS",
+  "thresholds": {
+    "mean_latency_overhead_pct": 15.0,
+    "p95_latency_overhead_pct": 25.0,
+    "token_consumption_overhead_pct": 10.0,
+    "heap_growth_mb": 5.0,
+    "timeout_fail_closed_ms": 500.0
+  },
+  "measured": {
+    "mean_latency_overhead_pct": 5.945,
+    "p95_latency_overhead_pct": 7.93,
+    "token_consumption_overhead_pct": 0.571,
+    "heap_growth_mb": 1.66,
+    "timeout_fail_closed_ms": 451.385,
+    "propagation_mean_ms": 110.987,
+    "propagation_p95_ms": 132.164,
+    "propagation_token_units": 427710,
+    "token_baseline_mean_ms": 104.759,
+    "token_baseline_p95_ms": 123.092,
+    "token_baseline_token_units": 425280,
+    "concurrency": 10,
+    "payload_kb": 50
+  },
+  "samples": 5,
+  "aggregation": "median",
+  "note": "Latency-overhead metrics are median-of-N and timing-dependent (noise-dominated; both arms do identical work). The gate asserts staying within threshold, not a fixed figure. Token/timeout/heap are effectively deterministic. See ADR-0006.",
+  "ran_at": "2026-06-15T17:00:49.560845+00:00",
+  "kernel_sha": "a2162fed9d82a8851844abf7b2e50bf17082a664"
+}
