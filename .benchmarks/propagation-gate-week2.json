@@ -9,16 +9,16 @@
     "timeout_fail_closed_ms": 500.0
   },
   "measured": {
-    "mean_latency_overhead_pct": 5.945,
-    "p95_latency_overhead_pct": 7.93,
+    "mean_latency_overhead_pct": 9.632,
+    "p95_latency_overhead_pct": 8.061,
     "token_consumption_overhead_pct": 0.571,
-    "heap_growth_mb": 1.66,
-    "timeout_fail_closed_ms": 451.385,
-    "propagation_mean_ms": 110.987,
-    "propagation_p95_ms": 132.164,
+    "heap_growth_mb": 1.593,
+    "timeout_fail_closed_ms": 451.348,
+    "propagation_mean_ms": 115.449,
+    "propagation_p95_ms": 134.356,
     "propagation_token_units": 427710,
-    "token_baseline_mean_ms": 104.759,
-    "token_baseline_p95_ms": 123.092,
+    "token_baseline_mean_ms": 105.307,
+    "token_baseline_p95_ms": 123.753,
     "token_baseline_token_units": 425280,
     "concurrency": 10,
     "payload_kb": 50
@@ -26,6 +26,6 @@
   "samples": 5,
   "aggregation": "median",
   "note": "Latency-overhead metrics are median-of-N and timing-dependent (noise-dominated; both arms do identical work). The gate asserts staying within threshold, not a fixed figure. Token/timeout/heap are effectively deterministic. See ADR-0006.",
-  "ran_at": "2026-06-15T17:00:49.560845+00:00",
-  "kernel_sha": "a2162fed9d82a8851844abf7b2e50bf17082a664"
+  "ran_at": "2026-06-15T17:27:33.439303+00:00",
+  "kernel_sha": "e783728a97034175507635f75ec0764dba7072a7"
 }

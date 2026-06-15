@@ -1,21 +1,18 @@
 """Emit the Week-2 propagation-gate verdict artifact.
 
-Runs the SAME ``measure_gate()`` the pytest gate
-(``benchmarks/test_propagation_overhead.py``) asserts and writes the verdict to
+Records the SAME ``median_measurement()`` the pytest gate
+(``benchmarks/test_propagation_overhead.py``) asserts, then writes the verdict to
 ``.benchmarks/propagation-gate-week2.json`` at the repository root, in the shape
 ``docs/codex-goals/phase1-week2-paper-gate.md`` specifies. This makes the
 ``ROADMAP.md`` ``test -f .benchmarks/propagation-gate-week2.json`` acceptance and
 ADR-0005's "benchmark artifact is committed at ..." statement true with a real,
 regenerable run rather than a hand-written number.
 
-Why median-of-N: the latency-overhead metric is noise-dominated. Both benchmark
-arms perform identical bounded work, so the "overhead" between them is mostly
-scheduling jitter; a single run swings widely (observed roughly -20%..+17% on a
-loaded machine) and can spuriously trip the <= 15% mean / <= 25% p95 thresholds.
-We therefore record the MEDIAN over ``SAMPLES`` runs (central tendency, not
-best-of, so this does not flatter the result) and compute the verdict from the
-medians. Token-consumption, timeout-fail-closed, and heap figures are effectively
-deterministic and pass regardless. See ADR-0006 for the per-chain methodology.
+The shared ``median_measurement`` is median-of-N because the latency-overhead
+metric is noise-dominated (both benchmark arms do identical work); a single run
+swings widely and can spuriously trip the threshold. The median is central
+tendency, not best-of, so it does not flatter the result. Token-consumption,
+timeout-fail-closed, and heap figures are effectively deterministic. See ADR-0006.
 
 Usage::
 
@@ -28,19 +25,14 @@ Exit code mirrors the verdict (0 = PASS, 1 = FAIL).
 from __future__ import annotations
 
 import json
-import statistics
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from benchmarks.test_propagation_overhead import THRESHOLDS, measure_gate
+from benchmarks.test_propagation_overhead import GATE_SAMPLES, THRESHOLDS, median_measurement
 
 ARTIFACT_RELPATH = Path(".benchmarks/propagation-gate-week2.json")
 GATE_NAME = "propagation-overhead-week2"
-SAMPLES = 5
-_INT_KEYS = frozenset(
-    {"propagation_token_units", "token_baseline_token_units", "concurrency", "payload_kb"}
-)
 
 
 def _git_output(*args: str) -> str:
@@ -56,18 +48,8 @@ def _repo_root() -> Path:
     return Path(top) if top else Path.cwd()
 
 
-def _median_measured(samples: int) -> dict[str, float]:
-    """Median per metric over ``samples`` independent runs."""
-    runs: list[dict[str, int | float]] = [measure_gate().to_dict() for _ in range(samples)]
-    measured: dict[str, float] = {}
-    for key in runs[0]:
-        median = statistics.median(float(run[key]) for run in runs)
-        measured[key] = round(median) if key in _INT_KEYS else round(median, 3)
-    return measured
-
-
-def build_gate_record(samples: int = SAMPLES) -> dict[str, object]:
-    measured = _median_measured(samples)
+def build_gate_record(samples: int = GATE_SAMPLES) -> dict[str, object]:
+    measured = median_measurement(samples)
     verdict = "PASS" if all(measured[key] <= THRESHOLDS[key] for key in THRESHOLDS) else "FAIL"
     return {
         "gate": GATE_NAME,
