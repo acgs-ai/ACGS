@@ -1,7 +1,7 @@
 # Path-filtered CI for hermes_acgs_bundle/ — flat-layout Python module
 # (Hermes + ACGS middleware + chain-hashed evidence writer).
 # No pyproject.toml — runs pytest directly against tests/ with deps installed
-# from the package's docker-compose-derived requirements.
+# from hermes_acgs_bundle/requirements-test.txt (the same file used locally).
 
 name: python-hermes-bundle
 
@@ -35,26 +35,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - uses: astral-sh/setup-uv@v3
         # No `enable-cache: true` — the action defaults to caching by
         # `**/uv.lock`, and hermes-bundle is a flat-layout module with
         # no pyproject.toml or uv.lock, so the cache key never resolves
         # and the step errors with "No matches found for glob".
 
-      - name: Install minimum deps (no pyproject)
-        # `--system` targets the active Python from setup-python above
-        # (a hostedtoolcache interpreter), not /usr — which is PEP 668
-        # externally-managed on current ubuntu-latest runners.
+      - name: Set up Python via uv
+        # The self-hosted runner has no actions/setup-python prebuilds for this
+        # OS (setup-python fails with "version '3.11' ... was not found"), so uv
+        # provisions the interpreter itself — matching python-gove-zone.yml.
         run: |
-          uv pip install --system \
-            pytest>=8.0 \
-            pyyaml>=6.0 \
-            opentelemetry-api>=1.24 \
-            opentelemetry-sdk>=1.24
+          uv python install 3.11
+          uv venv --python 3.11 .venv
+
+      - name: Install test deps
+        # Single source of truth: hermes_acgs_bundle/requirements-test.txt — the
+        # same file `uv run --with-requirements ... pytest` uses locally.
+        run: uv pip install --python .venv/bin/python -r requirements-test.txt
 
       - name: Test
-        run: python -m pytest tests/ -v --import-mode=importlib
+        run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib
