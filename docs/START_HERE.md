@@ -83,6 +83,7 @@ What it proves:
 
 | Need | Read |
 |---|---|
+| Canonical 5-minute install + proof | `docs/QUICKSTART.md` |
 | Canonical proof narrative | `docs/PROOF_PATH.md` |
 | Human evaluator explanation | `docs/HUMAN_GUIDE.md` |
 | Runtime architecture | `docs/ARCHITECTURE.md` |
