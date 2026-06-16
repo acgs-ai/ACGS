@@ -7,6 +7,9 @@
 #     `publish` job is gated behind `environment: production`, so the actual
 #     upload only runs after the required human reviewer approves — the same
 #     human-gate convention console.yml uses for the privileged Cloud Run push.
+#     NOTE: this gate is only enforced once a human configures required
+#     reviewers on the `production` environment in repo settings; until then
+#     GitHub treats it as decorative and a v* tag would publish unreviewed.
 #   - No long-lived PyPI API token and no secrets live in this file. Upload
 #     authenticates with a short-lived OIDC token (`id-token: write`, scoped to
 #     the publish job only) against a PyPI Trusted Publisher.
@@ -76,8 +79,9 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     # `environment: production` makes GitHub require the configured human
-    # reviewer to approve before this job runs. The actual PyPI upload — the
-    # only irreversible side effect — never fires without that approval.
+    # reviewer to approve before this job runs (once required reviewers are
+    # configured — see header note). The actual PyPI upload — the only
+    # irreversible side effect — never fires without that approval.
     environment: production
     # OIDC token minted only for this job; build above stays read-only.
     permissions:
