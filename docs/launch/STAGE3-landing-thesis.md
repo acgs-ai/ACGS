@@ -1,6 +1,6 @@
 # Stage 3 — Landing-Page Thesis (gove-zone / ACGS)
 
-> **Status:** launch artifact, built against verified anchor `f9a8f37` (gove-zone
+> **Status:** launch artifact, built against verified anchor `a2162fe` (gove-zone
 > `0.1.0.dev0`). Every claim below traces to the claims map (§6 of the launch
 > handoff) and to source: `packages/gove-zone/SECURITY.md`, `ARCHITECTURE.md`, and
 > the live proof-pack at `dist-govern-zone-proofpack/`. Caveats are part of the
@@ -191,7 +191,7 @@ exactly where it isn't (execution).
 | Broader MACI phases | **CAVEAT** — roadmap | `MACI-ROADMAP.md` |
 | "policy bundles" (not "compile-time policies") | **CAVEAT** — wording | §6 |
 | proofpack 6/6 + chain verified | SAY (evidence) | `dist-govern-zone-proofpack/` |
-| 250+ tests green, 0 failing | SAY (measured) | local pytest run on `f9a8f37` |
+| 250+ tests green, 0 failing | SAY (measured) | local pytest run on `a2162fe` (498 passed, 0 failing; see `evidence/SUMMARY.md`) |
 
 ## Appendix B — Do **not** say (guard rail for downstream copy)
 
