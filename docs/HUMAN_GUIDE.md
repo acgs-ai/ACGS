@@ -94,7 +94,7 @@ Run:
 
 ```bash
 tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 uv run --package gove-zone python examples/tamper_demo/demo.py
 uv run python -m pytest tests/docs --import-mode=importlib -q
 ```

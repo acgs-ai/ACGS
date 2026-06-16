@@ -28,7 +28,7 @@ What it proves:
 Run the full receipt-gated execution proof:
 
 ```bash
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
 What it proves:

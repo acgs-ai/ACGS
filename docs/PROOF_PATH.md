@@ -23,7 +23,7 @@ The smoke policy denies a write whose path contains `id_rsa`. The side effect fi
 Run:
 
 ```bash
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
 The demo mints receipts and proves:
