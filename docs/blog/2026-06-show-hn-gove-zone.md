@@ -2,6 +2,7 @@
 
 Claim-safe per docs/CLAIMS.md. All capability lines verified via the proof path (smoke + receipt-gated demo + tamper demo), 2026-06-07.
 HN formatting note: comments render only blank-line paragraphs, *italics*, and 2-space-indented code — no #headers, no ```fences, no **bold**, no tables.
+Recorded proof of the allow → id_rsa-deny → tampered-audit-fail sequence (for the launch page / repo, not the HN comment body): asciinema cast `docs/launch/evidence/demo-proof-sequence.cast` + plain transcript `docs/launch/evidence/demo-proof-sequence.txt` (driver: `docs/launch/evidence/record-proof-sequence.sh`).
 
 ---
 
