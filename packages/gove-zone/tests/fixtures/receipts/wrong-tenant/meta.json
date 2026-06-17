@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-tenant",
+  "notes": "receipt not issued for this tenant",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "TENANT_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_tenant_id": "tenant-Z",
+    "require_signature": true
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "actor-mismatch",
+  "notes": "receipt not issued for this caller",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "ACTOR_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_actor": "intruder",
+    "require_signature": true
+  }
+}

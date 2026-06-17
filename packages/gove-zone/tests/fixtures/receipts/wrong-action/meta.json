@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-action",
+  "notes": "receipt authorizes a different action",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "ACTION_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_action": "runtime.file.delete",
+    "require_signature": true
+  }
+}

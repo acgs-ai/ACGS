@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "missing-field-authority",
+  "notes": "empty required field caught at check 1 (before hash)",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "MISSING_REQUIRED_FIELD",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

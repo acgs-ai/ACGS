@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-bundle",
+  "notes": "policy bundle mismatch",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "POLICY_BUNDLE_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_policy_bundle_id": "different-bundle",
+    "require_signature": true
+  }
+}

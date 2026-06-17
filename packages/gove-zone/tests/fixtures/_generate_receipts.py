@@ -36,6 +36,7 @@ from gove_zone import (
     Validator,
 )
 from gove_zone.decision import sha256_json
+from gove_zone.errors import ReceiptRejectionReason as R
 
 # --- Fixed, deterministic test material (NOT production keys) ----------------
 SEED = hashlib.sha256(b"gove-zone fixture corpus v1 :: trusted").digest()
@@ -45,6 +46,7 @@ EVIL_SIGNER = Ed25519Signer.from_private_bytes(EVIL_SEED, key_id="fixture-key-ev
 
 TS = "2026-01-01T00:00:00+00:00"
 EXP_FAR = "2030-01-01T00:00:00+00:00"
+EXP_PAST = "2025-06-01T00:00:00+00:00"  # < TS, so verify(now_iso=TS) sees it expired
 
 TENANT = "tenant-A"
 BOUNDARY = "local-sandbox"
@@ -64,6 +66,7 @@ def mint(
     args: dict[str, Any] | None = None,
     signer: Ed25519Signer | None = SIGNER,
     expires_at: str = "",
+    transformed_args: dict[str, Any] | None = None,
 ) -> DecisionReceipt:
     """Mint a genuinely-valid receipt through the real issuance path."""
     effective_args = ARGS if args is None else args
@@ -75,6 +78,7 @@ def mint(
         event_id="ev_abc",
         actor=actor,
         timestamp_iso=TS,
+        transformed_args=transformed_args,
     )
     return DecisionReceipt.from_record(
         record=record,
@@ -192,6 +196,157 @@ def build_fixtures() -> list[dict[str, Any]]:
         "tamper-key-swap",
         _bound_field_tamper(base, "signing_key_id", "fixture-key-evil"),
         "key id is bound; cannot reach the unknown-key check",
+    )
+
+    # --- Layer B (semantic: each rejects for its OWN distinct reason) -------
+    # These reach a real check via a genuinely-wrong-but-consistent receipt OR a
+    # valid receipt + mismatched verify() context. The credibility set: "rejected
+    # for the right reason" across distinct failure modes. reason_code is the enum
+    # member (StrEnum -> serialises to its plain-string value in meta.json).
+    def layer_b(
+        name: str,
+        receipt: DecisionReceipt,
+        reason: R,
+        *,
+        verifier: str = "trusted-single",
+        kwargs: dict[str, Any] | None = None,
+        note: str = "",
+    ) -> None:
+        vk: dict[str, Any] = {"require_signature": True}
+        vk.update(kwargs or {})
+        add(
+            name,
+            receipt,
+            {
+                "expected": "reject",
+                "reason_code": reason,
+                "layer": "B",
+                "entry": "verify",
+                "verifier": verifier,
+                "verify_kwargs": vk,
+                "notes": note,
+            },
+        )
+
+    # Context-mismatch: receipt is valid; the mismatch is in expected_* at the gate.
+    layer_b(
+        "wrong-tenant",
+        mint(),
+        R.TENANT_MISMATCH,
+        kwargs={"expected_tenant_id": "tenant-Z"},
+        note="receipt not issued for this tenant",
+    )
+    layer_b(
+        "wrong-boundary",
+        mint(),
+        R.EXECUTION_BOUNDARY_MISMATCH,
+        kwargs={"expected_execution_boundary": "prod-cluster"},
+        note="wrong execution boundary",
+    )
+    layer_b(
+        "wrong-action",
+        mint(),
+        R.ACTION_MISMATCH,
+        kwargs={"expected_action": "runtime.file.delete"},
+        note="receipt authorizes a different action",
+    )
+    layer_b(
+        "wrong-audit-hash",
+        mint(),
+        R.AUDIT_HASH_MISMATCH,
+        kwargs={"expected_audit_hash": "different-audit-hash"},
+        note="not anchored to this audit event",
+    )
+    layer_b(
+        "wrong-policy-hash",
+        mint(),
+        R.POLICY_HASH_MISMATCH,
+        kwargs={"expected_policy_hash": "different-policy-hash"},
+        note="policy hash mismatch",
+    )
+    layer_b(
+        "wrong-bundle",
+        mint(),
+        R.POLICY_BUNDLE_MISMATCH,
+        kwargs={"expected_policy_bundle_id": "different-bundle"},
+        note="policy bundle mismatch",
+    )
+    layer_b(
+        "actor-mismatch",
+        mint(),
+        R.ACTOR_MISMATCH,
+        kwargs={"expected_actor": "intruder"},
+        note="receipt not issued for this caller",
+    )
+    layer_b(
+        "wrong-args-substitution",
+        mint(),
+        R.ARGUMENT_MISMATCH,
+        kwargs={"expected_args": {"path": "/etc/shadow"}},
+        note="ALLOW receipt for safe.txt cannot authorize /etc/shadow (arg binding)",
+    )
+
+    # Re-minted intrinsic-wrong: the receipt itself carries the rejecting property.
+    layer_b(
+        "denied-cannot-execute",
+        mint(decision=Decision.DENY),
+        R.DENIED_RECEIPT,
+        note="a DENY receipt is not executable",
+    )
+    layer_b(
+        "escalated-cannot-execute",
+        mint(decision=Decision.ESCALATE),
+        R.ESCALATED_RECEIPT,
+        note="an ESCALATE receipt is not executable",
+    )
+    layer_b(
+        "expired",
+        mint(expires_at=EXP_PAST),
+        R.RECEIPT_EXPIRED,
+        kwargs={"now_iso": TS},
+        note="genuinely-issued receipt used past its lifetime",
+    )
+    layer_b(
+        "missing-field-authority",
+        _bound_field_tamper(mint(), "authority", ""),
+        R.MISSING_REQUIRED_FIELD,
+        note="empty required field caught at check 1 (before hash)",
+    )
+    layer_b(
+        "transform-mismatch",
+        mint(decision=Decision.TRANSFORM, transformed_args={"path": "redacted.txt"}),
+        R.TRANSFORM_MISMATCH,
+        kwargs={"expected_args": {"path": "other.txt"}},
+        note="executed args do not match the approved transform",
+    )
+
+    # Signature failures (signed receipts).
+    layer_b(
+        "unsigned-rejected",
+        mint(signer=None),
+        R.UNSIGNED_REJECTED,
+        verifier="none",
+        note="require_signature=True but the receipt is unsigned",
+    )
+    layer_b(
+        "sig-invalid",
+        dataclasses.replace(mint(), signature=SIGNER.sign(b"a-different-message")),
+        R.SIGNATURE_INVALID,
+        note="well-formed signature that does not attest this hash",
+    )
+    layer_b(
+        "sig-unknown-key",
+        mint(signer=EVIL_SIGNER),
+        R.SIGNING_KEY_UNKNOWN,
+        verifier="trusted-registry",
+        note="signed by a key absent from the trust registry",
+    )
+    layer_b(
+        "sig-missing-verifier",
+        mint(),
+        R.SIGNED_RECEIPT_NO_VERIFIER,
+        verifier="none",
+        note="a receipt claiming a signature cannot skip verification",
     )
 
     return fixtures
