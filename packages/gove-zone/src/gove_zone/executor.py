@@ -35,6 +35,7 @@ def execute_with_receipt(
     policy: Policy | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = True,
+    require_expiry: bool = False,
     consumption_ledger: ReceiptConsumptionLedger | None = None,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
@@ -80,6 +81,15 @@ def execute_with_receipt(
     :class:`~gove_zone.policy.RuleSetPolicy` embeds only a 64-bit-truncated
     content digest, so this binds at ~2**64 second-preimage strength, not full
     SHA-256; it is a same-policy identity check, not a collision-proof seal.
+
+    ``require_expiry`` (opt-in, default ``False``) mandates a liveness/TTL
+    bound: when ``True`` a receipt whose ``expires_at`` is empty is rejected
+    (:class:`~gove_zone.errors.ReceiptValidationError`,
+    :data:`~gove_zone.errors.ReceiptRejectionReason.EXPIRY_REQUIRED`) rather
+    than being treated as never-expiring. The strict production profile
+    (:meth:`gove_zone.profile.GovernanceProfile.production_strict`) sets it so a
+    long-lived bearer receipt cannot authorize indefinitely. Default ``False``
+    leaves every existing caller unaffected.
 
     ``consumption_ledger`` (opt-in) makes the receipt **single-use**:
     ``verify`` alone is stateless, so without a ledger one valid receipt
@@ -132,6 +142,7 @@ def execute_with_receipt(
         expected_actor=expected_actor,
         verifier=verifier,
         require_signature=require_signature,
+        require_expiry=require_expiry,
     )
 
     # Burn-before-execute: consume only after verify passes (a failed
@@ -192,6 +203,7 @@ class GovernedExecutor:
         policy: Policy | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
+        require_expiry: bool = False,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
@@ -204,6 +216,7 @@ class GovernedExecutor:
         self.policy = policy
         self.verifier = verifier
         self.require_signature = require_signature
+        self.require_expiry = require_expiry
         self.consumption_ledger = consumption_ledger
         self.registry: dict[str, Callable[..., Any]] = {}
 
@@ -223,6 +236,7 @@ class GovernedExecutor:
         policy: Policy | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool | None = None,
+        require_expiry: bool | None = None,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
     ) -> Any:
         if action not in self.registry:
@@ -239,6 +253,9 @@ class GovernedExecutor:
         effective_verifier = verifier if verifier is not None else self.verifier
         effective_require = (
             require_signature if require_signature is not None else self.require_signature
+        )
+        effective_require_expiry = (
+            require_expiry if require_expiry is not None else self.require_expiry
         )
         effective_ledger = (
             consumption_ledger if consumption_ledger is not None else self.consumption_ledger
@@ -258,5 +275,6 @@ class GovernedExecutor:
             expected_actor=effective_actor,
             verifier=effective_verifier,
             require_signature=effective_require,
+            require_expiry=effective_require_expiry,
             consumption_ledger=effective_ledger,
         )

@@ -353,6 +353,7 @@ class DecisionReceipt:
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
+        require_expiry: bool = False,
         now_iso: str | None = None,
     ) -> None:
         """Low-level receipt verification primitive.
@@ -364,6 +365,16 @@ class DecisionReceipt:
         :class:`gove_zone.contracts.ReceiptVerifier`. Authorize side effects through
         those, not by calling this directly; a bare ``verify(...)`` opts into the
         unsigned posture.
+
+        ``require_expiry`` (additive, default ``False``) mandates a *liveness*
+        bound: when ``True`` a receipt whose ``expires_at`` is empty is rejected
+        (:data:`ReceiptRejectionReason.EXPIRY_REQUIRED`) instead of being treated
+        as never-expiring. The plain expiry check below (#13) only rejects a
+        receipt *past* its lifetime — with no TTL it is silently immortal. The
+        strict production profile
+        (:meth:`gove_zone.profile.GovernanceProfile.production_strict`) sets this
+        so a long-lived bearer receipt cannot authorize indefinitely. Default
+        ``False`` keeps every existing caller unaffected.
         """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
@@ -679,6 +690,19 @@ class DecisionReceipt:
             raise ReceiptValidationError(
                 f"Authority mismatch: expected {expected_authority}, got {self.authority}",
                 reason_code=ReceiptRejectionReason.AUTHORITY_MISMATCH,
+            )
+
+        # 13a. Liveness floor (opt-in, strict profile). With no TTL a receipt is
+        # silently immortal — the check below only rejects one *past* its
+        # lifetime. When require_expiry is set, an empty expires_at is itself a
+        # failure: a long-lived bearer receipt must not authorize indefinitely.
+        # Default-off, so non-strict callers are unaffected. Fail-closed.
+        if require_expiry and not self.expires_at:
+            raise ReceiptValidationError(
+                "Receipt has no expires_at but the strict profile requires a "
+                "liveness/TTL bound (a receipt without an expiry can authorize "
+                "indefinitely).",
+                reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
             )
 
         # 13. Expiry (only enforced when expires_at is set). expires_at is bound
