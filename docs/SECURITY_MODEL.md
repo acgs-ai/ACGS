@@ -31,17 +31,22 @@ Status: alpha/local proof. This document is a threat model, not a certification 
 
 ## Deployment hardening — defaults that matter
 
-The kernel ships safe-by-inspection but **dev-permissive by default**. Two defaults
-must be changed for a production posture; both are accepted limitations of the local
-alpha, not bugs:
+The kernel ships **secure-by-default for signing**, with one remaining
+dev-permissive default (anti-replay) that must be changed for a hardened posture;
+that remaining limitation is an accepted limitation of the local alpha, not a bug:
 
-- **Signing is off by default.** `require_signature` defaults to `False`
-  (`executor.py`, `contracts.py`). In that mode verification checks only the local
-  SHA-256 `receipt_hash`, which is recomputable under host compromise (see the
-  *Tampered receipt* and *Unsigned dev mode misuse* rows). **Production MUST set
-  `require_signature=True` with a trusted verifier** (`signing.py`,
-  `test_receipt_signing.py`). Unsigned mode is dev-only proof and must not be
-  described as production signing.
+- **Signing is required by default; the secure profile is the default.**
+  `require_signature` defaults to `True` (`executor.py`, `contracts.py`). The
+  default does **not** auto-sign: a gate invoked with no configured trusted
+  verifier fails closed loud — it raises `ProductionProfileError` naming both
+  exits rather than emitting an unsigned receipt or auto-generating a key
+  (`executor.py`, `contracts.py`). To run the explicit unsigned "dev mode" you
+  must opt in with `require_signature=False`, in which case verification checks
+  only the local SHA-256 `receipt_hash`, which is recomputable under host
+  compromise (see the *Tampered receipt* and *Unsigned dev mode misuse* rows).
+  Production closure is `require_signature=True` **with** a trusted verifier
+  (`signing.py`, `test_receipt_signing.py`); the default already requires
+  signing, so it is the verifier — not the flag — that the operator must supply.
 - **Anti-replay is opt-in, off by default.** `DecisionReceipt.verify` is
   stateless, so a valid `ALLOW` receipt can be replayed until its `expires_at`
   *unless* the gate carries a single-use ledger. Passing a
