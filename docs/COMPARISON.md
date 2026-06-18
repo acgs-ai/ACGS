@@ -125,3 +125,46 @@ Sources, verified as of June 2026:
 - Legal hold — <https://docs.mattermost.com/administration-guide/comply/legal-hold.html>
 - Advanced permissions / ABAC — <https://docs.mattermost.com/administration-guide/manage/admin/attribute-based-access-control.html>
 - Mattermost Agents (MCP tool approval) — <https://docs.mattermost.com/agents/docs/admin_guide.html>
+
+## Agent sandbox frameworks (e.g. flue)
+
+A newer category packages the *sandbox itself* as the agent framework — give the
+agent an isolated workspace to read, write, and execute in, and treat that
+containment as the safety story. flue (by Astro / `withastro`, Apache-2.0) is a
+representative, fast-rising example. Its governance is *complementary* to a
+receipt gate: it bounds the environment an agent runs in; it does not authorize
+the specific side effects that cross out of that environment. Entries verified
+June 2026; flue is moving quickly.
+
+| flue capability | Layer | Governs | First-class portable per-decision receipt? |
+|---|---|---|---|
+| Virtual sandbox (default) | In-memory workspace | `just-bash` filesystem/exec scratch space; **not** an OS or network-isolation boundary (its docs note generated runtimes permit network access) | No |
+| Local sandbox | Host process | Direct host filesystem + shell; for trusted scenarios, no isolation | No |
+| Remote sandbox (Daytona, Cloudflare Sandbox) | Provider-managed VM/container | Container-backed Linux environment off the application host | No |
+| Observability | Telemetry | Export traces/metrics via OpenTelemetry, Braintrust, or Sentry | No — telemetry, not a per-decision artifact |
+
+flue's safety primitive is **containment**: confine *where* an agent operates so
+that runaway execution or filesystem damage stays bounded. That is real and
+useful, and it composes with a receipt gate rather than competing with it. The
+evidenced difference is *containment vs authorization-plus-non-repudiation*: a
+sandbox bounds the room, but it does not decide which doors may open, nor leave a
+portable proof of who opened them. Two gaps follow directly from flue's own
+documentation. First, its default virtual sandbox is **not a network-isolation
+boundary** (egress is permitted), so an agent inside it can still exfiltrate data
+or call a destructive API — the sandbox confines the filesystem, not the
+*semantics* of an outbound action. Second, its action record is
+OpenTelemetry-style **observability** — operator-trusted and mutable — not a
+signed, sealed, per-decision artifact a relying party *outside* the runtime can
+verify *before* accepting the action; and its published sandbox and tools guides
+document no policy-decision or per-action approval gate and no fail-closed default
+on outbound side effects. ACGS / gove-zone's narrower bet sits exactly at that
+egress boundary: receipt-gate the side effects that leave the sandbox (network,
+payments, writes to production), fail closed without a valid Decision Receipt, and
+emit an independently verifiable artifact. The natural composition is
+defense-in-depth — sandbox the workspace with flue, receipt-gate what crosses out
+of it. Contrast by evidence, not a knock.
+
+Sources, verified as of June 2026:
+
+- flue — <https://github.com/withastro/flue>
+- flue sandboxes guide — <https://flueframework.com/docs/guide/sandboxes/>
