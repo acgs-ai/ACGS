@@ -730,12 +730,13 @@ def emit_receipt_for_hook(
     Returns the blocking receipt for batch events when any child is denied or
     escalated; otherwise returns the final emitted receipt for compatibility.
 
-    In :attr:`GateMode.OBSERVE` (default), returns ``None`` on any internal
+    In :attr:`GateMode.OBSERVE` (opt-in), returns ``None`` on any internal
     failure — preserving existing fail-open behavior.
 
-    In :attr:`GateMode.ENFORCE`, raises :class:`GateModeError` on any failure
-    that would have been swallowed. Callers must propagate the failure
-    (exit non-zero in a hook context).
+    In :attr:`GateMode.ENFORCE` (the default; :func:`current_gate_mode` falls
+    through to ENFORCE / fail-closed unless OBSERVE is explicitly opted into),
+    raises :class:`GateModeError` on any failure that would have been swallowed.
+    Callers must propagate the failure (exit non-zero in a hook context).
     """
     receipts = emit_receipts_for_hook(
         payload,

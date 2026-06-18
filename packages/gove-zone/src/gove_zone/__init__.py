@@ -4,6 +4,8 @@ A small library that wraps AI agent tool calls with policy checks,
 fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 """
 
+from importlib import metadata as _metadata
+
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
@@ -126,7 +128,13 @@ from gove_zone.workflow import (
     verify_workflow_replay,
 )
 
-__version__ = "0.1.0.dev0"
+# Single source of truth is the installed package metadata (pyproject `version`).
+# The literal fallback matches that value for source/editable runs where the
+# distribution is not installed; keep it in sync with pyproject on bumps.
+try:
+    __version__ = _metadata.version("gove-zone")
+except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
+    __version__ = "0.1.0a1"
 
 __all__ = [
     "GENESIS_HASH",
