@@ -99,7 +99,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 4. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — threat model and current protections.
 5. [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) — where to put the gate in your stack.
 6. [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — supported runtimes by proof tier (shipped / pattern / roadmap).
-7. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
+7. [`docs/FAQ.md`](docs/FAQ.md) — question-headed Q&A (Decision Receipt, vs audit log / Microsoft AGT, production-readiness) with claim-safe answers.
+8. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
 
 ## Development status
 
