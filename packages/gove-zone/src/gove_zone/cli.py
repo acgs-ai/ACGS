@@ -637,9 +637,41 @@ def _proofpack(args: argparse.Namespace) -> int:
     (dist_dir / "limitations.md").write_text(limitations_content, encoding="utf-8")
 
     # Write manifest.json
+    #
+    # Structured manifest the offline verifier (verify_proof_pack) can read: a
+    # `receipts` array with one structured entry per receipt file actually written,
+    # each carrying its declared verdict, plus an explicit `audit_chain` pointer so
+    # accept receipts can be anchored against the pack's own chain. The declared
+    # verdicts below mirror what `DecisionReceipt.verify()` observes for each file
+    # (allow/transform self-validate => "accept"; the deny receipt raises
+    # DENIED_RECEIPT => "reject"). reason_code is left null on the reject entry so
+    # the verifier only requires an observed reject, not a brittle reason match.
+    # The pack is dev-mode UNSIGNED (require_signature=False), so `verify-proofpack`
+    # passes without a --verifier-key.
     manifest = {
-        "version": "0.1.0.dev0",
+        "version": __version__,
         "schema_version": "gove-zone/proof-pack/v1",
+        "audit_chain": "audit.jsonl",
+        "receipts": [
+            {
+                "name": "allowed",
+                "file": "receipts/allowed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+            {
+                "name": "denied",
+                "file": "receipts/denied_receipt.json",
+                "declared_verdict": "reject",
+                "reason_code": None,
+            },
+            {
+                "name": "transformed",
+                "file": "receipts/transformed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+        ],
         "files": [
             "manifest.json",
             "receipts/allowed_receipt.json",

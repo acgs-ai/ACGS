@@ -137,6 +137,39 @@ def test_cli_proofpack_generates_files(
     assert results["audit_chain_verified"] is True
 
 
+def test_cli_proofpack_roundtrip_verifies(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`proofpack` must emit a manifest the offline verifier accepts (round-trip).
+
+    Regression guard: the generator's manifest historically carried only a flat
+    ``files`` array and no structured ``receipts``, so ``verify-proofpack`` read
+    zero receipts and returned ``valid=false`` (exit 1). This proves the real
+    generate->verify loop closes on the unsigned dev pack with no ``--verifier-key``.
+    """
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    gen_code = main(["proofpack"])
+    assert gen_code == 0
+    capsys.readouterr()  # drain the generator's emitted JSON
+
+    dist_dir = tmp_path / "dist-govern-zone-proofpack"
+    try:
+        verify_code = main(["verify-proofpack", "dist-govern-zone-proofpack"])
+        assert verify_code == 0
+
+        result = json.loads(capsys.readouterr().out)
+        assert result["valid"] is True
+        assert result["reasons"] == []
+        # Every declared verdict matched what the verifier observed.
+        assert all(r["matches_declared"] is True for r in result["receipts"])
+    finally:
+        shutil.rmtree(dist_dir, ignore_errors=True)
+
+
 def _write_replay_bundle(tmp_path: Path) -> Path:
     bundle_path = tmp_path / "policy.bundle.json"
     bundle_path.write_text(
