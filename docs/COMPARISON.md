@@ -184,3 +184,24 @@ Sources, verified as of June 2026:
 - flue sandboxes guide — <https://flueframework.com/docs/guide/sandboxes/>
 - flue Cloudflare deploy guide (`outboundByHost`) — <https://flueframework.com/docs/ecosystem/deploy/cloudflare/>
 - Cloudflare Sandbox SDK (Beta, Apache-2.0) — <https://github.com/cloudflare/sandbox-sdk> and <https://developers.cloudflare.com/sandbox/>
+
+## How the nearest comparisons relate (different axes)
+
+The two structurally-closest projects above sit near gove-zone on *different
+axes* — they are not interchangeable "same competitor" rivals:
+
+- **Microsoft AGT** is the nearest *governance-paradigm* analogue. It does
+  authorize tool-calls and keeps a fail-closed, Merkle-chained audit, so it
+  shares gove-zone's **authorization** axis; the evidenced difference is the
+  *resolution of the artifact* — audit-centric (forensics after the fact) versus
+  receipt-centric (a pre-execution artifact a relying party can verify outside
+  the runtime).
+- **flue** is a *containment-paradigm* tool. It bounds **where** an agent runs,
+  not **which action-plus-arguments** may execute; even its strongest egress
+  mediation (`outboundByHost`) keys on hostname and protects the secret, not the
+  action. The difference here is one of *paradigm* (authorization versus
+  containment), not merely artifact resolution.
+
+So "closest competitor" means two different things: AGT shares the axis and
+differs on the artifact; flue differs on the axis itself. A receipt gate
+composes with both rather than replacing either.
