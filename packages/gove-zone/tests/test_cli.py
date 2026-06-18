@@ -525,3 +525,86 @@ def test_cli_verify_ledger_reconcile_detects_forged_burn(
     assert rc == 1
     assert payload["reconcile"]["valid"] is False
     assert any(u["consumed_key"] == "f" * 64 for u in payload["reconcile"]["unmatched"])
+
+
+def _generate_proofpacks(dest: Path) -> Path:
+    import importlib.util
+
+    gen_path = Path(__file__).parent / "fixtures" / "_generate_proofpacks.py"
+    spec = importlib.util.spec_from_file_location("_proofpack_gen_cli", gen_path)
+    assert spec and spec.loader
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    gen.write_proofpacks(dest)
+    return dest
+
+
+def test_cli_verify_proofpack_valid_pack_exits_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    # valid-replay ships unsigned (dev-posture) receipts, so the CLI's no-verifier
+    # path accepts it. A SIGNED pack from the CLI is covered separately, with an
+    # out-of-band --verifier-key, in test_cli_verify_proofpack_signed_with_key.
+    rc = main(["verify-proofpack", str(packs / "valid-replay")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["valid"] is True
+    assert payload["reasons"] == []
+
+
+def test_cli_verify_proofpack_signed_with_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A SIGNED proof-pack verifies from the CLI when the relying party supplies the
+    public key OUT-OF-BAND (--verifier-key). The same pack without a key fails closed
+    (SIGNED_RECEIPT_NO_VERIFIER) — proving the trust anchor is load-bearing, not cosmetic.
+    """
+    import hashlib
+
+    from gove_zone import Ed25519Signer
+
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    # Reconstruct the committed fixture public key from its known seed (NOT shipped
+    # in the pack — that would be the trust-anchor circularity of docs/PROOF_PATH.md).
+    seed = hashlib.sha256(b"gove-zone fixture corpus v1 :: trusted").digest()
+    pub = Ed25519Signer.from_private_bytes(seed, key_id="fixture-key-1").public_bytes()
+    keyfile = tmp_path / "trusted.pub"
+    keyfile.write_bytes(pub)
+
+    # With the out-of-band key → valid, exit 0.
+    rc = main(
+        [
+            "verify-proofpack",
+            str(packs / "valid-allow"),
+            "--verifier-key",
+            str(keyfile),
+            "--key-id",
+            "fixture-key-1",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0, payload
+    assert payload["valid"] is True
+    assert payload["signature_verified"] is True
+
+    # Without the key → fail closed.
+    rc = main(["verify-proofpack", str(packs / "valid-allow")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert "SIGNED_RECEIPT_NO_VERIFIER" in payload["reasons"]
+
+
+def test_cli_verify_proofpack_tampered_pack_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    rc = main(["verify-proofpack", str(packs / "tampered-receipt")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert "RECEIPT_HASH_MISMATCH" in payload["reasons"]

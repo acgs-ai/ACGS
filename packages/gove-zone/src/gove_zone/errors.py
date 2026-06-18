@@ -9,6 +9,7 @@ anchors the decision. Callers can catch the specific type or the
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from gove_zone.decision import DecisionRecord
@@ -22,8 +23,67 @@ class GoveZoneError(Exception):
     """Base for all gove-zone errors."""
 
 
+class ReceiptRejectionReason(StrEnum):
+    """Stable, machine-readable reason codes for receipt verification failures.
+
+    The *contract* a relying party (and the fixture corpus) asserts on, instead of
+    the human-readable exception message — message text is explicitly NOT a contract
+    (it carries hashes/field values for humans and may be reworded). Every
+    :meth:`gove_zone.receipt.DecisionReceipt.verify` rejection and every
+    :class:`ReceiptValidationError` subclass populates one of these. Names mirror the
+    numbered checks in ``verify()``; values equal the member names (StrEnum) so the
+    code serialises as a plain string in JSON / proof packs without leaking detail.
+
+    Additive (B4-V0): ``reason_code`` defaults to ``None`` on a hand-constructed
+    ``ReceiptValidationError`` for backward compatibility; the library populates it.
+    """
+
+    # verify() checks 1-13 (see receipt.py)
+    MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD"
+    RECEIPT_HASH_MISSING = "RECEIPT_HASH_MISSING"
+    RECEIPT_HASH_MISMATCH = "RECEIPT_HASH_MISMATCH"
+    UNSIGNED_REJECTED = "UNSIGNED_REJECTED"
+    SIGNING_KEY_UNKNOWN = "SIGNING_KEY_UNKNOWN"
+    SIGNED_RECEIPT_NO_VERIFIER = "SIGNED_RECEIPT_NO_VERIFIER"
+    SIGNATURE_ALG_MISMATCH = "SIGNATURE_ALG_MISMATCH"
+    SIGNATURE_INVALID = "SIGNATURE_INVALID"
+    ACTOR_MISMATCH = "ACTOR_MISMATCH"
+    SELF_VALIDATION = "SELF_VALIDATION"
+    APPROVAL_CHAIN_DIVERGENCE = "APPROVAL_CHAIN_DIVERGENCE"
+    UNKNOWN_DECISION = "UNKNOWN_DECISION"
+    DENIED_RECEIPT = "DENIED_RECEIPT"
+    ESCALATED_RECEIPT = "ESCALATED_RECEIPT"
+    TENANT_MISMATCH = "TENANT_MISMATCH"
+    EXECUTION_BOUNDARY_MISMATCH = "EXECUTION_BOUNDARY_MISMATCH"
+    ACTION_MISMATCH = "ACTION_MISMATCH"
+    AUDIT_HASH_MISMATCH = "AUDIT_HASH_MISMATCH"
+    TRANSFORMATIONS_MALFORMED = "TRANSFORMATIONS_MALFORMED"
+    TRANSFORM_MISMATCH = "TRANSFORM_MISMATCH"
+    ARGUMENT_MISMATCH = "ARGUMENT_MISMATCH"
+    POLICY_HASH_MISMATCH = "POLICY_HASH_MISMATCH"
+    POLICY_BUNDLE_MISMATCH = "POLICY_BUNDLE_MISMATCH"
+    VALIDATOR_ROLE_MISMATCH = "VALIDATOR_ROLE_MISMATCH"
+    AUTHORITY_MISMATCH = "AUTHORITY_MISMATCH"
+    EXPIRY_UNPARSEABLE = "EXPIRY_UNPARSEABLE"
+    RECEIPT_EXPIRED = "RECEIPT_EXPIRED"
+    # gate-level / subclass reasons
+    PRODUCTION_PROFILE_NO_VERIFIER = "PRODUCTION_PROFILE_NO_VERIFIER"
+    RECEIPT_ALREADY_USED = "RECEIPT_ALREADY_USED"
+    CONSUMPTION_LEDGER_UNPROVABLE = "CONSUMPTION_LEDGER_UNPROVABLE"
+
+
 class ReceiptValidationError(GoveZoneError):
-    """Raised when a DecisionReceipt validation fails."""
+    """Raised when a DecisionReceipt validation fails.
+
+    Carries an optional machine-readable :class:`ReceiptRejectionReason` in
+    ``reason_code`` (B4-V0). ``None`` only on a hand-constructed instance that did not
+    supply one; every library raise site populates it. ``reason_code`` is keyword-only
+    and additive, so existing positional-message call sites are unaffected.
+    """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(*args)
+        self.reason_code = reason_code
 
 
 class ProductionProfileError(ReceiptValidationError):
@@ -39,6 +99,11 @@ class ProductionProfileError(ReceiptValidationError):
     (``GovernanceProfile.dev()`` / ``require_signature=False``) — so the secure
     default never auto-generates an ephemeral key (which would be false security).
     """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.PRODUCTION_PROFILE_NO_VERIFIER
+        )
 
 
 class ReceiptAlreadyUsedError(ReceiptValidationError):
@@ -61,7 +126,8 @@ class ReceiptAlreadyUsedError(ReceiptValidationError):
             "receipt already consumed: audit anchor "
             f"{self.audit_event_hash!r} is burned in the consumption ledger "
             f"({self.ledger_path}). One approval authorizes at most one "
-            "execution — obtain a fresh decision/approval to run again."
+            "execution — obtain a fresh decision/approval to run again.",
+            reason_code=ReceiptRejectionReason.RECEIPT_ALREADY_USED,
         )
 
     def __reduce__(self) -> tuple[type[ReceiptAlreadyUsedError], tuple[str, str]]:
@@ -81,6 +147,11 @@ class ConsumptionLedgerError(ReceiptValidationError):
     receipt-validation failure rather than silently degrading to stateless
     (replayable) verification.
     """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.CONSUMPTION_LEDGER_UNPROVABLE
+        )
 
 
 PRODUCTION_NO_VERIFIER_MSG = (

@@ -1,0 +1,24 @@
+{
+  "schema_version": "gove-zone/proof-pack/v1",
+  "generated_with": "tests/fixtures/_generate_proofpacks.py",
+  "receipts": [
+    {
+      "name": "r1",
+      "file": "receipts/r1.json",
+      "declared_verdict": "accept",
+      "reason_code": null
+    },
+    {
+      "name": "r2",
+      "file": "receipts/r2.json",
+      "declared_verdict": "accept",
+      "reason_code": null
+    }
+  ],
+  "audit_chain": "audit.jsonl",
+  "replay": {
+    "policy_bundle": "policy_bundle.json",
+    "side_store": "replay_side_store.jsonl"
+  },
+  "consumption_ledger": null
+}

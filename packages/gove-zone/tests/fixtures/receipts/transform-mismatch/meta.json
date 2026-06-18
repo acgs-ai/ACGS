@@ -1,0 +1,16 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "transform-mismatch",
+  "notes": "executed args do not match the approved transform",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "TRANSFORM_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_args": {
+      "path": "other.txt"
+    },
+    "require_signature": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "unsigned-rejected",
+  "notes": "require_signature=True but the receipt is unsigned",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "UNSIGNED_REJECTED",
+  "verifier": "none",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

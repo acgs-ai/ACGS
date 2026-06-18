@@ -35,6 +35,7 @@ from gove_zone.errors import (
     PolicyError,
     ProductionProfileError,
     ReceiptAlreadyUsedError,
+    ReceiptRejectionReason,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
@@ -111,6 +112,12 @@ from gove_zone.tenant import (
     evaluate_tenant_action,
 )
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
+from gove_zone.verifier import (
+    SCHEMA_VERSION,
+    ProofPackRejectionReason,
+    ProofPackVerificationResult,
+    verify_proof_pack,
+)
 from gove_zone.workflow import (
     WorkflowDAG,
     WorkflowExecutor,
@@ -157,17 +164,21 @@ __all__ = [
     "PolicyRule",
     "PolicyError",
     "ProductionProfileError",
+    "ProofPackRejectionReason",
+    "ProofPackVerificationResult",
     "ProposedAction",
     "Receipt",
     "ReceiptAlreadyUsedError",
     "LedgerObservability",
     "ReceiptConsumptionLedger",
+    "ReceiptRejectionReason",
     "ReceiptSigner",
     "ReceiptValidationError",
     "ReceiptVerifier",
     "ReplayResult",
     "ReplaySideStore",
     "RuleSetPolicy",
+    "SCHEMA_VERSION",
     "SigningError",
     "TenantPolicyBinding",
     "TenantPolicyStore",
@@ -215,5 +226,6 @@ __all__ = [
     "sha256_json",
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
+    "verify_proof_pack",
     "verify_workflow_replay",
 ]

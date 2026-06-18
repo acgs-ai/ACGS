@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "A",
+  "name": "tamper-argument-hash",
+  "notes": "argument_hash flipped (binding defeats arg substitution)",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "RECEIPT_HASH_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

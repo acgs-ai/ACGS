@@ -1,0 +1,9 @@
+{
+  "expected_reasons": [
+    "RECEIPT_UNEXPECTED_REJECT",
+    "UNSIGNED_REJECTED"
+  ],
+  "expected_valid": false,
+  "produced_by": "tests/fixtures/_generate_proofpacks.py",
+  "verifier": "trusted"
+}
