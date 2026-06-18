@@ -6,6 +6,11 @@
   "permissions": {
     "allow": [
       "Bash(gh pr merge:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull:*)",
       "Bash(make:*)",
       "Bash(pnpm:*)",
       "Bash(uv:*)",
@@ -54,7 +59,6 @@
       "Bash(git clean -f:*)",
       "Bash(git checkout master:*)",
       "Bash(git checkout main:*)",
-      "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
       "Bash(gh release:*)",
       "Bash(gh secret:*)",
