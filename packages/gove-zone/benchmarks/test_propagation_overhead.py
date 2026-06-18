@@ -94,9 +94,34 @@ def measure_gate() -> GateMeasurement:
     )
 
 
+GATE_SAMPLES = 5
+_INT_KEYS = frozenset(
+    {"propagation_token_units", "token_baseline_token_units", "concurrency", "payload_kb"}
+)
+
+
+def median_measurement(samples: int = GATE_SAMPLES) -> dict[str, float]:
+    """Median per metric over ``samples`` independent ``measure_gate()`` runs.
+
+    The latency-overhead metric is noise-dominated: both arms perform identical
+    bounded work, so a single run swings widely (roughly -20%..+17% under load)
+    and can spuriously trip the ``<= 15%`` mean threshold. The median is the
+    robust central tendency the gate asserts on. Shared with
+    ``benchmarks/emit_gate_artifact.py`` so the committed artifact and the gate
+    agree by construction. See ADR-0006 for the per-chain methodology.
+    """
+    runs = [measure_gate().to_dict() for _ in range(samples)]
+    out: dict[str, float] = {}
+    for key in runs[0]:
+        median = statistics.median(float(run[key]) for run in runs)
+        out[key] = round(median) if key in _INT_KEYS else round(median, 3)
+    return out
+
+
 def test_propagation_gate_thresholds() -> None:
-    measured = measure_gate()
-    data = measured.to_dict()
+    # Median over GATE_SAMPLES runs: the latency-overhead metric is noise-dominated
+    # (both arms do identical work), so a single run is flaky. Assert on the median.
+    data = median_measurement()
     assert data["mean_latency_overhead_pct"] <= THRESHOLDS["mean_latency_overhead_pct"]
     assert data["p95_latency_overhead_pct"] <= THRESHOLDS["p95_latency_overhead_pct"]
     assert data["token_consumption_overhead_pct"] <= THRESHOLDS["token_consumption_overhead_pct"]
