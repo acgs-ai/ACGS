@@ -639,6 +639,7 @@ def _proofpack(args: argparse.Namespace) -> int:
     # Write manifest.json
     manifest = {
         "version": "0.1.0.dev0",
+        "schema_version": "gove-zone/proof-pack/v1",
         "files": [
             "manifest.json",
             "receipts/allowed_receipt.json",
@@ -660,6 +661,31 @@ def _proofpack(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def _verify_proofpack(args: argparse.Namespace) -> int:
+    # Offline, standalone proof-pack verification (B4 §8). Fail-closed: any error
+    # folds into valid=False inside verify_proof_pack, so exit 1 on a non-valid pack.
+    from gove_zone.verifier import verify_proof_pack
+
+    verifier = None
+    if args.verifier_key:
+        # Out-of-band trust anchor: the relying party supplies the public key
+        # SEPARATELY, never from the pack — a key shipped beside the signer is not
+        # independent trust (see docs/PROOF_PATH.md). Raw 32-byte Ed25519 public key.
+        from gove_zone.signing import Ed25519Signer
+
+        try:
+            raw = Path(args.verifier_key).read_bytes()
+            signer = Ed25519Signer.from_public_bytes(raw, key_id=args.key_id or None)
+        except Exception as exc:  # noqa: BLE001 — bad trust anchor must not verify anything
+            print(f"verify-proofpack: cannot load --verifier-key: {exc}", file=sys.stderr)
+            return 2
+        verifier = {signer.key_id: signer}
+
+    result = verify_proof_pack(args.pack_dir, verifier=verifier, now_iso=args.now_iso)
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.valid else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -878,6 +904,35 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     proofpack.set_defaults(func=_proofpack)
+
+    verify_proofpack = subparsers.add_parser(
+        "verify-proofpack",
+        help=("verify a proof-pack directory offline (fail-closed); exit 0 iff valid, else 1"),
+    )
+    verify_proofpack.add_argument(
+        "pack_dir",
+        help="path to a gove-zone/proof-pack/v1 directory (contains manifest.json)",
+    )
+    verify_proofpack.add_argument(
+        "--now-iso",
+        default=None,
+        help="injected ISO-8601 clock for deterministic receipt-expiry checks",
+    )
+    verify_proofpack.add_argument(
+        "--verifier-key",
+        default=None,
+        help=(
+            "path to a raw 32-byte Ed25519 PUBLIC key, supplied out-of-band, used to "
+            "verify signed receipts. Omit for unsigned (dev) packs; a signed pack "
+            "without this fails closed (SIGNED_RECEIPT_NO_VERIFIER)."
+        ),
+    )
+    verify_proofpack.add_argument(
+        "--key-id",
+        default=None,
+        help="key_id the --verifier-key registers as (must match the receipt's signing_key_id)",
+    )
+    verify_proofpack.set_defaults(func=_verify_proofpack)
 
     return parser
 
