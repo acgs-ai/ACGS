@@ -1463,14 +1463,14 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
     local_gate_ok, local_gate_missing = _contains_all(
         makefile,
         [
-            "verify: lint typecheck test",
+            "verify: submodule-status lint typecheck test",
             "lint: lint-js lint-py lint-docs",
             "platform-readiness:",
             "grep -q '^\\[tool\\.mypy\\]'",
             "grep -q '^files = '",
-            "$(UV) run mypy) || exit $$?",
-            "$(UV) run mypy src tests) || exit $$?",
-            "mypy skipped — not configured",
+            "$(UV) run $$extra mypy $$mypy_args) || exit $$?",
+            "(informational mypy findings above; not gating)",
+            "STRICT (gated, clean):",
         ],
     )
     local_scripts_ok = (
