@@ -181,7 +181,7 @@ const products: ProductRoute[] = [
     ],
   },
   {
-    slug: 'acgs',
+    slug: 'gove-zone',
     folio: 'IV',
     eyebrow: 'ACGS · Runtime bridge',
     title: 'Governance before every',
