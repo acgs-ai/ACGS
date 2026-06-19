@@ -43,7 +43,7 @@ The console is the privileged surface. Public marketing must not embed the conso
 
 - mode-specific `@surface/App` aliases
 - marketing/console bundle checks
-- Vercel edge route checks that deny internal docs first, redirect `/console` paths to `https://console.acgs.ai/console`, and keep the marketing SPA fallback last
+- Cloudflare edge route checks that deny internal docs first, redirect `/console` paths to `https://console.acgs.ai/console`, and keep the marketing SPA fallback last
 - Caddy console headers and CSP
 - same-origin `/api/*` proxying through `BUS_UPSTREAM`
 - post-deploy asset scans for live console JS

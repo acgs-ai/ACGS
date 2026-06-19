@@ -4,13 +4,14 @@
 # workflows
 
 ## Purpose
-This directory defines CI/CD workflows for the two-origin deployment model: a marketing surface deployed through Vercel and a privileged console surface deployed as a Cloud Run container. It can also contain path-filtered static validation workflows for experiments that must not deploy.
+This directory defines CI/CD workflows for the two-origin deployment model: a marketing surface deployed through Cloudflare Pages and a privileged console surface deployed as a Cloud Run container. It can also contain path-filtered static validation workflows for experiments that must not deploy.
 
 ## Key Files
 | File | Description |
 |------|-------------|
 | `console.yml` | Builds, lints, containerizes, pushes, deploys, and smoke-tests the console origin using GCP Workload Identity Federation. |
-| `marketing.yml` | Builds, lints, previews, and deploys the marketing origin using Vercel. |
+| `marketing-cloudflare.yml` | Builds and deploys the marketing origin to Cloudflare Pages (gated production deploy on push to `master`). |
+| `marketing.yml` | Runs lint, build, and readiness checks for the marketing origin (verify-only, no deploy). |
 | `iii-governance-lab-static.yml` | Runs static-only contract checks for `experiments/iii-governance-lab/`; it must not start a live iii engine or deploy. |
 
 ## Subdirectories
@@ -29,21 +30,21 @@ This directory defines CI/CD workflows for the two-origin deployment model: a ma
 ### Testing Requirements
 - Confirm edited workflow commands exist in `package.json`.
 - For console workflow changes, confirm referenced infra files still exist.
-- For marketing workflow changes, confirm Vercel config names still align with `vercel.json`.
+- For marketing workflow changes, confirm Cloudflare config files still align with `infra/cloudflare/_redirects`, `infra/cloudflare/_headers`, and `wrangler.toml`.
 
 ### Common Patterns
 - Both workflows use pnpm 9, Node 24, `pnpm install --frozen-lockfile`, `pnpm lint`, and `pnpm build`.
 - Console deploys only on push to `main`; PRs build and push an image but do not replace the Cloud Run service.
-- Marketing PRs create preview deployments and comment the preview URL.
+- Marketing PRs run verify-only checks (lint + build + `test:all`); Cloudflare Pages preview deployments are gated on `master` push.
 
 ## Dependencies
 
 ### Internal
 - `package.json`, `pnpm-lock.yaml`, `vite.config.ts`, `tsconfig*.json`, `src/`, and `public/`.
 - `infra/Dockerfile.console` and `infra/cloudrun/service.yaml` for console.
-- `vercel.json` for marketing.
+- `infra/cloudflare/_redirects` and `infra/cloudflare/_headers` for marketing.
 
 ### External
-- `actions/checkout`, `pnpm/action-setup`, `actions/setup-node`, `google-github-actions/auth`, `google-github-actions/setup-gcloud`, `docker/build-push-action`, `docker/setup-buildx-action`, and `actions/github-script`.
+- `actions/checkout`, `pnpm/action-setup`, `actions/setup-node`, `google-github-actions/auth`, `google-github-actions/setup-gcloud`, `docker/build-push-action`, `docker/setup-buildx-action`, `actions/github-script`, and `cloudflare/wrangler-action`.
 
 <!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->
