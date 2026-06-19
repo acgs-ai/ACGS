@@ -11,10 +11,10 @@ def test_typecheck_py_uses_configured_mypy_scope() -> None:
     assert "typecheck-py:" in makefile
     assert "grep -q '^\\[tool\\.mypy\\]'" in makefile
     assert "grep -q '^files = '" in makefile
-    assert "$(UV) run mypy) || exit $$?" in makefile
-    assert "$(UV) run mypy src tests) || exit $$?" in makefile
+    assert "$(UV) run $$extra mypy $$mypy_args) || exit $$?" in makefile
+    assert 'mypy_args="src tests"' in makefile
     assert "$(UV) run mypy ." not in makefile
-    assert "mypy skipped — not configured" in makefile
+    assert "no [tool.mypy]; not gated" in makefile
 
 
 def test_cft_governance_pack_has_strict_mypy_gate() -> None:
