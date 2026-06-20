@@ -60,7 +60,7 @@ infrastructure.**
 
 ```
                      ┌──────────────────────────────┐
-   acgs.ai           │  Vercel edge (or Netlify)    │
+   acgs.ai           │  Cloudflare Pages (CDN edge) │
    www.acgs.ai  ───► │  static bundle, CDN-cached   │
                      │  marketing surface only       │
                      └──────────────────────────────┘
@@ -80,7 +80,7 @@ Why split, when the bundle is one file:
   The console CDN provider does not exist; the request path is end-to-end
   under operator control. This is the deployment-layer expression of
   `DESIGN.md §4.3`.
-- **Subprocessor story.** "Vercel sees public marketing visitors; nothing
+- **Subprocessor story.** "Cloudflare sees public marketing visitors; nothing
   third-party sits between a customer and `console.acgs.ai`." That is a
   one-line answer to a question every regulated-AI buyer asks.
 - **API homing.** The bus client calls `console.acgs.ai/api/*` — same
@@ -105,8 +105,9 @@ Why not a Cloudflare-in-front-of-origin single-domain plan:
 
 ## §3 Marketing surface — `acgs.ai`, `www.acgs.ai`
 
-**Provider:** Vercel (Hobby for staging, Pro for production). Netlify is an
-acceptable substitute; the design is provider-agnostic at this layer.
+**Provider:** Cloudflare Pages is the active marketing deploy provider — see §3a.
+Vercel is retired; its `vercel.json` routing/header contract is retained below
+only as the provider-agnostic spec that `_redirects`/`_headers` mirror.
 
 **Build:**
 
@@ -1013,7 +1014,7 @@ hash-anchored, operator-readable.
 
 **Marketing:**
 
-- Provider built-in access logs (Vercel / Netlify) + analytics product.
+- Provider built-in access logs (Cloudflare Pages) + analytics product.
   Retention 90 days. This is enough — marketing access patterns are
   not constitutional artifacts.
 
@@ -1049,7 +1050,7 @@ hash-anchored, operator-readable.
 | Cloudflare in front (single-domain) | If WAF / bot management becomes a buyer requirement | §2 weighed and deferred. |
 | Multi-region failover | When availability SLO > 99.9% | Single-region is fine until then; pair primary with a warm passive in another region. |
 | SSO / OIDC at the console edge | When auth lands | Terminates at the console origin defined in §4. |
-| Subprocessor disclosure page | First regulated buyer | One marketing-side page that lists Vercel (marketing only), Cloud Run / Fly (console), Let's Encrypt (certs), font foundries — and explicitly states no third party touches `/console/*`. |
+| Subprocessor disclosure page | First regulated buyer | One marketing-side page that lists Cloudflare Pages (marketing only), Cloud Run / Fly (console), Let's Encrypt (certs), font foundries — and explicitly states no third party touches `/console/*`. |
 
 ---
 
