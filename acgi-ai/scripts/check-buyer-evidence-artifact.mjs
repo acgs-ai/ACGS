@@ -202,7 +202,7 @@ try {
       'verify:production-live',
       'signed evidence packet',
       'not the hosted',
-      'not live Cloud Run/Vercel proof',
+      'not live Cloud Run/Cloudflare Pages proof',
     ]) {
       mustContain(html, needle, 'generated index.html')
     }

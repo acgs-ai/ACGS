@@ -156,7 +156,7 @@ function makeManifest({ status, productionLiveStatus }) {
       marketingUrl: 'https://acgs.ai',
       consoleUrl: 'https://console.acgs.ai',
       cloudRunRevisionUrl: 'https://console-acgs-ai-abc123-uc.a.run.app',
-      vercelUrl: 'https://acgs-ai-abc123.vercel.app',
+      cloudflareUrl: 'https://acgs-marketing-abc123.pages.dev',
       githubActionsRunUrls: {
         marketing: 'https://github.com/acgs/acgi-ai/actions/runs/1001',
         console: 'https://github.com/acgs/acgi-ai/actions/runs/1002',
@@ -504,7 +504,7 @@ try {
     deploy: {
       ...makeManifest({ status: 'deployment-blocked', productionLiveStatus: 'fail' }).deploy,
       cloudRunRevisionUrl: 'pending-external:cloud-run-revision-url',
-      vercelUrl: 'pending-external:vercel-deployment-url',
+      cloudflareUrl: 'pending-external:cloudflare-deployment-url',
       githubActionsRunUrls: {
         marketing: 'pending-external:marketing-workflow-run-url',
         console: 'pending-external:console-workflow-run-url',

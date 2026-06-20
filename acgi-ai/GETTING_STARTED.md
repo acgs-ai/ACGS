@@ -118,4 +118,4 @@ Use the narrow gate first, then the broader gate:
 - docs scaffold changes: `pnpm -F acgi-ai run test:docs-scaffold`
 - monorepo-wide confidence: `make verify`
 
-local verification does not equal production deployment. Production evidence requires live Vercel and Cloud Run domains, real headers, `/healthz` served-hash/build-id proof, OIDC or server-cookie auth, legal review, pentest evidence, CSP report processing, and manual WCAG review.
+local verification does not equal production deployment. Production evidence requires live Cloudflare Pages and Cloud Run domains, real headers, `/healthz` served-hash/build-id proof, OIDC or server-cookie auth, legal review, pentest evidence, CSP report processing, and manual WCAG review.

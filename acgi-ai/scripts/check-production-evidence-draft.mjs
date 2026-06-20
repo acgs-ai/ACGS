@@ -140,7 +140,7 @@ function makeCutoverPlan() {
     command:
       'pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-production-live.json> --blocker-report <production-blocker-report.json> --out <production-cutover-plan.json>',
     inputs: { productionLiveStatus: 'fail', blockerReportStatus: 'blocked' },
-    requiredGitHubSecrets: ['VERCEL_TOKEN', 'GCP_PROJECT_ID'],
+    requiredGitHubSecrets: ['CLOUDFLARE_API_TOKEN', 'GCP_PROJECT_ID'],
     requiredGitHubVariables: ['STORYBOOK_PAGES_ENABLED=true'],
     dnsCutover: { records: [] },
     operatorSequence: [],
