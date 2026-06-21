@@ -151,7 +151,7 @@ for (const needle of [
   'buyer-evidence-gallery',
   'console-dist',
   'GitHub Actions run URL',
-  'Vercel deployment URL',
+  'Cloudflare deployment URL',
   'Cloud Run revision URL',
   'EXPECTED_BUILD_ID',
   '/healthz',
@@ -168,9 +168,8 @@ for (const needle of [
 }
 
 for (const secret of [
-  'VERCEL_TOKEN',
-  'VERCEL_ORG_ID',
-  'VERCEL_PROJECT_ID',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
   'GCP_PROJECT_ID',
   'GCP_REGION',
   'GCP_WORKLOAD_IDENTITY_PROVIDER',

@@ -48,7 +48,7 @@ This directory contains the full React application source for the ACGS marketing
 
 ### Internal
 - `public/static/fonts/` for self-hosted font files.
-- `infra/Caddyfile` and `vercel.json` depend on route and asset path behavior.
+- `infra/Caddyfile` and `infra/cloudflare/_redirects` depend on route and asset path behavior.
 - Root TypeScript, Vite, and Biome configuration.
 
 ### External

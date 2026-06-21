@@ -93,7 +93,7 @@ Reference buyer for this plan: **regulated-AI procurement officer at an enterpri
 - **Full state coverage** for every in-scope console surface (11 states per §2 DOD).
 - **WCAG 2.2 AA accessibility** (per UC5) — keyboard, target sizes, focus restoration, manual NVDA/VoiceOver, reduced-motion regression.
 - **Tablet reviewer mode** at 768-1023px (per UC6) — read-only evidence review.
-- **Production deploy** of both surfaces (Vercel marketing, Cloud Run/Fly console) — but only **after** bus-readiness + OIDC complete (per §12 phase reorder).
+- **Production deploy** of both surfaces (Cloudflare Pages marketing, Cloud Run/Fly console) — but only **after** bus-readiness + OIDC complete (per §12 phase reorder).
 - **DX scaffolding** (Phase 0): `pnpm hello`, standardized scripts (`dev:mock`, `dev:live`, `test:all`, etc.), `VITE_EVAL_MODE` for deterministic audit runs, `ARCHITECTURE.md` + `INTEGRATING.md` skeletons.
 - **Compliance claim matrix** (per A21) reviewed by legal before public deploy.
 - **Storybook** (per T4 / Open Q4) — published to `storybook.acgs.ai` as buyer-evidence artifact (~½ day on top of Phase 2).
@@ -378,13 +378,13 @@ Claim matrix signed off by legal. Estimate: **1.5w** (was 1w).
 
 **Tasks:**
 1. Provision `acgs.ai` and `console.acgs.ai` per `DEPLOY.md §9`. DNS, ACME certs, CAA records, DMARC `p=reject`.
-2. Deploy marketing to Vercel via `marketing.yml`. Verify production headers match `vercel.json`. CSP `Content-Security-Policy-Report-Only` active with allowlist + report-uri. Report-uri receives + processes events.
+2. Deploy marketing to Cloudflare Pages via `marketing.yml`. Verify production headers match `infra/cloudflare/_headers`. CSP `Content-Security-Policy-Report-Only` active with allowlist + report-uri. Report-uri receives + processes events.
 3. Deploy console to Cloud Run via `console.yml` against the Caddy container (with the bus-readiness Phase 5 wiring). Verify production headers match the Caddyfile §5 table from `DEPLOY.md`.
 4. Verify the marketing → console hand-off: clicking "Open the console" on `acgs.ai` lands on `console.acgs.ai/console` via 308 redirect, not via a marketing-side `/console` rendering. Bundle-split assertion holds.
 5. Wire `/healthz` on the console origin returning `{ ok, served_hash, build_id }` per `DEPLOY.md §10`. Synthetic external pinger asserts `served_hash` matches the deployed bundle. Mismatch pages on-call.
 6. Configure alerting per `DEPLOY.md §10`: 5xx > 1% / 5min on console pages on-call. Cert expiry < 14d pages on-call. CSP-violation report rate threshold pages on-call (regression detector).
 7. Submit `acgs.ai` to the HSTS preload list per `DEPLOY.md §9`.
-8. **Trust + compliance pages (A22).** `/subprocessors` lists Vercel (marketing only), Cloud Run/Fly (console), Auth0/WorkOS (auth), Let's Encrypt (certs), the font self-hosting story, and explicitly states no third party touches `/console/*`. `/trust` links to subprocessors, DPA template, SOC 2 Type II roadmap, data-residency statement, deletion SLA, model-card disclosures, security.txt. `/security` carries the bug-bounty + responsible-disclosure policy. Sub-processor change RSS feed published. Claim matrix (per Phase 3 task 8) reviewed + signed off by legal BEFORE this deploy.
+8. **Trust + compliance pages (A22).** `/subprocessors` lists Cloudflare Pages (marketing only), Cloud Run/Fly (console), Auth0/WorkOS (auth), Let's Encrypt (certs), the font self-hosting story, and explicitly states no third party touches `/console/*`. `/trust` links to subprocessors, DPA template, SOC 2 Type II roadmap, data-residency statement, deletion SLA, model-card disclosures, security.txt. `/security` carries the bug-bounty + responsible-disclosure policy. Sub-processor change RSS feed published. Claim matrix (per Phase 3 task 8) reviewed + signed off by legal BEFORE this deploy.
 9. **Marketing CSP cutover (A11).** Within 30 days of production deploy, marketing moves from `Content-Security-Policy-Report-Only` to enforced `Content-Security-Policy`. Rollback plan documented.
 10. **SLO instrumentation (CEO Codex MEDIUM finding F2.3).** `/healthz` synthetic from 3 probes; 30-day rolling availability tracked; error budget defined; multi-region eligibility re-evaluated when SLO > 99.9% sustained for 90 days. Without this, "single-region acceptable" is permanent (premise 6 hardened).
 11. **Post-deploy verification script (`scripts/postdeploy-verify.sh`).** Header verification + `/healthz` `served_hash` match + bundle scan for inline styles / third-party URLs + WCAG 2.2 AA quick-check via axe-cli + CSP-violation rate baseline.

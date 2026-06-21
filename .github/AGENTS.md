@@ -29,17 +29,17 @@ This directory contains GitHub platform configuration for the repository. Its du
 
 ### Common Patterns
 - Workflows install pnpm, set up Node 24, install with `--frozen-lockfile`, run lint, and build before deployment.
-- Console deployment is Cloud Run-oriented; marketing deployment is Vercel-oriented.
+- Console deployment is Cloud Run-oriented; marketing deployment is Cloudflare Pages-oriented.
 
 ## Dependencies
 
 ### Internal
 - Root `package.json` scripts and lockfile.
 - `infra/` for console image and Cloud Run service definitions.
-- `vercel.json` for marketing-origin routing and headers.
+- `infra/cloudflare/_redirects` and `infra/cloudflare/_headers` for marketing-origin routing and headers.
 
 ### External
 - GitHub Actions hosted runners.
-- pnpm, Node, Docker Buildx, Google GitHub Actions, gcloud, and Vercel CLI.
+- pnpm, Node, Docker Buildx, Google GitHub Actions, gcloud, and cloudflare/wrangler-action.
 
 <!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->
