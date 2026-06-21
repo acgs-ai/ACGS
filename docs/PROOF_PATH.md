@@ -8,6 +8,12 @@ Core invariant:
 
 > **No valid Decision Receipt, no side effect.**
 
+## Prerequisites
+
+Python 3.11+, [uv](https://docs.astral.sh/uv/), and a clone of this repository.
+Run every command below from the repository root. Once dependencies are
+installed (`make install`), no network access or external service is required.
+
 ## Step 1 — denied action
 
 Run:
