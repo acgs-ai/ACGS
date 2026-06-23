@@ -15,6 +15,8 @@ function directly — that's the wiring proof per the review-handler-wiring rule
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,11 +27,15 @@ from gove_zone import (
     BoundaryPolicy,
     ChainHashAuditStore,
     Decision,
+    DecisionRecord,
     DeniedError,
     DenyAllPolicy,
     Kernel,
+    Policy,
     UnknownToolError,
 )
+from gove_zone.decision import sha256_json
+from gove_zone.policy import new_event_id
 from gove_zone.replay import replay_call
 from gove_zone.replay_store import ReplaySideStore
 from gove_zone.tool import ToolCall
@@ -274,3 +280,101 @@ def test_side_store_record_feeds_replay_call(tmp_path: Path) -> None:
         expected_policy_version=receipt.record.policy_version,
     )
     assert replayed.matches is True
+
+
+class _SlowAllowPolicy(Policy):
+    """Allows every call, but blocks in ``evaluate`` for ``delay`` seconds.
+
+    Used to exercise the kernel's fail-closed policy watchdog (``policy_timeout``,
+    #152): a slow/hung policy must be aborted and converted to a DENY rather than
+    stalling the gate or eventually leaking an ALLOW.
+    """
+
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+        # Set right before evaluate returns, so a test can wait for the orphan
+        # worker thread to finish and then assert its late ALLOW was discarded.
+        self.completed = threading.Event()
+
+    @property
+    def version(self) -> str:
+        return "slow-allow/v0"
+
+    def evaluate(self, call: ToolCall) -> DecisionRecord:
+        time.sleep(self._delay)
+        record = DecisionRecord(
+            decision=Decision.ALLOW,
+            tool=call.name,
+            argument_hash=sha256_json(dict(call.args)),
+            policy_version=self.version,
+            event_id=new_event_id(),
+            reason="slow allow policy",
+        )
+        self.completed.set()
+        return record
+
+
+def test_hung_policy_times_out_to_fail_closed_deny(tmp_path: Path) -> None:
+    """A policy that exceeds ``policy_timeout`` is aborted by the watchdog and the
+    dispatch fails closed: DENY synthesized, the tool never runs, and the decision
+    is anchored exactly once in the audit chain.
+
+    This is the dispatcher-level proof that the #152 watchdog actually fires —
+    it goes through ``kernel.dispatch``, not ``_evaluate_with_watchdog`` directly.
+    """
+    policy = _SlowAllowPolicy(delay=0.5)
+    k = Kernel(
+        policy=policy,
+        audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),
+        policy_timeout=0.05,
+    )
+    ran: list[str] = []
+
+    @k.tool("side_effect")
+    def side_effect() -> None:
+        ran.append("ran")
+
+    with pytest.raises(DeniedError) as exc_info:
+        k.dispatch("side_effect")
+
+    record = exc_info.value.record
+    assert record.decision is Decision.DENY
+    assert record.policy_version == "fail-closed/policy-timeout"
+    assert any(r.startswith("POLICY_ERROR:TIMEOUT:") for r in record.matched_rules)
+    assert exc_info.value.audit_hash != "0" * 64
+
+    # Wait for the orphan worker thread to finish its (now-discarded) ALLOW, then
+    # assert the late result was NOT applied: the fail-closed DENY stands, the tool
+    # never ran, and no second (ALLOW) event leaked into the chain. This
+    # regression-locks the discard guarantee in Kernel._evaluate_with_watchdog —
+    # without the wait, these assertions pass before a late ALLOW could manifest.
+    assert policy.completed.wait(timeout=2.0)
+    assert ran == []  # late ALLOW must not let the side effect through
+    events = list(k.audit.iter_events())
+    assert len(events) == 1  # exactly one event: the fail-closed DENY
+    assert events[0]["decision"] == "deny"
+    assert k.audit.verify_chain()["valid"] is True
+
+
+def test_slow_policy_within_timeout_allows_and_runs(tmp_path: Path) -> None:
+    """Control for the watchdog: the same slow policy, comfortably under a generous
+    ``policy_timeout``, ALLOWs and runs the tool. Proves the DENY above comes from
+    the timeout firing, not from the policy or the watchdog wrapper itself.
+    """
+    k = Kernel(
+        policy=_SlowAllowPolicy(delay=0.02),
+        audit=ChainHashAuditStore(tmp_path / "audit.jsonl"),
+        policy_timeout=5.0,
+    )
+    ran: list[str] = []
+
+    @k.tool("side_effect")
+    def side_effect() -> str:
+        ran.append("ran")
+        return "ok"
+
+    result, receipt = k.dispatch("side_effect")
+
+    assert result == "ok"
+    assert ran == ["ran"]
+    assert receipt.record.decision is Decision.ALLOW
