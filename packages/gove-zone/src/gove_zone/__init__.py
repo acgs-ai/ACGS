@@ -7,6 +7,13 @@ fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 from importlib import metadata as _metadata
 
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
+from gove_zone.authz import (
+    AuthzReason,
+    AuthzRegistryError,
+    PrincipalEntry,
+    PrincipalRegistry,
+    authz_enforce_from_env,
+)
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
     injecagent_scenarios_from_fixture,
@@ -143,7 +150,12 @@ __all__ = [
     "AuditError",
     "AuditEvent",
     "BoundaryPolicy",
+    "AuthzReason",
+    "AuthzRegistryError",
     "ChainHashAuditStore",
+    "PrincipalEntry",
+    "PrincipalRegistry",
+    "authz_enforce_from_env",
     "CompositePolicy",
     "ConsumptionLedgerError",
     "Decision",
