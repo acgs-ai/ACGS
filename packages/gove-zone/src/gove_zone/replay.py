@@ -30,6 +30,12 @@ class ReplayResult:
     policy_version_match: bool  # exact version string match
     argument_hash_match: bool  # original argument_hash == replayed
     reason: str
+    # True ONLY when the policy was actually re-run against the original raw
+    # args (replay_call / replay_from_side_store). False for event-only replay,
+    # which can confirm the policy *version* but cannot re-derive the decision.
+    # Callers must not read ``matches`` as "decision reproduced" without also
+    # checking ``re_derived`` — an event-only ``matches`` is a version match.
+    re_derived: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,17 +46,25 @@ class ReplayResult:
             "policy_version_match": self.policy_version_match,
             "argument_hash_match": self.argument_hash_match,
             "reason": self.reason,
+            "re_derived": self.re_derived,
         }
 
 
 def replay_event(event: dict[str, Any], policy: Policy) -> ReplayResult:
-    """Replay a single audit event against *policy*.
+    """Replay a single audit event against *policy* (policy-version check only).
 
-    Note: the audit event records only the *argument_hash*, not the raw
-    arguments. Without the raw args, replay cannot rerun the policy. Replay
-    against an event-only record can therefore only confirm the policy
-    version match; for full replay, callers should retain the original args
-    alongside the audit event (e.g. via a side-store).
+    .. warning::
+       This is the **weak** replay form. The audit event records only the
+       *argument_hash*, not the raw arguments, so this function CANNOT re-derive
+       the decision. ``re_derived`` is ``False`` and ``argument_hash_match`` is
+       ``False`` (the hash is not recomputed here, so a match cannot be
+       claimed). ``matches`` reflects the *policy version* only — do not read it
+       as "decision reproduced".
+
+       For real integrity replay, retain the raw args in a side-store and use
+       :func:`replay_from_side_store` (or :func:`replay_call` when you already
+       hold the :class:`~gove_zone.tool.ToolCall`). Those set
+       ``re_derived=True`` only after the policy is actually re-run.
     """
     original = Decision(event["decision"])
     return ReplayResult(
@@ -59,8 +73,9 @@ def replay_event(event: dict[str, Any], policy: Policy) -> ReplayResult:
         original_decision=original,
         replayed_decision=original,  # cannot re-derive without raw args
         policy_version_match=event.get("policy_version") == policy.version,
-        argument_hash_match=True,  # cannot recompute
+        argument_hash_match=False,  # not recomputed here — cannot claim a match
         reason="policy-version-only replay; raw args not in audit event",
+        re_derived=False,
     )
 
 
@@ -88,6 +103,7 @@ def replay_call(
         policy_version_match=pv_match,
         argument_hash_match=record.argument_hash == arg_hash,
         reason=record.reason,
+        re_derived=True,
     )
 
 
@@ -143,6 +159,7 @@ def replay_from_side_store(
             policy_version_match=event.get("policy_version") == policy.version,
             argument_hash_match=False,
             reason="side-store argument_hash does not match audit chain",
+            re_derived=False,
         )
 
     try:
@@ -161,6 +178,7 @@ def replay_from_side_store(
             policy_version_match=False,
             argument_hash_match=True,
             reason=f"policy re-derivation raised: {exc}",
+            re_derived=False,
         )
     return replace(result, event_id=event_id)
 

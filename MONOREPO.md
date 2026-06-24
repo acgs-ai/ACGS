@@ -52,6 +52,28 @@ pinned SHA in a follow-up parent commit.
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
 
+## Third-party `external/` submodules
+
+Reference checkouts of upstream research/agent projects, registered in
+`.gitmodules` and pinned by SHA. Unlike `packages/*` these are **not first-party
+ACGS code**: they carry their own upstream licenses, are **not** built, linted,
+imported, or gated by any parent CI workflow, and are left uninitialized by
+default (`git submodule status` shows them with a leading `-`). They exist only
+as provenance-anchored reading material; nothing in the tree imports them.
+
+| Submodule | Upstream | Why vendored | License |
+|---|---|---|---|
+| `external/natural_language_autoencoders/` | `kitft/natural_language_autoencoders` | Research reference for NL→latent encoding experiments | upstream (verify before reuse) |
+| `external/UI-TARS-desktop/` | `bytedance/UI-TARS-desktop` | Reference GUI-agent architecture | Apache-2.0 (upstream) |
+| `external/everything-claude-code/` | `affaan-m/everything-claude-code` | Agent-tooling pattern reference | upstream (verify before reuse) |
+| `external/openswarm/` | `VRSEN/OpenSwarm` | Multi-agent orchestration reference | upstream (verify before reuse) |
+
+Because no first-party code depends on them, no SHA bump is required for ACGS
+releases. To pull one for inspection: `git submodule update --init
+external/<name>`. To pin it to a tracking branch, add a `branch = ...` line to
+its `.gitmodules` stanza (currently SHA-only). Before vendoring any of this code
+into first-party packages, confirm the upstream license permits redistribution.
+
 ## Cross-cutting CI
 
 | Workflow | File | Trigger | What it gates |

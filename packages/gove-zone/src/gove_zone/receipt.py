@@ -627,21 +627,39 @@ class DecisionReceipt:
         # this rejects a genuinely-issued receipt used past its lifetime. The
         # clock is injectable so expiry is deterministically testable; in
         # production it defaults to the real UTC wall clock. Fail-closed.
+        #
+        # OPERATOR TRUST ASSUMPTION: expiry trusts the verifying host's wall
+        # clock. A host whose clock is rolled BACK accepts a genuinely-expired
+        # receipt as still-valid (fail-open against time, not against policy).
+        # This is an operator responsibility — keep gate hosts on trusted,
+        # monotonic, NTP-synced time. For expiry-sensitive deployments, inject a
+        # vetted time source via ``now_iso`` rather than relying on the host
+        # clock. gove-zone does not (yet) carry its own trusted time source.
         if self.expires_at:
             current = now_iso if now_iso is not None else _now_iso()
             # Compare timezone-aware datetimes, not strings: a lexicographic
             # compare is wrong across UTC offsets and would fail OPEN (accept an
-            # expired receipt). Unparseable / mixed-awareness timestamps are
-            # treated as a validation failure, never silently accepted.
+            # expired receipt). Unparseable timestamps are a validation failure.
             try:
                 current_dt = datetime.fromisoformat(current)
                 expires_dt = datetime.fromisoformat(self.expires_at)
-                is_expired = current_dt > expires_dt
             except (ValueError, TypeError) as err:
                 raise ReceiptValidationError(
                     f"Unparseable or mismatched expiry timestamp: "
                     f"expires_at={self.expires_at!r}, now={current!r}"
                 ) from err
+            # Reject offset-naive timestamps on either side. Two naive datetimes
+            # parse and compare without error, but their implied zones are
+            # ambiguous — a naive comparison can silently fail OPEN across
+            # offsets. Demand aware-vs-aware so expiry is unambiguous; a naive
+            # input is a validation failure, never silently accepted.
+            if current_dt.tzinfo is None or expires_dt.tzinfo is None:
+                raise ReceiptValidationError(
+                    f"Expiry timestamps must be timezone-aware (offset-naive "
+                    f"compares are ambiguous and can fail open): "
+                    f"expires_at={self.expires_at!r}, now={current!r}"
+                )
+            is_expired = current_dt > expires_dt
             if is_expired:
                 raise ReceiptValidationError(
                     f"Receipt expired at {self.expires_at} (now {current})"
