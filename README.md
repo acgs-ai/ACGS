@@ -48,6 +48,14 @@ A recorded run of this sequence (allow → id_rsa deny → tampered-audit verifi
 
 For the fastest guided path, start at [`docs/START_HERE.md`](docs/START_HERE.md). For the canonical proof narrative, read [`docs/PROOF_PATH.md`](docs/PROOF_PATH.md). The full documentation index is [`docs/README.md`](docs/README.md).
 
+## Integrator posture: signing and single-use are how the invariant holds
+
+Two defaults decide whether "no valid receipt, no side effect" actually binds in *your* deployment. Wire executors through the gate surfaces — `gove_zone.executor.execute_with_receipt`, `GovernedExecutor`, or `gove_zone.contracts.ReceiptVerifier` — never by calling `DecisionReceipt.verify()` directly:
+
+- **Signing.** The gate surfaces default to `require_signature=True` (production profile) and fail closed loud if no verifier is configured. The bare `DecisionReceipt.verify()` primitive defaults to `require_signature=False` — a direct caller silently opts into the unsigned posture. A `receipt_hash` is recomputable; only an Ed25519 signature checked against a trusted public-key verifier closes that residual. Run the dev/unsigned mode only by explicit opt-out (`require_signature=False` or `GovernanceProfile.dev`).
+- **Single-use.** `verify` is stateless, so one valid receipt authorizes *N* executions unless you pass a `ReceiptConsumptionLedger`. With a ledger the receipt's audit anchor is burned after verification and before the side effect, so a replay fails closed with no side effect. Pass the **same** logical ledger on every call that must share single-use state.
+- **Audit rollback.** `ChainHashAuditStore.verify_chain()` proves internal consistency, but a truncated *prefix* is itself consistent. Record the event count and/or last `event_hash` out-of-band and pass them as `verify_chain(expected_count=..., expected_last_hash=...)` to detect silent truncation.
+
 ## What is implemented now
 
 | Capability | Evidence |
