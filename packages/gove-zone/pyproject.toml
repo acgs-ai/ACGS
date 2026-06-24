@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gove-zone"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "Minimal governed agent runtime — fail-closed governance, receipts, audit chain for AI agent tool calls."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -13,7 +13,9 @@ authors = [{ name = "Gove Zone Contributors" }]
 keywords = ["ai", "agents", "governance", "audit", "policy"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",

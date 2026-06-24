@@ -1,0 +1,16 @@
+{
+  "id": "compliance-ruleset/v1",
+  "rules": [
+    {
+      "id": "BLOCK_SSH_KEY_ACCESS",
+      "effect": "deny",
+      "tools": [
+        "runtime.file.write"
+      ],
+      "path_prefix": [
+        "id_rsa"
+      ],
+      "reason": "Direct access to SSH keys is strictly forbidden"
+    }
+  ]
+}

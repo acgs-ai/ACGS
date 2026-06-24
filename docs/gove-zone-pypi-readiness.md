@@ -4,7 +4,7 @@
 **unpublished** governed-runtime core.
 
 > **Not to be confused with `acgs-lite`.** `packages/acgs-lite/` is a *separate*
-> package that is **already published to PyPI** (v2.10.0, `requires-python
+> package that is **already published to PyPI** (`requires-python
 > >=3.10`). This report does **not** touch `acgs-lite`. Everything below is about
 > `gove-zone` only.
 

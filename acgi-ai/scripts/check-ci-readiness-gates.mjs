@@ -37,6 +37,7 @@ function pathFilterCount(workflow, path) {
 const packageJson = JSON.parse(read('package.json'))
 const consoleWorkflowPath = '.github/workflows/console.yml'
 const marketingWorkflowPath = '.github/workflows/marketing.yml'
+const marketingCfWorkflowPath = '.github/workflows/marketing-cloudflare.yml'
 const storybookWorkflowPath = '.github/workflows/storybook.yml'
 const tthwWorkflowPath = '.github/workflows/tthw.yml'
 const productionDeployCheckPath = 'scripts/check-production-deploy-contract.mjs'
@@ -72,6 +73,7 @@ const browserEvidenceFoundationCheckPath = 'scripts/check-browser-evidence-found
 const mswNodeServerPath = 'src/mocks/server.ts'
 const consoleWorkflow = readRepo(consoleWorkflowPath)
 const marketingWorkflow = readRepo(marketingWorkflowPath)
+const marketingCfWorkflow = readRepo(marketingCfWorkflowPath)
 const storybookWorkflow = readRepo(storybookWorkflowPath)
 const tthwWorkflow = readRepo(tthwWorkflowPath)
 const productionDeployCheck = read(productionDeployCheckPath)
@@ -329,16 +331,33 @@ before(
 )
 before(consoleWorkflow, 'pnpm test:all', 'Build & push image', 'console.yml')
 before(consoleWorkflow, 'pnpm test:all', 'Deploy to Cloud Run', 'console.yml')
-before(marketingWorkflow, 'pnpm test:all', 'Check Vercel secrets present', 'marketing.yml')
-before(marketingWorkflow, 'pnpm test:all', 'Pull Vercel environment', 'marketing.yml')
-before(marketingWorkflow, 'pnpm test:all', 'Deploy', 'marketing.yml')
+// Marketing production deploy is Cloudflare Pages (marketing-cloudflare.yml). Its deploy
+// job `needs: verify`, and the verify job runs the full `pnpm test:all` readiness gate, so
+// the gate precedes deploy. The Vercel path (marketing.yml) is retired to verify-only.
+check(
+  // accept both the scalar (`needs: verify`) and YAML array (`needs: [verify]`) forms
+  /needs:\s*(?:verify\b|\[[^\]]*\bverify\b[^\]]*\])/.test(marketingCfWorkflow),
+  'marketing-cloudflare.yml deploy job must depend on the verify (readiness gate) job.',
+)
+before(
+  marketingCfWorkflow,
+  'pnpm test:all',
+  'Deploy to Cloudflare Pages',
+  'marketing-cloudflare.yml',
+)
+before(
+  marketingCfWorkflow,
+  'Check Cloudflare secrets present',
+  'Deploy to Cloudflare Pages',
+  'marketing-cloudflare.yml',
+)
 
 check(
-  /::error::Vercel production deploy blocked/.test(marketingWorkflow) &&
-    /exit 1/.test(marketingWorkflow) &&
-    !/::warning::Vercel deploy skipped/.test(marketingWorkflow) &&
-    !/available=false/.test(marketingWorkflow),
-  'marketing.yml must fail closed instead of warning/skipping when production Vercel secrets are missing.',
+  /::error::Cloudflare Pages deploy blocked/.test(marketingCfWorkflow) &&
+    /exit 1/.test(marketingCfWorkflow) &&
+    !/::warning::/.test(marketingCfWorkflow) &&
+    !/available=false/.test(marketingCfWorkflow),
+  'marketing-cloudflare.yml must fail closed instead of warning/skipping when production Cloudflare secrets are missing.',
 )
 check(
   /Production deploy contract check/.test(productionDeployCheck) &&

@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-audit-hash",
+  "notes": "not anchored to this audit event",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "AUDIT_HASH_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_audit_hash": "different-audit-hash",
+    "require_signature": true
+  }
+}

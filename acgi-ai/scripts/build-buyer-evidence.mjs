@@ -171,7 +171,7 @@ const evidenceStories = [
   {
     id: 'deploy-readiness-boundary',
     title: 'Deploy readiness boundary',
-    route: 'Cloud Run + Vercel deploy contracts',
+    route: 'Cloud Run + Cloudflare Pages deploy contracts',
     buyerQuestion: 'Can the team distinguish local readiness from live production proof?',
     proof: [
       'Cloud Run templates, container pins, CSP, and post-deploy scripts are locally gated.',
@@ -335,7 +335,7 @@ const html = `<!doctype html>
         </p>
         <p class="boundary">
           Boundary: this is a local buyer-evidence artifact. It is not the hosted
-          Storybook site, not live Cloud Run/Vercel proof, not legal signoff, and not a
+          Storybook site, not live Cloud Run/Cloudflare Pages proof, not legal signoff, and not a
           regulatory attestation.
         </p>
       </section>

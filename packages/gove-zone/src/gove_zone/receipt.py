@@ -277,13 +277,14 @@ class DecisionReceipt:
         unsigned (``signature_algorithm="none"``, ``signature="unsigned_local"``),
         fully backward-compatible.
         """
-        from gove_zone.errors import ReceiptValidationError
+        from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
 
         proposer = record.actor or "anonymous"
         if validator.validator_id == proposer:
             raise ReceiptValidationError(
                 "self-validation forbidden: validator must differ from proposer "
-                f"(both are {proposer!r})"
+                f"(both are {proposer!r})",
+                reason_code=ReceiptRejectionReason.SELF_VALIDATION,
             )
 
         transformations: list[dict[str, Any]] = []
@@ -352,6 +353,7 @@ class DecisionReceipt:
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
+        require_expiry: bool = False,
         now_iso: str | None = None,
     ) -> None:
         """Low-level receipt verification primitive.
@@ -363,9 +365,19 @@ class DecisionReceipt:
         :class:`gove_zone.contracts.ReceiptVerifier`. Authorize side effects through
         those, not by calling this directly; a bare ``verify(...)`` opts into the
         unsigned posture.
+
+        ``require_expiry`` (additive, default ``False``) mandates a *liveness*
+        bound: when ``True`` a receipt whose ``expires_at`` is empty is rejected
+        (:data:`ReceiptRejectionReason.EXPIRY_REQUIRED`) instead of being treated
+        as never-expiring. The plain expiry check below (#13) only rejects a
+        receipt *past* its lifetime — with no TTL it is silently immortal. The
+        strict production profile
+        (:meth:`gove_zone.profile.GovernanceProfile.production_strict`) sets this
+        so a long-lived bearer receipt cannot authorize indefinitely. Default
+        ``False`` keeps every existing caller unaffected.
         """
         from gove_zone.decision import Decision
-        from gove_zone.errors import ReceiptValidationError
+        from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
 
         # 1. Missing fields
         required_fields = [
@@ -390,16 +402,23 @@ class DecisionReceipt:
         for field_name in required_fields:
             val = getattr(self, field_name)
             if val is None or val == "":
-                raise ReceiptValidationError(f"Missing or empty required field: {field_name}")
+                raise ReceiptValidationError(
+                    f"Missing or empty required field: {field_name}",
+                    reason_code=ReceiptRejectionReason.MISSING_REQUIRED_FIELD,
+                )
 
         # 2. Check receipt hash (reject altered fields or invalid hash)
         if not self.receipt_hash:
-            raise ReceiptValidationError("receipt_hash is missing")
+            raise ReceiptValidationError(
+                "receipt_hash is missing",
+                reason_code=ReceiptRejectionReason.RECEIPT_HASH_MISSING,
+            )
         expected_hash = self.compute_hash()
         if self.receipt_hash != expected_hash:
             raise ReceiptValidationError(
                 f"Altered field or invalid hash: receipt_hash mismatch. "
-                f"Expected {expected_hash}, got {self.receipt_hash}"
+                f"Expected {expected_hash}, got {self.receipt_hash}",
+                reason_code=ReceiptRejectionReason.RECEIPT_HASH_MISMATCH,
             )
 
         # 2a. Asymmetric signature check. Placed AFTER the receipt_hash check
@@ -424,23 +443,38 @@ class DecisionReceipt:
         # an attacker cannot downgrade the algorithm or swap the key without
         # breaking check 2 above.
         if require_signature and self.signature_algorithm == "none":
-            raise ReceiptValidationError("unsigned receipt rejected: signature required")
+            raise ReceiptValidationError(
+                "unsigned receipt rejected: signature required",
+                reason_code=ReceiptRejectionReason.UNSIGNED_REJECTED,
+            )
         if self.signature_algorithm != "none":
             # Resolve the verifier — a missing verifier is a hard rejection here
             # (the receipt claims a signature; we must check it).
             resolved: ReceiptSigner | None
             if isinstance(verifier, Mapping):
                 if self.signing_key_id not in verifier:
-                    raise ReceiptValidationError("unknown signing key")
+                    raise ReceiptValidationError(
+                        "unknown signing key",
+                        reason_code=ReceiptRejectionReason.SIGNING_KEY_UNKNOWN,
+                    )
                 resolved = verifier[self.signing_key_id]
             elif verifier is not None:
                 resolved = verifier
             else:
-                raise ReceiptValidationError("signed receipt requires a configured verifier")
+                raise ReceiptValidationError(
+                    "signed receipt requires a configured verifier",
+                    reason_code=ReceiptRejectionReason.SIGNED_RECEIPT_NO_VERIFIER,
+                )
             if resolved.algorithm != self.signature_algorithm:
-                raise ReceiptValidationError("signature algorithm mismatch")
+                raise ReceiptValidationError(
+                    "signature algorithm mismatch",
+                    reason_code=ReceiptRejectionReason.SIGNATURE_ALG_MISMATCH,
+                )
             if not resolved.verify(self.receipt_hash.encode("utf-8"), self.signature):
-                raise ReceiptValidationError("invalid signature")
+                raise ReceiptValidationError(
+                    "invalid signature",
+                    reason_code=ReceiptRejectionReason.SIGNATURE_INVALID,
+                )
 
         # 2b. MACI actor-anchor check (authoritative when caller supplies identity).
         # expected_actor is the identity of the INVOKING PRINCIPAL at the gate,
@@ -454,11 +488,13 @@ class DecisionReceipt:
             if self.actor != expected_actor:
                 raise ReceiptValidationError(
                     f"actor mismatch: receipt not issued for this caller "
-                    f"(expected {expected_actor!r}, got {self.actor!r})"
+                    f"(expected {expected_actor!r}, got {self.actor!r})",
+                    reason_code=ReceiptRejectionReason.ACTOR_MISMATCH,
                 )
             if self.validator_id == expected_actor:
                 raise ReceiptValidationError(
-                    f"self-validation: validator is the invoking principal ({expected_actor!r})"
+                    f"self-validation: validator is the invoking principal ({expected_actor!r})",
+                    reason_code=ReceiptRejectionReason.SELF_VALIDATION,
                 )
 
         # 2c. Naive self-validation fallback — RESIDUAL defense-in-depth only.
@@ -474,7 +510,8 @@ class DecisionReceipt:
         # authenticated/signed issuance, which is roadmap).
         if self.validator_id == self.actor:
             raise ReceiptValidationError(
-                f"self-validation: validator must differ from proposer (both are {self.actor!r})"
+                f"self-validation: validator must differ from proposer (both are {self.actor!r})",
+                reason_code=ReceiptRejectionReason.SELF_VALIDATION,
             )
 
         # 2d. approval_chain_summary consistency: the issued summary must agree
@@ -485,29 +522,41 @@ class DecisionReceipt:
         if acs:
             if acs.get("validator_id") != self.validator_id:
                 raise ReceiptValidationError(
-                    "approval_chain_summary.validator_id disagrees with receipt"
+                    "approval_chain_summary.validator_id disagrees with receipt",
+                    reason_code=ReceiptRejectionReason.APPROVAL_CHAIN_DIVERGENCE,
                 )
             if acs.get("proposer") != self.actor:
                 raise ReceiptValidationError(
-                    "approval_chain_summary.proposer disagrees with receipt"
+                    "approval_chain_summary.proposer disagrees with receipt",
+                    reason_code=ReceiptRejectionReason.APPROVAL_CHAIN_DIVERGENCE,
                 )
 
         # 3. Unknown decisions
         try:
             Decision(self.decision)
         except ValueError as err:
-            raise ReceiptValidationError(f"Unknown decision: {self.decision}") from err
+            raise ReceiptValidationError(
+                f"Unknown decision: {self.decision}",
+                reason_code=ReceiptRejectionReason.UNKNOWN_DECISION,
+            ) from err
 
         # 4. Denied and escalated receipts
         if self.decision == Decision.DENY:
-            raise ReceiptValidationError("Denied receipt cannot authorize execution")
+            raise ReceiptValidationError(
+                "Denied receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
+            )
         if self.decision == Decision.ESCALATE:
-            raise ReceiptValidationError("Escalated receipt cannot authorize execution")
+            raise ReceiptValidationError(
+                "Escalated receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.ESCALATED_RECEIPT,
+            )
 
         # 5. Wrong tenant
         if expected_tenant_id is not None and self.tenant_id != expected_tenant_id:
             raise ReceiptValidationError(
-                f"Tenant mismatch: expected {expected_tenant_id}, got {self.tenant_id}"
+                f"Tenant mismatch: expected {expected_tenant_id}, got {self.tenant_id}",
+                reason_code=ReceiptRejectionReason.TENANT_MISMATCH,
             )
 
         # 6. Wrong execution boundary
@@ -517,33 +566,46 @@ class DecisionReceipt:
         ):
             raise ReceiptValidationError(
                 f"Execution boundary mismatch: expected {expected_execution_boundary}, "
-                f"got {self.execution_boundary}"
+                f"got {self.execution_boundary}",
+                reason_code=ReceiptRejectionReason.EXECUTION_BOUNDARY_MISMATCH,
             )
 
         # 7. Action mismatch
         if expected_action is not None and self.proposed_action != expected_action:
             raise ReceiptValidationError(
-                f"Action mismatch: expected {expected_action}, got {self.proposed_action}"
+                f"Action mismatch: expected {expected_action}, got {self.proposed_action}",
+                reason_code=ReceiptRejectionReason.ACTION_MISMATCH,
             )
 
         # 8. Audit hash mismatch
         if expected_audit_hash is not None and self.audit_event_hash != expected_audit_hash:
             raise ReceiptValidationError(
-                f"Audit hash mismatch: expected {expected_audit_hash}, got {self.audit_event_hash}"
+                f"Audit hash mismatch: expected {expected_audit_hash}, got {self.audit_event_hash}",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
             )
 
         # 9. Malformed transformations
         if not isinstance(self.transformations, list):
-            raise ReceiptValidationError("transformations must be a list")
+            raise ReceiptValidationError(
+                "transformations must be a list",
+                reason_code=ReceiptRejectionReason.TRANSFORMATIONS_MALFORMED,
+            )
         for tx in self.transformations:
             if not isinstance(tx, dict):
-                raise ReceiptValidationError("each transformation must be a dictionary")
+                raise ReceiptValidationError(
+                    "each transformation must be a dictionary",
+                    reason_code=ReceiptRejectionReason.TRANSFORMATIONS_MALFORMED,
+                )
             if "field" not in tx or "value" not in tx:
                 raise ReceiptValidationError(
-                    "transformation dictionary must contain 'field' and 'value' keys"
+                    "transformation dictionary must contain 'field' and 'value' keys",
+                    reason_code=ReceiptRejectionReason.TRANSFORMATIONS_MALFORMED,
                 )
             if not isinstance(tx["field"], str):
-                raise ReceiptValidationError("transformation 'field' key must be a string")
+                raise ReceiptValidationError(
+                    "transformation 'field' key must be a string",
+                    reason_code=ReceiptRejectionReason.TRANSFORMATIONS_MALFORMED,
+                )
 
         # 10. Transform mismatch
         if self.decision == Decision.TRANSFORM.value and expected_args is not None:
@@ -552,12 +614,14 @@ class DecisionReceipt:
                 val = tx["value"]
                 if f not in expected_args:
                     raise ReceiptValidationError(
-                        f"Transform mismatch: field '{f}' is missing from arguments"
+                        f"Transform mismatch: field '{f}' is missing from arguments",
+                        reason_code=ReceiptRejectionReason.TRANSFORM_MISMATCH,
                     )
                 if expected_args[f] != val:
                     raise ReceiptValidationError(
                         f"Transform mismatch: field '{f}' expected '{val}', "
-                        f"got '{expected_args[f]}'"
+                        f"got '{expected_args[f]}'",
+                        reason_code=ReceiptRejectionReason.TRANSFORM_MISMATCH,
                     )
 
             # 10c. Exact-match binding for TRANSFORM — symmetric with ALLOW (#10b).
@@ -571,7 +635,8 @@ class DecisionReceipt:
             if dict(expected_args) != approved:
                 raise ReceiptValidationError(
                     "transform mismatch: executed arguments do not exactly match the approved "
-                    "transformed arguments (extra, missing, or altered fields)"
+                    "transformed arguments (extra, missing, or altered fields)",
+                    reason_code=ReceiptRejectionReason.TRANSFORM_MISMATCH,
                 )
 
         # 10b. ALLOW argument binding: for ALLOW decisions, verify that the args
@@ -590,13 +655,15 @@ class DecisionReceipt:
             computed_arg_hash = _sha256_json(dict(expected_args))
             if self.argument_hash != computed_arg_hash:
                 raise ReceiptValidationError(
-                    "argument mismatch: receipt not issued for these arguments"
+                    "argument mismatch: receipt not issued for these arguments",
+                    reason_code=ReceiptRejectionReason.ARGUMENT_MISMATCH,
                 )
 
         # 11. Policy hash mismatch
         if expected_policy_hash is not None and self.policy_hash != expected_policy_hash:
             raise ReceiptValidationError(
-                f"Policy hash mismatch: expected {expected_policy_hash}, got {self.policy_hash}"
+                f"Policy hash mismatch: expected {expected_policy_hash}, got {self.policy_hash}",
+                reason_code=ReceiptRejectionReason.POLICY_HASH_MISMATCH,
             )
 
         # 12. Policy bundle ID mismatch
@@ -606,20 +673,36 @@ class DecisionReceipt:
         ):
             raise ReceiptValidationError(
                 f"Policy bundle ID mismatch: expected {expected_policy_bundle_id}, "
-                f"got {self.policy_bundle_id}"
+                f"got {self.policy_bundle_id}",
+                reason_code=ReceiptRejectionReason.POLICY_BUNDLE_MISMATCH,
             )
 
         # 12b. Validator role mismatch (optional)
         if expected_validator_role is not None and self.validator_role != expected_validator_role:
             raise ReceiptValidationError(
                 f"Validator role mismatch: expected {expected_validator_role}, "
-                f"got {self.validator_role}"
+                f"got {self.validator_role}",
+                reason_code=ReceiptRejectionReason.VALIDATOR_ROLE_MISMATCH,
             )
 
         # 12c. Authority mismatch (optional)
         if expected_authority is not None and self.authority != expected_authority:
             raise ReceiptValidationError(
-                f"Authority mismatch: expected {expected_authority}, got {self.authority}"
+                f"Authority mismatch: expected {expected_authority}, got {self.authority}",
+                reason_code=ReceiptRejectionReason.AUTHORITY_MISMATCH,
+            )
+
+        # 13a. Liveness floor (opt-in, strict profile). With no TTL a receipt is
+        # silently immortal — the check below only rejects one *past* its
+        # lifetime. When require_expiry is set, an empty expires_at is itself a
+        # failure: a long-lived bearer receipt must not authorize indefinitely.
+        # Default-off, so non-strict callers are unaffected. Fail-closed.
+        if require_expiry and not self.expires_at:
+            raise ReceiptValidationError(
+                "Receipt has no expires_at but the strict profile requires a "
+                "liveness/TTL bound (a receipt without an expiry can authorize "
+                "indefinitely).",
+                reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
             )
 
         # 13. Expiry (only enforced when expires_at is set). expires_at is bound
@@ -646,7 +729,8 @@ class DecisionReceipt:
             except (ValueError, TypeError) as err:
                 raise ReceiptValidationError(
                     f"Unparseable or mismatched expiry timestamp: "
-                    f"expires_at={self.expires_at!r}, now={current!r}"
+                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 ) from err
             # Reject offset-naive timestamps on either side. Two naive datetimes
             # parse and compare without error, but their implied zones are
@@ -657,10 +741,12 @@ class DecisionReceipt:
                 raise ReceiptValidationError(
                     f"Expiry timestamps must be timezone-aware (offset-naive "
                     f"compares are ambiguous and can fail open): "
-                    f"expires_at={self.expires_at!r}, now={current!r}"
+                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 )
             is_expired = current_dt > expires_dt
             if is_expired:
                 raise ReceiptValidationError(
-                    f"Receipt expired at {self.expires_at} (now {current})"
+                    f"Receipt expired at {self.expires_at} (now {current})",
+                    reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
                 )

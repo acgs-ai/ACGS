@@ -1,8 +1,8 @@
-# Path-filtered CI for packages/research-engine/ (the `delve` engine).
-# research-engine is a strict-gating mypy package in the root Makefile fan-out
-# but previously had no path-filtered workflow, so changes scoped only to
-# packages/research-engine/** could skip its strict gate. This closes that gap
-# (tracked in MONOREPO.md).
+# Path-filtered CI for packages/research-engine/ — `delve` self-deepening
+# research engine. Triggers only when this package or this workflow change.
+# No submodule init needed: research-engine is a first-class in-tree package,
+# not a gitlink. It is a STRICT_TYPECHECK_PACKAGE (see root Makefile), so this
+# workflow gates ruff + pytest + `mypy --strict` — the package's real gates.
 
 name: python-research-engine
 
@@ -11,13 +11,11 @@ on:
     branches: [master]
     paths:
       - 'packages/research-engine/**'
-      - 'pyproject.toml'
       - '.github/workflows/python-research-engine.yml'
   push:
     branches: [master]
     paths:
       - 'packages/research-engine/**'
-      - 'pyproject.toml'
       - '.github/workflows/python-research-engine.yml'
 
 concurrency:
@@ -46,26 +44,33 @@ jobs:
           enable-cache: true
           cache-dependency-glob: 'packages/research-engine/pyproject.toml'
 
-      - name: Install
-        # Mirrors python-agent-bus-analyzer.yml: use uv's python-build-standalone
-        # instead of actions/setup-python (which lacks prebuilds for the
-        # self-hosted runner) and install into a venv so lint/test invocations
-        # are unambiguous. `dev` is a PEP 735 [dependency-groups] entry, not a
-        # [project.optional-dependencies] extra, so install the group explicitly.
+      - name: Install (dev group)
+        # Standalone CI: no parent uv workspace context. The package declares
+        # zero runtime deps; ruff/pytest/mypy live in the PEP 735 [dependency-groups]
+        # `dev` group, pulled with `--group dev`. Use uv's python-build-standalone
+        # toolchain because actions/setup-python has no prebuilds for Ubuntu
+        # 25.10 on the self-hosted runner. `--no-config` keeps the install
+        # hermetic (no parent-workspace discovery).
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} --clear .venv
-          uv pip install --python .venv/bin/python --editable . --group dev
+          uv pip install --python .venv/bin/python --no-config --editable . --group dev
 
       - name: Lint
+        # ruff config pins `src = ["src", "tests"]`; lint both like the root
+        # Makefile (`make lint-py`) does for this package.
         run: |
-          .venv/bin/ruff check .
-          .venv/bin/ruff format --check .
+          .venv/bin/ruff check src tests
+          .venv/bin/ruff format --check src tests
 
-      - name: Typecheck (strict)
-        # [tool.mypy] sets strict = true and packages = ["delve"]; -p delve makes
-        # the target explicit so the strict gate runs regardless of CWD nuances.
-        run: .venv/bin/mypy -p delve
+      - name: Typecheck (mypy --strict)
+        # research-engine is in STRICT_TYPECHECK_PACKAGES (root Makefile). Its
+        # [tool.mypy] sets `strict = true` + `packages = ["delve"]`; the Makefile
+        # `typecheck-py` runs `mypy src tests` from inside the package. `--strict`
+        # is redundant with the config but pins the gate explicitly.
+        run: .venv/bin/mypy --strict src tests
 
       - name: Test
-        run: .venv/bin/pytest -q
+        # `--import-mode=importlib` keeps tests insulated from sys.path leakage
+        # from sibling packages.
+        run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib

@@ -230,6 +230,7 @@ class ReceiptVerifier:
         expected_policy_hash: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
+        require_expiry: bool = False,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -242,6 +243,7 @@ class ReceiptVerifier:
         self.expected_policy_hash = expected_policy_hash
         self.verifier = verifier
         self.require_signature = require_signature
+        self.require_expiry = require_expiry
 
     def verify(
         self,
@@ -283,6 +285,7 @@ class ReceiptVerifier:
             expected_actor=effective_actor,
             verifier=self.verifier,
             require_signature=self.require_signature,
+            require_expiry=self.require_expiry,
             now_iso=now_iso,
         )
 

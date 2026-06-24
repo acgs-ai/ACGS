@@ -21,6 +21,8 @@ Do not describe this project as an agent framework. It complements agent framewo
 - docs/INTEGRATION_GUIDE.md — where to install the gate.
 - docs/INTEGRATION_MATRIX.md — supported runtimes by proof tier (shipped/pattern/roadmap); evidence for the neutrality claim.
 - docs/COMPARISON.md — honest comparison with MCP, agent frameworks, guardrails, sandboxing, IAM, audit logs, and policy engines.
+- docs/COMPARISON-ONEPAGER.md — one-screen battlecard: receipt-gated vs audit-centric, complement-don't-replace.
+- docs/FAQ.md — question-headed Q&A (what is a Decision Receipt, how it differs from an audit log / Microsoft AGT, is it production-ready).
 - docs/POSITIONING.md — why a vendor-neutral governance layer is a category, not a platform feature (non-attack).
 - docs/ROADMAP.md — staged roadmap with acceptance tests.
 - docs/GLOSSARY.md — shared vocabulary.

@@ -44,6 +44,8 @@ uv run python -m pytest tests/docs --import-mode=importlib -q
 
 Expected result: the allowed side effect executes, denied/missing/tampered/mismatched receipts fail closed, audit evidence verifies, and tampered evidence fails replay/integrity checks.
 
+A recorded run of this sequence (allow → id_rsa deny → tampered-audit verification failure) is captured as an [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast) (play with `asciinema play docs/launch/evidence/demo-proof-sequence.cast`) with a plain-text [transcript](docs/launch/evidence/demo-proof-sequence.txt) for readers who can't play the cast. Both come from [`docs/launch/evidence/record-proof-sequence.sh`](docs/launch/evidence/record-proof-sequence.sh); re-run it to reproduce the evidence.
+
 For the fastest guided path, start at [`docs/START_HERE.md`](docs/START_HERE.md). For the canonical proof narrative, read [`docs/PROOF_PATH.md`](docs/PROOF_PATH.md). The full documentation index is [`docs/README.md`](docs/README.md).
 
 ## Integrator posture: signing and single-use are how the invariant holds
@@ -96,6 +98,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 | `docs/` | Human and agent documentation, claim ledger, architecture, proof path, integration guide. |
 | `examples/` | Root runnable governance examples for integrators. |
 | `tests/docs/` | Documentation/example smoke tests and link checks. |
+| [`MONOREPO.md`](MONOREPO.md) | Workspace registry: what exists and where each package is gated. |
+| [`docs/governance-stack-index.md`](docs/governance-stack-index.md) | Governance stack index mapping the layered components and proofs. |
 
 ## Read next
 
@@ -105,7 +109,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 4. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — threat model and current protections.
 5. [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) — where to put the gate in your stack.
 6. [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — supported runtimes by proof tier (shipped / pattern / roadmap).
-7. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
+7. [`docs/FAQ.md`](docs/FAQ.md) — question-headed Q&A (Decision Receipt, vs audit log / Microsoft AGT, production-readiness) with claim-safe answers.
+8. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
 
 ## Development status
 

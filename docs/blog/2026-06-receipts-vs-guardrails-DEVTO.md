@@ -21,8 +21,8 @@ about the model — prompts, refusals, classifiers. Now the industry is naming a
 different layer out loud. The Cloud Security Alliance is writing about going
 "from guardrails to governance" and the need for a *control layer*. Microsoft
 shipped an open-source Agent Governance Toolkit for runtime policy enforcement.
-Galileo announced an open-source "control plane for AI agents." Gartner is
-warning that ~40% of enterprises will pull autonomous agents back, and Deloitte
+Other vendors are announcing open-source "control planes for AI agents." Gartner
+is warning that ~40% of enterprises will pull autonomous agents back, and Deloitte
 puts mature agentic governance at ~21% of organizations. And there is a clock on
 it: the EU AI Act's high-risk obligations apply from **August 2, 2026**, with
 Article 12 requiring automatic event logging over a system's lifetime.
@@ -77,8 +77,9 @@ A Decision Receipt closes it by collapsing two systems into one object:
   drift apart.
 - **The audit chain is tamper-evident**: local audit events are hash-chained,
   and corrupting an entry breaks verification.
-- **Decisions are replayable** where the raw call context is retained, so "what
-  was allowed, and on what evidence?" is verifiable.
+- **Decisions are replayable** when raw call context is retained: replay
+  helpers can re-derive the decision, while the audit chain alone proves
+  tamper evidence and policy-version continuity.
 - For higher-assurance contexts, **opt-in Ed25519 signing** makes authority
   cryptographically attributable rather than merely recorded.
 
@@ -97,9 +98,12 @@ does not authenticate principals (that is IAM), it does not contain execution
 It proves a specific side-effect decision.
 
 So when a team adopts Microsoft's toolkit or a control-plane product for
-perimeter policy, the open question that remains is: *when the action actually
-runs, is there a verifiable receipt binding it to the authority that allowed
-it?* That is the slot `gove-zone` fills.
+runtime policy, the open question that remains is: *when the action actually
+runs, is there a verifiable, portable receipt binding it to the authority that
+allowed it — one a relying party can check on its own — or only an audit trail
+reconstructed afterward?* That receipt is the slot `gove-zone` fills (a contrast
+by evidence, not a knock — the two compose; see
+[`docs/COMPARISON.md`](https://github.com/dislovelhl/ACGS/blob/master/docs/COMPARISON.md)).
 
 ## The honest boundary
 

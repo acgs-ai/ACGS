@@ -22,6 +22,24 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+// Footer links to privileged routes must wire same-surface SPA navigation on the
+// SAME anchor as the href — not merely have the href and a navigate() call loose
+// somewhere in the file. Accepts the internalNav('/x') factory (current form,
+// optional after-hook arg) or an inline (param)=>{...navigate('/x')} handler
+// (any arrow-parameter name, e.g. (e) or (event)).
+// Anchor-scoped so a stray/commented handler can no longer satisfy a broken link
+// (closes the MEDIUM finding from the 2026-06-13 dedup review).
+function mustWireFooterRoute(source, path, label) {
+  const p = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const anchor = new RegExp(
+    `<a\\s+href="${p}"\\s+onClick=\\{(?:internalNav\\('${p}'(?:,[^)]*)?\\)|\\(\\w+\\)\\s*=>\\s*\\{[^}]*navigate\\('${p}'\\)[^}]*\\})`,
+  )
+  check(
+    anchor.test(source),
+    `${label} <a href="${path}"> must wire SPA navigation on the same anchor via internalNav('${path}') or inline navigate('${path}').`,
+  )
+}
+
 const packageJson = JSON.parse(read('package.json'))
 const marketingApp = read('src/surfaces/marketing/App.tsx')
 const marketing = read('src/routes/Marketing.tsx')
@@ -51,8 +69,8 @@ mustContain(marketingApp, 'component: Security', 'marketing App route tree')
 
 mustContain(marketing, 'href="/trust"', 'marketing footer')
 mustContain(marketing, 'href="/security"', 'marketing footer')
-mustContain(marketing, "navigate('/trust')", 'marketing footer')
-mustContain(marketing, "navigate('/security')", 'marketing footer')
+mustWireFooterRoute(marketing, '/trust', 'marketing footer')
+mustWireFooterRoute(marketing, '/security', 'marketing footer')
 mustContain(privacy, 'href="/subprocessors.xml"', 'privacy subprocessor disclosure')
 
 mustContain(trust, 'Engineering draft pending legal review', 'Trust page')

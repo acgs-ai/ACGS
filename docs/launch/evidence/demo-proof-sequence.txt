@@ -1,0 +1,108 @@
+gove-zone — proof-sequence demo transcript
+===========================================
+Plain-text, ANSI-stripped transcript of `record-proof-sequence.sh` run against
+the REAL gove-zone API in this monorepo (alpha 0.1.0.dev0). It is the companion
+to `demo-proof-sequence.cast` (asciinema v2), produced from the same driver
+script so a reader who can't play the cast still sees the literal output.
+
+Recording note: this environment had no attached TTY, so `asciinema rec -c`
+allocated its own PTY to capture the cast headlessly. `agg` (the GIF renderer)
+is not installed here, so no GIF was produced; the `.cast` + this `.txt` are the
+delivered artifacts. Nothing below is hand-edited — re-run the driver to verify.
+
+The three load-bearing proofs, in order:
+  proof 1  ALLOW  — a permitted write executes for real (bytesWritten=15 / step [0])
+  proof 2  DENY   — a write to an id_rsa / /etc/shadow path is blocked before any
+                    side effect (matchedRules SMOKE_SECRET_BOUNDARY:keyword:id_rsa)
+  proof 3  TAMPER — mutating one audit entry makes chain verification FAIL
+                    (step [5a]: valid=False, failure type=event_hash_mismatch)
+
+================================================================
+gove-zone proof sequence  —  allow  ->  deny(id_rsa)  ->  tamper-fail
+(real API; signed production profile for the tamper step)
+
+================================================================
+
+>>> [1+2] gove-zone smoke  —  ALLOW succeeds, id_rsa write DENIED
+    $ uv run --package gove-zone gove-zone smoke --audit <tmp>/audit.jsonl
+
+{"allow": {"auditHash": "ae2b8acffc6ddcebda78228dbd9e02ccfc6770c1a023d462631692d2aff7bb67", "bytesWritten": 15, "decision": "allow", "goal": "prove allowed side effect", "tool": "write_file"}, "artifactKind": "gove-zone-smoke-report", "audit": {"checked": 2, "failures": [], "last_hash": "353fdda0c10bdeaa0b3fa1e58f1ebcf11d5082664fe54ba3b304a386c25edf70", "valid": true}, "auditPath": "/tmp/tmp.aJl5i8JQKp/audit.jsonl", "auditRetained": true, "checks": [{"evidence": "ALLOW receipt emitted and safe write executed after audit append", "id": "allow-before-side-effect", "status": "pass"}, {"evidence": "DENY receipt emitted and blocked path write left no side effect", "id": "deny-before-side-effect", "status": "pass"}, {"evidence": "two smoke decisions are linked by a valid hash chain", "id": "audit-chain-verifies", "status": "pass"}], "claimBoundary": "Local gove-zone smoke proof only; not production deployment proof, not third-party framework certification, and not evidence that a live agent host is configured.", "deny": {"auditHash": "353fdda0c10bdeaa0b3fa1e58f1ebcf11d5082664fe54ba3b304a386c25edf70", "decision": "deny", "goal": "prove denied side effect", "matchedRules": ["SMOKE_SECRET_BOUNDARY:keyword:id_rsa"], "tool": "write_file"}, "status": "pass"}
+
+    ^ decision=allow bytesWritten=15  (proof 1: allowed side effect ran)
+    ^ decision=deny  matchedRules=SMOKE_SECRET_BOUNDARY:keyword:id_rsa
+      (proof 2: write to an id_rsa path blocked, no side effect on disk)
+
+================================================================
+
+>>> [3] undeniable-demo  —  tampered audit entry -> verification FAILS
+    $ uv run --package gove-zone --extra crypto python \
+          packages/gove-zone/examples/undeniable-demo/demo.py
+
+gove-zone — the undeniable evidence path
+Invariant: No valid Decision Receipt, no side effect.
+(workdir: /tmp/gove-zone-undeniable-bc3bidgn)
+profile: production  require_signature=True  signing_key_id=a73618e5e911fe7b
+
+[0] ALLOWED companion — a permitted write executes for real
+  ✓ allowed write executed: 'WROTE /tmp/gove-zone-undeniable-bc3bidgn/gateway-fs/reports/summary.txt'
+
+[1] DENIED — privileged write into secrets/prod/** is blocked
+  ✓ blocked at the gate: Denied receipt cannot authorize execution
+  ✓ asserted: gateway.invoke never ran; no file written on disk
+
+[2] RECEIPT — the signed Decision Receipt that records the denial
+  receipt_id           = ev_9be57f2987504aa5
+  decision             = deny
+  matched_rules        = ['BLOCK_PROD_SECRETS_WRITE']
+  signature_algorithm  = ed25519
+  signing_key_id       = a73618e5e911fe7b
+  receipt_hash         = b61668fdfe81fec0ce3e3d31e3b2d87ebeb03a95d0cf795be2c73e7c8dd6b400
+  signature[:32]       = caad0a6395723ce6aff596a2ba3b2f71…
+  ✓ signed denial receipt is well-formed (hash matches body, ed25519 signature present)
+
+[3] EVIDENCE BUNDLE — portable receipts + append-only audit chain
+  bundle path = /tmp/gove-zone-undeniable-bc3bidgn/evidence-bundle
+  contents:
+    audit.jsonl                        1480 bytes
+    manifest.json                       320 bytes
+    receipts/allow_receipt.json        1423 bytes
+    receipts/denied_receipt.json       1447 bytes
+    verification.json                   136 bytes
+  ✓ assembled portable bundle with 5 files
+
+[4] AUDIT REPLAY — verify the bundle's hash chain offline
+  valid   = True
+  checked = 2 events
+  failures = []
+  ✓ offline verification: valid=True, checked=2, zero failures
+
+[5] TAMPER ATTEMPTS FAIL — chain mutation and signature forgery both rejected
+  [5a] chain after mutation: valid=False
+       failure: type=event_hash_mismatch event_id=ev_9be57f2987504aa5
+  ✓ mutated chain rejected: failure types = ['event_hash_mismatch']
+  [5b] forged receipt rejected: invalid signature
+  ✓ signature forgery rejected — no private key, no valid signature
+
+Bonus: true re-decision replay (retained args reproduce the verdict)
+  replayed_decision    = deny
+  matches original     = True
+  policy_version_match = True
+  argument_hash_match  = True
+  ✓ retained-args replay reproduced the DENY verdict under the same policy version
+  note: a COLD audit event alone cannot re-derive the decision — events store
+        only argument_hash, not raw args. True cold re-derivation needs the opt-in
+        raw-args side-store (see README "Replay (what it actually verifies)").
+
+=== ALL 5 STEPS PROVEN — undeniable evidence path holds ===
+  [1] denied (no side effect)  [2] signed receipt  [3] evidence bundle
+  [4] offline audit replay valid  [5] chain + signature tampering both rejected
+
+(evidence bundle retained at: /tmp/gove-zone-undeniable-bc3bidgn/evidence-bundle)
+
+    ^ step [5a]: chain after mutation valid=False,
+      failure type=event_hash_mismatch  (proof 3: tamper fails closed)
+
+================================================================
+Proof sequence complete: allow -> deny(id_rsa) -> tamper-fail, all real.
+
+================================================================

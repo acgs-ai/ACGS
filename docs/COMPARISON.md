@@ -83,3 +83,125 @@ Sources, verified as of June 2026:
 - Copilot Control System — <https://learn.microsoft.com/en-us/microsoft-365/copilot/copilot-control-system/security-governance>
 - Azure AI Foundry Guardrails — <https://learn.microsoft.com/en-us/azure/foundry/guardrails/guardrails-overview>
 - Agent Governance Toolkit — <https://github.com/microsoft/agent-governance-toolkit> and <https://microsoft.github.io/agent-governance-toolkit/tutorials/04-audit-and-compliance/>
+
+## Collaboration platforms with built-in compliance (e.g. Mattermost)
+
+Team-collaboration platforms increasingly ship governance suites *and* AI agents.
+Mattermost is a representative, open-source example. Its governance is largely
+*complementary* to a receipt gate: it operates at a different point on the action
+timeline. Entries dated to when they were verified (June 2026); most features are
+Enterprise/Enterprise-Advanced-gated, not in the MIT Team Edition.
+
+| Mattermost capability | Layer | Governs | First-class portable per-decision receipt? |
+|---|---|---|---|
+| Audit logging (Beta) | Observability | Records API/mmctl events to file/syslog/TCP | No — JSON log entries, not per-decision |
+| Compliance export / e-discovery | Archive | Daily export to CSV / Actiance / Global Relay for downstream supervision | No — message archive, not authorization |
+| Data retention + Legal Hold | Lifecycle | Preserve/expire data; Legal Hold *Secret* verifies file authenticity | No — preserves data; Secret proves files, not decisions |
+| RBAC + ABAC (Ent. Advanced) | Authorization | Roles/schemes; attribute-based channel + some action gating | No — grants access, no decision artifact |
+| Mattermost Agents — MCP tool policy | Agent execution gate | Per-tool **allow / require-approval / disable** + inherited user RBAC | No — token-usage logs + OTel traces |
+
+The compliance stack (audit, export, retention, legal hold) is **archive-centric
+and after-the-fact** — it records and preserves; it does not authorize a side
+effect before it runs, and there is no fail-closed gate on human or agent actions.
+The one genuine pre-execution control is **Mattermost Agents' per-MCP-tool
+approval policy** — admins set each tool to allow, require approval, or disable.
+That is real human-in-the-loop gating and deserves acknowledgement as prior art.
+The evidenced difference is *resolution and artifact*: it is a coarse per-*tool*
+toggle, not evaluation of the specific action **plus arguments** against a policy
+bundle; it has no fail-closed default (MCP can't be globally disabled from the
+console); and it produces no signed, portable decision receipt a relying party can
+verify before accepting the action. ACGS / gove-zone's narrower bet is exactly
+that finer-grained, fail-closed, receipt-emitting gate at the `tools/call`
+boundary — which is also a natural composition seam: the same Mattermost Agents
+MCP surface is a candidate reference integration for the gate (see
+[`ROADMAP.md`](ROADMAP.md)). Contrast by evidence, not a knock — a receipt gate
+and Mattermost's compliance suite stack cleanly.
+
+Sources, verified as of June 2026:
+
+- Audit logging — <https://docs.mattermost.com/administration-guide/manage/logging.html>
+- Compliance export / e-discovery — <https://docs.mattermost.com/administration-guide/comply/compliance-export.html>
+- Data retention — <https://docs.mattermost.com/administration-guide/comply/data-retention-policy.html>
+- Legal hold — <https://docs.mattermost.com/administration-guide/comply/legal-hold.html>
+- Advanced permissions / ABAC — <https://docs.mattermost.com/administration-guide/manage/admin/attribute-based-access-control.html>
+- Mattermost Agents (MCP tool approval) — <https://docs.mattermost.com/agents/docs/admin_guide.html>
+
+## Agent sandbox frameworks (e.g. flue)
+
+A newer category packages the *sandbox itself* as the agent framework — give the
+agent an isolated workspace to read, write, and execute in, and treat that
+containment as the safety story. flue (by Astro / `withastro`, Apache-2.0) is a
+representative, fast-rising example. Its governance is *complementary* to a
+receipt gate: it bounds the environment an agent runs in; it does not authorize
+the specific side effects that cross out of that environment. Entries verified
+June 2026; flue is moving quickly.
+
+| flue capability | Layer | Governs | First-class portable per-decision receipt? |
+|---|---|---|---|
+| Virtual sandbox (default) | In-memory workspace | `just-bash` filesystem/exec scratch space; **not** an OS or network-isolation boundary (its docs note generated runtimes permit network access) | No |
+| Local sandbox | Host process | Direct host filesystem + shell; for trusted scenarios, no isolation | No |
+| Remote sandbox (Daytona, Cloudflare Sandbox) | Provider-managed VM/container | Container-backed Linux environment off the application host (Cloudflare: a full Linux container per Durable Object) | No |
+| Cloudflare outbound Worker (`outboundByHost`) | Egress proxy | Intercepts the container's HTTP requests **per host**; injects credentials at the Worker so the container never sees raw secrets | No — credential mediation + routing, no decision artifact |
+| Observability | Telemetry | Export traces/metrics via OpenTelemetry, Braintrust, or Sentry | No — telemetry, not a per-decision artifact |
+
+flue's safety primitive is **containment**: confine *where* an agent operates so
+that runaway execution or filesystem damage stays bounded. That is real and
+useful, and it composes with a receipt gate rather than competing with it. The
+evidenced difference is *containment vs authorization-plus-non-repudiation*: a
+sandbox bounds the room, but it does not decide which doors may open, nor leave a
+portable proof of who opened them. The isolation strength varies sharply by
+tier: the default virtual sandbox is, by flue's own docs, **not a
+network-isolation boundary** (egress is permitted), so an agent inside it can
+still exfiltrate data or call a destructive API. The **Cloudflare Sandbox** tier
+raises that floor considerably — a full Linux container per Durable Object, plus
+an **outbound Worker** (`outboundByHost`) that intercepts the container's HTTP
+requests per host and injects credentials at the Worker so the container never
+sees raw secrets (Cloudflare calls this a "zero-trust" model). That egress
+mediation is genuine prior art and deserves acknowledgement, not a knock.
+
+The evidenced difference is *resolution and artifact*, the same axis on which the
+AGT and Mattermost entries above turn. The outbound Worker keys on **hostname**,
+not on the specific action **plus its arguments** evaluated against a policy
+bundle; it is an imperative routing/credential hook, not a declarative
+`DENY` / `ESCALATE` / `ALLOW` verdict, and it has no stated fail-closed default
+for unconfigured hosts. Crucially it protects the *secret* (the container never
+sees the key), not the *action*: an agent can still trigger an
+authorized-credential call to a destructive endpoint on an allowed host — the
+proxy dutifully injects the token and forwards the request — and the record left
+behind is OpenTelemetry-style **observability** (operator-trusted, mutable), not a
+signed, sealed, per-decision artifact a relying party *outside* the runtime can
+verify *before* accepting the action. ACGS / gove-zone's narrower bet sits exactly
+at that boundary: evaluate the action-and-arguments, fail closed without a valid
+Decision Receipt, and emit an independently verifiable artifact. The composition
+is concrete rather than hand-wavy — flue's `outboundByHost` callback is a natural
+mount point for a receipt gate: call the kernel, forward only on `ALLOW` with the
+signed receipt attached, fail closed on `DENY`. Sandbox the workspace with flue;
+receipt-gate what crosses out of it. Contrast by evidence, not a knock.
+
+Sources, verified as of June 2026:
+
+- flue — <https://github.com/withastro/flue>
+- flue sandboxes guide — <https://flueframework.com/docs/guide/sandboxes/>
+- flue Cloudflare deploy guide (`outboundByHost`) — <https://flueframework.com/docs/ecosystem/deploy/cloudflare/>
+- Cloudflare Sandbox SDK (Beta, Apache-2.0) — <https://github.com/cloudflare/sandbox-sdk> and <https://developers.cloudflare.com/sandbox/>
+
+## How the nearest comparisons relate (different axes)
+
+The two structurally-closest projects above sit near gove-zone on *different
+axes* — they are not interchangeable "same competitor" rivals:
+
+- **Microsoft AGT** is the nearest *governance-paradigm* analogue. It does
+  authorize tool-calls and keeps a fail-closed, Merkle-chained audit, so it
+  shares gove-zone's **authorization** axis; the evidenced difference is the
+  *resolution of the artifact* — audit-centric (forensics after the fact) versus
+  receipt-centric (a pre-execution artifact a relying party can verify outside
+  the runtime).
+- **flue** is a *containment-paradigm* tool. It bounds **where** an agent runs,
+  not **which action-plus-arguments** may execute; even its strongest egress
+  mediation (`outboundByHost`) keys on hostname and protects the secret, not the
+  action. The difference here is one of *paradigm* (authorization versus
+  containment), not merely artifact resolution.
+
+So "closest competitor" means two different things: AGT shares the axis and
+differs on the artifact; flue differs on the axis itself. A receipt gate
+composes with both rather than replacing either.

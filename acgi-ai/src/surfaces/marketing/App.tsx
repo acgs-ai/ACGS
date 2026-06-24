@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
+import { Ask } from '../../routes/Ask'
 import {
   AgentReadable,
   FailureModesPage,
@@ -73,6 +74,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: Marketing,
+})
+
+const askRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ask',
+  component: Ask,
 })
 
 const privacyRoute = createRoute({
@@ -171,6 +178,7 @@ function MarketingNotFoundRoute() {
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  askRoute,
   privacyRoute,
   founderRoute,
   failureModesRoute,

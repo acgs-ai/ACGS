@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "sig-missing-verifier",
+  "notes": "a receipt claiming a signature cannot skip verification",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "SIGNED_RECEIPT_NO_VERIFIER",
+  "verifier": "none",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

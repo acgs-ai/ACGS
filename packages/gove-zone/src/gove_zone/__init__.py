@@ -4,13 +4,22 @@ A small library that wraps AI agent tool calls with policy checks,
 fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 """
 
+from importlib import metadata as _metadata
+
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
+from gove_zone.authz import (
+    AuthzReason,
+    AuthzRegistryError,
+    PrincipalEntry,
+    PrincipalRegistry,
+    authz_enforce_from_env,
+)
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
     injecagent_scenarios_from_fixture,
     load_benchmark_suite,
 )
-from gove_zone.consumption import ReceiptConsumptionLedger
+from gove_zone.consumption import LedgerObservability, ReceiptConsumptionLedger
 from gove_zone.contracts import (
     AuditEvent,
     ExecutionBoundary,
@@ -35,6 +44,7 @@ from gove_zone.errors import (
     PolicyError,
     ProductionProfileError,
     ReceiptAlreadyUsedError,
+    ReceiptRejectionReason,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
@@ -111,6 +121,12 @@ from gove_zone.tenant import (
     evaluate_tenant_action,
 )
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
+from gove_zone.verifier import (
+    SCHEMA_VERSION,
+    ProofPackRejectionReason,
+    ProofPackVerificationResult,
+    verify_proof_pack,
+)
 from gove_zone.workflow import (
     WorkflowDAG,
     WorkflowExecutor,
@@ -119,7 +135,13 @@ from gove_zone.workflow import (
     verify_workflow_replay,
 )
 
-__version__ = "0.1.0.dev0"
+# Single source of truth is the installed package metadata (pyproject `version`).
+# The literal fallback matches that value for source/editable runs where the
+# distribution is not installed; keep it in sync with pyproject on bumps.
+try:
+    __version__ = _metadata.version("gove-zone")
+except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
+    __version__ = "0.1.0a1"
 
 __all__ = [
     "GENESIS_HASH",
@@ -128,7 +150,12 @@ __all__ = [
     "AuditError",
     "AuditEvent",
     "BoundaryPolicy",
+    "AuthzReason",
+    "AuthzRegistryError",
     "ChainHashAuditStore",
+    "PrincipalEntry",
+    "PrincipalRegistry",
+    "authz_enforce_from_env",
     "CompositePolicy",
     "ConsumptionLedgerError",
     "Decision",
@@ -157,16 +184,21 @@ __all__ = [
     "PolicyRule",
     "PolicyError",
     "ProductionProfileError",
+    "ProofPackRejectionReason",
+    "ProofPackVerificationResult",
     "ProposedAction",
     "Receipt",
     "ReceiptAlreadyUsedError",
+    "LedgerObservability",
     "ReceiptConsumptionLedger",
+    "ReceiptRejectionReason",
     "ReceiptSigner",
     "ReceiptValidationError",
     "ReceiptVerifier",
     "ReplayResult",
     "ReplaySideStore",
     "RuleSetPolicy",
+    "SCHEMA_VERSION",
     "SigningError",
     "TenantPolicyBinding",
     "TenantPolicyStore",
@@ -214,5 +246,6 @@ __all__ = [
     "sha256_json",
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
+    "verify_proof_pack",
     "verify_workflow_replay",
 ]

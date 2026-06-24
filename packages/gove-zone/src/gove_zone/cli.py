@@ -12,7 +12,9 @@ from typing import Any
 from gove_zone import __version__
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
+from gove_zone.errors import AuditError, ConsumptionLedgerError
 from gove_zone.evaluation import evaluate_policy_scenarios
 from gove_zone.integration import (
     GateMode,
@@ -156,6 +158,59 @@ def _replay(args: argparse.Namespace) -> int:
     rederived = bool(payload.get("rederived", False))
     overall = verified and (rederived if rederivation_attempted else True)
     return 0 if overall else 1
+
+
+def _verify_ledger(args: argparse.Namespace) -> int:
+    """Verify the tamper-evidence hash chain of a consumption ledger.
+
+    Mirrors ``replay --audit``'s chain-verification surface for the
+    enforcement-side single-use record: prints the
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.verify_ledger`
+    report and exits non-zero when the ledger is not ``valid``. A corrupt /
+    unreadable ledger exits 2 (it cannot be verified), distinct from a readable
+    ledger that fails integrity (exit 1).
+
+    With ``--audit PATH`` it also reconciles every burn against that audit
+    chain (forged-burn detection via
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.reconcile`) and
+    folds the reconcile result into the exit code.
+    """
+    ledger = ReceiptConsumptionLedger(Path(args.ledger))
+    try:
+        report = ledger.verify_ledger(expected_last_hash=args.expected_last_hash)
+    except ConsumptionLedgerError as exc:
+        print(f"verify-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    payload: dict[str, Any] = {
+        "ledger": str(args.ledger),
+        "valid": report["valid"],
+        "checked": report["checked"],
+        "unverified_legacy": report["unverified_legacy"],
+        "last_hash": report["last_hash"],
+        "failures": report["failures"],
+    }
+
+    reconcile_ok = True
+    if args.audit is not None:
+        try:
+            recon = ledger.reconcile(ChainHashAuditStore(Path(args.audit)))
+        except (ConsumptionLedgerError, AuditError) as exc:
+            # reconcile() walks the audit chain via iter_events(), which raises
+            # AuditChainError (an AuditError) on a corrupt/malformed audit log —
+            # report it fail-closed instead of crashing with a raw traceback.
+            print(f"verify-ledger: {exc}", file=sys.stderr)
+            return 2
+        reconcile_ok = recon["valid"]
+        payload["reconcile"] = {
+            "valid": recon["valid"],
+            "checked": recon["checked"],
+            "audit_events": recon["audit_events"],
+            "unmatched": recon["unmatched"],
+        }
+
+    _emit(payload)
+    return 0 if (report["valid"] and reconcile_ok) else 1
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -582,8 +637,41 @@ def _proofpack(args: argparse.Namespace) -> int:
     (dist_dir / "limitations.md").write_text(limitations_content, encoding="utf-8")
 
     # Write manifest.json
+    #
+    # Structured manifest the offline verifier (verify_proof_pack) can read: a
+    # `receipts` array with one structured entry per receipt file actually written,
+    # each carrying its declared verdict, plus an explicit `audit_chain` pointer so
+    # accept receipts can be anchored against the pack's own chain. The declared
+    # verdicts below mirror what `DecisionReceipt.verify()` observes for each file
+    # (allow/transform self-validate => "accept"; the deny receipt raises
+    # DENIED_RECEIPT => "reject"). reason_code is left null on the reject entry so
+    # the verifier only requires an observed reject, not a brittle reason match.
+    # The pack is dev-mode UNSIGNED (require_signature=False), so `verify-proofpack`
+    # passes without a --verifier-key.
     manifest = {
-        "version": "0.1.0.dev0",
+        "version": __version__,
+        "schema_version": "gove-zone/proof-pack/v1",
+        "audit_chain": "audit.jsonl",
+        "receipts": [
+            {
+                "name": "allowed",
+                "file": "receipts/allowed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+            {
+                "name": "denied",
+                "file": "receipts/denied_receipt.json",
+                "declared_verdict": "reject",
+                "reason_code": None,
+            },
+            {
+                "name": "transformed",
+                "file": "receipts/transformed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+        ],
         "files": [
             "manifest.json",
             "receipts/allowed_receipt.json",
@@ -605,6 +693,31 @@ def _proofpack(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def _verify_proofpack(args: argparse.Namespace) -> int:
+    # Offline, standalone proof-pack verification (B4 §8). Fail-closed: any error
+    # folds into valid=False inside verify_proof_pack, so exit 1 on a non-valid pack.
+    from gove_zone.verifier import verify_proof_pack
+
+    verifier = None
+    if args.verifier_key:
+        # Out-of-band trust anchor: the relying party supplies the public key
+        # SEPARATELY, never from the pack — a key shipped beside the signer is not
+        # independent trust (see docs/PROOF_PATH.md). Raw 32-byte Ed25519 public key.
+        from gove_zone.signing import Ed25519Signer
+
+        try:
+            raw = Path(args.verifier_key).read_bytes()
+            signer = Ed25519Signer.from_public_bytes(raw, key_id=args.key_id or None)
+        except Exception as exc:  # noqa: BLE001 — bad trust anchor must not verify anything
+            print(f"verify-proofpack: cannot load --verifier-key: {exc}", file=sys.stderr)
+            return 2
+        verifier = {signer.key_id: signer}
+
+    result = verify_proof_pack(args.pack_dir, verifier=verifier, now_iso=args.now_iso)
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.valid else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -647,6 +760,34 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     replay.set_defaults(func=_replay)
+
+    verify_ledger = subparsers.add_parser(
+        "verify-ledger",
+        help="verify the tamper-evidence hash chain of a consumption ledger",
+    )
+    verify_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to verify",
+    )
+    verify_ledger.add_argument(
+        "--expected-last-hash",
+        default=None,
+        help=(
+            "optional external high-water-mark (last entry_hash); a mismatch "
+            "flags tail truncation, which chaining alone cannot detect"
+        ),
+    )
+    verify_ledger.add_argument(
+        "--audit",
+        default=None,
+        help=(
+            "optional audit JSONL path; also reconciles every burn against the "
+            "chain's event_hashes (forged-burn detection) and folds the result "
+            "into the exit code"
+        ),
+    )
+    verify_ledger.set_defaults(func=_verify_ledger)
 
     setup = subparsers.add_parser(
         "setup",
@@ -795,6 +936,35 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     proofpack.set_defaults(func=_proofpack)
+
+    verify_proofpack = subparsers.add_parser(
+        "verify-proofpack",
+        help=("verify a proof-pack directory offline (fail-closed); exit 0 iff valid, else 1"),
+    )
+    verify_proofpack.add_argument(
+        "pack_dir",
+        help="path to a gove-zone/proof-pack/v1 directory (contains manifest.json)",
+    )
+    verify_proofpack.add_argument(
+        "--now-iso",
+        default=None,
+        help="injected ISO-8601 clock for deterministic receipt-expiry checks",
+    )
+    verify_proofpack.add_argument(
+        "--verifier-key",
+        default=None,
+        help=(
+            "path to a raw 32-byte Ed25519 PUBLIC key, supplied out-of-band, used to "
+            "verify signed receipts. Omit for unsigned (dev) packs; a signed pack "
+            "without this fails closed (SIGNED_RECEIPT_NO_VERIFIER)."
+        ),
+    )
+    verify_proofpack.add_argument(
+        "--key-id",
+        default=None,
+        help="key_id the --verifier-key registers as (must match the receipt's signing_key_id)",
+    )
+    verify_proofpack.set_defaults(func=_verify_proofpack)
 
     return parser
 

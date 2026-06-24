@@ -60,7 +60,7 @@ infrastructure.**
 
 ```
                      ┌──────────────────────────────┐
-   acgs.ai           │  Vercel edge (or Netlify)    │
+   acgs.ai           │  Cloudflare Pages            │
    www.acgs.ai  ───► │  static bundle, CDN-cached   │
                      │  marketing surface only       │
                      └──────────────────────────────┘
@@ -80,7 +80,7 @@ Why split, when the bundle is one file:
   The console CDN provider does not exist; the request path is end-to-end
   under operator control. This is the deployment-layer expression of
   `DESIGN.md §4.3`.
-- **Subprocessor story.** "Vercel sees public marketing visitors; nothing
+- **Subprocessor story.** "Cloudflare Pages sees public marketing visitors; nothing
   third-party sits between a customer and `console.acgs.ai`." That is a
   one-line answer to a question every regulated-AI buyer asks.
 - **API homing.** The bus client calls `console.acgs.ai/api/*` — same
@@ -90,7 +90,7 @@ Why split, when the bundle is one file:
 
 Why not a single edge deploy:
 
-- A single Vercel/Netlify deploy puts the edge provider on every console
+- A single edge deploy puts the edge provider on every console
   request. Their access logs would carry `/console/agents/A-07` etc.
   That is not a story this product wants to tell.
 
@@ -105,8 +105,9 @@ Why not a Cloudflare-in-front-of-origin single-domain plan:
 
 ## §3 Marketing surface — `acgs.ai`, `www.acgs.ai`
 
-**Provider:** Vercel (Hobby for staging, Pro for production). Netlify is an
-acceptable substitute; the design is provider-agnostic at this layer.
+**Provider:** Cloudflare Pages (project `acgs-marketing`). The design is
+provider-agnostic at this layer; the routing and header contract is expressed
+in Cloudflare's static-config files.
 
 **Build:**
 
@@ -120,67 +121,54 @@ The marketing build is mode-specific: `vite --mode marketing` aliases the
 React entry to `src/surfaces/marketing/App.tsx`. It must not embed the
 privileged console route tree.
 
-**Routing config** (`vercel.json` at repo root, applied only to the
-marketing project — see §7):
+**Routing config** (`acgi-ai/infra/cloudflare/_redirects`, applied to the
+marketing Cloudflare Pages project — see §7):
 
-```jsonc
-{
-  "buildCommand": "pnpm build:marketing",
-  "outputDirectory": "dist",
-  "cleanUrls": true,
-  "routes": [
-    {
-      "src": "/(?:.*\/)?(?:AGENTS|CLAUDE|DESIGN|DEPLOY)\.md$",
-      "status": 404
-    },
-    {
-      "src": "/console",
-      "status": 308,
-      "headers": { "Location": "https://console.acgs.ai/console" }
-    },
-    {
-      "src": "/console/(.*)",
-      "status": 308,
-      "headers": { "Location": "https://console.acgs.ai/console/$1" }
-    },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/" }
-  ],
-  "headers": [
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    },
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()" }
-      ]
-    }
-  ]
-}
-```
+- Internal `*.md` docs requests → 404 (before redirect rules)
+- `/console` → 308 redirect to `https://console.acgs.ai/console` (privilege boundary)
+- `/console/*` → 308 redirect to `https://console.acgs.ai/console/:splat`
+- Existing static assets served as files by Cloudflare before the SPA fallback
+- `/* /index.html 200` SPA fallback (last rule)
+
+**Headers** (`acgi-ai/infra/cloudflare/_headers`): report-only CSP, HSTS,
+nosniff, SAMEORIGIN, referrer, permissions, and immutable `/assets/*` cache.
+`pnpm test:marketing-csp` asserts the headers stay correct. The console's
+*enforced* CSP is unaffected — it is served by Caddy on the Cloud Run origin
+(§5), not here.
+
+**Config** — `acgi-ai/wrangler.toml` (project `acgs-marketing`, output `dist/`).
+
+**Build + deploy:**
+- `pnpm build:marketing` → `dist/`, then
+  `cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/` before deploy.
+- Deploy workflow: repo-root `.github/workflows/marketing-cloudflare.yml`:
+  verify on PR, gated production deploy on push to `master`.
+- `marketing.yml` is verify-only (lint + build + `test:all`); it does not deploy.
+
+**Required secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+
+**Required human setup:** create the `acgs-marketing` Pages project, set its
+production branch to `master`, configure a GitHub `production` Environment with
+required reviewers (the `environment: production` gate is decorative without it),
+then add the two secrets. Deploy is BLOCKED (loud `::error::`) until the secrets exist.
+
+**Deploy status:** `gh run list -w marketing-cloudflare -L 1`.
+
+**Health check:** the production URL returns 200 on `/`.
 
 **Notes on the marketing surface:**
 
-- The `/console` and `/console/*` Vercel routes are hard 308 redirects to the console origin so
-  that an evaluator who clicks "Open the console" from a deep marketing
-  link lands on the privileged origin, not on a marketing-side
-  rendering. The internal-doc 404 route must stay before those redirects,
-  `handle: "filesystem"` must stay before the SPA fallback so hashed
-  `/assets/*` files are served as files instead of rewritten to
-  `index.html`, and the SPA fallback must stay last. This means
-  `Marketing.tsx`'s "Open the console" CTA must point at
-  `https://console.acgs.ai/console`, not at a relative `/console` href, in
-  the production build.
-- Marketing analytics are acceptable here. Plausible / Fathom / Vercel
-  Web Analytics — pick one. Do not deploy the same script bundle on the
-  console origin (§4).
+- The `/console` and `/console/*` rules in `_redirects` are hard 308 redirects
+  to `https://console.acgs.ai/console` so that an evaluator who clicks "Open the
+  console" from a deep marketing link lands on the privileged origin, not on a
+  marketing-side rendering. The internal-doc 404 rule must stay before those
+  redirects, Cloudflare serves existing static assets before the 200 rewrite so
+  hashed `/assets/*` files are served as files, and the SPA fallback must stay
+  last. This means `Marketing.tsx`'s "Open the console" CTA must point at
+  `https://console.acgs.ai/console`, not at a relative `/console` href, in the
+  production build.
+- Marketing analytics are acceptable here. Plausible / Fathom — pick one. Do
+  not deploy the same script bundle on the console origin (§4).
 - Google Fonts CDN may continue to load on this origin
   (`DESIGN.md §2.2`). The privilege concern is scoped to the console.
 
@@ -330,7 +318,7 @@ privileged surface.
 
 **Marketing CSP (target, report-only):**
 
-Marketing ships `Content-Security-Policy-Report-Only` from `vercel.json`
+Marketing ships `Content-Security-Policy-Report-Only` from `infra/cloudflare/_headers`
 with the same-origin baseline below and a report sink at
 `https://csp-report.acgs.ai/marketing`:
 
@@ -402,16 +390,20 @@ never embedded in `dist/`.
 
 ```
 .github/workflows/
-  marketing.yml      # → Vercel marketing project
-  console.yml        # → Cloud Run / Fly.io console project
+  marketing-cloudflare.yml  # → Cloudflare Pages marketing deploy (push to master)
+  marketing.yml             # → verify-only (lint + build + test:all, no deploy)
+  console.yml               # → Cloud Run / Fly.io console project
 infra/
   Caddyfile          # console origin config
+  cloudflare/
+    _redirects       # marketing-only routing (308 /console → console.acgs.ai/console, SPA fallback)
+    _headers         # marketing-only headers + report-only CSP
   cloudrun/service.preview.yaml
   cloudrun/service.staging.yaml
   cloudrun/service.production.yaml
   cloudrun/service.yaml  # render target produced from service.${DEPLOY_ENV}.yaml
   Dockerfile.console
-vercel.json          # marketing-only routing
+wrangler.toml        # Cloudflare Pages project config (marketing)
 ```
 
 The console deploy workflow requires `CONSOLE_AUTH_UPSTREAM` and
@@ -456,13 +448,13 @@ also keeps console path filters aligned with script/docs changes so readiness
 gate edits cannot silently bypass the production-bound workflows.
 
 `pnpm run test:production-deploy-contract` statically verifies production deploy
-fail-closed behavior: marketing push runs must error when `VERCEL_TOKEN`,
-`VERCEL_ORG_ID`, or `VERCEL_PROJECT_ID` is absent; console push runs remain WIF,
+fail-closed behavior: marketing push runs must error when `CLOUDFLARE_API_TOKEN`
+or `CLOUDFLARE_ACCOUNT_ID` is absent; console push runs remain WIF,
 Cloud Run renderer, and postdeploy gated. Local readiness and build output are
 not production deployment proof.
 
 `pnpm run test:production-launch-handoff` verifies `PRODUCTION-LAUNCH.md`, the
-production launch handoff. That handoff lists the exact Vercel/GCP/console
+production launch handoff. That handoff lists the exact Cloudflare/GCP/console
 secrets, local preflight commands, live post-deploy command, external proof
 artifacts, and rollback triggers needed before an operator can truthfully claim
 production launch.
@@ -529,7 +521,7 @@ to create a `production-evidence-validation` artifact. The validator checks
 `productionEvidenceValidationOutputRef`, `validatedProductionEvidence`, claim
 boundaries, pending-external blockers, and live-output consistency without
 deploying or performing network I/O. For `deployment-blocked` manifests it
-allows explicit `pending-external:` refs for missing Cloud Run, Vercel, and
+allows explicit `pending-external:` refs for missing Cloud Run, Cloudflare Pages, and
 GitHub Actions run URLs so blocked evidence can validate without inventing live
 proof. For `live-verified` or `--require-pass` manifests it rejects pending
 external assurance until the operator supplies verified legal claim-matrix
@@ -897,7 +889,7 @@ attestation.
 scheduled workflow runs the clean-runner HTTP shell measurement on Node 24 with
 a 300-second budget, while `pnpm run hello:world:local` is a bounded local smoke
 that skips install and allows local Node drift. This is not a production deployment proof, not a headless browser proof, and not evidence that live
-Vercel or Cloud Run domains are serving the latest build.
+Cloudflare Pages or Cloud Run domains are serving the latest build.
 
 **Bus schema contract gate.** `contracts/bus.openapi.json` is the local
 source of truth for the bus analyzer schema; `src/api/openapi.json` is a
@@ -936,7 +928,7 @@ success, not production verification.
 | Env | Marketing host | Console host | Constitution hash | Data |
 |---|---|---|---|---|
 | dev (local) | localhost:5173 | localhost:5173 | `608508a9bd224290` (fixture) | fixture |
-| preview | `pr-{n}-acgi-ai.vercel.app` | `pr-{n}.console-staging.acgs.ai` | per-PR fixture | fixture |
+| preview | `acgs-marketing-{git-hash}.pages.dev` | `pr-{n}.console-staging.acgs.ai` | per-PR fixture | fixture |
 | staging | `staging.acgs.ai` | `console-staging.acgs.ai` | rotating fixture | synthetic tenants |
 | production | `acgs.ai`, `www.acgs.ai` | `console.acgs.ai` | the live canon | real |
 
@@ -956,8 +948,8 @@ the production banner.
 
 | Name | Type | Target | Notes |
 |---|---|---|---|
-| `acgs.ai` | A/AAAA | Vercel anycast | apex |
-| `www.acgs.ai` | CNAME | `cname.vercel-dns.com` | |
+| `acgs.ai` | A/AAAA | Cloudflare Pages anycast | apex |
+| `www.acgs.ai` | CNAME | `acgs-marketing.pages.dev` | |
 | `console.acgs.ai` | CNAME | Cloud Run / Fly hostname | locked in `production-cutover-plan` |
 | `storybook.acgs.ai` | CNAME | GitHub Pages custom-domain target | required for buyer-evidence manifest proof |
 | `_acme-challenge.console` | TXT | rotated by ACME client | for cert issuance |
@@ -983,7 +975,7 @@ hash-anchored, operator-readable.
 
 **Marketing:**
 
-- Provider built-in access logs (Vercel / Netlify) + analytics product.
+- Cloudflare Pages built-in access logs + analytics product.
   Retention 90 days. This is enough — marketing access patterns are
   not constitutional artifacts.
 
@@ -1019,7 +1011,7 @@ hash-anchored, operator-readable.
 | Cloudflare in front (single-domain) | If WAF / bot management becomes a buyer requirement | §2 weighed and deferred. |
 | Multi-region failover | When availability SLO > 99.9% | Single-region is fine until then; pair primary with a warm passive in another region. |
 | SSO / OIDC at the console edge | When auth lands | Terminates at the console origin defined in §4. |
-| Subprocessor disclosure page | First regulated buyer | One marketing-side page that lists Vercel (marketing only), Cloud Run / Fly (console), Let's Encrypt (certs), font foundries — and explicitly states no third party touches `/console/*`. |
+| Subprocessor disclosure page | First regulated buyer | One marketing-side page that lists Cloudflare Pages (marketing only), Cloud Run / Fly (console), Let's Encrypt (certs), font foundries — and explicitly states no third party touches `/console/*`. |
 
 ---
 
@@ -1037,7 +1029,7 @@ hash-anchored, operator-readable.
 | 2026-05-04 | Staging environments render a structural `STAGING · synthetic data only` band in the privilege strip | Same structural rule as the production banner — never animated, never gated on a flag. The point of the banner is to be impossible to miss; staging needs that property too. |
 | 2026-05-04 | Marketing's "Open the console" CTA is an absolute URL to `https://console.acgs.ai/console` in production builds | Forces the user across the privilege boundary at the network layer, not just at the React route layer. |
 | 2026-05-04 | DMARC `p=reject`, not `quarantine` | Regulated-AI brand. Phishing using `acgs.ai` is a buyer-trust event. |
-| 2026-05-04 | Internal docs are stripped from build output and denied at the deployment layer for `*AGENTS.md`, `*CLAUDE.md`, `*DESIGN.md`, `*DEPLOY.md` | Vite copies `public/` verbatim into `dist/`. Per-directory `AGENTS.md` files placed for in-repo agent navigation must never be web-reachable on either origin (privilege leak on console; brand-control on marketing). The Vite plugin removes them from `dist/`; Caddy and Vercel rules provide defense in depth if one slips through. |
+| 2026-05-04 | Internal docs are stripped from build output and denied at the deployment layer for `*AGENTS.md`, `*CLAUDE.md`, `*DESIGN.md`, `*DEPLOY.md` | Vite copies `public/` verbatim into `dist/`. Per-directory `AGENTS.md` files placed for in-repo agent navigation must never be web-reachable on either origin (privilege leak on console; brand-control on marketing). The Vite plugin removes them from `dist/`; Caddy and Vercel rules provide defense in depth if one slips through. *(Superseded 2026-06: marketing moved to Cloudflare Pages; `_redirects` 404 rule and Caddy now provide the defense-in-depth layer. Vercel removed.)* |
 | 2026-05-24 | Console `/api/*` is a fail-closed Caddy reverse proxy backed by `BUS_UPSTREAM` | The deploy boundary should be ready for a governed bus without ever serving fixture data as if it were live backend output. The workflow requires `CONSOLE_BUS_UPSTREAM`, and Caddy forwards/echoes `X-ACGS-Schema-Version` for contract evidence. |
 | 2026-05-24 | Bus analyzer schema ownership is local and generated | `contracts/bus.openapi.json` is the vendored bus schema source of truth; `pnpm run test:bus-schema` guards codegen drift and fixture/error-envelope coverage before deploy workflows run. |
 | 2026-05-24 | Bundle performance budgets are enforced locally | `pnpm run test:performance` enforces marketing <= 200 KB and console <= 350 KB gzipped JS+CSS budgets before CI/deploy gates can pass. |
@@ -1048,14 +1040,14 @@ hash-anchored, operator-readable.
 | 2026-05-25 | Login interstitial has a local static gate | `pnpm run test:login-interstitial` guards the Phase 1 parchment handoff, operator/matter/hash copy, Enter dismissal, and no client-side console grant before deploy gates can pass. |
 | 2026-05-25 | Privilege banner has a local static gate | `pnpm run test:privilege-banner` guards the structural banner region, z-index token order, polite right-rail live region, and no route-local toast/modal/FAB or fixed/sticky receipt overlays before deploy gates can pass. |
 | 2026-05-25 | Wire decisions have a local static gate | `pnpm run test:wire-decisions` guards the A7 typed per-route console wire registry, shell right-rail route contract, DESIGN appendix, and package/security/CI wiring before deploy gates can pass. |
-| 2026-05-25 | Marketing production deploy fails closed when Vercel secrets are absent | A green push run must not mean a skipped deploy; `pnpm run test:production-deploy-contract` locks the production deploy fail-closed behavior while keeping local readiness distinct from live production proof. |
+| 2026-05-25 | Marketing production deploy fails closed when Vercel secrets are absent | A green push run must not mean a skipped deploy; `pnpm run test:production-deploy-contract` locks the production deploy fail-closed behavior while keeping local readiness distinct from live production proof. *(Superseded 2026-06: marketing moved to Cloudflare Pages; fail-closed now gates on `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`. Vercel removed.)* |
 | 2026-05-25 | Production launch has a machine-verifiable handoff | `pnpm run test:production-launch-handoff` guards the required secrets, local preflights, live postdeploy command, evidence artifacts, and claim boundary in `PRODUCTION-LAUNCH.md` before an operator attempts the credentialed deploy. |
 | 2026-05-25 | Production evidence intake is schema-checked before deploy | `pnpm run test:production-evidence-template` guards `production-evidence.example.json` as a template-only manifest for live deploy proof, with `pending-external` assurance placeholders, verified assurance detail fields, and an explicit not live production proof boundary. |
 | 2026-05-25 | Production live verifier is locally gated but not auto-run | `pnpm run test:production-live-verifier` guards the `verify:production-live` DNS/HTTPS/healthz/header/Storybook checker, emits `blockedUntil`/`blockers`, and keeps it out of `test:all` as a live network proof command. |
 | 2026-05-25 | Production authority has a local proof packet | `pnpm run test:production-authority-packet` guards `production-authority.example.json`, keeping deploy-owner/DNS/auth/claim approvals as `pending-external:deploy-owner-approval` style refs so local readiness is not confused with authority to deploy or claim production launch. |
 | 2026-05-25 | Live verifier blockers have a local handoff report | `pnpm run test:production-blocker-report` guards `build:production-blocker-report`, which turns saved `verify:production-live` JSON into a `production-blocker-report` with `copyIntoProductionEvidence` fields while preserving the not live production proof boundary. |
 | 2026-05-25 | Production cutover plan has a local builder | `pnpm run test:production-cutover-plan` guards `build:production-cutover-plan`, which turns saved live verifier and blocker-report JSON into a `production-cutover-plan` with required GitHub secrets, DNS cutover records, `productionLiveBlockers`, `liveCheckSummary`, `cutoverDelta`, and `copyIntoProductionEvidence` while preserving the not live production proof boundary. |
-| 2026-05-25 | Completed production evidence has a local validator | `pnpm run test:production-evidence-validator` guards `validate:production-evidence`, the completed-manifest validator for `productionLiveStatus`, `productionLiveBlockers`, `productionEvidenceValidationCommand`, `productionEvidenceValidationOutputRef`, and `validatedProductionEvidence` consistency against the attached live verifier JSON, including explicit `pending-external:` refs for deployment-blocked Cloud Run/Vercel/GitHub run URLs and verified legal, pentest, manual WCAG/screen-reader, and browser assurance details before `--require-pass`. |
+| 2026-05-25 | Completed production evidence has a local validator | `pnpm run test:production-evidence-validator` guards `validate:production-evidence`, the completed-manifest validator for `productionLiveStatus`, `productionLiveBlockers`, `productionEvidenceValidationCommand`, `productionEvidenceValidationOutputRef`, and `validatedProductionEvidence` consistency against the attached live verifier JSON, including explicit `pending-external:` refs for deployment-blocked Cloud Run/Cloudflare Pages/GitHub run URLs and verified legal, pentest, manual WCAG/screen-reader, and browser assurance details before `--require-pass`. |
 | 2026-05-25 | Deployment-blocked production evidence has a local draft builder | `pnpm run test:production-evidence-draft` guards `build:production-evidence-draft`, which turns saved live verifier, `production-blocker-report`, and `production-cutover-plan` JSON into a validator-ready `production-evidence.deployment-blocked.json` draft while preserving the not live production proof boundary. |
 | 2026-05-25 | Storybook runtime dependency has a local approval plan | `pnpm run test:storybook-runtime-plan` guards `storybook-runtime.plan.json`, keeping `@storybook/react-vite`, `npx storybook@latest init`, lockfile updates, and shim replacement behind `pending-external:dependency-owner-approval`; the plan is not official Storybook runtime proof, not hosted Storybook proof, and not production deployment proof. |
 | 2026-05-25 | Hosted Storybook proof has a local operator handoff | `pnpm run test:hosted-storybook-handoff` guards `build:hosted-storybook-handoff`, which turns a Pages-ready buyer-evidence manifest and saved live verifier JSON into `hosted-storybook-handoff.json` with `pending-external:storybook-pages-proof`, `storybook-manifest-live`, and `copyIntoProductionEvidence.hostedStorybook` fields while preserving the not live production proof boundary. |

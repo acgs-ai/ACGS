@@ -2,52 +2,67 @@
 
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
+This is the canonical 5-minute, copy-paste path for a local evaluator. It is the
+single source of truth for getting the runtime kernel (`gove-zone`) running and
+proving the invariant. Other onboarding docs link here for the install + proof
+steps:
 
-This is the fastest copy-paste path for a local evaluator.
+- `docs/START_HERE.md` — the 10-minute narrated tour.
+- `docs/PROOF_PATH.md` — the canonical proof narrative.
+- `docs/DEMO_SCRIPT.md` — the timed live-demo script.
 
 ## Prerequisites
 
-- Python compatible with the workspace (`>=3.11`).
-- `uv` installed.
-- From the repository root: `/home/martin/Documents/ACGS` or equivalent clone.
+- Python 3.11+ (the workspace floor; `gove-zone`'s published floor is 3.10).
+- [`uv`](https://docs.astral.sh/uv/) installed.
+- A clone of this repository; run every command from the repository root.
 
-Install/sync command from the root Makefile. **Unverified in this documentation pass if your environment is already synced; run when starting fresh:**
+## Install (single block)
+
+Sync the runtime kernel **with the signing extra** so Ed25519 receipt signing is
+available — the receipt-gated demo below needs it:
 
 ```bash
-uv sync --all-extras
+uv sync --package gove-zone --extra crypto
 ```
 
-## Clone
+> Do **not** use `uv sync --all-extras` from the workspace root. This root is a
+> *virtual* uv workspace, so `--all-extras` resolves the root's (empty) extras
+> and **uninstalls** `gove-zone` and `cryptography`. If your environment is
+> already in that state, the proof block below still self-heals: every
+> `uv run --extra crypto --package gove-zone ...` invocation re-syncs the extra
+> on the fly.
 
-Use your fork/remote URL. **Unverified here because this checkout already exists:**
+## Prove the invariant (single block)
+
+Run all four proof commands. The receipt-gated demo prints **`All invariants
+held`** and exits 0; the doc/example smoke tests exit 0:
 
 ```bash
-git clone <repo-url> ACGS
-cd ACGS
-```
-
-## Run tests
-
-Documentation/example smoke tests:
-
-```bash
+tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --package gove-zone python examples/tamper_demo/demo.py
 uv run python -m pytest tests/docs --import-mode=importlib -q
 ```
 
-Runtime kernel tests for gove-zone:
+What each command proves:
+
+- **smoke** — an allowed `write_file` executes only after the governance path
+  records evidence; an `id_rsa`-shaped write is denied before the file is
+  created; both audit events verify as a hash chain.
+- **receipt-gated demo** — allowed executes; denied / missing / tampered /
+  cross-tenant receipts fail closed; a transformed action runs only as approved;
+  a signed receipt verifies and a forged/recomputed one is rejected.
+- **tamper demo** — a valid receipt permits a simulated side effect; a tampered
+  receipt, a reused receipt with different args, and a hand-edited audit JSONL
+  all fail verification.
+- **tests/docs** — the documentation and example smoke suite is green.
+
+## Runtime kernel tests (optional)
 
 ```bash
 uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q
 ```
-
-## Run the demo
-
-```bash
-tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
-```
-
-Expected: JSON or terminal output proving allowed execution, denied failure, missing receipt failure, tamper failure, and audit-chain verification.
 
 ## Inspect a receipt/evidence artifact
 
@@ -68,25 +83,12 @@ Expected files:
 - `conformance-results.json`
 - `limitations.md`
 
-## Tamper with receipt/evidence and observe failure
-
-Run the local tamper demo:
-
-```bash
-uv run --package gove-zone python examples/tamper_demo/demo.py
-```
-
-Expected JSON fields:
-
-- `valid_receipt_executed: true`
-- `tampered_receipt_blocked: true`
-- `argument_mismatch_blocked: true`
-- `audit_chain_valid_before_tamper: true`
-- `audit_chain_valid_after_tamper: false`
-
 ## Next steps
 
 - Read `docs/PROOF_PATH.md` for the canonical proof narrative.
 - Read `docs/DECISION_RECEIPT_SPEC.md` before integrating.
-- Use `examples/python_tool_gate`, `examples/mcp_tool_gate`, `examples/agent_framework_gate`, and `examples/ci_deploy_gate` as local reference patterns.
+- Read `docs/INTEGRATION_GUIDE.md` for the copy-paste "first receipt" snippet.
+- Use `examples/python_tool_gate`, `examples/mcp_tool_gate`,
+  `examples/agent_framework_gate`, and `examples/ci_deploy_gate` as local
+  reference patterns.
 - Read `docs/CLAIMS.md` before making public claims.

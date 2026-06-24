@@ -1,12 +1,9 @@
-# Marketing surface — Vercel deploy (DEPLOY.md §3, §7).
+# Marketing surface — verification gate (DEPLOY.md §3, §7).
 #
-# Required secrets:
-#   VERCEL_TOKEN          — token from https://vercel.com/account/tokens
-#   VERCEL_ORG_ID         — `vercel project ls` reveals it
-#   VERCEL_PROJECT_ID     — same
-#
-# PR runs do a preview deploy and the URL is posted as a check; pushes to
-# master do a production deploy.
+# Deploy moved to Cloudflare Pages: see marketing-cloudflare.yml. This workflow
+# is now PR/verify-only — it runs the full marketing readiness gate (lint, build,
+# test:all) on PRs and master pushes but does NOT deploy. Vercel was retired as
+# the marketing provider; the old VERCEL_* secrets are no longer used here.
 #
 # Workflow lives at repo root (.github/workflows/) — GitHub Actions only
 # discovers workflows from there. The acgi-ai app is in a subdirectory, so
@@ -34,21 +31,16 @@ concurrency:
   group: marketing-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
 defaults:
   run:
     working-directory: acgi-ai
 
 jobs:
-  deploy:
+  verify:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     permissions:
       contents: read
-      deployments: write
     steps:
       - uses: actions/checkout@v4
 
@@ -70,61 +62,8 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      - name: Build (sanity check before Vercel takes over)
+      - name: Build
         run: pnpm build
 
       - name: Readiness gate
         run: pnpm test:all
-
-      # ---- Vercel deploy: master pushes only ----
-      # Originally this pipeline did a preview deploy on PRs too. That
-      # requires VERCEL_TOKEN + VERCEL_ORG_ID + VERCEL_PROJECT_ID secrets;
-      # when any are missing, vercel pull aborts with "No existing
-      # credentials found." Gating to push events keeps PRs unblocked.
-      # To re-enable PR previews, configure the three secrets and drop
-      # the `if:` gates on every deploy step below.
-
-      # Skip the Vercel deploy entirely if any of the three secrets is
-      # absent (e.g. fresh fork, secrets not yet rotated). Without this
-      # the master push pipeline goes red on `vercel pull` even though
-      # lint + build above already succeeded.
-      - name: Check Vercel secrets present
-        id: vercel_auth
-        if: github.event_name == 'push'
-        env:
-          HAVE_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
-          HAVE_ORG: ${{ secrets.VERCEL_ORG_ID != '' }}
-          HAVE_PROJECT: ${{ secrets.VERCEL_PROJECT_ID != '' }}
-        run: |
-          if [ "$HAVE_TOKEN" = "true" ] && [ "$HAVE_ORG" = "true" ] && [ "$HAVE_PROJECT" = "true" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Vercel production deploy blocked: set VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable."
-            exit 1
-          fi
-
-      - name: Install Vercel CLI
-        if: github.event_name == 'push' && steps.vercel_auth.outputs.available == 'true'
-        run: pnpm add -g vercel@latest
-
-      - name: Pull Vercel environment
-        if: github.event_name == 'push' && steps.vercel_auth.outputs.available == 'true'
-        run: |
-          vercel pull --yes \
-            --environment=production \
-            --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Build for Vercel
-        if: github.event_name == 'push' && steps.vercel_auth.outputs.available == 'true'
-        run: |
-          vercel build --prod \
-            --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Deploy
-        id: deploy
-        if: github.event_name == 'push' && steps.vercel_auth.outputs.available == 'true'
-        run: |
-          URL=$(vercel deploy --prebuilt --prod \
-            --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Deployed to $URL"

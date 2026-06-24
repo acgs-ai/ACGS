@@ -1,0 +1,16 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-args-substitution",
+  "notes": "ALLOW receipt for safe.txt cannot authorize /etc/shadow (arg binding)",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "ARGUMENT_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_args": {
+      "path": "/etc/shadow"
+    },
+    "require_signature": true
+  }
+}

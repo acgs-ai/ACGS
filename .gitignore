@@ -78,6 +78,7 @@ credentials/
 !/.omc/skills/**
 .remember
 .omx
+.autopilot
 
 # Additional agent / tool state (per-developer indexes, eval outputs, scratch
 # generators). Pattern without trailing slash matches both files and dirs.

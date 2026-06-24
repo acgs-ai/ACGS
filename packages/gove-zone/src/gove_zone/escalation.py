@@ -132,10 +132,15 @@ def approve_escalation(
       approval's audit anchor is burned before the side effect and a replay
       raises :class:`~gove_zone.errors.ReceiptAlreadyUsedError`. ``expires_at``
       remains useful as a time bound on the *first* use.
-    * **Re-approving the same pending reuses the approval ``event_id``**
-      (``<original>:approved``), so two approvals of one escalation are not
-      individually addressable via ``event_id`` lookup. The hash chain is not
-      affected (it keys on ``event_hash``/``previous_hash``).
+    * **Distinct approvals of one escalation get distinct ``event_id``s.** The
+      approval id is ``<original>:approved:<discriminator>``, where
+      ``<discriminator>`` is a 16-char prefix of ``sha256_json`` over the
+      validator id, the re-stamped argument hash, the matched-rule set and the
+      reason. Two approvals by different validators are therefore individually
+      addressable via ``event_id`` lookup (e.g. ``gove-zone replay --event``);
+      an identical re-approval reproduces the same id (idempotent — no random
+      uuid/timestamp, so reproducible hash chains are preserved). The hash chain
+      is unaffected regardless (it keys on ``event_hash``/``previous_hash``).
     """
     if pending.record.decision is not Decision.ESCALATE:
         raise ReceiptValidationError(
@@ -154,21 +159,46 @@ def approve_escalation(
         )
 
     approved_args = dict(pending.args)
+    approved_argument_hash = sha256_json(approved_args)
+    approved_matched_rules = (
+        *pending.record.matched_rules,
+        f"HUMAN_APPROVED:{validator.validator_id}",
+    )
+    approved_reason = (
+        (pending.record.reason + "; ") if pending.record.reason else ""
+    ) + f"escalation approved by validator {validator.validator_id}"
+
+    # Deterministic, content-derived discriminator so distinct approvals of the
+    # same escalation get distinct ``event_id``s (``_find_event`` returns the
+    # FIRST match, so a colliding id makes a later approval unfindable), while an
+    # identical re-approval reproduces the SAME id (idempotent — no random uuid /
+    # timestamp, preserving reproducible hash chains). The digest binds the
+    # validator identity, the re-stamped argument hash, the matched-rule set, and
+    # the reason — every field that distinguishes one approval from another. Two
+    # different validators (different ``HUMAN_APPROVED:`` rule + reason) therefore
+    # yield different ids; the same validator re-approving the same args yields the
+    # same id.
+    approval_discriminator = sha256_json(
+        {
+            "validator_id": validator.validator_id,
+            "argument_hash": approved_argument_hash,
+            "matched_rules": list(approved_matched_rules),
+            "reason": approved_reason,
+        }
+    )[:16]
+
     approved = dataclasses.replace(
         pending.record,
         decision=Decision.ALLOW,
         # Re-stamp so verify #10b binds the EXACT args that will execute, no
         # matter what the escalating policy put in argument_hash.
-        argument_hash=sha256_json(approved_args),
-        matched_rules=(
-            *pending.record.matched_rules,
-            f"HUMAN_APPROVED:{validator.validator_id}",
-        ),
-        reason=((pending.record.reason + "; ") if pending.record.reason else "")
-        + f"escalation approved by validator {validator.validator_id}",
+        argument_hash=approved_argument_hash,
+        matched_rules=approved_matched_rules,
+        reason=approved_reason,
         # Distinct audit identity for the approval; the original ESCALATE event
-        # stays in the chain unchanged.
-        event_id=pending.record.event_id + ":approved",
+        # stays in the chain unchanged. The content-derived discriminator keeps
+        # distinct approvals individually addressable via ``event_id`` lookup.
+        event_id=f"{pending.record.event_id}:approved:{approval_discriminator}",
         # ALLOW carries no transformed args; the gate binds the original args.
         transformed_args=None,
         # decision_request_hash is intentionally preserved (binds to the same

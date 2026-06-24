@@ -208,7 +208,7 @@ function validateManifest(manifest, options, liveOutput) {
     ['marketingUrl', 'marketing URL', false],
     ['consoleUrl', 'console URL', false],
     ['cloudRunRevisionUrl', 'Cloud Run revision URL', true],
-    ['vercelUrl', 'Vercel deployment URL', true],
+    ['cloudflareUrl', 'Cloudflare deployment URL', true],
   ]) {
     pushCheck(
       checks,

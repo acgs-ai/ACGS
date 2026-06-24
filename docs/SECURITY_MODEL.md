@@ -18,8 +18,9 @@ Status: alpha/local proof. This document is a threat model, not a certification 
 | Mismatched action | Receipt for one tool authorizes another. | `expected_action` check. | `test_decision_receipt.py`, `test_executor_guard.py`. | None inside gate; bypass risk remains outside gate. | Gateway coverage for all tool entrypoints. |
 | Argument substitution | Receipt for safe args is reused for dangerous args. | `argument_hash` and exact transform checks. | `test_argument_binding.py`, `test_executor_guard.py`. | Raw args are not stored in audit by default; strong replay needs side-store. | Proof packs with side-store or redaction policy. |
 | Self-validation | Agent validates its own authority. | `Validator` role, `DecisionReceipt.from_record` guard, gate actor-anchor check. | `test_maci_role_separation.py`. | Opaque string identity; no built-in IAM. | Integrator identity and signed validator profile. |
-| Replay attempt | Old receipt is reused across time/run/context. | Expiry, actor/action/args/tenant/boundary/policy binding; workflow ledger for workflow paths. | `test_receipt_expiry.py`, workflow tests, replay tests. | No global nonce registry/revocation in local kernel. | Replay hardening and proof-pack evidence registry. |
+| Replay attempt | Old receipt is reused across time/run/context. | Expiry, actor/action/args/tenant/boundary/policy binding; opt-in single-use `ReceiptConsumptionLedger` burns the receipt's audit anchor before execution; workflow ledger for workflow paths. | `test_receipt_expiry.py`, `test_receipt_consumption.py`, workflow tests, replay tests. | The consumption ledger is opt-in (off by default); no global nonce/revocation registry in the local kernel. | Default-on single-use profile; global revocation registry. |
 | Audit-chain tampering | Evidence is edited after the fact. | Hash-chained JSONL with `previous_hash` and `event_hash`; malformed tail fails closed before append. | `test_audit_chain.py`, `test_audit_chain_corruption.py`, tamper demo. | Local JSONL is not WORM/off-host durable. | WORM/SIEM/exportable proof packs. |
+| Consumption-ledger tampering | The single-use record is edited (line deleted/reordered/altered/truncated) to un-burn a receipt and re-enable exactly one replay. | Each ledger entry is hash-chained (`previous_hash`/`entry_hash`, mirroring the audit chain), so interior delete/reorder/content-edit is detectable; `verify_ledger()` / `gove-zone verify-ledger` reports it; `seal()` baselines a pre-chaining legacy ledger. Tail truncation is caught by a persisted high-water-mark — opt-in `ReceiptConsumptionLedger(path, checkpoint=True)` advances a `<ledger>.hwm` sidecar that `verify_ledger()` auto-consults. Forged/orphan burns (a `consumed_key` anchoring no real decision) are caught by `reconcile(audit_store)` / `verify-ledger --audit PATH`. (Replay-blocking itself never depends on the chain — it keys on `consumed_key` — so tampering is exposed by the report, not by a silent execution.) Every blocked replay and every failed `verify_ledger()`/`reconcile()` is also surfaced as a WARNING on the `gove_zone.consumption` logger (a logger record only — the SIEM/stderr integration point, never the audit chain) plus a per-instance counter via `observability()`, so a fleet can alert/count rather than only catch the exception. | The `.hwm` sidecar and the ledger share storage: an attacker who rewrites both consistently is not stopped (place the sidecar on append-only/off-host storage to raise the bar). `reconcile` trusts the audit chain's `iter_events()` — verify it separately with `verify_chain()`. No global revocation registry. | WORM / off-host placement of the audit chain + HWM sidecar; signed checkpoints. |
 | Unsigned dev mode misuse | Local unsigned receipts are marketed as production signing. | Docs and `CLAIM_BOUNDARY` identify unsigned local proof; signing mode exists. | `test_receipt_signing.py`, `docs/CLAIMS.md`. | Operator can still deploy unsigned mode if they choose. | Secure profile with signing required by default. |
 | Policy-bundle substitution | Receipt is evaluated under one policy but executed under another. | Policy bundle id/hash checks; canonical `RuleSetPolicy` export. | `test_policy_bundle_io.py`, `test_tenant_safety.py`. | No active/stale/revoked lifecycle registry. | Signed policy bundles and versioned policy registry. |
 | MCP/tool-gateway misuse | MCP connects tools but execution happens before governance. | `integration.py` normalizes MCP/function-call shapes; examples show gateway placement. | `test_integration_hook.py`, `test_integration_gaps.py`, `examples/mcp_tool_gate`. | Adapter shape support is local; production MCP server enforcement must be wired by integrator. | MCP adapter conformance suite. |
@@ -30,24 +31,35 @@ Status: alpha/local proof. This document is a threat model, not a certification 
 
 ## Deployment hardening — defaults that matter
 
-The kernel ships safe-by-inspection but **dev-permissive by default**. Two defaults
-must be changed for a production posture; both are accepted limitations of the local
-alpha, not bugs:
+The kernel ships **secure-by-default for signing**, with one remaining
+dev-permissive default (anti-replay) that must be changed for a hardened posture;
+that remaining limitation is an accepted limitation of the local alpha, not a bug:
 
-- **Signing is off by default.** `require_signature` defaults to `False`
-  (`executor.py`, `contracts.py`). In that mode verification checks only the local
-  SHA-256 `receipt_hash`, which is recomputable under host compromise (see the
-  *Tampered receipt* and *Unsigned dev mode misuse* rows). **Production MUST set
-  `require_signature=True` with a trusted verifier** (`signing.py`,
-  `test_receipt_signing.py`). Unsigned mode is dev-only proof and must not be
-  described as production signing.
-- **No anti-replay nonce.** Verification is stateless: there is no consumed-receipt
-  registry or nonce, so a valid `ALLOW` receipt can be replayed until its
-  `expires_at` (see the *Replay attempt* row). `replay.py` is *deterministic/audit*
-  replay, not anti-replay enforcement. This is an accepted limitation of the local
-  kernel. Mitigations available today: set a short `expires_at`, use the workflow
-  ledger for workflow paths, and retain side-store proof packs for strong replay.
-  A global nonce/revocation registry is roadmap, not shipped.
+- **Signing is required by default; the secure profile is the default.**
+  `require_signature` defaults to `True` (`executor.py`, `contracts.py`). The
+  default does **not** auto-sign: a gate invoked with no configured trusted
+  verifier fails closed loud — it raises `ProductionProfileError` naming both
+  exits rather than emitting an unsigned receipt or auto-generating a key
+  (`executor.py`, `contracts.py`). To run the explicit unsigned "dev mode" you
+  must opt in with `require_signature=False`, in which case verification checks
+  only the local SHA-256 `receipt_hash`, which is recomputable under host
+  compromise (see the *Tampered receipt* and *Unsigned dev mode misuse* rows).
+  Production closure is `require_signature=True` **with** a trusted verifier
+  (`signing.py`, `test_receipt_signing.py`); the default already requires
+  signing, so it is the verifier — not the flag — that the operator must supply.
+- **Anti-replay is opt-in, off by default.** `DecisionReceipt.verify` is
+  stateless, so a valid `ALLOW` receipt can be replayed until its `expires_at`
+  *unless* the gate carries a single-use ledger. Passing a
+  `ReceiptConsumptionLedger` (`consumption.py`) makes the receipt single-use: its
+  audit anchor is burned before the side effect, and a replay raises
+  `ReceiptAlreadyUsedError` (`test_receipt_consumption.py`). The ledger is now
+  hash-chained, so the freshness record is itself tamper-evident (see the
+  *Consumption-ledger tampering* row) — but it must be enabled per gate and there
+  is still no global nonce/revocation registry. `replay.py` is
+  *deterministic/audit* replay, not anti-replay enforcement. Mitigations today:
+  enable the consumption ledger, set a short `expires_at`, use the workflow ledger
+  for workflow paths, and retain side-store proof packs for strong replay. A
+  default-on single-use profile and a global revocation registry are roadmap.
 
 Also operator-tunable and off/optional by default: `expires_at` (no global
 revocation list) and `policy_timeout` (hang → DENY only when configured). Set both
@@ -59,6 +71,7 @@ for a hardened deployment.
 - `packages/gove-zone/src/gove_zone/executor.py`
 - `packages/gove-zone/src/gove_zone/kernel.py`
 - `packages/gove-zone/src/gove_zone/audit.py`
+- `packages/gove-zone/src/gove_zone/consumption.py`
 - `packages/gove-zone/src/gove_zone/replay.py`
 - `packages/gove-zone/src/gove_zone/signing.py`
 - `packages/gove-zone/src/gove_zone/policy.py`

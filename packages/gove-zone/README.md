@@ -56,7 +56,7 @@ the side effect **only** if the receipt verifies. Run the end-to-end proof —
 it asserts every rule and exits non-zero if any invariant is violated:
 
 ```bash
-uv run --package gove-zone python \
+uv run --extra crypto --package gove-zone python \
     packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
@@ -134,7 +134,11 @@ what you must supply externally — see the one-page
 release:
 
 ```bash
-uv sync --all-extras
+# Sync this package with the signing extra installed (Ed25519 receipts).
+# Note: `uv sync --all-extras` at the workspace root resolves the *root*
+# (virtual) project and uninstalls gove-zone + cryptography, so scope the
+# sync to the package instead.
+uv sync --package gove-zone --extra crypto
 uv run --package gove-zone gove-zone doctor
 uv run --package gove-zone gove-zone smoke
 ```

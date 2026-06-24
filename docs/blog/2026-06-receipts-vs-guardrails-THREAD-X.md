@@ -6,11 +6,11 @@ Every claim verified via the gove-zone proof path, 2026-06-07.
 ---
 
 ### Tweet 1 (Hook)
-AI agent "governance" got crowded fast (Microsoft, Galileo, CSA all naming a "control layer"). But most tools govern the *perimeter*: what an agent attempts.
+AI agent "governance" got crowded fast. Some govern the *perimeter* (prompts, outputs); the strong ones enforce at runtime—e.g. Microsoft's Agent Governance Toolkit (fail-closed tool-call policy + Merkle audit).
 
-The harder question: when an action runs, was it legitimate—with proof you can verify afterward? 🧵
+A portable receipt you verify, or an audit trail after? 🧵
 
-*Length: 260 / 280 characters*
+*Length: 270 / 280 characters*
 
 ---
 

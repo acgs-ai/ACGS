@@ -1,0 +1,139 @@
+# Marketing surface — Cloudflare Pages deploy (DEPLOY.md §3, §7).
+#
+# This is the marketing surface's production deploy path. The legacy Vercel
+# workflow (marketing.yml) is now PR/verify-only — Cloudflare replaced it.
+#
+# Required repository secrets (set by a human; deploy is BLOCKED until present):
+#   CLOUDFLARE_API_TOKEN   — Pages:Edit + Account:Read token from the Cloudflare dashboard
+#   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account id
+#
+# Required human setup BEFORE this can deploy (none of this is agent-doable):
+#   1. Create a Cloudflare Pages project named `acgs-marketing` (matches wrangler.toml).
+#   2. Set that project's PRODUCTION branch to `master`.
+#   3. Add a GitHub Environment named `production` with required reviewers — otherwise
+#      the `environment: production` line below is decorative and the deploy is NOT gated.
+#   4. Add the two secrets above.
+#
+# PRs run verify only. Pushes to master verify, then deploy (gated on `production`).
+#
+# Workflow lives at repo root — GitHub Actions only discovers workflows here. The
+# acgi-ai app is in a subdirectory, so defaults.run.working-directory pins `run:`
+# steps there; path filters are repo-root relative.
+
+name: marketing-cloudflare
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'acgi-ai/**'
+      - '!acgi-ai/DEPLOY.md'
+      - '!acgi-ai/infra/Caddyfile'
+      - '!acgi-ai/infra/Dockerfile.console'
+      - '!acgi-ai/infra/cloudrun/**'
+  push:
+    branches: [master]
+    paths:
+      - 'acgi-ai/**'
+      - '!acgi-ai/DEPLOY.md'
+      - '!acgi-ai/infra/Caddyfile'
+      - '!acgi-ai/infra/Dockerfile.console'
+      - '!acgi-ai/infra/cloudrun/**'
+
+concurrency:
+  group: marketing-cloudflare-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: acgi-ai
+
+jobs:
+  verify:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      # --ignore-workspace keeps acgi-ai installed against its own pnpm-lock.yaml
+      # (see console.yml / marketing.yml for the full rationale).
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+
+      # Full readiness gate. Includes test:marketing-csp, which also asserts the
+      # Cloudflare _headers report-only CSP is byte-identical to vercel.json (no drift).
+      # `deploy` needs this job, so production deploy never runs unless this passes.
+      - name: Readiness gate
+        run: pnpm test:all
+
+      # Rebuild the marketing surface alone (test:all's `pnpm build` leaves dist=console).
+      - name: Build marketing surface
+        run: pnpm run build:marketing
+
+      # The cp + presence assert is what actually ships headers/redirects — verify it here.
+      - name: Stage Cloudflare static config + assert it lands
+        run: |
+          cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/
+          test -f dist/_headers || { echo "::error::dist/_headers missing"; exit 1; }
+          test -f dist/_redirects || { echo "::error::dist/_redirects missing"; exit 1; }
+          # internal docs must NOT be in the marketing build
+          ! ls dist/CLAUDE.md dist/DEPLOY.md dist/AGENTS.md dist/DESIGN.md 2>/dev/null || { echo "::error::internal docs leaked into dist"; exit 1; }
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: verify
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Build marketing surface
+        run: pnpm run build:marketing
+
+      - name: Stage Cloudflare static config (headers + redirects)
+        run: cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/
+
+      # Fail loud with a clear message if the Cloudflare secrets are not set, instead
+      # of a cryptic wrangler auth error (mirrors marketing.yml's Vercel secret guard).
+      - name: Check Cloudflare secrets present
+        id: cf_auth
+        env:
+          HAVE_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAVE_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: |
+          if [ "$HAVE_TOKEN" = "true" ] && [ "$HAVE_ACCOUNT" = "true" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Cloudflare Pages deploy blocked: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to enable."
+            exit 1
+          fi
+
+      - name: Deploy to Cloudflare Pages (production)
+        if: steps.cf_auth.outputs.available == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: acgi-ai
+          command: pages deploy --branch=master

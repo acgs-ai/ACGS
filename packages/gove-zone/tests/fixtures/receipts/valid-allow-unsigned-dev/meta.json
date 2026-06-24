@@ -1,0 +1,20 @@
+{
+  "entry": "verify",
+  "expected": "accept",
+  "layer": "baseline",
+  "name": "valid-allow-unsigned-dev",
+  "notes": "dev profile only; documents the unsigned posture",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": null,
+  "verifier": "none",
+  "verify_kwargs": {
+    "expected_action": "runtime.file.write",
+    "expected_actor": "agent-1",
+    "expected_args": {
+      "path": "safe.txt"
+    },
+    "expected_execution_boundary": "local-sandbox",
+    "expected_tenant_id": "tenant-A",
+    "require_signature": false
+  }
+}

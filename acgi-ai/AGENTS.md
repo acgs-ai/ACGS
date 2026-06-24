@@ -25,7 +25,6 @@ This repository is a React + Vite application that ships the ACGS marketing land
 | `tsconfig.node.json` | TypeScript settings for Node-side config files. |
 | `biome.json` | Primary formatting and lint configuration used by `pnpm lint` and `pnpm format`. |
 | `eslint.config.js` | Secondary ESLint config for React refresh rules; not wired to an npm script. |
-| `vercel.json` | Marketing-origin Vercel build, rewrite, and header configuration. |
 
 ## Subdirectories
 | Directory | Purpose |
@@ -56,7 +55,7 @@ This repository is a React + Vite application that ships the ACGS marketing land
 - Run `pnpm test:claim-matrix` after changing public compliance/security copy, `claim-matrix.json`, or claim-review wording.
 - Run `pnpm test:trust-surface` after changing `/trust`, `/security`, `security.txt`, subprocessor RSS, DPA/SOC2 roadmap wording, or trust/security publication links.
 - Run `pnpm test:docs-scaffold` after changing `ARCHITECTURE.md`, `INTEGRATING.md`, `GETTING_STARTED.md`, `CLAUDE.md`, `AGENTS.md`, or DX script aliases.
-- Run `pnpm test:marketing-csp` after changing `vercel.json`, marketing-origin headers, or CSP report-only policy.
+- Run `pnpm test:marketing-csp` after changing `infra/cloudflare/_headers`, marketing-origin headers, or CSP report-only policy.
 - Run `pnpm build:console && pnpm smoke:bus-proxy` when Docker is available and `/api/*` runtime proxy behavior changes.
 - There is no configured test runner; use existing scripts only.
 
@@ -81,6 +80,6 @@ This repository is a React + Vite application that ships the ACGS marketing land
 - TanStack React Router for surface route trees and React Query for API hook caching.
 - MSW for optional local API mocks.
 - Biome for linting and formatting.
-- Caddy, Docker, Cloud Run, Vercel, and GitHub Actions for deployment.
+- Caddy, Docker, Cloud Run, Cloudflare Pages, and GitHub Actions for deployment.
 
 <!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->

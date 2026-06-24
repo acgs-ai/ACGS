@@ -137,6 +137,39 @@ def test_cli_proofpack_generates_files(
     assert results["audit_chain_verified"] is True
 
 
+def test_cli_proofpack_roundtrip_verifies(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`proofpack` must emit a manifest the offline verifier accepts (round-trip).
+
+    Regression guard: the generator's manifest historically carried only a flat
+    ``files`` array and no structured ``receipts``, so ``verify-proofpack`` read
+    zero receipts and returned ``valid=false`` (exit 1). This proves the real
+    generate->verify loop closes on the unsigned dev pack with no ``--verifier-key``.
+    """
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    gen_code = main(["proofpack"])
+    assert gen_code == 0
+    capsys.readouterr()  # drain the generator's emitted JSON
+
+    dist_dir = tmp_path / "dist-govern-zone-proofpack"
+    try:
+        verify_code = main(["verify-proofpack", "dist-govern-zone-proofpack"])
+        assert verify_code == 0
+
+        result = json.loads(capsys.readouterr().out)
+        assert result["valid"] is True
+        assert result["reasons"] == []
+        # Every declared verdict matched what the verifier observed.
+        assert all(r["matches_declared"] is True for r in result["receipts"])
+    finally:
+        shutil.rmtree(dist_dir, ignore_errors=True)
+
+
 def _write_replay_bundle(tmp_path: Path) -> Path:
     bundle_path = tmp_path / "policy.bundle.json"
     bundle_path.write_text(
@@ -402,3 +435,209 @@ def test_cli_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
 
     out = capsys.readouterr().out
     assert f"gove-zone {__version__}" in out
+
+
+# --- verify-ledger: tamper-evidence verification surface ----------------------
+
+
+class _LedgerReceipt:
+    """Minimal stand-in exposing only what ``consume`` reads."""
+
+    def __init__(self, anchor: str) -> None:
+        self.audit_event_hash = anchor
+        self.request_id = "req"
+        self.tenant_id = "tenant"
+        self.actor = "agent"
+        self.proposed_action = "write_file"
+
+    def compute_hash(self) -> str:
+        return "rh-" + self.audit_event_hash[:8]
+
+
+def _seed_ledger(path: Path, n: int):
+    from gove_zone import ReceiptConsumptionLedger
+
+    ledger = ReceiptConsumptionLedger(path)
+    for i in range(n):
+        ledger.consume(_LedgerReceipt(str(i).ljust(64, "0")))
+    return ledger
+
+
+def test_cli_verify_ledger_registered() -> None:
+    # Handler-wiring: the verb must be registered on the parser, not just defined.
+    from gove_zone.cli import build_parser
+
+    parser = build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    assert "verify-ledger" in subparsers_action.choices
+
+
+def test_cli_verify_ledger_clean(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "consumed.jsonl"
+    _seed_ledger(path, 3)
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["valid"] is True
+    assert payload["checked"] == 3
+    assert payload["unverified_legacy"] == 0
+
+
+def test_cli_verify_ledger_detects_tamper(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "consumed.jsonl"
+    _seed_ledger(path, 3)
+    records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    # Drop the middle entry: a non-zero exit and a recorded failure.
+    path.write_text(
+        "".join(json.dumps(r, sort_keys=True) + "\n" for r in [records[0], records[2]]),
+        encoding="utf-8",
+    )
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert payload["failures"]
+
+
+def test_cli_verify_ledger_corrupt_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "consumed.jsonl"
+    path.write_text("this is not json\n", encoding="utf-8")
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    assert rc == 2
+    assert "verify-ledger" in capsys.readouterr().err
+
+
+def test_cli_verify_ledger_missing_file_is_empty_valid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "never-written.jsonl"
+    rc = main(["verify-ledger", "--ledger", str(path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["checked"] == 0
+    assert payload["valid"] is True
+
+
+def _seed_audit_and_ledger(tmp_path: Path, forged: bool):
+    from gove_zone import ChainHashAuditStore, ReceiptConsumptionLedger
+
+    audit_path = tmp_path / "audit.jsonl"
+    ledger_path = tmp_path / "consumed.jsonl"
+    audit = ChainHashAuditStore(audit_path)
+    real = [audit.append(_record(f"ev{i}"))["event_hash"] for i in range(2)]
+    ledger = ReceiptConsumptionLedger(ledger_path)
+    ledger.consume(_LedgerReceipt(real[0]))
+    ledger.consume(_LedgerReceipt("f" * 64 if forged else real[1]))
+    return audit_path, ledger_path
+
+
+def test_cli_verify_ledger_reconcile_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, ledger_path = _seed_audit_and_ledger(tmp_path, forged=False)
+    rc = main(["verify-ledger", "--ledger", str(ledger_path), "--audit", str(audit_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["reconcile"]["valid"] is True
+    assert payload["reconcile"]["checked"] == 2
+    assert payload["reconcile"]["unmatched"] == []
+
+
+def test_cli_verify_ledger_reconcile_detects_forged_burn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit_path, ledger_path = _seed_audit_and_ledger(tmp_path, forged=True)
+    rc = main(["verify-ledger", "--ledger", str(ledger_path), "--audit", str(audit_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["reconcile"]["valid"] is False
+    assert any(u["consumed_key"] == "f" * 64 for u in payload["reconcile"]["unmatched"])
+
+
+def _generate_proofpacks(dest: Path) -> Path:
+    import importlib.util
+
+    gen_path = Path(__file__).parent / "fixtures" / "_generate_proofpacks.py"
+    spec = importlib.util.spec_from_file_location("_proofpack_gen_cli", gen_path)
+    assert spec and spec.loader
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    gen.write_proofpacks(dest)
+    return dest
+
+
+def test_cli_verify_proofpack_valid_pack_exits_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    # valid-replay ships unsigned (dev-posture) receipts, so the CLI's no-verifier
+    # path accepts it. A SIGNED pack from the CLI is covered separately, with an
+    # out-of-band --verifier-key, in test_cli_verify_proofpack_signed_with_key.
+    rc = main(["verify-proofpack", str(packs / "valid-replay")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["valid"] is True
+    assert payload["reasons"] == []
+
+
+def test_cli_verify_proofpack_signed_with_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A SIGNED proof-pack verifies from the CLI when the relying party supplies the
+    public key OUT-OF-BAND (--verifier-key). The same pack without a key fails closed
+    (SIGNED_RECEIPT_NO_VERIFIER) — proving the trust anchor is load-bearing, not cosmetic.
+    """
+    import hashlib
+
+    from gove_zone import Ed25519Signer
+
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    # Reconstruct the committed fixture public key from its known seed (NOT shipped
+    # in the pack — that would be the trust-anchor circularity of docs/PROOF_PATH.md).
+    seed = hashlib.sha256(b"gove-zone fixture corpus v1 :: trusted").digest()
+    pub = Ed25519Signer.from_private_bytes(seed, key_id="fixture-key-1").public_bytes()
+    keyfile = tmp_path / "trusted.pub"
+    keyfile.write_bytes(pub)
+
+    # With the out-of-band key → valid, exit 0.
+    rc = main(
+        [
+            "verify-proofpack",
+            str(packs / "valid-allow"),
+            "--verifier-key",
+            str(keyfile),
+            "--key-id",
+            "fixture-key-1",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0, payload
+    assert payload["valid"] is True
+    assert payload["signature_verified"] is True
+
+    # Without the key → fail closed.
+    rc = main(["verify-proofpack", str(packs / "valid-allow")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert "SIGNED_RECEIPT_NO_VERIFIER" in payload["reasons"]
+
+
+def test_cli_verify_proofpack_tampered_pack_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    rc = main(["verify-proofpack", str(packs / "tampered-receipt")])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["valid"] is False
+    assert "RECEIPT_HASH_MISMATCH" in payload["reasons"]
