@@ -20,7 +20,7 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
 | `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
 | `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Enhanced Agent Bus observability layer |
-| `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`); no path-filtered workflow yet (follow-up) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
+| `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | `.github/workflows/python-research-engine.yml` (path-filtered); also in root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
 | `automation/` | parent files | YAML + Python helpers | (covered by `python-other` umbrella when added) | Policies, proposals, workflows |
 
 `packages/ai-governance-research/` is parent-tracked but **not** a uv/pnpm

@@ -241,15 +241,39 @@ class ChainHashAuditStore:
                 break
         return out
 
-    def verify_chain(self) -> dict[str, Any]:
+    def verify_chain(
+        self,
+        *,
+        expected_count: int | None = None,
+        expected_last_hash: str | None = None,
+    ) -> dict[str, Any]:
         """Re-walk the chain and report integrity.
 
         Returns a dict with:
-            ``valid`` (bool): True iff every event hash matches and every
-              ``previous_hash`` matches the prior ``event_hash``.
+            ``valid`` (bool): True iff every event hash matches, every
+              ``previous_hash`` matches the prior ``event_hash``, and any
+              supplied external anchor (``expected_count`` / ``expected_last_hash``)
+              matches.
             ``checked`` (int): number of events walked.
             ``failures`` (list): per-failure detail dicts.
             ``last_hash`` (str): final ``event_hash`` walked, or genesis.
+
+        **Truncation/rollback detection.** Internal hash-chaining proves the
+        persisted events are mutually consistent, but a *prefix* of the chain is
+        itself internally consistent: silently deleting whole trailing events
+        yields a shorter chain that still re-walks cleanly. Internal walking
+        alone therefore cannot detect rollback. Supply an out-of-band anchor to
+        close that gap:
+
+        - ``expected_count``: the number of events the chain must contain. A
+          ``checked`` below it is reported as a ``length_mismatch`` failure
+          (the tail was truncated; a larger ``checked`` means unexpected growth).
+        - ``expected_last_hash``: the ``event_hash`` the chain must end on,
+          recorded out-of-band after the last trusted append. A mismatch is a
+          ``last_hash_mismatch`` failure.
+
+        Persist whichever anchor you can (event count and/or last hash) in a
+        store the audit writer cannot rewrite, and pass it here on verification.
         """
         previous = GENESIS_HASH
         checked = 0
@@ -283,6 +307,26 @@ class ChainHashAuditStore:
                 )
 
             previous = str(claimed_hash)
+
+        if expected_count is not None and checked != expected_count:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "length_mismatch",
+                    "expected": expected_count,
+                    "actual": checked,
+                }
+            )
+
+        if expected_last_hash is not None and previous != expected_last_hash:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "last_hash_mismatch",
+                    "expected": expected_last_hash,
+                    "actual": previous,
+                }
+            )
 
         return {
             "valid": len(failures) == 0,

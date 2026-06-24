@@ -1,0 +1,71 @@
+# Path-filtered CI for packages/research-engine/ (the `delve` engine).
+# research-engine is a strict-gating mypy package in the root Makefile fan-out
+# but previously had no path-filtered workflow, so changes scoped only to
+# packages/research-engine/** could skip its strict gate. This closes that gap
+# (tracked in MONOREPO.md).
+
+name: python-research-engine
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/research-engine/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-research-engine.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/research-engine/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-research-engine.yml'
+
+concurrency:
+  group: python-research-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/research-engine
+
+jobs:
+  test:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/research-engine/pyproject.toml'
+
+      - name: Install
+        # Mirrors python-agent-bus-analyzer.yml: use uv's python-build-standalone
+        # instead of actions/setup-python (which lacks prebuilds for the
+        # self-hosted runner) and install into a venv so lint/test invocations
+        # are unambiguous. `dev` is a PEP 735 [dependency-groups] entry, not a
+        # [project.optional-dependencies] extra, so install the group explicitly.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} --clear .venv
+          uv pip install --python .venv/bin/python --editable . --group dev
+
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck (strict)
+        # [tool.mypy] sets strict = true and packages = ["delve"]; -p delve makes
+        # the target explicit so the strict gate runs regardless of CWD nuances.
+        run: .venv/bin/mypy -p delve
+
+      - name: Test
+        run: .venv/bin/pytest -q
