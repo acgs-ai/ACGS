@@ -24,7 +24,14 @@ class ReplayResult:
     """Outcome of replaying a recorded decision."""
 
     event_id: str
-    matches: bool  # original decision == replayed decision
+    # Decision-equality signal, but its STRENGTH depends on ``re_derived``:
+    # when ``re_derived`` is True (replay_call / replay_from_side_store) it means
+    # the policy was re-run and the original decision was reproduced; when
+    # ``re_derived`` is False (event-only replay) the policy was NOT re-run, so
+    # this only reflects a recorded-vs-current policy *version* match, not a true
+    # re-derivation. Never read ``matches`` as "decision reproduced" without also
+    # checking ``re_derived`` and the ``*_match`` flags.
+    matches: bool
     original_decision: Decision
     replayed_decision: Decision
     policy_version_match: bool  # exact version string match
