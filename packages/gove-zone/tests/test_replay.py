@@ -134,6 +134,32 @@ def test_replay_event_uses_audit_only(tmp_path: Path) -> None:
     assert replay_event(event, other).policy_version_match is False
 
 
+def test_replay_event_does_not_claim_rederivation(tmp_path: Path) -> None:
+    """Event-only replay must not advertise a re-derived decision or an arg-hash
+    match: ``matches`` is a policy-version signal only, not proof the decision
+    was reproduced.
+    """
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    policy = BoundaryPolicy(forbidden_keywords=["secret"])
+    k = Kernel(policy=policy, audit=audit)
+
+    @k.tool("touch")
+    def touch() -> None:
+        return None
+
+    _, receipt = k.dispatch("touch")
+    event = find_event(audit, receipt.record.event_id)
+    assert event is not None
+
+    weak = replay_event(event, policy)
+    # version matches, but the decision was NOT re-run and the arg hash was NOT
+    # recomputed — both must be reported honestly.
+    assert weak.matches is True  # policy-version signal only
+    assert weak.re_derived is False
+    assert weak.argument_hash_match is False
+    assert weak.to_dict()["re_derived"] is False
+
+
 def test_find_event_returns_none_for_missing(tmp_path: Path) -> None:
     audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
     assert find_event(audit, "ev_does_not_exist") is None
@@ -167,6 +193,7 @@ def test_side_store_happy_rederivation(tmp_path: Path) -> None:
     assert result.replayed_decision is Decision.ALLOW
     assert result.argument_hash_match is True
     assert result.policy_version_match is True
+    assert result.re_derived is True
     assert result.event_id == event_id
 
 

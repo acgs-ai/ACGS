@@ -70,4 +70,15 @@ jobs:
       - name: Test
         # `--import-mode=importlib` matches the package's pytest config and
         # keeps tests insulated from sys.path leakage from sibling packages.
-        run: .venv/bin/python -m pytest tests/ -v
+        # Coverage floor: the kernel sits on the critical "no valid receipt, no
+        # side effect" path, so a regression that silently drops a tested branch
+        # must fail CI. 90% is a deliberate floor below the ~92% actual (leaving
+        # headroom for platform-specific branches: the Windows msvcrt audit lock
+        # and the no-crypto-extra ImportError paths are unreachable on this
+        # Linux+crypto runner). Raise the floor as coverage climbs; never lower
+        # it to make a red build pass.
+        run: >
+          .venv/bin/python -m pytest tests/ -v
+          --cov=gove_zone
+          --cov-report=term-missing:skip-covered
+          --cov-fail-under=90

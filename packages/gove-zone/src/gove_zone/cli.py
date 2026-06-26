@@ -87,7 +87,7 @@ def _rederive(
         status = "decision-mismatch"
     return {
         "attempted": True,
-        "rederived": result.matches,
+        "rederived": result.re_derived and result.matches,
         "rederivation_status": status,
         "replayed_decision": result.replayed_decision.value,
         "policy_version_match": result.policy_version_match,

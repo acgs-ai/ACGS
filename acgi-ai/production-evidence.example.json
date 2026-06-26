@@ -7,7 +7,7 @@
     "marketingUrl": "https://acgs.ai",
     "consoleUrl": "https://console.acgs.ai",
     "cloudRunRevisionUrl": "REPLACE_WITH_CLOUD_RUN_REVISION_URL",
-    "vercelUrl": "REPLACE_WITH_VERCEL_DEPLOYMENT_URL",
+    "cloudflareUrl": "REPLACE_WITH_CLOUDFLARE_DEPLOYMENT_URL",
     "githubActionsRunUrls": {
       "marketing": "REPLACE_WITH_MARKETING_WORKFLOW_RUN_URL",
       "console": "REPLACE_WITH_CONSOLE_WORKFLOW_RUN_URL",
