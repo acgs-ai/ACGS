@@ -12,10 +12,13 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.signing import ReceiptSigner
+
+if TYPE_CHECKING:
+    from gove_zone.revocation import RevocationList
 
 
 def _now_iso() -> str:
@@ -354,6 +357,7 @@ class DecisionReceipt:
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
         require_expiry: bool = False,
+        revoked_keys: RevocationList | None = None,
         now_iso: str | None = None,
     ) -> None:
         """Low-level receipt verification primitive.
@@ -375,6 +379,14 @@ class DecisionReceipt:
         (:meth:`gove_zone.profile.GovernanceProfile.production_strict`) sets this
         so a long-lived bearer receipt cannot authorize indefinitely. Default
         ``False`` keeps every existing caller unaffected.
+
+        ``revoked_keys`` (additive, default ``None``) is a
+        :class:`gove_zone.revocation.RevocationList` of compromised *signing*
+        ``key_id`` values. When supplied, a receipt whose ``signing_key_id`` is
+        revoked is rejected (:data:`ReceiptRejectionReason.SIGNING_KEY_REVOKED`)
+        *before* the signature is trusted — independent of whether the key is
+        still present in ``verifier``. ``None`` (the default) preserves current
+        behavior exactly.
         """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
@@ -448,6 +460,19 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.UNSIGNED_REJECTED,
             )
         if self.signature_algorithm != "none":
+            # 2a-revoke (B2): reject a revoked signing key BEFORE resolving the
+            # verifier or trusting the signature. This is independent of
+            # verifier-map membership — a revoked key still present in the map,
+            # with a cryptographically valid signature, is rejected. Placed
+            # inside the signed branch, so it can never reject an unsigned
+            # receipt (algorithm=="none" ⇒ signing_key_id=="" never reaches
+            # here), and it fires regardless of require_signature (a dev-mode
+            # signed receipt with a revoked key is still rejected).
+            if revoked_keys is not None and revoked_keys.is_revoked(self.signing_key_id):
+                raise ReceiptValidationError(
+                    f"signing key revoked: {self.signing_key_id!r}",
+                    reason_code=ReceiptRejectionReason.SIGNING_KEY_REVOKED,
+                )
             # Resolve the verifier — a missing verifier is a hard rejection here
             # (the receipt claims a signature; we must check it).
             resolved: ReceiptSigner | None

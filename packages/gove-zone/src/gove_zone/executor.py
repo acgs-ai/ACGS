@@ -19,6 +19,7 @@ from gove_zone.errors import (
 )
 from gove_zone.policy import Policy
 from gove_zone.receipt import DecisionReceipt
+from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
 
 
@@ -38,6 +39,7 @@ def execute_with_receipt(
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = True,
     require_expiry: bool = False,
+    revoked_keys: RevocationList | None = None,
     consumption_ledger: ReceiptConsumptionLedger | None = None,
     authz_enforce: bool = False,
     principal_registry: PrincipalRegistry | None = None,
@@ -168,6 +170,7 @@ def execute_with_receipt(
         verifier=verifier,
         require_signature=require_signature,
         require_expiry=require_expiry,
+        revoked_keys=revoked_keys,
     )
 
     # Burn-before-execute: consume only after verify passes (a failed
@@ -229,6 +232,7 @@ class GovernedExecutor:
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
+        revoked_keys: RevocationList | None = None,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
         authz_enforce: bool = False,
         principal_registry: PrincipalRegistry | None = None,
@@ -250,6 +254,11 @@ class GovernedExecutor:
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
+        # Revocation config is constructor-only (never a per-call arg on
+        # execute): a per-call empty/weaker list could silently disable a
+        # security control — the same foot-gun authz_enforce/ledger avoid. The
+        # executor's revocation posture flows through to resume_with_receipt.
+        self.revoked_keys = revoked_keys
         self.consumption_ledger = consumption_ledger
         self.authz_enforce = authz_enforce
         self.principal_registry = principal_registry
@@ -311,6 +320,7 @@ class GovernedExecutor:
             verifier=effective_verifier,
             require_signature=effective_require,
             require_expiry=effective_require_expiry,
+            revoked_keys=self.revoked_keys,
             consumption_ledger=effective_ledger,
             authz_enforce=self.authz_enforce,
             principal_registry=self.principal_registry,

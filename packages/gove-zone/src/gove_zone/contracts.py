@@ -34,7 +34,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, NewType
+from typing import TYPE_CHECKING, Any, NewType
+
+if TYPE_CHECKING:
+    from gove_zone.revocation import RevocationList
 
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
@@ -231,6 +234,7 @@ class ReceiptVerifier:
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
+        revoked_keys: RevocationList | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -244,6 +248,10 @@ class ReceiptVerifier:
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
+        # Revocation config is construction-only (never a per-call arg on
+        # verify): a per-call empty/weaker list could silently disable a
+        # security control, the same foot-gun authz/ledger avoid.
+        self.revoked_keys = revoked_keys
 
     def verify(
         self,
@@ -286,6 +294,7 @@ class ReceiptVerifier:
             verifier=self.verifier,
             require_signature=self.require_signature,
             require_expiry=self.require_expiry,
+            revoked_keys=self.revoked_keys,
             now_iso=now_iso,
         )
 
