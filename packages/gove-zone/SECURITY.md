@@ -160,8 +160,10 @@ ask for less.
   (`ReceiptVerifier` / `GovernedExecutor` / `execute_with_receipt`, and via them
   `resume_with_receipt`) and the offline `verify_workflow_replay` inner-receipt
   path by passing a `RevocationList` (`revoked_keys=`): a receipt signed by a
-  revoked `key_id` is rejected even with a valid signature still in the verifier
-  map. The residual gap is *distribution* — the verifier mapping and the
+  revoked `key_id` is rejected before its signature is trusted — at the live
+  gates, even with a valid signature still present in the verifier map (revocation
+  is independent of map membership). The residual gap is *distribution* — the
+  verifier mapping and the
   revocation list remain static config the operator deploys — and `verify_proof_pack`
   / the proof-pack CLI plus the workflow envelope/authorization signatures (a
   distinct key population) do not yet honor `revoked_keys`.
