@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from gove_zone.authz import AuthzReason
 from gove_zone.decision import DecisionRecord
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 
@@ -173,6 +174,23 @@ class SigningError(GoveZoneError):
     and configuration faults: missing ``crypto`` extra, malformed key bytes, or
     attempting to ``sign`` with a verify-only signer.
     """
+
+
+class AuthzDeniedError(GoveZoneError):
+    """Raised at the executor gate when the acting principal is not authorized.
+
+    Distinct from :class:`ReceiptValidationError` (a receipt defect): the receipt
+    may be perfectly valid; the principal is simply not on the integrator's
+    allowlist for this action. Relying parties assert on ``reason`` — the same
+    :class:`~gove_zone.authz.AuthzReason` taxonomy the kernel emits as
+    ``AUTHZ_DENY:<reason>``.
+    """
+
+    def __init__(self, reason: AuthzReason, actor: str, action: str) -> None:
+        self.reason = reason
+        self.actor = actor
+        self.action = action
+        super().__init__(f"principal {actor!r} not authorized for action {action!r} ({reason})")
 
 
 class DeniedError(GoveZoneError):

@@ -49,3 +49,14 @@ strict = true
 # installed; treat them as untyped so --strict doesn't require their stubs.
 module = ["anthropic.*", "exa_py.*", "tavily.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy>=2.5 ships PEP 695 `type` statements in its stubs that are only valid for
+# a checked-for python_version >= 3.12. With our 3.11 floor (python_version above),
+# mypy errors out parsing numpy's own stub before it reaches project code (this
+# only surfaces on a 3.12+ interpreter, where the lock installs numpy 2.5.0). Skip
+# following numpy so the conservative 3.11 typecheck target is preserved without
+# breaking on a third-party stub's newer syntax.
+module = ["numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

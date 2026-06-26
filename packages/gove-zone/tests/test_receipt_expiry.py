@@ -78,6 +78,20 @@ def test_unparseable_expiry_fails_closed() -> None:
         receipt.verify(now_iso="2026-01-01T00:00:00+00:00")
 
 
+def test_naive_expiry_timestamp_fails_closed() -> None:
+    # An offset-naive expires_at is ambiguous and could fail open across zones;
+    # the gate must reject it rather than compare naively.
+    receipt = _receipt(expires_at="2026-01-01T00:00:00")  # no offset
+    with pytest.raises(ReceiptValidationError, match="timezone-aware"):
+        receipt.verify(now_iso="2025-06-01T00:00:00+00:00")
+
+
+def test_naive_now_timestamp_fails_closed() -> None:
+    receipt = _receipt(expires_at="2026-01-01T00:00:00+00:00")
+    with pytest.raises(ReceiptValidationError, match="timezone-aware"):
+        receipt.verify(now_iso="2025-06-01T00:00:00")  # naive now
+
+
 def test_expiry_survives_json_round_trip() -> None:
     receipt = _receipt(expires_at="2026-01-01T00:00:00+00:00")
     restored = DecisionReceipt.from_json(receipt.to_json())
