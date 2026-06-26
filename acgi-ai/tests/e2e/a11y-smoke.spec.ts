@@ -22,7 +22,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
-import { mockConsoleSession } from './_console-session'
+import { mockConsoleData, mockConsoleSession } from './_console-session'
 
 const BLOCKING_IMPACTS = new Set(['serious', 'critical'])
 
@@ -53,6 +53,7 @@ test.describe('axe accessibility smoke (console surface)', () => {
     page,
   }) => {
     await mockConsoleSession(page)
+    await mockConsoleData(page) // scan the POPULATED console, not the fail-closed error state
     await page.goto('/console')
     await expect(page.locator('#console-main-content')).toBeVisible({ timeout: 30_000 })
     const blocking = await blockingViolations(page)

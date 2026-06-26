@@ -172,6 +172,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile --ignore-workspace
 
+      # No `--with-deps`: that needs apt/sudo. This self-hosted runner is a
+      # long-lived box with the OS libs already provisioned and browsers
+      # persisted in ~/.cache/ms-playwright, so a plain install (cache hit) is
+      # enough. Re-add --with-deps only if the runner is ever reprovisioned bare.
       - name: Install Playwright chromium
         run: pnpm exec playwright install chromium
 
