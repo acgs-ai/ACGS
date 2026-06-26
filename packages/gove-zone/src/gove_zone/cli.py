@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -211,6 +212,47 @@ def _verify_ledger(args: argparse.Namespace) -> int:
 
     _emit(payload)
     return 0 if (report["valid"] and reconcile_ok) else 1
+
+
+def _prune_ledger(args: argparse.Namespace) -> int:
+    """TTL-prune a consumption ledger: drop expired burned entries.
+
+    Calls :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.prune`, which
+    removes only entries whose receipt has already expired, re-chains the
+    survivors, and advances the prune watermark (clock-rollback defense) plus
+    the high-water-mark. Checkpointing is auto-detected from a ``<ledger>.hwm``
+    sidecar so prune keeps an existing high-water-mark consistent with the
+    re-chained tail. A corrupt / unreadable ledger (or an unparseable ``--now``)
+    exits 2 and prunes nothing — fail-closed.
+    """
+    ledger_path = Path(args.ledger)
+    checkpoint = ledger_path.with_suffix(ledger_path.suffix + ".hwm").exists()
+    ledger = ReceiptConsumptionLedger(ledger_path, checkpoint=checkpoint)
+
+    now = None
+    if args.now is not None:
+        try:
+            now = datetime.fromisoformat(args.now)
+        except (ValueError, TypeError) as exc:
+            print(f"prune-ledger: unparseable --now {args.now!r}: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        report = ledger.prune(now=now)
+    except ConsumptionLedgerError as exc:
+        print(f"prune-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "ledger": str(args.ledger),
+            "pruned": report["pruned"],
+            "kept": report["kept"],
+            "last_hash": report["last_hash"],
+            "watermark": report["watermark"],
+        }
+    )
+    return 0
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -803,6 +845,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     verify_ledger.set_defaults(func=_verify_ledger)
+
+    prune_ledger = subparsers.add_parser(
+        "prune-ledger",
+        help="TTL-prune a consumption ledger (drop expired burned entries)",
+    )
+    prune_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to prune",
+    )
+    prune_ledger.add_argument(
+        "--now",
+        default=None,
+        help=(
+            "optional ISO-8601 timezone-aware cutoff (default: current UTC time); "
+            "burned entries whose receipt expired strictly before this are removed, "
+            "and the prune watermark advances to the latest expiry removed. A future "
+            "value also prunes not-yet-expired entries — use deliberately"
+        ),
+    )
+    prune_ledger.set_defaults(func=_prune_ledger)
 
     setup = subparsers.add_parser(
         "setup",

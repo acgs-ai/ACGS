@@ -60,6 +60,20 @@ that remaining limitation is an accepted limitation of the local alpha, not a bu
   enable the consumption ledger, set a short `expires_at`, use the workflow ledger
   for workflow paths, and retain side-store proof packs for strong replay. A
   default-on single-use profile and a global revocation registry are roadmap.
+- **The ledger is bounded without reopening replay.** The single-use record grows
+  one line per governed execution; `ReceiptConsumptionLedger.prune` (CLI:
+  `gove-zone prune-ledger`) caps it by removing only entries whose receipt has
+  *already expired* — safe because an expired receipt fails `verify` check 13
+  before `consume` is reached. To keep the clock-set-back posture across a prune,
+  it persists a **prune time-watermark** (`<ledger>.pwm` = the latest expiry ever
+  removed); `consume` refuses any receipt expiring at or before that watermark, so
+  a rolled-back clock cannot replay a pruned-out receipt. Receipts minted without
+  an `expires_at` are never prunable. This compares fixed timestamps only, so it
+  never rejects a legitimately-fresh receipt under a forward clock. A corrupt
+  watermark fails closed and it is advanced write-ahead (crash-safe); its residual
+  gap is *deletion* — an attacker who deletes `<ledger>.pwm` and rolls the clock
+  back reopens the pruned receipt (same threat class as deleting `.hwm` without
+  `checkpoint`), so place both sidecars on protected/append-only storage.
 
 Also operator-tunable and off/optional by default: `expires_at` (no global
 revocation list) and `policy_timeout` (hang → DENY only when configured). Set both
