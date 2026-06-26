@@ -21,6 +21,17 @@ fetch, no expiry/rotation, no revocation metadata — a flat set, loaded from a
 JSON array. Off by default: with no list configured the gate behaves
 byte-for-byte as before.
 
+Surfaces covered: the live gates (:func:`gove_zone.executor.execute_with_receipt`,
+:class:`gove_zone.executor.GovernedExecutor`, :class:`gove_zone.contracts.ReceiptVerifier`,
+and via them :func:`gove_zone.escalation.resume_with_receipt`) and the offline
+inner-receipt path of :func:`gove_zone.workflow.verify_workflow_replay`.
+Deliberately NOT covered yet (documented fast-follows, all default-``None`` so
+behavior is unchanged): :func:`gove_zone.verifier.verify_proof_pack` and the
+``verify-proofpack`` CLI; the workflow **envelope** and **plan-authorization**
+signatures (``WorkflowStepReceipt`` / ``WorkflowAuthorization`` — a *distinct*
+key population from ``DecisionReceipt.signing_key_id``, belonging to the deferred
+caller/plan-credential subsystem).
+
 stdlib-only; never imports ``cryptography`` (revocation is a set membership
 test, not a crypto operation).
 """

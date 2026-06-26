@@ -156,8 +156,15 @@ ask for less.
 - **Key distribution / trust establishment.** There is no PKI, certificate chain,
   or trust-store bootstrapping. The verifier mapping is static; the operator must
   manage it.
-- **Revocation.** A compromised key cannot be revoked; the operator must update
-  and redeploy the verifier mapping.
+- **Revocation.** A compromised signing key *can* be revoked at the live gates
+  (`ReceiptVerifier` / `GovernedExecutor` / `execute_with_receipt`, and via them
+  `resume_with_receipt`) and the offline `verify_workflow_replay` inner-receipt
+  path by passing a `RevocationList` (`revoked_keys=`): a receipt signed by a
+  revoked `key_id` is rejected even with a valid signature still in the verifier
+  map. The residual gap is *distribution* — the verifier mapping and the
+  revocation list remain static config the operator deploys — and `verify_proof_pack`
+  / the proof-pack CLI plus the workflow envelope/authorization signatures (a
+  distinct key population) do not yet honor `revoked_keys`.
 
 ## Workflow receipt chaining
 
