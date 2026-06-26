@@ -23,14 +23,17 @@ byte-for-byte as before.
 
 Surfaces covered: the live gates (:func:`gove_zone.executor.execute_with_receipt`,
 :class:`gove_zone.executor.GovernedExecutor`, :class:`gove_zone.contracts.ReceiptVerifier`,
-and via them :func:`gove_zone.escalation.resume_with_receipt`) and the offline
-inner-receipt path of :func:`gove_zone.workflow.verify_workflow_replay`.
-Deliberately NOT covered yet (documented fast-follows, all default-``None`` so
-behavior is unchanged): :func:`gove_zone.verifier.verify_proof_pack` and the
-``verify-proofpack`` CLI; the workflow **envelope** and **plan-authorization**
-signatures (``WorkflowStepReceipt`` / ``WorkflowAuthorization`` — a *distinct*
-key population from ``DecisionReceipt.signing_key_id``, belonging to the deferred
-caller/plan-credential subsystem).
+and via them :func:`gove_zone.escalation.resume_with_receipt`); the offline
+inner-receipt path of :func:`gove_zone.workflow.verify_workflow_replay`; and the
+**offline** proof-pack verifier :func:`gove_zone.verifier.verify_proof_pack` with
+its ``verify-proofpack --revoked-keys`` CLI (all default-``None`` so behavior is
+unchanged when no list is supplied) — so a key compromised *after* a pack is
+minted cannot be verified as valid by a relying party.
+Deliberately NOT covered yet (documented fast-follow): the workflow **envelope**
+and **plan-authorization** signatures (``WorkflowStepReceipt`` /
+``WorkflowAuthorization`` — a *distinct* key population from
+``DecisionReceipt.signing_key_id``, belonging to the deferred caller/plan-credential
+subsystem).
 
 stdlib-only; never imports ``cryptography`` (revocation is a set membership
 test, not a crypto operation).
