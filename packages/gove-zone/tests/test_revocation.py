@@ -203,9 +203,7 @@ def test_empty_revocation_list_allows() -> None:
     pub = Ed25519Signer.from_public_bytes(signer.public_bytes(), key_id="k1")
     receipt = _issue(signer)
 
-    gate = _verifier(
-        verifier={"k1": pub}, require_signature=True, revoked_keys=RevocationList([])
-    )
+    gate = _verifier(verifier={"k1": pub}, require_signature=True, revoked_keys=RevocationList([]))
     gate.verify(receipt, expected_action=ACTION, expected_args=ARGS)  # no raise
 
 
