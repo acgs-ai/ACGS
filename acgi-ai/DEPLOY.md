@@ -942,29 +942,49 @@ the production banner.
 
 ## §9 DNS, certificates, mail
 
-**Zone:** `acgs.ai`, single registrar, DNSSEC on.
+**Zone:** `acgs.ai` on Cloudflare nameservers (`stan`/`zita.ns.cloudflare.com`).
+Enable DNSSEC at the Cloudflare zone and verify before launch.
 
-**Records:**
+**Live state — audited 2026-06-19** (read-only `dig`, confirmed via `@1.1.1.1`).
+This is the expected pre-launch / deployment-blocked posture; it matches the
+`production-deploy-fail-closed-local` readiness item (the marketing deploy fails
+closed until the Pages project + secrets exist):
 
-| Name | Type | Target | Notes |
-|---|---|---|---|
-| `acgs.ai` | A/AAAA | Cloudflare Pages anycast | apex |
-| `www.acgs.ai` | CNAME | `acgs-marketing.pages.dev` | |
-| `console.acgs.ai` | CNAME | Cloud Run / Fly hostname | locked in `production-cutover-plan` |
-| `storybook.acgs.ai` | CNAME | GitHub Pages custom-domain target | required for buyer-evidence manifest proof |
-| `_acme-challenge.console` | TXT | rotated by ACME client | for cert issuance |
-| MX | | Workspace / Fastmail | mail provider |
-| TXT (apex) | SPF | `v=spf1 include:_spf.google.com -all` | mail policy |
-| TXT (DKIM) | DKIM | provider-issued | mail policy |
-| TXT (DMARC) | `v=DMARC1; p=reject; rua=mailto:dmarc@acgs.ai` | reject, not quarantine | regulated-AI brand |
-| CAA (apex) | CAA | `0 issue "letsencrypt.org"` | restrict CAs |
+| Name | Live | Target |
+|---|---|---|
+| `acgs.ai` / `www.acgs.ai` | A `172.64.80.1` + AAAA (Cloudflare); **HTTP 404** — Pages project not yet bound | Cloudflare Pages custom domain serving the marketing build (§3a) |
+| `console.acgs.ai` | **no record** | CNAME to the Cloud Run domain-mapping target (`ghs.googlehosted.com`) once the console deploys |
+| `storybook.acgs.ai` | **no record** | CNAME to the GitHub Pages buyer-evidence target once the gallery is published (required for `storybook-manifest-live` proof) |
+| MX (apex) | Google Workspace ✓ | unchanged |
+| SPF (apex TXT) | `v=spf1 include:_spf.google.com ~all` ✓ | tighten to `-all` only after DMARC `p=reject` is stable |
+| DKIM (`google._domainkey`) | published ✓ | unchanged |
+| DMARC (`_dmarc` TXT) | **absent** | staged rollout to `p=reject` (below) |
+| CAA (apex) | **absent** | optional — see the caution below |
 
-**HSTS preload:** submit `acgs.ai` and `www.acgs.ai` after 60 days of
-clean delivery. Console is preload-eligible via `includeSubDomains` on
-the apex record.
+**Apply order:** §8 / the `production-cutover-plan` are authoritative. Set the
+`production` environment reviewers, then secrets (`CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`, GCP WIF), then deploy, then add the subdomain records to
+their live targets, then the mail-security records below.
 
-**Certificates:** ACME via the deploy provider on each surface. No
-manual cert handling.
+**DMARC — staged rollout (never jump straight to reject).** SPF and DKIM
+(`google._domainkey`) are both live, so alignment is satisfiable:
+
+1. `_dmarc.acgs.ai TXT "v=DMARC1; p=none; rua=mailto:dmarc-reports@acgs.ai; fo=1; adkim=s; aspf=s"` — monitor aggregate reports 2–4 weeks.
+2. `p=quarantine; pct=25` → ramp `pct` to 100.
+3. `p=reject` — the regulated-AI brand target.
+
+**CAA — optional, and a cert-renewal foot-gun.** Cloudflare Universal SSL issues
+via multiple CAs; a `0 issue "letsencrypt.org"`-only record (as previously drafted
+here) would **break renewal**. Either leave CAA unset (Cloudflare manages certs
+without it) or publish Cloudflare's full documented allow-list (`letsencrypt.org`,
+`pki.goog`, `ssl.com`, `google.com`, …) plus `0 iodef "mailto:security@acgs.ai"`,
+and confirm renewal afterward.
+
+**HSTS preload:** submit `acgs.ai` and `www.acgs.ai` after 60 days of clean
+delivery, with `includeSubDomains` on the apex so the console inherits.
+
+**Certificates:** Cloudflare Universal SSL for the marketing/apex surface; Cloud
+Run managed certificate for the console. No manual cert handling.
 
 ---
 
