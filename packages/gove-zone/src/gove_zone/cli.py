@@ -715,7 +715,22 @@ def _verify_proofpack(args: argparse.Namespace) -> int:
             return 2
         verifier = {signer.key_id: signer}
 
-    result = verify_proof_pack(args.pack_dir, verifier=verifier, now_iso=args.now_iso)
+    revoked_keys = None
+    if getattr(args, "revoked_keys", None):
+        # Out-of-band revocation list: revoked signing key_ids, supplied SEPARATELY
+        # by the relying party. Fail-closed — an unreadable/malformed list must not
+        # silently degrade to "no revocation applied" (exit 2, same as a bad anchor).
+        from gove_zone.revocation import RevocationList
+
+        try:
+            revoked_keys = RevocationList.from_json(args.revoked_keys)
+        except Exception as exc:  # noqa: BLE001 — a broken revocation list must not verify anything
+            print(f"verify-proofpack: cannot load --revoked-keys: {exc}", file=sys.stderr)
+            return 2
+
+    result = verify_proof_pack(
+        args.pack_dir, verifier=verifier, now_iso=args.now_iso, revoked_keys=revoked_keys
+    )
     print(json.dumps(result.to_dict(), indent=2))
     return 0 if result.valid else 1
 
@@ -963,6 +978,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--key-id",
         default=None,
         help="key_id the --verifier-key registers as (must match the receipt's signing_key_id)",
+    )
+    verify_proofpack.add_argument(
+        "--revoked-keys",
+        default=None,
+        help=(
+            "path to a JSON revocation list of revoked signing key_ids, supplied "
+            "out-of-band. A signed receipt whose signing_key_id is revoked fails "
+            "closed (SIGNING_KEY_REVOKED). Omit to apply no revocation."
+        ),
     )
     verify_proofpack.set_defaults(func=_verify_proofpack)
 

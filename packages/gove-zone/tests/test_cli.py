@@ -631,6 +631,78 @@ def test_cli_verify_proofpack_signed_with_key(
     assert "SIGNED_RECEIPT_NO_VERIFIER" in payload["reasons"]
 
 
+def test_cli_verify_proofpack_revoked_key_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A signed pack whose signing key is on an out-of-band --revoked-keys list fails
+    closed (SIGNING_KEY_REVOKED, exit 1), even though the signature itself is valid —
+    proving revocation is applied OFFLINE by the verify-proofpack CLI (B4-c).
+    """
+    import hashlib
+
+    from gove_zone import Ed25519Signer
+
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    seed = hashlib.sha256(b"gove-zone fixture corpus v1 :: trusted").digest()
+    pub = Ed25519Signer.from_private_bytes(seed, key_id="fixture-key-1").public_bytes()
+    keyfile = tmp_path / "trusted.pub"
+    keyfile.write_bytes(pub)
+    revoked = tmp_path / "revoked.json"
+    revoked.write_text(json.dumps(["fixture-key-1"]), encoding="utf-8")
+
+    # Same valid signed pack as test_cli_verify_proofpack_signed_with_key, now with the
+    # signing key revoked → rejected.
+    rc = main(
+        [
+            "verify-proofpack",
+            str(packs / "valid-allow"),
+            "--verifier-key",
+            str(keyfile),
+            "--key-id",
+            "fixture-key-1",
+            "--revoked-keys",
+            str(revoked),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1, payload
+    assert payload["valid"] is False
+    assert "SIGNING_KEY_REVOKED" in payload["reasons"]
+
+    # Sanity: WITHOUT --revoked-keys the same invocation is valid (off-by-default).
+    rc = main(
+        [
+            "verify-proofpack",
+            str(packs / "valid-allow"),
+            "--verifier-key",
+            str(keyfile),
+            "--key-id",
+            "fixture-key-1",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0, payload
+    assert payload["valid"] is True
+
+
+def test_cli_verify_proofpack_malformed_revoked_keys_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed --revoked-keys list must fail closed (exit 2), never silently
+    degrade to 'no revocation applied' — same posture as a bad --verifier-key.
+    """
+    pytest.importorskip("cryptography")
+    packs = _generate_proofpacks(tmp_path / "packs")
+    bad = tmp_path / "bad-revoked.json"
+    bad.write_text("{ not a json array", encoding="utf-8")
+
+    rc = main(["verify-proofpack", str(packs / "valid-replay"), "--revoked-keys", str(bad)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "cannot load --revoked-keys" in captured.err
+
+
 def test_cli_verify_proofpack_tampered_pack_exits_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
