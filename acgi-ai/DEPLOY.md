@@ -795,13 +795,18 @@ keeps route-level UI decisions explicit before deploy workflows run.
 
 
 **Test surface foundation gate.** `pnpm run test:test-surface` is a local
-static gate for the Phase 2/A15 script surface. It verifies `pnpm run test:e2e`
+static gate for the A15 script surface. It verifies `pnpm run test:e2e`
 and `pnpm run test:visual` package wiring, records the E2E route/viewport
 manifest and visual baseline target manifest, and keeps those commands inside
-`pnpm test:all`. This is not Playwright execution, not axe execution, and not a
-visual-diff artifact; browser screenshots, CSP event capture, accessibility
-scans, and visual diff proof remain external Phase 2 evidence before stronger
-launch claims.
+`pnpm test:all`. This gate itself is not Playwright execution, not axe execution,
+and not a visual-diff artifact — `test:e2e` and `test:visual` remain static
+manifest checks. Real browser execution now runs separately in the
+`browser-checks` CI job (`pnpm test:playwright`): a console-surface axe smoke
+that blocks serious/critical violations (`color-contrast` scoped out as the
+documented `--muted` token debt, see `A11Y.md`), and one console-overview 1440
+visual baseline (non-blocking for now). The full viewport matrix, the remaining
+visual targets, marketing-surface axe, and CSP event capture remain external
+Phase 3 evidence before stronger launch claims.
 
 **Local browser workbench evidence.** `pnpm run evidence:browser-workbench`
 launches the marketing and console Vite surfaces separately, uses
