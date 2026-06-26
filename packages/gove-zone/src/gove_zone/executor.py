@@ -9,9 +9,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from gove_zone.authz import PrincipalRegistry
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
+    AuthzDeniedError,
     ProductionProfileError,
     ReceiptValidationError,
 )
@@ -37,6 +39,8 @@ def execute_with_receipt(
     require_signature: bool = True,
     require_expiry: bool = False,
     consumption_ledger: ReceiptConsumptionLedger | None = None,
+    authz_enforce: bool = False,
+    principal_registry: PrincipalRegistry | None = None,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -102,11 +106,32 @@ def execute_with_receipt(
     executes. At-most-once semantics: a tool failure after the burn does NOT
     un-burn the receipt; recovery is a fresh decision/approval. Verification
     failures burn nothing.
+
+    ``authz_enforce`` (opt-in, default ``False``) + ``principal_registry`` add
+    principal authorization at the executor gate (B13): when enabled,
+    ``expected_actor`` must be an allowlisted principal permitted for
+    ``expected_action`` or the call raises
+    :class:`~gove_zone.errors.AuthzDeniedError` before any side effect. This is a
+    strictly additional AND-gate over receipt verification — it can only deny,
+    never permit, so it cannot weaken any existing guarantee. It runs before
+    receipt verification and the ledger burn. ``authz_enforce=True`` with no
+    registry is a fail-closed misconfiguration (``ValueError``). Default
+    ``False`` leaves every existing caller byte-for-byte unchanged.
     """
     if not expected_actor or not expected_actor.strip():
         raise ReceiptValidationError(
             "expected_actor is required for governed execution (fail-closed)"
         )
+    # Principal authorization (B13): when enabled, the acting principal must be
+    # an allowlisted principal permitted for this action — a strictly additional
+    # AND-gate over receipt verification (it can only deny, never permit). Off by
+    # default; enforcing with no registry is a fail-closed misconfiguration.
+    if authz_enforce:
+        if principal_registry is None:
+            raise ValueError("authz_enforce=True requires a principal_registry (fail-closed)")
+        denial = principal_registry.authorize(expected_actor, expected_action)
+        if denial is not None:
+            raise AuthzDeniedError(denial, expected_actor, expected_action)
     if require_signature and verifier is None:
         raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
     if receipt is None:
@@ -205,11 +230,19 @@ class GovernedExecutor:
         require_signature: bool = True,
         require_expiry: bool = False,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
+        authz_enforce: bool = False,
+        principal_registry: PrincipalRegistry | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
                 "expected_actor is required for GovernedExecutor (fail-closed)"
             )
+        # authz_enforce / principal_registry are constructor-only (never per-call):
+        # a per-call override could silently *disable* enforcement, the same
+        # footgun the ledger/policy fields avoid. Fail closed if enforcing
+        # without a registry.
+        if authz_enforce and principal_registry is None:
+            raise ValueError("authz_enforce=True requires a principal_registry (fail-closed)")
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
         self.expected_actor = expected_actor
@@ -218,6 +251,8 @@ class GovernedExecutor:
         self.require_signature = require_signature
         self.require_expiry = require_expiry
         self.consumption_ledger = consumption_ledger
+        self.authz_enforce = authz_enforce
+        self.principal_registry = principal_registry
         self.registry: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
@@ -277,4 +312,6 @@ class GovernedExecutor:
             require_signature=effective_require,
             require_expiry=effective_require_expiry,
             consumption_ledger=effective_ledger,
+            authz_enforce=self.authz_enforce,
+            principal_registry=self.principal_registry,
         )

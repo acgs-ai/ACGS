@@ -37,6 +37,7 @@ from gove_zone.decision import (
 )
 from gove_zone.errors import (
     AuditError,
+    AuthzDeniedError,
     ConsumptionLedgerError,
     DeniedError,
     EscalateError,
@@ -150,6 +151,7 @@ __all__ = [
     "AuditError",
     "AuditEvent",
     "BoundaryPolicy",
+    "AuthzDeniedError",
     "AuthzReason",
     "AuthzRegistryError",
     "ChainHashAuditStore",
