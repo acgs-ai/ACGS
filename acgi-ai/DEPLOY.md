@@ -60,7 +60,7 @@ infrastructure.**
 
 ```
                      ┌──────────────────────────────┐
-   acgs.ai           │  Cloudflare Pages            │
+   acgs.ai           │  Cloudflare Pages (CDN edge) │
    www.acgs.ai  ───► │  static bundle, CDN-cached   │
                      │  marketing surface only       │
                      └──────────────────────────────┘
