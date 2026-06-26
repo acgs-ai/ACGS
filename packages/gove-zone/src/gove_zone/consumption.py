@@ -67,6 +67,48 @@ every call. That is deliberate for v1 — it is immune to stale-cache races
 across processes and the file grows by one line per *governed execution*, which
 is low-volume by construction. Swap in an indexed store behind the same method
 contract if a deployment outgrows it.
+
+TTL pruning (bounded growth without reopening replay)
+-----------------------------------------------------
+
+:meth:`~ReceiptConsumptionLedger.prune` bounds the file: it removes only burned
+entries whose receipt has **already expired** (``expires_at`` is now stored per
+entry), re-chains the survivors, and advances the high-water-mark — never an
+unexpired or no-expiry entry. The safety argument is upstream: an expired
+receipt fails :meth:`~gove_zone.receipt.DecisionReceipt.verify` check 13 *before*
+``consume`` is ever reached, so reopening its anchor cannot be replayed.
+
+That argument holds only while the gate's clock moves forward. A naive prune
+would *regress* the deletion/HWM clock-set-back posture: prune an expired entry
+at a correct clock, then roll the clock back below the receipt's expiry, and
+``verify`` would pass again while the anchor reads as un-burned — a fresh burn,
+a replay. ``prune`` closes this by persisting a **prune time-watermark**
+(``<ledger>.pwm`` = the latest ``expires_at`` it has ever removed). ``consume``
+refuses any receipt whose ``expires_at`` is at or before that watermark: its
+single-use record may have been pruned and its freshness can no longer be
+proven. This compares two fixed timestamps (no live clock), so under a forward
+clock it never rejects a legitimately-fresh receipt — such a receipt is already
+expired and rejected upstream — and under a rolled-back clock it fails closed
+where the deleted entry no longer can. Receipts minted **without** an
+``expires_at`` are never prunable (they never expire) and never watermark-gated.
+
+Watermark integrity — what the ``.pwm`` defense covers, and what it does not:
+
+* **Corruption.** A present-but-unparseable ``.pwm`` fails closed in both
+  ``consume`` and ``prune`` (the rollback defense is treated like a corrupt
+  ledger), not silently skipped.
+* **Crash mid-prune.** ``prune`` advances ``.pwm`` *write-ahead* — before any
+  entry is deleted — so a crash leaves entries-present + watermark-ahead (both
+  safe), never entries-gone + watermark-stale.
+* **Deletion (residual caveat).** ``prune`` cannot detect that a ``.pwm`` an
+  attacker *deleted* ever existed; a deletion combined with a clock rollback
+  reopens the pruned receipt. This is the same threat class as deleting the
+  ``.hwm`` sidecar without ``checkpoint`` — place ``.pwm`` (and ``.hwm``) on
+  more-protected / append-only storage, keep gate hosts on monotonic NTP time
+  (the operator trust assumption ``receipt.verify`` already documents), and run
+  :meth:`verify_ledger` periodically. Without prune the expired entry persists
+  and blocks replay on its own; with prune the watermark is the substitute, so
+  its storage must be at least as protected as the ledger's.
 """
 
 from __future__ import annotations
@@ -155,6 +197,13 @@ class ReceiptConsumptionLedger:
         # is written and behavior is unchanged.
         self.checkpoint = checkpoint
         self._hwm_path = self.path.with_suffix(self.path.suffix + ".hwm")
+        # Durable prune time-watermark: the latest receipt ``expires_at`` that
+        # :meth:`prune` has ever removed. ``consume`` refuses any receipt whose
+        # ``expires_at`` is at or before this value (its single-use record may
+        # have been pruned), which preserves clock-set-back replay protection
+        # across a prune. Always honoured when present — independent of
+        # ``checkpoint`` — because TTL pruning is what creates it.
+        self._pwm_path = self.path.with_suffix(self.path.suffix + ".pwm")
         # In-process security counters (a side channel for scraping/assertions,
         # never on the enforcement path). Guarded by their own lock because
         # ``verify_ledger``/``reconcile`` run lock-free and may race a concurrent
@@ -204,6 +253,12 @@ class ReceiptConsumptionLedger:
                 "on; refusing execution (fail-closed)"
             )
 
+        # ``expires_at`` is stored so :meth:`prune` can later tell, from the
+        # durable entry alone (the receipt object is long gone), whether the
+        # burned receipt has expired and is therefore safe to remove. Read
+        # defensively: minimal receipt stand-ins may omit it, and a receipt
+        # minted without an expiry stores "" — which marks the entry permanently
+        # non-prunable (a never-expiring receipt must never be reopened).
         entry = {
             "consumed_key": key,
             "receipt_hash": receipt.compute_hash(),
@@ -211,12 +266,45 @@ class ReceiptConsumptionLedger:
             "tenant_id": receipt.tenant_id,
             "actor": receipt.actor,
             "proposed_action": receipt.proposed_action,
+            "expires_at": getattr(receipt, "expires_at", "") or "",
             "consumed_at": datetime.now(UTC).isoformat(),
         }
 
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         try:
             with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+                # Clock-rollback replay defense (read inside the lock so a
+                # concurrent prune cannot advance the watermark mid-burn). If this
+                # receipt's own expiry is at or before the latest expiry prune has
+                # ever removed, its single-use record may have been pruned and its
+                # freshness can no longer be proven — refuse. Compares two fixed
+                # timestamps, never a live clock: under a forward clock such a
+                # receipt is already expired (rejected by verify check 13 upstream)
+                # so this never false-rejects a fresh receipt; under a rolled-back
+                # clock it fails closed exactly where the deleted entry cannot.
+                receipt_exp = self._parse_aware_ts(getattr(receipt, "expires_at", "") or "")
+                if receipt_exp is not None:
+                    raw_watermark = self.prune_watermark()
+                    if raw_watermark is not None:
+                        # A present-but-unparseable watermark is corruption/tamper
+                        # of the rollback defense; fail closed rather than skip the
+                        # guard (which would silently reopen a pruned receipt).
+                        watermark = self._parse_aware_ts(raw_watermark)
+                        if watermark is None:
+                            raise ConsumptionLedgerError(
+                                f"consumption prune watermark {self._pwm_path} is present but "
+                                f"unparseable ({raw_watermark!r}); cannot prove receipt freshness "
+                                "against it; refusing execution (fail-closed)"
+                            )
+                        if receipt_exp <= watermark:
+                            with self._obs_lock:
+                                self._replays_blocked += 1
+                            raise ConsumptionLedgerError(
+                                f"receipt expires_at {getattr(receipt, 'expires_at', '')!r} is at "
+                                f"or before the prune watermark {watermark.isoformat()} in "
+                                f"{self.path}; its single-use record may have been pruned and "
+                                "freshness cannot be proven; refusing execution (fail-closed)"
+                            )
                 # One locked scan does both jobs: detect replay AND capture the
                 # tail's entry_hash to chain onto — mirroring
                 # ``ChainHashAuditStore.append`` reading the last hash inside its
@@ -396,7 +484,12 @@ class ReceiptConsumptionLedger:
         ``previous_hash_mismatch``). A no-op when checkpointing is off (no HWM) —
         the opt-in contract is unchanged.
         """
-        if hwm is not None and not hwm_seen:
+        # A GENESIS high-water-mark means the chain is legitimately empty — every
+        # entry was pruned (or none was ever burned). GENESIS is never an
+        # ``entry_hash`` so it is never "seen"; treating its absence as truncation
+        # would permanently brick a ledger after a routine prune-all. An empty
+        # ledger has nothing to replay, so this is safe.
+        if hwm is not None and hwm != GENESIS_HASH and not hwm_seen:
             raise ConsumptionLedgerError(
                 f"consumption ledger {self.path} no longer contains its checkpointed "
                 f"high-water-mark entry {hwm[:12]}...; it was truncated or deleted "
@@ -481,6 +574,218 @@ class ReceiptConsumptionLedger:
                 f"could not read consumption high-water-mark {self._hwm_path}: {exc}"
             ) from exc
         return value or None
+
+    @staticmethod
+    def _parse_aware_ts(value: str) -> datetime | None:
+        """Parse an ISO-8601 timestamp as timezone-AWARE, else ``None``.
+
+        Mirrors the contract of :meth:`~gove_zone.receipt.DecisionReceipt.verify`
+        check 13: empty, unparseable, or offset-naive values are rejected. Here a
+        ``None`` means "cannot compare", and every caller treats that as the
+        fail-SAFE choice — :meth:`prune` keeps the entry (never deletes one it
+        cannot prove expired) and :meth:`consume`'s rollback guard does not block.
+        An offset-naive timestamp is dropped on purpose: comparing it to an aware
+        one raises, and silently assuming a zone could fail open across offsets.
+        """
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed
+
+    def prune_watermark(self) -> str | None:
+        """Return the persisted prune time-watermark ISO timestamp, or ``None``.
+
+        ``None`` when no ``<ledger>.pwm`` sidecar exists (nothing has ever been
+        pruned). Consulted by :meth:`consume` to refuse receipts whose expiry is
+        at or before the latest expiry a prune has removed (clock-rollback
+        defense — see the module docstring).
+        """
+        try:
+            value = self._pwm_path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            # Mirrors :meth:`checkpoint_hash`: a missing sidecar is "no watermark"
+            # with no TOCTOU exists()/read race.
+            return None
+        except OSError as exc:
+            raise ConsumptionLedgerError(
+                f"could not read consumption prune watermark {self._pwm_path}: {exc}; "
+                "cannot prove receipt freshness, refusing execution (fail-closed)"
+            ) from exc
+        return value or None
+
+    def _write_prune_watermark(self, ts_iso: str) -> None:
+        """Atomically advance the ``<ledger>.pwm`` sidecar to *ts_iso*.
+
+        Temp write + ``os.replace`` + fsync, so a crash can never leave a
+        half-written watermark. Called only from inside the prune lock.
+        """
+        tmp_path = self._pwm_path.with_suffix(self._pwm_path.suffix + ".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                fh.write(ts_iso + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_path, self._pwm_path)
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise ConsumptionLedgerError(
+                f"could not write consumption prune watermark {self._pwm_path}: {exc}; "
+                "refusing execution (fail-closed)"
+            ) from exc
+
+    def prune(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Remove burned entries whose receipt has expired; bound the ledger.
+
+        TTL pruning for unbounded growth. Under the exclusive lock this removes
+        only entries whose stored ``expires_at`` parses as timezone-aware and is
+        strictly before *now* (an entry expiring exactly at *now* is not yet
+        expired and is kept — same boundary as ``verify`` check 13). Entries with
+        no expiry, an empty/unparseable/offset-naive expiry, or no ``expires_at``
+        field at all (pre-upgrade legacy lines) are **never** pruned — a receipt
+        that cannot be proven expired could still pass ``verify`` and must keep
+        its single-use record.
+
+        Survivors are re-chained (``previous_hash``/``entry_hash`` recomputed,
+        exactly like :meth:`seal`) and the file is atomically replaced, so a crash
+        mid-prune leaves the original intact. The prune time-watermark advances to
+        the latest expiry removed (defeating clock-rollback replay — see the
+        module docstring), and when ``checkpoint`` is on the high-water-mark
+        advances to the new tail so :meth:`verify_ledger` stays consistent.
+
+        *now* defaults to the real UTC wall clock and must be timezone-aware. Pass
+        a *now* in the future only deliberately: it prunes not-yet-expired entries
+        and advances the watermark over the live receipt range, which then refuses
+        those receipts (fail-closed, but it pulls forward the watermark gate).
+        Returns ``{pruned, kept, last_hash, watermark}``. A no-op (nothing
+        expired) leaves the file and every sidecar byte-for-byte untouched. An
+        unreadable / corrupt-JSON ledger raises
+        :class:`~gove_zone.errors.ConsumptionLedgerError` (same fail-closed
+        contract as :meth:`_scan_consumed`) and prunes nothing.
+
+        Re-chaining legitimately rewrites every surviving ``entry_hash``: an
+        external auditor holding a pre-prune ``expected_last_hash`` will see
+        ``last_hash_mismatch`` until it re-reads the advanced high-water-mark.
+        That is expected — prune is an authorized, watermark-recorded change, not
+        tamper.
+        """
+        now_dt = now if now is not None else datetime.now(UTC)
+        if now_dt.tzinfo is None:
+            raise ConsumptionLedgerError(
+                "prune `now` must be timezone-aware (offset-naive comparisons are "
+                "ambiguous and can fail open); refusing to prune (fail-closed)"
+            )
+
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        try:
+            with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+                survivors: list[dict[str, Any]] = []
+                pruned = 0
+                max_pruned_exp: datetime | None = None
+                scan_tail = GENESIS_HASH
+                for _line_number, record in self._iter_records():
+                    entry_hash = record.get("entry_hash")
+                    scan_tail = (
+                        entry_hash if isinstance(entry_hash, str) and entry_hash else GENESIS_HASH
+                    )
+                    exp = self._parse_aware_ts(record.get("expires_at", ""))
+                    if exp is not None and exp < now_dt:
+                        pruned += 1
+                        if max_pruned_exp is None or exp > max_pruned_exp:
+                            max_pruned_exp = exp
+                        continue
+                    survivors.append(record)
+
+                if pruned == 0:
+                    # Nothing expired: leave the file and sidecars untouched.
+                    return {
+                        "pruned": 0,
+                        "kept": len(survivors),
+                        "last_hash": scan_tail,
+                        "watermark": self.prune_watermark(),
+                    }
+
+                # Compute the new watermark — the latest expiry removed, never
+                # lowered (a concurrent operator cannot move it backwards). A
+                # present-but-unparseable watermark is corruption/tamper of the
+                # rollback defense itself: refuse rather than silently reset it
+                # downward (mirrors the consume-side guard).
+                raw_existing = self.prune_watermark()
+                if raw_existing is not None:
+                    existing_wm = self._parse_aware_ts(raw_existing)
+                    if existing_wm is None:
+                        raise ConsumptionLedgerError(
+                            f"consumption prune watermark {self._pwm_path} is present but "
+                            f"unparseable ({raw_existing!r}); refusing to prune (fail-closed)"
+                        )
+                else:
+                    existing_wm = None
+                new_wm = max_pruned_exp
+                if existing_wm is not None and existing_wm > new_wm:
+                    new_wm = existing_wm
+                assert new_wm is not None  # pruned > 0 ⇒ at least one aware expiry removed
+
+                # WRITE-AHEAD: advance the watermark BEFORE any entry is deleted.
+                # A crash between here and the file replace leaves entries-present +
+                # watermark-ahead (both fail-closed — the surviving entries still
+                # block replay, and the only receipts the ahead-watermark refuses
+                # are already-expired ones). The reverse order would leave
+                # entries-gone + watermark-stale: a rollback replay hole.
+                self._write_prune_watermark(new_wm.isoformat())
+
+                previous = GENESIS_HASH
+                lines: list[str] = []
+                for record in survivors:
+                    payload = {
+                        k: v for k, v in record.items() if k not in ("previous_hash", "entry_hash")
+                    }
+                    payload["previous_hash"] = previous
+                    payload["entry_hash"] = sha256_json(payload)
+                    previous = payload["entry_hash"]
+                    lines.append(
+                        json.dumps(
+                            payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                        )
+                    )
+
+                tmp_path = self.path.with_suffix(self.path.suffix + ".prune-tmp")
+                try:
+                    with tmp_path.open("w", encoding="utf-8") as fh:
+                        for line in lines:
+                            fh.write(line + "\n")
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    os.replace(tmp_path, self.path)
+                except OSError as exc:
+                    # os.replace is atomic: on failure the original file is
+                    # untouched. Remove the orphan temp so a retry is clean. The
+                    # watermark is already ahead — safe (see WRITE-AHEAD above).
+                    tmp_path.unlink(missing_ok=True)
+                    raise ConsumptionLedgerError(
+                        f"could not prune consumption ledger {self.path}: {exc}; "
+                        "original ledger left intact"
+                    ) from exc
+
+                # Keep the high-water-mark consistent with the freshly chained tail.
+                if self.checkpoint:
+                    self._write_checkpoint(previous)
+        except ConsumptionLedgerError:
+            raise
+        except OSError as exc:
+            raise ConsumptionLedgerError(
+                f"could not acquire the consumption ledger lock {lock_path}: {exc}; prune aborted"
+            ) from exc
+
+        return {
+            "pruned": pruned,
+            "kept": len(survivors),
+            "last_hash": previous,
+            "watermark": new_wm.isoformat(),
+        }
 
     def verify_ledger(self, expected_last_hash: str | None = None) -> dict[str, Any]:
         """Re-walk the ledger and report tamper-evidence integrity.
