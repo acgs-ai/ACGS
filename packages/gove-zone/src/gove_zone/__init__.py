@@ -109,6 +109,7 @@ from gove_zone.replay import (
     replay_from_side_store,
 )
 from gove_zone.replay_store import ReplaySideStore
+from gove_zone.revocation import RevocationList, RevocationListError
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -157,6 +158,8 @@ __all__ = [
     "ChainHashAuditStore",
     "PrincipalEntry",
     "PrincipalRegistry",
+    "RevocationList",
+    "RevocationListError",
     "authz_enforce_from_env",
     "CompositePolicy",
     "ConsumptionLedgerError",
