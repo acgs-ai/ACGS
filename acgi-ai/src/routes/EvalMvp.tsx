@@ -74,7 +74,7 @@ const PROOF_POINTS = [
   {
     state: 'shipped' as const,
     label: 'Dispatch → Audit → Consume pipeline',
-    detail: '659 passing tests · ruff clean · mypy strict',
+    detail: '322 passing tests · ruff clean · mypy strict',
   },
   {
     state: 'shipped' as const,
@@ -110,8 +110,8 @@ function EvalPipeline() {
       className="ev-pipeline-svg"
       viewBox="0 0 140 220"
       xmlns="http://www.w3.org/2000/svg"
-      role="img"
-      aria-label="Three sequential gates: dispatch, audit, consume"
+      aria-hidden="true"
+      focusable="false"
     >
       {/* connector lines */}
       <path className="ev-pipe-line ev-pipe-line-1" pathLength={1} d="M 70 64 L 70 82" />
@@ -489,8 +489,9 @@ export function EvalMvp() {
               Start evaluating agent actions
             </h2>
             <p className="ev-cta-intro">
-              acgs-governance-eval-mvp is available on PyPI. Add the governed MCP server to your
-              agent framework, or decorate individual tool-call functions directly.
+              acgs-governance-eval-mvp is a source-installable Python package — PyPI release is on
+              the roadmap. Add the governed MCP server to your agent framework, or decorate
+              individual tool-call functions directly.
             </p>
             <div className="ev-install-cmd-block">
               <span className="ev-install-cmd-prefix">$</span>
