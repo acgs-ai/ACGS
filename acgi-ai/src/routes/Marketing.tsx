@@ -704,6 +704,9 @@ Guidance for users and agents before real-world action.`}
                 <NavigationLink href="/swarm">acgs-swarm showcase</NavigationLink>
               </li>
               <li>
+                <NavigationLink href="/cft-pack">CFT Governance Pack</NavigationLink>
+              </li>
+              <li>
                 <a
                   href="/trust"
                   onClick={(event) => {
