@@ -572,7 +572,7 @@ function NavigationLink({
   )
 }
 
-function MarketingFrame({ children }: { children: ReactNode }) {
+export function MarketingFrame({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
 
   useHashScroll()
@@ -696,6 +696,9 @@ Guidance for users and agents before real-world action.`}
               </li>
               <li>
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
+              </li>
+              <li>
+                <NavigationLink href="/cft-pack">CFT Governance Pack</NavigationLink>
               </li>
               <li>
                 <a

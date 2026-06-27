@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
 import { Ask } from '../../routes/Ask'
+import { CftPack } from '../../routes/CftPack'
 import {
   AgentReadable,
   FailureModesPage,
@@ -112,6 +113,12 @@ const agentReadableRoute = createRoute({
   component: AgentReadable,
 })
 
+const cftPackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/cft-pack',
+  component: CftPack,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -184,6 +191,7 @@ const routeTree = rootRoute.addChildren([
   failureModesRoute,
   governancePatternsRoute,
   agentReadableRoute,
+  cftPackRoute,
   trustRoute,
   securityRoute,
   productIndexRoute,
