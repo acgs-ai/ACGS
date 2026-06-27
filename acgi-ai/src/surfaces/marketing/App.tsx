@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
+import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
 import {
   AgentReadable,
@@ -113,6 +114,12 @@ const agentReadableRoute = createRoute({
   component: AgentReadable,
 })
 
+const acgsLiteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/acgs-lite',
+  component: AcgsLite,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -191,6 +198,7 @@ const routeTree = rootRoute.addChildren([
   failureModesRoute,
   governancePatternsRoute,
   agentReadableRoute,
+  acgsLiteRoute,
   trustRoute,
   securityRoute,
   swarmRoute,
