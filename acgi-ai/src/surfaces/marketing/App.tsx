@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
 import { Ask } from '../../routes/Ask'
+import { ClinicalGuard } from '../../routes/ClinicalGuard'
 import {
   AgentReadable,
   FailureModesPage,
@@ -124,6 +125,12 @@ const securityRoute = createRoute({
   component: Security,
 })
 
+const clinicalguardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/clinicalguard',
+  component: ClinicalGuard,
+})
+
 const productIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/products',
@@ -186,6 +193,7 @@ const routeTree = rootRoute.addChildren([
   agentReadableRoute,
   trustRoute,
   securityRoute,
+  clinicalguardRoute,
   productIndexRoute,
   productRoute,
   privilegedLoginRoute,

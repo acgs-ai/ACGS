@@ -644,6 +644,9 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
+            <NavigationLink href="/clinicalguard" onNavigate={() => setNavOpen(false)}>
+              ClinicalGuard
+            </NavigationLink>
           </div>
           <a className="m-nav-cta" href="/#interview">
             Start interview <ArrowRight size={14} strokeWidth={1.75} />
@@ -696,6 +699,17 @@ Guidance for users and agents before real-world action.`}
               </li>
               <li>
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
+              </li>
+              <li>
+                <a
+                  href="/clinicalguard"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/clinicalguard')
+                  }}
+                >
+                  ClinicalGuard
+                </a>
               </li>
               <li>
                 <a
