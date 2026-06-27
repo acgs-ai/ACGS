@@ -732,6 +732,9 @@ Guidance for users and agents before real-world action.`}
                 </a>
               </li>
               <li>
+                <NavigationLink href="/cft-pack">CFT Governance Pack</NavigationLink>
+              </li>
+              <li>
                 <a
                   href="/trust"
                   onClick={(event) => {

@@ -7771,3 +7771,172 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================================================
+ * CftPack — /cft-pack showcase page (DESIGN.md token-only, no hex/rgba/shadow)
+ * ========================================================================= */
+
+.cft-hero {
+  padding-bottom: 48px;
+}
+
+.cft-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+}
+
+/* page section rhythm */
+.cft-section {
+  padding: 64px 0;
+  border-bottom: 1px solid var(--line-softer);
+}
+
+.cft-section.cft-cta {
+  border-bottom: none;
+  padding-bottom: 88px;
+}
+
+/* capabilities grid override — 3-col on wide, reuse .m-cards */
+.cft-caps-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* 4-step execution flow */
+.cft-steps {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  margin-top: 32px;
+  background: var(--line-softer);
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  padding: 0;
+  list-style: none;
+}
+
+.cft-step {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: var(--space-lg);
+  padding: 28px 24px;
+  background: var(--paper-2);
+  align-items: start;
+}
+
+.cft-step-n {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  padding-top: 4px;
+}
+
+.cft-step h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.cft-step p {
+  margin-top: 10px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* risk tier cards — 3-col editorial grid */
+.cft-risk-tiers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  margin-top: 32px;
+  background: var(--line-softer);
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.cft-risk-card {
+  padding: 28px 24px 32px;
+  background: var(--paper-2);
+}
+
+.cft-risk-card h3 {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 22px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.cft-risk-card p {
+  margin-top: 10px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.cft-risk-card ul {
+  display: grid;
+  gap: 6px;
+  margin: 16px 0 0;
+  padding: 14px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--line-softer);
+}
+
+.cft-risk-card li {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.cft-risk-card li::before {
+  content: "/ ";
+  color: var(--accent);
+}
+
+/* CTA block */
+.cft-cta-inner {
+  max-width: 680px;
+}
+
+.cft-cta-inner h2 {
+  margin-top: 28px;
+  font-family: var(--font-display);
+  font-size: clamp(36px, 4vw, 52px);
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.cft-cta-inner h2 em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+/* responsive — collapse grids to single column below 768px */
+@media (max-width: 768px) {
+  .cft-caps-grid,
+  .cft-steps,
+  .cft-risk-tiers {
+    grid-template-columns: 1fr;
+  }
+}

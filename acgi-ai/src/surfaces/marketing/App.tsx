@@ -8,6 +8,7 @@ import {
 import { lazy, Suspense, useEffect } from 'react'
 import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
+import { CftPack } from '../../routes/CftPack'
 import { ClinicalGuard } from '../../routes/ClinicalGuard'
 import {
   AgentReadable,
@@ -121,6 +122,12 @@ const acgsLiteRoute = createRoute({
   component: AcgsLite,
 })
 
+const cftPackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/cft-pack',
+  component: CftPack,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -206,6 +213,7 @@ const routeTree = rootRoute.addChildren([
   governancePatternsRoute,
   agentReadableRoute,
   acgsLiteRoute,
+  cftPackRoute,
   trustRoute,
   securityRoute,
   swarmRoute,
