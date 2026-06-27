@@ -572,7 +572,7 @@ function NavigationLink({
   )
 }
 
-function MarketingFrame({ children }: { children: ReactNode }) {
+export function MarketingFrame({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
 
   useHashScroll()
@@ -641,6 +641,9 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/agent-readable" onNavigate={() => setNavOpen(false)}>
               Agent-readable
             </NavigationLink>
+            <NavigationLink href="/agent-bus" onNavigate={() => setNavOpen(false)}>
+              Agent bus
+            </NavigationLink>
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
@@ -690,6 +693,9 @@ Guidance for users and agents before real-world action.`}
             <ul>
               <li>
                 <NavigationLink href="/failure-modes">Failure catalogue</NavigationLink>
+              </li>
+              <li>
+                <NavigationLink href="/agent-bus">Agent bus</NavigationLink>
               </li>
               <li>
                 <NavigationLink href="/governance-patterns">Governance patterns</NavigationLink>
