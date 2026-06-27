@@ -7940,3 +7940,381 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================================
+ * Agent Bus showcase page (.ab-*)
+ * DESIGN.md contract: no box-shadow, no hex outside index.css, no rgba()
+ * ========================================================================== */
+
+/* ── Page wrapper ─────────────────────────────────────────────────────────── */
+
+.ab-page {
+  padding-bottom: var(--space-5xl);
+}
+
+/* ── Hero — asymmetric two-column split ──────────────────────────────────── */
+
+.ab-hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4xl);
+  padding: var(--space-5xl) 0 var(--space-4xl);
+  align-items: start;
+}
+
+.ab-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.ab-h1 {
+  font-family: var(--font-display);
+  font-size: clamp(36px, 5vw, 60px);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.ab-lede {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 42ch;
+}
+
+.ab-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+/* ── Hero proof widget — dark panel via [data-theme] ─────────────────────── */
+
+.ab-hero-proof {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+}
+
+.ab-proof-widget {
+  padding: var(--space-3xl);
+  background: var(--paper); /* remapped to near-black by [data-theme="control-plane"] */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  min-height: 280px;
+}
+
+.ab-proof-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.ab-receipt-dl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.ab-receipt-dl-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ab-receipt-dt {
+  color: var(--muted);
+}
+
+.ab-receipt-dd {
+  color: var(--ink);
+  margin: 0;
+}
+
+.ab-proof-sig {
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── Proof strip — three tabular facts ───────────────────────────────────── */
+
+.ab-proof-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--line-softer);
+  border-bottom: 1px solid var(--line-softer);
+  margin: var(--space-4xl) 0;
+}
+
+.ab-proof-item {
+  padding: var(--space-3xl) var(--space-2xl);
+  border-right: 1px solid var(--line-softer);
+}
+
+.ab-proof-item:last-child {
+  border-right: none;
+}
+
+.ab-proof-folio {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: var(--space-md);
+}
+
+.ab-proof-stat {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.5vw, 28px);
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.ab-proof-sub {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: var(--space-xs);
+}
+
+/* ── Observer principle — full-width dark panel ──────────────────────────── */
+
+.ab-observer {
+  /* Break out of .shell using the standard margin-inline bleed trick.
+   * Safe because .marketing has overflow-x: hidden. */
+  margin-inline: calc(50% - 50vw);
+  padding-block: var(--space-5xl);
+  /* Restore horizontal padding to match shell edge + breathing room */
+  padding-inline: calc(50vw - 50% + var(--space-2xl));
+  background: var(--paper); /* remapped near-black by [data-theme="control-plane"] */
+  color: var(--ink); /* remapped light by [data-theme="control-plane"] */
+}
+
+.ab-observer-inner {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.ab-observer-headline {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4vw, 48px);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.ab-observer-body {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  max-width: 56ch;
+}
+
+/* ── Capabilities bento — 2×2 grid ──────────────────────────────────────── */
+
+.ab-bento {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-lg);
+}
+
+.ab-bento-card {
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3xl);
+  background: var(--paper-2);
+}
+
+.ab-bento-title {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
+  color: var(--ink);
+  margin-bottom: var(--space-md);
+}
+
+.ab-bento-body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+/* ── Evidence signing panel — parchment surface ──────────────────────────── */
+
+.ab-signing {
+  background: var(--boundary);
+  border: 1px solid var(--boundary-line);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3xl);
+}
+
+.ab-signing-intro {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--boundary-ink);
+  margin-bottom: var(--space-3xl);
+  max-width: 52ch;
+}
+
+.ab-field-cell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.ab-type-cell {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── API surface table ───────────────────────────────────────────────────── */
+
+.ab-method {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.ab-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ── Related resources list ──────────────────────────────────────────────── */
+
+.ab-related-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ab-related-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  padding: var(--space-lg) 0;
+  border-bottom: 1px solid var(--line-softer);
+}
+
+.ab-related-item:last-child {
+  border-bottom: none;
+}
+
+.ab-related-link {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--ink);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 1px;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.ab-related-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.ab-related-note {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ── CTA close ───────────────────────────────────────────────────────────── */
+
+.ab-cta {
+  margin-top: var(--space-5xl);
+  border-top: 2px solid var(--accent);
+  padding: var(--space-5xl) 0;
+}
+
+.ab-cta-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  max-width: 520px;
+}
+
+.ab-cta-headline {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3.5vw, 42px);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.ab-cta-body {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.ab-cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .ab-hero {
+    grid-template-columns: 1fr;
+    gap: var(--space-3xl);
+    padding-top: var(--space-3xl);
+  }
+
+  .ab-proof-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .ab-proof-item {
+    border-right: none;
+    border-bottom: 1px solid var(--line-softer);
+    padding: var(--space-2xl);
+  }
+
+  .ab-proof-item:last-child {
+    border-bottom: none;
+  }
+
+  .ab-bento {
+    grid-template-columns: 1fr;
+  }
+
+  .ab-related-item {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .ab-observer {
+    padding-inline: var(--space-2xl);
+  }
+}

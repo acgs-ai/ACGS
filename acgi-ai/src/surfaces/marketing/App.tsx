@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
 import { AcgsLite } from '../../routes/AcgsLite'
+import { AgentBus } from '../../routes/AgentBus'
 import { Ask } from '../../routes/Ask'
 import { CftPack } from '../../routes/CftPack'
 import { ClinicalGuard } from '../../routes/ClinicalGuard'
@@ -135,6 +136,12 @@ const evalMvpRoute = createRoute({
   component: EvalMvp,
 })
 
+const agentBusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-bus',
+  component: AgentBus,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -222,6 +229,7 @@ const routeTree = rootRoute.addChildren([
   acgsLiteRoute,
   cftPackRoute,
   evalMvpRoute,
+  agentBusRoute,
   trustRoute,
   securityRoute,
   swarmRoute,
