@@ -10,6 +10,7 @@ import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
 import { CftPack } from '../../routes/CftPack'
 import { ClinicalGuard } from '../../routes/ClinicalGuard'
+import { EvalMvp } from '../../routes/EvalMvp'
 import {
   AgentReadable,
   FailureModesPage,
@@ -128,6 +129,12 @@ const cftPackRoute = createRoute({
   component: CftPack,
 })
 
+const evalMvpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/eval-mvp',
+  component: EvalMvp,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -214,6 +221,7 @@ const routeTree = rootRoute.addChildren([
   agentReadableRoute,
   acgsLiteRoute,
   cftPackRoute,
+  evalMvpRoute,
   trustRoute,
   securityRoute,
   swarmRoute,
