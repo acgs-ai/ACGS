@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
 import { Ask } from '../../routes/Ask'
+import { EvalMvp } from '../../routes/EvalMvp'
 import {
   AgentReadable,
   FailureModesPage,
@@ -112,6 +113,12 @@ const agentReadableRoute = createRoute({
   component: AgentReadable,
 })
 
+const evalMvpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/eval-mvp',
+  component: EvalMvp,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -184,6 +191,7 @@ const routeTree = rootRoute.addChildren([
   failureModesRoute,
   governancePatternsRoute,
   agentReadableRoute,
+  evalMvpRoute,
   trustRoute,
   securityRoute,
   productIndexRoute,

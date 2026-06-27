@@ -641,6 +641,9 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/agent-readable" onNavigate={() => setNavOpen(false)}>
               Agent-readable
             </NavigationLink>
+            <NavigationLink href="/eval-mvp" onNavigate={() => setNavOpen(false)}>
+              Eval MVP
+            </NavigationLink>
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
