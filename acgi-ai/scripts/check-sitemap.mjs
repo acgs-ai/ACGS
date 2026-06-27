@@ -1,10 +1,12 @@
-// Sitemap + robots contract for the marketing surface.
+// Agent/crawler discovery contract for the marketing surface (sitemap + robots + llms.txt).
 //
 // Guards that public/sitemap.xml is a well-formed sitemaps.org urlset of absolute
-// https://acgs.ai canonical URLs, excludes privileged surfaces, and that
-// public/robots.txt references it. Deliberately does NOT parse the router — route
-// additions are reflected in sitemap.xml by hand (see the comment in that file).
-// Wired into test:all so a malformed sitemap or a dropped Sitemap reference fails CI.
+// https://acgs.ai canonical URLs, excludes privileged surfaces, that
+// public/robots.txt references it, and that public/llms.txt is the canonical
+// claim-safe file (pinned byte-identical to the repo-root llms.txt, so /llms.txt
+// never silently regresses to the SPA text/html fallback). Deliberately does NOT
+// parse the router — route additions are reflected in sitemap.xml by hand (see the
+// comment in that file). Wired into test:all so a regression fails CI.
 
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -73,10 +75,33 @@ if (robots) {
   )
 }
 
+// llms.txt — serve the canonical claim-safe file at the marketing origin, pinned
+// byte-identical to the repo-root llms.txt so the public copy can't drift or
+// regress to the SPA HTML fallback. Re-copy `llms.txt` -> `acgi-ai/public/llms.txt`
+// after editing the root file.
+let publicLlms = ''
+let rootLlms = ''
+try {
+  publicLlms = read('public/llms.txt')
+} catch {
+  failures.push('public/llms.txt must exist.')
+}
+try {
+  rootLlms = readFileSync(resolve(root, '..', 'llms.txt'), 'utf8')
+} catch {
+  failures.push('repo-root llms.txt must exist.')
+}
+if (publicLlms && rootLlms) {
+  check(
+    publicLlms === rootLlms,
+    'public/llms.txt must be byte-identical to the repo-root llms.txt (re-copy after editing root).',
+  )
+}
+
 if (failures.length > 0) {
-  console.error('Sitemap/robots contract check failed:')
+  console.error('Agent-discovery (sitemap/robots/llms) contract check failed:')
   for (const failure of failures) console.error(`- ${failure}`)
   process.exit(1)
 }
 
-console.log('Sitemap/robots contract check passed.')
+console.log('Agent-discovery (sitemap/robots/llms) contract check passed.')
