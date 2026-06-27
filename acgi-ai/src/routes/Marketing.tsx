@@ -572,7 +572,7 @@ function NavigationLink({
   )
 }
 
-function MarketingFrame({ children }: { children: ReactNode }) {
+export function MarketingFrame({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
 
   useHashScroll()
@@ -644,6 +644,9 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
+            <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
+              acgs-lite
+            </NavigationLink>
           </div>
           <a className="m-nav-cta" href="/#interview">
             Start interview <ArrowRight size={14} strokeWidth={1.75} />
@@ -696,6 +699,17 @@ Guidance for users and agents before real-world action.`}
               </li>
               <li>
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
+              </li>
+              <li>
+                <a
+                  href="/acgs-lite"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/acgs-lite')
+                  }}
+                >
+                  acgs-lite package
+                </a>
               </li>
               <li>
                 <a
