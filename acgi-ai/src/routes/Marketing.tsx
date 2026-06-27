@@ -650,6 +650,9 @@ export function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
               acgs-lite
             </NavigationLink>
+            <NavigationLink href="/clinicalguard" onNavigate={() => setNavOpen(false)}>
+              ClinicalGuard
+            </NavigationLink>
           </div>
           <a className="m-nav-cta" href="/#interview">
             Start interview <ArrowRight size={14} strokeWidth={1.75} />
@@ -715,6 +718,17 @@ Guidance for users and agents before real-world action.`}
                   }}
                 >
                   acgs-lite package
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/clinicalguard"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/clinicalguard')
+                  }}
+                >
+                  ClinicalGuard
                 </a>
               </li>
               <li>
