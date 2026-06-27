@@ -25,83 +25,81 @@ interface RiskTier {
 const CAPABILITIES: Capability[] = [
   {
     title: 'Policy-IO bridge',
-    body: 'Declarative YAML policy files bind agent intent to execution scope. Every operation declares action, target, and evidence before the infrastructure layer proceeds.',
+    body: 'Declarative YAML policy files name permitted resource shapes, required labels, and forbidden actions. The pack loads and evaluates them against Terraform plans before any apply gate runs.',
   },
   {
-    title: 'Decision Receipts',
-    body: 'Each evaluation emits a signed, tamper-evident receipt. Executors must present a valid receipt or halt. No receipt, no side effect.',
+    title: 'Evidence records',
+    body: 'Each evaluation emits one JSONL evidence record. The record contains the decision, a SHA-256 plan hash, a Merkle root over every evaluated control, actor identity, and timestamp. No evidence record, no apply gate passes.',
   },
   {
-    title: 'Risk classification',
-    body: 'Operations are scored LOW, PARTIAL, or HIGH based on blast radius, reversibility, and required authority. Thresholds are configurable per environment.',
+    title: 'Control severity levels',
+    body: 'Each policy control carries a severity (high, medium, or low). A single high-severity violation denies the plan and halts the CI pipeline at the apply gate before any infrastructure change runs.',
   },
   {
     title: 'Audit trail',
-    body: 'Every evaluation appends an immutable JSONL audit record covering decision, evidence hash, actor identity, and timestamp. Append-only by design.',
+    body: 'Every evaluation appends one event to a JSONL file. The file is append-only by convention. Each event includes the full decision, plan hash, Merkle root, actor, and control-level reasons.',
   },
   {
-    title: 'Fail-closed executor',
-    body: 'The executor calls receipt verification before any infrastructure write. A missing, expired, or tampered receipt produces an immediate halt, not a warning.',
+    title: 'Fail-closed evaluation',
+    body: 'Denied plans exit with code 2. Your CI pipeline can treat any non-zero exit as a hard block. There is no degraded mode: a governance failure is always a pipeline failure.',
   },
   {
-    title: 'CLI verifier',
-    body: 'The standalone verify-proofpack command lets operators inspect, diff, and audit proof packs outside the running system. Portable and dependency-light.',
+    title: 'Evaluate CLI',
+    body: 'The acgs-cft-govern evaluate command takes a Terraform plan JSON, a policy directory, and an actor identity, and writes the evidence JSONL. It is a standalone binary with no runtime infrastructure dependency.',
   },
 ]
 
 const STEPS: Step[] = [
   {
     title: 'Declare policy',
-    body: 'Write a YAML policy file that names permitted actions, required evidence, and scope limits. Bind it to the environment at init time.',
+    body: 'Write a YAML policy file that names permitted resource types, required labels, forbidden IAM roles, and other controls. Point the CLI at the policy directory.',
   },
   {
-    title: 'Agent requests execution',
-    body: 'The agent submits an action request with intent, actor identity, and arguments. The pack evaluates against policy synchronously.',
+    title: 'Generate a Terraform plan',
+    body: 'Run terraform plan -out tfplan.binary and terraform show -json to produce the plan JSON. Pass that file to the acgs-cft-govern evaluate command along with actor identity.',
   },
   {
-    title: 'Pack evaluates and emits receipt',
-    body: 'Policy rules run in priority order. The outcome is written to a signed Decision Receipt containing a cryptographic hash of the evaluation.',
+    title: 'Pack evaluates and emits evidence',
+    body: 'Controls run in policy order. The outcome is written to a JSONL evidence record containing the decision, a SHA-256 plan hash, and a Merkle root over all evaluated controls.',
   },
   {
-    title: 'Executor verifies before acting',
-    body: 'The infrastructure executor presents the receipt to the verification gate. Any hash or signature deviation causes a fail-closed halt with a full audit record.',
+    title: 'CI gate blocks on denial',
+    body: 'The evaluate command exits 2 on any denial. Your CI workflow treats exit 2 as a hard block on the apply step. The evidence JSONL is uploaded as a CI artifact for audit.',
   },
 ]
 
 const SAMPLE_RECEIPT = `{
-  "receipt_id": "rec_01j3xv7p8q2kzmn4r5...",
-  "decision":   "ALLOW",
-  "action":     "deploy:cloud-run:staging",
-  "actor":      "agent/deploy-bot@acgs.ai",
-  "risk_level": "LOW",
-  "policy_ref": "infra-staging-v1.yaml",
-  "audit_hash": "sha256:a3f9b1c4d2e7...",
-  "issued_at":  "2026-06-27T14:22:04Z",
-  "expires_at": "2026-06-27T14:27:04Z",
-  "signature":  "ed25519:7d3e2f1a9b8c..."
+  "schema":      "acgs.cft.evidence.v1",
+  "event_type":  "terraform_plan_evaluation",
+  "decision":    "allow",
+  "plan_hash":   "sha256:a3f9b1c4d2e7...",
+  "actor":       { "id": "platform-ci", "role": "validator" },
+  "reason":      "All 5 governance controls passed",
+  "merkle_root": "sha256:7d3e2f1a9b8c...",
+  "timestamp":   "2026-06-27T14:22:04Z"
 }`
 
 const RISK_TIERS: RiskTier[] = [
   {
     level: 'LOW',
     cls: 'confirmed',
-    title: 'Proceed with logging',
-    body: 'Low blast radius, fully reversible, no privileged credentials. The receipt is issued immediately; execution continues with a full audit record.',
-    examples: ['Read-only describe', 'Preview plans', 'Staging deploys'],
+    title: 'Informational control',
+    body: 'A low-severity violation is logged in the evidence record but does not deny the plan. Use for advisory checks such as recommended label conventions.',
+    examples: ['Recommended tags', 'Preferred naming', 'Optional logging'],
   },
   {
-    level: 'PARTIAL',
+    level: 'MEDIUM',
     cls: 'partial',
-    title: 'Proceed with approval flag',
-    body: 'Moderate scope or partial reversibility. A REVIEW flag is attached to the receipt. The operator may require a human acknowledgment before the executor runs.',
-    examples: ['Config changes', 'Service restarts', 'Quota modifications'],
+    title: 'Warning control',
+    body: 'A medium-severity violation records a reason in the evidence record. Your policy configuration determines whether medium violations deny the plan or pass with a warning.',
+    examples: ['Subnet flow logs', 'Release channel', 'OIDC hardening'],
   },
   {
     level: 'HIGH',
     cls: 'blocked',
-    title: 'Halt until escalated',
-    body: 'Wide blast radius, irreversible, or privileged credentials required. Execution is blocked until an explicit human approval is recorded in the audit trail.',
-    examples: ['Production deploys', 'IAM mutations', 'Data deletions'],
+    title: 'Blocking control',
+    body: 'A high-severity violation denies the plan immediately. The evaluate command exits 2, the evidence record captures the full reason, and the CI apply step is blocked.',
+    examples: ['Public ingress', 'Broad IAM roles', 'Service account keys'],
   },
 ]
 
@@ -121,9 +119,9 @@ export function CftPack() {
           Governed infrastructure for every AI <em>action</em>.
         </h1>
         <p className="m-hero-lede">
-          A Python library that attaches policy evaluation and verifiable Decision Receipts to
-          infrastructure operations before any side effect runs. Agents declare intent; the pack
-          decides; the executor verifies the receipt or halts.
+          A Python library that evaluates Terraform plans against YAML governance policies and emits
+          a verifiable evidence record before any apply gate runs. Declare the policy; the pack
+          evaluates; the CI pipeline blocks on any denial.
         </p>
         <div className="m-hero-actions">
           <a
@@ -194,7 +192,7 @@ export function CftPack() {
         <div className="m-sec-head">
           <span className="num">03 · sample output</span>
           <h2 id="cft-receipt-h">
-            A receipt you can <em>verify</em>.
+            An evidence record you can <em>inspect</em>.
           </h2>
         </div>
         <pre>{SAMPLE_RECEIPT}</pre>
