@@ -6,7 +6,6 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
-import { AgentBus } from '../../routes/AgentBus'
 import { Ask } from '../../routes/Ask'
 import { CftPack } from '../../routes/CftPack'
 import {
@@ -121,12 +120,6 @@ const cftPackRoute = createRoute({
   component: CftPack,
 })
 
-const agentBusRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/agent-bus',
-  component: AgentBus,
-})
-
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -206,7 +199,6 @@ const routeTree = rootRoute.addChildren([
   governancePatternsRoute,
   agentReadableRoute,
   cftPackRoute,
-  agentBusRoute,
   trustRoute,
   securityRoute,
   swarmRoute,
