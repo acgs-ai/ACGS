@@ -1,24 +1,13 @@
-import { motion } from 'motion/react'
 import { MarketingFrame } from './Marketing'
 
 /* ============================================================================
  * acgs-lite showcase page — /acgs-lite
  * Warm-paper design system: Instrument Serif display, token-only CSS.
- * Motion: whileInView stagger via motion/react v12.
+ * Motion: CSS @keyframes al-fade-up with nth-child stagger (no motion/react —
+ * keeps the marketing bundle within the 200 KiB gzip budget).
  * Copy discipline: MACI is advisory-by-default; opt-in via enforce_maci=True.
  * No version pinned in pip snippet — see HTML comment below.
  * ============================================================================ */
-
-const FADE_UP = {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0 },
-}
-
-const STAGGER = {
-  animate: { transition: { staggerChildren: 0.09, delayChildren: 0.05 } },
-}
-
-const EASE_OUT = [0.22, 1, 0.36, 1] as const
 
 interface Feature {
   title: string
@@ -106,44 +95,22 @@ export function AcgsLite() {
           <span className="al-badge">PyPI</span>
           <span>acgs-lite · governance receipts for Python agents</span>
         </div>
-        <motion.h1
-          id="al-h"
-          className="al-hero-h1"
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, ease: EASE_OUT }}
-        >
+        <h1 id="al-h" className="al-hero-h1 al-animate-hero-1">
           No valid receipt,
           <br />
           <em>no side effect.</em>
-        </motion.h1>
-        <motion.p
-          className="al-hero-lede"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, delay: 0.1, ease: EASE_OUT }}
-        >
+        </h1>
+        <p className="al-hero-lede al-animate-hero-2">
           acgs-lite is a fail-closed governance gate for AI agent side effects. It sits between an
           agent&apos;s decision and the tool call that acts on the world — enforcing a verifiable
           Decision Receipt before execution. No valid receipt, no side effect. Enforced, not
           advisory.
-        </motion.p>
-        <motion.div
-          className="al-install-row"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2, ease: EASE_OUT }}
-          aria-label="Install command"
-        >
+        </p>
+        <div className="al-install-row al-animate-hero-3">
           <code className="al-install-cmd">{INSTALL_LINE}</code>
           {/* no version pinned — consult PyPI for the current release */}
-        </motion.div>
-        <motion.div
-          className="al-hero-actions"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.4, delay: 0.32 }}
-        >
+        </div>
+        <div className="al-hero-actions al-animate-hero-4">
           <a
             className="btn btn-rust"
             href="https://pypi.org/project/acgs-lite/"
@@ -160,18 +127,12 @@ export function AcgsLite() {
           >
             View on GitHub
           </a>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── Signal strip ─────────────────────────────────────────── */}
       <section className="al-signals" aria-label="Package facts">
-        <motion.ul
-          className="al-signal-list"
-          variants={STAGGER}
-          initial="initial"
-          whileInView="animate"
-          viewport={{ once: true }}
-        >
+        <ul className="al-signal-list">
           {(
             [
               { label: 'Platform', value: 'Python ≥ 3.10' },
@@ -180,51 +141,32 @@ export function AcgsLite() {
               { label: 'Audit log', value: 'Hash-chained JSONL' },
             ] as const
           ).map(({ label, value }) => (
-            <motion.li key={label} className="al-signal-item" variants={FADE_UP}>
+            <li key={label} className="al-signal-item">
               <span className="al-signal-label">{label}</span>
               <span className="al-signal-value">{value}</span>
-            </motion.li>
+            </li>
           ))}
-        </motion.ul>
+        </ul>
       </section>
 
       {/* ── Feature grid ─────────────────────────────────────────── */}
       <section className="al-features" aria-labelledby="al-features-h">
-        <motion.h2
-          id="al-features-h"
-          className="al-section-h2"
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
-        >
+        <h2 id="al-features-h" className="al-section-h2 al-animate-in">
           What the gate enforces
-        </motion.h2>
-        <motion.ul
-          className="al-feature-grid"
-          variants={STAGGER}
-          initial="initial"
-          whileInView="animate"
-          viewport={{ once: true }}
-        >
-          {FEATURES.map((f) => (
-            <motion.li key={f.title} className="al-feature-card" variants={FADE_UP}>
+        </h2>
+        <ul className="al-feature-grid">
+          {FEATURES.map((f, i) => (
+            <li key={f.title} className={`al-feature-card al-stagger-${i}`}>
               <strong className="al-feature-title">{f.title}</strong>
               <p className="al-feature-body">{f.body}</p>
-            </motion.li>
+            </li>
           ))}
-        </motion.ul>
+        </ul>
       </section>
 
       {/* ── Code example ─────────────────────────────────────────── */}
       <section className="al-code-section" aria-labelledby="al-code-h">
-        <motion.div
-          className="al-code-inner"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.55, ease: EASE_OUT }}
-        >
+        <div className="al-code-inner al-animate-in">
           <h2 id="al-code-h" className="al-section-h2">
             Receipt-gated execution
           </h2>
@@ -236,18 +178,12 @@ export function AcgsLite() {
           <pre className="al-code-block">
             <code>{CODE_EXAMPLE}</code>
           </pre>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── MACI role separation ──────────────────────────────────── */}
       <section className="al-maci" aria-labelledby="al-maci-h">
-        <motion.div
-          className="al-maci-inner"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
-        >
+        <div className="al-maci-inner al-animate-in">
           <h2 id="al-maci-h" className="al-section-h2">
             Role separation <em>(MACI)</em>
           </h2>
@@ -270,18 +206,12 @@ export function AcgsLite() {
             Broader MACI phases — cross-boundary federation, external validator registries — are
             roadmap. See <code>MACI-ROADMAP.md</code>.
           </p>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── Proof panel ──────────────────────────────────────────── */}
       <section className="al-proof" aria-labelledby="al-proof-h">
-        <motion.div
-          className="al-proof-inner"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
-        >
+        <div className="al-proof-inner al-animate-in">
           <h2 id="al-proof-h" className="al-section-h2">
             Proof, not adjectives
           </h2>
@@ -301,35 +231,24 @@ export function AcgsLite() {
                   <th>Result</th>
                 </tr>
               </thead>
-              <motion.tbody
-                variants={STAGGER}
-                initial="initial"
-                whileInView="animate"
-                viewport={{ once: true }}
-              >
-                {PROOF_CHECKS.map(({ check, result }) => (
-                  <motion.tr key={check} variants={FADE_UP}>
+              <tbody>
+                {PROOF_CHECKS.map(({ check, result }, i) => (
+                  <tr key={check} className={`al-stagger-${i}`}>
                     <td>
                       <code>{check}</code>
                     </td>
                     <td className="al-proof-pass">{result}</td>
-                  </motion.tr>
+                  </tr>
                 ))}
-              </motion.tbody>
+              </tbody>
             </table>
           </div>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── Honest limits ────────────────────────────────────────── */}
       <section className="al-limits" aria-labelledby="al-limits-h">
-        <motion.div
-          className="al-limits-inner"
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.45, ease: EASE_OUT }}
-        >
+        <div className="al-limits-inner al-animate-in">
           <h2 id="al-limits-h" className="al-section-h2">
             What it does <em>not</em> do
           </h2>
@@ -341,18 +260,12 @@ export function AcgsLite() {
               <li key={limit}>{limit}</li>
             ))}
           </ul>
-        </motion.div>
+        </div>
       </section>
 
       {/* ── CTA ──────────────────────────────────────────────────── */}
       <section className="al-cta" aria-labelledby="al-cta-h">
-        <motion.div
-          className="al-cta-inner"
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
-        >
+        <div className="al-cta-inner al-animate-in">
           <h2 id="al-cta-h" className="al-cta-h2">
             Ready to gate your agents?
           </h2>
@@ -373,7 +286,7 @@ export function AcgsLite() {
               Start governance interview
             </a>
           </div>
-        </motion.div>
+        </div>
       </section>
     </MarketingFrame>
   )

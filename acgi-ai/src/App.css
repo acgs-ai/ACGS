@@ -6374,6 +6374,66 @@
   gap: var(--space-md);
 }
 
+/* ── Animations ──────────────────────────────────────────────────────────── */
+
+@keyframes al-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Hero: sequential entry on mount */
+.al-animate-hero-1 {
+  animation: al-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) 0ms both;
+}
+
+.al-animate-hero-2 {
+  animation: al-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+}
+
+.al-animate-hero-3 {
+  animation: al-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) 220ms both;
+}
+
+.al-animate-hero-4 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 330ms both;
+}
+
+/* Sections: fade-up on render (below-fold sections reveal as scroll reaches them) */
+.al-animate-in {
+  animation: al-fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+}
+
+/* Stagger: feature cards and proof table rows */
+.al-stagger-0 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 0ms both;
+}
+
+.al-stagger-1 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+}
+
+.al-stagger-2 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 160ms both;
+}
+
+.al-stagger-3 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 240ms both;
+}
+
+.al-stagger-4 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 320ms both;
+}
+
+.al-stagger-5 {
+  animation: al-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) 400ms both;
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
@@ -6394,5 +6454,21 @@
 
   .al-signal-list {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .al-animate-hero-1,
+  .al-animate-hero-2,
+  .al-animate-hero-3,
+  .al-animate-hero-4,
+  .al-animate-in,
+  .al-stagger-0,
+  .al-stagger-1,
+  .al-stagger-2,
+  .al-stagger-3,
+  .al-stagger-4,
+  .al-stagger-5 {
+    animation: none;
   }
 }
