@@ -33,6 +33,7 @@ empty on deny).
 There is **no real `langgraph` dependency** here, by design. The package's
 `governance/adapters/AGENTS.md` mandates that adapters target only the SDK's
 tool-node callback contract, not the SDK itself. `governed_graph.py` mirrors that
-node-dispatch + conditional-edge contract (a node that raises routes to
-remediation) so the fail-closed behaviour can be exercised hermetically. The
+node-dispatch + conditional-edge contract (a governance denial —
+`PermissionError`/`GovernanceDeniedError` — routes to remediation) so the
+fail-closed behaviour can be exercised hermetically. The
 governance decision path it drives is the real one.

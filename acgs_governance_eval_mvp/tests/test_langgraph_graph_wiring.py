@@ -41,3 +41,7 @@ def test_graph_allows_with_citations_executes_and_persists_receipt(tmp_path, rol
     assert final["terminal"] == "done"
     assert ran and ran[0] == args                       # executed with validated input
     assert final["result"] == {"ok": True}
+    # Receipt persisted: the allow DecisionRecord is in the audit chain and it
+    # verifies — the test name claims persistence, so the body must prove it.
+    report = adapter.audit_store.verify_chain()
+    assert report["valid"] and report["checked"] >= 1   # receipt persisted + chain intact
