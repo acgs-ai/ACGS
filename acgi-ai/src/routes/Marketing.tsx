@@ -644,6 +644,9 @@ export function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
+            <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
+              acgs-lite
+            </NavigationLink>
             <NavigationLink href="/swarm" onNavigate={() => setNavOpen(false)}>
               Swarm
             </NavigationLink>
@@ -702,6 +705,17 @@ Guidance for users and agents before real-world action.`}
               </li>
               <li>
                 <NavigationLink href="/swarm">acgs-swarm showcase</NavigationLink>
+              </li>
+              <li>
+                <a
+                  href="/acgs-lite"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/acgs-lite')
+                  }}
+                >
+                  acgs-lite package
+                </a>
               </li>
               <li>
                 <a
