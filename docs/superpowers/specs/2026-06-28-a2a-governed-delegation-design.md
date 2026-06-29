@@ -1,6 +1,6 @@
 # Wave 3 (Plug) — A2A Receipt-Gated Delegation: Design Spec
 
-**Status:** DESIGN — pending adversarial review before implementation.
+**Status:** APPROVED-FOR-BUILD (governance-reviewed 2026-06-28; 2 blocking findings resolved — see Design review section).
 
 ## Goal
 
@@ -30,11 +30,25 @@ never runs.
    from the receipt (executor.py:41-49; the load-bearing anti-forgery anchor,
    proven by `test_gate_refuses_actor_rewrite_forgery`). The adapter's remote
    handler takes the authenticated caller id as a *separate argument* from the
-   receipt.
-6. **Cross-boundary = signed.** A2A crosses trust boundaries, so the headline
-   path mints a signed receipt (`Ed25519Signer`) and the remote gate verifies
-   with `require_signature=True` + a trusted verifier.
-7. Claim-safety: README states mechanism, not compliance; "no real a2a dep, by
+   receipt. **Trust assumption (must be explicit in code + README):** in any
+   real deployment `authenticated_delegator` MUST originate from a transport
+   authentication mechanism (mutual TLS, signed JWT, A2A handshake). The
+   contract-only implementation makes supplying the genuine authenticated
+   identity the *caller's* responsibility — the adapter and gate enforce the
+   binding, not the authentication.
+6. **Cross-boundary = signed, secure by default.** A2A crosses trust
+   boundaries, so the server is signed-by-default: `require_signature=True` with
+   a required `verifier`. Unsigned same-domain operation is an *explicit opt-in*
+   (`require_signature=False`), never the silent default. A `require_signature=False`
+   default would leave `receipt.py:416-417`'s unsigned-rejection guard dead — the
+   constructor must not allow that to happen by omission.
+7. **Same-tenant delegation only (v1 scope).** The gate checks
+   `receipt.tenant_id == expected_tenant_id` (receipt.py:498-501) and
+   `tenant_id == requester_tenant_id` at bundle load (tenant.py:77-103). Both
+   the minting call and `GovernedA2AServer.tenant_id` MUST use the **same**
+   governance tenant. Cross-tenant A2A (agents in distinct policy namespaces) is
+   not a path the existing gate supports and is out of scope — see below.
+8. Claim-safety: README states mechanism, not compliance; "no real a2a dep, by
    design"; no "certified/production-ready/compliant".
 
 ## Verified gate API (from recon; file:line authoritative — re-read before coding)
@@ -89,7 +103,15 @@ def mint_delegation(
 class GovernedA2AServer:
     """Remote side: accepts delegated tasks and runs them ONLY via the gate."""
     def __init__(self, *, card: AgentCard, tenant_id: str,
-                 verifier=None, require_signature: bool = False): ...
+                 verifier: "ReceiptSigner | None" = None,
+                 require_signature: bool = True): ...
+        # Secure by default (constraint 6). Construction MUST fail closed on a
+        # contradictory config:
+        #   require_signature=True and verifier is None  -> ValueError
+        #     ("signed A2A server requires a verifier")
+        #   require_signature=False                       -> allowed ONLY as an
+        #     explicit unsigned same-domain opt-in (verifier may be None).
+        # There is no config where signatures are silently ignored.
     def register(self, action: str, fn: Callable[..., Any]) -> None: ...
     def accept_delegation(
         self, *, authenticated_delegator: str,   # from transport handshake, NOT the receipt
@@ -97,10 +119,19 @@ class GovernedA2AServer:
     ) -> Any:
         """Run task.action(**task.args) iff the gate admits the receipt for
         authenticated_delegator. Calls execute_with_receipt with
-        expected_actor=authenticated_delegator, expected_action=task.action,
-        args=task.args, expected_tenant_id/boundary from this server.
+        expected_actor=authenticated_delegator  (NEVER receipt.actor — that
+        single substitution would defeat the anti-forgery anchor),
+        expected_action=task.action, args=task.args, expected_tenant_id and
+        expected_execution_boundary from this server, plus verifier +
+        require_signature from this server's config.
         Raises A2ADelegationError (wrapping ReceiptValidationError) on any
-        fail-closed vector. The registered fn is reachable ONLY through this gate."""
+        fail-closed vector. The registered fn is reachable ONLY through this gate.
+
+        Trust assumption: authenticated_delegator MUST be the transport-
+        authenticated identity of the calling agent (mutual TLS / signed JWT /
+        A2A handshake). Passing an unauthenticated or caller-chosen string here
+        voids the actor-binding guarantee — the gate binds the receipt to this
+        value but cannot itself authenticate it."""
 ```
 
 **Critical wiring invariants (review these hardest):**
@@ -126,12 +157,17 @@ class GovernedA2AServer:
 
 Drive `GovernedA2AServer.accept_delegation(...)` (NOT `execute_with_receipt` directly — handler-wiring rule). A spy executor records calls.
 
+**Write `test_delegation_wrong_delegator_fails_closed` FIRST and confirm it fails on the wrong wiring.** It is the load-bearing guard against the single most likely implementation bug: passing `expected_actor=receipt.actor` instead of `authenticated_delegator`. With the wrong wiring no exception is raised, the spy runs, and this test fails — so it must exist and be red before the implementation is written, then go green.
+
+All tenants in these tests are the SAME (constraint 7). `args=task.args` flows through ALLOW arg-binding (receipt.py:577-584); the demo/tests use ALLOW decisions, so the TRANSFORM binding path (receipt.py:539-565) is not exercised here — fine, but do not claim TRANSFORM coverage.
+
 - `test_delegation_allows_authenticated_delegator_and_runs` — happy path (unsigned, same domain): spy called once with the bound args; result returned; receipt persisted (`audit_store` chain verifies).
 - `test_delegation_no_receipt_fails_closed` — `receipt=None` → `A2ADelegationError`; spy empty.
 - `test_delegation_wrong_delegator_fails_closed` — receipt minted for `agent-A`, `authenticated_delegator="agent-B"` → `A2ADelegationError` (actor mismatch); spy empty.
 - `test_delegation_substituted_args_fails_closed` — receipt for args X, task carries args Y → `A2ADelegationError` (argument mismatch); spy empty.
 - `test_delegation_signed_forgery_rejected` — signed path with `require_signature=True`; a tampered/re-signed-with-wrong-key receipt → `A2ADelegationError`; spy empty. (Needs `crypto` extra; the gove-zone dev install bundles it.)
 - `test_mint_self_validation_forbidden` — `mint_delegation` with `validator == delegating_actor` → raises (MACI), surfaced from kernel.
+- `test_server_signed_by_default_requires_verifier` — `GovernedA2AServer(card=..., tenant_id=..., require_signature=True, verifier=None)` (or relying on the default) → `ValueError`. And `GovernedA2AServer(..., require_signature=False)` constructs (explicit unsigned opt-in). Proves constraint 6's secure-by-default guard.
 
 All fail-closed tests assert BOTH the raise AND the spy emptiness (the un-run side effect is the real proof).
 
@@ -149,5 +185,21 @@ make lint-docs                                                          # docs g
 ## Out of scope (named, not silently dropped)
 
 - Real `a2a` SDK transport / JSON-RPC / AgentCard discovery endpoint (contract-only here).
+- **Transport-layer authentication** of the delegating agent's identity. The adapter
+  consumes an already-authenticated `authenticated_delegator`; it does not establish it
+  (constraint 5 trust assumption).
+- **Cross-tenant A2A delegation** (agents in distinct governance tenant namespaces). The
+  existing gate is same-tenant by construction (constraint 7); cross-tenant would require
+  kernel/gate changes and is deferred.
 - Multi-hop delegation chains (A→B→C). Single hop only.
 - Updating the stack-map `thin → exists` row (lives on PR #182; separate follow-up).
+
+## Design review
+
+Adversarially reviewed at the design stage (governance-reviewer, 2026-06-28): the
+four-vector fail-closed composition, MACI self-validation enforcement, the
+`expected_actor` anti-forgery anchor, and the fn-only-through-gate property were all
+confirmed against the kernel (executor.py / receipt.py / tenant.py). Two blocking
+findings — signed-by-default and same-tenant scope — and one advisory (the
+`authenticated_delegator` trust assumption) are resolved in constraints 5–7 and the
+out-of-scope list above. Status upgraded DESIGN → APPROVED-FOR-BUILD.
