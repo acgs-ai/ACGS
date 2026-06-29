@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
+import { AgentBus } from '../../routes/AgentBus'
 import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
 import { EvalMvp } from '../../routes/EvalMvp'
@@ -117,6 +118,12 @@ const agentReadableRoute = createRoute({
   component: AgentReadable,
 })
 
+const agentBusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-bus',
+  component: AgentBus,
+})
+
 const evalMvpRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/eval-mvp',
@@ -219,6 +226,7 @@ const routeTree = rootRoute.addChildren([
   failureModesRoute,
   governancePatternsRoute,
   agentReadableRoute,
+  agentBusRoute,
   evalMvpRoute,
   cftPackRoute,
   acgsLiteRoute,
