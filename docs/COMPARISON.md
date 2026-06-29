@@ -20,6 +20,22 @@ ACGS / gove-zone is not trying to replace the surrounding ecosystem. It fills a 
 
 Most agent tooling focuses on making actions possible. ACGS focuses on proving whether actions are legitimate.
 
+## Governance posture: none vs audit-centric vs receipt-centric
+
+Three postures a system can take at the agent action boundary:
+
+| Posture | Acts… | You get | Example |
+|---|---|---|---|
+| **Ungoverned** (most of the stack today) | agent → tool directly | speed, zero accountability | raw MCP server, vanilla LangGraph |
+| **Audit-centric** | logs *after* the action | a trail you read after harm | Microsoft Agent Governance Toolkit ([detail below](#microsoft-agent-governance)) |
+| **Receipt-centric (ACGS)** | gates *before* the action | every action carries a verifiable, single-use Decision Receipt; fail-closed | gove-zone |
+
+ACGS's distinctive choice is **receipt-centric**: the gate runs before the
+side effect, and the receipt is the artifact that proves it. This is a
+technical membrane, not a compliance certification. See
+[AGENT_STACK_GOVERNANCE.md](AGENT_STACK_GOVERNANCE.md) for where each adapter
+plugs into the agent stack.
+
 ## What to combine
 
 A production-adjacent stack should combine:

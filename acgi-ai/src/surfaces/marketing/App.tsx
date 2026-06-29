@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
+import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
 import { ClinicalGuard } from '../../routes/ClinicalGuard'
 import {
@@ -19,6 +20,7 @@ import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
 import { Security } from '../../routes/Security'
+import { Swarm } from '../../routes/Swarm'
 import { Trust } from '../../routes/Trust'
 
 function consoleOrigin(): string {
@@ -113,6 +115,12 @@ const agentReadableRoute = createRoute({
   component: AgentReadable,
 })
 
+const acgsLiteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/acgs-lite',
+  component: AcgsLite,
+})
+
 const trustRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/trust',
@@ -129,6 +137,12 @@ const clinicalguardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/clinicalguard',
   component: ClinicalGuard,
+})
+
+const swarmRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/swarm',
+  component: Swarm,
 })
 
 const productIndexRoute = createRoute({
@@ -191,9 +205,11 @@ const routeTree = rootRoute.addChildren([
   failureModesRoute,
   governancePatternsRoute,
   agentReadableRoute,
+  acgsLiteRoute,
   trustRoute,
   securityRoute,
   clinicalguardRoute,
+  swarmRoute,
   productIndexRoute,
   productRoute,
   privilegedLoginRoute,
