@@ -1,0 +1,59 @@
+# Secret-scanning PR gate (free-for-dev pick: GitGuardian, free <=25 devs).
+# Complements the repo's detect-secrets pre-commit baseline with a
+# server-side scan of the full PR diff. Fails closed: a detected secret
+# blocks the PR. Runs on GitHub-hosted runners (free for public repos) so it
+# never competes with the self-hosted box that the required `verify` check
+# depends on.
+#
+# SETUP (human-gated, one-time): add the repo secret GITGUARDIAN_API_KEY
+#   Settings > Secrets and variables > Actions > New repository secret
+#   (create a free key at https://dashboard.gitguardian.com). Until the secret
+#   exists this workflow no-ops with a clear skip message rather than erroring.
+
+name: gitguardian
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: gitguardian-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scanning:
+    name: GitGuardian secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check for API key
+        id: guard
+        env:
+          GG_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+        run: |
+          if [ -z "$GG_KEY" ]; then
+            echo "GITGUARDIAN_API_KEY not set — skipping scan. Add the repo secret to enable." >> "$GITHUB_STEP_SUMMARY"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # ggshield scans the full commit range of the PR
+
+      - name: GitGuardian scan
+        if: steps.guard.outputs.enabled == 'true'
+        uses: GitGuardian/ggshield-action@v1
+        env:
+          GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
