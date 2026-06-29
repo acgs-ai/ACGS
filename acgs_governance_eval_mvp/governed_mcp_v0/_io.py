@@ -15,7 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import IO, Any
 
-from governance.audit.jsonl_chain import UnsafeAuditStorageError, _refuse_unreliable_fs
+from governance.audit import UnsafeAuditStorageError, refuse_unreliable_fs
 
 from .constants import GENESIS_HASH
 from .models import RuntimeTargets
@@ -71,7 +71,7 @@ def _evidence_lock(audit_path: Path) -> IO[str]:
     TODO: ``fcntl`` is POSIX-only; Windows fallback is out of scope because
     the package CI runs on Linux.
     """
-    _refuse_unreliable_fs(audit_path)
+    refuse_unreliable_fs(audit_path)
     lock_path = audit_path.with_suffix(audit_path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as handle:

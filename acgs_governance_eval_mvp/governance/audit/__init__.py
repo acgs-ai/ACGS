@@ -12,6 +12,7 @@ from .jsonl_chain import (
     NonceReplayError,
     UnsafeAuditStorageError,
     extract_trace,
+    refuse_unreliable_fs,
 )
 
 
@@ -46,4 +47,5 @@ __all__ = [
     "NonceReplayError",
     "UnsafeAuditStorageError",
     "extract_trace",
+    "refuse_unreliable_fs",
 ]
