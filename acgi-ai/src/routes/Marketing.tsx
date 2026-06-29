@@ -707,6 +707,7 @@ Guidance for users and agents before real-world action.`}
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
               </li>
               <li>
+                <NavigationLink href="/cft-pack">CFT Governance Pack</NavigationLink>
                 <NavigationLink href="/swarm">acgs-swarm showcase</NavigationLink>
               </li>
               <li>
