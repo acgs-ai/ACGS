@@ -1,0 +1,85 @@
+# GitHub-hosted advisory twin of `tests-root.yml`.
+#
+# WHY: every meaningful gate in this repo (`verify`, `test`, `tests-root`, all
+# per-package suites, deploys) runs on the single `[self-hosted, Linux, X64]`
+# runner. If that one box is offline, those checks sit `pending` indefinitely —
+# there is no independent signal that the codebase is healthy.
+#
+# This job mirrors `tests-root.yml`'s environment-INDEPENDENT invariant guards
+# (82 tests) onto a GitHub-hosted runner (free for public repos). It is a
+# faithful copy of that gate's run step — the ONLY difference is `runs-on` —
+# so the two never diverge in what they assert. The self-hosted `tests-root`
+# remains the authority; this is a redundant safety net for runner outages.
+#
+# ADVISORY BY DESIGN: a newly-added check is not a required status check until a
+# human adds it to branch protection. Leave it advisory, or promote it to
+# required once you trust it — same "agent preps, human flips the switch"
+# pattern as repo secrets. Keep the run step in lockstep with `tests-root.yml`.
+
+name: tests-root-hosted
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - '.claude/settings.json'
+      - 'automation/**'
+      - 'pyproject.toml'
+      - 'Makefile'
+      - 'docs/PLAN-MONOREPO.md'
+      - 'docs/constitutional-hashes.lock'
+  push:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - '.claude/settings.json'
+      - 'automation/**'
+      - 'pyproject.toml'
+      - 'Makefile'
+      - 'docs/PLAN-MONOREPO.md'
+      - 'docs/constitutional-hashes.lock'
+
+concurrency:
+  group: tests-root-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Root invariants (GitHub-hosted advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Submodules intentionally NOT initialized — these guards read
+      # parent-tracked files only; the submodule-dependent tests are excluded
+      # below, identically to tests-root.yml.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Run root governance-invariant guards
+        # Lockstep copy of tests-root.yml. `--no-project` skips the workspace
+        # sync; `--with` supplies the only deps these tests need (pytest +
+        # pyyaml). tests/conftest.py puts scripts/ on sys.path. EXCLUSIONS match
+        # tests-root.yml exactly — env-dependent tests stay out of this gate.
+        run: |
+          uv python install 3.11
+          uv run --no-project --python 3.11 --with pytest --with pyyaml \
+            python -m pytest tests/ \
+            --ignore=tests/docs \
+            --ignore=tests/test_platform_readiness_report.py \
+            --ignore=tests/test_readiness_evidence_boundaries.py \
+            --ignore=tests/test_release_evidence_bundle.py \
+            --ignore=tests/test_production_blocker_evidence.py \
+            --ignore=tests/test_production_launch_preflight.py \
+            -k "not test_acgs_lite_published_floor_unchanged and not test_acgs_swarm_floor_drives_workspace_floor and not test_acgs_swarm_has_strict_core_mypy_gate and not test_typecheck_py_uses_configured_mypy_scope" \
+            -v --import-mode=importlib
