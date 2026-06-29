@@ -19,6 +19,7 @@ import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
 import { Security } from '../../routes/Security'
+import { Swarm } from '../../routes/Swarm'
 import { Trust } from '../../routes/Trust'
 
 function consoleOrigin(): string {
@@ -131,6 +132,12 @@ const securityRoute = createRoute({
   component: Security,
 })
 
+const swarmRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/swarm',
+  component: Swarm,
+})
+
 const productIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/products',
@@ -194,6 +201,7 @@ const routeTree = rootRoute.addChildren([
   acgsLiteRoute,
   trustRoute,
   securityRoute,
+  swarmRoute,
   productIndexRoute,
   productRoute,
   privilegedLoginRoute,

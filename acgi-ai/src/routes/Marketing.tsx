@@ -542,7 +542,7 @@ function signalByKey(key: SignalKey): RiskSignal {
   return riskSignals.find((signal) => signal.key === key) ?? riskSignals[0]
 }
 
-function NavigationLink({
+export function NavigationLink({
   href,
   children,
   onNavigate,
@@ -647,6 +647,9 @@ export function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
               acgs-lite
             </NavigationLink>
+            <NavigationLink href="/swarm" onNavigate={() => setNavOpen(false)}>
+              Swarm
+            </NavigationLink>
           </div>
           <a className="m-nav-cta" href="/#interview">
             Start interview <ArrowRight size={14} strokeWidth={1.75} />
@@ -699,6 +702,9 @@ Guidance for users and agents before real-world action.`}
               </li>
               <li>
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
+              </li>
+              <li>
+                <NavigationLink href="/swarm">acgs-swarm showcase</NavigationLink>
               </li>
               <li>
                 <a
