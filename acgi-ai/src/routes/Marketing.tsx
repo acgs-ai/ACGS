@@ -644,6 +644,9 @@ export function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
             </NavigationLink>
+            <NavigationLink href="/clinicalguard" onNavigate={() => setNavOpen(false)}>
+              ClinicalGuard
+            </NavigationLink>
             <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
               acgs-lite
             </NavigationLink>
@@ -715,6 +718,17 @@ Guidance for users and agents before real-world action.`}
                   }}
                 >
                   acgs-lite package
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/clinicalguard"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/clinicalguard')
+                  }}
+                >
+                  ClinicalGuard
                 </a>
               </li>
               <li>

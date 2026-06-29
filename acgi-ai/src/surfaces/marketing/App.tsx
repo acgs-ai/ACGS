@@ -8,6 +8,7 @@ import {
 import { lazy, Suspense, useEffect } from 'react'
 import { AcgsLite } from '../../routes/AcgsLite'
 import { Ask } from '../../routes/Ask'
+import { ClinicalGuard } from '../../routes/ClinicalGuard'
 import {
   AgentReadable,
   FailureModesPage,
@@ -132,6 +133,12 @@ const securityRoute = createRoute({
   component: Security,
 })
 
+const clinicalguardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/clinicalguard',
+  component: ClinicalGuard,
+})
+
 const swarmRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/swarm',
@@ -201,6 +208,7 @@ const routeTree = rootRoute.addChildren([
   acgsLiteRoute,
   trustRoute,
   securityRoute,
+  clinicalguardRoute,
   swarmRoute,
   productIndexRoute,
   productRoute,
