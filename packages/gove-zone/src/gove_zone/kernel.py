@@ -33,6 +33,7 @@ from gove_zone.errors import (
     EscalateError,
     UnknownToolError,
 )
+from gove_zone.escalation import PendingApproval
 from gove_zone.policy import Policy, new_event_id
 from gove_zone.receipt import Receipt, safe_result_hash
 from gove_zone.replay_store import ReplaySideStore
@@ -65,21 +66,15 @@ class Kernel:
         actor: str = "anonymous",
         policy_timeout: float | None = None,
         side_store: ReplaySideStore | None = None,
+        context_hydrator: Callable[[str, Mapping[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
         self.registry = registry or ToolRegistry()
         self.actor = actor
-        # Watchdog: if set, policy.evaluate must return within this many
-        # seconds or the kernel synthesizes a fail-closed DENY. None
-        # preserves the unbounded synchronous path (default).
         self.policy_timeout = policy_timeout
-        # Opt-in raw-args side-store. When None (default) the kernel writes
-        # nothing extra and behaves byte-for-byte as before. When set, every
-        # dispatch additionally persists the raw call so replay can re-derive
-        # the decision. It never affects the audit chain, the returned receipt,
-        # or the decision — strictly additive.
         self.side_store = side_store
+        self.context_hydrator = context_hydrator
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator to register a tool under *name*.
@@ -123,20 +118,29 @@ class Kernel:
         if not self.registry.has(tool_name):
             raise UnknownToolError(tool_name)
 
+        state_dict = dict(state or {})
+        if self.context_hydrator is not None:
+            hydrated = self.context_hydrator(tool_name, args_dict)
+            state_dict.update(hydrated)
+
         call = ToolCall(
             name=tool_name,
             args=args_dict,
             goal=goal,
             actor=self.actor,
             path=normalize_path_context(path),
-            state=dict(state or {}),
+            state=state_dict,
         )
         record, audit_hash = self._evaluate_and_record(call)
 
         if record.decision is Decision.DENY:
             raise DeniedError(record, audit_hash)
         if record.decision is Decision.ESCALATE:
-            raise EscalateError(record, audit_hash)
+            raise EscalateError(
+                record,
+                audit_hash,
+                pending=PendingApproval(record, audit_hash, dict(call.args)),
+            )
         if record.decision is Decision.TRANSFORM:
             if record.transformed_args is None:
                 # Policy bug: TRANSFORM without args. Fail closed.
@@ -280,3 +284,26 @@ class Kernel:
         )
         with contextlib.suppress(Exception):
             self.audit.append(failure)
+
+
+class GovernedTool:
+    """Wrapper that freezes agent tool execution until evaluated by Kernel."""
+
+    def __init__(self, kernel: Kernel, tool_name: str, tool_fn: Callable[..., Any]) -> None:
+        self.kernel = kernel
+        self.tool_name = tool_name
+        self.tool_fn = tool_fn
+        # Register automatically on kernel
+        self.kernel.registry.register(tool_name, tool_fn)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        # Freeze and compile arguments
+        call_args = dict(kwargs)
+        if args:
+            # Match positional arguments if metadata is not provided, fallback to standard indexing
+            for idx, val in enumerate(args):
+                call_args[f"arg_{idx}"] = val
+
+        # Dispatch through the kernel's pre-execution interception wrapper
+        result, _ = self.kernel.dispatch(self.tool_name, call_args)
+        return result

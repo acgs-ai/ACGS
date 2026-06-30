@@ -67,12 +67,62 @@ every decision leaves tamper-evident audit evidence.
 
 The same thread is covered as a test in `tests/test_end_to_end.py`.
 
+## When should I use gove-zone?
+
+gove-zone is a narrow enforcement layer, not a platform. It earns its place when
+you need *verifiable proof, gated before the act* — and it is the wrong tool when
+you need breadth.
+
+**Use gove-zone if**
+
+- You need machine-checkable proof that a **specific tool call, with specific
+  arguments**, was authorized by policy *before* it ran — not logged after.
+- You operate under a **fail-closed** mandate: if governance cannot decide, the
+  action is denied, never silently allowed.
+- You want an **append-only, tamper-evident audit chain** a third party can
+  replay and verify offline, without re-running your policy.
+- You need **proposer ≠ validator** separation (MACI): the agent requesting an
+  action cannot also be the authority that approves it.
+- You already own **authentication and tool sandboxing**, and need the
+  governance decision in the last mile before execution — inside an MCP server,
+  a LangGraph / OpenAI-Agents tool, a CI/deploy step, or a custom executor.
+- You want **cryptographic non-repudiation** of decisions: the default
+  production profile signs receipts (Ed25519), so a recomputed-hash forgery is
+  infeasible without the key.
+- You are **multi-tenant** and need one tenant's policy/receipt to be unusable
+  in another's execution context.
+
+**Do NOT use gove-zone if**
+
+- You want an **agent framework**. gove-zone has no planner and no orchestration
+  of its own; integrate it *into* your framework, don't replace it.
+- You expect **policies to be written for you**. Policies are explicit (rules /
+  code); you author them.
+- You need a turnkey **PKI, key rotation, or revocation** service. Production
+  signing is point-to-point; key custody, distribution, and rotation are yours
+  to operate (see `SECURITY.md` → *Ed25519 receipt signing*).
+- Your threat model is **a compromised host**. An attacker who can write the
+  audit file and run the issuer can forge a consistent local chain; the chain
+  proves tamper-evidence to *readers*, not unforgeability under host compromise.
+- You need a **turnkey approval queue / UI**. `ESCALATE` blocks the action and
+  the kernel surfaces a *resumable* pending approval (`approve_escalation` →
+  `resume_with_receipt`), but routing it to a human reviewer — the queue, the
+  notification, the UI — is yours to build.
+- You need **production / compliance certification**. gove-zone is alpha
+  (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
+  certification.
+
+For the full boundary — what is enforced, what is explicitly out of scope, and
+what you must supply externally — see the one-page
+[threat model](docs/threat-model.md) and the deeper [`SECURITY.md`](SECURITY.md).
+
 ## Documentation
 
 | Topic | Doc |
 |---|---|
 | Architecture & components | `ARCHITECTURE.md` |
-| Security boundary & threat model | `SECURITY.md` |
+| Threat model (one page: prevents / does not / supply externally) | `docs/threat-model.md` |
+| Security boundary (deep) | `SECURITY.md` |
 | Receipt schema & verification | `docs/decision-receipts.md` |
 | Governed execution flow | `docs/governed-execution.md` |
 | Audit evidence & chain | `docs/audit-evidence.md` |
@@ -408,6 +458,61 @@ Set with one command: `gove-zone enable --enforce` (or `--observe`).
 1. `$GOVE_ZONE_AUDIT_PATH`
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/audit.jsonl`
 3. `$PWD/.gove-zone/audit.jsonl`
+
+## Structured rejections (agent self-correction)
+
+When a dispatch is denied or escalated the kernel raises a typed error
+(`DeniedError` / `EscalateError`) carrying the deciding `DecisionRecord`. Both
+expose `to_rejection_dict()` — a small, stable JSON envelope a *calling agent*
+can read to self-correct, the machine-facing twin of the human-console
+projection (`record_to_governed_action`):
+
+```python
+try:
+    kernel.dispatch("matter.fetch", {"matter_id": "M-1"}, goal="...")
+except DeniedError as exc:
+    rejection = exc.to_rejection_dict()
+    # {"status": "deny", "outcome": "denied", "resumable": False,
+    #  "resolution": "revise_and_retry", "reason": ..., "matched_rules": [...],
+    #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...}
+    # (allowed_alternatives is omitted until PR-2 computes it — see Notes)
+```
+
+`ESCALATE` is **not** a dead-end — its envelope is `resumable` and advertises the
+human-approval resume path:
+
+```python
+except EscalateError as exc:
+    rejection = exc.to_rejection_dict()
+    # {... "resumable": True, "resolution": "human_approval",
+    #  "approval": {"via": "approve_escalation", "pending": True}}
+```
+
+The host routes that to a human, who approves via `approve_escalation(...)` →
+`resume_with_receipt(...)`; execution still runs only through the
+receipt-verifying gate.
+
+**Notes.**
+
+- Pure projection — no decision is made and nothing is mutated. The envelope
+  carries `decision_request_hash` / `audit_hash` (never raw arguments), no
+  `state_hash`, and no `transformed_args`.
+- `reason` has two provenances. On a **policy** verdict it is *policy-authored*
+  free text, surfaced verbatim — **keep policy `reason` strings non-sensitive**
+  (they also reach the audit chain and the console). On a **fail-closed fallback**
+  verdict (`policy_version` starts with `fail-closed/` — the policy raised or timed
+  out), `reason` would be derived from the raising exception and could echo raw
+  arguments, so the envelope **redacts** it to a fixed safe summary; the error
+  class stays in `matched_rules` and the full reason is retained in the audit chain.
+- `resumable` tracks the *actual* affordance: it is `True` iff a
+  `PendingApproval` is attached, which the kernel does on every `ESCALATE`. For
+  an `EscalateError` built outside the kernel, both `resumable` and
+  `approval.pending` are `False` — gate the resume call on either; they never
+  disagree.
+- `allowed_alternatives` is **omitted** until a future capability-discovery
+  (`simulate`, PR-2) primitive computes it. Absence means *"not computed"*; a
+  present list (even empty) will mean *"computed"* — so the key never carries an
+  in-band ambiguity between "unknown" and "none permitted".
 
 ## Auto-setup
 

@@ -32,9 +32,15 @@ from gove_zone.errors import (
     EscalateError,
     GoveZoneError,
     PolicyError,
+    ProductionProfileError,
     ReceiptValidationError,
     SigningError,
     UnknownToolError,
+)
+from gove_zone.escalation import (
+    PendingApproval,
+    approve_escalation,
+    resume_with_receipt,
 )
 from gove_zone.evaluation import (
     EvaluationReport,
@@ -73,10 +79,13 @@ from gove_zone.policy import (
     RuleSetPolicy,
     new_event_id,
 )
+from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Receipt, Validator, safe_result_hash
+from gove_zone.rejection import rejection_dict
 from gove_zone.replay import (
     ReplayResult,
     find_event,
+    replay_bundle,
     replay_call,
     replay_event,
     replay_from_side_store,
@@ -130,6 +139,7 @@ __all__ = [
     "ExecutionBoundary",
     "GateMode",
     "GateModeError",
+    "GovernanceProfile",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
@@ -138,10 +148,12 @@ __all__ = [
     "ManagedAgent",
     "NullSigner",
     "PathBoundaryPolicy",
+    "PendingApproval",
     "Policy",
     "PolicyBundleRef",
     "PolicyRule",
     "PolicyError",
+    "ProductionProfileError",
     "ProposedAction",
     "Receipt",
     "ReceiptSigner",
@@ -168,6 +180,7 @@ __all__ = [
     "YAMLPolicy",
     "__version__",
     "agentdojo_scenarios_from_fixture",
+    "approve_escalation",
     "emit_receipt_for_hook",
     "emit_receipts_for_hook",
     "evaluate_policy_scenarios",
@@ -184,9 +197,12 @@ __all__ = [
     "normalize_path_context",
     "receipt_to_governed_action",
     "record_to_governed_action",
+    "rejection_dict",
+    "replay_bundle",
     "replay_call",
     "replay_event",
     "replay_from_side_store",
+    "resume_with_receipt",
     "run_smoke",
     "safe_result_hash",
     "sha256_json",
