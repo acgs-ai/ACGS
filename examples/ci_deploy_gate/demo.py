@@ -72,6 +72,7 @@ def main() -> int:
     )
 
     staging_result = execute_with_receipt(
+        require_signature=False,  # dev-mode: local unsigned demo
         tool_fn=deployer.deploy,
         args=staging_args,
         receipt=staging_receipt,
@@ -84,6 +85,7 @@ def main() -> int:
     prod_denied = False
     try:
         execute_with_receipt(
+            require_signature=False,  # dev-mode: local unsigned demo
             tool_fn=deployer.deploy,
             args=prod_args,
             receipt=prod_deny_receipt,

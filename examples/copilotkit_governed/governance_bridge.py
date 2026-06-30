@@ -25,7 +25,10 @@ the audit anchor, not yet an executor gate.
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +47,14 @@ ACTOR = "copilotkit-copilot"
 TENANT = "tenant-A"
 BOUNDARY = "copilotkit-bridge/local"
 
-# One audit chain per process; each ALLOW appends and chains from the previous.
-_AUDIT_PATH = Path(tempfile.mkdtemp(prefix="copilot-bridge-")) / "admit-audit.jsonl"
+# One shared local audit chain; each ALLOW appends and chains from the previous.
+# COPILOT_AUDIT_PATH lets tests/operators isolate the local proof file without
+# creating import-time temp directories or split per-worker chains.
+_AUDIT_ENV = os.getenv("COPILOT_AUDIT_PATH")
+_AUDIT_PATH = (
+    Path(_AUDIT_ENV) if _AUDIT_ENV else Path(tempfile.gettempdir()) / "copilot-bridge-audit.jsonl"
+)
+_AUDIT_LOCK = threading.Lock()
 
 
 class BridgePolicy(Policy):
@@ -61,12 +70,29 @@ class BridgePolicy(Policy):
     def version(self) -> str:
         return "copilotkit-bridge-policy/v1"
 
+    def _first_forbidden_value(self, value: Any) -> str | None:
+        if isinstance(value, str):
+            lowered = value.lower()
+            return next((kw for kw in self.FORBIDDEN if kw in lowered), None)
+        if isinstance(value, dict):
+            for child in value.values():
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        elif isinstance(value, (list, tuple, set)):
+            for child in value:
+                matched = self._first_forbidden_value(child)
+                if matched:
+                    return matched
+        return None
+
     def evaluate(self, call: ToolCall) -> DecisionRecord:
-        blob = sha256_json(dict(call.args))
-        lowered = str(sorted(dict(call.args).items())).lower()
-        matched = [kw for kw in self.FORBIDDEN if kw in lowered]
-        if matched:
-            decision, reason = Decision.DENY, f"forbidden arg: {matched[0]}"
+        args = dict(call.args)
+        blob = sha256_json(args)
+        matched_kw = self._first_forbidden_value(args)
+        matched = [matched_kw] if matched_kw else []
+        if matched_kw:
+            decision, reason = Decision.DENY, f"forbidden arg: {matched_kw}"
         elif call.name in self.HUMAN_IN_THE_LOOP_TOOLS:
             decision, reason = Decision.ESCALATE, "human-in-the-loop approval required"
         else:
@@ -85,30 +111,56 @@ class BridgePolicy(Policy):
 _POLICY = BridgePolicy()
 
 
-def admit_action(action: str, args: dict[str, Any]) -> dict[str, Any]:
+def admit_action(action: Any, args: Any) -> dict[str, Any]:
     """Decide whether *action* may run. Fail closed: anything other than a
-    clean ALLOW returns no ``receiptAuditHash``."""
+    clean ALLOW returns no ``receiptAuditHash``.
+
+    Input is validated here, not only at the HTTP edge, so a malformed call can
+    never fall through to ALLOW: ``action`` must be a non-empty string and
+    ``args`` must be an object. ``action``/``args`` are typed ``Any`` precisely
+    because callers (and the network) may pass anything; this function is the
+    single fail-closed gate that rejects it.
+    """
     try:
+        if not isinstance(action, str) or not action.strip():
+            return {"decision": "deny", "reason": "action must be a non-empty string"}
+        if not isinstance(args, dict):
+            return {"decision": "deny", "reason": "args must be an object"}
+
         call = ToolCall(name=action, args=dict(args), actor=ACTOR)
         record = _POLICY.evaluate(call)
+        # The policy returns a bare record; inject caller context the way the
+        # kernel's _attach_context does, so the minted receipt is bound to ACTOR
+        # rather than the "anonymous" default and can be verified for this caller.
+        record = dataclasses.replace(
+            record,
+            goal=call.goal,
+            actor=call.actor,
+            path=call.path,
+            state_hash=call.state_hash(),
+            decision_request_hash=call.decision_request_hash(),
+        )
 
         if record.decision is Decision.ALLOW:
-            event = ChainHashAuditStore(_AUDIT_PATH).append(record)
-            audit_hash = str(event["event_hash"])
-            # Issuing the receipt proves it is well-formed; we return the same
-            # anchored hash the client checks for.
-            DecisionReceipt.from_record(
-                record=record,
-                audit_hash=audit_hash,
-                previous_audit_hash=str(event["previous_hash"]),
-                tenant_id=TENANT,
-                execution_boundary=BOUNDARY,
-                policy_bundle_id="copilotkit-bridge-policy",
-                policy_hash=record.policy_version,
-                request_id=f"req-{record.event_id}",
-                validator=Validator("governance-bridge"),
-                authority="tenant-A/copilot-tool-grant",
-            )
+            with _AUDIT_LOCK:
+                event = ChainHashAuditStore(_AUDIT_PATH).append(record)
+                audit_hash = str(event["event_hash"])
+                receipt = DecisionReceipt.from_record(
+                    record=record,
+                    audit_hash=audit_hash,
+                    previous_audit_hash=str(event["previous_hash"]),
+                    tenant_id=TENANT,
+                    execution_boundary=BOUNDARY,
+                    policy_bundle_id="copilotkit-bridge-policy",
+                    policy_hash=record.policy_version,
+                    request_id=f"req-{record.event_id}",
+                    validator=Validator("governance-bridge"),
+                    authority="tenant-A/copilot-tool-grant",
+                )
+                # Prove the receipt is well-formed AND issued for this caller before
+                # returning its anchor hash. A verify failure raises and is caught
+                # below, so the client fails closed (no hash).
+                receipt.verify(expected_actor=ACTOR, expected_action=action)
             return {"decision": "allow", "receiptAuditHash": audit_hash, "reason": record.reason}
 
         if record.decision is Decision.ESCALATE:
@@ -129,11 +181,10 @@ def build_app() -> Any:
 
     @app.post("/admit")
     async def admit(payload: dict[str, Any]) -> dict[str, Any]:
-        action = str(payload.get("action", ""))
-        args = payload.get("args") or {}
-        if not isinstance(args, dict):
-            return {"decision": "deny", "reason": "args must be an object"}
-        return admit_action(action, args)
+        # Delegate all validation to admit_action (the single fail-closed gate).
+        # Do not coerce here: str(payload.get("action", "")) would turn a
+        # non-string action into a passable string and bypass the guard.
+        return admit_action(payload.get("action"), payload.get("args"))
 
     return app
 

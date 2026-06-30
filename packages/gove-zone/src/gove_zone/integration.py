@@ -629,8 +629,33 @@ def emit_receipts_for_hook(
 
     This is the batch-aware variant used by CLI gate enforcement. It preserves
     the same observe/enforce failure semantics as ``emit_receipt_for_hook``.
+
+    **Profile consultation (orthogonal to GateMode).** This passive auditor emits
+    a :class:`~gove_zone.receipt.Receipt` (the audit anchor), which carries no
+    cryptographic ``signature`` field — there is no signed-receipt path to engage
+    here, and no signer parameter is threaded in (see the module docstring and
+    SECURITY.md "Runtime-hook auditing is unsigned"). To keep the production
+    profile honest without silently emitting an unsigned receipt where signing was
+    expected, we fail closed LOUD only at the intersection of *enforcement* and
+    *production*: ``GateMode.ENFORCE`` **and** the production profile (the default)
+    with no signer configured. The passive ``GateMode.OBSERVE`` audit path is left
+    intact and may legitimately stay unsigned even under the production profile —
+    signing stays orthogonal to GateMode. Select ``GOVE_ZONE_PROFILE=dev`` to opt
+    out of this loud check under enforcement.
     """
+    from gove_zone.profile import GovernanceProfile
+
     mode = current_gate_mode()
+    profile = GovernanceProfile.from_env()
+    if mode is GateMode.ENFORCE and profile.is_production and profile.signer is None:
+        raise GateModeError(
+            "production profile under enforce mode requires a configured signer for "
+            "runtime-hook receipts, but this auditor emits unsigned audit-anchor "
+            "Receipts (no signer is threaded into emit_receipt_for_hook). Either run the "
+            "passive auditor in observe mode (GOVE_ZONE_GATE_MODE=observe), or explicitly "
+            "select the dev profile (GOVE_ZONE_PROFILE=dev) to acknowledge unsigned "
+            "runtime-hook auditing under enforcement."
+        )
     active_policy = policy if policy is not None else _ObserverPolicy(action_kind)
     try:
         calls = tool_calls_from_hook_payload(payload, action_kind=action_kind, actor=actor)

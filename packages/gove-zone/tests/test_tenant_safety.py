@@ -132,6 +132,7 @@ def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
             expected_execution_boundary="sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode (unsigned)
         )
     assert "Tenant mismatch" in str(exc_info.value)
 
@@ -167,6 +168,7 @@ def test_policy_hash_mismatch_fails_closed() -> None:
             expected_execution_boundary="sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
+            require_signature=False,  # explicit dev mode (unsigned)
             expected_policy_hash="policy-hash-different",
         )
     assert "Policy hash mismatch" in str(exc_info.value)

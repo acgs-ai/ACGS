@@ -6,10 +6,18 @@ can be run.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from gove_zone.errors import ReceiptValidationError
+from gove_zone.decision import Decision, DecisionRecord
+from gove_zone.errors import (
+    PRODUCTION_NO_VERIFIER_MSG,
+    DeniedError,
+    GoveZoneError,
+    ProductionProfileError,
+    ReceiptValidationError,
+)
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
 
@@ -27,7 +35,7 @@ def execute_with_receipt(
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
-    require_signature: bool = False,
+    require_signature: bool = True,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -52,6 +60,8 @@ def execute_with_receipt(
         raise ReceiptValidationError(
             "expected_actor is required for governed execution (fail-closed)"
         )
+    if require_signature and verifier is None:
+        raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
     if receipt is None:
         raise ReceiptValidationError("No receipt provided for governed execution")
 
@@ -98,7 +108,7 @@ class GovernedExecutor:
         execution_boundary: str,
         expected_actor: str,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
-        require_signature: bool = False,
+        require_signature: bool = True,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -156,3 +166,37 @@ class GovernedExecutor:
             verifier=effective_verifier,
             require_signature=effective_require,
         )
+
+
+class StateRollbackHandler:
+    """Fail-safe context manager that tracks transaction state and rolls back on failure."""
+
+    def __init__(self, rollback_fn: Callable[[], None] | None = None) -> None:
+        self.rollback_fn = rollback_fn
+
+    def __enter__(self) -> StateRollbackHandler:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        if exc_type is not None:
+            if self.rollback_fn is not None:
+                with contextlib.suppress(Exception):
+                    self.rollback_fn()
+            # Wrap standard/assertion errors into DeniedError standard security error format
+            if not isinstance(exc_val, GoveZoneError):
+                raise DeniedError(
+                    DecisionRecord(
+                        decision=Decision.DENY,
+                        tool="unknown",
+                        argument_hash="",
+                        policy_version="rollback/v0",
+                        event_id="ev_rollback",
+                        reason=f"Execution aborted and rolled back due to: {exc_val}",
+                    ),
+                    audit_hash="",
+                ) from exc_val
