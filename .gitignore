@@ -79,6 +79,8 @@ credentials/
 .remember
 .omx
 .autopilot
+.agents
+.specify
 
 # Additional agent / tool state (per-developer indexes, eval outputs, scratch
 # generators). Pattern without trailing slash matches both files and dirs.
@@ -154,3 +156,7 @@ credentials/
 # Remove these two lines once root-level reproducibility is decided.
 /pnpm-lock.yaml
 /uv.lock
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json

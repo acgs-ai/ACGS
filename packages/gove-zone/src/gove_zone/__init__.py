@@ -4,6 +4,7 @@ A small library that wraps AI agent tool calls with policy checks,
 fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 """
 
+from gove_zone.agent import ManagedAgent
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
@@ -81,6 +82,7 @@ from gove_zone.replay import (
     replay_from_side_store,
 )
 from gove_zone.replay_store import ReplaySideStore
+from gove_zone.sandbox import E2BSandbox, LocalProcessSandbox, SandboxError, SandboxProvider
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -101,6 +103,7 @@ from gove_zone.workflow import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone.yaml_policy import YAMLPolicy
 
 __version__ = "0.1.0.dev0"
 
@@ -117,6 +120,7 @@ __all__ = [
     "DecisionRecord",
     "DecisionReceipt",
     "DeniedError",
+    "E2BSandbox",
     "EvaluationReport",
     "EvaluationResult",
     "EvaluationScenario",
@@ -130,6 +134,8 @@ __all__ = [
     "GovernedExecutor",
     "GoveZoneError",
     "Kernel",
+    "LocalProcessSandbox",
+    "ManagedAgent",
     "NullSigner",
     "PathBoundaryPolicy",
     "Policy",
@@ -144,6 +150,8 @@ __all__ = [
     "ReplayResult",
     "ReplaySideStore",
     "RuleSetPolicy",
+    "SandboxError",
+    "SandboxProvider",
     "SigningError",
     "TenantPolicyBinding",
     "TenantPolicyStore",
@@ -157,6 +165,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowStep",
     "WorkflowStepReceipt",
+    "YAMLPolicy",
     "__version__",
     "agentdojo_scenarios_from_fixture",
     "emit_receipt_for_hook",
