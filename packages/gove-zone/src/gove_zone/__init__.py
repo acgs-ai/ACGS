@@ -6,6 +6,7 @@ fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 
 from importlib import metadata as _metadata
 
+from gove_zone.agent import ManagedAgent
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
 from gove_zone.authz import (
     AuthzReason,
@@ -110,6 +111,12 @@ from gove_zone.replay import (
 )
 from gove_zone.replay_store import ReplaySideStore
 from gove_zone.revocation import RevocationList, RevocationListError
+from gove_zone.sandbox import (
+    E2BSandbox,
+    LocalProcessSandbox,
+    SandboxError,
+    SandboxProvider,
+)
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -136,6 +143,7 @@ from gove_zone.workflow import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone.yaml_policy import YAMLPolicy
 
 # Single source of truth is the installed package metadata (pyproject `version`).
 # The literal fallback matches that value for source/editable runs where the
@@ -181,6 +189,12 @@ __all__ = [
     "GovernedExecutor",
     "GoveZoneError",
     "Kernel",
+    "ManagedAgent",
+    "SandboxProvider",
+    "LocalProcessSandbox",
+    "E2BSandbox",
+    "SandboxError",
+    "YAMLPolicy",
     "NullSigner",
     "PathBoundaryPolicy",
     "PendingApproval",
