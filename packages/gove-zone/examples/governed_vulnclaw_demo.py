@@ -21,13 +21,10 @@ from gove_zone import (
     ChainHashAuditStore,
     Decision,
     DecisionReceipt,
-    GovernanceRequest,
-    ProposedAction,
     ReceiptValidationError,
     RuleSetPolicy,
     TenantPolicyStore,
     Validator,
-    evaluate_tenant_action,
     execute_with_receipt,
 )
 from gove_zone.tool import ToolCall, normalize_path_context
@@ -38,45 +35,53 @@ VALIDATOR = Validator("constitutional-council")
 AUTHORITY = "tenant-security-ops/recon-gate"
 
 # Declarative policy bundle targeting VulnClaw pentest tools
-VULNCLAW_POLICY = RuleSetPolicy.from_dict({
-    "id": "policy-vulnclaw-governance",
-    "rules": [
-        {
-            "id": "DENY_UNAUTHORIZED_TARGETS",
-            "effect": "deny",
-            "tools": ["vulnclaw.port_scan", "vulnclaw.exploit"],
-            "state_equals": {
-                "is_unauthorized_target": True
+VULNCLAW_POLICY = RuleSetPolicy.from_dict(
+    {
+        "id": "policy-vulnclaw-governance",
+        "rules": [
+            {
+                "id": "DENY_UNAUTHORIZED_TARGETS",
+                "effect": "deny",
+                "tools": ["vulnclaw.port_scan", "vulnclaw.exploit"],
+                "state_equals": {"is_unauthorized_target": True},
+                "reason": (
+                    "Scanning or exploiting targets outside the authorized "
+                    "scoping boundary is prohibited."
+                ),
             },
-            "reason": "Scanning or exploiting targets outside the authorized scoping boundary is prohibited."
-        },
-        {
-            "id": "RESTRICT_EXPLOITATION_TO_ADMINS",
-            "effect": "deny",
-            "tools": ["vulnclaw.exploit"],
-            "allow": {
-                "actors": ["elevated-administrator", "system-operator"]
+            {
+                "id": "RESTRICT_EXPLOITATION_TO_ADMINS",
+                "effect": "deny",
+                "tools": ["vulnclaw.exploit"],
+                "allow": {"actors": ["elevated-administrator", "system-operator"]},
+                "reason": (
+                    "Standard agent actors are restricted from triggering "
+                    "target exploitation payloads."
+                ),
             },
-            "reason": "Standard agent actors are restricted from triggering target exploitation payloads."
-        },
-        {
-            "id": "BLOCK_LOCAL_PYTHON_EXECUTION",
-            "effect": "deny",
-            "tools": ["vulnclaw.python_execute"],
-            "allow": {
-                "trust_tiers": ["system-admin"]
+            {
+                "id": "BLOCK_LOCAL_PYTHON_EXECUTION",
+                "effect": "deny",
+                "tools": ["vulnclaw.python_execute"],
+                "allow": {"trust_tiers": ["system-admin"]},
+                "reason": (
+                    "Arbitrary local Python code execution is blocked for "
+                    "standard and elevated security agents."
+                ),
             },
-            "reason": "Arbitrary local Python code execution is blocked for standard and elevated security agents."
-        },
-        {
-            "id": "RESTRICT_REPORT_DIRECTORY",
-            "effect": "deny",
-            "tools": ["vulnclaw.generate_report"],
-            "path_prefix": "/opt/secure/secrets",
-            "reason": "Pentesting reports and PoC scripts cannot be written to secure secrets directory paths."
-        }
-    ]
-})
+            {
+                "id": "RESTRICT_REPORT_DIRECTORY",
+                "effect": "deny",
+                "tools": ["vulnclaw.generate_report"],
+                "path_prefix": "/opt/secure/secrets",
+                "reason": (
+                    "Pentesting reports and PoC scripts cannot be written to "
+                    "secure secrets directory paths."
+                ),
+            },
+        ],
+    }
+)
 
 
 class VulnClawMockTool:
@@ -95,13 +100,19 @@ class VulnClawMockTool:
 
     def exploit(self, target: str, cve_id: str, payload: str) -> dict[str, Any]:
         self.ran_exploit = True
-        print(f"    [REAL EXPLOIT] Delivering exploit '{cve_id}' with payload '{payload}' to target '{target}'")
+        print(
+            f"    [REAL EXPLOIT] Delivering exploit '{cve_id}' with payload "
+            f"'{payload}' to target '{target}'"
+        )
         return {"status": "success", "exploit_delivered": True}
 
     def python_execute(self, script_body: str) -> dict[str, Any]:
         self.ran_python_execute = True
         print(f"    [REAL LOCAL EXEC] Running Python script on local runner: {script_body!r}")
-        return {"status": "success", "stdout": "uid=1000(martin) gid=1000(martin) groups=1000(martin)\n"}
+        return {
+            "status": "success",
+            "stdout": "uid=1000(martin) gid=1000(martin) groups=1000(martin)\n",
+        }
 
     def generate_report(self, output_dir: str, format: str = "markdown") -> dict[str, Any]:
         self.ran_generate_report = True
@@ -182,7 +193,11 @@ def run_test_scenario(
     expected_decision: Decision,
 ) -> None:
     print(f"\nScenario: {name}")
-    print(f"  Inputs: tool={tool_name}, args={tool_args}, actor={actor}, tier={trust_tier}, unauthorized_target={is_unauthorized_target}, path={path_context}")
+    print(
+        f"  Inputs: tool={tool_name}, args={tool_args}, actor={actor}, "
+        f"tier={trust_tier}, unauthorized_target={is_unauthorized_target}, "
+        f"path={path_context}"
+    )
 
     receipt = _issue_vulnclaw_receipt(
         store=store,
@@ -197,7 +212,10 @@ def run_test_scenario(
     )
 
     if receipt.decision != expected_decision.value:
-        _fail(f"Expected decision {expected_decision.value.upper()}, got {receipt.decision.upper()} (rules: {receipt.matched_rules})")
+        _fail(
+            f"Expected decision {expected_decision.value.upper()}, got "
+            f"{receipt.decision.upper()} (rules: {receipt.matched_rules})"
+        )
 
     tool = VulnClawMockTool()
 
@@ -230,7 +248,12 @@ def run_test_scenario(
         if expected_decision == Decision.ALLOW:
             _fail(f"Allowed action was incorrectly blocked: {exc}")
         # Verify that mock tool did not run
-        if tool.ran_port_scan or tool.ran_exploit or tool.ran_python_execute or tool.ran_generate_report:
+        if (
+            tool.ran_port_scan
+            or tool.ran_exploit
+            or tool.ran_python_execute
+            or tool.ran_generate_report
+        ):
             _fail("Denied action triggered mock tool side-effects!")
         _ok(f"Blocked as expected by execution gate: {exc}")
 
