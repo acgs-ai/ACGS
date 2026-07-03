@@ -1,0 +1,111 @@
+# gove-zone build-loop reference-monitor policy.
+#
+# This is Pack II artifact **B1**, authored against the REAL gove-zone policy
+# grammar (gove_zone.yaml_policy.YAMLPolicy -> gove_zone.policy.RuleSetPolicy),
+# NOT the illustrative principals/obligations sketch in the workflow pack. The
+# real loader accepts exactly `{id, rules: [...]}` and rule effects are limited
+# to `deny` / `escalate`.
+#
+# POSTURE NOTE (important, and different from the pack's assumption):
+#   RuleSetPolicy is ALLOW-BY-DEFAULT. A ToolCall that matches no rule is
+#   ALLOWED. Rules can only DENY or ESCALATE; positive authorization is
+#   expressed as per-rule `allow:` exemptions (actor / trust_tier scoped), never
+#   as an `effect: allow`. So this bundle denies the catastrophic build actions,
+#   escalates the release surface, and lets ordinary build/test commands through
+#   by default. A hard deny-by-default catch-all is provided at the END
+#   (commented) — enable it only if your integration maps EVERY build action to
+#   a named ToolCall, because the `allow:` exemption mechanism is actor/tier
+#   scoped, not tool scoped, and cannot re-permit specific tools under a
+#   blanket deny.
+#
+# Tool names below (`shell.exec`, `git.push`, `file.write`, ...) are the
+# `ToolCall.name` values the host integration is expected to emit; they are
+# matched exactly. `state.command` / `state.path` carry the concrete invocation
+# the guard inspects (substring-matched by `state_contains`).
+#
+# Verify this bundle loads and enforces (from repo root):
+#   uv run --package gove-zone python - <<'PY'
+#   from gove_zone.yaml_policy import YAMLPolicy
+#   from gove_zone.tool import ToolCall
+#   p = YAMLPolicy.load_yaml(".claude/policy/build.yaml")
+#   print(p.version)
+#   print(p.evaluate(ToolCall(name="shell.exec",
+#         state={"command": "rm -rf /"})).decision)          # -> Decision.DENY
+#   print(p.evaluate(ToolCall(name="git.push",
+#         state={"command": "origin master"})).decision)     # -> Decision.ESCALATE
+#   print(p.evaluate(ToolCall(name="pytest",
+#         state={"command": "pytest -q"})).decision)         # -> Decision.ALLOW
+#   PY
+# A machine gate lives in tests/docs/test_governance_artifacts.py.
+
+id: gove-zone-build-guard/v1
+rules:
+  # --- Catastrophic shell actions: denied unconditionally (no exemption). ------
+  - id: DENY_RECURSIVE_FORCE_DELETE
+    effect: deny
+    tools: [shell.exec, bash, sh]
+    state_contains:
+      command: "rm -rf"
+    reason: recursive force-delete is never permitted for the build agent
+
+  - id: DENY_REMOTE_PIPE_TO_SHELL
+    effect: deny
+    tools: [shell.exec, bash, sh]
+    state_contains:
+      command: "| sh"
+    reason: piping a network fetch straight into a shell is never permitted
+
+  - id: DENY_PERMISSION_BYPASS_FLAGS
+    effect: deny
+    tools: [shell.exec, bash, sh, claude.exec]
+    state_contains:
+      command: "--dangerously-skip-permissions"
+    reason: permission-bypass flags are never permitted
+
+  # --- Secret-bearing writes: denied. -----------------------------------------
+  # NOTE: `state_contains` with a LIST value is AND-semantics (every item must be
+  # present), so an OR over secret patterns is expressed as one rule per pattern
+  # (first-match-deny gives the union). Each `path:` string is substring-matched.
+  - id: DENY_DOTENV_WRITES
+    effect: deny
+    tools: [file.write, file.edit, shell.exec, bash]
+    state_contains:
+      path: .env
+    reason: the build agent may not write .env / secret-env files
+
+  - id: DENY_CREDENTIAL_FILE_WRITES
+    effect: deny
+    tools: [file.write, file.edit, shell.exec, bash]
+    state_contains:
+      path: credentials.json
+    reason: the build agent may not write credential files
+
+  # --- Release surface: force-push denied; ordinary push escalates. -----------
+  - id: DENY_FORCE_PUSH
+    effect: deny
+    tools: [git.push]
+    state_contains:
+      command: "--force"
+    reason: force-push rewrites shared history and is never permitted
+
+  - id: ESCALATE_GIT_PUSH
+    effect: escalate
+    tools: [git.push]
+    # Positive authorization via the REAL exemption mechanism: a caller carrying
+    # state.trust_tier == "release-manager" is exempt, so their push falls
+    # through to ALLOW instead of ESCALATE. Everyone else escalates to a human.
+    allow:
+      trust_tiers: [release-manager]
+    reason: pushing to a release surface requires human / release-manager authority
+
+  # --- Optional hard deny-by-default. -----------------------------------------
+  # Uncomment to flip the posture to fail-closed. It matches EVERY call, so it
+  # must stay LAST, and it will deny build/test commands too unless your
+  # integration re-permits them via allow.actors / allow.trust_tiers on THIS
+  # rule (there is no tool-scoped allow). Prefer the explicit deny/escalate
+  # rules above for a real build agent.
+  # - id: DENY_BY_DEFAULT
+  #   effect: deny
+  #   allow:
+  #     trust_tiers: [build-runner]
+  #   reason: deny-by-default; only the trusted build-runner tier proceeds

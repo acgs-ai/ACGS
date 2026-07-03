@@ -1,0 +1,50 @@
+{
+  "phase": 1,
+  "exit_criteria": [
+    {
+      "id": "EC-1",
+      "statement": "The 8 adversary classes are enumerated and each maps to a real, collectable test or an explicit NOT-DEFENDED entry.",
+      "met": true,
+      "evidence_path": "packages/gove-zone/tests/adversary/test_coverage_manifest.py",
+      "verify_cmd": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/adversary/test_coverage_manifest.py --import-mode=importlib -q"
+    },
+    {
+      "id": "EC-2",
+      "statement": "The two open adversary gaps (standalone-receipt replay, unpinned policy-version downgrade) have live reproducing tests.",
+      "met": true,
+      "evidence_path": "packages/gove-zone/tests/adversary/",
+      "verify_cmd": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/adversary --import-mode=importlib -q"
+    },
+    {
+      "id": "EC-3",
+      "statement": "The build-guard policy loads under the real RuleSetPolicy grammar and denies a catastrophic shell action.",
+      "met": true,
+      "evidence_path": ".claude/policy/build.yaml",
+      "verify_cmd": "uv run python -m pytest tests/docs/test_governance_artifacts.py --import-mode=importlib -q"
+    }
+  ],
+  "exit_criteria_met": true,
+  "validator_signoff": true,
+  "open_findings": [
+    {
+      "severity": "MAJOR",
+      "note": "standalone-receipt replay is NOT-DEFENDED on this branch (no ReceiptConsumptionLedger wired into execute_with_receipt); tracked as a live tripwire in test_standalone_receipt_replay.py."
+    },
+    {
+      "severity": "MINOR",
+      "note": "policy binding is opt-in: a caller that omits expected_policy_hash accepts a downgraded-policy receipt; mitigation (pin expected_policy_hash) is proven in test_policy_version_downgrade.py."
+    }
+  ],
+  "artifacts": [
+    ".claude/policy/build.yaml",
+    "packages/gove-zone/tests/adversary/",
+    "evidence/schema/phase.schema.json"
+  ],
+  "test_results": {
+    "passed": 7,
+    "failed": 0,
+    "command": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/adversary --import-mode=importlib -q"
+  },
+  "ledger_head_hash": "3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b",
+  "timestamp": "2026-07-06T00:00:00Z"
+}

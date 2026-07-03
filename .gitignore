@@ -110,6 +110,8 @@ credentials/
 !/.claude/agents/**
 !/.claude/workflows/
 !/.claude/workflows/**
+!/.claude/policy/
+!/.claude/policy/**
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on

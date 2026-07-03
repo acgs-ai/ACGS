@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.local/schema/phase-exit-evidence/v1",
+  "title": "ACGS Phase Exit Evidence",
+  "$comment": "Pack II artifact B3. Governance-process evidence for a ship-loop phase gate; distinct from a gove-zone Decision Receipt. A criterion's `verify_cmd` must be a real command a stranger can run — for gove-zone the audit/receipt verification commands are `gove-zone replay --event <id> --audit <path>`, `gove-zone smoke --audit <path>`, and `gove-zone proofpack` (there is NO `gove-zone verify` subcommand). `ledger_head_hash` is the tail event_hash of a ChainHashAuditStore JSONL chain (sha256, lowercase hex; GENESIS_HASH is 64 zeros).",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "phase",
+    "exit_criteria",
+    "exit_criteria_met",
+    "validator_signoff",
+    "artifacts",
+    "test_results",
+    "ledger_head_hash",
+    "timestamp"
+  ],
+  "properties": {
+    "phase": { "type": "integer", "minimum": 1 },
+    "exit_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "met", "evidence_path"],
+        "properties": {
+          "id": { "type": "string" },
+          "statement": { "type": "string" },
+          "met": { "type": "boolean" },
+          "evidence_path": { "type": "string" },
+          "verify_cmd": {
+            "type": "string",
+            "description": "A command a stranger can run to confirm this criterion. Required in spirit for any criterion claiming a verifiable property."
+          }
+        }
+      }
+    },
+    "exit_criteria_met": {
+      "type": "boolean",
+      "description": "MUST be the logical AND of every exit_criteria[].met. The observer computes it; it is not asserted independently by the executor."
+    },
+    "validator_signoff": {
+      "type": "boolean",
+      "description": "True only when the validator returned PASS with zero open BLOCKER findings."
+    },
+    "open_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "note"],
+        "properties": {
+          "severity": { "enum": ["BLOCKER", "MAJOR", "MINOR"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "artifacts": { "type": "array", "items": { "type": "string" } },
+    "test_results": {
+      "type": "object",
+      "required": ["passed", "failed", "command"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "const": 0 },
+        "command": { "type": "string" }
+      }
+    },
+    "ledger_head_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time" }
+  }
+}
