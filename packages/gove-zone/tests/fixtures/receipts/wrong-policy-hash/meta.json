@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-policy-hash",
+  "notes": "policy hash mismatch",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "POLICY_HASH_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_policy_hash": "different-policy-hash",
+    "require_signature": true
+  }
+}

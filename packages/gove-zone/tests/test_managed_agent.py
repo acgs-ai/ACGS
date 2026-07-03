@@ -10,7 +10,7 @@ import pytest
 from gove_zone.agent import ManagedAgent
 from gove_zone.decision import Decision
 from gove_zone.errors import DeniedError
-from gove_zone.policy import DenyAllPolicy
+from gove_zone.policy import AllowAllPolicy, DenyAllPolicy
 from gove_zone.sandbox import LocalProcessSandbox
 from gove_zone.yaml_policy import YAMLPolicy
 
@@ -20,11 +20,21 @@ def my_agent_test_tool(x: int, y: int) -> int:
     return x * y
 
 
-def test_managed_agent_allow_all_default() -> None:
-    """Verify that a default ManagedAgent registers and dispatches tools successfully."""
+def test_managed_agent_requires_explicit_policy() -> None:
+    """ManagedAgent is fail-closed: constructing one without a policy is an error.
+
+    There is no implicit allow-all default; an ungoverned agent must never be
+    created by omission.
+    """
+    with pytest.raises(TypeError):
+        ManagedAgent(name="no-policy-bot")  # type: ignore[call-arg]
+
+
+def test_managed_agent_explicit_allow_all() -> None:
+    """An explicit AllowAllPolicy registers and dispatches tools successfully."""
     with tempfile.TemporaryDirectory() as tmpdir:
         audit_path = Path(tmpdir) / "audit.jsonl"
-        agent = ManagedAgent(name="test-bot", audit_path=audit_path)
+        agent = ManagedAgent(name="test-bot", policy=AllowAllPolicy(), audit_path=audit_path)
 
         # Register tool
         @agent.tool("multiply")
@@ -71,7 +81,12 @@ def test_managed_agent_with_local_sandbox() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         audit_path = Path(tmpdir) / "audit.jsonl"
         sandbox = LocalProcessSandbox(use_bwrap=False)
-        agent = ManagedAgent(name="isolated-bot", sandbox=sandbox, audit_path=audit_path)
+        agent = ManagedAgent(
+            name="isolated-bot",
+            policy=AllowAllPolicy(),
+            sandbox=sandbox,
+            audit_path=audit_path,
+        )
 
         agent.register_tool("multiply", my_agent_test_tool)
 
@@ -109,3 +124,16 @@ rules:
             agent.dispatch("multiply", {"x": 2, "y": 3}, state={"unsafe": True})
 
         assert "block-unsafe-action" in str(exc_info.value)
+
+
+def test_managed_agent_authz_enforce_requires_registry() -> None:
+    """authz_enforce=True without a principal_registry fails closed at construction."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        audit_path = Path(tmpdir) / "audit.jsonl"
+        with pytest.raises(ValueError):
+            ManagedAgent(
+                name="authz-bot",
+                policy=AllowAllPolicy(),
+                audit_path=audit_path,
+                authz_enforce=True,
+            )

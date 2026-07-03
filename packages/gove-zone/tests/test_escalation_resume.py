@@ -239,7 +239,9 @@ def test_approval_is_audited_and_chain_verifies(tmp_path):
     assert chain["valid"] is True
     pairs = [(e["decision"], e["event_id"]) for e in audit.iter_events()]
     assert ("escalate", err.pending.record.event_id) in pairs
-    assert any(d == "allow" and eid.endswith(":approved") for d, eid in pairs)
+    # Approval id is ``<original>:approved:<discriminator>`` (content-derived).
+    approved_prefix = f"{err.pending.record.event_id}:approved:"
+    assert any(d == "allow" and eid.startswith(approved_prefix) for d, eid in pairs)
 
 
 # --- fail-closed: tenant / boundary binding ---------------------------------
@@ -270,6 +272,33 @@ def test_signed_approval_roundtrips(tmp_path):
     )
     assert result == "wrote /tmp/safe"
     assert calls == ["/tmp/safe"]
+
+
+def test_resume_rejects_revoked_signing_key(tmp_path):
+    # B2: the executor carries a revocation list; resume_with_receipt routes
+    # through executor.execute, so a signed approval whose signing key is revoked
+    # is rejected at the resume gate even though the key is a valid verifier and
+    # the signature is sound. The tool never runs.
+    from gove_zone import RevocationList
+
+    err, audit = _escalated(tmp_path)
+    signer = Ed25519Signer.generate(key_id="k1")
+    receipt = _approve(err.pending, audit, signer=signer)
+    verifier = Ed25519Signer.from_public_bytes(signer.public_bytes(), key_id="k1")
+
+    fn, calls = _spy()
+    ex = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=PROPOSER,
+        verifier=verifier,
+        require_signature=True,
+        revoked_keys=RevocationList(["k1"]),
+    )
+    ex.register("write_file", fn)
+    with pytest.raises(ReceiptValidationError, match="signing key revoked"):
+        resume_with_receipt(ex, err.pending, receipt)
+    assert calls == []
 
 
 def test_unsigned_approval_rejected_when_signature_required(tmp_path):
@@ -385,3 +414,59 @@ def test_known_limitation_single_approval_is_replayable(tmp_path):
     for _ in range(3):
         assert resume_with_receipt(ex, err.pending, receipt) == "wrote /tmp/safe"
     assert calls == ["/tmp/safe", "/tmp/safe", "/tmp/safe"]
+
+
+# --- approval event_id is deterministic AND uniquely addressable -------------
+
+
+def _find_event_id(audit: ChainHashAuditStore, event_id: str) -> dict | None:
+    # Mirror cli.py:_find_event — linear scan returning the FIRST match. Colliding
+    # ids would make a later approval unfindable via this path.
+    for event in audit.iter_events():
+        if event.get("event_id") == event_id:
+            return event
+    return None
+
+
+def test_distinct_validator_approvals_get_distinct_findable_event_ids(tmp_path):
+    # Two approvals of the SAME escalation by DISTINCT validators must produce
+    # distinct event_ids, and each must be individually findable in the audit
+    # store (the cli `replay --event` lookup returns the first match, so a
+    # collision would hide the second approval). The discriminator is derived
+    # from approval content, not a random uuid/timestamp.
+    err, audit = _escalated(tmp_path)
+    receipt_a = _approve(err.pending, audit, validator=Validator("human-alice", "approver"))
+    receipt_b = _approve(err.pending, audit, validator=Validator("human-bob", "approver"))
+
+    id_a = receipt_a.receipt_id
+    id_b = receipt_b.receipt_id
+
+    # Both carry the shared escalation anchor + the :approved: marker.
+    approved_prefix = f"{err.pending.record.event_id}:approved:"
+    assert id_a.startswith(approved_prefix)
+    assert id_b.startswith(approved_prefix)
+    # Distinct validators ⇒ distinct ids.
+    assert id_a != id_b
+
+    # Each is individually addressable in the audit store via the cli lookup path.
+    found_a = _find_event_id(audit, id_a)
+    found_b = _find_event_id(audit, id_b)
+    assert found_a is not None and found_a["event_id"] == id_a
+    assert found_b is not None and found_b["event_id"] == id_b
+    assert found_a["decision"] == "allow"
+    assert found_b["decision"] == "allow"
+
+
+def test_identical_reapproval_reproduces_same_event_id(tmp_path):
+    # Determinism: the same validator approving the SAME pending escalation twice
+    # reproduces the SAME event_id (idempotent — no random discriminator). This
+    # guards reproducible hash chains: a replay of the approval derivation must
+    # land on the identical audit identity. (The base ESCALATE event_id is itself
+    # random per dispatch, so identity is asserted against one shared pending.)
+    err, _ = _escalated(tmp_path, args={"path": "/tmp/safe"})
+
+    audit_1 = ChainHashAuditStore(tmp_path / "a1.jsonl")
+    audit_2 = ChainHashAuditStore(tmp_path / "a2.jsonl")
+    r1 = _approve(err.pending, audit_1, validator=Validator("human-alice", "approver"))
+    r2 = _approve(err.pending, audit_2, validator=Validator("human-alice", "approver"))
+    assert r1.receipt_id == r2.receipt_id

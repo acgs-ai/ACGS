@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "escalated-cannot-execute",
+  "notes": "an ESCALATE receipt is not executable",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "ESCALATED_RECEIPT",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

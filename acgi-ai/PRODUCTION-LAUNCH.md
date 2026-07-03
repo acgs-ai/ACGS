@@ -26,11 +26,10 @@ runtime evidence from the deployed origins.
 
 ## Required GitHub secrets and variables
 
-Marketing / Vercel production deploy:
+Marketing / Cloudflare Pages production deploy:
 
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
 Console / Cloud Run production deploy:
 
@@ -116,13 +115,13 @@ claims but does not weaken the production deploy fail-closed contract.
    is not hosted Storybook proof or live production proof.
 5. Confirm the secrets and `STORYBOOK_PAGES_ENABLED` setting above in GitHub.
 6. Push or merge to `master` and record the GitHub Actions run URL.
-7. For marketing, record the Vercel deployment URL and confirm that missing
-   Vercel secrets would fail closed via `test:production-deploy-contract`.
+7. For marketing, record the Cloudflare deployment URL and confirm that missing
+   Cloudflare secrets would fail closed via `test:production-deploy-contract`.
 8. For console, record the Cloud Run service URL, revision, image digest, and
    `EXPECTED_BUILD_ID` used by `scripts/postdeploy-verify.sh`.
 9. Copy `production-evidence.example.json` to the real release evidence
    location and replace every `REPLACE_WITH_*` value with the corresponding
-   GitHub Actions, Vercel, Cloud Run, `/healthz`, and postdeploy proof. Keep
+   GitHub Actions, Cloudflare Pages, Cloud Run, `/healthz`, and postdeploy proof. Keep
    legal, pentest, WCAG/manual, browser screenshot, and hosted Storybook fields
    as `pending-external` unless the external proof is attached. The template is
    not live production proof by itself. Fill `productionLiveStatus`,
@@ -236,7 +235,7 @@ pnpm -F acgi-ai run build:production-cutover-plan -- --live-output <verify-produ
    The `production-evidence-draft` copies `productionLiveStatus`,
    `productionLiveBlockers`, `productionBlockerReport`, `productionCutoverPlan`,
    and `productionEvidenceValidationCommand`, and records missing Cloud Run,
-   Vercel, and GitHub Actions run URLs as explicit `pending-external:` refs. It
+   Cloudflare Pages, and GitHub Actions run URLs as explicit `pending-external:` refs. It
    does not deploy, fetch live origins, mutate DNS, or create live production
    proof.
 
@@ -284,7 +283,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - `console-dist` CI artifact from the production push run
 - GitHub Actions run URL for `marketing.yml`
 - GitHub Actions run URL for `console.yml`
-- Vercel deployment URL for `acgs.ai`
+- Cloudflare deployment URL for `acgs.ai`
 - Cloud Run revision URL for `console.acgs.ai`
 - Output from `scripts/postdeploy-verify.sh`
 - JSON output from `pnpm -F acgi-ai run verify:production-live -- --json`
@@ -313,7 +312,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 
 ## Rollback trigger notes
 
-- If Vercel deploy fails, keep the previous marketing deployment active and do
+- If Cloudflare Pages deploy fails, keep the previous marketing deployment active and do
   not claim the new build is live.
 - If Cloud Run post-deploy verification fails, roll back to the previous known
   good revision and preserve the failing `postdeploy-verify.sh` output.

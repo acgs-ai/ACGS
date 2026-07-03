@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.authz import PrincipalRegistry
 from gove_zone.kernel import Kernel
-from gove_zone.policy import AllowAllPolicy, Policy
+from gove_zone.policy import Policy
 from gove_zone.receipt import Receipt
 from gove_zone.sandbox import SandboxProvider
 
@@ -28,14 +29,26 @@ class ManagedAgent:
         self,
         name: str,
         *,
-        policy: Policy | None = None,
+        policy: Policy,
         audit_path: str | Path | None = None,
         sandbox: SandboxProvider | None = None,
         system_prompt: str | None = None,
+        authz_enforce: bool = False,
+        principal_registry: PrincipalRegistry | None = None,
     ) -> None:
+        # ``policy`` is required and has no default: a governance SDK must never
+        # silently create an allow-all (fail-open) agent. Callers that genuinely
+        # want no restrictions must pass ``AllowAllPolicy()`` explicitly.
+        #
+        # ``authz_enforce`` / ``principal_registry`` are threaded straight to the
+        # kernel so SDK-built agents can turn on fail-closed principal
+        # authorization (``authz_enforce=True`` without a registry raises at
+        # construction). Dispatch produces UNSIGNED receipts — receipt signing is
+        # a separate primitive (``DecisionReceipt.from_record(signer=...)``) not
+        # applied by the kernel dispatch path.
         self.name = name
         self.system_prompt = system_prompt or "You are a governed AI agent."
-        self.policy = policy or AllowAllPolicy()
+        self.policy = policy
 
         # Resolve audit log path and ensure directories exist
         resolved_audit = audit_path or Path(".gove-zone") / "audit.jsonl"
@@ -49,6 +62,8 @@ class ManagedAgent:
             policy=self.policy,
             audit=self.audit,
             actor=self.name,
+            authz_enforce=authz_enforce,
+            principal_registry=principal_registry,
         )
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:

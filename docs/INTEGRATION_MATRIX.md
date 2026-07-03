@@ -12,6 +12,8 @@ Neutrality here means *the gate treats every caller the same*, **not** that ever
 - **Pattern** — a documented integration snippet exists; a *tested conformance adapter* for that runtime is on the [roadmap](ROADMAP.md), not built.
 - **Roadmap** — named for orientation; a payload from this runtime generally falls through the generic parse path, but there is **no named, tested example**, so we do not claim it.
 
+Qualified **Shipped (…)** labels mark rows where code and tests exist but with a stated caveat — shape-only parse, contract mirror, or adapter-mediated gating. The caveat is part of the claim; do not read a qualified row as the unqualified **Shipped + tested** tier (only that exact tier is covered by the static gate-wiring check in `packages/gove-zone/tests/test_gate_wiring_matrix.py`).
+
 Where the neutrality actually lives in code: `packages/gove-zone/src/gove_zone/integration.py` (`_tool_name_and_input_from_payload`) is documented runtime-neutral and resolves hook-style (`tool_name`/`tool_input`), MCP `tools/call`, OpenAI function-call/Responses, OpenAI-Chat/LangChain `tool_calls`, and generic `{name, args}` shapes — hook style is checked first, no runtime is the privileged default. The receipt schema in `receipt.py` carries no vendor-specific fields. See `docs/CLAIMS.md` for the claim-to-evidence rows.
 
 ## Matrix
@@ -25,7 +27,8 @@ Where the neutrality actually lives in code: `packages/gove-zone/src/gove_zone/i
 | OpenAI-Chat / LangChain `tool_calls` shape | Shipped (shape parse); example is generic | `integration.py` `tool_calls` branch — parse is tested; no LangChain-named example yet |
 | CI/CD deploy gate | Shipped + tested | `examples/ci_deploy_gate/` |
 | Generic HTTP side-effect API | Pattern | `INTEGRATION_GUIDE.md` snippet; no shipped server example |
-| LangGraph node / tool | Pattern | `INTEGRATION_GUIDE.md` snippet; conformance tests are roadmap (`ROADMAP.md`) |
+| LangGraph node / tool | Shipped (contract mirror, eval-mvp) | `acgs_governance_eval_mvp/examples/langgraph_governed_agent/` + `acgs_governance_eval_mvp/tests/test_langgraph_graph_wiring.py` — governed graph mirrors LangGraph's node-dispatch contract and fails closed before the executor; it gates via the eval-mvp adapter, not the gove-zone kernel entrypoints; a real-`langgraph`-dep conformance adapter remains roadmap (`ROADMAP.md`) |
+| A2A delegation (agent↔agent) | Shipped (adapter-mediated) | `packages/gove-zone/src/gove_zone/a2a.py`, `packages/gove-zone/tests/test_a2a_delegation.py`, `packages/gove-zone/examples/a2a_governed_delegation/` — the demo's side effect is gated inside the adapter (`execute_with_receipt`); contract-level: no transport/discovery/JSON-RPC |
 | OpenAI Agents SDK (framework loop) | Pattern | generic wrapper snippet; conformance tests are roadmap (`ROADMAP.md`) |
 | AutoGen / CrewAI / Anthropic-branded SDK | Roadmap | tool-call dicts generally reach the generic parse path, but no named, tested example exists — not claimed |
 

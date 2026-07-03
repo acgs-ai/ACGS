@@ -1,4 +1,7 @@
-"""Public surface + FastMCP entrypoint for governed MCP v0.
+"""Public surface + FastMCP entrypoint for governed MCP v0 (EVAL-ONLY).
+
+EVAL-ONLY: this stdio server exists for benchmark/eval scenarios. The
+production MCP binding is ``gove_zone.mcp`` on a ``gove_zone.Kernel``.
 
 After the step 1-10 refactor this module is intentionally thin:
 - re-exports the public types and helpers from their new homes so

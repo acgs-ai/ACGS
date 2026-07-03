@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Marketing surface sitemap (sitemaps.org 0.9). Canonical public marketing URLs only.
+  Privileged surfaces (/console/*, /login) are 308 redirects to console.acgs.ai and are
+  intentionally excluded. Keep in sync with the marketing route tree in
+  src/surfaces/marketing/App.tsx and the product slugs in src/routes/ProductSurfaces.tsx;
+  scripts/check-sitemap.mjs (test:sitemap) guards well-formedness + the robots reference.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://acgs.ai/</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/legalguard</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/governance-eval</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/acgs-lite</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/gove-zone</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/hermes</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/eu-ai-act</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/products/vault-demo</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/ask</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/trust</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/security</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/privacy</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/founder</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/failure-modes</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/governance-patterns</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/agent-readable</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+  <url>
+    <loc>https://acgs.ai/agent-bus</loc>
+    <loc>https://acgs.ai/eval-mvp</loc>
+    <loc>https://acgs.ai/cft-pack</loc>
+    <loc>https://acgs.ai/clinicalguard</loc>
+    <loc>https://acgs.ai/acgs-lite</loc>
+    <loc>https://acgs.ai/swarm</loc>
+    <lastmod>2026-06-27</lastmod>
+  </url>
+</urlset>

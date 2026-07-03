@@ -10,11 +10,11 @@ type Subprocessor = {
 
 const SUBPROCESSORS: Subprocessor[] = [
   {
-    name: 'Vercel',
+    name: 'Cloudflare Pages',
     surface: 'marketing',
     purpose: 'Edge hosting for the public marketing landing only',
     region: 'global edge',
-    dpa: 'vercel.com/legal/dpa',
+    dpa: 'cloudflare.com/cloudflare-customer-dpa/',
   },
   {
     name: 'Google Cloud Platform · Cloud Run',

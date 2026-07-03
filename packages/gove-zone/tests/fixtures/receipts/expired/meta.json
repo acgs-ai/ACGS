@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "expired",
+  "notes": "genuinely-issued receipt used past its lifetime",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "RECEIPT_EXPIRED",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "now_iso": "2026-01-01T00:00:00+00:00",
+    "require_signature": true
+  }
+}

@@ -28,7 +28,7 @@ What it proves:
 Run the full receipt-gated execution proof:
 
 ```bash
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
 What it proves:
@@ -83,6 +83,7 @@ What it proves:
 
 | Need | Read |
 |---|---|
+| Canonical 5-minute install + proof | `docs/QUICKSTART.md` |
 | Canonical proof narrative | `docs/PROOF_PATH.md` |
 | Human evaluator explanation | `docs/HUMAN_GUIDE.md` |
 | Runtime architecture | `docs/ARCHITECTURE.md` |

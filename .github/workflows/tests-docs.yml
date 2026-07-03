@@ -1,0 +1,99 @@
+# Path-filtered CI for the root docs + examples smoke (tests/docs).
+#
+# No existing workflow runs the root `tests/docs/test_docs_and_examples.py`:
+# every `python-*.yml` runs in its own package directory. This job runs it at
+# the repo root so the doc claim-safety invariants AND the runnable example
+# demos (each executed as `[sys.executable, demo.py]`, asserted to exit 0 with
+# stdout JSON `status:"pass"`) are gated in GitHub Actions.
+#
+# SECURITY — runs on GitHub-hosted (ephemeral) runners, NOT self-hosted. This
+# job executes example demo code that lives in the parent repo and is therefore
+# editable by a fork pull request. On a PUBLIC repo, running fork-editable code
+# on a self-hosted runner would be arbitrary code execution on that host, so an
+# ephemeral `ubuntu-latest` VM is used instead. `dislovelhl/Acgs-Swarm` is a
+# PUBLIC submodule, so it initializes over https with no token — this workflow
+# intentionally has no access to `SUBMODULE_TOKEN`.
+#
+# `constitutional_swarm` comes from the Acgs-Swarm submodule; `acgs-lite` is its
+# dependency. We install with `--no-sources` so `acgs-lite` resolves from PyPI
+# (bounded `>=2.8.1,<3`) instead of the workspace redirect — only the Acgs-Swarm
+# submodule is needed, not the full uv workspace. The gove-zone examples are
+# pure-source; the test injects `packages/gove-zone/src` onto PYTHONPATH itself.
+
+name: tests-docs
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'examples/**'
+      - 'tests/docs/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'llms.txt'
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'packages/Acgs-Swarm/**'
+      - 'packages/gove-zone/**'
+      - '.github/workflows/tests-docs.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'examples/**'
+      - 'tests/docs/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'llms.txt'
+      - 'Makefile'
+      - 'pyproject.toml'
+      - 'packages/Acgs-Swarm/**'
+      - 'packages/gove-zone/**'
+      - '.github/workflows/tests-docs.yml'
+
+concurrency:
+  group: tests-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # GitHub-hosted (ephemeral) — see the SECURITY note in the header. Do NOT
+    # change to a self-hosted runner: this job runs fork-editable demo code.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init Acgs-Swarm submodule (public — no token)
+        run: git submodule update --init -- packages/Acgs-Swarm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/Acgs-Swarm/pyproject.toml'
+
+      - name: Install constitutional_swarm (+acgs-lite from PyPI) into an isolated venv
+        # --no-sources ignores the workspace [tool.uv.sources] redirect so
+        # acgs-lite installs from PyPI; the explicit bound keeps CI reproducible
+        # instead of silently floating to any future acgs-lite release.
+        run: |
+          uv venv .venv --python ${{ matrix.python-version }}
+          uv pip install --python .venv/bin/python --no-config --no-sources \
+            'acgs-lite>=2.8.1,<3' --editable packages/Acgs-Swarm
+          uv pip install --python .venv/bin/python --no-config pytest
+
+      - name: Test (root docs + example demos)
+        run: .venv/bin/python -m pytest tests/docs --import-mode=importlib -q

@@ -56,7 +56,7 @@ the side effect **only** if the receipt verifies. Run the end-to-end proof —
 it asserts every rule and exits non-zero if any invariant is violated:
 
 ```bash
-uv run --package gove-zone python \
+uv run --extra crypto --package gove-zone python \
     packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
@@ -134,7 +134,11 @@ what you must supply externally — see the one-page
 release:
 
 ```bash
-uv sync --all-extras
+# Sync this package with the signing extra installed (Ed25519 receipts).
+# Note: `uv sync --all-extras` at the workspace root resolves the *root*
+# (virtual) project and uninstalls gove-zone + cryptography, so scope the
+# sync to the package instead.
+uv sync --package gove-zone --extra crypto
 uv run --package gove-zone gove-zone doctor
 uv run --package gove-zone gove-zone smoke
 ```
@@ -307,6 +311,27 @@ The fixture file is local JSON:
 }
 ```
 
+## Dry-run: would this be allowed?
+
+`Kernel.simulate(...)` predicts the governance decision for a call **without
+executing the tool or writing to the audit chain** — read-only capability
+discovery, so an agent can ask "would this be allowed?" before producing a side
+effect (e.g. after a DENY, to find a variant that passes).
+
+```python
+record = kernel.simulate("matter.fetch", {"matter_id": "M-1"}, goal="...")
+record.decision        # Decision.ALLOW / DENY / ESCALATE / TRANSFORM
+record.matched_rules   # why
+# No tool ran; kernel.audit.last_hash() is unchanged.
+```
+
+It runs the **same** policy evaluation and fail-closed synthesis as `dispatch`
+(shared internally), so the predicted `decision` is the one `dispatch` would
+reach for the same input. The returned `DecisionRecord` is a *prediction, not a
+receipt* — it is never appended to the audit chain and must never be presented as
+authorization to execute. `simulate` raises `UnknownToolError` for an
+unregistered tool, exactly like `dispatch`.
+
 ## Hello, audit chain
 
 ```python
@@ -442,22 +467,69 @@ emit_receipt_for_hook(payload, action_kind="edit", actor="me", policy=MyPolicy()
 
 **Gate mode resolution (in order):**
 
-1. `$GOVE_ZONE_GATE_MODE`
+1. `$GOVE_ZONE_GATE_MODE` (`observe` or `enforce`)
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/gate.mode` (single line: `observe` or `enforce`)
-3. default `observe`
+3. default `enforce` — fail-closed: an unset, unreadable, or unrecognized
+   mode gates; it never silently falls back to observe
 
 Set with one command: `gove-zone enable --enforce` (or `--observe`).
 
 | Mode | Behavior on emission failure |
 |---|---|
-| `observe` (default) | Returns `None`; existing fail-open contract preserved. |
-| `enforce` | Raises `GateModeError`; hooks MUST exit non-zero. |
+| `enforce` (default) | Raises `GateModeError`; hooks MUST exit non-zero. |
+| `observe` (explicit opt-in, logged) | Returns `None`; fail-open — only because the host runtime owns allow/deny. |
+
+> **Migration (enforce-by-default).** Earlier releases defaulted to
+> `observe`. If your hooks relied on that fail-open default, opt in
+> explicitly with `GOVE_ZONE_GATE_MODE=observe` or
+> `gove-zone enable --observe`; otherwise emission failures (e.g. an
+> unwritable audit path) now surface as `GateModeError` instead of being
+> silently swallowed. The opt-in emits a WARNING via the
+> `gove_zone.integration` logger (a logger record, not an audit-chain
+> event). Scope: this default lives in `current_gate_mode()` — a runtime
+> host that resolves gate mode itself (e.g. a hook that only reads the
+> env var) must delegate to `current_gate_mode()` to inherit it.
 
 **Audit path resolution (in order):**
 
 1. `$GOVE_ZONE_AUDIT_PATH`
 2. `$CLAUDE_PROJECT_DIR/.gove-zone/audit.jsonl`
 3. `$PWD/.gove-zone/audit.jsonl`
+
+## MCP binding (structural admission)
+
+`gove_zone.mcp` maps MCP `tools/call` / `tools/list` onto a `Kernel`, so the
+MCP surface inherits `Kernel.dispatch`'s gating *structurally*:
+
+```python
+from gove_zone import Kernel, mcp_tools_call, mcp_tools_list
+
+kernel = Kernel(policy=policy, audit=audit, actor="mcp-agent")
+
+@kernel.tool("notes.write")
+def write_note(text: str) -> dict: ...
+
+mcp_tools_list(kernel)   # {"tools": [{"name": "notes.write"}]} — the registry IS the list
+mcp_tools_call(kernel, {"method": "tools/call",
+                        "params": {"name": "notes.write", "arguments": {"text": "hi"}}})
+```
+
+- **No hand-wired admission.** There is no per-tool `admit` call and no
+  safe-tool bypass: an unregistered tool cannot run
+  (`UnknownToolError` → `isError: true`), and a registered one cannot skip
+  policy evaluation + audit append. Forgetting to register a tool makes it
+  *unavailable*, never silently allowed.
+- **Denials are machine-readable.** DENY/ESCALATE return `isError: true` with
+  the full structured rejection envelope in `_meta.gove_zone` (see the section
+  below) — the calling agent reads `resolution` / `matched_rules` /
+  `resumable` and self-corrects.
+- **Dependency-free.** The binding consumes parsed request dicts and returns
+  result dicts; stdio/JSON-RPC framing or an `mcp`-SDK server is the caller's
+  transport choice. `examples/mcp-tool-gateway/` shows the equivalent
+  hand-rolled end-to-end pattern (including a signed execution gate).
+- The eval-grade `governed_mcp_v0` (in `acgs_governance_eval_mvp`) is
+  benchmark harness only — new production MCP tools register on a kernel and
+  route through this module.
 
 ## Structured rejections (agent self-correction)
 
@@ -475,7 +547,7 @@ except DeniedError as exc:
     # {"status": "deny", "outcome": "denied", "resumable": False,
     #  "resolution": "revise_and_retry", "reason": ..., "matched_rules": [...],
     #  "policy_version": ..., "decision_request_hash": ..., "audit_hash": ...}
-    # (allowed_alternatives is omitted until PR-2 computes it — see Notes)
+    # (allowed_alternatives is omitted unless you compute it — see Notes)
 ```
 
 `ESCALATE` is **not** a dead-end — its envelope is `resumable` and advertises the
@@ -509,10 +581,63 @@ receipt-verifying gate.
   an `EscalateError` built outside the kernel, both `resumable` and
   `approval.pending` are `False` — gate the resume call on either; they never
   disagree.
-- `allowed_alternatives` is **omitted** until a future capability-discovery
-  (`simulate`, PR-2) primitive computes it. Absence means *"not computed"*; a
-  present list (even empty) will mean *"computed"* — so the key never carries an
-  in-band ambiguity between "unknown" and "none permitted".
+- `allowed_alternatives` is **omitted by default**. Absence means *"not
+  computed"*; a present list (even empty) means *"computed"* — so the key never
+  carries an in-band ambiguity between "unknown" and "none permitted". To
+  compute it, probe candidate variants with the read-only
+  `discover_alternatives(kernel, candidates)` (backed by `kernel.simulate` — no
+  execution, no audit append) and pass the result through
+  `exc.to_rejection_dict(allowed_alternatives=...)`. Entries are
+  `alternative_from_record(...)` projections (tool, predicted decision,
+  non-reversible hashes, policy version) plus a `candidate_index`; every entry
+  is validated against that closed allowlist schema (raw inputs, unknown keys,
+  nested payloads, and mistyped values are refused — leak-safe for any caller,
+  not just the canonical producers), and
+  an allowed alternative is a *prediction under the current policy*, never
+  authorization — execution still requires a real `dispatch` and its receipt.
+
+## Single-use receipts (approve once, run once)
+
+`DecisionReceipt.verify` is stateless — it proves a receipt is *valid*, not
+*fresh*, so on its own one valid receipt authorizes N executions. To make
+"approved once" mean "executed at most once", give the gate a
+`ReceiptConsumptionLedger` (opt-in; stdlib-only, same cross-process file lock
+as the audit chain):
+
+```python
+from gove_zone import GovernedExecutor, ReceiptAlreadyUsedError, ReceiptConsumptionLedger
+
+ledger = ReceiptConsumptionLedger("consumed.jsonl")
+executor = GovernedExecutor(
+    tenant_id="tenant-acme",
+    execution_boundary="prod/api",
+    expected_actor="agent-x",
+    verifier=verifier,
+    consumption_ledger=ledger,
+)
+executor.execute("write_file", args, receipt)   # runs; the receipt is burned
+executor.execute("write_file", args, receipt)   # ReceiptAlreadyUsedError, no side effect
+```
+
+`resume_with_receipt(..., consumption_ledger=ledger)` takes the same ledger, so
+an ESCALATE → approve → resume approval cannot be replayed into a second run.
+
+**Semantics.**
+
+- The consumption key is the receipt's `audit_event_hash` — **one
+  audit-anchored decision authorizes at most one execution**. Re-minting a
+  receipt variant from the same approval event does not grant a second run,
+  and a signed receipt cannot be re-keyed (the anchor is signed content).
+- **Burn-before-execute**: the ledger entry is fsync'd under an exclusive
+  cross-process lock after `verify` passes and before the tool runs.
+  Concurrent presenters serialize; exactly one executes.
+- **At-most-once, not exactly-once**: a tool failure after the burn does not
+  un-burn the receipt — recovery is a fresh decision/approval, never a silent
+  replay window. Verification failures burn nothing.
+- **Fail-closed ledger**: an unreadable or corrupt ledger refuses execution
+  (`ConsumptionLedgerError`) instead of degrading to stateless verification.
+  Both error types subclass `ReceiptValidationError`, so existing callers
+  treat replay refusal as the validation failure it is.
 
 ## Auto-setup
 

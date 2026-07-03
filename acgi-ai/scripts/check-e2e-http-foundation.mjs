@@ -66,7 +66,7 @@ for (const route of [
   '/',
   '/products/legalguard',
   '/products/governance-eval',
-  '/products/gove-zone',
+  '/products/acgs',
   '/login?next=%2Fconsole%2Fagents',
   '/console/workbench',
   '/console/agents',

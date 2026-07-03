@@ -1,0 +1,15 @@
+{
+  "schema_version": "gove-zone/proof-pack/v1",
+  "generated_with": "tests/fixtures/_generate_proofpacks.py",
+  "receipts": [
+    {
+      "name": "allow",
+      "file": "receipts/allow.json",
+      "declared_verdict": "accept",
+      "reason_code": null
+    }
+  ],
+  "audit_chain": "audit.jsonl",
+  "replay": null,
+  "consumption_ledger": "consumed.jsonl"
+}

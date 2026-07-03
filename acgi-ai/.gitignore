@@ -28,5 +28,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.vercel
 test-results/

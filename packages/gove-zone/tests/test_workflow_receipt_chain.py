@@ -95,6 +95,7 @@ def _inner_receipt(
     actor: str = ACTOR,
     validator: Validator = VALIDATOR,
     event_id: str = "ev-1",
+    signer: ReceiptSigner | None = None,
 ) -> DecisionReceipt:
     """Mint a valid, executable inner ALLOW DecisionReceipt for *action*/*args*.
 
@@ -122,6 +123,7 @@ def _inner_receipt(
         request_id="req-" + event_id,
         validator=validator,
         authority=AUTHORITY,
+        signer=signer,
     )
 
 
@@ -877,6 +879,52 @@ def test_replay_signed_chain_verifies() -> None:
             signer=signer,
         )
     verify_workflow_replay(dag, list(envelopes.values()), authorization=auth, verifier=verifier)
+
+
+def test_replay_rejects_revoked_inner_key() -> None:
+    """B2 wiring through the offline replay gate: an inner DecisionReceipt signed
+    by a revoked, in-scope signing key_id is rejected (SIGNING_KEY_REVOKED) on
+    replay when a RevocationList is supplied — the revocation check fires before
+    verifier resolution, so it reports the precise revoked reason."""
+    pytest.importorskip("cryptography")
+    from gove_zone import Ed25519Signer, RevocationList
+    from gove_zone.errors import ReceiptRejectionReason
+
+    dag = _three_step_dag()
+    inner_signer = Ed25519Signer.generate(key_id="inner-compromised")
+    auth = _auth(dag)
+    args_by_step = {
+        "fetch": {"url": "u"},
+        "transform": {"op": "normalize"},
+        "write": {"path": "out.txt", "content": "ok"},
+    }
+    envelopes: dict[str, WorkflowStepReceipt] = {}
+    for sid in ("fetch", "transform", "write"):
+        step = dag.steps[sid]
+        inner = _inner_receipt(
+            action=step.action,
+            args=args_by_step[sid],
+            event_id="ev-" + sid,
+            signer=inner_signer,  # inner receipts signed by the to-be-revoked key
+        )
+        pred_hashes = {p: envelopes[p].step_receipt_hash for p in step.predecessor_step_ids}
+        envelopes[sid] = WorkflowStepReceipt.from_inner(
+            inner,
+            workflow_id=WORKFLOW_ID,
+            step_id=sid,
+            predecessor_step_ids=step.predecessor_step_ids,
+            predecessor_receipt_hashes=pred_hashes,
+            dag_hash=dag.dag_hash(),
+            authorization_hash=auth.authorization_hash,
+        )
+    with pytest.raises(ReceiptValidationError, match="signing key revoked") as ei:
+        verify_workflow_replay(
+            dag,
+            list(envelopes.values()),
+            authorization=auth,
+            revoked_keys=RevocationList(["inner-compromised"]),
+        )
+    assert ei.value.reason_code == ReceiptRejectionReason.SIGNING_KEY_REVOKED
 
 
 def test_step_receipt_for_one_position_rejected_at_another() -> None:

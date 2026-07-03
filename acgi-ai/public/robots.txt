@@ -1,0 +1,20 @@
+# Marketing surface robots.txt — origin file served from dist/ (acgi-ai/public/).
+#
+# NOTE ON CLOUDFLARE: the acgs.ai zone has Cloudflare "managed robots.txt"
+# (content-signals) enabled, which PREPENDS a managed block to this file at the
+# edge. This origin file supplies the crawl policy + Sitemap reference; Cloudflare
+# adds the AI content-signals on top. After deploy, `curl https://acgs.ai/robots.txt`
+# and confirm BOTH the managed block AND the `Sitemap:` line below are present. If the
+# managed setting is set to REPLACE (not append), add the Sitemap line via the
+# Cloudflare dashboard (Manage robots.txt) instead — see the reconcile runbook.
+
+User-agent: *
+Allow: /
+
+# Privileged console is a separate origin (console.acgs.ai); these paths are 308
+# redirects on the marketing origin and carry no indexable content.
+Disallow: /console
+Disallow: /console/
+Disallow: /login
+
+Sitemap: https://acgs.ai/sitemap.xml

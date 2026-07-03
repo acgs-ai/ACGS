@@ -20,8 +20,8 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
 | `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
 | `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Enhanced Agent Bus observability layer |
-| `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`); no path-filtered workflow yet (follow-up) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
-| `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
+| `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | `.github/workflows/python-research-engine.yml` (path-filtered); also in root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
+| `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-gove-zone.yml` (path-filtered); also in root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
 | `automation/` | parent files | YAML + Python helpers | (covered by `python-other` umbrella when added) | Policies, proposals, workflows |
 
 `packages/ai-governance-research/` is parent-tracked but **not** a uv/pnpm
@@ -53,6 +53,28 @@ pinned SHA in a follow-up parent commit.
 | `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
+
+## Third-party `external/` submodules
+
+Reference checkouts of upstream research/agent projects, registered in
+`.gitmodules` and pinned by SHA. Unlike `packages/*` these are **not first-party
+ACGS code**: they carry their own upstream licenses, are **not** built, linted,
+imported, or gated by any parent CI workflow, and are left uninitialized by
+default (`git submodule status` shows them with a leading `-`). They exist only
+as provenance-anchored reading material; nothing in the tree imports them.
+
+| Submodule | Upstream | Why vendored | License |
+|---|---|---|---|
+| `external/natural_language_autoencoders/` | `kitft/natural_language_autoencoders` | Research reference for NL→latent encoding experiments | upstream (verify before reuse) |
+| `external/UI-TARS-desktop/` | `bytedance/UI-TARS-desktop` | Reference GUI-agent architecture | Apache-2.0 (upstream) |
+| `external/everything-claude-code/` | `affaan-m/everything-claude-code` | Agent-tooling pattern reference | upstream (verify before reuse) |
+| `external/openswarm/` | `VRSEN/OpenSwarm` | Multi-agent orchestration reference | upstream (verify before reuse) |
+
+Because no first-party code depends on them, no SHA bump is required for ACGS
+releases. To pull one for inspection: `git submodule update --init
+external/<name>`. To pin it to a tracking branch, add a `branch = ...` line to
+its `.gitmodules` stanza (currently SHA-only). Before vendoring any of this code
+into first-party packages, confirm the upstream license permits redistribution.
 
 ## Cross-cutting CI
 

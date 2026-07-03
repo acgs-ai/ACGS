@@ -24,7 +24,7 @@ Narrate:
 ## 1:00-2:30 — full receipt-gated execution proof
 
 ```bash
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --extra crypto --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
 ```
 
 Point to these lines in output:

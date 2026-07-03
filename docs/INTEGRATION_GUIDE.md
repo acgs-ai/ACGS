@@ -44,19 +44,91 @@ Runnable example:
 uv run --package gove-zone python examples/python_tool_gate/demo.py
 ```
 
-Pattern:
+### Your first receipt (self-contained, copy-paste)
+
+This minimal snippet mints a Decision Receipt and proves the invariant in both
+directions: the allowed path executes the side effect, the missing-receipt path
+fails closed. Run it verbatim with
+`uv run --extra crypto --package gove-zone python <file>.py`:
 
 ```python
-result = execute_with_receipt(
-    tool_fn=write_file,
-    args={"path": "safe.txt", "content": "ok"},
-    receipt=receipt,
-    expected_tenant_id="tenant-A",
-    expected_execution_boundary="local-sandbox",
-    expected_action="runtime.file.write",
-    expected_actor="agent-1",
+from gove_zone import (
+    Decision,
+    DecisionReceipt,
+    DecisionRecord,
+    ReceiptValidationError,
+    Validator,
+    execute_with_receipt,
+    sha256_json,
 )
+
+TENANT, BOUNDARY = "tenant-A", "local-sandbox"
+ACTION, ACTOR = "runtime.file.write", "agent-1"
+ARGS = {"path": "safe.txt", "content": "ok"}
+
+
+def write_file(**kwargs) -> str:
+    return "SIDE EFFECT EXECUTED"
+
+
+# 1. Mint a Decision Receipt for an ALLOW decision over this exact call.
+record = DecisionRecord(
+    decision=Decision.ALLOW,
+    tool=ACTION,
+    argument_hash=sha256_json(ARGS),
+    policy_version="example-policy/v1",
+    event_id="ev_first_receipt",
+    actor=ACTOR,
+    reason="example allow",
+)
+receipt = DecisionReceipt.from_record(
+    record=record,
+    audit_hash="audit_hash_first_receipt",
+    previous_audit_hash="0" * 64,
+    tenant_id=TENANT,
+    execution_boundary=BOUNDARY,
+    policy_bundle_id="example-policy",
+    policy_hash="example-policy/v1",
+    request_id="req-first-receipt",
+    validator=Validator("constitutional-council"),
+    authority="tenant-A/write-grant",
+)
+
+# 2. Allowed path: the receipt verifies, so the side effect runs.
+result = execute_with_receipt(
+    require_signature=False,  # dev-mode: local unsigned demo (prod signs receipts)
+    tool_fn=write_file,
+    args=ARGS,
+    receipt=receipt,
+    expected_tenant_id=TENANT,
+    expected_execution_boundary=BOUNDARY,
+    expected_action=ACTION,
+    expected_actor=ACTOR,
+)
+assert result == "SIDE EFFECT EXECUTED"
+
+# 3. Missing-receipt path: no valid receipt -> no side effect (fail closed).
+missing_blocked = False
+try:
+    execute_with_receipt(
+        require_signature=False,
+        tool_fn=write_file,
+        args=ARGS,
+        receipt=None,
+        expected_tenant_id=TENANT,
+        expected_execution_boundary=BOUNDARY,
+        expected_action=ACTION,
+        expected_actor=ACTOR,
+    )
+except ReceiptValidationError:
+    missing_blocked = True
+assert missing_blocked
+
+print("OK: allowed path executed; missing-receipt path blocked.")
 ```
+
+The same end-to-end thread, including denied / tampered / cross-tenant paths,
+runs as `examples/python_tool_gate/demo.py` (above).
 
 ## MCP tool gateway
 
@@ -152,3 +224,10 @@ workflow job -> request governance -> receipt -> deploy step verifies -> deploy 
 - Do not accept unsigned receipts in production-adjacent paths unless the risk is explicitly accepted and documented.
 - Do not describe hook observe mode as enforcement.
 - Do not put the gate only in a planner; put it where the side effect would happen.
+
+## Contributing an adapter or policy bundle
+
+To teach ACGS a new framework's tool-call shape, or to contribute a reviewed policy bundle, follow the step-by-step runbooks:
+
+- [`runbooks/add-a-runtime-adapter.md`](runbooks/add-a-runtime-adapter.md) — extend the normalizer, keep batches fail-closed (`runtime.malformed_batch`), and add the gate-level tests a parser-only unit test cannot replace.
+- [`runbooks/add-a-policy-bundle.md`](runbooks/add-a-policy-bundle.md) — `RuleSetPolicy` bundle shape (`deny`/`escalate` plus exemptions) and its fixture and gate tests.

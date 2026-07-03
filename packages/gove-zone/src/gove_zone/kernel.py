@@ -26,6 +26,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.authz import AuthzReason, PrincipalRegistry
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import (
     AuditError,
@@ -66,15 +67,33 @@ class Kernel:
         actor: str = "anonymous",
         policy_timeout: float | None = None,
         side_store: ReplaySideStore | None = None,
-        context_hydrator: Callable[[str, Mapping[str, Any]], dict[str, Any]] | None = None,
+        authz_enforce: bool = False,
+        principal_registry: PrincipalRegistry | None = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
         self.registry = registry or ToolRegistry()
         self.actor = actor
+        # Principal authorization (B13). When ``authz_enforce`` is False (the
+        # default) the kernel never consults ``principal_registry`` and behaves
+        # exactly as before. When True, every dispatch must come from a
+        # registered, tool-authorized principal — so an enforcing kernel without
+        # a registry is a misconfiguration and fails closed at construction
+        # rather than denying everything silently at runtime.
+        if authz_enforce and principal_registry is None:
+            raise ValueError("authz_enforce=True requires a principal_registry (fail-closed)")
+        self.authz_enforce = authz_enforce
+        self.principal_registry = principal_registry
+        # Watchdog: if set, policy.evaluate must return within this many
+        # seconds or the kernel synthesizes a fail-closed DENY. None
+        # preserves the unbounded synchronous path (default).
         self.policy_timeout = policy_timeout
+        # Opt-in raw-args side-store. When None (default) the kernel writes
+        # nothing extra and behaves byte-for-byte as before. When set, every
+        # dispatch additionally persists the raw call so replay can re-derive
+        # the decision. It never affects the audit chain, the returned receipt,
+        # or the decision — strictly additive.
         self.side_store = side_store
-        self.context_hydrator = context_hydrator
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         """Decorator to register a tool under *name*.
@@ -118,18 +137,13 @@ class Kernel:
         if not self.registry.has(tool_name):
             raise UnknownToolError(tool_name)
 
-        state_dict = dict(state or {})
-        if self.context_hydrator is not None:
-            hydrated = self.context_hydrator(tool_name, args_dict)
-            state_dict.update(hydrated)
-
         call = ToolCall(
             name=tool_name,
             args=args_dict,
             goal=goal,
             actor=self.actor,
             path=normalize_path_context(path),
-            state=state_dict,
+            state=dict(state or {}),
         )
         record, audit_hash = self._evaluate_and_record(call)
 
@@ -195,20 +209,13 @@ class Kernel:
         """
         if not self.registry.has(tool_name):
             raise UnknownToolError(tool_name)
-
-        args_dict = dict(args or {})
-        state_dict = dict(state or {})
-        if self.context_hydrator is not None:
-            hydrated = self.context_hydrator(tool_name, args_dict)
-            state_dict.update(hydrated)
-
         call = ToolCall(
             name=tool_name,
-            args=args_dict,
+            args=dict(args or {}),
             goal=goal,
             actor=self.actor,
             path=normalize_path_context(path),
-            state=state_dict,
+            state=dict(state or {}),
         )
         return self._evaluate_only(call)
 
@@ -222,6 +229,31 @@ class Kernel:
             decision_request_hash=call.decision_request_hash(),
         )
 
+    def _authz_check(self, call: ToolCall) -> DecisionRecord | None:
+        """Fail-closed principal authorization (B13).
+
+        Returns a synthesized DENY record if ``call.actor`` is not an authorized
+        principal for ``call.name``, else ``None``. Only consulted when
+        ``authz_enforce`` is set; the constructor guarantees a registry exists.
+        """
+        registry = self.principal_registry
+        reason = (
+            AuthzReason.UNREGISTERED_PRINCIPAL
+            if registry is None
+            else registry.authorize(call.actor, call.name)
+        )
+        if reason is None:
+            return None
+        return DecisionRecord(
+            decision=Decision.DENY,
+            tool=call.name,
+            argument_hash=sha256_json(dict(call.args)),
+            policy_version="fail-closed/authz",
+            event_id=new_event_id(),
+            matched_rules=(f"AUTHZ_DENY:{reason}",),
+            reason=f"actor {call.actor!r} not authorized for tool {call.name!r} ({reason})",
+        )
+
     def _evaluate_only(self, call: ToolCall) -> DecisionRecord:
         """Evaluate policy under the fail-closed watchdog and attach kernel
         context, WITHOUT appending to the audit chain or executing the tool.
@@ -230,10 +262,18 @@ class Kernel:
         :meth:`simulate` (which does neither), so a simulated prediction uses the
         exact same evaluation + fail-closed synthesis as a real dispatch.
 
+        - actor not an authorized principal (enforce on) -> ``fail-closed/authz`` DENY
         - policy raises -> synthesize a ``fail-closed/policy-raised`` DENY
         - policy times out -> synthesize a ``fail-closed/policy-timeout`` DENY
         - TRANSFORM without ``transformed_args`` -> DENY (malformed)
         """
+        if self.authz_enforce:
+            denied = self._authz_check(call)
+            if denied is not None:
+                # Short-circuit before policy evaluation: an unauthorized actor
+                # never reaches the policy or the tool, but the DENY is still
+                # attached + audited like any other decision.
+                return self._attach_context(denied, call)
         try:
             record = self._evaluate_with_watchdog(call)
         except FuturesTimeoutError:
@@ -345,26 +385,3 @@ class Kernel:
         )
         with contextlib.suppress(Exception):
             self.audit.append(failure)
-
-
-class GovernedTool:
-    """Wrapper that freezes agent tool execution until evaluated by Kernel."""
-
-    def __init__(self, kernel: Kernel, tool_name: str, tool_fn: Callable[..., Any]) -> None:
-        self.kernel = kernel
-        self.tool_name = tool_name
-        self.tool_fn = tool_fn
-        # Register automatically on kernel
-        self.kernel.registry.register(tool_name, tool_fn)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        # Freeze and compile arguments
-        call_args = dict(kwargs)
-        if args:
-            # Match positional arguments if metadata is not provided, fallback to standard indexing
-            for idx, val in enumerate(args):
-                call_args[f"arg_{idx}"] = val
-
-        # Dispatch through the kernel's pre-execution interception wrapper
-        result, _ = self.kernel.dispatch(self.tool_name, call_args)
-        return result

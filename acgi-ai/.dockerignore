@@ -25,9 +25,6 @@ dist-ssr
 *.swp
 *.swo
 
-# Vercel marketing config — irrelevant to the console image.
-vercel.json
-
 # Documentation.
 *.md
 !README.md

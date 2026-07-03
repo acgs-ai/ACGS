@@ -182,6 +182,19 @@ Title rule: each product or console H1 gets exactly one italic rust word. Exampl
 
 The base unit is 4px. Marketing and product atlas pages use a 1200px shell, asymmetric hero composition, editorial cards, and asterism section breaks. Console pages use a 276px sidebar, flexible main panel, and 280px status rail. Matter-bearing or privileged products place the parchment boundary before sensitive content.
 
+### Ask surface carve-out (`/ask`)
+
+The `/ask` route is the one explicit, owner-approved exception to the
+asymmetric-hero rule. It is a conversational governance Q&A surface modeled on a
+search-assistant layout: a left workspace rail, a **centered prompt hero**, and a
+threaded answer view with sourced cards and follow-ups. This centered
+composition is intentional and permitted **only on `/ask`** — do not propagate
+it to the landing, product atlas, or console surfaces. It still obeys every
+non-visual contract: ACGS tokens only (no hardcoded hex), no inline `style`,
+self-hosted fonts, hairline borders instead of shadows, and the rust accent as
+the single brand color. Answer copy is grounded in `docs/CLAIMS.md` public
+wording so the surface never overclaims.
+
 Spacing should feel compact and deliberate. Cards use 24px padding by default, tables use dense mono headers, and product evidence lists use grid lines rather than shadows. Border radius is restrained: 4px for buttons, 6px for inputs, 8px for cards, and pill radius only for semantic pills.
 
 ## Elevation & Depth
@@ -201,6 +214,61 @@ Shapes are constitutional and editorial: rectangular panels, compact cards, stro
 Risk pills are semantic and restricted to confirmed, partial, blocked, and privileged states. They must not be used as generic badges.
 
 Product pages use the same primitives as marketing: product-nav, product-hero, product-docket, product-stat-grid, product-brief, and product-evidence-list. Console pages use c-side, c-banner, c-topbar, c-heartbeat, c-table, c-toolbar, c-receipt, and the same button primitives.
+
+Six governance components live under `src/components/governance/` and are always imported directly from their component file — there is no barrel export. `DecisionBadge` (`gz-badge`) renders the runtime outcome of a governed action (ALLOW / DENY / REVIEW_REQUIRED / TRANSFORM / ERROR) using a dot-plus-label pattern; import `Decision` from the same file. `FeatureStatusBadge` (`gz-fstatus`) renders the maturity of a feature or claim (verified / partial / in-progress / roadmap / unverified / needs-review / not-supported / deprecated) as a pill with a shaped dot that distinguishes unproven states; import `FeatureStatus` from the same file. `ProofChip` (`gz-proofchip`) is a link to a proof artifact; when `href` is absent it renders a fail-closed "No proof artifact" state — never pass a page-internal anchor as `href`. `GovernedClaim` (`gz-claim`) wraps a product claim with a `FeatureStatusBadge` and a `ProofChip`; it passes `proofUrl` to `ProofChip` only when status is `verified` or `partial`. `ReceiptCard` (`gz-rcard`) is the core receipt object: actor, capability, decision, policy, reason, hash chain, and optional replay/export actions; import `ReceiptCardData` from the same file. `HashChainViewer` (`gz-chain`) renders previous → current → next hash links with a chain-verification status; a `broken` status renders a fail-closed warning. All six components are theme-adaptive: their CSS reads only `--gz-*` token aliases and the semantic status tokens (`--allow`, `--deny`, `--verified`, etc.), which resolve to warm-paper values on the editorial surface and to dark control-plane values under `[data-theme="control-plane"]` — no hardcoded hex in any component rule.
+
+## Two aesthetic registers + status colours (§2.6)
+
+> **Supersession (2026-06-07).** The earlier rule "do not use dark mode for the
+> privileged console" is retired. The console (`/console/*`) and product runtime
+> surfaces now use a dark **control-plane** register; the editorial marketing
+> landing and the parchment login / privilege boundary stay warm paper. A
+> deliberate hybrid, approved by the maintainer.
+
+One system, two registers — they share every token, the five type families, the
+asterism `⁂`, and the governance law (gate · default-deny · record · replay):
+
+1. **Editorial (warm paper + rust)** — the default `:root`. Marketing landing,
+   product atlas prose, login boundary.
+2. **Control-plane (dark)** — opt-in via `data-theme="control-plane"` on a
+   subtree (set on the console shell root in `Console.tsx`). Near-black
+   cool-tinted slate, brightened rust, instrumented density.
+
+Mechanism: components and surfaces read `--gz-*` semantic aliases (`--gz-bg`,
+`--gz-surface`, `--gz-fg`, `--gz-brand`, …). Under `[data-theme="control-plane"]`
+those flip to dark values, **and** the warm-paper base aliases (`--paper`,
+`--ink`, `--line`, `--accent`) are remapped onto them — so the token-only,
+hardcoded-hex-free console rules invert to dark with no per-rule changes. Two
+intentional non-remaps: the parchment privilege boundary (`--boundary*`) stays a
+warm structural strip on dark (§4.3), and `--accent-on` (text/icon on a rust
+fill) stays light in both registers.
+
+### Status colours — signal, not decoration
+
+Decision and feature/claim status are semantic colour, tuned per register
+(editorial values AA on paper; control-plane values bright on near-black):
+
+| Token | Decision / state |
+|---|---|
+| `--allow` green | ALLOW · verified |
+| `--deny` red | DENY · blocked |
+| `--review` amber | REVIEW_REQUIRED · partial |
+| `--transform` blue | TRANSFORM · in-progress |
+| `--roadmap` purple | roadmap / planned — status-only |
+| `--unverified` gray | unverified |
+| `--deprecated` muted red-gray | deprecated / not-supported |
+
+This is the ONE place a non-rust hue is allowed, and only as signal — rust
+remains the single *brand* accent. Badges read `color: var(--allow|…)` with a
+low-alpha `color-mix` fill so one rule adapts to either register. The legacy risk
+pills (`--risk-*`) map to the bright `--allow/--review/--deny` under the
+control-plane register.
+
+> **Divergence from canonical.** Per `CLAUDE.md`, this file is downstream of
+> `/home/martin/Downloads/govern-zone/ACGS/DESIGN.md`, which "wins for tokens."
+> The two-register model, the `--gz-*` aliases, `--accent-on`, and the status
+> colour system are a project-local superset added here on 2026-06-07. Fold them
+> back into the canonical file when it is next revised.
 
 ## Platform UX blueprint
 
@@ -262,7 +330,7 @@ Don't:
 
 - Introduce a second accent color.
 - Use purple/violet/indigo gradients or generic SaaS blue.
-- Use dark mode for the privileged console.
+- Apply `[data-theme="control-plane"]` to the editorial landing or the parchment privilege boundary — it is the console and product surface register only.
 - Hide or animate privilege boundaries.
 - Replace legal/governance copy with vague trust-marketing language.
 - Use large shadows, glossy cards, bubble radii, or decorative status colors.

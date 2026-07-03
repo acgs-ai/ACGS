@@ -1,5 +1,20 @@
 import { ArrowRight } from 'lucide-react'
+import type { FeatureStatus } from '../components/governance/FeatureStatusBadge'
+import { FeatureStatusBadge } from '../components/governance/FeatureStatusBadge'
+import { GovernedClaim } from '../components/governance/GovernedClaim'
+import { ProofChip } from '../components/governance/ProofChip'
 import { navigate } from '../lib/navigate'
+
+const STATUS_MAP: Record<string, FeatureStatus> = {
+  CONFIRMED: 'verified',
+  PARTIAL: 'partial',
+  BLOCKED: 'not-supported',
+  PRIVILEGED: 'roadmap',
+}
+
+function toFeatureStatus(raw: string): FeatureStatus {
+  return STATUS_MAP[raw] ?? 'unverified'
+}
 
 const ASTERISM = '⁂'
 
@@ -168,7 +183,7 @@ const products: ProductRoute[] = [
   {
     slug: 'gove-zone',
     folio: 'IV',
-    eyebrow: 'gove-zone · Runtime bridge',
+    eyebrow: 'ACGS · Runtime bridge',
     title: 'Governance before every',
     emphasis: 'tool call',
     deck: 'A local runtime kernel that normalizes agent-framework tool-call shapes into pre-execution decisions, receipts, and replayable audit chains.',
@@ -373,7 +388,7 @@ export function ProductIndex() {
       <a className="skip-link" href="#main-content">
         Skip to product content
       </a>
-      <main id="main-content" className="product-surface" tabIndex={-1}>
+      <main id="main-content" className="product-surface" tabIndex={-1} data-theme="control-plane">
         <div className="product-shell">
           <ProductNav />
           <header className="product-hero">
@@ -385,8 +400,8 @@ export function ProductIndex() {
             </h1>
             <p>
               This atlas turns the LegalGuard, governance-evaluation, ACGS Lite, Hermes, EU AI Act,
-              gove-zone runtime bridge, and Auth0 vault references into routeable product pages
-              without iframe drops or new dependencies.
+              ACGS runtime bridge, and Auth0 vault references into routeable product pages without
+              iframe drops or new dependencies.
             </p>
           </header>
 
@@ -424,7 +439,7 @@ export function ProductSurface({ path }: { path: string }) {
       <a className="skip-link" href="#main-content">
         Skip to product content
       </a>
-      <main id="main-content" className="product-surface" tabIndex={-1}>
+      <main id="main-content" className="product-surface" tabIndex={-1} data-theme="control-plane">
         <div className="product-shell">
           <ProductNav current={product.slug} />
           <header className="product-hero product-hero-detail">
@@ -448,7 +463,9 @@ export function ProductSurface({ path }: { path: string }) {
               </div>
             </div>
             <aside className="product-docket" aria-label="Reference docket">
-              <span className={`pill ${product.status.toLowerCase()}`}>{product.status}</span>
+              <FeatureStatusBadge status={toFeatureStatus(product.status)}>
+                {product.status}
+              </FeatureStatusBadge>
               <dl>
                 <div>
                   <dt>Reference</dt>
@@ -509,6 +526,20 @@ export function ProductSurface({ path }: { path: string }) {
                 </article>
               ))}
             </div>
+            {product.evidence.length > 0 && (
+              <div className="product-evidence-claims">
+                <GovernedClaim
+                  claim={product.evidence[0]}
+                  status={toFeatureStatus(product.status)}
+                  proofType="receipt"
+                  proofUrl="/console/audit"
+                  version={`Vol. ${product.folio}`}
+                />
+                {product.evidence.length > 1 && (
+                  <ProofChip proofType="audit_chain" href="/console/audit" />
+                )}
+              </div>
+            )}
           </section>
         </div>
       </main>

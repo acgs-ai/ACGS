@@ -17,9 +17,49 @@ GENESIS_HASH = "0" * 64
 # audit store relies on LOCK_EX for serialization and on the tail-scan
 # observing committed bytes from peers; both guarantees break on these
 # mounts, so we refuse to open the store rather than silently corrupt.
+# ``overlay``/``overlayfs`` (lower/upper layers split lock state) and ``9p``
+# (Plan 9 transport, common in VMs/containers; advisory locks are unreliable)
+# are denied for the same reason.
 _UNRELIABLE_FS: frozenset[str] = frozenset(
-    {"nfs", "nfs3", "nfs4", "smb", "smb2", "smb3", "cifs", "fuse", "glusterfs", "ceph", "cephfs"}
+    {
+        "nfs",
+        "nfs3",
+        "nfs4",
+        "smb",
+        "smb2",
+        "smb3",
+        "cifs",
+        "fuse",
+        "glusterfs",
+        "ceph",
+        "cephfs",
+        "overlay",
+        "overlayfs",
+        "9p",
+    }
 )
+
+# Filesystem *families* whose subtyped mounts are also unreliable. Linux reports
+# FUSE mounts in ``/proc/self/mounts`` as ``fuse.<subtype>`` (e.g. ``fuse.sshfs``,
+# ``fuse.glusterfs``, ``fuse.s3fs``); without a family match those subtypes slip
+# past the exact-name set above. The match is intentionally the dotted FUSE
+# convention only — local FUSE block devices reported as ``fuseblk`` and the
+# ``fusectl`` control pseudo-filesystem are NOT members and stay permissive.
+_UNRELIABLE_FS_FAMILIES: frozenset[str] = frozenset({"fuse"})
+
+
+def _is_unreliable_fs_type(fs_type: str) -> bool:
+    """True when ``fs_type`` names a mount with unreliable fcntl LOCK_EX.
+
+    Matches exact names (``nfs4``, ``overlay``, ``9p``) and subtyped families
+    (``fuse.sshfs`` → family ``fuse``), case-insensitively, so a FUSE subtype
+    cannot bypass the denylist.
+    """
+    normalized = fs_type.lower()
+    if normalized in _UNRELIABLE_FS:
+        return True
+    family = normalized.split(".", 1)[0]
+    return family in _UNRELIABLE_FS_FAMILIES
 
 
 class UnsafeAuditStorageError(RuntimeError):
@@ -67,13 +107,24 @@ def _detect_fs_type(path: Path) -> str | None:
     return best_match[1] if best_match is not None else None
 
 
-def _refuse_unreliable_fs(path: Path) -> None:
+def refuse_unreliable_fs(path: Path) -> None:
+    """Raise :class:`UnsafeAuditStorageError` if ``path`` is on an unreliable FS.
+
+    Public guard shared by :class:`ChainHashAuditStore` and the governed-MCP IO
+    layer. No-ops when the filesystem type cannot be probed (non-Linux, ``/proc``
+    unavailable) so the guard stays permissive where it cannot prove a hazard.
+    """
     fs_type = _detect_fs_type(path)
-    if fs_type is not None and fs_type.lower() in _UNRELIABLE_FS:
+    if fs_type is not None and _is_unreliable_fs_type(fs_type):
         raise UnsafeAuditStorageError(
             f"audit store path {path} resides on '{fs_type}', whose fcntl LOCK_EX "
             "semantics are unreliable; use a local filesystem (ext4, xfs, btrfs, apfs)"
         )
+
+
+# Backward-compatible private alias predating the public name. Retained so
+# existing imports and monkeypatch targets keep resolving to the same object.
+_refuse_unreliable_fs = refuse_unreliable_fs
 
 
 class NonceReplayError(ValueError):
@@ -130,7 +181,7 @@ class ChainHashAuditStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        _refuse_unreliable_fs(self.path.parent)
+        refuse_unreliable_fs(self.path.parent)
         # Phase 2 nonce index: (trace_id, session_nonce) pairs already
         # observed on disk, plus the byte offset up to which the chain
         # has been merged. The in-memory index is a fast-path cache;

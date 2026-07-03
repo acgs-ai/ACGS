@@ -1,0 +1,6 @@
+{
+  "expected_reasons": [],
+  "expected_valid": true,
+  "produced_by": "tests/fixtures/_generate_proofpacks.py",
+  "verifier": "trusted"
+}

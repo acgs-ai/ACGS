@@ -17,8 +17,8 @@ def main() -> int:
         checked += 1
         text = path.read_text(encoding="utf-8", errors="replace")
         for match in LINK_RE.finditer(text):
-            target = match.group(1).split("#", 1)[0].strip()
-            if not target or re.match(r"^(https?://|mailto:)", target):
+            target = match.group(1).split("#", 1)[0].split("?", 1)[0].strip()
+            if not target or re.match(r"^[a-zA-Z0-9+.-]+:", target):
                 continue
             resolved = (path.parent / target).resolve()
             try:

@@ -15,8 +15,8 @@ about the model — prompts, refusals, classifiers. Now the industry is naming a
 different layer out loud. The Cloud Security Alliance is writing about going
 "from guardrails to governance" and the need for a *control layer*. Microsoft
 shipped an open-source Agent Governance Toolkit for runtime policy enforcement.
-Galileo announced an open-source "control plane for AI agents." Gartner is
-warning that ~40% of enterprises will pull autonomous agents back, and Deloitte
+Other vendors are announcing open-source "control planes for AI agents." Gartner
+is warning that ~40% of enterprises will pull autonomous agents back, and Deloitte
 puts mature agentic governance at ~21% of organizations. And there is a clock on
 it: the EU AI Act's high-risk obligations apply from **August 2, 2026**, with
 Article 12 requiring automatic event logging over a system's lifetime.
@@ -94,9 +94,12 @@ and it does not moderate model text (that is guardrails). It proves a specific
 side-effect decision ([`docs/COMPARISON.md`](../COMPARISON.md)).
 
 So when a team adopts Microsoft's toolkit or a control-plane product for
-perimeter policy, the open question that remains is: *when the action actually
-runs, is there a verifiable receipt binding it to the authority that allowed
-it?* That is the slot `gove-zone` fills.
+runtime policy, the open question that remains is: *when the action actually
+runs, is there a verifiable, portable receipt binding it to the authority that
+allowed it — one a relying party can check on its own — or only an audit trail
+reconstructed afterward?* That receipt is the slot `gove-zone` fills (a contrast
+by evidence, not a knock — the two compose; see
+[`docs/COMPARISON.md`](../COMPARISON.md)).
 
 ## The honest boundary
 

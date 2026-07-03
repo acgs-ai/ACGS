@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "A",
+  "name": "tamper-expires-extend",
+  "notes": "expiry pushed forward; rejects as HASH_MISMATCH not EXPIRED (the F2 trap, pinned)",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "RECEIPT_HASH_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

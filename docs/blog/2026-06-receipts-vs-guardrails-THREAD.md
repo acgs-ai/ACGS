@@ -5,7 +5,7 @@ Every claim verified via the gove-zone proof path (smoke + receipt-gated demo + 
 
 ---
 
-1/ AI-agent "governance" got crowded fast — Microsoft, Galileo, CSA all naming a "control layer." But most tools govern the *perimeter*: what an agent is allowed to attempt. The harder question: when the action actually runs, was it legitimate — with proof you can verify afterward? 🧵
+1/ AI-agent "governance" got crowded fast. Some tools govern the *perimeter* (prompts, outputs); the strong ones already enforce at the execution boundary — Microsoft's open-source Agent Governance Toolkit does fail-closed, pre/post tool-call policy with a Merkle-chained audit. The harder question isn't the layer, it's the artifact: when the action runs, do you get a portable Decision Receipt you can verify on its own, or an audit trail reconstructed afterward? 🧵
 
 2/ Distinction 1 — Guardrails moderate what an agent *says*. Receipts gate what it *does*. A guardrail filters text and the tool *request*. But by the time a tools/call leaves the model, the question is: may THIS actor run THIS action with THESE args under THIS policy?
 

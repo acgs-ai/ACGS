@@ -33,12 +33,17 @@ export interface GovernedTransport {
 }
 
 export function createTransport(): GovernedTransport {
-  const agent = new HttpAgent({ url: RUNTIME_URL })
+  let agent = new HttpAgent({ url: RUNTIME_URL })
 
   return {
     async send(content: string): Promise<ChatMessage[]> {
       agent.addMessage({ id: newId(), role: 'user', content })
-      await agent.runAgent()
+      try {
+        await agent.runAgent()
+      } catch (error) {
+        agent = new HttpAgent({ url: RUNTIME_URL })
+        throw error
+      }
       // After the run, `agent.messages` holds the full transcript. Normalise to
       // the minimal shape the panel renders (text messages only).
       const out: ChatMessage[] = []

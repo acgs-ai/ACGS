@@ -30,7 +30,6 @@ members = [
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
     "packages/research-engine",
-    "hermes_acgs_bundle",
 ]
 
 # Optional: cross-link members so local edits to acgs-lite flow into Acgs-Swarm

@@ -219,7 +219,8 @@ def gate_mode(
         # test_integration_hook.py).
         monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
     else:
-        monkeypatch.delenv("GOVE_ZONE_GATE_MODE", raising=False)
+        # Observe is no longer the default — it is an explicit opt-in (PR-3).
+        monkeypatch.setenv("GOVE_ZONE_GATE_MODE", "observe")
         monkeypatch.delenv("GOVE_ZONE_PROFILE", raising=False)
     assert current_gate_mode() is mode
     return mode
