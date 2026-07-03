@@ -20,9 +20,7 @@ from gove_zone.policy import AllowAllPolicy, DenyAllPolicy, Policy
 
 
 def _agent(policy: Policy, tmpdir: str) -> ManagedAgent:
-    return ManagedAgent(
-        name="adapter-bot", policy=policy, audit_path=Path(tmpdir) / "audit.jsonl"
-    )
+    return ManagedAgent(name="adapter-bot", policy=policy, audit_path=Path(tmpdir) / "audit.jsonl")
 
 
 def test_govern_autogen_tool_dispatches_and_allows() -> None:

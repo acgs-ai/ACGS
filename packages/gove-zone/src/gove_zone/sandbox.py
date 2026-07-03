@@ -166,9 +166,7 @@ class LocalProcessSandbox(SandboxProvider):
         try:
             spec_json = json.dumps({"module": module_name, "func": func_name, "args": args})
         except (TypeError, ValueError) as e:
-            raise SandboxError(
-                f"Sandboxed tool arguments must be JSON-serializable: {e}"
-            ) from e
+            raise SandboxError(f"Sandboxed tool arguments must be JSON-serializable: {e}") from e
 
         runner_script = _RUNNER_SCRIPT
         script_path = os.path.join(self.sandbox_dir, "run_tool.py")
@@ -316,9 +314,7 @@ class E2BSandbox(SandboxProvider):
         try:
             spec_json = json.dumps({"module": module_name, "func": func_name, "args": args})
         except (TypeError, ValueError) as e:
-            raise SandboxError(
-                f"Sandboxed tool arguments must be JSON-serializable: {e}"
-            ) from e
+            raise SandboxError(f"Sandboxed tool arguments must be JSON-serializable: {e}") from e
 
         try:
             # Connect to/create sandbox VM
