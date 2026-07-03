@@ -129,8 +129,10 @@ def main() -> int:
     if not handler.calls:
         _fail("valid signed delegation did not reach the remote handler")
     _ok(f"remote handler ran → {result!r}")
-    print(f"      receipt: actor={receipt.actor!r} decision={receipt.decision!r} "
-          f"alg={receipt.signature_algorithm!r} key={receipt.signing_key_id[:8]}…")
+    print(
+        f"      receipt: actor={receipt.actor!r} decision={receipt.decision!r} "
+        f"alg={receipt.signature_algorithm!r} key={receipt.signing_key_id[:8]}…"
+    )
 
     # --- FAIL-CLOSED 1: no receipt. ---
     print("[2] BLOCKED: no receipt")
@@ -150,9 +152,15 @@ def main() -> int:
     # --- FAIL-CLOSED 2: wrong delegator (receipt for planner; transport says impostor). ---
     print("[3] BLOCKED: receipt minted for planner, transport authenticates 'impostor'")
     unsigned = mint_delegation(
-        store=store, audit_store=audit, delegating_actor=DELEGATOR, task=_task(["price"]),
-        tenant_id=TENANT, execution_boundary=BOUNDARY, request_id="req-redline-3",
-        validator=VALIDATOR, authority=AUTHORITY,
+        store=store,
+        audit_store=audit,
+        delegating_actor=DELEGATOR,
+        task=_task(["price"]),
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        request_id="req-redline-3",
+        validator=VALIDATOR,
+        authority=AUTHORITY,
     )
     handler = RemoteHandler()
     server = GovernedA2AServer(card=card, tenant_id=TENANT, require_signature=False)
