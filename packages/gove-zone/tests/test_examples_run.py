@@ -24,6 +24,7 @@ _RUNNABLE_DEMOS = [
     "agent-framework-wrapper/demo.py",
     "ci-deployment-gate/demo.py",
     "undeniable-demo/demo.py",
+    "governed_vulnclaw_demo.py",
 ]
 
 
