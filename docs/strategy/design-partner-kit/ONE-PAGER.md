@@ -2,7 +2,7 @@
 
 **For:** platform / security-engineering teams shipping agentic AI into high-blast-radius environments (offensive security tooling, infra automation, fintech/health ops).
 
-**Status: Alpha (`0.1.0.dev0`). NOT production-certified, NOT compliance-certified.** This is a design-partner program to prove one invariant together in a real pipeline — not a product purchase. Read the "Honest disclosure" section before the pitch lands.
+**Status: Alpha (`0.1.0a1`). NOT production-certified, NOT compliance-certified.** This is a design-partner program to prove one invariant together in a real pipeline — not a product purchase. Read the "Honest disclosure" section before the pitch lands.
 
 ---
 
@@ -29,7 +29,7 @@ gove-zone is **not** an agent framework and never orchestrates — neutrality is
 
 ## Proof you can run in 30 seconds
 
-Verified on this repo (`0.1.0.dev0`, Python 3.13, exit 0):
+Verified on this repo (`0.1.0a1`, Python 3.13.11, exit 0, re-run 2026-07-03):
 
 ```bash
 uv run --package gove-zone gove-zone smoke
@@ -54,7 +54,7 @@ Emits claim-bounded JSON: a safe `write_file` **allowed**, an `id_rsa` path writ
 
 ## Honest disclosure (read this)
 
-- **Alpha, `0.1.0.dev0`.** Not production-certified, not compliance-certified. Do not present gove-zone to your auditor as a certified control; present it as an evidence-generation mechanism you are piloting.
+- **Alpha, `0.1.0a1`.** Not production-certified, not compliance-certified. Do not present gove-zone to your auditor as a certified control; present it as an evidence-generation mechanism you are piloting.
 - The shipped VulnClaw demo governs a **mock** pentest tool (it proves the gate's allow/deny/receipt/tamper behavior against the real gove-zone API — it does not drive live VulnClaw or attack real hosts).
 - The dev-mode demos run **unsigned** receipts; the production (signed, Ed25519) profile is demonstrated separately in `undeniable-demo` and requires the `crypto` extra. In-process keypair generation in the demo is pedagogical, **not** real key custody.
 - Every capability claim here maps to code and commands we actually ran (`docs/CLAIMS.md` discipline). If it is not proven, it is not claimed.
