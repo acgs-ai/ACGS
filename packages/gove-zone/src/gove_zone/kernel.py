@@ -178,6 +178,40 @@ class Kernel:
         )
         return result, receipt
 
+    def evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
+        """Public governed decision primitive: evaluate *call* under the
+        fail-closed watchdog and append the single decision to the audit chain,
+        returning the real :class:`~gove_zone.decision.DecisionRecord` and its
+        audit ``event_hash``.
+
+        A thin public alias for the private :meth:`_evaluate_and_record` that
+        :meth:`dispatch` itself calls (it delegates verbatim, adding no logic),
+        exposed so transport adapters — e.g. the MCP gateway in
+        :mod:`gove_zone.adapters.mcp_gateway` — can obtain the deciding record
+        for all four verdicts without reconstructing it from a lossy projection:
+        a DENY record still carries ``reason`` / ``decision_request_hash``, an
+        ESCALATE record can be parked as a
+        :class:`~gove_zone.escalation.PendingApproval`, and an ALLOW/TRANSFORM
+        record can mint a :class:`~gove_zone.receipt.DecisionReceipt`.
+
+        Contract (identical to the private method, since it is that method):
+        evaluation runs under the same fail-closed watchdog and DENY synthesis
+        as :meth:`dispatch`; **exactly one** audit event is appended; **no tool
+        is executed** (there is no registry lookup and no ``tool_fn`` call — the
+        caller drives execution through the signed
+        :func:`~gove_zone.executor.execute_with_receipt` gate);
+        :class:`~gove_zone.errors.AuditError` is raised if the append fails; and
+        kernel-owned context is attached via :meth:`_attach_context`. It grants
+        no new authority — it neither bypasses receipt validation nor executes
+        before audit.
+
+        Unlike :meth:`dispatch` it does **not** raise
+        :class:`~gove_zone.errors.DeniedError` /
+        :class:`~gove_zone.errors.EscalateError`: the caller inspects
+        ``record.decision`` and drives the DENY / ESCALATE / ALLOW branch itself.
+        """
+        return self._evaluate_and_record(call)
+
     def simulate(
         self,
         tool_name: str,

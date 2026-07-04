@@ -255,6 +255,61 @@ def _prune_ledger(args: argparse.Namespace) -> int:
     return 0
 
 
+def _approve_escalation(args: argparse.Namespace) -> int:
+    """Approve a parked governed-MCP escalation and mint an ALLOW receipt.
+
+    Wraps :func:`gove_zone.escalation.approve_escalation` for the local stdio
+    gateway pilot: reads the gateway config and a pending-escalation descriptor
+    (emitted by ``GovernedGateway.pending_descriptor``), mints a signed approval
+    receipt with the config's *distinct* validator, appends the approval to the
+    audit chain, and prints the receipt plus its ``approval_audit_hash`` — the
+    value the gateway pins as ``expected_audit_hash`` at resume. Single-use is
+    enforced at the resume gate by the gateway's
+    :class:`~gove_zone.consumption.ReceiptConsumptionLedger`, not here.
+
+    A missing/invalid config, descriptor, or a self-validation clash exits 2
+    (fail-closed) and mints nothing.
+    """
+    from gove_zone.adapters.mcp_gateway import load_gateway_config, pending_from_dict
+    from gove_zone.errors import ReceiptValidationError
+    from gove_zone.escalation import approve_escalation
+
+    try:
+        config = load_gateway_config(Path(args.config))
+        descriptor = json.loads(Path(args.pending).read_text(encoding="utf-8"))
+        pending = pending_from_dict(descriptor)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    store = ChainHashAuditStore(config.audit_path)
+    try:
+        receipt = approve_escalation(
+            pending,
+            validator=config.validator,
+            authority=config.authority,
+            tenant_id=config.tenant_id,
+            execution_boundary=config.execution_boundary,
+            policy_bundle_id=config.policy_bundle_id,
+            policy_hash=config.policy.version,
+            audit=store,
+            expires_at=args.expires_at or "",
+            signer=config.profile.signer,
+        )
+    except ReceiptValidationError as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "pending_event_id": pending.record.event_id,
+            "approval_audit_hash": receipt.audit_event_hash,
+            "receipt": receipt.to_dict(),
+        }
+    )
+    return 0
+
+
 def _setup(args: argparse.Namespace) -> int:
     if args.format == "json":
         _emit(
@@ -866,6 +921,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     prune_ledger.set_defaults(func=_prune_ledger)
+
+    approve = subparsers.add_parser(
+        "approve-escalation",
+        help="approve a parked governed-MCP escalation and mint an ALLOW receipt",
+    )
+    approve.add_argument(
+        "--config",
+        required=True,
+        help="path to the gateway JSON config (tenant/boundary/policy/validator/signer/audit)",
+    )
+    approve.add_argument(
+        "--pending",
+        required=True,
+        help=(
+            "path to a pending-escalation descriptor JSON "
+            "(GovernedGateway.pending_descriptor output): the ESCALATE record + args"
+        ),
+    )
+    approve.add_argument(
+        "--expires-at",
+        default=None,
+        help="optional ISO-8601 expiry bounding the FIRST use of the approval receipt",
+    )
+    approve.set_defaults(func=_approve_escalation)
 
     setup = subparsers.add_parser(
         "setup",

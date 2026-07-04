@@ -41,6 +41,12 @@ yaml = ["pyyaml>=6.0"]
 # LangChain/LangGraph adapter (gove_zone.adapters.langgraph). Guarded import;
 # the adapter module loads without it and raises a clear error when used.
 langchain = ["langchain-core>=0.1"]
+# Official Model Context Protocol SDK, for the governed-MCP gateway
+# (gove_zone.adapters.mcp_gateway). Lazy-imported inside the gateway entry
+# points; `import gove_zone` / `import gove_zone.adapters` stay dependency-free
+# and the gateway raises a loud RuntimeError with an install hint when the SDK
+# is absent.
+mcp = ["mcp>=1.27"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
