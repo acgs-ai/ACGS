@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.executor import GovernedExecutor
@@ -120,18 +121,26 @@ def approve_escalation(
     recomputed-receipt residual, pass a private-key ``signer`` and resume with
     ``require_signature=True`` plus the matching verifier.
 
-    Limitations (inherited from the stateless gate; tracked for a follow-up
-    single-use change):
+    Limitations:
 
-    * **Approvals are not single-use.** ``DecisionReceipt.verify`` holds no
-      memory of prior uses, so one approval receipt can be resumed more than
-      once — exactly as an ordinary kernel ALLOW receipt can. "Approved once"
-      does NOT imply "executed once". Bound the window with ``expires_at`` (or
-      pin ``expected_audit_hash`` at resume) until a used-receipt ledger exists.
-    * **Re-approving the same pending reuses the approval ``event_id``**
-      (``<original>:approved``), so two approvals of one escalation are not
-      individually addressable via ``event_id`` lookup. The hash chain is not
-      affected (it keys on ``event_hash``/``previous_hash``).
+    * **Approvals are single-use only when the resume gate carries a ledger.**
+      ``DecisionReceipt.verify`` holds no memory of prior uses, so without one
+      an approval receipt can be resumed more than once — exactly as an
+      ordinary kernel ALLOW receipt can. For "approved once, executed once",
+      pass a :class:`~gove_zone.consumption.ReceiptConsumptionLedger` to
+      :func:`resume_with_receipt` (or construct the executor with one): the
+      approval's audit anchor is burned before the side effect and a replay
+      raises :class:`~gove_zone.errors.ReceiptAlreadyUsedError`. ``expires_at``
+      remains useful as a time bound on the *first* use.
+    * **Distinct approvals of one escalation get distinct ``event_id``s.** The
+      approval id is ``<original>:approved:<discriminator>``, where
+      ``<discriminator>`` is a 16-char prefix of ``sha256_json`` over the
+      validator id, the re-stamped argument hash, the matched-rule set and the
+      reason. Two approvals by different validators are therefore individually
+      addressable via ``event_id`` lookup (e.g. ``gove-zone replay --event``);
+      an identical re-approval reproduces the same id (idempotent — no random
+      uuid/timestamp, so reproducible hash chains are preserved). The hash chain
+      is unaffected regardless (it keys on ``event_hash``/``previous_hash``).
     """
     if pending.record.decision is not Decision.ESCALATE:
         raise ReceiptValidationError(
@@ -150,21 +159,46 @@ def approve_escalation(
         )
 
     approved_args = dict(pending.args)
+    approved_argument_hash = sha256_json(approved_args)
+    approved_matched_rules = (
+        *pending.record.matched_rules,
+        f"HUMAN_APPROVED:{validator.validator_id}",
+    )
+    approved_reason = (
+        (pending.record.reason + "; ") if pending.record.reason else ""
+    ) + f"escalation approved by validator {validator.validator_id}"
+
+    # Deterministic, content-derived discriminator so distinct approvals of the
+    # same escalation get distinct ``event_id``s (``_find_event`` returns the
+    # FIRST match, so a colliding id makes a later approval unfindable), while an
+    # identical re-approval reproduces the SAME id (idempotent — no random uuid /
+    # timestamp, preserving reproducible hash chains). The digest binds the
+    # validator identity, the re-stamped argument hash, the matched-rule set, and
+    # the reason — every field that distinguishes one approval from another. Two
+    # different validators (different ``HUMAN_APPROVED:`` rule + reason) therefore
+    # yield different ids; the same validator re-approving the same args yields the
+    # same id.
+    approval_discriminator = sha256_json(
+        {
+            "validator_id": validator.validator_id,
+            "argument_hash": approved_argument_hash,
+            "matched_rules": list(approved_matched_rules),
+            "reason": approved_reason,
+        }
+    )[:16]
+
     approved = dataclasses.replace(
         pending.record,
         decision=Decision.ALLOW,
         # Re-stamp so verify #10b binds the EXACT args that will execute, no
         # matter what the escalating policy put in argument_hash.
-        argument_hash=sha256_json(approved_args),
-        matched_rules=(
-            *pending.record.matched_rules,
-            f"HUMAN_APPROVED:{validator.validator_id}",
-        ),
-        reason=((pending.record.reason + "; ") if pending.record.reason else "")
-        + f"escalation approved by validator {validator.validator_id}",
+        argument_hash=approved_argument_hash,
+        matched_rules=approved_matched_rules,
+        reason=approved_reason,
         # Distinct audit identity for the approval; the original ESCALATE event
-        # stays in the chain unchanged.
-        event_id=pending.record.event_id + ":approved",
+        # stays in the chain unchanged. The content-derived discriminator keeps
+        # distinct approvals individually addressable via ``event_id`` lookup.
+        event_id=f"{pending.record.event_id}:approved:{approval_discriminator}",
         # ALLOW carries no transformed args; the gate binds the original args.
         transformed_args=None,
         # decision_request_hash is intentionally preserved (binds to the same
@@ -213,6 +247,7 @@ def resume_with_receipt(
     expected_audit_hash: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool | None = None,
+    consumption_ledger: ReceiptConsumptionLedger | None = None,
 ) -> Any:
     """Resume an approved escalation by executing through the existing gate.
 
@@ -229,6 +264,13 @@ def resume_with_receipt(
     signed approval, else it fails closed with
     :class:`~gove_zone.errors.ProductionProfileError`; construct a dev executor
     (``require_signature=False``) for unsigned operation.
+
+    For "approved once, executed once", pass ``consumption_ledger`` (or
+    construct *executor* with one): the approval receipt's audit anchor is
+    burned atomically after verification and before the side effect, so a
+    second resume of the same approval raises
+    :class:`~gove_zone.errors.ReceiptAlreadyUsedError` instead of re-running
+    the tool.
     """
     return executor.execute(
         pending.record.tool,
@@ -240,4 +282,5 @@ def resume_with_receipt(
         expected_audit_hash=expected_audit_hash,
         verifier=verifier,
         require_signature=require_signature,
+        consumption_ledger=consumption_ledger,
     )

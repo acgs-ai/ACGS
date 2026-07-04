@@ -30,9 +30,8 @@
     }
   ],
   "requiredGitHubSecrets": [
-    "VERCEL_TOKEN",
-    "VERCEL_ORG_ID",
-    "VERCEL_PROJECT_ID",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_ACCOUNT_ID",
     "GCP_PROJECT_ID",
     "GCP_REGION",
     "GCP_WORKLOAD_IDENTITY_PROVIDER",
@@ -52,7 +51,7 @@
     {
       "host": "acgs.ai",
       "ownerProofRef": "pending-external:acgs-ai-dns-owner-proof",
-      "plannedTargetRef": "pending-external:vercel-production-target"
+      "plannedTargetRef": "pending-external:cloudflare-production-target"
     },
     {
       "host": "console.acgs.ai",
@@ -69,7 +68,7 @@
     "marketingWorkflowRunUrl": "pending-external:marketing-workflow-run-url",
     "consoleWorkflowRunUrl": "pending-external:console-workflow-run-url",
     "storybookWorkflowRunUrl": "pending-external:storybook-workflow-run-url",
-    "vercelDeploymentUrl": "pending-external:vercel-deployment-url",
+    "cloudflareDeploymentUrl": "pending-external:cloudflare-deployment-url",
     "cloudRunRevisionUrl": "pending-external:cloud-run-revision-url"
   },
   "rollbackAuthority": {

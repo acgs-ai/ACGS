@@ -21,6 +21,10 @@ def in_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     monkeypatch.delenv("GOVE_ZONE_AUDIT_PATH", raising=False)
     monkeypatch.delenv("GOVE_ZONE_GATE_MODE", raising=False)
+    # These tests exercise setup/CLI logic under the (new) enforce default;
+    # dev profile keeps the orthogonal production-signer guard out of frame
+    # (it has its own coverage in test_integration_hook.py).
+    monkeypatch.setenv("GOVE_ZONE_PROFILE", "dev")
     return tmp_path
 
 
@@ -29,7 +33,7 @@ def test_detect_environment_reports_project_and_audit_path(in_project: Path) -> 
     assert env.project_dir == str(in_project)
     assert env.audit_path == str(in_project / ".gove-zone" / "audit.jsonl")
     assert env.gove_zone_installed is True
-    assert env.gate_mode == "observe"
+    assert env.gate_mode == "enforce"  # fail-closed default (PR-3)
 
 
 def test_validate_dependencies_ok_when_writable(in_project: Path) -> None:
@@ -71,7 +75,7 @@ def test_cli_doctor_passes_in_writable_env(
     payload = json.loads(out)
     assert rc == 0
     assert payload["ok"] is True
-    assert payload["gate_mode"] == "observe"
+    assert payload["gate_mode"] == "enforce"  # fail-closed default (PR-3)
 
 
 def test_cli_smoke_passes_and_can_retain_audit(
@@ -141,7 +145,7 @@ def test_cli_gate_emits_receipt(
     out = capsys.readouterr().out
     payload = json.loads(out)
     assert rc == 0
-    assert payload["gate_mode"] == "observe"
+    assert payload["gate_mode"] == "enforce"  # fail-closed default (PR-3)
     assert payload["receipt"]["actor"] == "tester"
     assert payload["receipt"]["tool"] == "runtime.Edit"
     assert payload["blocked"] is False

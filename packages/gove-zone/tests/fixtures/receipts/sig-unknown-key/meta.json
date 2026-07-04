@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "sig-unknown-key",
+  "notes": "signed by a key absent from the trust registry",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "SIGNING_KEY_UNKNOWN",
+  "verifier": "trusted-registry",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

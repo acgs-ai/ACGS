@@ -6,13 +6,16 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from gove_zone import __version__
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
+from gove_zone.errors import AuditError, ConsumptionLedgerError
 from gove_zone.evaluation import evaluate_policy_scenarios
 from gove_zone.integration import (
     GateMode,
@@ -85,7 +88,7 @@ def _rederive(
         status = "decision-mismatch"
     return {
         "attempted": True,
-        "rederived": result.matches,
+        "rederived": result.re_derived and result.matches,
         "rederivation_status": status,
         "replayed_decision": result.replayed_decision.value,
         "policy_version_match": result.policy_version_match,
@@ -156,6 +159,155 @@ def _replay(args: argparse.Namespace) -> int:
     rederived = bool(payload.get("rederived", False))
     overall = verified and (rederived if rederivation_attempted else True)
     return 0 if overall else 1
+
+
+def _verify_ledger(args: argparse.Namespace) -> int:
+    """Verify the tamper-evidence hash chain of a consumption ledger.
+
+    Mirrors ``replay --audit``'s chain-verification surface for the
+    enforcement-side single-use record: prints the
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.verify_ledger`
+    report and exits non-zero when the ledger is not ``valid``. A corrupt /
+    unreadable ledger exits 2 (it cannot be verified), distinct from a readable
+    ledger that fails integrity (exit 1).
+
+    With ``--audit PATH`` it also reconciles every burn against that audit
+    chain (forged-burn detection via
+    :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.reconcile`) and
+    folds the reconcile result into the exit code.
+    """
+    ledger = ReceiptConsumptionLedger(Path(args.ledger))
+    try:
+        report = ledger.verify_ledger(expected_last_hash=args.expected_last_hash)
+    except ConsumptionLedgerError as exc:
+        print(f"verify-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    payload: dict[str, Any] = {
+        "ledger": str(args.ledger),
+        "valid": report["valid"],
+        "checked": report["checked"],
+        "unverified_legacy": report["unverified_legacy"],
+        "last_hash": report["last_hash"],
+        "failures": report["failures"],
+    }
+
+    reconcile_ok = True
+    if args.audit is not None:
+        try:
+            recon = ledger.reconcile(ChainHashAuditStore(Path(args.audit)))
+        except (ConsumptionLedgerError, AuditError) as exc:
+            # reconcile() walks the audit chain via iter_events(), which raises
+            # AuditChainError (an AuditError) on a corrupt/malformed audit log —
+            # report it fail-closed instead of crashing with a raw traceback.
+            print(f"verify-ledger: {exc}", file=sys.stderr)
+            return 2
+        reconcile_ok = recon["valid"]
+        payload["reconcile"] = {
+            "valid": recon["valid"],
+            "checked": recon["checked"],
+            "audit_events": recon["audit_events"],
+            "unmatched": recon["unmatched"],
+        }
+
+    _emit(payload)
+    return 0 if (report["valid"] and reconcile_ok) else 1
+
+
+def _prune_ledger(args: argparse.Namespace) -> int:
+    """TTL-prune a consumption ledger: drop expired burned entries.
+
+    Calls :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.prune`, which
+    removes only entries whose receipt has already expired, re-chains the
+    survivors, and advances the prune watermark (clock-rollback defense) plus
+    the high-water-mark. Checkpointing is auto-detected from a ``<ledger>.hwm``
+    sidecar so prune keeps an existing high-water-mark consistent with the
+    re-chained tail. A corrupt / unreadable ledger (or an unparseable ``--now``)
+    exits 2 and prunes nothing — fail-closed.
+    """
+    ledger_path = Path(args.ledger)
+    checkpoint = ledger_path.with_suffix(ledger_path.suffix + ".hwm").exists()
+    ledger = ReceiptConsumptionLedger(ledger_path, checkpoint=checkpoint)
+
+    now = None
+    if args.now is not None:
+        try:
+            now = datetime.fromisoformat(args.now)
+        except (ValueError, TypeError) as exc:
+            print(f"prune-ledger: unparseable --now {args.now!r}: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        report = ledger.prune(now=now)
+    except ConsumptionLedgerError as exc:
+        print(f"prune-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "ledger": str(args.ledger),
+            "pruned": report["pruned"],
+            "kept": report["kept"],
+            "last_hash": report["last_hash"],
+            "watermark": report["watermark"],
+        }
+    )
+    return 0
+
+
+def _approve_escalation(args: argparse.Namespace) -> int:
+    """Approve a parked governed-MCP escalation and mint an ALLOW receipt.
+
+    Wraps :func:`gove_zone.escalation.approve_escalation` for the local stdio
+    gateway pilot: reads the gateway config and a pending-escalation descriptor
+    (emitted by ``GovernedGateway.pending_descriptor``), mints a signed approval
+    receipt with the config's *distinct* validator, appends the approval to the
+    audit chain, and prints the receipt plus its ``approval_audit_hash`` — the
+    value the gateway pins as ``expected_audit_hash`` at resume. Single-use is
+    enforced at the resume gate by the gateway's
+    :class:`~gove_zone.consumption.ReceiptConsumptionLedger`, not here.
+
+    A missing/invalid config, descriptor, or a self-validation clash exits 2
+    (fail-closed) and mints nothing.
+    """
+    from gove_zone.adapters.mcp_gateway import load_gateway_config, pending_from_dict
+    from gove_zone.errors import ReceiptValidationError
+    from gove_zone.escalation import approve_escalation
+
+    try:
+        config = load_gateway_config(Path(args.config))
+        descriptor = json.loads(Path(args.pending).read_text(encoding="utf-8"))
+        pending = pending_from_dict(descriptor)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    store = ChainHashAuditStore(config.audit_path)
+    try:
+        receipt = approve_escalation(
+            pending,
+            validator=config.validator,
+            authority=config.authority,
+            tenant_id=config.tenant_id,
+            execution_boundary=config.execution_boundary,
+            policy_bundle_id=config.policy_bundle_id,
+            policy_hash=config.policy.version,
+            audit=store,
+            expires_at=args.expires_at or "",
+            signer=config.profile.signer,
+        )
+    except ReceiptValidationError as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "pending_event_id": pending.record.event_id,
+            "approval_audit_hash": receipt.audit_event_hash,
+            "receipt": receipt.to_dict(),
+        }
+    )
+    return 0
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -255,8 +407,8 @@ def _enable(args: argparse.Namespace) -> int:
     """Flip the gate mode for this project by writing ``.gove-zone/gate.mode``.
 
     Provides a single, agent-followable surface — no env-var juggling, no
-    settings.json edits — to turn the gate from observe (fail-open) into
-    enforce (fail-closed) or back again.
+    settings.json edits — to pin the (default) fail-closed enforce mode or
+    explicitly opt into observe (fail-open).
     """
     mode = GateMode.ENFORCE if args.enforce else GateMode.OBSERVE
     path = resolve_gate_mode_path()
@@ -569,9 +721,9 @@ def _proofpack(args: argparse.Namespace) -> int:
     )
 
     # Write limitations.md
-    limitations_content = """# Conformance Proof Pack Limitations & Disclaimers
+    limitations_content = f"""# Conformance Proof Pack Limitations & Disclaimers
 
-- **Status**: Alpha (`0.1.0.dev0`).
+- **Status**: Alpha (`{__version__}`).
 - **Scope**: Local proof and production-shaped foundation only.
 - **Certification**: NOT production-certified, NOT compliance-certified.
   Do not claim live production deployment or regulatory compliance without direct evidence.
@@ -581,9 +733,49 @@ def _proofpack(args: argparse.Namespace) -> int:
 """
     (dist_dir / "limitations.md").write_text(limitations_content, encoding="utf-8")
 
+    # Remove the audit append lock file so the pack directory contains exactly
+    # the files listed in the manifest; the lock only guards concurrent appends
+    # during generation and carries no evidence value.
+    lock_path = dist_dir / "audit.jsonl.lock"
+    if lock_path.exists():
+        lock_path.unlink()
+
     # Write manifest.json
+    #
+    # Structured manifest the offline verifier (verify_proof_pack) can read: a
+    # `receipts` array with one structured entry per receipt file actually written,
+    # each carrying its declared verdict, plus an explicit `audit_chain` pointer so
+    # accept receipts can be anchored against the pack's own chain. The declared
+    # verdicts below mirror what `DecisionReceipt.verify()` observes for each file
+    # (allow/transform self-validate => "accept"; the deny receipt raises
+    # DENIED_RECEIPT => "reject"). reason_code is left null on the reject entry so
+    # the verifier only requires an observed reject, not a brittle reason match.
+    # The pack is dev-mode UNSIGNED (require_signature=False), so `verify-proofpack`
+    # passes without a --verifier-key.
     manifest = {
-        "version": "0.1.0.dev0",
+        "version": __version__,
+        "schema_version": "gove-zone/proof-pack/v1",
+        "audit_chain": "audit.jsonl",
+        "receipts": [
+            {
+                "name": "allowed",
+                "file": "receipts/allowed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+            {
+                "name": "denied",
+                "file": "receipts/denied_receipt.json",
+                "declared_verdict": "reject",
+                "reason_code": None,
+            },
+            {
+                "name": "transformed",
+                "file": "receipts/transformed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+        ],
         "files": [
             "manifest.json",
             "receipts/allowed_receipt.json",
@@ -605,6 +797,46 @@ def _proofpack(args: argparse.Namespace) -> int:
         }
     )
     return 0
+
+
+def _verify_proofpack(args: argparse.Namespace) -> int:
+    # Offline, standalone proof-pack verification (B4 §8). Fail-closed: any error
+    # folds into valid=False inside verify_proof_pack, so exit 1 on a non-valid pack.
+    from gove_zone.verifier import verify_proof_pack
+
+    verifier = None
+    if args.verifier_key:
+        # Out-of-band trust anchor: the relying party supplies the public key
+        # SEPARATELY, never from the pack — a key shipped beside the signer is not
+        # independent trust (see docs/PROOF_PATH.md). Raw 32-byte Ed25519 public key.
+        from gove_zone.signing import Ed25519Signer
+
+        try:
+            raw = Path(args.verifier_key).read_bytes()
+            signer = Ed25519Signer.from_public_bytes(raw, key_id=args.key_id or None)
+        except Exception as exc:  # noqa: BLE001 — bad trust anchor must not verify anything
+            print(f"verify-proofpack: cannot load --verifier-key: {exc}", file=sys.stderr)
+            return 2
+        verifier = {signer.key_id: signer}
+
+    revoked_keys = None
+    if getattr(args, "revoked_keys", None):
+        # Out-of-band revocation list: revoked signing key_ids, supplied SEPARATELY
+        # by the relying party. Fail-closed — an unreadable/malformed list must not
+        # silently degrade to "no revocation applied" (exit 2, same as a bad anchor).
+        from gove_zone.revocation import RevocationList
+
+        try:
+            revoked_keys = RevocationList.from_json(args.revoked_keys)
+        except Exception as exc:  # noqa: BLE001 — a broken revocation list must not verify anything
+            print(f"verify-proofpack: cannot load --revoked-keys: {exc}", file=sys.stderr)
+            return 2
+
+    result = verify_proof_pack(
+        args.pack_dir, verifier=verifier, now_iso=args.now_iso, revoked_keys=revoked_keys
+    )
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.valid else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -647,6 +879,79 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     replay.set_defaults(func=_replay)
+
+    verify_ledger = subparsers.add_parser(
+        "verify-ledger",
+        help="verify the tamper-evidence hash chain of a consumption ledger",
+    )
+    verify_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to verify",
+    )
+    verify_ledger.add_argument(
+        "--expected-last-hash",
+        default=None,
+        help=(
+            "optional external high-water-mark (last entry_hash); a mismatch "
+            "flags tail truncation, which chaining alone cannot detect"
+        ),
+    )
+    verify_ledger.add_argument(
+        "--audit",
+        default=None,
+        help=(
+            "optional audit JSONL path; also reconciles every burn against the "
+            "chain's event_hashes (forged-burn detection) and folds the result "
+            "into the exit code"
+        ),
+    )
+    verify_ledger.set_defaults(func=_verify_ledger)
+
+    prune_ledger = subparsers.add_parser(
+        "prune-ledger",
+        help="TTL-prune a consumption ledger (drop expired burned entries)",
+    )
+    prune_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to prune",
+    )
+    prune_ledger.add_argument(
+        "--now",
+        default=None,
+        help=(
+            "optional ISO-8601 timezone-aware cutoff (default: current UTC time); "
+            "burned entries whose receipt expired strictly before this are removed, "
+            "and the prune watermark advances to the latest expiry removed. A future "
+            "value also prunes not-yet-expired entries — use deliberately"
+        ),
+    )
+    prune_ledger.set_defaults(func=_prune_ledger)
+
+    approve = subparsers.add_parser(
+        "approve-escalation",
+        help="approve a parked governed-MCP escalation and mint an ALLOW receipt",
+    )
+    approve.add_argument(
+        "--config",
+        required=True,
+        help="path to the gateway JSON config (tenant/boundary/policy/validator/signer/audit)",
+    )
+    approve.add_argument(
+        "--pending",
+        required=True,
+        help=(
+            "path to a pending-escalation descriptor JSON "
+            "(GovernedGateway.pending_descriptor output): the ESCALATE record + args"
+        ),
+    )
+    approve.add_argument(
+        "--expires-at",
+        default=None,
+        help="optional ISO-8601 expiry bounding the FIRST use of the approval receipt",
+    )
+    approve.set_defaults(func=_approve_escalation)
 
     setup = subparsers.add_parser(
         "setup",
@@ -795,6 +1100,44 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     proofpack.set_defaults(func=_proofpack)
+
+    verify_proofpack = subparsers.add_parser(
+        "verify-proofpack",
+        help=("verify a proof-pack directory offline (fail-closed); exit 0 iff valid, else 1"),
+    )
+    verify_proofpack.add_argument(
+        "pack_dir",
+        help="path to a gove-zone/proof-pack/v1 directory (contains manifest.json)",
+    )
+    verify_proofpack.add_argument(
+        "--now-iso",
+        default=None,
+        help="injected ISO-8601 clock for deterministic receipt-expiry checks",
+    )
+    verify_proofpack.add_argument(
+        "--verifier-key",
+        default=None,
+        help=(
+            "path to a raw 32-byte Ed25519 PUBLIC key, supplied out-of-band, used to "
+            "verify signed receipts. Omit for unsigned (dev) packs; a signed pack "
+            "without this fails closed (SIGNED_RECEIPT_NO_VERIFIER)."
+        ),
+    )
+    verify_proofpack.add_argument(
+        "--key-id",
+        default=None,
+        help="key_id the --verifier-key registers as (must match the receipt's signing_key_id)",
+    )
+    verify_proofpack.add_argument(
+        "--revoked-keys",
+        default=None,
+        help=(
+            "path to a JSON revocation list of revoked signing key_ids, supplied "
+            "out-of-band. A signed receipt whose signing_key_id is revoked fails "
+            "closed (SIGNING_KEY_REVOKED). Omit to apply no revocation."
+        ),
+    )
+    verify_proofpack.set_defaults(func=_verify_proofpack)
 
     return parser
 

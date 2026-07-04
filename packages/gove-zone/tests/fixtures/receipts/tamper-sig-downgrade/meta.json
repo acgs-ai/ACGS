@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "A",
+  "name": "tamper-sig-downgrade",
+  "notes": "anti-downgrade: algorithm is bound into the hash",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "RECEIPT_HASH_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

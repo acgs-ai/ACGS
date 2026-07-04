@@ -1,4 +1,8 @@
-"""GovernedMCPServer — the deterministic, audit-chained MCP facade.
+"""GovernedMCPServer — the deterministic, audit-chained MCP facade (EVAL-ONLY).
+
+EVAL-ONLY: production MCP tools belong on a ``gove_zone.Kernel`` behind
+``gove_zone.mcp`` (structural admission); this facade's per-method
+``self.admit`` wiring exists for deterministic eval scenarios only.
 
 Wraps the bare side-effect operations (filesystem write, sql mutation,
 email send, deploy restart, github mutate, shell exec) with:

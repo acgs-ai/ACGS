@@ -1,0 +1,8 @@
+{
+  "expected_reasons": [
+    "SCHEMA_VERSION_UNSUPPORTED"
+  ],
+  "expected_valid": false,
+  "produced_by": "tests/fixtures/_generate_proofpacks.py",
+  "verifier": "trusted"
+}

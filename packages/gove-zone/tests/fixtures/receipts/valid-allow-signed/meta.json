@@ -1,0 +1,20 @@
+{
+  "entry": "verify",
+  "expected": "accept",
+  "layer": "baseline",
+  "name": "valid-allow-signed",
+  "notes": "canonical demo subject: signed, fresh, correct context",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": null,
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_action": "runtime.file.write",
+    "expected_actor": "agent-1",
+    "expected_args": {
+      "path": "safe.txt"
+    },
+    "expected_execution_boundary": "local-sandbox",
+    "expected_tenant_id": "tenant-A",
+    "require_signature": true
+  }
+}

@@ -135,7 +135,7 @@ const verificationAnchors = [
   'check-login-interstitial.mjs', 'test:login-interstitial',
   'check-polling-hygiene.mjs', 'test:polling-hygiene',
   'check-privilege-banner-contract.mjs', 'test:privilege-banner',
-  'check-vercel-routes.mjs', 'test:vercel-routes', 'https://console.acgs.ai/console',
+  'check-marketing-routes.mjs', 'test:marketing-routes', 'https://console.acgs.ai/console',
   'check-wire-decisions.mjs', 'test:wire-decisions',
   'storybook-runtime.plan.json', 'test:storybook-runtime-plan', 'pending-external:dependency-owner-approval', 'not official Storybook runtime proof',
   'check-style-bundle.mjs', 'test:style-bundle',

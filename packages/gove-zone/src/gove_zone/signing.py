@@ -1,4 +1,4 @@
-"""Asymmetric receipt signing — opt-in closure of the recomputed-receipt residual.
+"""Asymmetric receipt signing — the production-profile closure of the recomputed-receipt residual.
 
 The receipt schema binds goal/action/authority/validator/args/policy/boundary
 into ``receipt_hash``. But a hash is recomputable: any process that can rebuild
@@ -11,15 +11,25 @@ can sign, so a recomputed-hash forgery is cryptographically infeasible.
   (a) receipts are issued with a private-key signer (``from_record(signer=…)``), AND
   (b) the gate is configured with a matching public-key verifier AND
       ``require_signature=True``.
-Default deployments are unsigned; operators must engage signing explicitly.
+This is the **default** posture: the production profile
+(``GovernanceProfile.production`` / unset ``GOVE_ZONE_PROFILE``) makes the gates
+default to ``require_signature=True``, and a production gate with no verifier fails
+closed loud. The unsigned path is the explicit dev-mode opt-out
+(``GovernanceProfile.dev`` / ``require_signature=False``).
 
 **Residuals this mechanism does NOT address:**
   - Private-key **custody**: if the signing key is compromised, an attacker can
     issue valid-looking receipts. Key custody is the operator's responsibility.
   - Key **distribution / trust establishment**: the verifier mapping is static;
     there is no PKI, no certificate chain, and no trust-store bootstrapping.
-  - **Revocation**: a compromised key cannot be revoked; the verifier mapping must
-    be updated and redeployed by the operator.
+  - **Revocation**: a compromised key can now be revoked at the live gates, the
+    offline workflow-replay path, and the offline proof-pack verifier
+    (``verify_proof_pack`` / ``verify-proofpack --revoked-keys``) by passing a
+    :class:`gove_zone.revocation.RevocationList` (``revoked_keys=``) — a receipt
+    signed by a revoked ``key_id`` is rejected even with a valid signature still
+    present in the verifier map. The residual gap is *distribution*: the verifier
+    mapping and the revocation list are static config the operator deploys (no PKI
+    / CRL fetch / expiry).
 
 ``cryptography`` is an optional dependency behind the ``crypto`` extra and is
 lazy-imported. The core library stays stdlib-only: importing this module never

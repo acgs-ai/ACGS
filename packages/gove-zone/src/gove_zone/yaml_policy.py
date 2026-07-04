@@ -2,16 +2,31 @@
 
 Extends the RuleSetPolicy implementation to allow policy definition in standard,
 easy-to-read YAML syntax.
+
+PyYAML is an *optional* dependency: importing this module (and the top-level
+``gove_zone`` package) never requires it. It is imported lazily, only when a
+YAML method is actually called, so the core runtime stays dependency-free.
+Install it with the ``yaml`` extra: ``pip install 'gove-zone[yaml]'``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
-
-import yaml  # type: ignore[import-untyped]
+from typing import Any, cast
 
 from gove_zone.policy import RuleSetPolicy
+
+
+def _require_yaml() -> Any:
+    """Return the PyYAML module, or raise a clear, actionable error if absent."""
+    try:
+        import yaml  # type: ignore[import-untyped]
+    except ModuleNotFoundError as exc:  # pragma: no cover - trivial import guard
+        raise ModuleNotFoundError(
+            "YAMLPolicy requires PyYAML, which is not installed. Install the "
+            "optional 'yaml' extra: pip install 'gove-zone[yaml]'"
+        ) from exc
+    return yaml
 
 
 class YAMLPolicy(RuleSetPolicy):
@@ -23,6 +38,7 @@ class YAMLPolicy(RuleSetPolicy):
     @classmethod
     def from_yaml(cls, text: str) -> YAMLPolicy:
         """Parse a YAML string into a YAMLPolicy instance."""
+        yaml = _require_yaml()
         try:
             raw = yaml.safe_load(text)
         except yaml.YAMLError as exc:
@@ -32,7 +48,7 @@ class YAMLPolicy(RuleSetPolicy):
             raise ValueError("YAMLPolicy must define a dictionary/object at the root level")
 
         # Let RuleSetPolicy's dictionary parsing handle the rest
-        # (uses python's class polymorphism to return a YAMLPolicy instance)
+        # (uses Python's class polymorphism to return a YAMLPolicy instance).
         return cast(YAMLPolicy, cls.from_dict(raw))
 
     @classmethod
@@ -43,6 +59,7 @@ class YAMLPolicy(RuleSetPolicy):
 
     def to_yaml(self) -> str:
         """Dump the policy ruleset back to a YAML formatted string."""
+        yaml = _require_yaml()
         return cast(
             str,
             yaml.dump(self.to_dict(), sort_keys=True, indent=2, allow_unicode=True),

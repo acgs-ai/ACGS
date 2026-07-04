@@ -1,9 +1,12 @@
 """Append-only JSONL audit store with hash chaining.
 
 Ported from ``acgs_governance_eval_mvp/governance/audit/jsonl_chain.py``.
-Process-safe via ``fcntl.flock`` when that lock primitive is available. Importing
-the package does not require ``fcntl``; append support on platforms without a
-safe lock primitive remains deferred.
+Process-safe via a standard-library file lock: ``fcntl.flock`` on POSIX and
+``msvcrt.locking`` on Windows. Importing the package requires neither; the lock
+primitive is resolved lazily at append time. A host exposing neither primitive
+fails closed at append rather than writing without serialization. The POSIX
+path is exercised by ``test_concurrent_appends_preserve_chain_integrity``; the
+Windows path uses stdlib ``msvcrt`` and is not exercised on POSIX CI.
 
 Chain rules:
 
@@ -21,11 +24,14 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Generator, Iterable
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
+# Re-exported for backward compatibility: the lock implementation lives in
+# ``gove_zone._locking`` and ``from gove_zone.audit import _exclusive_file_lock``
+# must keep working.
+from gove_zone._locking import _exclusive_file_lock as _exclusive_file_lock
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.errors import AuditError
 
@@ -34,24 +40,6 @@ GENESIS_HASH = "0" * 64
 
 class AuditChainError(AuditError):
     """Raised when the persisted audit chain tail is corrupt or unreadable."""
-
-
-@contextmanager
-def _exclusive_file_lock(lock_fh: TextIO) -> Generator[None, None, None]:
-    """Hold an exclusive process lock for platforms with ``fcntl`` support."""
-    try:
-        import fcntl
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "ChainHashAuditStore append requires a platform file-lock primitive; "
-            "fcntl is unavailable on this host, so audit append support is deferred."
-        ) from exc
-
-    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-    try:
-        yield
-    finally:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
 class ChainHashAuditStore:
@@ -207,15 +195,39 @@ class ChainHashAuditStore:
                 break
         return out
 
-    def verify_chain(self) -> dict[str, Any]:
+    def verify_chain(
+        self,
+        *,
+        expected_count: int | None = None,
+        expected_last_hash: str | None = None,
+    ) -> dict[str, Any]:
         """Re-walk the chain and report integrity.
 
         Returns a dict with:
-            ``valid`` (bool): True iff every event hash matches and every
-              ``previous_hash`` matches the prior ``event_hash``.
+            ``valid`` (bool): True iff every event hash matches, every
+              ``previous_hash`` matches the prior ``event_hash``, and any
+              supplied external anchor (``expected_count`` / ``expected_last_hash``)
+              matches.
             ``checked`` (int): number of events walked.
             ``failures`` (list): per-failure detail dicts.
             ``last_hash`` (str): final ``event_hash`` walked, or genesis.
+
+        **Truncation/rollback detection.** Internal hash-chaining proves the
+        persisted events are mutually consistent, but a *prefix* of the chain is
+        itself internally consistent: silently deleting whole trailing events
+        yields a shorter chain that still re-walks cleanly. Internal walking
+        alone therefore cannot detect rollback. Supply an out-of-band anchor to
+        close that gap:
+
+        - ``expected_count``: the number of events the chain must contain. A
+          ``checked`` below it is reported as a ``length_mismatch`` failure
+          (the tail was truncated; a larger ``checked`` means unexpected growth).
+        - ``expected_last_hash``: the ``event_hash`` the chain must end on,
+          recorded out-of-band after the last trusted append. A mismatch is a
+          ``last_hash_mismatch`` failure.
+
+        Persist whichever anchor you can (event count and/or last hash) in a
+        store the audit writer cannot rewrite, and pass it here on verification.
         """
         previous = GENESIS_HASH
         checked = 0
@@ -249,6 +261,26 @@ class ChainHashAuditStore:
                 )
 
             previous = str(claimed_hash)
+
+        if expected_count is not None and checked != expected_count:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "length_mismatch",
+                    "expected": expected_count,
+                    "actual": checked,
+                }
+            )
+
+        if expected_last_hash is not None and previous != expected_last_hash:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "last_hash_mismatch",
+                    "expected": expected_last_hash,
+                    "actual": previous,
+                }
+            )
 
         return {
             "valid": len(failures) == 0,

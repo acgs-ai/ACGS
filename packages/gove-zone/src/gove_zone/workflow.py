@@ -31,7 +31,10 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from gove_zone.revocation import RevocationList
 
 from gove_zone.decision import sha256_json
 from gove_zone.errors import ReceiptValidationError
@@ -533,6 +536,7 @@ def verify_workflow_replay(
     *,
     authorization: WorkflowAuthorization,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+    revoked_keys: RevocationList | None = None,
 ) -> None:
     """Offline re-verification of a recorded workflow run (no ledger).
 
@@ -558,7 +562,11 @@ def verify_workflow_replay(
     - **cross-level separation (b)** over the recorded set:
       ``{plan_proposer} ∪ {step actors}`` disjoint from
       ``{plan_validator_id} ∪ {step validator_ids}``;
-    - each inner :class:`DecisionReceipt` independently verifies.
+    - each inner :class:`DecisionReceipt` independently verifies — pass
+      ``revoked_keys`` (a :class:`gove_zone.revocation.RevocationList`) to reject
+      an inner receipt signed by a revoked, in-scope signing ``key_id`` on replay
+      (default ``None`` preserves prior behavior). The envelope/authorization
+      signatures are a distinct key population and are NOT revocation-checked here.
 
     Honesty: there is **no runner** offline (it is runtime-only and deliberately
     not in the authorization), so replay enforces plan MACI but **not** the runner
@@ -651,6 +659,11 @@ def verify_workflow_replay(
                 "replay: chain is not topologically consistent (unsatisfiable predecessors)"
             )
 
-    # Each inner receipt independently verifies.
+    # Each inner receipt independently verifies. ``revoked_keys`` (B2) is
+    # threaded so a recorded inner DecisionReceipt signed by a revoked, in-scope
+    # signing key_id is rejected (SIGNING_KEY_REVOKED) on replay too, not only at
+    # the live gate. (The envelope/authorization signatures are a DISTINCT key
+    # population — caller/plan credentials — and are intentionally NOT covered
+    # here; see revocation.py scope note.)
     for sr in step_receipts:
-        sr.inner.verify()
+        sr.inner.verify(revoked_keys=revoked_keys)

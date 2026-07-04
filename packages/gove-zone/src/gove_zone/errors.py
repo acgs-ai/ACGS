@@ -8,8 +8,11 @@ anchors the decision. Callers can catch the specific type or the
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from gove_zone.authz import AuthzReason
 from gove_zone.decision import DecisionRecord
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 
@@ -21,8 +24,69 @@ class GoveZoneError(Exception):
     """Base for all gove-zone errors."""
 
 
+class ReceiptRejectionReason(StrEnum):
+    """Stable, machine-readable reason codes for receipt verification failures.
+
+    The *contract* a relying party (and the fixture corpus) asserts on, instead of
+    the human-readable exception message — message text is explicitly NOT a contract
+    (it carries hashes/field values for humans and may be reworded). Every
+    :meth:`gove_zone.receipt.DecisionReceipt.verify` rejection and every
+    :class:`ReceiptValidationError` subclass populates one of these. Names mirror the
+    numbered checks in ``verify()``; values equal the member names (StrEnum) so the
+    code serialises as a plain string in JSON / proof packs without leaking detail.
+
+    Additive (B4-V0): ``reason_code`` defaults to ``None`` on a hand-constructed
+    ``ReceiptValidationError`` for backward compatibility; the library populates it.
+    """
+
+    # verify() checks 1-13 (see receipt.py)
+    MISSING_REQUIRED_FIELD = "MISSING_REQUIRED_FIELD"
+    RECEIPT_HASH_MISSING = "RECEIPT_HASH_MISSING"
+    RECEIPT_HASH_MISMATCH = "RECEIPT_HASH_MISMATCH"
+    UNSIGNED_REJECTED = "UNSIGNED_REJECTED"
+    SIGNING_KEY_UNKNOWN = "SIGNING_KEY_UNKNOWN"
+    SIGNING_KEY_REVOKED = "SIGNING_KEY_REVOKED"
+    SIGNED_RECEIPT_NO_VERIFIER = "SIGNED_RECEIPT_NO_VERIFIER"
+    SIGNATURE_ALG_MISMATCH = "SIGNATURE_ALG_MISMATCH"
+    SIGNATURE_INVALID = "SIGNATURE_INVALID"
+    ACTOR_MISMATCH = "ACTOR_MISMATCH"
+    SELF_VALIDATION = "SELF_VALIDATION"
+    APPROVAL_CHAIN_DIVERGENCE = "APPROVAL_CHAIN_DIVERGENCE"
+    UNKNOWN_DECISION = "UNKNOWN_DECISION"
+    DENIED_RECEIPT = "DENIED_RECEIPT"
+    ESCALATED_RECEIPT = "ESCALATED_RECEIPT"
+    TENANT_MISMATCH = "TENANT_MISMATCH"
+    EXECUTION_BOUNDARY_MISMATCH = "EXECUTION_BOUNDARY_MISMATCH"
+    ACTION_MISMATCH = "ACTION_MISMATCH"
+    AUDIT_HASH_MISMATCH = "AUDIT_HASH_MISMATCH"
+    TRANSFORMATIONS_MALFORMED = "TRANSFORMATIONS_MALFORMED"
+    TRANSFORM_MISMATCH = "TRANSFORM_MISMATCH"
+    ARGUMENT_MISMATCH = "ARGUMENT_MISMATCH"
+    POLICY_HASH_MISMATCH = "POLICY_HASH_MISMATCH"
+    POLICY_BUNDLE_MISMATCH = "POLICY_BUNDLE_MISMATCH"
+    VALIDATOR_ROLE_MISMATCH = "VALIDATOR_ROLE_MISMATCH"
+    AUTHORITY_MISMATCH = "AUTHORITY_MISMATCH"
+    EXPIRY_UNPARSEABLE = "EXPIRY_UNPARSEABLE"
+    RECEIPT_EXPIRED = "RECEIPT_EXPIRED"
+    EXPIRY_REQUIRED = "EXPIRY_REQUIRED"
+    # gate-level / subclass reasons
+    PRODUCTION_PROFILE_NO_VERIFIER = "PRODUCTION_PROFILE_NO_VERIFIER"
+    RECEIPT_ALREADY_USED = "RECEIPT_ALREADY_USED"
+    CONSUMPTION_LEDGER_UNPROVABLE = "CONSUMPTION_LEDGER_UNPROVABLE"
+
+
 class ReceiptValidationError(GoveZoneError):
-    """Raised when a DecisionReceipt validation fails."""
+    """Raised when a DecisionReceipt validation fails.
+
+    Carries an optional machine-readable :class:`ReceiptRejectionReason` in
+    ``reason_code`` (B4-V0). ``None`` only on a hand-constructed instance that did not
+    supply one; every library raise site populates it. ``reason_code`` is keyword-only
+    and additive, so existing positional-message call sites are unaffected.
+    """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(*args)
+        self.reason_code = reason_code
 
 
 class ProductionProfileError(ReceiptValidationError):
@@ -38,6 +102,59 @@ class ProductionProfileError(ReceiptValidationError):
     (``GovernanceProfile.dev()`` / ``require_signature=False``) — so the secure
     default never auto-generates an ephemeral key (which would be false security).
     """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.PRODUCTION_PROFILE_NO_VERIFIER
+        )
+
+
+class ReceiptAlreadyUsedError(ReceiptValidationError):
+    """Raised when a receipt presented at the gate was already consumed.
+
+    A :class:`~gove_zone.consumption.ReceiptConsumptionLedger` keys consumption
+    on the receipt's ``audit_event_hash`` — one audit-anchored decision
+    authorizes at most one execution. Subclasses
+    :class:`ReceiptValidationError` deliberately (the
+    :class:`ProductionProfileError` precedent): replay refusal stays on the
+    single fail-closed receipt-verification path, so every existing caller
+    that treats ``ReceiptValidationError`` as "execution refused" handles
+    replay correctly with no new catch site.
+    """
+
+    def __init__(self, audit_event_hash: str = "", ledger_path: str = "") -> None:
+        self.audit_event_hash = audit_event_hash
+        self.ledger_path = ledger_path
+        super().__init__(
+            "receipt already consumed: audit anchor "
+            f"{self.audit_event_hash!r} is burned in the consumption ledger "
+            f"({self.ledger_path}). One approval authorizes at most one "
+            "execution — obtain a fresh decision/approval to run again.",
+            reason_code=ReceiptRejectionReason.RECEIPT_ALREADY_USED,
+        )
+
+    def __reduce__(self) -> tuple[type[ReceiptAlreadyUsedError], tuple[str, str]]:
+        # BaseException pickling replays ``args`` (the rendered message) into
+        # ``__init__``; rebuild from the structured fields instead so the error
+        # survives multiprocessing/ProcessPoolExecutor boundaries intact.
+        return (type(self), (self.audit_event_hash, self.ledger_path))
+
+
+class ConsumptionLedgerError(ReceiptValidationError):
+    """Raised when the consumption ledger cannot prove a receipt is fresh —
+    unreadable file, corrupt line, or a failed write of the consumption entry.
+
+    Subclasses :class:`ReceiptValidationError` deliberately (the
+    :class:`ProductionProfileError` precedent): if single-use cannot be
+    *proven*, execution is refused on the same fail-closed path as any other
+    receipt-validation failure rather than silently degrading to stateless
+    (replayable) verification.
+    """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.CONSUMPTION_LEDGER_UNPROVABLE
+        )
 
 
 PRODUCTION_NO_VERIFIER_MSG = (
@@ -60,6 +177,23 @@ class SigningError(GoveZoneError):
     """
 
 
+class AuthzDeniedError(GoveZoneError):
+    """Raised at the executor gate when the acting principal is not authorized.
+
+    Distinct from :class:`ReceiptValidationError` (a receipt defect): the receipt
+    may be perfectly valid; the principal is simply not on the integrator's
+    allowlist for this action. Relying parties assert on ``reason`` — the same
+    :class:`~gove_zone.authz.AuthzReason` taxonomy the kernel emits as
+    ``AUTHZ_DENY:<reason>``.
+    """
+
+    def __init__(self, reason: AuthzReason, actor: str, action: str) -> None:
+        self.reason = reason
+        self.actor = actor
+        self.action = action
+        super().__init__(f"principal {actor!r} not authorized for action {action!r} ({reason})")
+
+
 class DeniedError(GoveZoneError):
     """Raised when a dispatch is denied by policy or fail-closed fallback."""
 
@@ -68,18 +202,27 @@ class DeniedError(GoveZoneError):
         self.audit_hash = audit_hash
         super().__init__(f"denied by policy {record.policy_version!r}: {record.reason}")
 
-    def to_rejection_dict(self) -> dict[str, Any]:
+    def to_rejection_dict(
+        self,
+        *,
+        allowed_alternatives: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Machine-readable rejection envelope for a calling agent.
 
         Deny is terminal for *this* call: the resolution hint is
         ``revise_and_retry`` and ``resumable`` is ``False``. Pure projection of
         the deciding record — see :func:`gove_zone.rejection.rejection_dict`.
+
+        ``allowed_alternatives`` (from
+        :func:`gove_zone.rejection.discover_alternatives`) is passed through to
+        the envelope; ``None`` keeps the key omitted ("not computed").
         """
         return rejection_dict(
             self.record,
             self.audit_hash,
             resumable=False,
             resolution=REVISE_AND_RETRY,
+            allowed_alternatives=allowed_alternatives,
         )
 
 
@@ -104,7 +247,11 @@ class EscalateError(GoveZoneError):
         self.pending = pending
         super().__init__(f"escalated by policy {record.policy_version!r}: {record.reason}")
 
-    def to_rejection_dict(self) -> dict[str, Any]:
+    def to_rejection_dict(
+        self,
+        *,
+        allowed_alternatives: Iterable[Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Machine-readable rejection envelope for a calling agent.
 
         Escalation is **not** a dead-end: ``approval`` advertises the
@@ -118,6 +265,10 @@ class EscalateError(GoveZoneError):
         ``False`` and ``approval.pending`` agrees). A consumer can therefore gate
         the resume call on either ``resumable`` or ``approval.pending`` without
         the two ever disagreeing.
+
+        ``allowed_alternatives`` (from
+        :func:`gove_zone.rejection.discover_alternatives`) is passed through to
+        the envelope; ``None`` keeps the key omitted ("not computed").
         """
         has_pending = self.pending is not None
         return rejection_dict(
@@ -126,6 +277,7 @@ class EscalateError(GoveZoneError):
             resumable=has_pending,
             resolution=HUMAN_APPROVAL,
             approval={"via": "approve_escalation", "pending": has_pending},
+            allowed_alternatives=allowed_alternatives,
         )
 
 

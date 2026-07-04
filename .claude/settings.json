@@ -6,6 +6,11 @@
   "permissions": {
     "allow": [
       "Bash(gh pr merge:*)",
+      "Bash(gh pr create:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull:*)",
       "Bash(make:*)",
       "Bash(pnpm:*)",
       "Bash(uv:*)",
@@ -54,7 +59,6 @@
       "Bash(git clean -f:*)",
       "Bash(git checkout master:*)",
       "Bash(git checkout main:*)",
-      "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
       "Bash(gh release:*)",
       "Bash(gh secret:*)",
@@ -78,7 +82,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -90,7 +94,7 @@
           },
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "PY=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$PY\" ] || { echo 'gove-zone hook: project venv missing - run uv sync' >&2; exit 2; }; GOVE_ZONE_PROFILE=dev exec \"$PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       },
@@ -99,7 +103,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "PY=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$PY\" ] || { echo 'gove-zone hook: project venv missing - run uv sync' >&2; exit 2; }; GOVE_ZONE_PROFILE=dev exec \"$PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       }

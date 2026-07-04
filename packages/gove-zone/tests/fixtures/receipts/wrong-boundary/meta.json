@@ -1,0 +1,14 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "wrong-boundary",
+  "notes": "wrong execution boundary",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "EXECUTION_BOUNDARY_MISMATCH",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "expected_execution_boundary": "prod-cluster",
+    "require_signature": true
+  }
+}

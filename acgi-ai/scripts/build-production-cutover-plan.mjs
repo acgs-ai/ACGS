@@ -13,9 +13,8 @@ const BLOCKED_UNTIL =
   'Resolve every listed productionLiveBlocker, rerun verify:production-live until all checks pass, then validate completed production evidence before making deployment claims.'
 
 const REQUIRED_GITHUB_SECRETS = [
-  'VERCEL_TOKEN',
-  'VERCEL_ORG_ID',
-  'VERCEL_PROJECT_ID',
+  'CLOUDFLARE_API_TOKEN',
+  'CLOUDFLARE_ACCOUNT_ID',
   'GCP_PROJECT_ID',
   'GCP_REGION',
   'GCP_WORKLOAD_IDENTITY_PROVIDER',
@@ -30,14 +29,14 @@ const REQUIRED_GITHUB_VARIABLES = ['STORYBOOK_PAGES_ENABLED=true']
 const DNS_RECORDS = [
   {
     host: 'acgs.ai',
-    type: 'A/ALIAS or Vercel-managed apex',
-    target: 'REPLACE_WITH_VERCEL_PRODUCTION_TARGET',
+    type: 'CNAME/ALIAS or Cloudflare-managed apex',
+    target: 'REPLACE_WITH_CLOUDFLARE_PRODUCTION_TARGET',
     proves: ['marketing-dns-live', 'marketing-https-live'],
   },
   {
     host: 'www.acgs.ai',
     type: 'CNAME',
-    target: 'REPLACE_WITH_VERCEL_WWW_TARGET',
+    target: 'REPLACE_WITH_CLOUDFLARE_WWW_TARGET',
     proves: ['marketing redirect/canonical checks'],
   },
   {
@@ -446,7 +445,7 @@ function buildPlan({ liveOutput, blockerReport, options }) {
       'Run make verify-js-node24, make platform-readiness, make release-evidence, and pnpm -F acgi-ai run test:production-cutover-plan.',
       'Confirm required GitHub secrets and STORYBOOK_PAGES_ENABLED=true only after DNS and Pages are ready.',
       'Push or merge to master and record marketing.yml, console.yml, and buyer-evidence-storybook run URLs.',
-      'Record Vercel deployment URL, Cloud Run revision URL, image digest, EXPECTED_BUILD_ID, and console /healthz output.',
+      'Record Cloudflare deployment URL, Cloud Run revision URL, image digest, EXPECTED_BUILD_ID, and console /healthz output.',
       'Run pnpm -F acgi-ai run verify:postdeploy -- https://console.acgs.ai.',
       'Run pnpm -F acgi-ai run verify:production-live -- --json and save the JSON artifact.',
       'If blocked, run build:production-blocker-report and build:production-cutover-plan from the saved JSON artifacts.',

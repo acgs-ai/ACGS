@@ -40,7 +40,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    if args.resume is not None and args.resume.exists():
+    if args.resume is not None:
+        if not args.resume.exists():
+            print(f"error: resume path does not exist: {args.resume}", file=sys.stderr)
+            return 2
         graph = KnowledgeGraph.load(args.resume)
         if args.graph is None:
             args.graph = args.resume  # persist back to the same file by default

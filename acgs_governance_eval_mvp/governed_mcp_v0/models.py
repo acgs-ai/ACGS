@@ -92,3 +92,13 @@ class RuntimeTargets:
     @property
     def constitution_path(self) -> Path:
         return self.evidence_dir / "constitution.json"
+
+    @property
+    def constitution_registry_path(self) -> Path:
+        """Pinned JSON list of allowed constitution hashes.
+
+        Optional: when present, replay verification cross-checks every
+        receipt's ``constitution_hash`` against this registry instead of
+        the singleton hash derived from the live constitution.
+        """
+        return self.root / "constitution_registry.json"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gove-zone"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "Minimal governed agent runtime — fail-closed governance, receipts, audit chain for AI agent tool calls."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -13,7 +13,9 @@ authors = [{ name = "Gove Zone Contributors" }]
 keywords = ["ai", "agents", "governance", "audit", "policy"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
@@ -26,19 +28,32 @@ gove-zone-api = "gove_zone.api:main"
 
 [project.urls]
 Homepage = "https://acgs.ai"
-Documentation = "https://acgs.ai/docs"
+Documentation = "https://acgs.ai"
 Repository = "https://github.com/dislovelhl/ACGS"
 Issues = "https://github.com/dislovelhl/ACGS/issues"
 
 [project.optional-dependencies]
 schema = ["pydantic>=2.0"]
 crypto = ["cryptography>=42"]
+# YAML-authored policies (gove_zone.yaml_policy). Imported lazily; the core
+# runtime never requires it.
+yaml = ["pyyaml>=6.0"]
+# LangChain/LangGraph adapter (gove_zone.adapters.langgraph). Guarded import;
+# the adapter module loads without it and raises a clear error when used.
+langchain = ["langchain-core>=0.1"]
+# Official Model Context Protocol SDK, for the governed-MCP gateway
+# (gove_zone.adapters.mcp_gateway). Lazy-imported inside the gateway entry
+# points; `import gove_zone` / `import gove_zone.adapters` stay dependency-free
+# and the gateway raises a loud RuntimeError with an install hint when the SDK
+# is absent.
+mcp = ["mcp>=1.27"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
     "cryptography>=42",
+    "pyyaml>=6.0",
 ]
 
 [tool.hatch.build.targets.wheel]

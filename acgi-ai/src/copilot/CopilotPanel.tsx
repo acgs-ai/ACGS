@@ -32,6 +32,7 @@ export function CopilotPanel() {
     try {
       setMessages(await transport.send(content))
     } catch (err) {
+      setMessages((prev) => prev.filter((message) => message.id !== localId))
       setError(err instanceof Error ? err.message : 'Copilot runtime unavailable (Phase 2).')
     } finally {
       setBusy(false)

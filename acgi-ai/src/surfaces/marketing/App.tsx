@@ -6,11 +6,24 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { lazy, Suspense, useEffect } from 'react'
-import { Marketing } from '../../routes/Marketing'
+import { AgentBus } from '../../routes/AgentBus'
+import { AcgsLite } from '../../routes/AcgsLite'
+import { Ask } from '../../routes/Ask'
+import { EvalMvp } from '../../routes/EvalMvp'
+import { CftPack } from '../../routes/CftPack'
+import { ClinicalGuard } from '../../routes/ClinicalGuard'
+import {
+  AgentReadable,
+  FailureModesPage,
+  FounderNarrative,
+  GovernancePatternsPage,
+  Marketing,
+} from '../../routes/Marketing'
 import { NotFound } from '../../routes/NotFound'
 import { Privacy } from '../../routes/Privacy'
 import { ProductIndex, ProductSurface } from '../../routes/ProductSurfaces'
 import { Security } from '../../routes/Security'
+import { Swarm } from '../../routes/Swarm'
 import { Trust } from '../../routes/Trust'
 
 function consoleOrigin(): string {
@@ -69,10 +82,64 @@ const indexRoute = createRoute({
   component: Marketing,
 })
 
+const askRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ask',
+  component: Ask,
+})
+
 const privacyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/privacy',
   component: Privacy,
+})
+
+const founderRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/founder',
+  component: FounderNarrative,
+})
+
+const failureModesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/failure-modes',
+  component: FailureModesPage,
+})
+
+const governancePatternsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/governance-patterns',
+  component: GovernancePatternsPage,
+})
+
+const agentReadableRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-readable',
+  component: AgentReadable,
+})
+
+const agentBusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/agent-bus',
+  component: AgentBus,
+})
+
+const evalMvpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/eval-mvp',
+  component: EvalMvp,
+})
+
+const cftPackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/cft-pack',
+  component: CftPack,
+})
+
+const acgsLiteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/acgs-lite',
+  component: AcgsLite,
 })
 
 const trustRoute = createRoute({
@@ -85,6 +152,18 @@ const securityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/security',
   component: Security,
+})
+
+const clinicalguardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/clinicalguard',
+  component: ClinicalGuard,
+})
+
+const swarmRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/swarm',
+  component: Swarm,
 })
 
 const productIndexRoute = createRoute({
@@ -141,9 +220,20 @@ function MarketingNotFoundRoute() {
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  askRoute,
   privacyRoute,
+  founderRoute,
+  failureModesRoute,
+  governancePatternsRoute,
+  agentReadableRoute,
+  agentBusRoute,
+  evalMvpRoute,
+  cftPackRoute,
+  acgsLiteRoute,
   trustRoute,
   securityRoute,
+  clinicalguardRoute,
+  swarmRoute,
   productIndexRoute,
   productRoute,
   privilegedLoginRoute,

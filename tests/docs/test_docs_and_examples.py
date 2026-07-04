@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +40,7 @@ EXAMPLE_SCRIPTS = [
     "examples/agent_framework_gate/demo.py",
     "examples/ci_deploy_gate/demo.py",
     "examples/tamper_demo/demo.py",
+    "examples/dynamic_swarm/demo.py",
 ]
 
 EXAMPLE_READMES = [
@@ -46,6 +49,7 @@ EXAMPLE_READMES = [
     "examples/agent_framework_gate/README.md",
     "examples/ci_deploy_gate/README.md",
     "examples/tamper_demo/README.md",
+    "examples/dynamic_swarm/README.md",
 ]
 
 
@@ -144,6 +148,21 @@ def test_examples_have_readmes_and_run_successfully() -> None:
         assert "What is proven" in text
 
     for rel in EXAMPLE_SCRIPTS:
+        # The dynamic_swarm example imports `acgs_lite`, which lives in the
+        # `packages/acgs-lite` git submodule. On a fresh/documented checkout the
+        # submodule is uninitialized, so `acgs_lite` is unimportable and the
+        # script exits non-zero. Skip ONLY this example in that case (a clear,
+        # explicit skip), without weakening the other example checks.
+        if (
+            rel == "examples/dynamic_swarm/demo.py"
+            and importlib.util.find_spec("acgs_lite") is None
+        ):
+            warnings.warn(
+                f"skipping {rel}: acgs_lite submodule not initialized "
+                "(run `git submodule update --init packages/acgs-lite` to exercise it)",
+                stacklevel=2,
+            )
+            continue
         proc = subprocess.run(
             [sys.executable, rel],
             cwd=ROOT,

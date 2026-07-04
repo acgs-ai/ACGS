@@ -77,8 +77,8 @@ check(
   `${templatePath} must keep Cloud Run revision URL as an operator-supplied placeholder.`,
 )
 check(
-  template.deploy?.vercelUrl === 'REPLACE_WITH_VERCEL_DEPLOYMENT_URL',
-  `${templatePath} must keep Vercel URL as an operator-supplied placeholder.`,
+  template.deploy?.cloudflareUrl === 'REPLACE_WITH_CLOUDFLARE_DEPLOYMENT_URL',
+  `${templatePath} must keep Cloudflare URL as an operator-supplied placeholder.`,
 )
 for (const key of ['marketing', 'console', 'storybook']) {
   check(

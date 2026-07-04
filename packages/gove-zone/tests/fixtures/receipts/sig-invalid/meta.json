@@ -1,0 +1,13 @@
+{
+  "entry": "verify",
+  "expected": "reject",
+  "layer": "B",
+  "name": "sig-invalid",
+  "notes": "well-formed signature that does not attest this hash",
+  "produced_by": "tests/fixtures/_generate_receipts.py",
+  "reason_code": "SIGNATURE_INVALID",
+  "verifier": "trusted-single",
+  "verify_kwargs": {
+    "require_signature": true
+  }
+}

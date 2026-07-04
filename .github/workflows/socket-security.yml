@@ -1,0 +1,70 @@
+# Supply-chain dependency PR gate (free-for-dev pick: Socket, free for OSS).
+# Directly relevant because `packages/acgs-lite` is published to public PyPI:
+# Socket flags risky new/changed dependencies (install scripts, network access,
+# obfuscation, typosquats) on the PR that introduces them. Runs on GitHub-hosted
+# runners (free for public repos), so it does not load the self-hosted box.
+#
+# Zero-YAML alternative: install the Socket GitHub App (https://socket.dev) for
+# automatic PR comments without a workflow or stored secret. This file is for
+# teams that prefer an explicit, blocking CI check.
+#
+# SETUP (human-gated, one-time): add the repo secret SOCKET_SECURITY_API_TOKEN
+#   (free key at https://socket.dev). Until it exists this workflow no-ops with a
+#   clear skip message rather than erroring.
+
+name: socket-security
+
+on:
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: socket-security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write # Socket posts a findings summary on the PR
+
+jobs:
+  socket:
+    name: Socket supply-chain scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check for API token
+        id: guard
+        env:
+          SOCKET_TOKEN: ${{ secrets.SOCKET_SECURITY_API_TOKEN }}
+        run: |
+          if [ -z "$SOCKET_TOKEN" ]; then
+            echo "SOCKET_SECURITY_API_TOKEN not set — skipping scan. Add the repo secret to enable." >> "$GITHUB_STEP_SUMMARY"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # socketcli diffs the PR against the base branch
+
+      - name: Set up Python
+        if: steps.guard.outputs.enabled == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Socket CLI
+        if: steps.guard.outputs.enabled == 'true'
+        run: pip install --upgrade socketsecurity
+
+      - name: Socket scan
+        if: steps.guard.outputs.enabled == 'true'
+        # --strict-blocking fails the job on new dependency risk. socketcli
+        # auto-detects the GitHub Actions PR context (repo, branch, PR number).
+        run: socketcli --strict-blocking --target-path .
+        env:
+          SOCKET_SECURITY_API_TOKEN: ${{ secrets.SOCKET_SECURITY_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

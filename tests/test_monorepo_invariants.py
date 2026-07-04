@@ -113,6 +113,7 @@ EXPECTED_UV_MEMBERS = {
     "packages/clinicalguard",
     "packages/gove-zone",
     "packages/agent-bus-analyzer",
+    "packages/research-engine",
     "acgs_governance_eval_mvp",
     "acgs-cft-governance-pack",
 }

@@ -24,7 +24,7 @@ The `gove-zone` package (`packages/gove-zone`, Python module `gove_zone`) is the
 |---|---|
 | What is it? | A vendor-neutral, receipt-gated governance layer for AI-agent side effects. |
 | What problem does it solve? | Agents can request powerful tools faster than teams can prove authority, policy, auditability, and replay. ACGS moves that proof before execution. |
-| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one common receipt format apply to every caller wired through it — runtime support is tiered, not uniform (see the integration matrix). A single platform governing its own agents has an inherent conflict of interest in offering that even-handedness across rival platforms; ACGS privileges none. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
+| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one common receipt format apply to every caller wired through it — runtime support is tiered, not uniform (see the integration matrix). When a platform both ships and governs its agents, the governor and the governed are the same party — a structural position, not a knock on its engineering; a plane outside the platforms avoids that, and ACGS privileges no runtime. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
 | Core invariant | **No valid Decision Receipt, no side effect.** |
 | Why it matters | Tool calls can mutate files, systems, money, data, or infrastructure. A natural-language model may request an action; the executor must enforce the receipt gate. |
 | Proof path | Run the smoke proof, run the receipt-gated execution demo, inspect the proof pack, then tamper with receipts/audit evidence and observe failure. |
@@ -44,7 +44,17 @@ uv run python -m pytest tests/docs --import-mode=importlib -q
 
 Expected result: the allowed side effect executes, denied/missing/tampered/mismatched receipts fail closed, audit evidence verifies, and tampered evidence fails replay/integrity checks.
 
+A recorded run of this sequence (allow → id_rsa deny → tampered-audit verification failure) is captured as an [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast) (play with `asciinema play docs/launch/evidence/demo-proof-sequence.cast`) with a plain-text [transcript](docs/launch/evidence/demo-proof-sequence.txt) for readers who can't play the cast. Both come from [`docs/launch/evidence/record-proof-sequence.sh`](docs/launch/evidence/record-proof-sequence.sh); re-run it to reproduce the evidence.
+
 For the fastest guided path, start at [`docs/START_HERE.md`](docs/START_HERE.md). For the canonical proof narrative, read [`docs/PROOF_PATH.md`](docs/PROOF_PATH.md). The full documentation index is [`docs/README.md`](docs/README.md).
+
+## Integrator posture: signing and single-use are how the invariant holds
+
+Two defaults decide whether "no valid receipt, no side effect" actually binds in *your* deployment. Wire executors through the gate surfaces — `gove_zone.executor.execute_with_receipt`, `GovernedExecutor`, or `gove_zone.contracts.ReceiptVerifier` — never by calling `DecisionReceipt.verify()` directly:
+
+- **Signing.** The gate surfaces default to `require_signature=True` (production profile) and fail closed loud if no verifier is configured. The bare `DecisionReceipt.verify()` primitive defaults to `require_signature=False` — a direct caller silently opts into the unsigned posture. A `receipt_hash` is recomputable; only an Ed25519 signature checked against a trusted public-key verifier closes that residual. Run the dev/unsigned mode only by explicit opt-out (`require_signature=False` or `GovernanceProfile.dev`).
+- **Single-use.** `verify` is stateless, so one valid receipt authorizes *N* executions unless you pass a `ReceiptConsumptionLedger`. With a ledger the receipt's audit anchor is burned after verification and before the side effect, so a replay fails closed with no side effect. Pass the **same** logical ledger on every call that must share single-use state.
+- **Audit rollback.** `ChainHashAuditStore.verify_chain()` proves internal consistency, but a truncated *prefix* is itself consistent. Record the event count and/or last `event_hash` out-of-band and pass them as `verify_chain(expected_count=..., expected_last_hash=...)` to detect silent truncation.
 
 ## What is implemented now
 
@@ -88,6 +98,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 | `docs/` | Human and agent documentation, claim ledger, architecture, proof path, integration guide. |
 | `examples/` | Root runnable governance examples for integrators. |
 | `tests/docs/` | Documentation/example smoke tests and link checks. |
+| [`MONOREPO.md`](MONOREPO.md) | Workspace registry: what exists and where each package is gated. |
+| [`docs/governance-stack-index.md`](docs/governance-stack-index.md) | Governance stack index mapping the layered components and proofs. |
 
 ## Read next
 
@@ -97,7 +109,8 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 4. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — threat model and current protections.
 5. [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) — where to put the gate in your stack.
 6. [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — supported runtimes by proof tier (shipped / pattern / roadmap).
-7. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
+7. [`docs/FAQ.md`](docs/FAQ.md) — question-headed Q&A (Decision Receipt, vs audit log / Microsoft AGT, production-readiness) with claim-safe answers.
+8. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
 
 ## Development status
 
@@ -110,3 +123,14 @@ make lint-docs
 ```
 
 Use `make verify` for broad root validation when the full mixed workspace is intended to be gated.
+
+## Local buyer-evidence gallery
+
+For acgi-ai buyer-review packets, use the local buyer-evidence gallery commands from `acgi-ai/`:
+
+```bash
+pnpm run evidence:build
+pnpm run test:buyer-evidence
+```
+
+The `evidence:build` script produces a dependency-free local buyer-evidence artifact, and `test:buyer-evidence` validates the artifact contract. This is local review evidence only; it is not hosted Storybook, production deployment proof, or a compliance certification.

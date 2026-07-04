@@ -22,6 +22,48 @@ export function Overview() {
         is the same constitution serving traffic at this moment.
       </p>
 
+      <section
+        className="overview-section action-entry"
+        aria-labelledby="getting-started"
+        data-first-run="getting-started"
+      >
+        <div>
+          <h2 className="overview-section-title" id="getting-started">
+            Getting started
+          </h2>
+          <p>
+            New to this console? The numbers above come from local fixtures. Bind your own runtime
+            and prove one gated action end to end before you trust any populated view. These are
+            local readiness steps, not production certification.
+          </p>
+        </div>
+        <ol>
+          <li>
+            Connect a runtime to the same-origin governed bus, then open{' '}
+            <span className="mono">/console/bus</span> to watch traces propagate.
+          </li>
+          <li>
+            Run the one-command smoke proof:{' '}
+            <span className="mono">uv run --package gove-zone gove-zone smoke</span>.
+          </li>
+          <li>
+            Replay the receipt-gated demo so a denied or unreceipted action stays blocked:{' '}
+            <span className="mono">
+              uv run --package gove-zone python
+              packages/gove-zone/examples/receipt-gated-execution/demo.py
+            </span>
+            .
+          </li>
+        </ol>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => navigate('/console/bus')}
+        >
+          Open bus traces
+        </button>
+      </section>
+
       <div className="overview-stats">
         {data.stats.map((s) => (
           <Stat key={s.label} label={s.label} value={s.value} sub={s.sub} />

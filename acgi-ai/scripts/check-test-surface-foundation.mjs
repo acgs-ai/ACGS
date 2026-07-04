@@ -153,8 +153,8 @@ check(
 check(
   /Local static foundation: `pnpm run test:test-surface`/.test(plan) &&
     /Local HTTP shell smoke: `pnpm run test:e2e-http`/.test(plan) &&
-    /browser Playwright and visual-diff execution remains Phase 2 work/.test(plan),
-  'PLAN.md must bound A15/Phase 2 test script foundation without closing browser execution work.',
+    /The full viewport matrix and remaining visual targets remain Phase 3 work/.test(plan),
+  'PLAN.md must bound the A15 static test-surface gates and the remaining Phase 3 browser execution work.',
 )
 
 if (failures.length > 0) {

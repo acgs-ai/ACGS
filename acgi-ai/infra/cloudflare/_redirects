@@ -1,0 +1,35 @@
+# Marketing surface — Cloudflare Pages routing parity (DEPLOY.md §3, vercel.json).
+#
+# Cloudflare evaluates these top-to-bottom, first match wins. Existing static
+# assets (hashed /assets/*, index.html, fonts) are served as files BEFORE the
+# 200 SPA rewrite, so the catch-all only handles client-side routes. Keep the
+# SPA fallback LAST.
+#
+# Copied into dist/ at deploy time by marketing-cloudflare.yml (not in public/).
+
+# Privilege boundary — /console is a SEPARATE, privileged origin. Hard 308 so a
+# deep marketing link to the console lands on console.acgs.ai, never a
+# marketing-side render. Marketing.tsx's "Open the console" CTA points at the
+# absolute console URL in production; this is defense-in-depth (DEPLOY.md §3).
+/console        https://console.acgs.ai/console          308
+/console/*      https://console.acgs.ai/console/:splat    308
+
+# Internal docs must 404, never fall through to the SPA shell. The build strips
+# AGENTS/CLAUDE/DESIGN/DEPLOY (vite removeInternalDocs) and root-level docs are not
+# copied into dist at all; these rules are defense-in-depth so any internal doc that
+# is ever shipped returns 404 instead of the SPA shell (README.md stays public).
+/AGENTS.md             /404.html   404
+/CLAUDE.md             /404.html   404
+/DESIGN.md             /404.html   404
+/DESIGN-legacy.md      /404.html   404
+/DEPLOY.md             /404.html   404
+/ARCHITECTURE.md       /404.html   404
+/INTEGRATING.md        /404.html   404
+/GETTING_STARTED.md    /404.html   404
+/A11Y.md               /404.html   404
+/CLAIM_VALIDATION.md   /404.html   404
+/PLAN.md               /404.html   404
+/PRODUCTION-LAUNCH.md  /404.html   404
+
+# SPA client-side routing fallback — MUST stay last.
+/*              /index.html  200

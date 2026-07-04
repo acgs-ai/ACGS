@@ -1,0 +1,18 @@
+# Test-time third-party dependencies for hermes_acgs_bundle/ (flat-layout module,
+# no pyproject.toml). Derived by static import analysis of tests/ + source and
+# kept in lockstep with .github/workflows/python-hermes-bundle.yml, which is the
+# canonical install step in CI. Loose pins match that workflow.
+#
+# Import -> distribution mapping:
+#   import pytest                                  -> pytest
+#   import yaml  (constitution.min.yaml loader)    -> pyyaml
+#   from opentelemetry import trace                -> opentelemetry-api
+#   from opentelemetry.sdk.trace ... import ...    -> opentelemetry-sdk
+#
+# opentelemetry imports are optional/conditional in source (no-op when absent)
+# but exercised by tests/test_otel_cross_link.py against the real SDK, so they
+# are required test deps.
+pytest>=8.0
+pyyaml>=6.0
+opentelemetry-api>=1.24
+opentelemetry-sdk>=1.24
