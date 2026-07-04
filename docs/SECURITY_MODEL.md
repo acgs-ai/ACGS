@@ -172,8 +172,50 @@ Also operator-tunable and off/optional by default: `expires_at` (no global
 revocation list) and `policy_timeout` (hang → DENY only when configured). Set both
 for a hardened deployment.
 
+## Governed-MCP gateway trust boundary (alpha)
+
+The governed-MCP gateway (`packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py`)
+is a transparent stdio proxy that fronts one downstream MCP server and gates its
+`tools/call` traffic through the sealed kernel. Its security posture in the alpha
+pilot:
+
+- **Host→gateway hop is assumed trusted (local transport).** The gateway does not
+  itself authenticate the host; it derives the session principal from the MCP
+  `clientInfo` presented at `initialize` plus the config principal map. That
+  principal is only as strong as the local stdio transport's authentication
+  (same trust domain — a subprocess the operator launched). This is a documented
+  limitation, **not** an end-to-end authenticated-identity claim. A remote /
+  multi-tenant deployment would require authenticating that hop before relying on
+  the bound principal.
+- **Identity never comes from the request body (G4).** The actor bound into every
+  receipt is the session principal, held per MCP session (keyed by the session
+  object, never a process global), so a forged `actor` field in
+  `params.arguments` is ignored and cannot cross between sessions.
+- **Principal enforcement is at first `tools/call`, not `initialize`.** The
+  low-level MCP `Server` owns the handshake, so an unmapped principal is failed
+  closed with a DENY `CallToolResult` at the first governed call rather than by
+  rejecting `initialize`. Same fail-closed guarantee, different enforcement point.
+- **Fail-closed method surface.** Only `tools/list` (pass-through) and
+  `tools/call` (gated) are wired. `sampling/createMessage` (the downstream's
+  reverse LLM channel) is denied in alpha — the runtime
+  (`run_stdio_gateway`) constructs the downstream client session with no sampling
+  callback, so a downstream sampling request is refused at the gateway and never
+  reaches the host. Partner opt-in (which would require bridging downstream→host
+  sampling) is a reserved, **not-yet-honoured** follow-up: the `allow_sampling`
+  config field is parsed for forward-compatibility but has no effect. Every other
+  method is unregistered, so the SDK answers *method-not-found* — never a silent
+  forward. Full resources/prompts proxying is likewise a documented follow-up,
+  not shipped blind.
+- **Single-use by construction.** Every ALLOW forward and every escalation resume
+  runs through the receipt gate with one shared `ReceiptConsumptionLedger`; the
+  approval's audit anchor is burned before the side effect, so a replay raises
+  `ReceiptAlreadyUsedError`.
+- **TRANSFORM out of scope.** Config load rejects transform-policy bundles so an
+  unrouted TRANSFORM decision cannot silently hard-fail every call at the gate.
+
 ## Security-sensitive files
 
+- `packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py`
 - `packages/gove-zone/src/gove_zone/receipt.py`
 - `packages/gove-zone/src/gove_zone/executor.py`
 - `packages/gove-zone/src/gove_zone/kernel.py`

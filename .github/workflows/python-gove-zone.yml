@@ -60,7 +60,7 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema]'
+          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp]'
 
       - name: Lint
         run: |
@@ -72,11 +72,14 @@ jobs:
         # keeps tests insulated from sys.path leakage from sibling packages.
         # Coverage floor: the kernel sits on the critical "no valid receipt, no
         # side effect" path, so a regression that silently drops a tested branch
-        # must fail CI. 90% is a deliberate floor below the ~92% actual (leaving
+        # must fail CI. 90% is a deliberate floor below the ~91% actual (leaving
         # headroom for platform-specific branches: the Windows msvcrt audit lock
         # and the no-crypto-extra ImportError paths are unreachable on this
-        # Linux+crypto runner). Raise the floor as coverage climbs; never lower
-        # it to make a red build pass.
+        # Linux+crypto runner). The `mcp` extra is installed above so the
+        # governed-MCP gateway (adapters/mcp_gateway.py) is exercised by its
+        # conformance suite here rather than skipped — without it the gateway
+        # sits at ~43% and drags the total under the floor. Raise the floor as
+        # coverage climbs; never lower it to make a red build pass.
         run: >
           .venv/bin/python -m pytest tests/ -v
           --cov=gove_zone
