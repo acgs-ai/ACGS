@@ -185,9 +185,8 @@ links.
 ### Publish runbook (human-gated, in order)
 
 1. Flip repo public (or decide mirror / strip-URLs alternative above).
-2. Merge this PR; tag `gove-zone-v0.1.0a1` on the merge commit.
-3. Build from the tag: `cd packages/gove-zone && uv build` → artifacts in repo-root `dist/`.
-4. `uvx twine check dist/*` must PASS.
-5. Upload via PyPI **Trusted Publishing** (OIDC GitHub Actions) preferred; else `uvx twine upload dist/*` with a scoped token.
-6. Post-publish smoke: `pip install gove-zone==0.1.0a1` in a clean venv → `gove-zone smoke` exit 0.
-7. Verify the PyPI page renders and all Project-URLs resolve.
+2. One-time setup (if not done): register the PyPI **Trusted Publisher** (project `gove-zone`, repo `dislovelhl/ACGS`, workflow `release.yml`, environment `production`) and configure **required reviewers** on the `production` environment — until reviewers are set, GitHub treats the gate as decorative and a tag would publish unreviewed (see `release.yml` header).
+3. Merge this PR; tag **`v0.1.0a1`** on the merge commit — `.github/workflows/release.yml` triggers on `v*` tags only (a `gove-zone-v...` tag would NOT trigger it). The workflow builds, twine-checks, then waits for the human approval on `production` before uploading via OIDC.
+4. Approve the `publish` job → upload happens with a short-lived OIDC token (no API token anywhere).
+5. Post-publish smoke: `pip install gove-zone==0.1.0a1` in a clean venv → `gove-zone smoke` exit 0.
+6. Verify the PyPI page renders and all Project-URLs resolve.
