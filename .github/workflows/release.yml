@@ -76,7 +76,15 @@ jobs:
   publish:
     name: Publish to PyPI (Trusted Publishing)
     needs: build
-    runs-on: [self-hosted, Linux, X64]
+    # GitHub-hosted, NOT self-hosted. pypa/gh-action-pypi-publish is a Docker
+    # container action; on the self-hosted runner it fails before the OIDC
+    # exchange with `Permission denied: /github/workspace/dist` (the container
+    # runs as root while the workspace is owned by the runner user). GitHub's
+    # OIDC Trusted Publishing is only reliably supported on GitHub-hosted
+    # runners, which is also where this action is tested. Free for this public
+    # repo. The build job above stays self-hosted (it only runs uv, no
+    # container action) so no toolchain assumptions change there.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     # `environment: production` makes GitHub require the configured human
     # reviewer to approve before this job runs (once required reviewers are
