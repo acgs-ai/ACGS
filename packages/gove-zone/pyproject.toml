@@ -28,7 +28,7 @@ gove-zone-api = "gove_zone.api:main"
 
 [project.urls]
 Homepage = "https://acgs.ai"
-Documentation = "https://acgs.ai/docs"
+Documentation = "https://acgs.ai"
 Repository = "https://github.com/dislovelhl/ACGS"
 Issues = "https://github.com/dislovelhl/ACGS/issues"
 

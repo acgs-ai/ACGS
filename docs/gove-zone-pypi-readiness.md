@@ -153,3 +153,41 @@ Project-URL: Issues, https://github.com/dislovelhl/ACGS/issues
 Items 1–5 are reviewable engineering work suitable for a PR (and appear as a
 good-first-issue cluster in [`CONTRIBUTING.md`](../CONTRIBUTING.md)). Item 6 is
 the human-gated release step.
+
+---
+
+## 2026-07-03 refresh — full pre-flight re-run at `0.1.0a1`
+
+All checks re-executed against current `master` (post #195/#197: version
+`0.1.0a1`, `mcp` extra present).
+
+| # | Item | Result |
+|---|---|---|
+| 3 | Version bump | ✅ `0.1.0a1` on master (alpha marker, matches claim boundary) |
+| 4 | PyPI name availability | ✅ **free** — `https://pypi.org/pypi/gove-zone/json` → HTTP 404 |
+| 5 | `uv build` + `twine check` | ✅ both wheel + sdist **PASSED** (note: uv workspace puts `dist/` at repo root, not package dir) |
+| 6a | Apex `https://acgs.ai` | ✅ now HTTP **200** (was 404 in original report) |
+| 6b | `https://acgs.ai/docs` | ❌ now HTTP **404** (was 200) — `Documentation` URL repointed to `https://acgs.ai` in this PR |
+| — | Clean-venv wheel smoke | ✅ `pip install <wheel>` → only `gove-zone==0.1.0a1` installed (zero-dep claim holds); `gove-zone smoke` exit 0, allow/deny/audit-chain checks pass |
+
+### NEW pre-publish gate: repository is private
+
+`github.com/dislovelhl/ACGS` is **private**. The wheel's `Repository` and
+`Issues` Project-URLs therefore 404 for every PyPI visitor. Publishing an
+Apache-2.0 open-core adoption package whose source links are dead undermines
+the PLG wedge (startup canvas: OSS tier is the adoption engine).
+
+**Decision required (human):** make the repo public (or publish a public
+mirror) **before or together with** the PyPI upload. If the repo must stay
+private, strip `Repository`/`Issues` URLs pre-upload instead of shipping dead
+links.
+
+### Publish runbook (human-gated, in order)
+
+1. Flip repo public (or decide mirror / strip-URLs alternative above).
+2. Merge this PR; tag `gove-zone-v0.1.0a1` on the merge commit.
+3. Build from the tag: `cd packages/gove-zone && uv build` → artifacts in repo-root `dist/`.
+4. `uvx twine check dist/*` must PASS.
+5. Upload via PyPI **Trusted Publishing** (OIDC GitHub Actions) preferred; else `uvx twine upload dist/*` with a scoped token.
+6. Post-publish smoke: `pip install gove-zone==0.1.0a1` in a clean venv → `gove-zone smoke` exit 0.
+7. Verify the PyPI page renders and all Project-URLs resolve.
