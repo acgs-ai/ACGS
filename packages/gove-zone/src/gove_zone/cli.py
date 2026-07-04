@@ -666,9 +666,9 @@ def _proofpack(args: argparse.Namespace) -> int:
     )
 
     # Write limitations.md
-    limitations_content = """# Conformance Proof Pack Limitations & Disclaimers
+    limitations_content = f"""# Conformance Proof Pack Limitations & Disclaimers
 
-- **Status**: Alpha (`0.1.0.dev0`).
+- **Status**: Alpha (`{__version__}`).
 - **Scope**: Local proof and production-shaped foundation only.
 - **Certification**: NOT production-certified, NOT compliance-certified.
   Do not claim live production deployment or regulatory compliance without direct evidence.
@@ -677,6 +677,13 @@ def _proofpack(args: argparse.Namespace) -> int:
   of compliance with any security framework, law, or regulatory body.
 """
     (dist_dir / "limitations.md").write_text(limitations_content, encoding="utf-8")
+
+    # Remove the audit append lock file so the pack directory contains exactly
+    # the files listed in the manifest; the lock only guards concurrent appends
+    # during generation and carries no evidence value.
+    lock_path = dist_dir / "audit.jsonl.lock"
+    if lock_path.exists():
+        lock_path.unlink()
 
     # Write manifest.json
     #
