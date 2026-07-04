@@ -2,7 +2,7 @@
 
 Audience: a security-engineering team evaluating a design-partner pilot. Goal: show the invariant **"No valid Decision Receipt, no side effect"** end-to-end — **allow, deny, receipt, tamper** — against the real gove-zone API, on a governed pentest agent (VulnClaw).
 
-**Every command below was run on this repo at `0.1.0.dev0` (Python 3.13).** Verified exit codes: `smoke`, `doctor`, `governed_vulnclaw_demo.py`, `undeniable-demo/demo.py` → **0**; `proofpack` → `"status":"pass"`. Keep the honest-scope note visible: alpha, not production/compliance certified; the VulnClaw tool is a mock (proves gate behavior, does not attack real hosts); dev demos are unsigned, the signed profile is Step 4.
+**Every command below was run on this repo at `0.1.0a1` (Python 3.13.11, re-verified 2026-07-03).** Verified exit codes: `smoke`, `doctor`, `governed_vulnclaw_demo.py`, `undeniable-demo/demo.py` → **0**; `proofpack` → `"status":"pass"`. Keep the honest-scope note visible: alpha, not production/compliance certified; the VulnClaw tool is a mock (proves gate behavior, does not attack real hosts); dev demos are unsigned, the signed profile is Step 4.
 
 ---
 
@@ -13,7 +13,7 @@ Pre-warm the environment so nothing installs live on screen:
 ```bash
 cd /path/to/ACGS
 uv sync
-uv run --package gove-zone gove-zone --version   # expect: gove-zone 0.1.0.dev0
+uv run --package gove-zone gove-zone --version   # expect: gove-zone 0.1.0a1
 uv run --package gove-zone gove-zone doctor       # expect JSON with "ok": true
 ```
 
@@ -77,12 +77,12 @@ Degrade gracefully — you always have a runnable proof at a lower cost:
 2. **The VulnClaw demo errors or a scenario asserts:** drop to the 30-second proof — `uv run --package gove-zone gove-zone smoke` — which prints the allow/deny/audit-chain JSON verdict in one shot and exits non-zero on any failure. It proves the same invariant with no moving parts.
 3. **The signed `undeniable-demo` fails (missing `crypto` extra):** run `uv run --package gove-zone gove-zone proofpack` instead — it emits a conformance result object (`allowed_action_executed`, `denied_action_blocked`, `missing_receipt_blocked`, `tampered_receipt_blocked`, `audit_chain_verified`, all `true`) and writes a proof-pack folder.
 4. **Total environment failure (no Python, screen-share dies):** show the recorded terminal output captured during Step 0 and walk the policy source by eye. The claim-safe posture means you never have to overstate — say "here is the output from my last run" and point at exit codes.
-5. **They ask "is this certified?":** answer honestly — *"No. Alpha, `0.1.0.dev0`, not certified. This is the evidence mechanism; the pilot is how we find out if your auditor accepts receipts. That's the experiment we're proposing to run together."*
+5. **They ask "is this certified?":** answer honestly — *"No. Alpha, `0.1.0a1`, not certified. This is the evidence mechanism; the pilot is how we find out if your auditor accepts receipts. That's the experiment we're proposing to run together."*
 
 ## Command reference (all verified, exit 0)
 
 ```bash
-uv run --package gove-zone gove-zone --version                                  # 0.1.0.dev0
+uv run --package gove-zone gove-zone --version                                  # 0.1.0a1
 uv run --package gove-zone gove-zone doctor                                      # {"ok": true, ...}
 uv run --package gove-zone gove-zone smoke                                       # allow/deny/audit JSON, "status":"pass"
 uv run --package gove-zone python packages/gove-zone/examples/governed_vulnclaw_demo.py   # 8 scenarios + chain verify

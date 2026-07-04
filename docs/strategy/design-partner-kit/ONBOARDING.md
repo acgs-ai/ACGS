@@ -2,7 +2,9 @@
 
 **Goal: time-to-first-governed-call under 1 hour.** This is the design-partner path from zero to a fail-closed governed pipeline, with a metric wired at the end.
 
-**Status: Alpha (`0.1.0.dev0`). Not production-certified, not compliance-certified.** Every command below was run on this repo (Python 3.13) and produced the stated output. Verified exit codes: `smoke`, `doctor`, `governed_vulnclaw_demo.py`, `undeniable-demo/demo.py`, `replay` → **0**; `gate --policy-bundle` on a matching deny → **1** (non-zero *by design* — that is how a hook host blocks). `proofpack` → `"status":"pass"`. The one exception, called out inline, is `enable --enforce/--observe`, which mutates shared project state and was **not** run here (documented from `--help` + README). Commands that change local state (gate mode, audit files) are flagged.
+**Status: Alpha (`0.1.0a1`). Not production-certified, not compliance-certified.** Every command below was run on this repo (Python 3.13.11, re-verified 2026-07-03 at `0.1.0a1`) and produced the stated output. Verified exit codes: `smoke`, `doctor`, `governed_vulnclaw_demo.py`, `undeniable-demo/demo.py`, `replay` → **0**; `gate --policy-bundle` on a matching deny → **1** (non-zero *by design* — that is how a hook host blocks; requires the dev-profile acknowledgment, see Step 4). `proofpack` → `"status":"pass"`.
+
+> **Behavior change at `0.1.0a1` (fail-closed by default):** the gate now defaults to **enforce** mode, and under enforcement the unsigned CLI auditor refuses to run at all (exit 2 with an explanatory error) unless you explicitly acknowledge unsigned receipts with `GOVE_ZONE_PROFILE=dev` or opt into observe mode with `GOVE_ZONE_GATE_MODE=observe`. Nothing silently observes and nothing unsigned silently enforces. Steps 2 and 4 below show the explicit opt-ins. The one exception, called out inline, is `enable --enforce/--observe`, which mutates shared project state and was **not** run here (documented from `--help` + README). Commands that change local state (gate mode, audit files) are flagged.
 
 ---
 
@@ -28,7 +30,7 @@ Verify the install (verified output shown):
 
 ```bash
 uv run --package gove-zone gove-zone --version
-# → gove-zone 0.1.0.dev0
+# → gove-zone 0.1.0a1
 
 uv run --package gove-zone gove-zone doctor
 # → JSON with "ok": true; checks gove_zone_importable, integration_adapter_present,
@@ -43,12 +45,12 @@ The fastest honest first call routes a tool-call payload through the gate adapte
 
 ```bash
 printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/home/you/notes.txt","content":"hi"}}' \
-  | uv run --package gove-zone gove-zone gate
+  | GOVE_ZONE_GATE_MODE=observe uv run --package gove-zone gove-zone gate
 ```
 
 Verified: returns a JSON envelope with `"decision": "allow"`, `"blocked": false`, `"gate_mode": "observe"`, and a full `receipt` object (`event_id`, `argument_hash`, `audit_hash`, `decision_request_hash`, `matched_rules`, `path`). **That receipt is your first governed call** — a bound, hash-chained record emitted before the side effect.
 
-By default the gate runs in **observe** mode (fail-open: it records but does not block). That is intentional for the first call. The next step flips it to fail-closed.
+The `GOVE_ZONE_GATE_MODE=observe` opt-in is required: since `0.1.0a1` the gate **defaults to enforce** (fail-closed), and without it the bare command refuses with exit 2 (unsigned receipts may not silently enforce — verified). Observe mode is fail-open (records, does not block) and is intentional for the first call only. The next step runs the gate fail-closed.
 
 ## 3. Fail-closed proof (10 min)
 
@@ -70,7 +72,7 @@ Verified: ends with `=== ALL 5 STEPS PROVEN ===` — signed Ed25519 denial recei
 
 ## 4. Block a real side effect (10 min)
 
-Fail-closed blocking comes from a **policy bundle that denies** — and this holds regardless of the project gate mode. Verified: piping a matching tool call into `gate --policy-bundle` returned `"decision":"deny"`, `"blocked":true`, and **exit code 1**, even with `gate_mode: observe`.
+Fail-closed blocking comes from a **policy bundle that denies** — and this holds regardless of the project gate mode. Verified at `0.1.0a1`: piping a matching tool call into `gate --policy-bundle` returned `"decision":"deny"`, `"blocked":true`, and **exit code 1**. One prerequisite under the new enforce-by-default behavior: the unsigned CLI auditor must be explicitly acknowledged with `GOVE_ZONE_PROFILE=dev`, otherwise the gate refuses outright (exit 2) before evaluating any policy — that refusal is itself fail-closed behavior, not a bug. The production alternative is a configured signer (`crypto` extra).
 
 Author a minimal deny bundle (`RuleSetPolicy`: deny / escalate rules over tool + canonical path + org state + actor trust tier), then gate against it:
 
@@ -82,7 +84,7 @@ cat > deny.bundle.json <<'JSON'
 JSON
 
 printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/home/you/secrets/id_rsa","content":"x"}}' \
-  | uv run --package gove-zone gove-zone gate --policy-bundle deny.bundle.json
+  | GOVE_ZONE_PROFILE=dev uv run --package gove-zone gove-zone gate --policy-bundle deny.bundle.json
 echo "exit: $?"   # verified: 1 — non-zero, so your hook host blocks the side effect
 ```
 
@@ -138,7 +140,7 @@ Report back to us: (a) which pipeline, (b) `gate_mode: enforce` confirmed, (c) e
 
 ## Honest boundaries
 
-- Alpha, `0.1.0.dev0`. Not production/compliance certified. The proof-pack and receipts are evidence artifacts, not a certification stamp.
+- Alpha, `0.1.0a1`. Not production/compliance certified. The proof-pack and receipts are evidence artifacts, not a certification stamp.
 - Two distinct enforcement paths exist; do not conflate them. (1) The **policy-bundle path** (`gate --policy-bundle`) blocks on deny with exit 1 regardless of project gate mode — verified in Step 4. (2) The **no-bundle observer path** uses the project gate mode: observe = fail-open record-only, `enable --enforce` = fail-closed. A pipeline counts toward the OMTM only if its actual execution path is fail-closed — either it consumes `blocked:true`/exit 1 from a deny-bearing policy bundle, or it runs with `gate_mode: enforce`. Do not claim fail-closed for a no-bundle pipeline still in observe mode.
 - The demos govern mock tools with (except the signed `undeniable-demo`) unsigned receipts. Real key custody is out of scope for the demo; production signing needs the `crypto` extra and real key management.
 - See `packages/gove-zone/SECURITY.md` for the enforced-vs-out-of-scope boundary and `docs/CLAIMS.md` for the claim discipline every statement here follows.
