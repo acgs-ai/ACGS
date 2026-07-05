@@ -305,13 +305,14 @@ def build_checklist(repo_root: Path, drills: list[DrillRecord]) -> list[Checklis
             "packages/research-engine",
             "acgs_governance_eval_mvp",
             "acgs-cft-governance-pack",
+            "hermes_acgs_bundle",
         }
         declared = set(root_proj["tool"]["uv"]["workspace"]["members"])
         items.append(
             ChecklistItem(
                 number=3,
                 description=(
-                    "uv workspace members match current parent Python registry (8 packages)"
+                    "uv workspace members match current parent Python registry (9 packages)"
                 ),
                 status="pass" if declared == expected else "fail",
                 evidence=f"declared={sorted(declared)}",
