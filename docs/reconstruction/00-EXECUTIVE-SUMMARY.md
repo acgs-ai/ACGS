@@ -74,6 +74,11 @@ enforcement (answers the Gartner uniform-governance objection).
 
 ## 5. Phased roadmap (blueprint §3 + production plan §8, merged)
 
+> Note: this table reconciles the two source phase plans into one sequence; a few
+> items sit in a different phase here than in their source doc (e.g. readiness-test
+> un-ignore, staging deploy). The source docs govern if this is turned into an
+> execution plan.
+
 | Phase | Theme | Highlights | Risk | Gate |
 |---|---|---|---|---|
 | **A — Hygiene** | Docs + CI truth | One roadmap of record + `docs/archive/`; fix stale pointers; archive orphan; normalize CI templates; version-string fix; fail-fast `test:all` grouping; un-ignore 5 readiness tests; write (unapplied) IaC | Green | Agent-preparable |

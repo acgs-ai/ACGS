@@ -61,7 +61,7 @@ durable driver either way.
 | "Authorization as a service" | Oso — pivoted to "Oso for Agents" (https://www.osohq.com/) | ⚠️ Strong incumbent now in-lane |
 | "Pre-action authorization / policy before the API call" | **APort** — "Passport. Policy. Proof.", signed audit trails, Apache-2.0 OAP spec (https://aport.io/blog/best-ai-agent-guardrails-2026-pre-action-authorization-compared/) | ⚠️ **Near-identical to this project** |
 | "AI firewall" / runtime guardrails | Robust Intelligence, Arthur, CodeIntegrity ($5M seed) (https://www.geekwire.com/2026/codeintegrity-raises-4-8m-to-put-permanent-guardrails-on-unpredictable-ai-agents/) | ⚠️ Content/behavioral, not deterministic proof |
-| "Attestation / notarized receipts" | Academic ("Notarized Agents", arXiv 2606.04193); provenance vendors | ✅ Least crowded, most differentiated |
+| "Attestation / notarized receipts" | Academic ("Notarized Agents" — see `02-external-research.md` §2 citations); provenance vendors | ✅ Least crowded, most differentiated |
 
 **Recommendation [inferred]:** lead with the **verifiable Decision Receipt** as the
 differentiator, wrapped in the category language buyers search for:
@@ -69,7 +69,8 @@ differentiator, wrapped in the category language buyers search for:
 Avoid "firewall" (implies content pattern-matching, which this is not) and pure
 "SOC2 for agents" (commoditized). The defensible wedge APort/Oso/Microsoft do not
 emphasize: **offline-verifiable, tamper-evident receipts + fail-closed executors** —
-regulators now demand "runtime proof, not logs" (EU AI Act Art. 12 / Annex IV).
+regulators increasingly expect "runtime proof, not logs" (EU AI Act Art. 12 /
+Annex IV) **[inferred — single vendor analysis]**.
 https://zylos.ai/research/2026-05-01-ai-agent-governance-compliance-2026/
 
 **Threat [verified]:** APort has the same tagline structure plus an open spec.
