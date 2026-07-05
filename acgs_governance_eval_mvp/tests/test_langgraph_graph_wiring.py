@@ -17,7 +17,8 @@ BASE_ARGS = {"contract_id": "supplier-123", "fields": ["price", "term"], "resour
 
 def _adapter(tmp_path, roles_bundle, policy_bundle):
     return GovernedToolAdapter(
-        roles_bundle=roles_bundle, policy_bundle=policy_bundle,
+        roles_bundle=roles_bundle,
+        policy_bundle=policy_bundle,
         audit_store=ChainHashAuditStore(tmp_path / "audit.jsonl"),
     )
 
@@ -27,9 +28,9 @@ def test_graph_denies_without_citations_executor_never_runs(tmp_path, roles_bund
     ran = []
     graph = build_governed_graph(adapter, lambda ti: ran.append(ti) or {"ok": True})
     final = graph.invoke({"principal": PRINCIPAL, "tool_args": BASE_ARGS})
-    assert final["terminal"] == "remediation"          # routed to remediation
-    assert ran == []                                    # FAIL-CLOSED: side effect never ran
-    assert final["denial"]["reason_codes"]              # carries why
+    assert final["terminal"] == "remediation"  # routed to remediation
+    assert ran == []  # FAIL-CLOSED: side effect never ran
+    assert final["denial"]["reason_codes"]  # carries why
 
 
 def test_graph_allows_with_citations_executes_and_persists_receipt(tmp_path, roles_bundle, policy_bundle):
@@ -39,9 +40,9 @@ def test_graph_allows_with_citations_executes_and_persists_receipt(tmp_path, rol
     args = {**BASE_ARGS, "policy_citations": ["CONTRACT-AUTHORITY-001"]}
     final = graph.invoke({"principal": PRINCIPAL, "tool_args": args})
     assert final["terminal"] == "done"
-    assert ran and ran[0] == args                       # executed with validated input
+    assert ran and ran[0] == args  # executed with validated input
     assert final["result"] == {"ok": True}
     # Receipt persisted: the allow DecisionRecord is in the audit chain and it
     # verifies — the test name claims persistence, so the body must prove it.
     report = adapter.audit_store.verify_chain()
-    assert report["valid"] and report["checked"] >= 1   # receipt persisted + chain intact
+    assert report["valid"] and report["checked"] >= 1  # receipt persisted + chain intact
