@@ -69,7 +69,8 @@ MAIGRET_POLICY = RuleSetPolicy.from_dict(
                 "tools": ["maigret.search"],
                 "state_equals": {"use_ai": True},
                 "allow": {"actors": ["lead-investigator"]},
-                "reason": "Only the lead-investigator actor may run AI-based profile summarization.",
+                "reason": "Only the lead-investigator actor may run AI-based "
+                "profile summarization.",
             },
         ],
     }
