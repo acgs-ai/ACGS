@@ -132,24 +132,6 @@ def _call_from_side_record(event: dict[str, Any], side_record: dict[str, Any]) -
     )
 
 
-def _call_from_side_record(event: dict[str, Any], side_record: dict[str, Any]) -> ToolCall:
-    """Reconstruct the original :class:`ToolCall` from an audit *event* plus
-    its raw-args *side_record*.
-
-    The tool name comes from the tamper-evident audit event; everything the
-    chain deliberately does not retain (raw args, state, path, actor, goal)
-    comes from the side-store record.
-    """
-    return ToolCall(
-        name=str(event.get("tool", "")),
-        args=dict(side_record.get("args", {})),
-        goal=str(side_record.get("goal", "")),
-        actor=str(side_record.get("actor", "")),
-        path=tuple(side_record.get("path", ()) or ()),
-        state=dict(side_record.get("state", {})),
-    )
-
-
 def replay_from_side_store(
     event: dict[str, Any],
     side_record: dict[str, Any],
