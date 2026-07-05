@@ -22,3 +22,6 @@
 [submodule "external/openswarm"]
 	path = external/openswarm
 	url = https://github.com/VRSEN/OpenSwarm.git
+[submodule "packages/ACGS-agency-agents"]
+	path = packages/ACGS-agency-agents
+	url = https://github.com/dislovelhl/ACGS-agency-agents.git
