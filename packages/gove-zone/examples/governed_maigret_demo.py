@@ -21,13 +21,10 @@ from gove_zone import (
     ChainHashAuditStore,
     Decision,
     DecisionReceipt,
-    GovernanceRequest,
-    ProposedAction,
     ReceiptValidationError,
     RuleSetPolicy,
     TenantPolicyStore,
     Validator,
-    evaluate_tenant_action,
     execute_with_receipt,
 )
 from gove_zone.tool import ToolCall, normalize_path_context
@@ -38,55 +35,50 @@ VALIDATOR = Validator("constitutional-council")
 AUTHORITY = "tenant-security-ops/recon-gate"
 
 # Declarative policy bundle specifically targeting the maigret.search tool
-MAIGRET_POLICY = RuleSetPolicy.from_dict({
-    "id": "policy-recon-governance",
-    "rules": [
-        {
-            "id": "DENY_SYSTEM_USERNAMES",
-            "effect": "deny",
-            "tools": ["maigret.search"],
-            "state_equals": {
-                "is_system_username": True
+MAIGRET_POLICY = RuleSetPolicy.from_dict(
+    {
+        "id": "policy-recon-governance",
+        "rules": [
+            {
+                "id": "DENY_SYSTEM_USERNAMES",
+                "effect": "deny",
+                "tools": ["maigret.search"],
+                "state_equals": {"is_system_username": True},
+                "reason": "Searching for system administration usernames is prohibited.",
             },
-            "reason": "Searching for system administration usernames is prohibited."
-        },
-        {
-            "id": "RESTRICT_SENSITIVE_CATEGORIES",
-            "effect": "deny",
-            "tools": ["maigret.search"],
-            "state_equals": {
-                "has_sensitive_tags": True
+            {
+                "id": "RESTRICT_SENSITIVE_CATEGORIES",
+                "effect": "deny",
+                "tools": ["maigret.search"],
+                "state_equals": {"has_sensitive_tags": True},
+                "allow": {"trust_tiers": ["elevated"]},
+                "reason": (
+                    "Standard agents are blocked from searching dating, adult, or financial sites."
+                ),
             },
-            "allow": {
-                "trust_tiers": ["elevated"]
+            {
+                "id": "RESTRICT_OUTPUT_DIRECTORY",
+                "effect": "deny",
+                "tools": ["maigret.search"],
+                "path_prefix": "/opt/secure/secrets",
+                "reason": "Reports cannot be written to secure secrets directory paths.",
             },
-            "reason": "Standard agents are blocked from searching dating, adult, or financial sites."
-        },
-        {
-            "id": "RESTRICT_OUTPUT_DIRECTORY",
-            "effect": "deny",
-            "tools": ["maigret.search"],
-            "path_prefix": "/opt/secure/secrets",
-            "reason": "Reports cannot be written to secure secrets directory paths."
-        },
-        {
-            "id": "BLOCK_RECON_AI_SUMMARY",
-            "effect": "deny",
-            "tools": ["maigret.search"],
-            "state_equals": {
-                "use_ai": True
+            {
+                "id": "BLOCK_RECON_AI_SUMMARY",
+                "effect": "deny",
+                "tools": ["maigret.search"],
+                "state_equals": {"use_ai": True},
+                "allow": {"actors": ["lead-investigator"]},
+                "reason": "Only the lead-investigator actor may run AI-based profile summarization.",
             },
-            "allow": {
-                "actors": ["lead-investigator"]
-            },
-            "reason": "Only the lead-investigator actor may run AI-based profile summarization."
-        }
-    ]
-})
+        ],
+    }
+)
 
 
 class MaigretMockTool:
-    """Mock Maigret engine simulating side-effectful network username checks and report files generation."""
+    """Mock Maigret engine simulating side-effectful network username checks and
+    report files generation."""
 
     def __init__(self) -> None:
         self.ran = False
@@ -95,20 +87,35 @@ class MaigretMockTool:
         self.last_output_dir: str | None = None
         self.last_use_ai: bool = False
 
-    def search(self, username: str, tags: list[str] | None = None, output_dir: str = "./reports", use_ai: bool = False) -> dict[str, Any]:
+    def search(
+        self,
+        username: str,
+        tags: list[str] | None = None,
+        output_dir: str = "./reports",
+        use_ai: bool = False,
+    ) -> dict[str, Any]:
         self.ran = True
         self.last_username = username
         self.last_tags = tags
         self.last_output_dir = output_dir
         self.last_use_ai = use_ai
-        
+
         # Simulate network side effect
         tags_str = ", ".join(tags) if tags else "all categories"
-        print(f"    [REAL SCAN] Initiated scanning for '{username}' across sites matching tags: {tags_str}")
-        print(f"    [REAL FILE] Generating report file under: {output_dir}/maigret_report_{username}.html")
+        print(
+            f"    [REAL SCAN] Initiated scanning for '{username}' "
+            f"across sites matching tags: {tags_str}"
+        )
+        print(
+            f"    [REAL FILE] Generating report file under: "
+            f"{output_dir}/maigret_report_{username}.html"
+        )
         if use_ai:
-            print(f"    [REAL LLM] Sending scraped data to external LLM API for analysis report summary")
-            
+            print(
+                "    [REAL LLM] Sending scraped data to external LLM API "
+                "for analysis report summary"
+            )
+
         return {
             "status": "success",
             "username": username,
@@ -200,7 +207,10 @@ def run_test_scenario(
     expected_decision: Decision,
 ) -> None:
     print(f"\nScenario: {name}")
-    print(f"  Inputs: actor={actor}, username={username}, tags={tags}, out={output_dir}, use_ai={use_ai}, tier={trust_tier}")
+    print(
+        f"  Inputs: actor={actor}, username={username}, tags={tags}, "
+        f"out={output_dir}, use_ai={use_ai}, tier={trust_tier}"
+    )
 
     receipt = _issue_recon_receipt(
         store=store,
@@ -215,10 +225,13 @@ def run_test_scenario(
     )
 
     if receipt.decision != expected_decision.value:
-        _fail(f"Expected decision {expected_decision.value.upper()}, got {receipt.decision.upper()} (rules: {receipt.matched_rules})")
+        _fail(
+            f"Expected decision {expected_decision.value.upper()}, "
+            f"got {receipt.decision.upper()} (rules: {receipt.matched_rules})"
+        )
 
     tool = MaigretMockTool()
-    
+
     try:
         result = execute_with_receipt(
             tool_fn=tool.search,
@@ -235,11 +248,11 @@ def run_test_scenario(
             expected_actor=actor,
             require_signature=False,  # dev mode (unsigned)
         )
-        
+
         if expected_decision == Decision.DENY:
             _fail("Denied action executed anyway!")
         _ok(f"Executed successfully! Result path: {result['report_path']}")
-        
+
     except ReceiptValidationError as exc:
         if expected_decision == Decision.ALLOW:
             _fail(f"Allowed action was incorrectly blocked: {exc}")
