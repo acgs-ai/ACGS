@@ -4,10 +4,16 @@
 # `# Constitutional Hash: <hash>` marker has drifted from the inventory
 # pinned in docs/constitutional-hashes.lock.
 #
-# Today the inventory is empty (no markers in the parent-tracked tree).
-# Once Phase 2 of docs/PLAN-MONOREPO.md registers submodules, the script
-# will automatically discover markers inside packages/* and the lock
-# regenerates with `python scripts/verify_constitutional_hashes.py --update`.
+# The inventory is POPULATED and this gate is an active control
+# (reconstruction decision 00#7:5 — activate, not descope). The lock pins
+# 221 markers: 209 under packages/acgs-lite (enforced strictly every run)
+# and 12 under packages/clinicalguard (enforced when SUBMODULE_TOKEN can
+# reach its private repo; otherwise reported as an explicit credential-gated
+# gap via --ignore-missing-prefix, never silently passed). The parent-tracked
+# tree itself carries no markers today, but the verifier fails on ADDED
+# entries too, so a new sealed file anywhere in the scanned tree cannot land
+# without regenerating the lock:
+#   python scripts/verify_constitutional_hashes.py --update
 
 name: constitutional-hash
 
