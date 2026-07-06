@@ -118,6 +118,7 @@ EXPECTED_UV_MEMBERS = {
     "acgs-cft-governance-pack",
 }
 
+
 def test_uv_workspace_members_match_plan():
     declared = _read_uv_members(ROOT)
     assert declared, "uv workspace members must be declared in pyproject.toml"
@@ -186,14 +187,17 @@ def test_pnpm_workspace_lists_acgi_ai():
     assert "acgi-ai" in ws["packages"]
 
 
-def test_pnpm_workspace_lists_enterprise_frontend():
-    """The enterprise frontend has package metadata and must join JS installs."""
+def test_enterprise_frontend_is_archived_not_a_workspace_member():
+    """The orphan Vue app is archived (roadmap 00#5): it must stay out of the
+    pnpm workspace so installs/Turbo no longer discover it, and the archived
+    tree must keep its rationale record."""
     ws = _load_yaml("pnpm-workspace.yaml")
-    member = "acgs-enterprise-ai-manager/frontend"
-    assert member in ws["packages"]
-    pkg = _load_json(f"{member}/package.json")
+    assert "acgs-enterprise-ai-manager/frontend" not in ws["packages"]
+    assert not (ROOT / "acgs-enterprise-ai-manager").exists()
+    archived = "docs/archive/acgs-enterprise-ai-manager"
+    pkg = _load_json(f"{archived}/frontend/package.json")
     assert pkg["name"] == "acgs-enterprise-manager-frontend"
-    assert "build" in pkg["scripts"]
+    assert (ROOT / archived / "ARCHIVED.md").is_file()
 
 
 # ---------------------------------------------------------------------------

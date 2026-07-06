@@ -1,0 +1,14 @@
+{
+  "phase": 1,
+  "cycle": 0,
+  "criteria": [],
+  "blocked": [],
+  "last_green_ref": null,
+  "stall_count": 0,
+  "budget": {
+    "tokens": 4000000,
+    "tool_calls": 1500,
+    "remaining": 4000000,
+    "stall_limit": 6
+  }
+}

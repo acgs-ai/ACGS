@@ -26,7 +26,7 @@ REQUIRED_PATHS = (
     "clinicalguard-privacy-hardening/",
     "packages/clinicalguard/",
     "ACGS/packages/legalguard/",
-    "acgs-enterprise-ai-manager/frontend/",
+    "docs/archive/acgs-enterprise-ai-manager/frontend/",
 )
 
 REQUIRED_CONCEPTS = (

@@ -139,7 +139,7 @@ job — see the Accessibility foundation and Test surface sections).
 
 ## Performance budget
 
-`pnpm test:performance` builds both surfaces into a temporary `.performance-check/` directory and enforces the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 200 KB and console <= 350 KB. This is a local bundle-budget gate only; Lighthouse scores and real-user latency still require deployed-browser evidence.
+`pnpm test:performance` builds both surfaces into a temporary `.performance-check/` directory and enforces the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 225 KB and console <= 350 KB. This is a local bundle-budget gate only; Lighthouse scores and real-user latency still require deployed-browser evidence.
 
 ## Verification surfaces
 
@@ -149,7 +149,7 @@ High-signal local gates:
 - `pnpm build` for both artifacts plus font provenance
 - `pnpm test:security` for hardening invariants
 - `pnpm test:bus-schema` for bus schema ownership, generated-type drift, strict fixture, version-skew, and error-envelope checks
-- `pnpm test:performance` for marketing <= 200 KB and console <= 350 KB gzipped JS+CSS budgets
+- `pnpm test:performance` for marketing <= 225 KB and console <= 350 KB gzipped JS+CSS budgets
 - `pnpm test:state-coverage` for the console 11-state primitive and empty-state taxonomy contract
 - `pnpm test:polling-hygiene` for jittered intervals, visibility-aware polling, background interval suppression, and bus-health backoff
 - `pnpm test:session-sync` for cross-tab demo-session broadcast/listener wiring and retry-time `hasSession()` re-checks

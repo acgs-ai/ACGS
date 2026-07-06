@@ -34,7 +34,7 @@ nothing is pushed anywhere. The whole thing writes only to a tempdir.
 
 Honest scope
 ------------
-Status: foundational / Alpha (gove-zone ``0.1.0.dev0``). This is *local* proof
+Status: foundational / Alpha (gove-zone ``0.1.0a1``). This is *local* proof
 of the receipt-gate invariant ("No valid Decision Receipt, no side effect")
 applied to a deploy decision. It is **not** a production-, compliance-, or
 regulator-ready CI security control, and the ephemeral signing key generated

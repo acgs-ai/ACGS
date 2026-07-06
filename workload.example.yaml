@@ -1,0 +1,26 @@
+# governed-loop-v2 workload contract — document-QA agent (AML dogfood).
+# Copy to workload.yaml to run. The domain lives here, not in the prompt.
+deliverable: "gove-zone-governed AML document-QA, pilot-ready"
+ship_condition: "gove-zone verify passes on the client's own review bundle"
+threat_model_ref: "docs/THREAT_MODEL.md"
+stall_limit: 6
+rollback_k: 2
+budget:
+  tokens: 4000000
+  tool_calls: 1500
+phases:
+  - phase: 3
+    criteria:
+      - id: findings-ledgered
+        statement: "every AML finding lands in the signed ledger"
+        verify_cmd: "pytest tests/e2e/test_findings_ledgered.py -q"
+      - id: bundle-verifies
+        statement: "a third party can verify the output bundle"
+        verify_cmd: "gove-zone verify evidence/aml-bundle/ --strict"
+      - id: tamper-detected
+        statement: "a mutated record fails verification with a specific error"
+        # exits 0 iff verify FAILS as expected
+        verify_cmd: "bash tests/e2e/tamper_then_verify.sh"
+      - id: no-overclaim
+        statement: "no DO-NOT-SAY strings in buyer-facing text"
+        verify_cmd: "python tools/claims_lint.py pilot/ docs/"
