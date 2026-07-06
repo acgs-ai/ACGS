@@ -6165,6 +6165,8 @@
 
 .ab-bento-body {
   font-family: var(--font-sans);
+}
+
 /* =========================================================================
  * CftPack — /cft-pack showcase page (DESIGN.md token-only, no hex/rgba/shadow)
  * ========================================================================= */
@@ -6245,6 +6247,8 @@
   margin-top: 10px;
   font-family: var(--font-serif);
   font-size: 15px;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
  * ClinicalGuard showcase — /clinicalguard
  * Token-only: no hex, no rgba(), no box-shadow.
@@ -6377,6 +6381,8 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 1px;
   margin-top: 32px;
+}
+
 .cg-aside-panel p + p {
   margin-top: 14px;
 }
@@ -6523,6 +6529,8 @@
   font-size: clamp(28px, 3.5vw, 42px);
   font-weight: 400;
   line-height: 1.15;
+}
+
 .cft-risk-card ul {
   display: grid;
   gap: 6px;
@@ -6571,7 +6579,11 @@
   flex-wrap: wrap;
   gap: var(--space-md);
   margin-top: var(--space-sm);
+}
+
 .cft-cta-inner h2 em {
+}
+
 .cg-verdict-card {
   background: var(--paper-2);
   padding: 26px 24px;
@@ -6876,6 +6888,8 @@
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1px;
+}
+
 /* ============================================================================
  * acgs-lite showcase page  (/acgs-lite)
  * Token-only: all colours via var(--token) or color-mix(in srgb, var(--token)
@@ -7397,6 +7411,9 @@
 
   .ab-observer {
     padding-inline: var(--space-2xl);
+  }
+}
+
 @media (max-width: 600px) {
   .al-hero {
     padding-top: var(--space-4xl);
@@ -7431,6 +7448,9 @@
   .al-stagger-4,
   .al-stagger-5 {
     animation: none;
+  }
+}
+
 /* =========================================================================
  * Swarm showcase — acgs-swarm (constitutional-swarm).
  * "Constitutional Mesh as layout": asymmetric inverted frontier hero, heavy
@@ -8067,7 +8087,7 @@
     grid-template-columns: 1fr;
   }
 }
-}
+
 .m-swarm-int {
   background: var(--paper-2);
   padding: 26px 22px 28px;
