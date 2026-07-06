@@ -1,0 +1,10 @@
+# Runtime loop state — created at loop start, never committed.
+loop-active
+state.json
+ledger.jsonl
+phase-*.json
+loop-verify.*
+ledger.jsonl.lock
+escalation.md
+blocks.md
+final-report.md
