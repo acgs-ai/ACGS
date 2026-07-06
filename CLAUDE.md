@@ -13,7 +13,6 @@ Multi-package monorepo: regulated-AI governance platform. Python (uv workspace) 
 | `packages/agent-bus-analyzer/` | Enhanced Agent Bus observability layer | Python |
 | `acgs_governance_eval_mvp/` | Eval MVP | Python |
 | `acgs-cft-governance-pack/` | CFT governance pack | Python 3.11+, pytest |
-| `hermes_acgs_bundle/` | Hermes bundle integration | Python |
 | `automation/` | Policies, proposals, workflows, scripts | YAML + Python |
 | `docs/` | ADRs, design notes, plans | Markdown |
 | `.github/workflows/` | CI — `console.yml`, `marketing.yml` for `acgi-ai`; per-package fan-out | GitHub Actions |

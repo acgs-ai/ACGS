@@ -15,6 +15,7 @@ Drop-in usage:
 The event hash identifies the event itself. Each event also carries prev_hash,
 creating an append-only tamper-evident JSONL chain.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -173,19 +174,13 @@ class ChainEvidenceWriter:
         for index, event in enumerate(ChainEvidenceWriter.read_events(path), start=1):
             declared_hash = event.get("event_hash")
             if event.get("prev_hash") != previous:
-                errors.append(
-                    f"line {index}: prev_hash mismatch "
-                    f"(expected {previous}, got {event.get('prev_hash')})"
-                )
+                errors.append(f"line {index}: prev_hash mismatch (expected {previous}, got {event.get('prev_hash')})")
 
             body = dict(event)
             body.pop("event_hash", None)
             computed_hash = stable_hash(body)
             if declared_hash != computed_hash:
-                errors.append(
-                    f"line {index}: event_hash mismatch "
-                    f"(expected {computed_hash}, got {declared_hash})"
-                )
+                errors.append(f"line {index}: event_hash mismatch (expected {computed_hash}, got {declared_hash})")
 
             previous = declared_hash or computed_hash
 

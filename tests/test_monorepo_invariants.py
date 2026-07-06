@@ -203,7 +203,6 @@ def test_pnpm_workspace_lists_enterprise_frontend():
 WORKFLOW_PATH_PREFIXES = {
     "python-eval-mvp.yml": "acgs_governance_eval_mvp",
     "python-cft-pack.yml": "acgs-cft-governance-pack",
-    "python-hermes-bundle.yml": "hermes_acgs_bundle",
 }
 
 

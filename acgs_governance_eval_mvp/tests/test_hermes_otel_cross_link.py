@@ -15,23 +15,25 @@ These tests use the real opentelemetry-sdk with an InMemorySpanExporter so
 trace/span ids are deterministic and span attributes are inspectable. No
 Phoenix container or network traffic is required.
 """
+
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from evidence_writer import ChainEvidenceWriter  # noqa: E402
-from hermes_acgs_middleware import (  # noqa: E402
+from governance.adapters.hermes import (
+    CONSTITUTION_MIN_PATH,
     DENY,
+    ChainEvidenceWriter,
     HermesACGSMiddleware,
-    _current_otel_ids,
-    _stamp_span_with_acgs,
 )
+from governance.adapters.hermes.middleware import _current_otel_ids, _stamp_span_with_acgs
+
+# The cross-link tests exercise the real opentelemetry-sdk (InMemorySpanExporter).
+# The middleware itself treats OTEL as optional, so when the sdk is not
+# installed (the `otel` extra) the whole module skips rather than failing.
+pytest.importorskip("opentelemetry.sdk.trace", reason="requires opentelemetry-sdk (otel extra)")
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -84,7 +86,7 @@ def otel_exporter():
 
 def build_middleware(tmp_path: Path, evidence: bool = True) -> HermesACGSMiddleware:
     return HermesACGSMiddleware(
-        constitution_path=ROOT / "constitution.min.yaml",
+        constitution_path=CONSTITUTION_MIN_PATH,
         evidence_path=(tmp_path / "session.jsonl") if evidence else None,
         session_id="pytest-otel-session",
         agent_id="hermes-otel-test-agent",
@@ -243,7 +245,7 @@ def test_span_stamping_failure_does_not_break_audit(tmp_path, monkeypatch):
     tracer SDK, a closed exporter, or a third-party monkey-patch gone wrong
     must not prevent ACGS from recording a decision.
     """
-    import hermes_acgs_middleware as module
+    import governance.adapters.hermes.middleware as module
 
     def raising_stamp(**_kwargs):
         raise RuntimeError("synthetic tracer failure")

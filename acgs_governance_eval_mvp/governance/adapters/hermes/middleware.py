@@ -19,6 +19,7 @@ methods into Hermes' tool lifecycle:
 Actions:
     ALLOW, DENY, REQUIRE_HUMAN, REWRITE, REDACT, SOFT_BLOCK_WITH_EXPLANATION
 """
+
 from __future__ import annotations
 
 import json
@@ -28,10 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:
-    from .evidence_writer import ChainEvidenceWriter
-except ImportError:  # pragma: no cover - supports direct file drop-in
-    from evidence_writer import ChainEvidenceWriter
+from governance.adapters.hermes.evidence_writer import ChainEvidenceWriter
 
 # Optional OpenTelemetry cross-link: enrich ACGS evidence rows with the active
 # span's trace_id/span_id, and stamp the corresponding span with the ACGS
@@ -206,8 +204,7 @@ def _load_json_or_yaml(path: str | Path) -> dict[str, Any]:
             import yaml  # type: ignore
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "PyYAML is required for non-JSON YAML constitution files. "
-                "Install pyyaml or pass constitution=dict."
+                "PyYAML is required for non-JSON YAML constitution files. Install pyyaml or pass constitution=dict."
             ) from exc
         data = yaml.safe_load(raw)
 
@@ -262,16 +259,10 @@ class HermesACGSMiddleware:
         )
         self.agent_id = agent_id
         self.fail_closed = fail_closed
-        self.evidence = (
-            ChainEvidenceWriter(evidence_path, session_id=session_id)
-            if evidence_path
-            else None
-        )
+        self.evidence = ChainEvidenceWriter(evidence_path, session_id=session_id) if evidence_path else None
 
         self._pii_patterns = _compile_patterns(self.constitution.get("pii_patterns", []))
-        self._redaction_patterns = _compile_patterns(
-            self.constitution.get("redaction_patterns", [])
-        )
+        self._redaction_patterns = _compile_patterns(self.constitution.get("redaction_patterns", []))
 
     def check_pre_tool(
         self,
@@ -321,11 +312,7 @@ class HermesACGSMiddleware:
             )
 
         args_text = _jsonable_text(args)
-        pii_hits = [
-            pattern_id
-            for pattern_id, pattern, _ in self._pii_patterns
-            if pattern.search(args_text)
-        ]
+        pii_hits = [pattern_id for pattern_id, pattern, _ in self._pii_patterns if pattern.search(args_text)]
         if pii_hits:
             return GovernanceDecision(
                 action=DENY,
@@ -336,9 +323,7 @@ class HermesACGSMiddleware:
 
         operation = str(context.get("operation", "")).lower()
         write_tools = set(self.constitution.get("write_tools", []))
-        sensitive_ops = {
-            str(op).lower() for op in self.constitution.get("sensitive_operations", [])
-        }
+        sensitive_ops = {str(op).lower() for op in self.constitution.get("sensitive_operations", [])}
         if tool_name in write_tools or operation in sensitive_ops:
             return GovernanceDecision(
                 action=REQUIRE_HUMAN,
@@ -437,9 +422,7 @@ class HermesACGSMiddleware:
         risk_domains = {str(item).lower() for item in self.constitution.get("risk_domains", [])}
 
         secret_hits = [
-            pattern_id
-            for pattern_id, pattern, _ in self._redaction_patterns
-            if pattern.search(draft_answer)
+            pattern_id for pattern_id, pattern, _ in self._redaction_patterns if pattern.search(draft_answer)
         ]
         if secret_hits:
             return GovernanceDecision(
@@ -481,10 +464,7 @@ class HermesACGSMiddleware:
             return prefix
 
         if decision.action == SOFT_BLOCK_WITH_EXPLANATION:
-            reason_text = (
-                "; ".join(decision.reasons)
-                or "Governance policy blocked the final answer."
-            )
+            reason_text = "; ".join(decision.reasons) or "Governance policy blocked the final answer."
             return f"I cannot release this answer as written. Reason: {reason_text}"
 
         if decision.action == DENY:
@@ -533,10 +513,7 @@ class HermesACGSMiddleware:
     def user_friendly_explain(self, decision: GovernanceDecision) -> str:
         reasons = "; ".join(decision.reasons) if decision.reasons else "No reason provided."
         policies = ", ".join(decision.policy_ids) if decision.policy_ids else "unclassified_policy"
-        return (
-            f"ACGS blocked or paused this action. Decision={decision.action}. "
-            f"Policies={policies}. Reason={reasons}"
-        )
+        return f"ACGS blocked or paused this action. Decision={decision.action}. Policies={policies}. Reason={reasons}"
 
     def _audit(
         self,

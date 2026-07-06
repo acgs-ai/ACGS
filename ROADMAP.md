@@ -35,8 +35,8 @@ headers, fall back to the lightweight authz design and re-scope Phases 2-4 accor
 | Phase | Weeks | Name | Exit Criteria | Owning Packages | Top Risk |
 |---|---|---|---|---|---|
 | 1 | 1-3 | Kernel hardening + paper gate | Fail-closed tool interception + receipt-chain verify + benchmark verdict | `packages/gove-zone`, `acgs_governance_eval_mvp` | Benchmark verdict invalidates downstream phases |
-| 2 | 4-6 | R5/R6 trace receipts (gated) | Receipt + audit-chain event in `make verify` and `python-eval-mvp.yml` | `acgs_governance_eval_mvp`, `packages/acgs-lite`, `hermes_acgs_bundle` | Receipt format divergence across packages |
-| 3 | 7-9 | R1/R2 identity + R3 boundary enforcement | Actor/tenant/role propagate through adapter→gate→receipt→replay; boundary mismatch fails closed before side effects | `packages/acgs-lite`, `acgs_governance_eval_mvp`, `hermes_acgs_bundle`, `packages/Acgs-Swarm` | Submodule pointer drift; py3.10 floor break in `acgs-lite` |
+| 2 | 4-6 | R5/R6 trace receipts (gated) | Receipt + audit-chain event in `make verify` and `python-eval-mvp.yml` | `acgs_governance_eval_mvp` (incl. `governance/adapters/hermes`), `packages/acgs-lite` | Receipt format divergence across packages |
+| 3 | 7-9 | R1/R2 identity + R3 boundary enforcement | Actor/tenant/role propagate through adapter→gate→receipt→replay; boundary mismatch fails closed before side effects | `packages/acgs-lite`, `acgs_governance_eval_mvp` (incl. `governance/adapters/hermes`), `packages/Acgs-Swarm` | Submodule pointer drift; py3.10 floor break in `acgs-lite` |
 | 4 | 10-12 | R7/R4 recovery + aggregation + constitutional-hash CI | Recovery emits governed incident evidence; aggregate reporting is MACI-aware; hash workflow gates sealed files | Root CI, `acgi-ai`, `packages/acgs-lite`, `acgs_governance_eval_mvp` | Hash updates become manual brittle release blockers |
 
 ## Cross-package coupling
@@ -148,7 +148,7 @@ git commit -m "feat(gove-zone): audit + gap-fill fail-closed coverage (OSError, 
 
 ### Workflow files gated per phase
 - Phase 1: `python-gove-zone.yml`, `python-eval-mvp.yml`, `constitutional-hash.yml`
-- Phase 2: + `python-acgs-lite.yml`, `python-hermes-bundle.yml`
+- Phase 2: + `python-acgs-lite.yml` (hermes bundle folded into eval-mvp; covered by `python-eval-mvp.yml`)
 - Phase 3: + `python-acgs-swarm.yml`
 - Phase 4: + `console.yml`, `marketing.yml`
 

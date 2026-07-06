@@ -10,7 +10,7 @@ posture, EU AI Act Article 12/15 coverage implications).
 ## Quick start
 
 ```bash
-cd hermes_acgs_bundle/phoenix
+cd acgs_governance_eval_mvp/examples/phoenix
 docker compose up -d
 docker compose logs -f phoenix   # wait for "Phoenix is running"
 xdg-open http://127.0.0.1:6006   # UI
