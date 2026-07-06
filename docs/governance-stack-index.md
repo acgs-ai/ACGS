@@ -54,11 +54,24 @@ evidence have run.
 - Ignored adjacent checkout rows are current-worktree routing notes, not root
   CI coverage.
 
+## Roadmap of record
+
+`docs/ROADMAP.md` is the single maintained roadmap for the platform.
+Superseded roadmaps and plans (`ROADMAP.md` root draft, `AUTHZ-ROADMAP.md`,
+`MACI-ROADMAP.md`, `ROADMAP-ENFORCEMENT-SUBSTRATE.md`,
+`PLAN-GOVE-ZONE-KERNEL.md`, `workspace-PLAN.md`) are frozen in
+`docs/archive/` — see `docs/archive/README.md` for provenance. Active plans
+that are *not* roadmaps remain in place: `docs/PLAN-MONOREPO.md` (monorepo
+unification; load-bearing for CI path filters) and `acgi-ai/PLAN.md`
+(frontend scope only).
+
 ## Update rule
 
 When a package gains or loses a policy/evidence contract, update this file,
 `MONOREPO.md` if package ownership changed, and
 `docs/integration-readiness-task-map.md` if the change resolves a tracked gap.
+When a roadmap or plan is superseded, move it to `docs/archive/` and update
+`docs/archive/README.md` in the same commit.
 Then run:
 
 ```bash
