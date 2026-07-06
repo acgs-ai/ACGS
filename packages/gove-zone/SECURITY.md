@@ -1,6 +1,6 @@
 # Security
 
-> Status: foundational / Alpha (`0.1.0.dev0`). gove-zone is **not** production-,
+> Status: foundational / Alpha (`0.1.0a1`). gove-zone is **not** production-,
 > compliance-, or regulator-certified. This document states the security
 > boundary honestly — what is enforced and what is explicitly out of scope.
 
