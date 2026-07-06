@@ -49,13 +49,16 @@ jobs:
         # Create a per-matrix venv to insulate from /usr (PEP 668).
         run: |
           uv python install ${{ matrix.python-version }}
-          uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --editable '.[test]'
+          uv venv --python ${{ matrix.python-version }} --clear .venv
+          uv pip install --python .venv/bin/python --editable '.[test]' 'ruff==0.15.12'
 
       - name: Lint
+        # Pinned in-venv ruff, matching python-eval-mvp.yml — `uvx ruff@0.8`
+        # formats differently from current minor versions and drifted from
+        # `make lint-py` (which uses the workspace-locked ruff, same 0.15 minor).
         run: |
-          uvx ruff@0.8 check .
-          uvx ruff@0.8 format --check .
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Test
         run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib

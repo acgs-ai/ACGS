@@ -48,8 +48,9 @@ intent.
 
 The `ADV*` prefix is intentional and must **not** be conflated with `COMPARISON.md`'s
 `A1–A8` *capability-comparison axes* — a different, unrelated namespace. Gate/track labels
-refer to `ROADMAP-ENFORCEMENT-SUBSTRATE.md` (G1 = adoptable kernel, G2 = trustless
-evidence, G3 = production proof).
+refer to the archived `docs/archive/ROADMAP-ENFORCEMENT-SUBSTRATE.md` (G1 = adoptable
+kernel, G2 = trustless evidence, G3 = production proof); `docs/ROADMAP.md` is the roadmap
+of record.
 
 | # | Adversary | What they attempt | Closing mechanism | Gate / track | Status | Evidence / mapped threats |
 |---|---|---|---|---|---|---|

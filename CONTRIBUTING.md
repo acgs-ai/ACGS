@@ -83,7 +83,7 @@ unit test does not prove handler wiring.
 ## Good first issues
 
 These are real, scoped, and grounded in the current roadmap
-([`ROADMAP.md`](ROADMAP.md)) and the integration task map
+([`docs/ROADMAP.md`](docs/ROADMAP.md)) and the integration task map
 ([`docs/integration-readiness-task-map.md`](docs/integration-readiness-task-map.md)).
 They are starting points — open a discussion issue first if you want to claim
 one or scope it further. (The maintainer will convert the strongest of these

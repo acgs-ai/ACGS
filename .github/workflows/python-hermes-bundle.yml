@@ -1,7 +1,9 @@
 # Path-filtered CI for hermes_acgs_bundle/ — flat-layout Python module
 # (Hermes + ACGS middleware + chain-hashed evidence writer).
-# No pyproject.toml — runs pytest directly against tests/ with deps installed
-# from hermes_acgs_bundle/requirements-test.txt (the same file used locally).
+# Runs pytest directly against tests/ with deps installed from
+# hermes_acgs_bundle/requirements-test.txt (the same file used locally).
+# The package has a pyproject.toml for packaging metadata, but the canonical
+# test-dep source stays requirements-test.txt to match local usage.
 
 name: python-hermes-bundle
 
@@ -32,27 +34,34 @@ jobs:
   test:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v3
-        # No `enable-cache: true` — the action defaults to caching by
-        # `**/uv.lock`, and hermes-bundle is a flat-layout module with
-        # no pyproject.toml or uv.lock, so the cache key never resolves
-        # and the step errors with "No matches found for glob".
+        with:
+          enable-cache: true
+          # Deps install from requirements-test.txt (not pyproject/uv.lock),
+          # so the cache key must track that file.
+          cache-dependency-glob: 'hermes_acgs_bundle/requirements-test.txt'
 
-      - name: Set up Python via uv
+      - name: Install (test deps + pinned ruff)
         # The self-hosted runner has no actions/setup-python prebuilds for this
-        # OS (setup-python fails with "version '3.11' ... was not found"), so uv
-        # provisions the interpreter itself — matching python-gove-zone.yml.
+        # OS, so uv provisions the interpreter itself — matching the other
+        # per-package Python workflows. Ruff is pinned to the same version as
+        # python-eval-mvp.yml so CI formats identically to `make lint-py`
+        # (which resolves the workspace-locked ruff, same 0.15 minor).
         run: |
-          uv python install 3.11
-          uv venv --python 3.11 .venv
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} --clear .venv
+          uv pip install --python .venv/bin/python -r requirements-test.txt 'ruff==0.15.12'
 
-      - name: Install test deps
-        # Single source of truth: hermes_acgs_bundle/requirements-test.txt — the
-        # same file `uv run --with-requirements ... pytest` uses locally.
-        run: uv pip install --python .venv/bin/python -r requirements-test.txt
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
 
       - name: Test
         run: .venv/bin/python -m pytest tests/ -v --import-mode=importlib
