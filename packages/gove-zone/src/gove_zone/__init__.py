@@ -91,6 +91,8 @@ from gove_zone.policy import (
     PathBoundaryPolicy,
     Policy,
     PolicyRule,
+    RiskTier,
+    RiskTierPolicy,
     RuleSetPolicy,
     new_event_id,
 )
@@ -143,7 +145,7 @@ from gove_zone.workflow import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
-from gove_zone.yaml_policy import YAMLPolicy
+from gove_zone.yaml_policy import YAMLPolicy, YAMLRiskTierPolicy
 
 # Single source of truth is the installed package metadata (pyproject `version`).
 # The literal fallback matches that value for source/editable runs where the
@@ -208,6 +210,9 @@ __all__ = [
     "ProposedAction",
     "Receipt",
     "ReceiptAlreadyUsedError",
+    "RiskTier",
+    "RiskTierPolicy",
+    "YAMLRiskTierPolicy",
     "LedgerObservability",
     "ReceiptConsumptionLedger",
     "ReceiptRejectionReason",
