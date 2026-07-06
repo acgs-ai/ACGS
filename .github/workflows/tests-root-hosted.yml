@@ -70,7 +70,9 @@ jobs:
         # Lockstep copy of tests-root.yml. `--no-project` skips the workspace
         # sync; `--with` supplies the only deps these tests need (pytest +
         # pyyaml). tests/conftest.py puts scripts/ on sys.path. EXCLUSIONS match
-        # tests-root.yml exactly — env-dependent tests stay out of this gate.
+        # tests-root.yml exactly — the five readiness/evidence tests are gated
+        # by readiness-evidence.yml (+ hosted twin); submodule-dependent tests
+        # stay out of this gate.
         run: |
           uv python install 3.11
           uv run --no-project --python 3.11 --with pytest --with pyyaml \

@@ -66,7 +66,7 @@ needs the `crypto` extra).
 
 ## Honest scope
 
-Status: foundational / Alpha (`0.1.0.dev0`). The Ed25519 keypair is generated
+Status: foundational / Alpha (`0.1.0a1`). The Ed25519 keypair is generated
 inside the process — correct and self-contained for a pedagogical example, but
 obviously not real key custody. This is **local alpha proof of the invariant**,
 **not** a production, compliance, or regulator-ready certification. See the

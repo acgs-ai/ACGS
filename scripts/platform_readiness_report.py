@@ -327,7 +327,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "Local readiness is not production deployment proof",
             "No stronger claims until live proof is attached",
-            "VERCEL_TOKEN",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID",
             "GCP_WORKLOAD_IDENTITY_PROVIDER",
             "GCP_ARTIFACT_REGISTRY",
             "CONSOLE_AUTH_UPSTREAM",

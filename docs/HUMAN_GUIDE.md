@@ -66,7 +66,7 @@ That receipt can be checked before execution and reviewed after incidents.
 
 ## Current maturity
 
-`gove-zone` is alpha (`0.1.0.dev0`). Implemented local capabilities include:
+`gove-zone` is alpha (`0.1.0a1`). Implemented local capabilities include:
 
 - policy-before-execution kernel;
 - Decision Receipt schema and validation;

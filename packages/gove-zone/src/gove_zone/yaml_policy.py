@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
-from gove_zone.policy import RuleSetPolicy
+from gove_zone.policy import RiskTierPolicy, RuleSetPolicy
 
 
 def _require_yaml() -> Any:
@@ -59,6 +59,58 @@ class YAMLPolicy(RuleSetPolicy):
 
     def to_yaml(self) -> str:
         """Dump the policy ruleset back to a YAML formatted string."""
+        yaml = _require_yaml()
+        return cast(
+            str,
+            yaml.dump(self.to_dict(), sort_keys=True, indent=2, allow_unicode=True),
+        )
+
+    def dump_yaml(self, path: str | Path) -> None:
+        """Serialize and save the policy to a YAML file on disk."""
+        Path(path).write_text(self.to_yaml(), encoding="utf-8")
+
+
+class YAMLRiskTierPolicy(RiskTierPolicy):
+    """YAML-backed risk-tiered enforcement bundle.
+
+    Same schema as :meth:`RiskTierPolicy.from_dict`, authored in YAML::
+
+        id: prod-risk-tiers
+        tiers:
+          - name: low
+            enforcement: allow
+          - name: high
+            enforcement: escalate
+            requirements: [signed, single-use, human-approval]
+          - name: critical
+            enforcement: deny
+        tools:
+          read_file: low
+          deploy_service: high
+          drop_database: critical
+    """
+
+    @classmethod
+    def from_yaml(cls, text: str) -> YAMLRiskTierPolicy:
+        """Parse a YAML string into a YAMLRiskTierPolicy instance."""
+        yaml = _require_yaml()
+        try:
+            raw = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML content: {exc}") from exc
+
+        if not isinstance(raw, dict):
+            raise ValueError("YAMLRiskTierPolicy must define a dictionary/object at the root level")
+        return cast(YAMLRiskTierPolicy, cls.from_dict(raw))
+
+    @classmethod
+    def load_yaml(cls, path: str | Path) -> YAMLRiskTierPolicy:
+        """Load and parse a YAML risk-tier policy file from disk."""
+        text = Path(path).read_text(encoding="utf-8")
+        return cls.from_yaml(text)
+
+    def to_yaml(self) -> str:
+        """Dump the risk-tier bundle back to a YAML formatted string."""
         yaml = _require_yaml()
         return cast(
             str,

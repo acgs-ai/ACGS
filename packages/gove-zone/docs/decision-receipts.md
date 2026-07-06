@@ -1,6 +1,6 @@
 # Decision Receipts
 
-> Status: foundational / Alpha (`0.1.0.dev0`). This document describes what is
+> Status: foundational / Alpha (`0.1.0a1`). This document describes what is
 > implemented in code today and what is roadmap. gove-zone is **not**
 > production-, compliance-, or regulator-certified.
 

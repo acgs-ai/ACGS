@@ -12,7 +12,7 @@ Core invariant:
 
 ## Status
 
-Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as `DecisionReceipt`. This is alpha (`0.1.0.dev0`) and not a compliance certification.
+Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as `DecisionReceipt`. This is alpha (`0.1.0a1`) and not a compliance certification.
 
 ## Schema
 
