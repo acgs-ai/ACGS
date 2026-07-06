@@ -3,4 +3,3 @@
 # Add new JS workspace members here.
 packages:
   - "acgi-ai"
-  - "acgs-enterprise-ai-manager/frontend"

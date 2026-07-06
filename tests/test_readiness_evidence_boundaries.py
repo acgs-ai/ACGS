@@ -17,8 +17,10 @@ def test_governance_index_makes_conditional_surfaces_explicit() -> None:
     index = (ROOT / "docs" / "governance-stack-index.md").read_text()
 
     assert "parent CI skip is not clinical verification" in index
-    assert "archive or integrate with the shared evidence API" in index
-    assert "build proof only" in index
+    # The enterprise admin adjunct conditional was resolved by archiving it
+    # (roadmap 00#5); the index must record that decision explicitly.
+    assert "docs/archive/acgs-enterprise-ai-manager/frontend/" in index
+    assert "archive over integrate with the shared evidence API" in index
 
 
 def test_readiness_baseline_docs_exist_and_separate_claims() -> None:
