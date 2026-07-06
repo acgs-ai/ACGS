@@ -28,7 +28,7 @@ verify as a hash-linked audit chain — then exits non-zero if any check fails.
 See [One-command smoke proof](#one-command-smoke-proof) for the full output and
 `--audit` evidence retention.
 
-> Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
+> Status: foundational / Alpha (`0.1.0a1`). Local proof and
 > production-shaped foundation only. **NOT** production-certified and **NOT**
 > compliance-certified. Do not make live production deployment claims without
 > evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for
@@ -109,7 +109,7 @@ you need breadth.
   `resume_with_receipt`), but routing it to a human reviewer — the queue, the
   notification, the UI — is yours to build.
 - You need **production / compliance certification**. gove-zone is alpha
-  (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
+  (`0.1.0a1`); local receipts and smoke proofs are readiness evidence, not
   certification.
 
 For the full boundary — what is enforced, what is explicitly out of scope, and

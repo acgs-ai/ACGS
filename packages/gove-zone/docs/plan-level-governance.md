@@ -99,7 +99,7 @@ self-consistent; the executor requires it to match.
 
 ## The gate — `WorkflowExecutor`
 
-**Breaking change (0.1.0.dev0, mirrors `ae46c9d`):** `WorkflowExecutor` now
+**Breaking change (0.1.0a1, mirrors `ae46c9d`):** `WorkflowExecutor` now
 **requires** a `WorkflowAuthorization`. There is no silent-ungoverned path — a
 missing authorization is a fail-closed error, not a downgrade. Existing workflow
 tests/demo gain an authorization fixture.

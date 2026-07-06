@@ -15,7 +15,7 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | Package | Tracking | Toolchain | Parent CI | Maintainer / notes |
 |---|---|---|---|---|
 | `acgi-ai/` | parent files | Node 20, pnpm 9.15.4, Vite 5, Tailwind 4, Biome | `.github/workflows/console.yml`, `marketing.yml` | Frontend — deploys to GCP Cloud Run via WIF; CSP rules in `acgi-ai/DEPLOY.md` §4–§7 |
-| `acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5, npm package metadata | TBD | Enterprise manager frontend — included in pnpm workspace so dependency installs and Turbo package discovery see it |
+| `docs/archive/acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5 (archived) | none (archived) | Enterprise manager frontend — archived 2026-07-05, removed from pnpm workspace; rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
 | `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**` |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
 | `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
@@ -53,6 +53,7 @@ pinned SHA in a follow-up parent commit.
 | `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
+| `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
 ## Third-party `external/` submodules
 
@@ -107,7 +108,7 @@ python3 scripts/hardening_report.py
 
 | File | Scope |
 |---|---|
-| `PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
+| `acgi-ai/PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
 | `docs/PLAN-MONOREPO.md` | Multi-phase plan for unifying the workspace; 6 phases, 5 of 6 landed for parent-tracked surfaces |
 | `MONOREPO.md` (this file) | Read-only registry — the truthful map of what exists and what is gated where |
 

@@ -3,7 +3,7 @@
 Short, citable answers about ACGS / gove-zone. Every answer traces to
 [`CLAIMS.md`](CLAIMS.md) (claim-to-evidence ledger and safe wording) and
 [`COMPARISON.md`](COMPARISON.md). Project status: alpha — `gove-zone` reports
-`0.1.0.dev0`.
+`0.1.0a1`.
 
 ## What is a Decision Receipt?
 
@@ -60,7 +60,7 @@ sandboxing/content moderation" rows: "not claimed".)*
 
 ## Is gove-zone production-ready?
 
-No — gove-zone is **alpha** (it reports `0.1.0.dev0`) and is **not** certified.
+No — gove-zone is **alpha** (it reports `0.1.0a1`) and is **not** certified.
 It is explicitly **not** production-certified, **not** compliance-certified, and
 **not** regulator-approved. The local proofs (proof pack, tamper-evident audit
 chain, test suite) are real engineering evidence, but they are not production

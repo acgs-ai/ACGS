@@ -1,5 +1,9 @@
 # Roadmap
 
+> **Roadmap of record.** This is the single maintained roadmap for the
+> repository. Superseded roadmaps and plans are frozen in
+> [`docs/archive/`](archive/README.md); do not plan new work from them.
+
 This roadmap is claim-safe: planned work is not described as implemented.
 
 Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. Marks verified against `origin/master` @ `9dd118c` (see Status evidence).

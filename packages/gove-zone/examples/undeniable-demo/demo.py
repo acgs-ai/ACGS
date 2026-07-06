@@ -27,7 +27,7 @@ demonstrates WHERE the gate slots in.
 --------------------------------------------------------------------------------
 Honest scope
 --------------------------------------------------------------------------------
-Status: foundational / Alpha (``0.1.0.dev0``). This proves the LOCAL invariant
+Status: foundational / Alpha (``0.1.0a1``). This proves the LOCAL invariant
 with a keypair generated inside this process (correct and self-contained for a
 pedagogical example, but obviously not real key custody). It is NOT a
 production, compliance, or regulator-ready certification. See ``SECURITY.md``
@@ -62,6 +62,7 @@ from gove_zone import (
     RuleSetPolicy,
     TenantPolicyStore,
     Validator,
+    __version__,
     evaluate_tenant_action,
     execute_with_receipt,
     normalize_path_context,
@@ -318,7 +319,7 @@ def main() -> int:
         json.dumps(chain_at_bundle, indent=2, sort_keys=True), encoding="utf-8"
     )
     manifest = {
-        "version": "0.1.0.dev0",
+        "version": __version__,
         "tenant_id": TENANT,
         "execution_boundary": BOUNDARY,
         "profile": profile.name,

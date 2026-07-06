@@ -1,6 +1,6 @@
 # gove-zone — Threat Model (one page)
 
-> Status: alpha (`0.1.0.dev0`). This is an honest boundary statement, not a
+> Status: alpha (`0.1.0a1`). This is an honest boundary statement, not a
 > certification. For the deep treatment of every property below, see
 > [`../SECURITY.md`](../SECURITY.md).
 

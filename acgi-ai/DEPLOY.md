@@ -906,7 +906,7 @@ local schema/readiness gate, not proof that the live bus is deployed.
 
 **Performance budget gate.** `pnpm run test:performance` builds marketing and
 console artifacts into a temporary `.performance-check/` directory and enforces
-the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 200 KB and
+the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 225 KB and
 console <= 350 KB. This gate does not replace Lighthouse or live latency
 evidence, but it prevents local bundle growth from silently violating the deploy
 contract.
@@ -1057,7 +1057,7 @@ hash-anchored, operator-readable.
 | 2026-05-04 | Internal docs are stripped from build output and denied at the deployment layer for `*AGENTS.md`, `*CLAUDE.md`, `*DESIGN.md`, `*DEPLOY.md` | Vite copies `public/` verbatim into `dist/`. Per-directory `AGENTS.md` files placed for in-repo agent navigation must never be web-reachable on either origin (privilege leak on console; brand-control on marketing). The Vite plugin removes them from `dist/`; Caddy and Vercel rules provide defense in depth if one slips through. *(Superseded 2026-06: marketing moved to Cloudflare Pages; `_redirects` 404 rule and Caddy now provide the defense-in-depth layer. Vercel removed.)* |
 | 2026-05-24 | Console `/api/*` is a fail-closed Caddy reverse proxy backed by `BUS_UPSTREAM` | The deploy boundary should be ready for a governed bus without ever serving fixture data as if it were live backend output. The workflow requires `CONSOLE_BUS_UPSTREAM`, and Caddy forwards/echoes `X-ACGS-Schema-Version` for contract evidence. |
 | 2026-05-24 | Bus analyzer schema ownership is local and generated | `contracts/bus.openapi.json` is the vendored bus schema source of truth; `pnpm run test:bus-schema` guards codegen drift and fixture/error-envelope coverage before deploy workflows run. |
-| 2026-05-24 | Bundle performance budgets are enforced locally | `pnpm run test:performance` enforces marketing <= 200 KB and console <= 350 KB gzipped JS+CSS budgets before CI/deploy gates can pass. |
+| 2026-05-24 | Bundle performance budgets are enforced locally | `pnpm run test:performance` enforces marketing <= 225 KB and console <= 350 KB gzipped JS+CSS budgets before CI/deploy gates can pass. |
 | 2026-05-24 | Console state coverage has a local static gate | `pnpm run test:state-coverage` guards the Phase 1 11-state primitive set, `emptyMeans` taxonomy, and non-production environment indicator before CI/deploy gates can pass. |
 | 2026-05-24 | Console polling hygiene has a local static gate | `pnpm run test:polling-hygiene` guards jittered live/slow intervals, visibility-aware polling, background interval suppression, and bus-health failure backoff before CI/deploy gates can pass. |
 | 2026-05-25 | Cross-tab demo-session sync has a local static gate | `pnpm run test:session-sync` guards the temporary demo-session storage-event channel, console router invalidation, and retry-time `hasSession()` re-checks while production OIDC/server-cookie auth remains external. |

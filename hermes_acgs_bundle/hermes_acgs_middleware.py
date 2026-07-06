@@ -19,6 +19,7 @@ methods into Hermes' tool lifecycle:
 Actions:
     ALLOW, DENY, REQUIRE_HUMAN, REWRITE, REDACT, SOFT_BLOCK_WITH_EXPLANATION
 """
+
 from __future__ import annotations
 
 import json
@@ -263,9 +264,7 @@ class HermesACGSMiddleware:
         self.agent_id = agent_id
         self.fail_closed = fail_closed
         self.evidence = (
-            ChainEvidenceWriter(evidence_path, session_id=session_id)
-            if evidence_path
-            else None
+            ChainEvidenceWriter(evidence_path, session_id=session_id) if evidence_path else None
         )
 
         self._pii_patterns = _compile_patterns(self.constitution.get("pii_patterns", []))
@@ -322,9 +321,7 @@ class HermesACGSMiddleware:
 
         args_text = _jsonable_text(args)
         pii_hits = [
-            pattern_id
-            for pattern_id, pattern, _ in self._pii_patterns
-            if pattern.search(args_text)
+            pattern_id for pattern_id, pattern, _ in self._pii_patterns if pattern.search(args_text)
         ]
         if pii_hits:
             return GovernanceDecision(
@@ -482,8 +479,7 @@ class HermesACGSMiddleware:
 
         if decision.action == SOFT_BLOCK_WITH_EXPLANATION:
             reason_text = (
-                "; ".join(decision.reasons)
-                or "Governance policy blocked the final answer."
+                "; ".join(decision.reasons) or "Governance policy blocked the final answer."
             )
             return f"I cannot release this answer as written. Reason: {reason_text}"
 

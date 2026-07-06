@@ -10,7 +10,7 @@ ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agen
 
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
-> Alpha (`gove-zone` reports `0.1.0.dev0`). Badges reflect declared metadata, not a
+> Alpha (`gove-zone` reports `0.1.0a1`). Badges reflect declared metadata, not a
 > production, compliance, or certification claim — see
 > [What this repository is not claiming](#what-this-repository-is-not-claiming).
 
@@ -72,7 +72,7 @@ Two defaults decide whether "no valid receipt, no side effect" actually binds in
 
 ## What this repository is not claiming
 
-ACGS / gove-zone is alpha (`gove-zone` currently reports `0.1.0.dev0`). The local proofs are valuable engineering evidence, but they are not production deployment proof. Do not claim this repository is:
+ACGS / gove-zone is alpha (`gove-zone` currently reports `0.1.0a1`). The local proofs are valuable engineering evidence, but they are not production deployment proof. Do not claim this repository is:
 
 - production-certified;
 - compliance-certified;

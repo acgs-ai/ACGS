@@ -15,6 +15,7 @@ Drop-in usage:
 The event hash identifies the event itself. Each event also carries prev_hash,
 creating an append-only tamper-evident JSONL chain.
 """
+
 from __future__ import annotations
 
 import hashlib

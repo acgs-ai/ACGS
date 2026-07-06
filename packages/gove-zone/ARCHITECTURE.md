@@ -1,6 +1,6 @@
 # gove-zone — Architecture
 
-> Status: foundational / Alpha (`0.1.0.dev0`). This describes the implemented
+> Status: foundational / Alpha (`0.1.0a1`). This describes the implemented
 > design. gove-zone is **not** production-, compliance-, or regulator-certified.
 
 ## What it is
