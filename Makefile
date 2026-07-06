@@ -113,8 +113,8 @@ test-py:
 
 lint-py:
 	@set -e; \
-	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
-	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack; \
+	$(UV) run ruff check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack hermes_acgs_bundle; \
+	$(UV) run ruff format --check packages/gove-zone packages/agent-bus-analyzer packages/research-engine acgs_governance_eval_mvp acgs-cft-governance-pack hermes_acgs_bundle; \
 	$(MAKE) -C packages/acgs-lite lint; \
 	(cd packages/Acgs-Swarm && $(UV) run ruff check src/)
 

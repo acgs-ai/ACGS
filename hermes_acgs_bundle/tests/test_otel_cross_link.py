@@ -15,6 +15,7 @@ These tests use the real opentelemetry-sdk with an InMemorySpanExporter so
 trace/span ids are deterministic and span attributes are inspectable. No
 Phoenix container or network traffic is required.
 """
+
 from __future__ import annotations
 
 import sys
