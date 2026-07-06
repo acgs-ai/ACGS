@@ -70,7 +70,7 @@ You are the REVIEW lane and you did NOT author this change (author != reviewer).
 - Fail-closed integrity: no weakening of DENY/ESCALATE handling, receipt validation, audit-chain append, or single-use enforcement.
 - Sealed files: no edits to Constitutional-Hash / @generated / DO NOT EDIT files or the hash lock.
 - Boundary discipline: no staging across a nested-repo boundary (packages/acgs-lite, packages/Acgs-Swarm, packages/clinicalguard); no unrelated cross-package edits.
-- Handler wiring: a new handler/route/tool/command/middleware is INCOMPLETE unless it is registered in the runtime dispatch path AND exercised by a test that hits the dispatcher, not one that imports and calls it directly. If wiring cannot be traced end-to-end, set wired=false.
+- Handler wiring: a new handler/route/tool/command/middleware is INCOMPLETE unless it is registered in the runtime dispatch path AND exercised by a test that hits the dispatcher, not one that imports and calls it directly. If wiring cannot be traced end-to-end, set wired=false. If the diff adds no handler/route/tool (docs/config/test-only), there is nothing to wire — set wired=true.
 - Tests + evidence: the change carries tests where it is a code/test change, and the package-scoped gate is the proof.
 Verdict: ALLOW only when every check passes; REQUEST_CHANGES for fixable gaps (missing wiring/tests/scope creep); BLOCK for a fail-closed, sealed-file, or boundary violation.`.trim()
 
@@ -195,7 +195,7 @@ const REVIEW_SCHEMA = {
     wired: {
       type: 'boolean',
       description:
-        'true only if any new handler/route/tool is registered in the runtime path AND exercised by a dispatcher-level test. false when there is no wiring to trace or it is not covered.',
+        'true if every new handler/route/tool is registered in the runtime path AND exercised by a dispatcher-level test — or if the diff adds no handler/route/tool at all (nothing to wire is wired). false only when a new handler exists whose registration cannot be traced or is untested.',
     },
   },
 }
@@ -406,7 +406,7 @@ Files the author reports changing: ${JSON.stringify(prep.filesChanged)}
 Procedure:
 1. cd ${prep.worktree} && git diff origin/master...HEAD — read the actual diff, do not trust the summary.
 2. Read the package-local CLAUDE.md / AGENTS.md for the touched package.
-3. Apply every check in the charter above. For any new handler/route/tool, trace it from the runtime dispatch registration to a test that hits the dispatcher; if you cannot, set wired=false.
+3. Apply every check in the charter above. For any new handler/route/tool, trace it from the runtime dispatch registration to a test that hits the dispatcher; if you cannot, set wired=false. If the diff adds no new handler/route/tool, set wired=true.
 4. Return your verdict, findings, and wired. ALLOW only when every check passes.`
 
 // Route the review to a specialized reviewer by the class of files touched.
