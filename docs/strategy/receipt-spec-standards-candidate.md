@@ -4,7 +4,7 @@
 > as a standards candidate. Versioned, standalone spec repo + solicit public auditor/vendor
 > comment." Companion strategy context: [startup-canvas-gove-zone.md](startup-canvas-gove-zone.md).
 >
-> Status of the underlying artifact: **alpha** (`0.1.0.dev0`). Nothing in this plan is a
+> Status of the underlying artifact: **alpha** (`0.1.0a1`). Nothing in this plan is a
 > compliance certification, production-readiness claim, or endorsement by any standards body.
 > Claim-safe discipline per `docs/CLAIMS.md` applies to every external publication step.
 > Date: 2026-07-03.

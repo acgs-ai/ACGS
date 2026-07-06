@@ -3,7 +3,7 @@
 > Stress-test: [swot-gove-zone.md](swot-gove-zone.md)
 
 > Product: vendor-neutral, receipt-gated governance layer for AI-agent side effects.
-> Stage: alpha (`0.1.0.dev0`), kernel ~95% built, OSS on GitHub, `acgs-lite` published to PyPI, console (acgi-ai) deployed.
+> Stage: alpha (`0.1.0a1`), kernel ~95% built, OSS on GitHub, `acgs-lite` published to PyPI, console (acgi-ai) deployed.
 > Date: 2026-07-03
 
 ## Part 1: Product Strategy
