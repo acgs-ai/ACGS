@@ -48,6 +48,7 @@ parent repo.
 |---|---|
 | Per-package conventions | Package-local `CLAUDE.md` / `AGENTS.md` / `README.md` |
 | Workspace registry — what exists + what is gated where | `MONOREPO.md` |
+| Roadmap of record | `docs/ROADMAP.md` — superseded roadmaps/plans live in `docs/archive/` |
 | Frontend completion plan | `PLAN.md` |
 | Monorepo unification plan | `docs/PLAN-MONOREPO.md` |
 | ADRs | `docs/adr/` |

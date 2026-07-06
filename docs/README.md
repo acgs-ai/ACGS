@@ -25,7 +25,7 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 
 - [CLAIMS](CLAIMS.md)
 - [POSITIONING](POSITIONING.md) — why a neutral governance layer is a category, not a feature
-- [ROADMAP](ROADMAP.md)
+- [ROADMAP](ROADMAP.md) — the roadmap of record; superseded roadmaps/plans are frozen in [archive/](archive/README.md)
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)
