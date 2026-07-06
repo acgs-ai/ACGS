@@ -207,7 +207,6 @@ def test_enterprise_frontend_is_archived_not_a_workspace_member():
 WORKFLOW_PATH_PREFIXES = {
     "python-eval-mvp.yml": "acgs_governance_eval_mvp",
     "python-cft-pack.yml": "acgs-cft-governance-pack",
-    "python-hermes-bundle.yml": "hermes_acgs_bundle",
 }
 
 

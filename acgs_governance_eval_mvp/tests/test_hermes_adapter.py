@@ -1,26 +1,23 @@
+from __future__ import annotations
+
 import json
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-
-from evidence_writer import (
-    ChainEvidenceWriter,
-)
-from hermes_acgs_middleware import (
+from governance.adapters.hermes import (
+    CONSTITUTION_MIN_PATH,
     DEFAULT_CONSTITUTION,
     DENY,
     REDACT,
     REQUIRE_HUMAN,
     SOFT_BLOCK_WITH_EXPLANATION,
+    ChainEvidenceWriter,
     HermesACGSMiddleware,
 )
 
 
 def build_middleware(tmp_path: Path) -> HermesACGSMiddleware:
     return HermesACGSMiddleware(
-        constitution_path=ROOT / "constitution.min.yaml",
+        constitution_path=CONSTITUTION_MIN_PATH,
         evidence_path=tmp_path / "session.jsonl",
         session_id="pytest-session",
         agent_id="hermes-test-agent",
@@ -100,7 +97,7 @@ def test_final_answer_with_hyphenated_openai_key_is_soft_blocked(tmp_path):
 
 
 def test_default_and_bundled_constitution_openai_key_regex_stay_in_sync():
-    bundled = json.loads((ROOT / "constitution.min.yaml").read_text(encoding="utf-8"))
+    bundled = json.loads(CONSTITUTION_MIN_PATH.read_text(encoding="utf-8"))
 
     def openai_key_regex(constitution):
         return next(
