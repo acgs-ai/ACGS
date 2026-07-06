@@ -80,6 +80,16 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/loop-load-state.sh\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
@@ -104,6 +114,10 @@
           {
             "type": "command",
             "command": "PY=\"$CLAUDE_PROJECT_DIR/.venv/bin/python\"; [ -x \"$PY\" ] || { echo 'gove-zone hook: project venv missing - run uv sync' >&2; exit 2; }; GOVE_ZONE_PROFILE=dev exec \"$PY\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/loop-pretool-guard.sh\""
           }
         ]
       }
@@ -127,6 +141,20 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/source-doc-suggest.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/loop-posttool-verify.sh\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/loop-stop-gate.sh\""
           }
         ]
       }

@@ -1,0 +1,30 @@
+# governed-loop-v2 workload contract — GPU attention kernel (correctness-gated).
+# Same governed loop, different truth-commands. Correctness is the HARD gate:
+# a fast-but-wrong kernel is a liability, so perf criteria only count once
+# correctness passes.
+deliverable: "optimized attention kernel, correctness-gated, meets SLA on target GPU"
+ship_condition: "correctness holds AND p99 latency <= SLA at production batch"
+threat_model_ref: "docs/NUMERICS_AND_LIMITS.md"
+stall_limit: 8
+rollback_k: 2
+budget:
+  tokens: 6000000
+  tool_calls: 2500
+phases:
+  - phase: 1
+    criteria:
+      - id: numerical-correct    # HARD GATE — must pass before any perf criterion counts
+        statement: "kernel output matches reference within tolerance across shapes"
+        verify_cmd: "python bench/check_correctness.py --tol 2e-2 --shapes shapes.json"
+      - id: no-illegal-access
+        statement: "no out-of-bounds / race under compute-sanitizer"
+        verify_cmd: "compute-sanitizer --tool memcheck ./build/kernel_test"
+      - id: fits-device-memory
+        statement: "weights + KV-cache for the chosen quant config fit target VRAM"
+        verify_cmd: "python bench/capacity_check.py --config quant.yaml --device a100-80g"
+      - id: occupancy-ok
+        statement: "achieved occupancy >= target (measured, not estimated)"
+        verify_cmd: "python bench/parse_occupancy.py --min 0.5 profile.ncu-rep"
+      - id: latency-sla
+        statement: "p99 latency within SLA at production batch"
+        verify_cmd: "python bench/latency.py --batch 64 --p99-max-ms 8.0"
