@@ -1,0 +1,264 @@
+# agent-bus-analyzer — Cloud Run deploy pipeline (docs/reconstruction/05 §action-item 4).
+#
+# Mirrors console.yml's verify → publish → deploy split:
+#   - PRs run the `verify` job only: package gate + deploy-contract checks.
+#     No image is built or pushed, no GCP call is made.
+#   - Push-to-master runs `publish` (image → Artifact Registry) and `deploy`
+#     (`gcloud run services replace`), BOTH gated on the `production` GitHub
+#     environment — a human reviewer must approve before either job starts.
+#
+# Auth model: Workload Identity Federation only (no service-account JSON, no
+# long-lived GCP keys — .github/workflows/AGENTS.md hard rule). Fail-closed:
+# if GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT are absent, the
+# `auth` step aborts and every later step short-circuits — no partial-secret
+# path pushes an image or touches the service.
+#
+# Deployment invariants enforced by this workflow (not just documented):
+#   1. maxScale stays "1" — the file-backed TraceStore (SQLite + JSONL over
+#      gcsfuse) is single-writer; the render guard AND a post-deploy check
+#      both fail the run if the annotation drifts.
+#   2. Evidence-signing material comes from Secret Manager via the manifest's
+#      pinned secretKeyRef. The workflow never reads, renders, or echoes the
+#      signing secret — Secret Manager → Cloud Run directly.
+#
+# Repo/environment secrets consumed (scope GCP_* to the `production`
+# environment, same as console.yml):
+#   GCP_PROJECT_ID                     GCP project id
+#   GCP_PROJECT_NUMBER                 numeric project (Secret Manager path)
+#   GCP_REGION                         e.g. us-central1
+#   GCP_WORKLOAD_IDENTITY_PROVIDER     full WIF provider resource path
+#   GCP_SERVICE_ACCOUNT                deploy SA email
+#   GCP_ARTIFACT_REGISTRY              e.g. us-central1-docker.pkg.dev/<project>/acgi
+#   ANALYZER_RUNTIME_SERVICE_ACCOUNT   runtime SA email for the service
+#   ANALYZER_TRACE_BUCKET              GCS bucket mounted as the trace store
+#
+# Post-deploy receipt smoke (`agent-bus-analyzer postdeploy-smoke`) needs a
+# reviewer bearer token and a seeded receipt id; it stays a human runbook step
+# (deploy/cloudrun/import-audit-job.yaml) rather than an automated job so the
+# reviewer token never becomes a repo-wide secret.
+
+name: deploy-agent-bus-analyzer
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/agent-bus-analyzer/deploy/**'
+      - '.github/workflows/deploy-agent-bus-analyzer.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/agent-bus-analyzer/**'
+      - '.github/workflows/deploy-agent-bus-analyzer.yml'
+
+concurrency:
+  group: deploy-agent-bus-analyzer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/agent-bus-analyzer
+
+jobs:
+  # ---- Deploy-readiness gate: package verify + deploy-contract checks ----
+  # Runs on PRs touching deploy artifacts and on every master push. The
+  # python-agent-bus-analyzer.yml workflow remains the authoritative
+  # multi-version test gate for src/ changes; this job re-runs the package
+  # gate on one interpreter so image publication in THIS workflow is ordered
+  # after a green verify (needs: below), since `needs:` cannot cross
+  # workflow files.
+  verify:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/agent-bus-analyzer/pyproject.toml'
+
+      - name: Install
+        # Same pattern as python-agent-bus-analyzer.yml: uv-managed python,
+        # venv install of the PEP 735 `dev` dependency group.
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12 --clear .venv
+          uv pip install --python .venv/bin/python --editable . --group dev
+
+      - name: Package gate (lint + typecheck + test)
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+          .venv/bin/mypy src/
+          .venv/bin/pytest -q
+
+      - name: Deploy contract — render check + invariants
+        # Renders the Cloud Run manifest with dummy values and asserts the
+        # deployment invariants hold BEFORE any push-to-master ever reaches
+        # the gated deploy job. Fails closed on any drift.
+        run: |
+          test -f deploy/Dockerfile
+          test -f deploy/cloudrun/service.yaml
+          test -f deploy/cloudrun/import-audit-job.yaml
+
+          # Placeholders the deploy job substitutes must still exist verbatim.
+          for token in REPLACE_AT_DEPLOY_TIME REPLACE_GCP_PROJECT_NUMBER \
+                       REPLACE_ANALYZER_RUNTIME_SERVICE_ACCOUNT REPLACE_ANALYZER_TRACE_BUCKET; do
+            grep -q "$token" deploy/cloudrun/service.yaml \
+              || { echo "service.yaml lost placeholder: $token" >&2; exit 1; }
+          done
+
+          RENDER_IMAGE="registry.invalid/agent-bus-analyzer:ci-check" \
+          RENDER_PROJECT_NUMBER="000000000000" \
+          RENDER_RUNTIME_SA="ci-check@ci-check.iam.gserviceaccount.com" \
+          RENDER_TRACE_BUCKET="ci-check-bucket" \
+          python3 deploy/render_service.py \
+            --template deploy/cloudrun/service.yaml \
+            --out /tmp/agent-bus-analyzer-service.rendered.yaml
+
+          # Invariant 1: single serving instance (file-backed TraceStore is
+          # single-writer).
+          grep -q 'autoscaling.knative.dev/maxScale: "1"' /tmp/agent-bus-analyzer-service.rendered.yaml \
+            || { echo "maxScale invariant violated: must stay \"1\"" >&2; exit 1; }
+
+          # Invariant 2: signing secret stays in Secret Manager (pinned
+          # secretKeyRef), never inlined into the manifest or workflow.
+          grep -q 'secretKeyRef' /tmp/agent-bus-analyzer-service.rendered.yaml \
+            || { echo "signing secret must come from Secret Manager secretKeyRef" >&2; exit 1; }
+          grep -q 'run.googleapis.com/secrets: evidence-signing-secret:projects/' /tmp/agent-bus-analyzer-service.rendered.yaml \
+            || { echo "Secret Manager annotation missing from rendered manifest" >&2; exit 1; }
+
+          # No unrendered placeholders may survive on live YAML lines
+          # (comment lines may mention the REPLACE_ contract).
+          if grep -vE '^[[:space:]]*#' /tmp/agent-bus-analyzer-service.rendered.yaml | grep -n 'REPLACE_'; then
+            echo "unrendered REPLACE_ placeholder in manifest" >&2
+            exit 1
+          fi
+
+  # ---- Image build + push: master pushes only, human-gated ----
+  # `environment: production` requires a configured human reviewer before
+  # this job runs. `needs: verify` keeps image publication ordered after a
+  # green package gate + contract check.
+  publish:
+    needs: verify
+    if: github.event_name == 'push'
+    environment: production
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 25
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Auth to GCP via WIF (fail-closed on absent secrets)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure docker auth
+        run: |
+          gcloud auth configure-docker \
+            "$(echo '${{ secrets.GCP_ARTIFACT_REGISTRY }}' | cut -d/ -f1)" --quiet
+
+      - name: Compute image URI
+        id: image
+        run: |
+          SHA="${GITHUB_SHA::12}"
+          URI="${{ secrets.GCP_ARTIFACT_REGISTRY }}/agent-bus-analyzer:${SHA}"
+          echo "uri=$URI" >> "$GITHUB_OUTPUT"
+          echo "Image URI: $URI"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          # Dockerfile COPYs pyproject.toml/README.md/src relative to the
+          # package root.
+          context: packages/agent-bus-analyzer
+          file: packages/agent-bus-analyzer/deploy/Dockerfile
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---- Cloud Run deploy: master pushes only, human-gated (second gate) ----
+  deploy:
+    needs: [verify, publish]
+    if: github.event_name == 'push'
+    environment: production
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Auth to GCP via WIF (fail-closed on absent secrets)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Render service.yaml
+        env:
+          RENDER_IMAGE: ${{ needs.publish.outputs.image }}
+          RENDER_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER }}
+          RENDER_RUNTIME_SA: ${{ secrets.ANALYZER_RUNTIME_SERVICE_ACCOUNT }}
+          RENDER_TRACE_BUCKET: ${{ secrets.ANALYZER_TRACE_BUCKET }}
+        run: |
+          python3 deploy/render_service.py \
+            --template deploy/cloudrun/service.yaml \
+            --out deploy/cloudrun/service.rendered.yaml
+
+      - name: Pre-deploy invariant guard (fail-closed)
+        run: |
+          grep -q 'autoscaling.knative.dev/maxScale: "1"' deploy/cloudrun/service.rendered.yaml \
+            || { echo "refusing to deploy: maxScale must stay \"1\"" >&2; exit 1; }
+          grep -q 'secretKeyRef' deploy/cloudrun/service.rendered.yaml \
+            || { echo "refusing to deploy: signing secret must come from Secret Manager" >&2; exit 1; }
+          if grep -vE '^[[:space:]]*#' deploy/cloudrun/service.rendered.yaml | grep -n 'REPLACE_'; then
+            echo "refusing to deploy: unrendered REPLACE_ placeholder" >&2
+            exit 1
+          fi
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services replace deploy/cloudrun/service.rendered.yaml \
+            --region=${{ secrets.GCP_REGION }} \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Post-deploy verification
+        # Ingress is internal-and-cloud-load-balancing, so no public curl of
+        # /api/bus/healthz from CI. Verify the live service instead: the
+        # revision must be Ready, run the image we just published, and keep
+        # the maxScale=1 single-writer invariant. The signed-receipt smoke
+        # (`agent-bus-analyzer postdeploy-smoke`) is the human runbook step.
+        run: |
+          DESCRIBE() {
+            gcloud run services describe agent-bus-analyzer \
+              --region=${{ secrets.GCP_REGION }} \
+              --project=${{ secrets.GCP_PROJECT_ID }} \
+              --format="$1"
+          }
+          READY=$(DESCRIBE 'value(status.conditions[0].status)')
+          IMAGE=$(DESCRIBE 'value(spec.template.spec.containers[0].image)')
+          MAXSCALE=$(DESCRIBE 'value(spec.template.metadata.annotations."autoscaling.knative.dev/maxScale")')
+          echo "ready=$READY image=$IMAGE maxScale=$MAXSCALE"
+          test "$READY" = "True" || { echo "service not Ready" >&2; exit 1; }
+          test "$IMAGE" = "${{ needs.publish.outputs.image }}" \
+            || { echo "live image does not match published image" >&2; exit 1; }
+          test "$MAXSCALE" = "1" || { echo "live maxScale is not 1" >&2; exit 1; }
