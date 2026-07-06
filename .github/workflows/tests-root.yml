@@ -12,11 +12,9 @@
 #
 # Scope (deliberate — see EXCLUSIONS in the run step): this gate runs only the
 # environment-independent invariant guards (82 tests, green on master). The
-# release-evidence / readiness tests need `make release-evidence` + the
-# acgi-ai evidence build to have run first, and the package-floor / mypy-scope
-# tests need initialized submodules. Wiring those into CI (and reconciling the
-# drifted readiness-evidence packet they assert against) is tracked as a
-# follow-up — see the PR that introduced this workflow.
+# five release-evidence / readiness tests are gated by the dedicated
+# `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
+# mypy-scope tests need initialized submodules and remain a follow-up.
 
 name: tests-root
 
@@ -73,14 +71,14 @@ jobs:
         # plus pyyaml (the guards parse workflow/policy YAML). tests/conftest.py
         # puts scripts/ on sys.path so `import hardening_report` etc. resolve.
         #
-        # EXCLUSIONS — env-dependent tests deferred to a follow-up gate:
+        # EXCLUSIONS — tests gated elsewhere or deferred:
         #   tests/docs/**                      -> already covered by tests-docs.yml
-        #   test_platform_readiness_report     -> needs `make release-evidence`
-        #   test_readiness_evidence_boundaries -> needs release build + evidence reconcile
-        #   test_release_evidence_bundle       -> needs `make release-evidence`
-        #   test_production_blocker_evidence   -> needs built evidence artifacts
-        #   test_production_launch_preflight   -> needs built evidence artifacts
-        #   *_floor_* / *mypy* scope tests     -> need initialized submodules
+        #   test_platform_readiness_report     -> covered by readiness-evidence.yml
+        #   test_readiness_evidence_boundaries -> covered by readiness-evidence.yml
+        #   test_release_evidence_bundle       -> covered by readiness-evidence.yml
+        #   test_production_blocker_evidence   -> covered by readiness-evidence.yml
+        #   test_production_launch_preflight   -> covered by readiness-evidence.yml
+        #   *_floor_* / *mypy* scope tests     -> need initialized submodules (follow-up)
         run: |
           uv python install 3.11
           uv run --no-project --python 3.11 --with pytest --with pyyaml \
