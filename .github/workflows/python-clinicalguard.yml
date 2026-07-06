@@ -50,6 +50,12 @@ jobs:
         env:
           SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
         run: |
+          # Ephemeral global gitconfig: this job runs on the self-hosted
+          # runner as the operator's user, so a plain `git config --global`
+          # would write SUBMODULE_TOKEN into the real ~/.gitconfig and
+          # persist after the job. Redirect global config to a job-scoped
+          # temp file instead; it dies with the job.
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi
