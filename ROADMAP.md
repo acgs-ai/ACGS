@@ -16,7 +16,7 @@
 | `MONOREPO.md` | Keep as package registry/gate map | Authoritative for what exists, not what to build |
 | `docs/PLAN-MONOREPO.md` | Merge Phase 5 (hash CI) into Phase 4 below; archive remainder | Largely subsumed; constitutional-hash CI is the surviving asset |
 | `docs/workspace-PLAN.md` | Archive | Duplicate of PLAN-MONOREPO content |
-| `PLAN.md` (84KB) | Keep, scope frozen to `acgi-ai/` frontend | Different scope entirely; runs parallel |
+| `acgi-ai/PLAN.md` (84KB, moved from root) | Keep, scope frozen to `acgi-ai/` frontend | Different scope entirely; runs parallel |
 | `docs/PLAN-GOVE-ZONE-KERNEL.md` | Keep, embedded in Phase 1 | See above |
 | `COMPARISON.md` | Keep as decision-record artifact | Historical |
 

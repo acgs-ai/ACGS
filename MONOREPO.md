@@ -53,6 +53,7 @@ pinned SHA in a follow-up parent commit.
 | `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
+| `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
 ## Third-party `external/` submodules
 
@@ -107,7 +108,7 @@ python3 scripts/hardening_report.py
 
 | File | Scope |
 |---|---|
-| `PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
+| `acgi-ai/PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
 | `docs/PLAN-MONOREPO.md` | Multi-phase plan for unifying the workspace; 6 phases, 5 of 6 landed for parent-tracked surfaces |
 | `MONOREPO.md` (this file) | Read-only registry — the truthful map of what exists and what is gated where |
 
