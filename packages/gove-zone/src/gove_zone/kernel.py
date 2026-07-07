@@ -27,7 +27,7 @@ from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.authz import AuthzReason, PrincipalRegistry
-from gove_zone.decision import Decision, DecisionRecord, sha256_json
+from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import (
     AuditError,
     DeniedError,
@@ -281,7 +281,7 @@ class Kernel:
         return DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version="fail-closed/authz",
             event_id=new_event_id(),
             matched_rules=(f"AUTHZ_DENY:{reason}",),
@@ -314,7 +314,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
@@ -324,7 +324,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-raised",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
@@ -406,7 +406,7 @@ class Kernel:
         failure = DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=decision_record.policy_version,
             event_id=decision_record.event_id + ":failure",
             matched_rules=(f"EXEC_FAILURE:{type(exc).__name__}",),

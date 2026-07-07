@@ -52,6 +52,11 @@ class ToolCall:
     actor: str = ""
     path: tuple[str, ...] = ()
     state: Mapping[str, Any] = field(default_factory=dict)
+    # Per-instance memo for the canonical-JSON hashes below. A slot of its own
+    # because slots=True removes __dict__; mutating the dict's contents is
+    # legal on a frozen instance. Excluded from eq/repr, and never carried to
+    # a new instance (init=False → re-defaulted by with_args / replace).
+    _hash_cache: dict[str, str] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def with_args(self, args: Mapping[str, Any]) -> ToolCall:
         """Return a new ToolCall with the same context but replaced args.
@@ -68,12 +73,32 @@ class ToolCall:
         )
 
     def argument_hash(self) -> str:
-        """Hash only the proposed tool arguments."""
-        return sha256_json(dict(self.args))
+        """Hash only the proposed tool arguments.
+
+        Memoized: a single dispatch hashes the same args several times (policy
+        record, kernel context, decision-request binding), so the canonical
+        JSON + SHA-256 is computed once per ``ToolCall`` instance. The dataclass
+        is frozen and every args replacement goes through :meth:`with_args`
+        (a new instance), so the cache can never serve a stale hash unless a
+        caller mutates the underlying mapping mid-evaluation — which the
+        immutable-view contract above already forbids.
+        """
+        cached = self._hash_cache.get("args")
+        if cached is None:
+            cached = sha256_json(dict(self.args))
+            self._hash_cache["args"] = cached
+        return cached
 
     def state_hash(self) -> str | None:
-        """Hash organizational/runtime state when supplied."""
-        return sha256_json(dict(self.state)) if self.state else None
+        """Hash organizational/runtime state when supplied. Memoized like
+        :meth:`argument_hash`."""
+        if not self.state:
+            return None
+        cached = self._hash_cache.get("state")
+        if cached is None:
+            cached = sha256_json(dict(self.state))
+            self._hash_cache["state"] = cached
+        return cached
 
     def decision_request_hash(self) -> str:
         """Hash the full pre-execution decision request.
@@ -96,17 +121,23 @@ class ToolCall:
         (e.g. the kernel, from ``record.argument_hash``) can avoid recomputing
         it. The public :meth:`decision_request_hash` delegates here with a
         freshly computed hash, so both produce byte-identical output.
+        Memoized per *argument_hash* like :meth:`argument_hash`.
         """
-        return sha256_json(
-            {
-                "actor": self.actor,
-                "path": list(self.path),
-                "goal": self.goal,
-                "tool": self.name,
-                "argument_hash": argument_hash,
-                "state_hash": self.state_hash(),
-            }
-        )
+        cache_key = f"drh:{argument_hash}"
+        cached = self._hash_cache.get(cache_key)
+        if cached is None:
+            cached = sha256_json(
+                {
+                    "actor": self.actor,
+                    "path": list(self.path),
+                    "goal": self.goal,
+                    "tool": self.name,
+                    "argument_hash": argument_hash,
+                    "state_hash": self.state_hash(),
+                }
+            )
+            self._hash_cache[cache_key] = cached
+        return cached
 
 
 class ToolRegistry:
