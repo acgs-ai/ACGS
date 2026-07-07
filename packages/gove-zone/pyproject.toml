@@ -25,6 +25,7 @@ dependencies = []
 [project.scripts]
 gove-zone = "gove_zone.cli:main"
 gove-zone-api = "gove_zone.api:main"
+acgs = "gove_zone.proofpack_cli:main"
 
 [project.urls]
 Homepage = "https://acgs.ai"
