@@ -52,7 +52,7 @@ No agent-UI dependency is installed anywhere (no CopilotKit / Vercel AI SDK / as
 ## 4. Recommendation
 
 1. **Do not replace** any ACGS component (Reading A is off the table).
-2. **Pursue Reading C first** — build a small `examples/copilotkit-governed/` proof: a CopilotKit app whose MCP tool calls route through our governed MCP server and fail closed without a receipt. Highest narrative value, lowest blast radius, stays out of sealed/console code.
+2. **Pursue Reading C first** — build a small `examples/copilotkit_governed/` proof: a CopilotKit app whose MCP tool calls route through our governed MCP server and fail closed without a receipt. Highest narrative value, lowest blast radius, stays out of sealed/console code.
 3. **Defer Reading B** (console chat UI) until the CSP/same-origin runtime question is answered. If we ever want it, prefer a same-origin self-hosted runtime; never CopilotKit Cloud in console routes.
 
 ## 5. Scope note

@@ -1,6 +1,6 @@
 # Thread: Guardrails vs Receipts (Tuned X/Twitter format)
 
-Source: [docs/blog/2026-06-receipts-vs-guardrails-positioning.md](file:///home/martin/Documents/ACGS/docs/blog/2026-06-receipts-vs-guardrails-positioning.md)
+Source: [docs/blog/2026-06-receipts-vs-guardrails-positioning.md](2026-06-receipts-vs-guardrails-positioning.md)
 Every claim verified via the gove-zone proof path, 2026-06-07.
 
 ---
