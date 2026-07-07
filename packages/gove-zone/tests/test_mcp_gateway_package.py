@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
