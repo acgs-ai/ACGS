@@ -85,7 +85,7 @@ Checklist (details in [02-deployment-options.md](02-deployment-options.md) §4):
   operator required for hash/signature checks.
 - Ledger hygiene: `gove-zone prune-ledger` (safe: only expired receipts are
   pruned; the prune watermark blocks clock-rollback replay).
-- Escalations: `gove-zone approve` for the human-approval resume path.
+- Escalations: `gove-zone approve-escalation` for the human-approval resume path.
 
 **Success metric (matches the product's North Star):** governed side-effecting
 operations per week through the gate — measuring that the membrane carries real
