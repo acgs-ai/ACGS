@@ -87,6 +87,17 @@ def _runs_on_self_hosted(job_block: str) -> bool:
     return False
 
 
+def _guard_is_top_level_conjunct(if_line: str) -> bool:
+    # The guard must be the whole expression or AND-composed at top level.
+    # `true || (<guard>)` would render it vacuous, so after stripping the
+    # guard itself, no `||` may remain anywhere in the expression.
+    expression = if_line.split("if:", 1)[1].strip()
+    if FORK_PR_GUARD not in expression:
+        return False
+    remainder = expression.replace(f"({FORK_PR_GUARD})", "").replace(FORK_PR_GUARD, "")
+    return "||" not in remainder
+
+
 def test_pull_request_workflows_guard_self_hosted_jobs_against_forks() -> None:
     workflows = sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml"))
     assert workflows
@@ -100,9 +111,10 @@ def test_pull_request_workflows_guard_self_hosted_jobs_against_forks() -> None:
             if not _runs_on_self_hosted(block):
                 continue
             # The guard must sit on a single-line job-level `if:` (step-level
-            # ifs do not stop the job from starting on the runner).
+            # ifs do not stop the job from starting on the runner), and it
+            # must not be defeated by OR-composition with another condition.
             guarded = any(
-                line.startswith("    if:") and FORK_PR_GUARD in line
+                line.startswith("    if:") and _guard_is_top_level_conjunct(line)
                 for line in block.splitlines()
             )
             assert guarded, (

@@ -65,3 +65,9 @@ in the root tests gate, so a new unguarded job cannot land silently.
 - The invariant test is a line-based parser, not a full YAML parser (pyyaml is
   not a workspace dependency). It expects the guard on a single-line job-level
   `if:`; multi-line `if: |` blocks would need the test updated.
+- OR-composition (mitigated): a substring check alone would accept a vacuous
+  `if: true || (<guard>)`. The test therefore strips the guard from the `if:`
+  expression and rejects any remaining `||` — the guard must be the whole
+  expression or a top-level AND conjunct. This is deliberately over-strict:
+  a safe-but-OR-containing sibling clause like `(guard) && (a || b)` also
+  fails and must be rewritten (e.g. into a separate condition).
