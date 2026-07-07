@@ -1,0 +1,115 @@
+# gove-zone build-loop reference-monitor policy (Pack II artifact B1).
+#
+# Consumed by the governed-loop-v2 PreToolUse reference monitor
+# (.claude/hooks/loop-pretool-guard.sh), which pipes each Claude Code tool-call
+# through `gove-zone validate --policy .claude/policy/build.yaml --stdin`. That
+# subcommand maps the host PreToolUse payload ({tool_name, tool_input}) to a
+# ToolCall and evaluates it here; ALLOW exits 0 (proceed), DENY/ESCALATE exit 2
+# (the hook's `|| deny` blocks the side effect).
+#
+# GRAMMAR: authored against the REAL gove-zone policy grammar
+# (gove_zone.yaml_policy.YAMLPolicy -> gove_zone.policy.RuleSetPolicy). The loader
+# accepts exactly `{id, rules: [...]}`; rule effects are limited to deny / escalate.
+#
+# TOOL NAMES ARE THE HOST'S, MATCHED EXACTLY. `tools:` lists the Claude Code tool
+# names the reference monitor actually emits — `Bash`, `Write`, `Edit`. Keying on
+# these (not a synthetic `shell.exec` / `git.push`) is deliberate: a rule scoped
+# to a tool name the host never sends can never fire, which would be a silent
+# policy bypass. The discriminating content is matched via `state_contains` on
+# `state.command` (Bash) / `state.path` (Write/Edit), which `gove-zone validate`
+# populates from `tool_input`.
+#
+# POSTURE: RuleSetPolicy is ALLOW-BY-DEFAULT. A ToolCall matching no rule is
+# ALLOWED, so ordinary build/test commands proceed. Rules can only DENY or
+# ESCALATE; positive authorization is a per-rule `allow:` exemption (actor / trust
+# tier), never `effect: allow`.
+#
+# DEFENSE IN DEPTH: the recursive-force-delete / pipe-to-shell / permission-skip /
+# force-push denies below overlap the hook's own coarse regex backstop (which runs
+# BEFORE this policy). That overlap is intentional — the policy layer is a second,
+# declarative, versioned gate. Its NET-NEW value over the regex is the
+# secret-file-write denials and the release-push escalation.
+#
+# ENFORCEMENT REQUIRES PyYAML (the optional `yaml` extra): `pip install
+# 'gove-zone[yaml]'`. If PyYAML is absent, `gove-zone validate` degrades to allow
+# (the regex backstop + settings.json still gate); it never bricks the loop.
+#
+# Verify this bundle loads and enforces (real host tool names, from repo root):
+#   uv run --package gove-zone --extra yaml python - <<'PY'
+#   from gove_zone.yaml_policy import YAMLPolicy
+#   from gove_zone.tool import ToolCall
+#   p = YAMLPolicy.load_yaml(".claude/policy/build.yaml")
+#   d = lambda **kw: p.evaluate(ToolCall(**kw)).decision
+#   print(d(name="Bash",  state={"command": "rm -rf /"}))          # Decision.DENY
+#   print(d(name="Bash",  state={"command": "git push --force"}))  # Decision.DENY
+#   print(d(name="Bash",  state={"command": "git push origin x"})) # Decision.ESCALATE
+#   print(d(name="Write", state={"path": "svc/.env"}))             # Decision.DENY
+#   print(d(name="Bash",  state={"command": "pytest -q"}))         # Decision.ALLOW
+#   PY
+# A machine gate lives in packages/gove-zone/tests/test_cli_validate.py (it drives
+# the real `gove-zone validate` CLI on host-shaped payloads, PyYAML present).
+
+id: gove-zone-build-guard/v1
+rules:
+  # --- Catastrophic shell actions (Bash). Denied unconditionally. -------------
+  - id: DENY_RECURSIVE_FORCE_DELETE
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "rm -rf"
+    reason: recursive force-delete is never permitted for the build agent
+
+  - id: DENY_REMOTE_PIPE_TO_SHELL
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "| sh"
+    reason: piping a network fetch straight into a shell is never permitted
+
+  - id: DENY_PERMISSION_BYPASS_FLAGS
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "--dangerously-skip-permissions"
+    reason: permission-bypass flags are never permitted
+
+  # Force-push is denied and MUST precede the ordinary-push escalation below:
+  # `git push --force` matches both, and first-match-wins gives deny (deny beats
+  # escalate). Substring "push --force" also catches `--force-with-lease`.
+  - id: DENY_FORCE_PUSH
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "push --force"
+    reason: force-push rewrites shared history and is never permitted
+
+  # --- Secret-bearing writes (Write / Edit). Path substring-matched. ----------
+  # `state_contains` with a LIST value is AND-semantics, so an OR over secret
+  # patterns is one rule per pattern (first-match-deny gives the union).
+  - id: DENY_DOTENV_FILE_WRITE
+    effect: deny
+    tools: [Write, Edit]
+    state_contains:
+      path: ".env"
+    reason: the build agent may not write .env / secret-env files
+
+  - id: DENY_CREDENTIAL_FILE_WRITE
+    effect: deny
+    tools: [Write, Edit]
+    state_contains:
+      path: "credentials.json"
+    reason: the build agent may not write credential files
+
+  # --- Release surface: ordinary push escalates to a human. -------------------
+  # A caller carrying state.trust_tier == "release-manager" is exempt (falls
+  # through to ALLOW). The PreToolUse payload carries no trust tier, so a loop's
+  # `git push` escalates -> the gate blocks it, matching the human-gated-push
+  # posture; the exemption is reachable by an integration that supplies the tier.
+  - id: ESCALATE_GIT_PUSH
+    effect: escalate
+    tools: [Bash]
+    state_contains:
+      command: "git push"
+    allow:
+      trust_tiers: [release-manager]
+    reason: pushing to a release surface requires human / release-manager authority

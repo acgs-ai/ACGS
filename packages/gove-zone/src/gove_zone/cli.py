@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -839,6 +839,114 @@ def _verify_proofpack(args: argparse.Namespace) -> int:
     return 0 if result.valid else 1
 
 
+def _tool_call_from_hook_payload(payload: Mapping[str, Any]) -> Any:
+    """Map a host PreToolUse tool-call payload to a :class:`ToolCall`.
+
+    The governed-loop-v2 reference monitor (``.claude/hooks/loop-pretool-guard.sh``)
+    passes the Claude Code PreToolUse JSON — ``{tool_name, tool_input, ...}`` — on
+    stdin. ``tool_name`` is the real host tool ("Bash", "Write", "Edit", "Read"),
+    which is what the policy's ``tools:`` field must match; the discriminating
+    content lives in ``tool_input`` (``command`` for Bash, ``file_path`` for
+    Write/Edit), which we surface as ``state.command`` / ``state.path`` for the
+    policy's ``state_contains`` matcher. Keying rules on the real tool name (not a
+    synthetic ``shell.exec`` / ``git.push``) is what closes the shell-bypass hole.
+    """
+    from gove_zone.tool import ToolCall
+
+    tool_name = str(payload.get("tool_name", "")).strip()
+    if not tool_name:
+        raise ValueError("payload missing tool_name")
+    raw_input = payload.get("tool_input") or {}
+    if not isinstance(raw_input, Mapping):
+        raise ValueError("tool_input must be a JSON object")
+    command = raw_input.get("command")
+    path = raw_input.get("file_path") or raw_input.get("path") or raw_input.get("notebook_path")
+    state = {
+        "command": command if isinstance(command, str) else "",
+        "path": path if isinstance(path, str) else "",
+    }
+    return ToolCall(name=tool_name, args=dict(raw_input), state=state)
+
+
+def _validate(args: argparse.Namespace) -> int:
+    """Evaluate one PreToolUse tool-call payload against a YAML build-guard policy.
+
+    Reads the host's tool-call JSON (``{tool_name, tool_input}``) from stdin (or
+    ``--event-file``), maps it to a :class:`ToolCall`, and evaluates it against the
+    :class:`YAMLPolicy` at ``--policy``. Exit 0 iff the decision is ALLOW; DENY and
+    ESCALATE exit 2 so a ``... || deny`` PreToolUse hook blocks the side effect.
+
+    FAIL-CLOSED on a real governance failure — an unparseable payload, a missing
+    ``tool_name``, or a policy file that is PRESENT BUT BROKEN (bad YAML / invalid
+    schema) — exits 2 and denies: an action that cannot be evaluated against a
+    policy that is supposed to exist is never allowed.
+
+    GRACEFUL-DEGRADE on tooling absence only: if PyYAML (the optional ``yaml``
+    extra) is not installed, the policy layer cannot run AT ALL. That is tooling
+    absence, not a policy denial, so it exits 0 (allow) with a stderr advisory
+    rather than denying every call and bricking the loop. This is safe because the
+    calling PreToolUse hook's coarse regex backstop and the settings.json
+    deny-rules remain in force and independently block the catastrophic cases
+    (recursive-force rm, pipe-to-shell, permission-skip, force-push); only the
+    policy's additive rules (secret-file writes, push escalation) are lost until
+    ``yaml`` is installed. A missing optional dep must never be a governance
+    failure. This asymmetry is deliberate.
+    """
+    from gove_zone.decision import Decision
+
+    # 1) Read + map the request. Any read/parse error is a fail-closed deny.
+    try:
+        if args.event_file:
+            payload_text = Path(args.event_file).read_text(encoding="utf-8")
+        else:
+            payload_text = sys.stdin.read()
+        payload = json.loads(payload_text)
+        if not isinstance(payload, dict):
+            raise ValueError("tool-call payload must be a JSON object")
+        call = _tool_call_from_hook_payload(payload)
+    except Exception as exc:  # noqa: BLE001 — an unreadable request is denied
+        print(f"validate: fail-closed deny (bad request): {exc}", file=sys.stderr)
+        return 2
+
+    # 2) Load the YAML policy. Distinguish tooling-absence (PyYAML missing ->
+    #    degrade to allow) from a present-but-broken policy (-> fail closed).
+    try:
+        from gove_zone.yaml_policy import YAMLPolicy
+
+        policy = YAMLPolicy.load_yaml(args.policy)
+    except ModuleNotFoundError as exc:
+        print(
+            "validate: PyYAML not installed; build-guard policy layer inactive "
+            f"(install gove-zone[yaml] to enforce it). Allowing. [{exc}]",
+            file=sys.stderr,
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 — a broken/missing policy denies
+        print(f"validate: fail-closed deny (policy load): {exc}", file=sys.stderr)
+        return 2
+
+    # 3) Evaluate. ALLOW -> 0; DENY/ESCALATE -> 2 (the hook's `|| deny`).
+    try:
+        record = policy.evaluate(call)
+    except Exception as exc:  # noqa: BLE001 — an evaluation error denies
+        print(f"validate: fail-closed deny (evaluate): {exc}", file=sys.stderr)
+        return 2
+
+    allowed = record.decision is Decision.ALLOW
+    _emit(
+        {
+            "policy": str(args.policy),
+            "policy_version": policy.version,
+            "tool": call.name,
+            "decision": record.decision.value,
+            "allowed": allowed,
+            "matched_rules": list(record.matched_rules),
+            "reason": record.reason,
+        }
+    )
+    return 0 if allowed else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gove-zone",
@@ -1007,6 +1115,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     gate.set_defaults(func=_gate)
+
+    validate = subparsers.add_parser(
+        "validate",
+        help=(
+            "evaluate a PreToolUse tool-call payload against a YAML build-guard "
+            "policy; exit 0 iff ALLOW, else 2 (fail-closed)"
+        ),
+    )
+    validate.add_argument(
+        "--policy",
+        required=True,
+        help="path to a YAML policy bundle (loaded via YAMLPolicy.load_yaml)",
+    )
+    validate.add_argument(
+        "--stdin",
+        action="store_true",
+        help="read the tool-call JSON from stdin (the default when no --event-file)",
+    )
+    validate.add_argument(
+        "--event-file",
+        help="path to a JSON file with the tool-call payload (default: stdin)",
+    )
+    validate.set_defaults(func=_validate)
 
     enable = subparsers.add_parser(
         "enable",
