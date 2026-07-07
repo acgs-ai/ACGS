@@ -13,7 +13,7 @@ from __future__ import annotations
 from gove_zone.dag.authority import (
     AuthorityGrant,
     AuthorityViolationError,
-    resolve_authority_labels,
+    resolve_authority_grants,
     resolve_effective_scopes,
     validate_authority,
 )
@@ -37,7 +37,7 @@ __all__ = [
     "GovernanceEdge",
     "GovernanceNode",
     "NodeKind",
-    "resolve_authority_labels",
+    "resolve_authority_grants",
     "resolve_effective_scopes",
     "validate_authority",
     "verify_dag_replay",

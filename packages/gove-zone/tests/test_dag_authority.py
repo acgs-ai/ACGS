@@ -18,7 +18,7 @@ from gove_zone import (
     GovernanceNode,
     NodeKind,
     ReceiptRejectionReason,
-    resolve_authority_labels,
+    resolve_authority_grants,
     resolve_effective_scopes,
     validate_authority,
 )
@@ -150,20 +150,20 @@ class TestResolveEffectiveScopes:
         assert scopes["c"] == frozenset({WRITE})
 
 
-class TestResolveAuthorityLabels:
-    def test_labels_propagate_along_delegations(self) -> None:
+class TestResolveAuthorityGrants:
+    def test_grants_propagate_with_their_actions(self) -> None:
         dag = GovernanceDAG(
             nodes={"a": _agent("a"), "b": _agent("b"), "c": _agent("c")},
             edges=(_delegation("a", "b", WRITE), _delegation("b", "c", WRITE)),
         )
-        labels = resolve_authority_labels(dag, {"a": _grant("a", WRITE)})
-        assert labels == {
-            "a": frozenset({"tenant-A/root-grant"}),
-            "b": frozenset({"tenant-A/root-grant"}),
-            "c": frozenset({"tenant-A/root-grant"}),
+        grants = resolve_authority_grants(dag, {"a": _grant("a", WRITE, READ)})
+        assert grants == {
+            "a": {"tenant-A/root-grant": frozenset({WRITE, READ})},
+            "b": {"tenant-A/root-grant": frozenset({WRITE})},
+            "c": {"tenant-A/root-grant": frozenset({WRITE})},
         }
 
-    def test_labels_union_across_roots(self) -> None:
+    def test_grants_union_across_roots(self) -> None:
         dag = GovernanceDAG(
             nodes={"a": _agent("a"), "b": _agent("b"), "c": _agent("c")},
             edges=(_delegation("a", "c", WRITE), _delegation("b", "c", READ)),
@@ -172,13 +172,33 @@ class TestResolveAuthorityLabels:
             "a": _grant("a", WRITE),
             "b": AuthorityGrant("b", "tenant-B/read-grant", frozenset({READ})),
         }
-        labels = resolve_authority_labels(dag, roots)
-        assert labels["c"] == frozenset({"tenant-A/root-grant", "tenant-B/read-grant"})
+        grants = resolve_authority_grants(dag, roots)
+        assert grants["c"] == {
+            "tenant-A/root-grant": frozenset({WRITE}),
+            "tenant-B/read-grant": frozenset({READ}),
+        }
 
-    def test_ungranted_unconnected_agent_has_no_labels(self) -> None:
+    def test_label_never_stretches_to_actions_it_did_not_carry(self) -> None:
+        # Regression for the cross-root confusion attack: c legitimately holds
+        # WRITE (via b's grant) and the read-grant label (via a's grant), but
+        # the read-grant must NOT be recorded as delivering WRITE to c.
+        dag = GovernanceDAG(
+            nodes={"a": _agent("a"), "b": _agent("b"), "c": _agent("c")},
+            edges=(_delegation("a", "c", READ), _delegation("b", "c", WRITE)),
+        )
+        roots = {
+            "a": AuthorityGrant("a", "tenant-A/read-grant", frozenset({READ})),
+            "b": AuthorityGrant("b", "tenant-B/write-grant", frozenset({WRITE})),
+        }
+        grants = resolve_authority_grants(dag, roots)
+        assert grants["c"]["tenant-A/read-grant"] == frozenset({READ})
+        assert WRITE not in grants["c"]["tenant-A/read-grant"]
+        assert grants["c"]["tenant-B/write-grant"] == frozenset({WRITE})
+
+    def test_ungranted_unconnected_agent_has_no_grants(self) -> None:
         dag = GovernanceDAG(nodes={"a": _agent("a"), "b": _agent("b")})
-        labels = resolve_authority_labels(dag, {"a": _grant("a", WRITE)})
-        assert labels["b"] == frozenset()
+        grants = resolve_authority_grants(dag, {"a": _grant("a", WRITE)})
+        assert grants["b"] == {}
 
 
 class TestValidateAuthority:

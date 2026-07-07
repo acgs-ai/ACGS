@@ -132,8 +132,37 @@ def test_unrelated_authority_label_rejected() -> None:
     # receipt claims — action/actor match alone must not be enough.
     receipt = _receipt()
     roots = {DELEGATOR: AuthorityGrant(DELEGATOR, "tenant-B/other-grant", frozenset({ACTION}))}
-    with pytest.raises(DagReplayError, match="never empowered"):
+    with pytest.raises(DagReplayError, match="never delivered"):
         verify_dag_replay(_chain(receipt), {"rcpt": receipt}, roots=roots)
+
+
+def test_label_from_other_grant_cannot_justify_action_rejected() -> None:
+    # Cross-root confusion attack: the worker legitimately holds ACTION via a
+    # write-grant AND holds a read-grant label via another delegation path.
+    # A receipt claiming the read-grant for the write action must fail — the
+    # label and the action must have travelled together.
+    read_action = "runtime.http.get"
+    read_root = "agent-read-root"
+    receipt = _receipt()  # actor=WORKER, action=ACTION, authority=AUTHORITY
+    claiming_read_grant = dataclasses.replace(receipt, authority="tenant-A/read-grant")
+    # Re-freeze the hash so only the authority claim differs, legitimately.
+    claiming_read_grant = dataclasses.replace(
+        claiming_read_grant, receipt_hash=claiming_read_grant.compute_hash()
+    )
+    base = _chain(claiming_read_grant)
+    nodes = dict(base.nodes)
+    nodes[read_root] = GovernanceNode(read_root, NodeKind.AGENT)
+    edges = (
+        *base.edges,
+        GovernanceEdge(read_root, WORKER, EdgeKind.AUTHORITY_DELEGATION, scope=(read_action,)),
+    )
+    dag = GovernanceDAG(nodes=nodes, edges=edges)
+    roots = {
+        DELEGATOR: AuthorityGrant(DELEGATOR, AUTHORITY, frozenset({ACTION})),
+        read_root: AuthorityGrant(read_root, "tenant-A/read-grant", frozenset({read_action})),
+    }
+    with pytest.raises(DagReplayError, match="never delivered"):
+        verify_dag_replay(dag, {"rcpt": claiming_read_grant}, roots=roots)
 
 
 def test_graph_level_errors_carry_reason_code() -> None:

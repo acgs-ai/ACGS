@@ -25,10 +25,12 @@ What is proven, fail-closed:
    exactly one tool call, and each tool call is executed by exactly one agent
    — the same agent that proposed it (``receipt.actor`` binding, matching the
    ``expected_actor`` discipline of the executor gates).
-5. Each receipt's ``authority`` names a root grant whose label actually
-   reached the proposer through the delegation graph
-   (:func:`gove_zone.dag.authority.resolve_authority_labels`) — a receipt
-   minted under an unrelated grant fails even if action and actor match.
+5. Each receipt's ``authority`` names a root grant that actually delivered
+   the executed action to the proposer through the delegation graph
+   (:func:`gove_zone.dag.authority.resolve_authority_grants`) — a receipt
+   minted under an unrelated grant fails even if action and actor match, and
+   a grant whose own scope never covered the action cannot justify it merely
+   because the agent holds that action under a different grant.
 6. Each receipt re-verifies via :meth:`DecisionReceipt.verify` with the
    gated tool call's action and the proposing agent bound in — so a tampered,
    forged, mis-actored, or mis-actioned receipt fails exactly as it would at
@@ -51,7 +53,7 @@ from collections.abc import Mapping
 
 from gove_zone.dag.authority import (
     AuthorityGrant,
-    resolve_authority_labels,
+    resolve_authority_grants,
     validate_authority,
 )
 from gove_zone.dag.graph import (
@@ -124,7 +126,7 @@ def verify_dag_replay(
     level) on the first failure; returns ``None`` when every check passes.
     """
     validate_authority(dag, roots)
-    labels = resolve_authority_labels(dag, roots)
+    grants = resolve_authority_grants(dag, roots)
 
     if expected_dag_hash is not None and expected_dag_hash != dag.dag_hash():
         raise DagReplayError(
@@ -164,14 +166,16 @@ def verify_dag_replay(
                 f"{receipt.proposed_action!r}"
             )
 
-        # The receipt's authority label must have actually reached the
-        # proposer through the delegation graph — action/actor alone is not
-        # enough when several grants share action names.
-        if receipt.authority not in labels.get(proposer, frozenset()):
+        # The receipt's claimed authority must have actually delivered THIS
+        # action to the proposer — a label that reached the agent carrying
+        # only other actions cannot justify this one (joint label-action
+        # binding, not two independent checks).
+        delivered = grants.get(proposer, {}).get(receipt.authority, frozenset())
+        if decision.action not in delivered:
             raise DagReplayError(
                 f"receipt {receipt_node.node_id!r} authority {receipt.authority!r} "
-                f"never empowered proposer {proposer!r} (reachable labels: "
-                f"{sorted(labels.get(proposer, frozenset()))!r})"
+                f"never delivered action {decision.action!r} to proposer "
+                f"{proposer!r} (delivered under that grant: {sorted(delivered)!r})"
             )
 
         # One receipt authorizes exactly one execution (single-use discipline).
