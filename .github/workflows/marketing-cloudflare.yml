@@ -50,6 +50,8 @@ defaults:
 
 jobs:
   verify:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
@@ -87,7 +89,7 @@ jobs:
           ! ls dist/CLAUDE.md dist/DEPLOY.md dist/AGENTS.md dist/DESIGN.md 2>/dev/null || { echo "::error::internal docs leaked into dist"; exit 1; }
 
   deploy:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs: verify
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
