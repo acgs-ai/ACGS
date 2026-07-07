@@ -21,6 +21,7 @@ _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 # Demos that run to a clean exit 0 with no arguments and no stdin.
 _RUNNABLE_DEMOS = [
     "mcp-tool-gateway/demo.py",
+    "multi-agent-chain/demo.py",
     "agent-framework-wrapper/demo.py",
     "ci-deployment-gate/demo.py",
     "undeniable-demo/demo.py",
