@@ -47,7 +47,7 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DecisionRecord:
     """A single governance decision, ready to be appended to the audit chain.
 
