@@ -14,7 +14,10 @@ Covers:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from gove_zone import BoundaryPolicy, ChainHashAuditStore, Kernel
 from gove_zone.audit import GENESIS_HASH
@@ -58,6 +61,20 @@ class TestAppendMany:
         assert last["previous_hash"] == batch[-1]["event_hash"]
         assert store.verify_chain(expected_count=4)["valid"]
 
+    def test_batch_cross_instance_interleaving_invalidates_fast_path(self, tmp_path: Path) -> None:
+        """append_many must never chain a batch onto a stale cached tail after
+        ANOTHER instance advanced the file — the stat size-guard must fall back
+        to the authoritative tail read."""
+        path = tmp_path / "a.jsonl"
+        one = ChainHashAuditStore(path)
+        two = ChainHashAuditStore(path)
+        b1 = one.append_many([_record(0), _record(1)])  # one's cache now warm
+        foreign = two.append(_record(2))  # two advances the file behind one's back
+        b2 = one.append_many([_record(3), _record(4)])  # must re-read, not reuse
+        assert b2[0]["previous_hash"] == foreign["event_hash"]
+        assert foreign["previous_hash"] == b1[-1]["event_hash"]
+        assert one.verify_chain(expected_count=5)["valid"]
+
 
 class TestAppendFastPath:
     def test_two_instances_interleaved_appends_stay_chained(self, tmp_path: Path) -> None:
@@ -99,6 +116,33 @@ class TestToolCallMemoization:
         call = ToolCall(name="t", args={})
         assert call.state_hash() is None
 
+    def test_mid_flight_mutation_still_diverges_in_failure_record(self, tmp_path: Path) -> None:
+        """The audit trail's mutation-divergence signal survives memoization:
+        a tool that mutates a shared nested arg value and then raises must
+        produce an EXEC_FAILURE record whose argument_hash differs from the
+        pre-execution decision record's (the failure path recomputes fresh)."""
+        audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+        kernel = Kernel(policy=POLICY, audit=audit, actor="a")
+
+        @kernel.tool("mutator")
+        def mutator(payload: dict) -> None:
+            payload["x"] = "tampered-mid-flight"
+            raise RuntimeError("boom after mutation")
+
+        with pytest.raises(RuntimeError):
+            kernel.dispatch("mutator", {"payload": {"x": 1}}, goal="g")
+
+        events = list(audit.iter_events())
+        assert len(events) == 2, "expected decision record + EXEC_FAILURE record"
+        decision_event, failure_event = events
+        assert failure_event["event_id"].endswith(":failure")
+        assert failure_event["argument_hash"] != decision_event["argument_hash"], (
+            "EXEC_FAILURE must hash post-mutation args so divergence is visible"
+        )
+        assert failure_event["argument_hash"] == sha256_json(
+            {"payload": {"x": "tampered-mid-flight"}}
+        )
+
 
 class TestReplaySideStoreDurability:
     def test_non_durable_roundtrip(self, tmp_path: Path) -> None:
@@ -112,6 +156,31 @@ class TestReplaySideStoreDurability:
     def test_default_is_durable(self, tmp_path: Path) -> None:
         store = ReplaySideStore(tmp_path / "side.jsonl")
         assert store._durable is True
+
+    def test_fsync_called_by_default_and_skipped_when_non_durable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Observe fsync itself in both directions: the default store MUST
+        fsync every append (the side store's durability guarantee) and
+        durable=False MUST NOT."""
+        calls: list[int] = []
+        real_fsync = os.fsync
+
+        def counting_fsync(fd: int) -> None:
+            calls.append(fd)
+            real_fsync(fd)
+
+        monkeypatch.setattr("gove_zone.replay_store.os.fsync", counting_fsync)
+        call = ToolCall(name="t", args={"x": 1}, goal="g", actor="a")
+        record = POLICY.evaluate(call)
+
+        durable = ReplaySideStore(tmp_path / "durable.jsonl")
+        durable.append(call, record)
+        assert len(calls) == 1, "default store must fsync each append"
+
+        relaxed = ReplaySideStore(tmp_path / "relaxed.jsonl", durable=False)
+        relaxed.append(call, record)
+        assert len(calls) == 1, "durable=False must not fsync"
 
 
 class TestReplayBundleVerdicts:

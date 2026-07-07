@@ -323,14 +323,22 @@ def replay_bundle(
 
         semantic, fresh, call = _rederive_from_side_store(event, side_record, policy)
         if not semantic.matches or fresh is None or call is None:
+            # Three distinct consumer-visible failure labels:
+            # - argument_hash_mismatch: side-store drifted from the chain
+            # - replay_policy_error: the policy itself RAISED during the
+            #   (single) re-derivation — infrastructure failure, not a flipped
+            #   decision (fresh is None with the cross-check having passed)
+            # - decision_mismatch: policy ran but decision/version disagree
+            if not semantic.argument_hash_match:
+                mismatch_type = "argument_hash_mismatch"
+            elif fresh is None:
+                mismatch_type = "replay_policy_error"
+            else:
+                mismatch_type = "decision_mismatch"
             mismatches.append(
                 {
                     "event_id": event_id,
-                    "type": (
-                        "argument_hash_mismatch"
-                        if not semantic.argument_hash_match
-                        else "decision_mismatch"
-                    ),
+                    "type": mismatch_type,
                     "detail": semantic.to_dict(),
                 }
             )

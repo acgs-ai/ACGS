@@ -8,9 +8,22 @@ receipt rejected, replay valid).
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
-from benchmarks import governed_actions_bench as bench
+# Loaded by explicit file path so this test is collected and importable from
+# any invocation cwd (CI runs `pytest tests/` from the package dir; the repo
+# root also has an unrelated `benchmarks/` directory that would shadow a
+# name-based `import benchmarks`).
+_BENCH_FILE = Path(__file__).resolve().parents[1] / "benchmarks" / "governed_actions_bench.py"
+_spec = importlib.util.spec_from_file_location("governed_actions_bench", _BENCH_FILE)
+assert _spec is not None and _spec.loader is not None
+bench = importlib.util.module_from_spec(_spec)
+# Must be registered before exec: the module defines dataclasses, and the
+# dataclass machinery resolves sys.modules[cls.__module__] at class creation.
+sys.modules[_spec.name] = bench
+_spec.loader.exec_module(bench)
 
 
 def test_harness_runs_all_arms_at_tiny_scale(tmp_path: Path) -> None:

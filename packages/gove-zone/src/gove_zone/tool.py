@@ -35,10 +35,15 @@ def normalize_path_context(path: str | Sequence[str] | None = None) -> tuple[str
 class ToolCall:
     """A proposed tool invocation.
 
-    ``args`` is captured as an immutable view of the caller's dict so callers
-    can't mutate it after a policy has hashed it. ``goal`` is the caller's
-    high-level intent — opaque to the kernel, available to policies that want
-    to reason about purpose.
+    ``args`` is stored by reference and MUST be treated as frozen by every
+    consumer: the dataclass blocks field rebinding, but nothing deep-copies
+    or proxy-wraps the mapping, so mutating it (or a nested value) after
+    construction violates the contract. The memoized hashes below record the
+    args *as first observed/authorized*; the kernel's post-execution failure
+    path (``Kernel._record_execution_failure``) deliberately recomputes the
+    hash fresh so a mid-flight mutation still surfaces as an audit-trail
+    divergence. ``goal`` is the caller's high-level intent — opaque to the
+    kernel, available to policies that want to reason about purpose.
 
     ``actor``, ``path``, and ``state`` make the call compatible with
     policies-on-paths: policies can evaluate who is acting, where in the
@@ -77,11 +82,13 @@ class ToolCall:
 
         Memoized: a single dispatch hashes the same args several times (policy
         record, kernel context, decision-request binding), so the canonical
-        JSON + SHA-256 is computed once per ``ToolCall`` instance. The dataclass
-        is frozen and every args replacement goes through :meth:`with_args`
-        (a new instance), so the cache can never serve a stale hash unless a
-        caller mutates the underlying mapping mid-evaluation — which the
-        immutable-view contract above already forbids.
+        JSON + SHA-256 is computed once per ``ToolCall`` instance. Every args
+        replacement goes through :meth:`with_args` (a new instance, fresh
+        cache). The value is therefore the hash of the args *as first
+        observed*: a caller that violates the treat-as-frozen contract above
+        by mutating the mapping mid-evaluation gets the first-observation
+        hash from this method — the kernel's post-execution failure record
+        recomputes fresh precisely so that divergence stays detectable.
         """
         cached = self._hash_cache.get("args")
         if cached is None:

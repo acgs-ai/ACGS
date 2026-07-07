@@ -28,7 +28,7 @@ All CPU-side governance work (policy scan, hashing, receipt checks) totals
 
 Every optimization is behavior-preserving: fail-closed semantics, chain rules,
 and receipt validation checks are untouched. Full gate after the pass:
-**752 passed / 0 failed / 1 skipped** (`packages/gove-zone/tests` +
+**755 passed / 0 failed / 1 skipped** (`packages/gove-zone/tests` +
 `packages/gove-zone/benchmarks`, dev+crypto extras).
 
 ## Methodology
@@ -153,11 +153,20 @@ All in `packages/gove-zone/src/gove_zone/`, commit `47903fb`:
 
 ## Verification
 
-- `uv run --package gove-zone --extra dev --extra crypto python -m pytest packages/gove-zone/tests packages/gove-zone/benchmarks --import-mode=importlib -q` → **752 passed, 0 failed, 1 skipped** (junitxml-verified).
-- New targeted tests: `tests/test_perf_optimizations.py` (13 tests: batch
-  chain validity, cross-instance fast-path fallback, memoization parity with
-  un-memoized hashes, non-durable side store, replay verdicts incl. tamper and
-  missing-record fail-closed) and a benchmark-harness smoke test.
+- `uv run --package gove-zone --extra dev --extra crypto python -m pytest packages/gove-zone/tests packages/gove-zone/benchmarks --import-mode=importlib -q` → **755 passed, 0 failed, 1 skipped** (junitxml-verified).
+- New targeted tests: `tests/test_perf_optimizations.py` (17 tests: batch
+  chain validity, cross-instance fast-path fallback for both `append` and
+  `append_many`, memoization parity with un-memoized hashes, mid-flight
+  mutation divergence in the EXEC_FAILURE record, fsync observed called /
+  skipped for the side-store `durable` flag, replay verdicts incl. tamper and
+  missing-record fail-closed) and `tests/test_benchmark_harness_smoke.py`
+  (harness smoke test, collected by the standard `pytest tests/` gate).
+- Adversarial branch review (4 dimensions × 3-perspective verification, 31
+  agents): 8 confirmed findings, all addressed or explicitly accepted — the
+  `replay_policy_error` mismatch label is restored and pinned by test; the
+  kernel's post-execution failure record recomputes the argument hash fresh so
+  memoization cannot mask a mid-flight args mutation in the audit trail;
+  `append_many` remains intentionally opt-in with no runtime caller.
 - Root docs suite: 18 passed. Ruff lint + format clean on `src`, `tests`,
   `benchmarks`.
 
