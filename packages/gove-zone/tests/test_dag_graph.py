@@ -17,6 +17,7 @@ from gove_zone import (
     GovernanceEdge,
     GovernanceNode,
     NodeKind,
+    ReceiptRejectionReason,
     ReceiptValidationError,
 )
 
@@ -95,6 +96,11 @@ class TestValidate:
     def test_error_is_receipt_validation_error(self) -> None:
         # Fail-closed path compatibility: one catch site refuses everything.
         assert issubclass(DagValidationError, ReceiptValidationError)
+
+    def test_error_carries_reason_code(self) -> None:
+        with pytest.raises(DagValidationError) as exc:
+            GovernanceDAG(nodes={"x": _agent("y")}).validate()
+        assert exc.value.reason_code is ReceiptRejectionReason.DAG_STRUCTURE_INVALID
 
     def test_key_node_id_mismatch(self) -> None:
         dag = GovernanceDAG(nodes={"x": _agent("y")})

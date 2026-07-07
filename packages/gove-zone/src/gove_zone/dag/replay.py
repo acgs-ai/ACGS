@@ -13,33 +13,47 @@ What is proven, fail-closed:
 
 1. The graph is structurally valid and acyclic, and every agent acted inside
    its inherited authority (:func:`gove_zone.dag.authority.validate_authority`).
-2. Every receipt node is backed by a supplied receipt whose ``receipt_hash``
+2. When ``expected_dag_hash`` is supplied (an externally recorded value — a
+   plan store, an audit event, a pinned config), the graph presented for
+   replay is byte-identical in canonical form to the declared one; topology
+   swaps are rejected.
+3. Every receipt node is backed by a supplied receipt whose ``receipt_hash``
    equals the node's ``ref`` (node/receipt binding), and no receipt is
    supplied for a non-receipt node (no smuggling).
-3. The proposer chain is complete and single-actor: each decision has exactly
+4. The proposer chain is complete and single-actor: each decision has exactly
    one proposing agent, each receipt exactly one decision, each receipt gates
    exactly one tool call, and each tool call is executed by exactly one agent
    — the same agent that proposed it (``receipt.actor`` binding, matching the
    ``expected_actor`` discipline of the executor gates).
-4. Each receipt re-verifies via :meth:`DecisionReceipt.verify` with the
+5. Each receipt's ``authority`` names a root grant whose label actually
+   reached the proposer through the delegation graph
+   (:func:`gove_zone.dag.authority.resolve_authority_labels`) — a receipt
+   minted under an unrelated grant fails even if action and actor match.
+6. Each receipt re-verifies via :meth:`DecisionReceipt.verify` with the
    gated tool call's action and the proposing agent bound in — so a tampered,
    forged, mis-actored, or mis-actioned receipt fails exactly as it would at
    the gate.
-5. Every tool call is receipt-gated (no valid Decision Receipt, no side
+7. Every tool call is receipt-gated (no valid Decision Receipt, no side
    effect) and every side effect is produced by a tool call and carries a
    non-empty evidence ``ref``.
 
 Honest scope: with ``require_signature=False`` (default, matching
 ``verify_workflow_replay``) this proves internal chain consistency, not
-unforgeability. Pass a verifier and ``require_signature=True`` for the signed
-posture.
+unforgeability — pass a verifier and ``require_signature=True`` for the
+signed posture. The ``roots`` grants and ``expected_dag_hash`` are the
+*premises* of the proof: they must come from a source independent of the
+party presenting the chain (see :mod:`gove_zone.dag.authority`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from gove_zone.dag.authority import AuthorityGrant, validate_authority
+from gove_zone.dag.authority import (
+    AuthorityGrant,
+    resolve_authority_labels,
+    validate_authority,
+)
 from gove_zone.dag.graph import (
     DagValidationError,
     EdgeKind,
@@ -47,6 +61,7 @@ from gove_zone.dag.graph import (
     GovernanceNode,
     NodeKind,
 )
+from gove_zone.errors import ReceiptRejectionReason
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
@@ -58,8 +73,15 @@ class DagReplayError(DagValidationError):
     Receipt-level failures raise the underlying
     :class:`~gove_zone.errors.ReceiptValidationError` from
     :meth:`DecisionReceipt.verify` unchanged, so ``reason_code`` taxonomies
-    keep working; both land on the same fail-closed catch path.
+    keep working; both land on the same fail-closed catch path. Graph-level
+    failures default ``reason_code`` to
+    :attr:`~gove_zone.errors.ReceiptRejectionReason.DAG_REPLAY_INVALID`.
     """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.DAG_REPLAY_INVALID
+        )
 
 
 def _sole_edge_src(
@@ -86,6 +108,7 @@ def verify_dag_replay(
     receipts: Mapping[str, DecisionReceipt],
     *,
     roots: Mapping[str, AuthorityGrant],
+    expected_dag_hash: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = False,
     revoked_keys: RevocationList | None = None,
@@ -93,11 +116,20 @@ def verify_dag_replay(
     """Offline, fail-closed replay verification of the whole governance DAG.
 
     ``receipts`` maps receipt **node ids** to the actual
-    :class:`DecisionReceipt` objects. Raises :class:`DagReplayError` (graph
+    :class:`DecisionReceipt` objects. ``expected_dag_hash``, when supplied,
+    pins the graph to an externally recorded declaration (``None`` skips the
+    binding, mirroring the ``expected_*`` convention of
+    :meth:`DecisionReceipt.verify`). Raises :class:`DagReplayError` (graph
     level) or :class:`~gove_zone.errors.ReceiptValidationError` (receipt
     level) on the first failure; returns ``None`` when every check passes.
     """
     validate_authority(dag, roots)
+    labels = resolve_authority_labels(dag, roots)
+
+    if expected_dag_hash is not None and expected_dag_hash != dag.dag_hash():
+        raise DagReplayError(
+            "governance DAG hash mismatch: the graph presented for replay is not the declared one"
+        )
 
     receipt_node_ids = {node.node_id for node in dag.nodes_of_kind(NodeKind.RECEIPT)}
     unknown = set(receipts) - receipt_node_ids
@@ -130,6 +162,16 @@ def verify_dag_replay(
                 f"decision {decision_id!r} action {decision.action!r} does not match "
                 f"receipt {receipt_node.node_id!r} proposed_action "
                 f"{receipt.proposed_action!r}"
+            )
+
+        # The receipt's authority label must have actually reached the
+        # proposer through the delegation graph — action/actor alone is not
+        # enough when several grants share action names.
+        if receipt.authority not in labels.get(proposer, frozenset()):
+            raise DagReplayError(
+                f"receipt {receipt_node.node_id!r} authority {receipt.authority!r} "
+                f"never empowered proposer {proposer!r} (reachable labels: "
+                f"{sorted(labels.get(proposer, frozenset()))!r})"
             )
 
         # One receipt authorizes exactly one execution (single-use discipline).

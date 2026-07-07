@@ -102,12 +102,45 @@ def _chain(
     )
 
 
-ROOTS = {DELEGATOR: AuthorityGrant(DELEGATOR, "tenant-A/root-grant", frozenset({ACTION}))}
+# The root grant's authority label matches the receipts' AUTHORITY — replay
+# cross-checks that the label actually reached the proposer.
+ROOTS = {DELEGATOR: AuthorityGrant(DELEGATOR, AUTHORITY, frozenset({ACTION}))}
 
 
 def test_happy_chain_passes() -> None:
     receipt = _receipt()
     verify_dag_replay(_chain(receipt), {"rcpt": receipt}, roots=ROOTS)
+
+
+def test_expected_dag_hash_binding_passes() -> None:
+    receipt = _receipt()
+    dag = _chain(receipt)
+    verify_dag_replay(dag, {"rcpt": receipt}, roots=ROOTS, expected_dag_hash=dag.dag_hash())
+
+
+def test_expected_dag_hash_mismatch_rejected() -> None:
+    # The declared hash pins the topology; presenting a different (individually
+    # valid) graph for replay is rejected.
+    receipt = _receipt()
+    dag = _chain(receipt)
+    with pytest.raises(DagReplayError, match="hash mismatch"):
+        verify_dag_replay(dag, {"rcpt": receipt}, roots=ROOTS, expected_dag_hash="not-the-hash")
+
+
+def test_unrelated_authority_label_rejected() -> None:
+    # Grant covers the action but under a different authority label than the
+    # receipt claims — action/actor match alone must not be enough.
+    receipt = _receipt()
+    roots = {DELEGATOR: AuthorityGrant(DELEGATOR, "tenant-B/other-grant", frozenset({ACTION}))}
+    with pytest.raises(DagReplayError, match="never empowered"):
+        verify_dag_replay(_chain(receipt), {"rcpt": receipt}, roots=roots)
+
+
+def test_graph_level_errors_carry_reason_code() -> None:
+    receipt = _receipt()
+    with pytest.raises(DagReplayError) as exc:
+        verify_dag_replay(_chain(receipt), {}, roots=ROOTS)
+    assert exc.value.reason_code is ReceiptRejectionReason.DAG_REPLAY_INVALID
 
 
 def test_missing_receipt_rejected() -> None:

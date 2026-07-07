@@ -17,6 +17,8 @@ from gove_zone import (
     GovernanceEdge,
     GovernanceNode,
     NodeKind,
+    ReceiptRejectionReason,
+    resolve_authority_labels,
     resolve_effective_scopes,
     validate_authority,
 )
@@ -54,6 +56,11 @@ class TestAuthorityGrant:
     def test_empty_action_name_rejected(self) -> None:
         with pytest.raises(AuthorityViolationError, match="non-empty action names"):
             AuthorityGrant("a", "auth", frozenset({WRITE, ""}))
+
+    def test_violation_carries_reason_code(self) -> None:
+        with pytest.raises(AuthorityViolationError) as exc:
+            AuthorityGrant("", "auth", frozenset({WRITE}))
+        assert exc.value.reason_code is ReceiptRejectionReason.AUTHORITY_VIOLATION
 
 
 class TestResolveEffectiveScopes:
@@ -141,6 +148,37 @@ class TestResolveEffectiveScopes:
         )
         scopes = resolve_effective_scopes(dag, {"a": _grant("a", WRITE)})
         assert scopes["c"] == frozenset({WRITE})
+
+
+class TestResolveAuthorityLabels:
+    def test_labels_propagate_along_delegations(self) -> None:
+        dag = GovernanceDAG(
+            nodes={"a": _agent("a"), "b": _agent("b"), "c": _agent("c")},
+            edges=(_delegation("a", "b", WRITE), _delegation("b", "c", WRITE)),
+        )
+        labels = resolve_authority_labels(dag, {"a": _grant("a", WRITE)})
+        assert labels == {
+            "a": frozenset({"tenant-A/root-grant"}),
+            "b": frozenset({"tenant-A/root-grant"}),
+            "c": frozenset({"tenant-A/root-grant"}),
+        }
+
+    def test_labels_union_across_roots(self) -> None:
+        dag = GovernanceDAG(
+            nodes={"a": _agent("a"), "b": _agent("b"), "c": _agent("c")},
+            edges=(_delegation("a", "c", WRITE), _delegation("b", "c", READ)),
+        )
+        roots = {
+            "a": _grant("a", WRITE),
+            "b": AuthorityGrant("b", "tenant-B/read-grant", frozenset({READ})),
+        }
+        labels = resolve_authority_labels(dag, roots)
+        assert labels["c"] == frozenset({"tenant-A/root-grant", "tenant-B/read-grant"})
+
+    def test_ungranted_unconnected_agent_has_no_labels(self) -> None:
+        dag = GovernanceDAG(nodes={"a": _agent("a"), "b": _agent("b")})
+        labels = resolve_authority_labels(dag, {"a": _grant("a", WRITE)})
+        assert labels["b"] == frozenset()
 
 
 class TestValidateAuthority:

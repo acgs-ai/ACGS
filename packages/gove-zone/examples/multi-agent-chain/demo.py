@@ -118,16 +118,21 @@ def _governed_chain(receipt: DecisionReceipt, *, evidence_ref: str) -> Governanc
 def main() -> int:
     args = {"path": "reports/out.txt", "content": "governed"}
     roots = {
-        ORCHESTRATOR: AuthorityGrant(ORCHESTRATOR, "tenant-A/root-grant", frozenset({WRITE, READ}))
+        # The grant's authority label matches the receipts' AUTHORITY — replay
+        # cross-checks that this label actually reached the proposer.
+        ORCHESTRATOR: AuthorityGrant(ORCHESTRATOR, AUTHORITY, frozenset({WRITE, READ}))
     }
     receipt = _mint_receipt(action=WRITE, args=args, actor=WORKER)
     evidence_ref = "sha256:" + sha256_json({"written": args["path"]})
 
     print("Scenario 1: governed multi-agent chain replays clean")
     dag = _governed_chain(receipt, evidence_ref=evidence_ref)
+    declared_dag_hash = dag.dag_hash()  # recorded at declaration time
     try:
-        verify_dag_replay(dag, {"receipt-1": receipt}, roots=roots)
-        _ok(f"chain verified (dag_hash={dag.dag_hash()[:16]}...)")
+        verify_dag_replay(
+            dag, {"receipt-1": receipt}, roots=roots, expected_dag_hash=declared_dag_hash
+        )
+        _ok(f"chain verified (dag_hash={declared_dag_hash[:16]}...)")
     except ReceiptValidationError as exc:
         _fail(f"governed chain unexpectedly rejected: {exc}")
 

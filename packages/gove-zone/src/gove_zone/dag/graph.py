@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from gove_zone.decision import sha256_json
-from gove_zone.errors import ReceiptValidationError
+from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
 
 
 class DagValidationError(ReceiptValidationError):
@@ -38,8 +38,15 @@ class DagValidationError(ReceiptValidationError):
     (the :class:`~gove_zone.errors.ProductionProfileError` precedent): DAG
     defects stay on the single fail-closed "execution refused" path, so every
     caller that treats ``ReceiptValidationError`` as refusal handles graph
-    defects with no new catch site.
+    defects with no new catch site. Defaults ``reason_code`` to
+    :attr:`~gove_zone.errors.ReceiptRejectionReason.DAG_STRUCTURE_INVALID` so
+    every raise site carries a machine-readable reason.
     """
+
+    def __init__(self, *args: object, reason_code: ReceiptRejectionReason | None = None) -> None:
+        super().__init__(
+            *args, reason_code=reason_code or ReceiptRejectionReason.DAG_STRUCTURE_INVALID
+        )
 
 
 class NodeKind(StrEnum):
@@ -150,8 +157,16 @@ class GovernanceDAG:
 
     ``validate`` is fail-closed: id mismatches, dangling endpoints, self-loops,
     edge-type violations, duplicate edges, and cycles all raise
-    :class:`DagValidationError`. ``dag_hash`` binds the canonical structure so
-    tampering with the declared chain is detectable.
+    :class:`DagValidationError`. Cycle detection runs over **all** edge kinds,
+    not just delegation — deliberately conservative; a topology that loops
+    through any edge kind is rejected. Edge identity for the duplicate check is
+    ``(src, dst, kind)``: two delegation edges between the same ordered pair
+    must be merged into one edge with the union scope.
+
+    ``dag_hash`` is the canonical structure hash. On its own it detects
+    nothing — tampering with the declared chain is detected only when a caller
+    binds an externally recorded value via
+    :func:`gove_zone.dag.replay.verify_dag_replay`'s ``expected_dag_hash``.
     """
 
     nodes: dict[str, GovernanceNode]

@@ -34,4 +34,7 @@ Honest scope: the DAG is structural governance *tracking* plus offline replay
 verification. It does not by itself stop an ungoverned executor — the receipt
 gates in `gove_zone.executor` remain the enforcement point, and unsigned
 replay proves internal consistency, not unforgeability (pass a verifier and
-`require_signature=True` for the signed posture).
+`require_signature=True` for the signed posture). The root `AuthorityGrant`s
+and the `expected_dag_hash` are the *premises* of the proof, not part of it:
+an auditor must obtain them from a channel independent of the party
+presenting the chain.
