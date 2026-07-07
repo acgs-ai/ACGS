@@ -38,11 +38,12 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.authz import PrincipalEntry
-from gove_zone.errors import IdentityError
+from gove_zone.errors import IdentityError, IdentityRejectionReason
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.signing import ReceiptSigner
 from gove_zone.tenant import TenantPolicyStore, evaluate_tenant_action
@@ -89,18 +90,27 @@ _ALLOWED_CREDENTIALS: dict[PrincipalType, frozenset[CredentialType]] = {
 }
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _parse_iso(value: str, *, field_name: str) -> datetime:
-    """Parse an ISO-8601 timestamp, failing closed with :class:`IdentityError`."""
+    """Parse an ISO-8601 timestamp, failing closed with :class:`IdentityError`.
+
+    Offset-naive timestamps are rejected, mirroring the expiry check in
+    :meth:`gove_zone.receipt.DecisionReceipt.verify`: silently assuming a zone
+    for a naive timestamp can extend a credential's life (fail-open), so the
+    ambiguity is refused instead.
+    """
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise IdentityError(f"unparseable {field_name}: {value!r} (fail-closed)") from exc
+        raise IdentityError(
+            f"unparseable {field_name}: {value!r} (fail-closed)",
+            reason_code=IdentityRejectionReason.TIMESTAMP_UNPARSEABLE,
+        ) from exc
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        raise IdentityError(
+            f"offset-naive {field_name}: {value!r} — naive timestamps are ambiguous "
+            "and can fail open; supply an explicit UTC offset (fail-closed)",
+            reason_code=IdentityRejectionReason.TIMESTAMP_NAIVE,
+        )
     return parsed
 
 
@@ -118,6 +128,9 @@ class Credential:
     audience: str = ""
 
     def __post_init__(self) -> None:
+        # Coerce so a plain-string credential_type (== the enum but not `is` it)
+        # cannot slip past identity checks; an unknown value raises ValueError.
+        object.__setattr__(self, "credential_type", CredentialType(self.credential_type))
         if not self.token:
             raise ValueError("Credential.token is required (fail-closed)")
         if self.credential_type is CredentialType.WORKLOAD_IDENTITY_TOKEN and not self.audience:
@@ -132,8 +145,15 @@ class Principal:
 
     ``actor_id()`` is the canonical proposer string the kernel binds into
     receipts (``ToolCall.actor`` / ``DecisionReceipt.actor``). It is namespaced
-    by provider and tenant so principals from different IdPs or directories can
-    never collide: ``azure-ad:tenant-A:alice`` ≠ ``okta:tenant-A:alice``.
+    by provider and tenant, and the encoding is injective: ``provider_id`` and
+    ``tenant_id`` may not contain the ``:`` separator (rejected at
+    construction), so ``prov:tenant:subject`` parses unambiguously left-to-right
+    and distinct principals can never encode to the same actor string —
+    subjects themselves may contain ``:`` (e.g. SPIFFE ids).
+
+    ``claims`` is snapshotted into a read-only mapping at construction, so a
+    resolved principal cannot be mutated through an aliased dict, and the
+    frozen dataclass stays hashable.
     """
 
     subject: str
@@ -142,15 +162,22 @@ class Principal:
     principal_type: PrincipalType
     groups: frozenset[str] = frozenset()
     display_name: str = ""
-    claims: Mapping[str, Any] = field(default_factory=dict)
+    claims: Mapping[str, Any] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "principal_type", PrincipalType(self.principal_type))
+        object.__setattr__(self, "claims", MappingProxyType(dict(self.claims)))
         if not self.subject:
             raise ValueError("Principal.subject is required (fail-closed)")
         if not self.tenant_id:
             raise ValueError("Principal.tenant_id is required (fail-closed)")
         if not self.provider_id:
             raise ValueError("Principal.provider_id is required (fail-closed)")
+        if ":" in self.provider_id or ":" in self.tenant_id:
+            raise ValueError(
+                "Principal.provider_id and tenant_id may not contain ':' — it is the "
+                "actor_id separator and would make actor encoding ambiguous (fail-closed)"
+            )
 
     def actor_id(self) -> str:
         """Canonical, provider-namespaced actor string for receipts and authz."""
@@ -293,10 +320,17 @@ class MockIdentityProvider(IdentityProviderAdapter):
         subject: str,
         *,
         groups: Iterable[str] = (),
+        display_name: str = "",
         claims: Mapping[str, Any] | None = None,
     ) -> None:
         """Register a service account (key / client-credentials OAuth)."""
-        self._register(subject, PrincipalType.SERVICE_ACCOUNT, groups=groups, claims=claims)
+        self._register(
+            subject,
+            PrincipalType.SERVICE_ACCOUNT,
+            groups=groups,
+            display_name=display_name,
+            claims=claims,
+        )
 
     def register_workload(
         self,
@@ -335,17 +369,24 @@ class MockIdentityProvider(IdentityProviderAdapter):
         """
         registration = self._registrations.get(subject)
         if registration is None:
-            raise IdentityError(f"unknown subject: {subject!r} (fail-closed)")
+            raise IdentityError(
+                f"unknown subject: {subject!r} (fail-closed)",
+                reason_code=IdentityRejectionReason.UNKNOWN_SUBJECT,
+            )
         if credential_type not in self._supported:
             raise IdentityError(
-                f"provider {self._provider_id!r} does not support {credential_type} (fail-closed)"
+                f"provider {self._provider_id!r} does not support {credential_type} (fail-closed)",
+                reason_code=IdentityRejectionReason.UNSUPPORTED_CREDENTIAL_TYPE,
             )
         if credential_type not in _ALLOWED_CREDENTIALS[registration.principal_type]:
             raise IdentityError(
                 f"{registration.principal_type} principal {subject!r} cannot hold a "
-                f"{credential_type} credential (fail-closed)"
+                f"{credential_type} credential (fail-closed)",
+                reason_code=IdentityRejectionReason.CREDENTIAL_KIND_NOT_ALLOWED,
             )
         token = uuid.uuid4().hex
+        while token in self._issued:  # never silently rebind a live token
+            token = uuid.uuid4().hex
         self._issued[token] = _IssuedCredential(
             subject=subject,
             credential_type=credential_type,
@@ -371,26 +412,37 @@ class MockIdentityProvider(IdentityProviderAdapter):
         if credential.credential_type not in self._supported:
             raise IdentityError(
                 f"provider {self._provider_id!r} does not support "
-                f"{credential.credential_type} (fail-closed)"
+                f"{credential.credential_type} (fail-closed)",
+                reason_code=IdentityRejectionReason.UNSUPPORTED_CREDENTIAL_TYPE,
             )
         issued = self._issued.get(credential.token)
         if issued is None:
-            raise IdentityError("unknown or revoked credential (fail-closed)")
+            raise IdentityError(
+                "unknown or revoked credential (fail-closed)",
+                reason_code=IdentityRejectionReason.UNKNOWN_OR_REVOKED_CREDENTIAL,
+            )
         if issued.credential_type is not credential.credential_type:
             raise IdentityError(
                 f"credential type mismatch: presented as {credential.credential_type}, "
-                f"issued as {issued.credential_type} (fail-closed)"
+                f"issued as {issued.credential_type} (fail-closed)",
+                reason_code=IdentityRejectionReason.CREDENTIAL_TYPE_MISMATCH,
             )
         if issued.audience and credential.audience != issued.audience:
             raise IdentityError(
                 f"audience mismatch: token bound to {issued.audience!r}, "
-                f"presented for {credential.audience!r} (fail-closed)"
+                f"presented for {credential.audience!r} (fail-closed)",
+                reason_code=IdentityRejectionReason.AUDIENCE_MISMATCH,
             )
         if issued.expires_at:
             expires = _parse_iso(issued.expires_at, field_name="expires_at")
-            now = _parse_iso(now_iso or _utc_now_iso(), field_name="now_iso")
+            now = _parse_iso(now_iso, field_name="now_iso") if now_iso else datetime.now(UTC)
+            # `>=` is deliberately one tick stricter than the receipt gate's `>`:
+            # at the exact boundary the identity layer refuses (fail-closed).
             if now >= expires:
-                raise IdentityError(f"credential expired at {issued.expires_at} (fail-closed)")
+                raise IdentityError(
+                    f"credential expired at {issued.expires_at} (fail-closed)",
+                    reason_code=IdentityRejectionReason.CREDENTIAL_EXPIRED,
+                )
         registration = self._registrations[issued.subject]
         claims = dict(registration.claims)
         claims.update(self._provider_claims(registration))
@@ -410,10 +462,16 @@ class MockIdentityProvider(IdentityProviderAdapter):
 
 
 class MockAzureADAdapter(MockIdentityProvider):
-    """Mock Azure AD / Microsoft Entra ID. ``tenant_id`` plays the directory ``tid``."""
+    """Mock Azure AD / Microsoft Entra ID. ``tenant_id`` plays the directory ``tid``.
+
+    ``provider_id`` is deliberately ``mock-azure-ad`` (not ``azure-ad``): a
+    mock-resolved principal must never mint the same actor namespace — and thus
+    the same receipts and authz registry entries — as a real production
+    adapter. Provenance is visible in every actor string.
+    """
 
     def __init__(self, *, tenant_id: str) -> None:
-        super().__init__(provider_id="azure-ad", tenant_id=tenant_id)
+        super().__init__(provider_id="mock-azure-ad", tenant_id=tenant_id)
 
     def _provider_claims(self, registration: _Registration) -> dict[str, Any]:
         return {
@@ -424,10 +482,14 @@ class MockAzureADAdapter(MockIdentityProvider):
 
 
 class MockOktaAdapter(MockIdentityProvider):
-    """Mock Okta org. ``tenant_id`` plays the Okta org name."""
+    """Mock Okta org. ``tenant_id`` plays the Okta org name.
+
+    ``provider_id`` is ``mock-okta`` — see :class:`MockAzureADAdapter` on why
+    mocks never share a real adapter's actor namespace.
+    """
 
     def __init__(self, *, tenant_id: str) -> None:
-        super().__init__(provider_id="okta", tenant_id=tenant_id)
+        super().__init__(provider_id="mock-okta", tenant_id=tenant_id)
 
     def _provider_claims(self, registration: _Registration) -> dict[str, Any]:
         return {
@@ -438,10 +500,15 @@ class MockOktaAdapter(MockIdentityProvider):
 
 
 class MockGoogleWorkspaceAdapter(MockIdentityProvider):
-    """Mock Google Workspace. ``tenant_id`` plays the hosted domain (``hd``)."""
+    """Mock Google Workspace. ``tenant_id`` plays the hosted domain (``hd``).
+
+    ``provider_id`` is ``mock-google-workspace`` — see
+    :class:`MockAzureADAdapter` on why mocks never share a real adapter's
+    actor namespace.
+    """
 
     def __init__(self, *, tenant_id: str) -> None:
-        super().__init__(provider_id="google-workspace", tenant_id=tenant_id)
+        super().__init__(provider_id="mock-google-workspace", tenant_id=tenant_id)
 
     def _provider_claims(self, registration: _Registration) -> dict[str, Any]:
         subject = registration.subject
@@ -468,6 +535,12 @@ class RoleDefinition:
             raise ValueError("RoleDefinition.role is required (fail-closed)")
         if not self.authority:
             raise ValueError("RoleDefinition.authority is required (fail-closed)")
+        if "+" in self.authority:
+            raise ValueError(
+                "RoleDefinition.authority may not contain '+' — it is the grant-set "
+                "join separator, and an authority containing it would be ambiguous "
+                "with a multi-role grant (fail-closed)"
+            )
 
 
 class RBACMapper:
@@ -502,7 +575,8 @@ class RBACMapper:
         )
         if not matched:
             raise IdentityError(
-                f"no role mapped for principal {principal.actor_id()!r} (fail-closed)"
+                f"no role mapped for principal {principal.actor_id()!r} (fail-closed)",
+                reason_code=IdentityRejectionReason.NO_ROLE_MAPPED,
             )
         return tuple(self._roles[name] for name in matched)
 
@@ -557,7 +631,12 @@ def govern_identity_action(
     1. **Identity** — *adapter* resolves *credential* to a :class:`Principal`
        (raises :class:`~gove_zone.errors.IdentityError` on any defect).
     2. **Authority** — *rbac* maps the principal's groups to a deterministic
-       authority grant (raises ``IdentityError`` if no role is mapped).
+       authority grant (raises ``IdentityError`` if no role is mapped), and the
+       proposed *action* must be within the principal's role-granted tool set
+       (union of ``RoleDefinition.allowed_tools``; any all-tools role opens
+       all). A role set that does not grant *action* refuses here, before any
+       policy evaluation — the fail-closed ``allowed_tools`` default is
+       enforced by this chain, not just by an optional executor registry.
     3. **Policy → Receipt** — delegates to
        :func:`gove_zone.tenant.evaluate_tenant_action` with the principal's own
        tenant as both target and requester (an IdP-resolved principal can only
@@ -571,6 +650,13 @@ def govern_identity_action(
     """
     principal = adapter.resolve(credential, now_iso=now_iso)
     authority = rbac.authority_for(principal)
+    entry = rbac.principal_entry(principal)
+    if entry.allowed_tools is not None and action not in entry.allowed_tools:
+        raise IdentityError(
+            f"action {action!r} is not granted by any role of principal "
+            f"{principal.actor_id()!r} (fail-closed)",
+            reason_code=IdentityRejectionReason.TOOL_NOT_PERMITTED_BY_ROLE,
+        )
     return evaluate_tenant_action(
         policy_store,
         principal.tenant_id,

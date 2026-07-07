@@ -25,6 +25,7 @@ from gove_zone import (
     Credential,
     CredentialType,
     IdentityError,
+    IdentityRejectionReason,
     MockAzureADAdapter,
     MockGoogleWorkspaceAdapter,
     MockIdentityProvider,
@@ -234,6 +235,93 @@ def test_unsupported_credential_type_fails_closed_at_both_ends() -> None:
         sso_only.resolve(oauth)
 
 
+def test_string_typed_credential_type_is_coerced_not_bypassed() -> None:
+    # A plain string (== the enum but not `is` it) must not skip the
+    # workload-audience check or any downstream `is` comparison.
+    with pytest.raises(ValueError, match="audience is required"):
+        Credential(credential_type="WORKLOAD_IDENTITY_TOKEN", token="t")  # type: ignore[arg-type]
+    coerced = Credential(credential_type="OAUTH_ACCESS_TOKEN", token="t")  # type: ignore[arg-type]
+    assert coerced.credential_type is CredentialType.OAUTH_ACCESS_TOKEN
+    with pytest.raises(ValueError):
+        Credential(credential_type="NOT_A_TYPE", token="t")  # type: ignore[arg-type]
+
+
+def test_actor_id_encoding_is_injective() -> None:
+    # ':' forbidden in provider/tenant, so left-to-right parsing is unambiguous.
+    with pytest.raises(ValueError, match="may not contain ':'"):
+        Principal(
+            subject="c", tenant_id="a:b", provider_id="idp", principal_type=PrincipalType.USER
+        )
+    with pytest.raises(ValueError, match="may not contain ':'"):
+        Principal(subject="c", tenant_id="a", provider_id="id:p", principal_type=PrincipalType.USER)
+    # Subjects may contain ':' (SPIFFE-style ids).
+    spiffe = Principal(
+        subject="spiffe://org/ns/x",
+        tenant_id="a",
+        provider_id="idp",
+        principal_type=PrincipalType.WORKLOAD,
+    )
+    assert spiffe.actor_id() == "idp:a:spiffe://org/ns/x"
+
+
+def test_principal_is_hashable_and_claims_immutable() -> None:
+    source = {"k": "v"}
+    principal = Principal(
+        subject="alice",
+        tenant_id=TENANT,
+        provider_id="idp",
+        principal_type=PrincipalType.USER,
+        claims=source,
+    )
+    assert {principal}  # hashable — usable in sets/dict keys
+    source["k"] = "MUTATED"  # aliased-source mutation must not leak in
+    assert principal.claims["k"] == "v"
+    with pytest.raises(TypeError):
+        principal.claims["k"] = "x"  # type: ignore[index]
+
+
+def test_naive_timestamps_are_rejected_fail_closed() -> None:
+    # Mirrors the receipt gate: a naive timestamp could extend credential life
+    # (fail-open) if silently assumed UTC, so it is refused instead.
+    idp = MockAzureADAdapter(tenant_id=TENANT)
+    idp.register_user("alice")
+    credential = idp.issue_credential(
+        "alice", CredentialType.OAUTH_ACCESS_TOKEN, expires_at="2026-01-01T00:00:00+00:00"
+    )
+    with pytest.raises(IdentityError, match="offset-naive") as exc_info:
+        idp.resolve(credential, now_iso="2025-12-31T23:00:00")
+    assert exc_info.value.reason_code is IdentityRejectionReason.TIMESTAMP_NAIVE
+
+    naive_expiry = idp.issue_credential(
+        "alice", CredentialType.OAUTH_ACCESS_TOKEN, expires_at="2099-01-01T00:00:00"
+    )
+    with pytest.raises(IdentityError, match="offset-naive"):
+        idp.resolve(naive_expiry, now_iso="2026-01-01T00:00:00+00:00")
+
+
+def test_identity_errors_carry_machine_readable_reason_codes() -> None:
+    idp = MockOktaAdapter(tenant_id=TENANT)
+    idp.register_user("alice")
+    with pytest.raises(IdentityError) as unknown:
+        idp.resolve(Credential(credential_type=CredentialType.OAUTH_ACCESS_TOKEN, token="bogus"))
+    assert unknown.value.reason_code is IdentityRejectionReason.UNKNOWN_OR_REVOKED_CREDENTIAL
+    with pytest.raises(IdentityError) as no_role:
+        _rbac().roles_for(_principal(frozenset({"marketing"})))
+    assert no_role.value.reason_code is IdentityRejectionReason.NO_ROLE_MAPPED
+
+
+def test_mock_providers_never_mint_real_provider_namespaces() -> None:
+    # A mock-resolved principal must be distinguishable from a real IdP's by
+    # actor namespace — provenance is part of the actor string.
+    for cls in ALL_ADAPTERS:
+        assert _adapter(cls).provider_id.startswith("mock-")
+
+
+def test_role_authority_may_not_contain_join_separator() -> None:
+    with pytest.raises(ValueError, match="may not contain '\\+'"):
+        RoleDefinition(role="combo", authority="tenant-A/a+tenant-A/b")
+
+
 def test_constructors_fail_closed() -> None:
     with pytest.raises(ValueError, match="token is required"):
         Credential(credential_type=CredentialType.OAUTH_ACCESS_TOKEN, token="")
@@ -410,6 +498,37 @@ def test_foreign_actor_cannot_use_identity_receipt(tmp_path: Path) -> None:
             require_signature=False,
         )
     assert not effect.ran
+
+
+def test_chain_refuses_action_outside_role_tool_grant(tmp_path: Path) -> None:
+    # A role's fail-closed allowed_tools default (no tools) must be enforced by
+    # the bundled chain itself, not only by an optional executor registry.
+    idp = MockAzureADAdapter(tenant_id=TENANT)
+    idp.register_user("alice", groups=["auditors"])
+    credential = idp.issue_credential("alice", CredentialType.OAUTH_ACCESS_TOKEN)
+
+    store = TenantPolicyStore(tmp_path / "pol")
+    store.store_bundle(TENANT, _allow_policy())
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    rbac = RBACMapper(
+        roles=[RoleDefinition(role="auditor", authority="tenant-A/read-grant")],
+        group_to_role={"auditors": "auditor"},
+    )
+
+    with pytest.raises(IdentityError, match="not granted by any role") as exc_info:
+        govern_identity_action(
+            idp,
+            credential,
+            policy_store=store,
+            action="runtime.file.write",
+            args={"path": "safe.txt"},
+            execution_boundary=BOUNDARY,
+            request_id="req-1",
+            rbac=rbac,
+            validator=VALIDATOR,
+            audit_store=audit,
+        )
+    assert exc_info.value.reason_code is IdentityRejectionReason.TOOL_NOT_PERMITTED_BY_ROLE
 
 
 def test_chain_refuses_before_policy_on_identity_defect(tmp_path: Path) -> None:

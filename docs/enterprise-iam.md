@@ -71,13 +71,17 @@ identity secret-less but not bearer-promiscuous.
 `groups`, and provider-dialect `claims`. Its canonical actor string,
 
 ```text
-actor_id() = "<provider_id>:<tenant_id>:<subject>"    # e.g. azure-ad:tenant-A:alice
+actor_id() = "<provider_id>:<tenant_id>:<subject>"    # e.g. mock-azure-ad:tenant-A:alice
 ```
 
 is what the kernel binds into receipts (`DecisionReceipt.actor`) and what the
-executor gate anchors on (`expected_actor`). Namespacing by provider and
-tenant means `azure-ad:tenant-A:alice` and `okta:tenant-A:alice` can never
-collide or replay each other's receipts.
+executor gate anchors on (`expected_actor`). The encoding is injective:
+`provider_id` and `tenant_id` may not contain `:` (rejected at construction),
+while subjects may (SPIFFE-style ids) — so two distinct principals can never
+encode to the same actor string. Cross-principal receipt replay is then
+refused at the gate *on paths where the integrator binds `expected_actor`*
+(all gate surfaces require it; direct `DecisionReceipt.verify()` callers that
+omit it fall back to weaker checks — see `docs/CLAIMS.md`).
 
 ### Mock providers
 
@@ -87,9 +91,13 @@ enterprise IdPs, over an in-memory directory:
 
 | Adapter | `provider_id` | `tenant_id` plays | Dialect claims |
 |---|---|---|---|
-| `MockAzureADAdapter` | `azure-ad` | directory / `tid` | `tid`, `oid`, `upn` |
-| `MockOktaAdapter` | `okta` | Okta org | `sub`, `iss`, `preferred_username` |
-| `MockGoogleWorkspaceAdapter` | `google-workspace` | hosted domain / `hd` | `sub`, `email`, `hd` |
+| `MockAzureADAdapter` | `mock-azure-ad` | directory / `tid` | `tid`, `oid`, `upn` |
+| `MockOktaAdapter` | `mock-okta` | Okta org | `sub`, `iss`, `preferred_username` |
+| `MockGoogleWorkspaceAdapter` | `mock-google-workspace` | hosted domain / `hd` | `sub`, `email`, `hd` |
+
+The `mock-` prefix is deliberate provenance: a mock-resolved principal never
+mints the same actor namespace — and thus the same receipts or authz registry
+entries — as a real production adapter for that provider would.
 
 All three subclass `MockIdentityProvider`, which is itself usable directly
 for provider-agnostic tests (including restricted
@@ -125,9 +133,16 @@ rbac = RBACMapper(
   `roles_for` / `authority_for` raise `IdentityError` rather than defaulting
   to a permissive role. A `group_to_role` entry naming an unknown role is a
   construction-time `ValueError`.
-- **Deterministic:** multiple roles combine as sorted, `+`-joined
-  authorities, so the same principal always mints the same
-  `DecisionReceipt.authority` regardless of group enumeration order.
+- **Deterministic and unambiguous:** multiple roles combine as sorted,
+  `+`-joined authorities, so the same principal always mints the same
+  `DecisionReceipt.authority` regardless of group enumeration order. A role
+  authority may not itself contain `+` (rejected at construction), so a
+  single role can never mint an authority string identical to a multi-role
+  grant set — `receipt.verify(expected_authority=...)` exact-matching stays
+  meaningful.
+- **Enforced by the bundled chain:** `govern_identity_action` refuses (before
+  any policy evaluation) an action outside the principal's role-granted tool
+  union, so the fail-closed `allowed_tools` default is not merely advisory.
 - **Bridges to the existing authz seam:** `principal_entry(principal)`
   derives a `gove_zone.authz.PrincipalEntry` (tools = union across roles;
   any all-tools role → all tools; default = *no* tools). Feed these into a
@@ -140,7 +155,9 @@ rbac = RBACMapper(
 proposed action:
 
 1. **Identity** — `adapter.resolve(credential)` → `Principal`.
-2. **Authority** — `rbac.authority_for(principal)` → authority grant.
+2. **Authority** — `rbac.authority_for(principal)` → authority grant, and the
+   proposed action must be inside the principal's role-granted tool union
+   (`IdentityError` with `TOOL_NOT_PERMITTED_BY_ROLE` otherwise).
 3. **Policy → Receipt** — delegates to `evaluate_tenant_action` with the
    principal's home tenant as both target and requester (an IdP-resolved
    principal cannot request cross-tenant), `actor=principal.actor_id()`, and
@@ -153,13 +170,27 @@ proposed action:
 ```python
 from gove_zone import (
     ChainHashAuditStore, CredentialType, MockAzureADAdapter, RBACMapper,
-    RoleDefinition, TenantPolicyStore, Validator, execute_with_receipt,
-    govern_identity_action,
+    RoleDefinition, RuleSetPolicy, TenantPolicyStore, Validator,
+    execute_with_receipt, govern_identity_action,
 )
 
 idp = MockAzureADAdapter(tenant_id="tenant-A")
 idp.register_user("alice", groups=["eng"])
 credential = idp.issue_credential("alice", CredentialType.OAUTH_ACCESS_TOKEN)
+
+rbac = RBACMapper(
+    roles=[RoleDefinition(role="writer", authority="tenant-A/write-grant",
+                          allowed_tools=frozenset({"runtime.file.write"}))],
+    group_to_role={"eng": "writer"},
+)
+store = TenantPolicyStore("policies")
+store.store_bundle("tenant-A", RuleSetPolicy.from_dict(
+    {"id": "policy-A", "rules": [{"id": "R1", "effect": "deny", "tools": ["shell.exec"]}]}
+))
+audit = ChainHashAuditStore("audit.jsonl")
+
+def write_file(**kwargs):  # the governed side effect
+    ...
 
 receipt = govern_identity_action(
     idp, credential,
@@ -184,10 +215,15 @@ execute_with_receipt(
 
 | Error | Layer | Meaning |
 |---|---|---|
-| `IdentityError` | Identity / Authority | No principal was established (bad/revoked/expired credential, audience mismatch, no mapped role). No governance request is ever made. |
+| `IdentityError` (carries `IdentityRejectionReason` in `reason_code`) | Identity / Authority | No principal was established, or the action is outside the principal's role tool-grant. No governance request is ever made. |
 | `AuthzDeniedError` | Execution gate (authz seam) | A resolved principal is not on the integrator allowlist for this tool. |
-| `DeniedError` / `EscalateError` | Policy | The action was evaluated and refused / needs approval. |
-| `ReceiptValidationError` | Receipt / Execution gate | The receipt itself fails verification (tamper, wrong actor/tenant/boundary, expiry, replay). |
+| `ReceiptValidationError` | Receipt / Execution gate | The receipt fails verification (tamper, wrong actor/tenant/boundary, expiry, replay) — including receipts whose `decision` is `deny`/`escalate`. |
+
+Note: on this chain a policy DENY/ESCALATE does **not** raise
+`DeniedError`/`EscalateError` — `govern_identity_action` returns a receipt
+carrying that decision, and the executor gate refuses it with
+`ReceiptValidationError`. Those exceptions belong to the `Kernel.dispatch`
+path, which this chain does not use.
 
 Every layer refuses independently; a defect earlier in the chain means later
 layers never run.
@@ -200,6 +236,12 @@ layers never run.
   implemented anywhere in this module.
 - `RBACMapper` is exact-match on group strings; nested/dynamic groups are the
   IdP's concern and must be flattened into the asserted `groups`.
+- The principal-kind ↔ credential-kind table is static and mock-scoped: flows
+  where a workload exchanges its federated token for an OAuth access token
+  (GCP WIF token exchange) are not modeled by the mocks; a production adapter
+  models its provider's real issuance rules.
+- Offset-naive timestamps are rejected everywhere (`expires_at`, `now_iso`),
+  mirroring the receipt gate — supply explicit UTC offsets.
 - Cross-tenant delegation is intentionally not expressible through
   `govern_identity_action`; it pins requester = principal's home tenant.
 - The kernel-side authorization seam this maps onto is the B13 first slice

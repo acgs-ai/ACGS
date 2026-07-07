@@ -177,6 +177,28 @@ class SigningError(GoveZoneError):
     """
 
 
+class IdentityRejectionReason(StrEnum):
+    """Machine-readable reason codes for identity-layer refusals.
+
+    The contract a relying party asserts on instead of the human-readable
+    message — mirrors :class:`ReceiptRejectionReason` and
+    :class:`~gove_zone.authz.AuthzReason`. Values equal member names (StrEnum)
+    so they serialise as plain strings.
+    """
+
+    UNKNOWN_SUBJECT = "UNKNOWN_SUBJECT"
+    UNSUPPORTED_CREDENTIAL_TYPE = "UNSUPPORTED_CREDENTIAL_TYPE"
+    CREDENTIAL_KIND_NOT_ALLOWED = "CREDENTIAL_KIND_NOT_ALLOWED"
+    UNKNOWN_OR_REVOKED_CREDENTIAL = "UNKNOWN_OR_REVOKED_CREDENTIAL"
+    CREDENTIAL_TYPE_MISMATCH = "CREDENTIAL_TYPE_MISMATCH"
+    AUDIENCE_MISMATCH = "AUDIENCE_MISMATCH"
+    CREDENTIAL_EXPIRED = "CREDENTIAL_EXPIRED"
+    TIMESTAMP_UNPARSEABLE = "TIMESTAMP_UNPARSEABLE"
+    TIMESTAMP_NAIVE = "TIMESTAMP_NAIVE"
+    NO_ROLE_MAPPED = "NO_ROLE_MAPPED"
+    TOOL_NOT_PERMITTED_BY_ROLE = "TOOL_NOT_PERMITTED_BY_ROLE"
+
+
 class IdentityError(GoveZoneError):
     """Raised when identity resolution or role mapping fails — fail-closed.
 
@@ -187,7 +209,16 @@ class IdentityError(GoveZoneError):
     allowlist) and :class:`ReceiptValidationError` (a receipt defect): an
     ``IdentityError`` means no principal was established at all, so no
     governance request is ever made.
+
+    Carries a machine-readable :class:`IdentityRejectionReason` in
+    ``reason_code`` (the :class:`ReceiptValidationError` precedent): relying
+    parties route on the code, never on message prose. ``None`` only on a
+    hand-constructed instance; every library raise site populates it.
     """
+
+    def __init__(self, *args: object, reason_code: IdentityRejectionReason | None = None) -> None:
+        super().__init__(*args)
+        self.reason_code = reason_code
 
 
 class AuthzDeniedError(GoveZoneError):
