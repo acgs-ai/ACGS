@@ -95,6 +95,7 @@ def _verify(args: argparse.Namespace) -> int:
     result = verify_pack(
         args.pack_dir,
         verifier=verifier,
+        require_signature=True if args.require_signature else None,
         now_iso=args.now_iso,
         revoked_keys=revoked_keys,
         policy_bundle=args.policy_bundle,
@@ -160,6 +161,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify.add_argument(
         "--key-id", default=None, help="key id the receipt's signing_key_id must match"
+    )
+    verify.add_argument(
+        "--require-signature",
+        action="store_true",
+        help="fail-closed on unsigned packs: a declared-accept receipt MUST carry a signature",
     )
     verify.add_argument(
         "--revoked-keys",

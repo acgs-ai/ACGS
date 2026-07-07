@@ -8,8 +8,11 @@ Three contracts are pinned here:
    never silent.
 2. **Fail-closed verification.** Every single-edit tamper of the golden bundle
    is rejected with a stable reason code — including the stronger attacker who
-   *recomputes the evidence digests* after tampering, which must still be
-   caught by the inner receipt/chain verification.
+   *recomputes the evidence digests* after tampering the receipt, chain,
+   evidence sections, or summary (caught by inner hash binding + re-derivation).
+   The documented residual: the generation timestamp and the replay report's
+   generate-time status are generator attestations, not offline-provable —
+   pinned by test_replay_report_status_never_upgrades_validity.
 3. **Engine independence.** ``gove_zone.proofpack`` must not import the policy
    engine at module scope (mirror of the verifier's §5.4 guard); the replay
    tier's engine imports stay lazy.
@@ -242,6 +245,81 @@ def test_tampered_summary_fails_integrity(tmp_path: Path) -> None:
     assert result.integrity_status == "tampered"
 
 
+def test_tampered_summary_with_rehashed_evidence_still_fails(tmp_path: Path) -> None:
+    """Code-review HIGH regression: the auditor/regulator prose must not be
+    rewritable even by the attacker who recomputes every evidence digest. The
+    summary is re-derived from the hash-bound receipt at verify time.
+    """
+    pack = _copy_golden(tmp_path)
+    summary = pack / SUMMARY_FILE
+    summary.write_text(
+        summary.read_text(encoding="utf-8").replace(
+            "`runtime.file.write`", "`runtime.harmless.noop`"
+        ),
+        encoding="utf-8",
+    )
+    _rehash_evidence(pack)
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert result.integrity_status == "intact"  # digests recomputed by the attacker
+    assert PackRejectionReason.SUMMARY_BINDING_MISMATCH in result.reasons
+
+
+def test_forged_replay_status_with_rehashed_evidence_fails_summary_binding(
+    tmp_path: Path,
+) -> None:
+    # Downgrading/upgrading the replay status desynchronises the summary's
+    # replay line from the report; the re-render catches it.
+    pack = _copy_golden(tmp_path)
+    _edit_json(pack / REPLAY_REPORT_FILE, lambda d: d.__setitem__("status", "not_available"))
+    _rehash_evidence(pack)
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert PackRejectionReason.SUMMARY_BINDING_MISMATCH in result.reasons
+
+
+def test_replay_report_status_never_upgrades_validity(tmp_path: Path) -> None:
+    """Pin the attestation boundary: a recorded 'verified' replay report yields
+    replay_status='recorded' (a generator claim), never 'reverified' — so a
+    fully-consistent forgery of the report can at most claim, not prove.
+    """
+    result = verify_pack(GOLDEN, now_iso=NOW_ISO)
+    assert result.replay_status == "recorded"
+    assert result.valid  # and validity never depends on the recorded status
+
+
+def test_malformed_replay_report_fails_closed(tmp_path: Path) -> None:
+    pack = _copy_golden(tmp_path)
+    _edit_json(pack / REPLAY_REPORT_FILE, lambda d: d.__setitem__("status", "totally-fine"))
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert PackRejectionReason.REPLAY_REPORT_MALFORMED in result.reasons
+
+
+def test_evidence_not_json_fails_closed(tmp_path: Path) -> None:
+    pack = _copy_golden(tmp_path)
+    (pack / EVIDENCE_FILE).write_text("not json {", encoding="utf-8")
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert PackRejectionReason.EVIDENCE_MALFORMED in result.reasons
+
+
+def test_missing_schema_version_fails_closed(tmp_path: Path) -> None:
+    pack = _copy_golden(tmp_path)
+    _edit_json(pack / EVIDENCE_FILE, lambda d: d.pop("schema_version"))
+    result = verify_pack(pack, now_iso=NOW_ISO)
+    assert not result.valid
+    assert PackRejectionReason.SCHEMA_VERSION_MISSING in result.reasons
+
+
+def test_unexpected_exception_maps_to_verifier_error() -> None:
+    # Path(12345) raises TypeError before any tier runs; the top-level guard
+    # must fold it into a fail-closed verdict, never an escaping exception.
+    result = verify_pack(12345)  # type: ignore[arg-type]
+    assert not result.valid
+    assert PackRejectionReason.VERIFIER_ERROR in result.reasons
+
+
 def test_missing_artifact_is_incomplete(tmp_path: Path) -> None:
     pack = _copy_golden(tmp_path)
     (pack / REPLAY_REPORT_FILE).unlink()
@@ -414,6 +492,16 @@ def test_generate_refuses_half_supplied_replay_material(tmp_path: Path) -> None:
         )
 
 
+def test_generate_rejects_invalid_now_iso(tmp_path: Path) -> None:
+    with pytest.raises(PackGenerationError, match="ISO-8601"):
+        generate_proof_pack(
+            tmp_path / "pack",
+            receipt_path=INPUTS / "receipts" / "r1.json",
+            audit_path=INPUTS / "audit.jsonl",
+            now_iso="yesterday-ish",
+        )
+
+
 def test_generate_refuses_overwrite_without_force(tmp_path: Path) -> None:
     dest = tmp_path / "pack"
     _generate_golden(dest)
@@ -481,6 +569,65 @@ def test_cli_generate_exits_1_on_refusal(tmp_path: Path, capsys: Any) -> None:
     )
     assert rc == 1
     assert "refusing" in capsys.readouterr().err
+
+
+def test_cli_verify_signed_pack_with_real_key_file(tmp_path: Path, capsys: Any) -> None:
+    pack = _generate_signed(tmp_path)
+    key_file = tmp_path / "trusted.pub"
+    key_file.write_bytes(_TRUSTED.public_bytes())
+    rc = acgs_main(
+        [
+            "proofpack",
+            "verify",
+            str(pack),
+            "--verifier-key",
+            str(key_file),
+            "--key-id",
+            "fixture-key-1",
+            "--require-signature",
+            "--now-iso",
+            NOW_ISO,
+        ]
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+
+
+def test_cli_verify_revoked_key_fails(tmp_path: Path, capsys: Any) -> None:
+    pack = _generate_signed(tmp_path)
+    key_file = tmp_path / "trusted.pub"
+    key_file.write_bytes(_TRUSTED.public_bytes())
+    revoked = tmp_path / "revoked.json"
+    revoked.write_text(json.dumps(["fixture-key-1"]), encoding="utf-8")
+    rc = acgs_main(
+        [
+            "proofpack",
+            "verify",
+            str(pack),
+            "--verifier-key",
+            str(key_file),
+            "--key-id",
+            "fixture-key-1",
+            "--revoked-keys",
+            str(revoked),
+            "--now-iso",
+            NOW_ISO,
+        ]
+    )
+    assert rc == 1
+    assert json.loads(capsys.readouterr().out)["valid"] is False
+
+
+def test_cli_require_signature_rejects_unsigned_pack(capsys: Any) -> None:
+    # The golden pack is unsigned (dev posture); an auditor demanding signatures
+    # must get a fail-closed verdict from the CLI.
+    rc = acgs_main(
+        ["proofpack", "verify", str(GOLDEN), "--require-signature", "--now-iso", NOW_ISO]
+    )
+    assert rc == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["valid"] is False
+    assert "UNSIGNED_REJECTED" in report["reasons"]
 
 
 def test_cli_verify_exits_2_on_half_supplied_replay_material(capsys: Any) -> None:

@@ -22,7 +22,7 @@ acgs proofpack verify <this-directory>
 | Receipt integrity (`receipt_hash` binding) | PASS at generation time |
 | Audit chain integrity | PASS (2 event(s), hash-linked) |
 | Receipt anchored in audit chain | PASS at generation time |
-| Decision replay (re-derivation) | PASS — every recorded decision was re-derived from retained raw arguments and matched the audit chain byte-for-byte. |
+| Decision replay (re-derivation) | PASS (generator attestation) — every recorded decision was re-derived from retained raw arguments at generation time and matched the audit chain byte-for-byte. Re-derive independently at verify time with `--policy-bundle`/`--side-store`. |
 | Signature | UNSIGNED (development posture) — the receipt is tamper-evident via `receipt_hash` but carries no cryptographic signature; do not treat an unsigned pack as production evidence |
 
 ## The governed action
@@ -56,10 +56,13 @@ acgs proofpack verify <this-directory>
 
 What a passing verification **proves**:
 
-1. No artifact in this pack was modified after generation (digest check).
-2. The Decision Receipt's bound fields are exactly as issued (hash binding).
-3. The audit chain is internally consistent and the receipt is anchored to a
+1. The Decision Receipt's bound fields are exactly as issued (hash binding).
+2. The audit chain is internally consistent and the receipt is anchored to a
    specific event in it.
+3. `evidence.json`'s action / actor / policy sections and this summary are
+   re-derived from the hash-bound receipt and chain at verify time — a
+   rewritten summary or evidence file fails verification even if every file
+   digest is recomputed to match.
 
 What it does **not** prove:
 
@@ -67,6 +70,10 @@ What it does **not** prove:
   out-of-band last-hash anchor to close this).
 - That the clock or identity claims inside the receipt are true — those are
   attestations of the issuing system.
+- The generation timestamp and the replay report's "verified at generation
+  time" status are generator attestations: a consistent forgery of those two
+  fields is not detectable offline. Independent replay re-derivation requires
+  the policy bundle and side store, supplied out-of-band at verify time.
 - An unsigned pack does not prove **who** issued the receipt. Only a signed
   receipt, checked against a public key you obtained independently of this
   pack, proves issuer identity.

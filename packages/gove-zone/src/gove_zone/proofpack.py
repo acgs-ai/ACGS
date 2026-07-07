@@ -109,6 +109,7 @@ class PackRejectionReason(StrEnum):
     ARTIFACT_DIGEST_MISMATCH = "ARTIFACT_DIGEST_MISMATCH"
     RECEIPT_BINDING_MISMATCH = "RECEIPT_BINDING_MISMATCH"
     EVIDENCE_BINDING_MISMATCH = "EVIDENCE_BINDING_MISMATCH"
+    SUMMARY_BINDING_MISMATCH = "SUMMARY_BINDING_MISMATCH"
     AUDIT_CHAIN_MALFORMED = "AUDIT_CHAIN_MALFORMED"
     AUDIT_BINDING_MISMATCH = "AUDIT_BINDING_MISMATCH"
     REPLAY_REPORT_MALFORMED = "REPLAY_REPORT_MALFORMED"
@@ -336,10 +337,17 @@ def generate_proof_pack(
                 f"{', '.join(existing)} (pass force=True / --force)"
             )
 
-    if now_iso is None:
-        from datetime import UTC, datetime
+    from datetime import UTC, datetime
 
+    if now_iso is None:
         now_iso = datetime.now(UTC).isoformat()
+    else:
+        try:
+            datetime.fromisoformat(now_iso)
+        except ValueError as exc:
+            raise PackGenerationError(
+                f"--now-iso is not a valid ISO-8601 timestamp: {exc}"
+            ) from exc
 
     (out / RECEIPT_FILE).write_text(receipt.to_json() + "\n", encoding="utf-8")
 
@@ -426,8 +434,10 @@ def _render_summary(
     replay_status = replay_report["status"]
     replay_line = {
         "verified": (
-            "PASS — every recorded decision was re-derived from retained raw "
-            "arguments and matched the audit chain byte-for-byte."
+            "PASS (generator attestation) — every recorded decision was re-derived "
+            "from retained raw arguments at generation time and matched the audit "
+            "chain byte-for-byte. Re-derive independently at verify time with "
+            "`--policy-bundle`/`--side-store`."
         ),
         "not_available": (
             "NOT AVAILABLE — no replay material was supplied at generation time; "
@@ -504,10 +514,13 @@ acgs proofpack verify <this-directory>
 
 What a passing verification **proves**:
 
-1. No artifact in this pack was modified after generation (digest check).
-2. The Decision Receipt's bound fields are exactly as issued (hash binding).
-3. The audit chain is internally consistent and the receipt is anchored to a
+1. The Decision Receipt's bound fields are exactly as issued (hash binding).
+2. The audit chain is internally consistent and the receipt is anchored to a
    specific event in it.
+3. `evidence.json`'s action / actor / policy sections and this summary are
+   re-derived from the hash-bound receipt and chain at verify time — a
+   rewritten summary or evidence file fails verification even if every file
+   digest is recomputed to match.
 
 What it does **not** prove:
 
@@ -515,6 +528,10 @@ What it does **not** prove:
   out-of-band last-hash anchor to close this).
 - That the clock or identity claims inside the receipt are true — those are
   attestations of the issuing system.
+- The generation timestamp and the replay report's "verified at generation
+  time" status are generator attestations: a consistent forgery of those two
+  fields is not detectable offline. Independent replay re-derivation requires
+  the policy bundle and side store, supplied out-of-band at verify time.
 - An unsigned pack does not prove **who** issued the receipt. Only a signed
   receipt, checked against a public key you obtained independently of this
   pack, proves issuer identity.
@@ -627,6 +644,22 @@ def _verify_pack_inner(
 
     reasons: list[str] = []
 
+    # Parse the replay report up front: tier 3 re-renders the summary from its
+    # status and tier 4 reports it. A malformed report fails closed here.
+    report_doc: dict[str, Any] | None = None
+    report_path = root / REPLAY_REPORT_FILE
+    if report_path.is_file():
+        try:
+            parsed = json.loads(report_path.read_text(encoding="utf-8"))
+            if not isinstance(parsed, dict) or parsed.get("status") not in {
+                "verified",
+                "not_available",
+            }:
+                raise ValueError("unexpected replay report shape")
+            report_doc = parsed
+        except (ValueError, OSError):
+            reasons.append(PackRejectionReason.REPLAY_REPORT_MALFORMED)
+
     # --- tier 1: artifact integrity -----------------------------------------
     declared = evidence.get("artifacts")
     declared = declared if isinstance(declared, dict) else {}
@@ -698,6 +731,27 @@ def _verify_pack_inner(
                 or chain_doc.get("event_count") != len(events)
             ):
                 reasons.append(PackRejectionReason.AUDIT_BINDING_MISMATCH)
+
+            # The summary is deterministic given the receipt, the chain, and the
+            # replay status, so it is re-rendered here and byte-compared — the
+            # auditor/regulator prose cannot be rewritten even by an attacker who
+            # recomputes every evidence digest. Rendered with chain valid=True
+            # because generation refuses to write a pack from an invalid chain;
+            # a chain broken after generation is caught by the inner verifier.
+            summary_path = root / SUMMARY_FILE
+            if report_doc is not None and summary_path.is_file():
+                try:
+                    expected_summary = _render_summary(
+                        receipt=receipt,
+                        chain={"valid": True},
+                        event_count=len(events),
+                        replay_report=report_doc,
+                        now_iso=str(evidence.get("generated_at")),
+                    )
+                    if summary_path.read_text(encoding="utf-8") != expected_summary:
+                        reasons.append(PackRejectionReason.SUMMARY_BINDING_MISMATCH)
+                except Exception:  # noqa: BLE001 — an unrenderable summary is a mismatch, never a pass.
+                    reasons.append(PackRejectionReason.SUMMARY_BINDING_MISMATCH)
     else:
         # Missing artifacts already recorded in tier 1; the inner tiers cannot run.
         if PackRejectionReason.ARTIFACT_MISSING not in reasons:
@@ -705,17 +759,10 @@ def _verify_pack_inner(
 
     # --- tier 4: replay -------------------------------------------------------
     replay_status = "not_available"
-    report_path = root / REPLAY_REPORT_FILE
-    if report_path.is_file():
-        try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-            status = report.get("status")
-            if status not in {"verified", "not_available"}:
-                raise ValueError(f"unexpected replay status {status!r}")
-            if status == "verified":
-                replay_status = "recorded"
-        except (ValueError, OSError):
-            reasons.append(PackRejectionReason.REPLAY_REPORT_MALFORMED)
+    if report_doc is not None and report_doc.get("status") == "verified":
+        # A recorded generate-time report is an ATTESTATION ("recorded"), never
+        # treated as re-verification; only an out-of-band re-run upgrades it.
+        replay_status = "recorded"
 
     if (policy_bundle is None) != (side_store is None):
         reasons.append(PackRejectionReason.REPLAY_MATERIAL_MALFORMED)
