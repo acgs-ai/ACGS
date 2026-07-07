@@ -177,6 +177,19 @@ class SigningError(GoveZoneError):
     """
 
 
+class IdentityError(GoveZoneError):
+    """Raised when identity resolution or role mapping fails — fail-closed.
+
+    Covers the Identity/Authority layers (:mod:`gove_zone.identity`): unknown or
+    revoked credentials, credential-type mismatches, workload audience
+    mismatches, expired tokens, and principals with no mapped role. Distinct
+    from :class:`AuthzDeniedError` (a resolved principal refused at the executor
+    allowlist) and :class:`ReceiptValidationError` (a receipt defect): an
+    ``IdentityError`` means no principal was established at all, so no
+    governance request is ever made.
+    """
+
+
 class AuthzDeniedError(GoveZoneError):
     """Raised at the executor gate when the acting principal is not authorized.
 
