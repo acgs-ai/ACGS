@@ -31,7 +31,7 @@ def normalize_path_context(path: str | Sequence[str] | None = None) -> tuple[str
     return tuple(segment for segment in (s.strip() for s in raw_segments) if segment)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ToolCall:
     """A proposed tool invocation.
 
