@@ -260,7 +260,7 @@ class Kernel:
             actor=call.actor,
             path=call.path,
             state_hash=call.state_hash(),
-            decision_request_hash=call.decision_request_hash(),
+            decision_request_hash=call._decision_request_hash(record.argument_hash),
         )
 
     def _authz_check(self, call: ToolCall) -> DecisionRecord | None:

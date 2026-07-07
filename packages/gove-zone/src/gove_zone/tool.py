@@ -81,13 +81,23 @@ class ToolCall:
         This hash binds actor + path + goal + tool + argument hash + state
         hash without storing potentially large/sensitive state inline.
         """
+        return self._decision_request_hash(self.argument_hash())
+
+    def _decision_request_hash(self, argument_hash: str) -> str:
+        """Build the decision-request hash from a precomputed argument hash.
+
+        Factored out so a caller that already holds this call's argument hash
+        (e.g. the kernel, from ``record.argument_hash``) can avoid recomputing
+        it. The public :meth:`decision_request_hash` delegates here with a
+        freshly computed hash, so both produce byte-identical output.
+        """
         return sha256_json(
             {
                 "actor": self.actor,
                 "path": list(self.path),
                 "goal": self.goal,
                 "tool": self.name,
-                "argument_hash": self.argument_hash(),
+                "argument_hash": argument_hash,
                 "state_hash": self.state_hash(),
             }
         )
