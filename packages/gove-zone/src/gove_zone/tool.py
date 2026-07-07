@@ -80,6 +80,12 @@ class ToolCall:
 
         This hash binds actor + path + goal + tool + argument hash + state
         hash without storing potentially large/sensitive state inline.
+
+        Note: the kernel derives this hash from the policy-supplied
+        ``DecisionRecord.argument_hash`` (all built-in policies set it to
+        ``sha256_json(dict(call.args))``); a custom policy that emits a
+        divergent argument_hash will see that value bound here, keeping the
+        decision request consistent with the receipt's stored argument_hash.
         """
         return self._decision_request_hash(self.argument_hash())
 
