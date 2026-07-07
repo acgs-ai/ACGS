@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
 from gove_zone.errors import ReceiptValidationError, UnknownToolError
 from gove_zone.kernel import Kernel
@@ -181,6 +182,68 @@ def test_verify_receipt_offline_checks_all_bindings(tmp_path) -> None:
             arguments={"report_id": "r-1"},
             actor=AGENT,
             now_iso="2999-01-01T00:00:00+00:00",
+        )
+
+
+def test_consumption_ledger_enforces_single_use(tmp_path) -> None:
+    """A gateway-level ledger burns the receipt on first execution."""
+    ledger = ReceiptConsumptionLedger(tmp_path / "ledger.jsonl")
+    gateway, executed = _gateway(tmp_path, consumption_ledger=ledger)
+    decision = gateway.authorize("read_report", {"report_id": "r-1"}, actor=AGENT)
+    assert decision.allowed
+
+    out = gateway.execute(decision.receipt, "read_report", {"report_id": "r-1"}, actor=AGENT)
+    assert out == {"report_id": "r-1", "status": "ok"}
+
+    with pytest.raises(ReceiptValidationError):
+        gateway.execute(decision.receipt, "read_report", {"report_id": "r-1"}, actor=AGENT)
+    assert executed == [{"tool": "read_report", "report_id": "r-1"}]
+
+
+def test_production_strict_profile_works_end_to_end(tmp_path) -> None:
+    """The hardened posture (signed + single-use + TTL) runs through the
+    gateway: one governed execution, then replay is refused."""
+    pytest.importorskip("cryptography")
+    from gove_zone.signing import Ed25519Signer
+
+    signer = Ed25519Signer.generate()
+    ledger = ReceiptConsumptionLedger(tmp_path / "strict-ledger.jsonl")
+    profile = GovernanceProfile.production_strict(
+        verifier=signer, consumption_ledger=ledger, signer=signer
+    )
+    gateway, executed = _gateway(tmp_path, profile=profile, receipt_ttl_seconds=3600.0)
+
+    result = gateway.handle_tools_call(_request("read_report", {"report_id": "r-1"}), actor=AGENT)
+    assert result["isError"] is False
+    assert executed == [{"tool": "read_report", "report_id": "r-1"}]
+
+    decision = gateway.authorize("read_report", {"report_id": "r-2"}, actor=AGENT)
+    assert decision.allowed
+    gateway.execute(decision.receipt, "read_report", {"report_id": "r-2"}, actor=AGENT)
+    with pytest.raises(ReceiptValidationError):
+        gateway.execute(decision.receipt, "read_report", {"report_id": "r-2"}, actor=AGENT)
+    assert executed == [
+        {"tool": "read_report", "report_id": "r-1"},
+        {"tool": "read_report", "report_id": "r-2"},
+    ]
+
+
+def test_ambiguous_double_ledger_is_rejected_at_construction(tmp_path) -> None:
+    """A ledger on both the profile and the gateway is a config error."""
+    pytest.importorskip("cryptography")
+    from gove_zone.signing import Ed25519Signer
+
+    signer = Ed25519Signer.generate()
+    profile = GovernanceProfile.production_strict(
+        verifier=signer,
+        consumption_ledger=ReceiptConsumptionLedger(tmp_path / "profile-ledger.jsonl"),
+        signer=signer,
+    )
+    with pytest.raises(ValueError, match="ambiguous consumption ledger"):
+        _gateway(
+            tmp_path,
+            profile=profile,
+            consumption_ledger=ReceiptConsumptionLedger(tmp_path / "gateway-ledger.jsonl"),
         )
 
 

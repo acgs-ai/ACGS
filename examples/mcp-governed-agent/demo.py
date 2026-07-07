@@ -4,7 +4,7 @@ Flow demonstrated::
 
     Agent -> MCP request -> ACGS policy check -> Decision Receipt -> tool execution
 
-Four scenarios, matching the gateway's binding guarantees:
+Five scenarios, matching the gateway's binding guarantees:
 
 1. **Allowed tool** — policy ALLOW mints a receipt; the tool executes and the
    MCP result carries the receipt metadata.
@@ -13,6 +13,8 @@ Four scenarios, matching the gateway's binding guarantees:
 3. **Modified arguments** — a receipt minted for one argument set refuses a
    tampered argument set (canonical argument hashing).
 4. **Expired receipt** — a receipt past its ``expires_at`` refuses execution.
+5. **Replayed receipt** — with a consumption ledger, a spent receipt refuses
+   a second execution (single use).
 
 Local-only: no network, no MCP SDK required. The gateway is transport-neutral —
 it consumes already-parsed ``tools/call`` payloads. Runs in the explicit
@@ -28,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.kernel import Kernel
@@ -129,17 +132,37 @@ def main() -> int:
     except ReceiptValidationError:
         expiry_blocked = True
 
+    # 5. Replayed receipt: with a consumption ledger, a receipt is single-use —
+    # the first execution burns it, the second is refused.
+    ledgered_gateway = gateway_over(
+        kernel, consumption_ledger=ReceiptConsumptionLedger(workdir / "consumed.jsonl")
+    )
+    single_use = ledgered_gateway.authorize(
+        "read_customer_record", {"customer_id": "c-77"}, actor=AGENT
+    )
+    ledgered_gateway.execute(
+        single_use.receipt, "read_customer_record", {"customer_id": "c-77"}, actor=AGENT
+    )
+    replay_blocked = False
+    try:
+        ledgered_gateway.execute(
+            single_use.receipt, "read_customer_record", {"customer_id": "c-77"}, actor=AGENT
+        )
+    except ReceiptValidationError:
+        replay_blocked = True
+
     checks = {
         "allowed_tool_executed_with_receipt": allowed_ok,
         "denied_tool_blocked_without_execution": denied_ok,
         "modified_arguments_blocked": tamper_blocked,
         "expired_receipt_blocked": expiry_blocked,
+        "replayed_receipt_blocked": replay_blocked,
         "side_effects_observed": executed,
     }
     report = {
         "status": "pass"
         if all(v is True for k, v in checks.items() if k != "side_effects_observed")
-        and executed == ["read_customer_record:c-42"]
+        and executed == ["read_customer_record:c-42", "read_customer_record:c-77"]
         else "fail",
         **checks,
         "invariant": "No valid Decision Receipt, no side effect.",

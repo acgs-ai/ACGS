@@ -103,6 +103,14 @@ class MCPGovernanceGateway:
         consumption_ledger: ReceiptConsumptionLedger | None = None,
         receipt_ttl_seconds: float | None = None,
     ) -> None:
+        if consumption_ledger is not None and profile.consumption_ledger is not None:
+            # Two ledgers means two sources of truth for "already spent" — an
+            # ambiguity the gate must not resolve silently. Fail loud at
+            # construction instead of at the first execute().
+            raise ValueError(
+                "ambiguous consumption ledger: both the gateway and the "
+                "governance profile carry one; configure it in exactly one place"
+            )
         self._kernel = kernel
         self._tenant_id = tenant_id
         self._execution_boundary = execution_boundary
@@ -202,6 +210,13 @@ class MCPGovernanceGateway:
             tool_fn = self._kernel.registry.get(name)
         except KeyError:
             raise UnknownToolError(name) from None
+        # Single kwargs dict: the strict profile's as_gate_kwargs() already
+        # carries consumption_ledger, so a second explicit keyword would raise
+        # TypeError at every call. __init__ rejects the both-configured case;
+        # here the gateway-level ledger only fills the gap the profile left.
+        gate_kwargs = dict(self._profile.as_gate_kwargs())
+        if self._ledger is not None:
+            gate_kwargs["consumption_ledger"] = self._ledger
         return execute_with_receipt(
             tool_fn=tool_fn,
             args=dict(arguments or {}),
@@ -210,8 +225,7 @@ class MCPGovernanceGateway:
             expected_execution_boundary=self._execution_boundary,
             expected_action=name,
             expected_actor=actor,
-            consumption_ledger=self._ledger,
-            **self._profile.as_gate_kwargs(),
+            **gate_kwargs,
         )
 
     # -- one-step MCP envelope ---------------------------------------------- #

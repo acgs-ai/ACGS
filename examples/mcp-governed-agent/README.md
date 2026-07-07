@@ -44,7 +44,10 @@ scenario:
   refused execution with `customer_id: c-999`.
 - `expired_receipt_blocked` — a receipt past its `expires_at` refused
   execution.
-- `side_effects_observed` — exactly one side effect total: the allowed read.
+- `replayed_receipt_blocked` — with a `ReceiptConsumptionLedger` configured,
+  the first execution burned the receipt and the replay was refused.
+- `side_effects_observed` — exactly two side effects total: the allowed read
+  and the single-use read; every other scenario terminated before the tool.
 
 Failure case: any scenario where a side effect happens without a valid,
 matching, unexpired receipt flips `status` to `fail` and the script exits
@@ -52,11 +55,13 @@ non-zero. The deny, tamper, and expiry paths all terminate before the tool
 callable is reached.
 
 What is proven: MCP tool calls only execute through a policy decision plus a
-receipt whose tool-name, argument-hash, identity, and expiry bindings all
-verify at the execution gate — and denials, tampered arguments, and expired
-receipts are refused fail-closed. No valid Decision Receipt, no side effect.
+receipt whose tool-name, argument-hash, identity, expiry, and single-use
+bindings all verify at the execution gate — and denials, tampered arguments,
+expired receipts, and replayed receipts are refused fail-closed. No valid
+Decision Receipt, no side effect.
 
 What is NOT proven here: transport authentication of the calling agent (the
-demo passes `actor` in-process; see `docs/SECURITY_MODEL.md`), signed-receipt
-verification (dev profile is explicitly unsigned), and single-use enforcement
-(see `ReceiptConsumptionLedger`, exercised in the package tests).
+demo passes `actor` in-process; see `docs/SECURITY_MODEL.md`) and
+signed-receipt verification (dev profile is explicitly unsigned; the signed
+`GovernanceProfile.production_strict` posture is exercised in the package
+tests).
