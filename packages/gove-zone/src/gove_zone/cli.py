@@ -844,12 +844,23 @@ def _tool_call_from_hook_payload(payload: Mapping[str, Any]) -> Any:
 
     The governed-loop-v2 reference monitor (``.claude/hooks/loop-pretool-guard.sh``)
     passes the Claude Code PreToolUse JSON — ``{tool_name, tool_input, ...}`` — on
-    stdin. ``tool_name`` is the real host tool ("Bash", "Write", "Edit", "Read"),
-    which is what the policy's ``tools:`` field must match; the discriminating
-    content lives in ``tool_input`` (``command`` for Bash, ``file_path`` for
-    Write/Edit), which we surface as ``state.command`` / ``state.path`` for the
-    policy's ``state_contains`` matcher. Keying rules on the real tool name (not a
-    synthetic ``shell.exec`` / ``git.push``) is what closes the shell-bypass hole.
+    stdin. ``tool_name`` is the real host tool ("Bash", "Write", "Edit", ...), which
+    is what the policy's ``tools:`` field must match; the discriminating content
+    lives in ``tool_input`` (``command`` for Bash, ``file_path`` for the write
+    tools), surfaced as ``state.command`` / ``state.path`` for the policy's
+    ``state_contains`` substring matcher. Rules must key on the real host tool name
+    — a rule scoped to a name the host never sends (e.g. a synthetic ``shell.exec``)
+    can never fire, which is a silent no-op, not a gate.
+
+    ``state.command`` whitespace is collapsed so trivial spacing variants
+    (``git  push``, tabs, newlines) — which the shell treats as equivalent — cannot
+    dodge a substring rule. Substring matching is still COARSE by construction (a
+    declarative defense-in-depth layer, not a hard boundary): the hook's
+    flag-order-independent regex backstop and settings.json remain the primary
+    gates. This mapping does not, and cannot, turn a shell command string into a
+    guarantee about file writes — a ``Bash`` redirect writing a path is opaque to
+    ``state.path``; guarding structured file writes is the host write-tool matcher's
+    and settings.json's job, not this Bash-surface policy's.
     """
     from gove_zone.tool import ToolCall
 
@@ -859,10 +870,11 @@ def _tool_call_from_hook_payload(payload: Mapping[str, Any]) -> Any:
     raw_input = payload.get("tool_input") or {}
     if not isinstance(raw_input, Mapping):
         raise ValueError("tool_input must be a JSON object")
-    command = raw_input.get("command")
+    raw_command = raw_input.get("command")
+    command = " ".join(raw_command.split()) if isinstance(raw_command, str) else ""
     path = raw_input.get("file_path") or raw_input.get("path") or raw_input.get("notebook_path")
     state = {
-        "command": command if isinstance(command, str) else "",
+        "command": command,
         "path": path if isinstance(path, str) else "",
     }
     return ToolCall(name=tool_name, args=dict(raw_input), state=state)
