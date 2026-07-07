@@ -57,7 +57,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/gove_zone"]
+packages = ["src/gove_zone", "src/mcp_gateway"]
 
 [tool.ruff]
 line-length = 100
