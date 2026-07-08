@@ -1,0 +1,101 @@
+# gove-zone build-loop reference-monitor policy (Pack II artifact B1).
+#
+# Consumed by the governed-loop-v2 PreToolUse reference monitor
+# (.claude/hooks/loop-pretool-guard.sh), which pipes each tool-call through
+# `gove-zone validate --policy .claude/policy/build.yaml --stdin`. That subcommand
+# maps the host PreToolUse payload ({tool_name, tool_input}) to a ToolCall and
+# evaluates it here; ALLOW exits 0 (proceed), DENY/ESCALATE exit 2 (the hook's
+# `|| deny` blocks the side effect).
+#
+# SCOPE — THIS IS A BASH-SURFACE POLICY. In this repo, loop-pretool-guard.sh is
+# registered under the `Bash` PreToolUse matcher only, so `gove-zone validate`
+# only ever sees Bash tool-calls. This policy therefore governs shell COMMANDS.
+# It deliberately does NOT guard structured file writes (Write / Edit / MultiEdit
+# / NotebookEdit): those tool-calls never reach this hook, and a shell redirect
+# (`> file`, `tee`, `cp`) is opaque to a command-substring matcher. File-path
+# governance is the host write-tool matcher's and settings.json's job; a rule here
+# scoped to `tools: [Write]` would be dead, not a gate. Do not add one and claim it
+# enforces — that would be a silent overclaim.
+#
+# MATCHING IS COARSE, DEFENSE-IN-DEPTH. `state_contains` is a substring test over
+# the (whitespace-normalized) command; it is NOT flag-order-independent and NOT a
+# hard boundary. The hook's own regex backstop (flag-order-independent
+# rm -rf / pipe-to-shell / permission-skip / force-push) runs BEFORE this policy
+# and is the primary catch; settings.json deny-rules are the harness-level gate.
+# The value this declarative layer adds over the regex is (1) ordinary-`git push`
+# ESCALATION (the regex only blocks force-push) and (2) an auditable, versioned,
+# ledgered record of every allow/deny decision with a reason.
+#
+# GRAMMAR: real gove-zone grammar (YAMLPolicy -> RuleSetPolicy). `{id, rules: [...]}`;
+# effects are deny / escalate only; RuleSetPolicy is ALLOW-BY-DEFAULT (an unmatched
+# call proceeds, so ordinary build/test commands run). Positive authorization is a
+# per-rule `allow:` exemption (actor / trust tier), never `effect: allow`.
+#
+# Tool names below are the host's, matched EXACTLY against `tool_name`.
+# ENFORCEMENT REQUIRES PyYAML (the optional `yaml` extra: pip install
+# 'gove-zone[yaml]'). If PyYAML is absent, `gove-zone validate` degrades to allow
+# (the regex backstop + settings.json still gate); it never bricks the loop.
+#
+# Verify (real host tool names, from repo root):
+#   uv run --package gove-zone --extra yaml python - <<'PY'
+#   from gove_zone.yaml_policy import YAMLPolicy
+#   from gove_zone.tool import ToolCall
+#   p = YAMLPolicy.load_yaml(".claude/policy/build.yaml")
+#   d = lambda **kw: p.evaluate(ToolCall(**kw)).decision
+#   print(d(name="Bash", state={"command": "rm -rf /"}))          # Decision.DENY
+#   print(d(name="Bash", state={"command": "git push --force"}))  # Decision.DENY
+#   print(d(name="Bash", state={"command": "git push origin x"})) # Decision.ESCALATE
+#   print(d(name="Bash", state={"command": "pytest -q"}))         # Decision.ALLOW
+#   PY
+# Machine gate: packages/gove-zone/tests/test_cli_validate.py drives the real
+# `gove-zone validate` CLI on host-shaped payloads (PyYAML present).
+
+id: gove-zone-build-guard/v1
+rules:
+  # --- Catastrophic shell actions (Bash). Declarative twins of the hook's coarse
+  # --- regex backstop; kept for an auditable, versioned deny with a reason. ----
+  - id: DENY_RECURSIVE_FORCE_DELETE
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "rm -rf"
+    reason: recursive force-delete is never permitted for the build agent
+
+  - id: DENY_REMOTE_PIPE_TO_SHELL
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "| sh"
+    reason: piping a network fetch straight into a shell is never permitted
+
+  - id: DENY_PERMISSION_BYPASS_FLAGS
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "--dangerously-skip-permissions"
+    reason: permission-bypass flags are never permitted
+
+  # Force-push is denied and MUST precede the ordinary-push escalation below:
+  # `git push --force` matches both, and first-match-wins gives deny (deny beats
+  # escalate). Substring "push --force" also catches `--force-with-lease`.
+  - id: DENY_FORCE_PUSH
+    effect: deny
+    tools: [Bash]
+    state_contains:
+      command: "push --force"
+    reason: force-push rewrites shared history and is never permitted
+
+  # --- Release surface: ordinary push escalates to a human (NET-NEW over the
+  # --- regex, which only blocks force-push). ----------------------------------
+  # A caller carrying state.trust_tier == "release-manager" is exempt (falls
+  # through to ALLOW). The PreToolUse payload carries no trust tier, so a loop's
+  # `git push` escalates -> the gate blocks it, matching the human-gated-push
+  # posture; the exemption is reachable by an integration that supplies the tier.
+  - id: ESCALATE_GIT_PUSH
+    effect: escalate
+    tools: [Bash]
+    state_contains:
+      command: "git push"
+    allow:
+      trust_tiers: [release-manager]
+    reason: pushing to a release surface requires human / release-manager authority

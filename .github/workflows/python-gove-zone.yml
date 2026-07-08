@@ -10,6 +10,7 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - '.claude/policy/**'
       - 'scripts/**'
       - 'tests/**'
       - 'Makefile'
@@ -19,6 +20,7 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - '.claude/policy/**'
       - 'scripts/**'
       - 'tests/**'
       - 'Makefile'
@@ -60,7 +62,7 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp]'
+          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp,yaml]'
 
       - name: Lint
         run: |
