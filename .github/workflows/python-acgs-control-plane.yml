@@ -1,0 +1,68 @@
+# Path-filtered CI for packages/acgs-control-plane/ — enterprise governance control plane.
+
+name: python-acgs-control-plane
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/acgs-control-plane/**'
+      - 'packages/gove-zone/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-control-plane.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/acgs-control-plane/**'
+      - 'packages/gove-zone/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-control-plane.yml'
+
+concurrency:
+  group: python-acgs-control-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/acgs-control-plane
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/acgs-control-plane/pyproject.toml'
+
+      - name: Install
+        # Mirrors python-agent-bus-analyzer.yml: uv-provisioned interpreter +
+        # explicit venv. gove-zone is a workspace member, so install it from
+        # the sibling path first (uv sources don't apply to `uv pip`).
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} --clear .venv
+          uv pip install --python .venv/bin/python --editable ../gove-zone
+          uv pip install --python .venv/bin/python --editable . --group dev
+
+      - name: Lint
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck
+        run: .venv/bin/mypy src/
+
+      - name: Test
+        run: .venv/bin/pytest -q
