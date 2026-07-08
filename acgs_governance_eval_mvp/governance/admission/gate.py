@@ -24,6 +24,11 @@ from governance.models import sha256_json, utc_now_iso
 
 SCHEMA_VERSION = "admission_gate/0.1"
 
+# Sentinel stored in receipt hash fields when canonical hashing itself failed.
+# A replay verifier can never reproduce it from real bytes, so a degraded
+# receipt always fails receipt verification — fail-closed at replay too.
+HASH_UNAVAILABLE = "unavailable:canonicalization_failure"
+
 _PRECEDENCE = {"deny": 3, "require_review": 2, "transform": 1, "allow": 0}
 
 _ENUMS: dict[str, tuple[str, ...]] = {
@@ -370,13 +375,94 @@ def _build_decision(
     }
     if reason is not None:
         body["reason"] = reason
-    body["receipt"] = make_receipt(
-        request=request,
-        decision_body=body,
-        policy_bundle=policy_bundle,
-        now=now,
-        receipt_id=receipt_id,
-    )
+    try:
+        body["receipt"] = make_receipt(
+            request=request,
+            decision_body=body,
+            policy_bundle=policy_bundle,
+            now=now,
+            receipt_id=receipt_id,
+        )
+    except Exception as exc:
+        # Fail closed: if the canonical hash of the request/decision cannot be
+        # produced, no decision built here is executable. Replace whatever
+        # action was computed (including allow) with a deny that carries a
+        # degraded, non-reproducible receipt.
+        return _canonicalization_failure_decision(
+            request=request,
+            policy_bundle=policy_bundle,
+            error=exc,
+            now=now,
+            decision_id=decision_id,
+            receipt_id=receipt_id,
+        )
+    return body
+
+
+def _safe_str(value: Any) -> str:
+    """str() that cannot raise — the fallback deny path must never fail."""
+    try:
+        return str(value)
+    except Exception:
+        return f"<unrepresentable {type(value).__name__}>"
+
+
+def _canonicalization_failure_decision(
+    *,
+    request: dict[str, Any],
+    policy_bundle: PolicyBundle,
+    error: Exception,
+    now: str | None,
+    decision_id: str | None,
+    receipt_id: str | None,
+) -> dict[str, Any]:
+    """Fail-closed deny used when canonical hashing raised mid-decision.
+
+    Every field is built from safe coercions so this constructor cannot itself
+    raise. Receipt hash fields are computed best-effort per field; any hash
+    that cannot be produced is set to :data:`HASH_UNAVAILABLE`, which no
+    replay verifier can reproduce — so the degraded receipt also fails closed
+    at verification time.
+    """
+    requested = request.get("requested_capabilities", [])
+    blocked = [_safe_str(c) for c in requested] if isinstance(requested, list) else []
+    body: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "request_id": _safe_str(request.get("request_id", "")),
+        "decision_id": decision_id or _new_decision_id(),
+        "decision": "deny",
+        "reason_code": "canonicalization_failure",
+        "policy_version": _safe_str(policy_bundle.version),
+        "matched_constraints": ["canonicalization_failure"],
+        "execution_boundary": {
+            "effective_permissions": [],
+            "required_controls": [],
+            "blocked_capabilities": blocked,
+        },
+        "transform": _empty_transform(),
+        "review": _empty_review(),
+        "reason": (
+            "fail-closed deny: canonicalization/hash failure while building the "
+            f"decision receipt: {type(error).__name__}: {_safe_str(error)}"
+        ),
+    }
+    hashes: dict[str, str] = {}
+    for field, compute in (
+        ("request_hash", lambda: sha256_json(request)),
+        ("decision_hash", lambda: sha256_json(body)),
+        ("policy_bundle_hash", lambda: policy_bundle_hash(policy_bundle)),
+    ):
+        try:
+            hashes[field] = compute()
+        except Exception:
+            hashes[field] = HASH_UNAVAILABLE
+    body["receipt"] = {
+        "receipt_id": receipt_id or _new_receipt_id(),
+        "hash_alg": "sha256",
+        **hashes,
+        "policy_version": _safe_str(policy_bundle.version),
+        "created_at": now or utc_now_iso(),
+    }
     return body
 
 

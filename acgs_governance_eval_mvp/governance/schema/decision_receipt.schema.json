@@ -15,11 +15,19 @@
   "properties": {
     "receipt_id": {"type": "string", "pattern": "^rcpt_[A-Za-z0-9_-]+$"},
     "hash_alg": {"type": "string", "enum": ["sha256"]},
-    "request_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "decision_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "policy_bundle_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "request_hash": {"$ref": "#/$defs/hash_or_unavailable"},
+    "decision_hash": {"$ref": "#/$defs/hash_or_unavailable"},
+    "policy_bundle_hash": {"$ref": "#/$defs/hash_or_unavailable"},
     "policy_version": {"type": "string"},
     "created_at": {"type": "string"}
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "hash_or_unavailable": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"const": "unavailable:canonicalization_failure"}
+      ]
+    }
+  }
 }
