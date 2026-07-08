@@ -48,6 +48,7 @@ from acgs_control_plane.models import (
     PolicyBundle,
     ReceiptRow,
     User,
+    new_id,
 )
 from acgs_control_plane.rbac import Permission, Role, role_allows
 from acgs_control_plane.schemas import (
@@ -211,35 +212,48 @@ def _register_routes(app: FastAPI) -> None:
         if exists is not None:
             raise HTTPException(status_code=409, detail="organization name already exists")
 
-        org = Organization(name=body.name)
-        session.add(org)
-        session.flush()
+        # Genesis dispatch: the org/admin rows are created INSIDE the governed
+        # callback (like every other mutation), so a non-ALLOW decision rolls
+        # back cleanly — no org, no admin, no dangling receipt FK. IDs are
+        # pre-generated because the membrane (audit chain file, actor id)
+        # needs them before the rows exist.
+        org_id = new_id()
+        admin_id = new_id()
         raw_key, key_hash = generate_api_key()
-        admin = User(
-            org_id=org.id,
-            name=body.admin_name,
-            email=str(body.admin_email),
-            role=Role.ORG_ADMIN.value,
-            api_key_hash=key_hash,
-        )
-        session.add(admin)
-        session.flush()
 
-        # Bootstrap is the one pre-tenant operation: the org (and its kernel,
-        # policy, audit chain) does not exist until this commit. Immediately
-        # after creation, record a genesis receipt through the new org's own
-        # membrane so the chain starts with a governed event.
-        principal = Principal(user_id=admin.id, org_id=org.id, name=admin.name, role=Role.ORG_ADMIN)
-        membrane = _membrane(request, session, org, principal)
+        def _do(name: str, admin_email: str) -> dict[str, str]:
+            session.add(Organization(id=org_id, name=name))
+            session.flush()
+            session.add(
+                User(
+                    id=admin_id,
+                    org_id=org_id,
+                    name=body.admin_name,
+                    email=admin_email,
+                    role=Role.ORG_ADMIN.value,
+                    api_key_hash=key_hash,
+                )
+            )
+            session.flush()
+            return {"org_id": org_id, "admin_user_id": admin_id}
+
+        principal = Principal(
+            user_id=admin_id, org_id=org_id, name=body.admin_name, role=Role.ORG_ADMIN
+        )
+        membrane = GovernanceMembrane(session, settings.audit_dir, org_id, principal)
+        # persist_blocked_row=False: on DENY/ESCALATE the org itself is rolled
+        # back, so a DB receipt row would dangle; the decision stays on the
+        # org's audit chain file.
         membrane.run(
             "org.create",
             {"name": body.name, "admin_email": str(body.admin_email)},
-            lambda name, admin_email: {"org_id": org.id},
+            _do,
             goal="bootstrap organization",
             path=["control-plane", "orgs"],
+            persist_blocked_row=False,
         )
         return OrgCreateResponse(
-            org_id=org.id, name=org.name, admin_user_id=admin.id, admin_api_key=raw_key
+            org_id=org_id, name=body.name, admin_user_id=admin_id, admin_api_key=raw_key
         )
 
     @app.get("/orgs/{org_id}", response_model=OrgResponse, tags=["orgs"])
@@ -631,7 +645,9 @@ def _register_routes(app: FastAPI) -> None:
         store = org_audit_store(settings.audit_dir, org.id)
         in_chain = any(event.get("event_hash") == row.audit_hash for event in store.iter_events())
         result = store.verify_chain(
-            expected_count=org.audit_anchor_count or None,
+            # 0 is a legitimate anchor (org exists, chain empty) — always
+            # pass the count so truncation-to-empty is still detected.
+            expected_count=org.audit_anchor_count,
             expected_last_hash=org.audit_anchor_hash or None,
         )
         # verify_chain reports anchor mismatches as failures; split them out
@@ -693,7 +709,9 @@ def _register_routes(app: FastAPI) -> None:
         ).scalar_one()
         store = org_audit_store(settings.audit_dir, org.id)
         chain = store.verify_chain(
-            expected_count=org.audit_anchor_count or None,
+            # 0 is a legitimate anchor (org exists, chain empty) — always
+            # pass the count so truncation-to-empty is still detected.
+            expected_count=org.audit_anchor_count,
             expected_last_hash=org.audit_anchor_hash or None,
         )
         return DashboardResponse(

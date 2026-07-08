@@ -142,9 +142,19 @@ def _blocked_payload(record: DecisionRecord, audit_hash: str) -> dict[str, Any]:
 
 
 def _anchor(session: Session, org_id: str, store: ChainHashAuditStore) -> None:
+    """Advance the org's chain-tip anchor — never regress it.
+
+    The file append is serialized by the audit store's flock, but two
+    concurrent requests can commit their DB anchors out of order. The row
+    lock (``with_for_update``; no-op on SQLite, row-level on PostgreSQL)
+    serializes writers, and the monotonic guard makes a stale reader skip
+    rather than regress the anchor below the true chain length — a regressed
+    anchor would make ``verify_chain`` falsely report a healthy chain as
+    truncated.
+    """
     count, last = chain_tip(store)
-    org = session.get(Organization, org_id)
-    if org is not None:
+    org = session.get(Organization, org_id, with_for_update=True)
+    if org is not None and count >= org.audit_anchor_count:
         org.audit_anchor_count = count
         org.audit_anchor_hash = last
 
@@ -178,6 +188,7 @@ class GovernanceMembrane:
         goal: str = "",
         path: Sequence[str] = (),
         state: Mapping[str, Any] | None = None,
+        persist_blocked_row: bool = True,
     ) -> GovernedOutcome:
         """Dispatch ``fn`` as governed tool ``tool_name``; commit receipt + effect atomically.
 
@@ -185,6 +196,13 @@ class GovernanceMembrane:
         On DENY/ESCALATE: session is rolled back first, then ONLY the receipt
         row + anchor are committed, and a typed error is raised for the HTTP
         layer to map (403 / 202).
+
+        ``persist_blocked_row=False`` is for the genesis dispatch only: when
+        the governed mutation *creates the org itself*, a rolled-back DENY /
+        ESCALATE leaves no ``organizations`` row for the receipt to reference,
+        so persisting one would dangle its foreign key (an IntegrityError on
+        PostgreSQL). The decision is still on the org's audit chain file; only
+        the queryable DB row is skipped.
         """
         self.kernel.registry.register(tool_name, fn)
         call_state = {"principal_role": self.principal.role.value, **dict(state or {})}
@@ -197,34 +215,62 @@ class GovernanceMembrane:
                 state=call_state,
             )
         except DeniedError as exc:
-            self.session.rollback()
-            row = _receipt_row_from_payload(
-                self.org_id, _blocked_payload(exc.record, exc.audit_hash)
+            row = self._commit_blocked(
+                _blocked_payload(exc.record, exc.audit_hash), persist_blocked_row
             )
-            self.session.add(row)
-            _anchor(self.session, self.org_id, self.store)
-            self.session.commit()
             raise PolicyDeniedError(row, exc.record.reason) from exc
         except EscalateError as exc:
-            self.session.rollback()
-            row = _receipt_row_from_payload(
-                self.org_id, _blocked_payload(exc.record, exc.audit_hash)
+            row = self._commit_blocked(
+                _blocked_payload(exc.record, exc.audit_hash), persist_blocked_row
             )
-            self.session.add(row)
-            _anchor(self.session, self.org_id, self.store)
-            self.session.commit()
             raise PolicyEscalatedError(row, exc.record.reason) from exc
-        except Exception:
-            # Tool execution failed after ALLOW: the kernel already appended a
-            # failure event to the audit chain. No partial side effect may
-            # survive.
+        except Exception as exc:
+            # Tool execution failed after ALLOW: the kernel appended a
+            # synthesized ":failure" DENY event to the audit chain
+            # (best-effort). No partial side effect may survive, and the
+            # failure must stay visible in the queryable receipts store —
+            # these are exactly the receipts a compliance review needs.
             self.session.rollback()
+            self._persist_failure_row(tool_name, exc)
             _anchor(self.session, self.org_id, self.store)
             self.session.commit()
             raise
 
         row = self._persist_allowed(receipt)
         return GovernedOutcome(result=result, receipt=row, decision=row.decision)
+
+    def _commit_blocked(self, payload: dict[str, Any], persist_row: bool) -> ReceiptRow:
+        """Rollback the blocked mutation, commit only the receipt + anchor."""
+        self.session.rollback()
+        row = _receipt_row_from_payload(self.org_id, payload)
+        if persist_row:
+            self.session.add(row)
+            _anchor(self.session, self.org_id, self.store)
+            self.session.commit()
+        return row
+
+    def _persist_failure_row(self, tool_name: str, exc: Exception) -> None:
+        """Mirror the kernel's synthesized execution-failure event into the DB.
+
+        The kernel's append is best-effort (suppressed on error), so only
+        persist a row when the failure event actually reached the chain.
+        """
+        last_event: dict[str, Any] | None = None
+        for event in self.store.iter_events():
+            last_event = event
+        if (
+            last_event is None
+            or last_event.get("tool") != tool_name
+            or not str(last_event.get("event_id", "")).endswith(":failure")
+        ):
+            return
+        payload = {
+            **last_event,
+            "audit_hash": str(last_event.get("event_hash", "")),
+            "result_hash": None,
+            "error_class": type(exc).__name__,
+        }
+        self.session.add(_receipt_row_from_payload(self.org_id, payload))
 
     def _persist_allowed(self, receipt: Receipt) -> ReceiptRow:
         row = _receipt_row_from_payload(self.org_id, receipt.to_dict())

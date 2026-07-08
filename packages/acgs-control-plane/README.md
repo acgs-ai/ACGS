@@ -43,6 +43,13 @@ hash) is anchored in the `organizations` row inside the same transaction as ever
 receipt. `POST .../receipts/{id}/verify` re-walks the chain **and** cross-checks the
 database anchor, so both in-place edits (hash mismatch) and truncation/rollback
 (anchor mismatch) are detected — neither store can silently rewrite the other.
+Anchor writes take a row-level lock (PostgreSQL) and are monotonic — a stale
+concurrent writer skips rather than regressing the anchor, so ordinary
+concurrent traffic cannot produce false tamper reports.
+
+Post-ALLOW execution failures (the tool ran and raised) are mirrored from the
+kernel's synthesized `:failure` chain event into the receipts table, so the
+explorer, dashboard, and exports stay consistent with the chain.
 
 ## Run
 
@@ -80,3 +87,9 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   when the schema stabilises.
 - The chain-tip anchor is written by the same service that writes the chain — it
   detects accidents and file-level tampering, not a fully compromised service.
+- **A blocked bootstrap leaves no DB receipt**: if a policy ever denies/escalates
+  `org.create`, the org rolls back entirely, so the decision exists only on that
+  org-id's audit chain file (a DB row would dangle its foreign key).
+- **An export never references its own receipt**: the `export.generate` receipt is
+  minted after the bundle is sealed, so it appears in the *next* export — evidence
+  chains forward.
