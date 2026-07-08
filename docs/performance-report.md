@@ -28,7 +28,7 @@ All CPU-side governance work (policy scan, hashing, receipt checks) totals
 
 Every optimization is behavior-preserving: fail-closed semantics, chain rules,
 and receipt validation checks are untouched. Full gate after the pass:
-**755 passed / 0 failed / 1 skipped** (`packages/gove-zone/tests` +
+**956 passed / 0 failed / 1 skipped (post-rebase onto master, which grew the suite)** (`packages/gove-zone/tests` +
 `packages/gove-zone/benchmarks`, dev+crypto extras).
 
 ## Methodology
@@ -48,8 +48,16 @@ and receipt validation checks are untouched. Full gate after the pass:
   tampered receipt must fail validation, and `replay_bundle` must report
   `valid: true` with all events matched (asserted at every scale, including
   100,005/100,005 events matched at n=100k).
-- Baseline = master @ `98f6f18`; optimized = this branch @ `47903fb`.
-  Raw JSON: `.omc/bench/{baseline,optimized}.json` (local, not committed).
+- Baseline = master @ `98f6f18`; optimized = this branch @ `47903fb` (later
+  rebased onto master @ `deb0543`, which independently landed PR #229's
+  byte-identical hot-path micro-optimizations — `slots=True` dataclasses and
+  canonical-string hashing in `BoundaryPolicy`; the rebase reconciles the two
+  passes, moving the `ToolCall` memo into a dedicated slot). A post-rebase
+  re-run at 100/1k reproduces every figure within noise (replay 22.8–24.3k
+  ev/s, batched audit 67k ev/s at 1k, dispatch ~10.0–10.2 ms); the 100k
+  figures are from the pre-rebase run.
+  Raw JSON: `.omc/bench/{baseline,optimized,postrebase-1k}.json` (local, not
+  committed).
 
 ## Results
 
@@ -111,7 +119,7 @@ through `append_many`.
 
 ## What was optimized
 
-All in `packages/gove-zone/src/gove_zone/`, commit `47903fb`:
+All in `packages/gove-zone/src/gove_zone/` (this branch):
 
 1. **Replay (algorithmic, the big win).** `replay_bundle` called
    `ReplaySideStore.get(event_id)` per event, and `get` rescans the whole
@@ -153,7 +161,7 @@ All in `packages/gove-zone/src/gove_zone/`, commit `47903fb`:
 
 ## Verification
 
-- `uv run --package gove-zone --extra dev --extra crypto python -m pytest packages/gove-zone/tests packages/gove-zone/benchmarks --import-mode=importlib -q` → **755 passed, 0 failed, 1 skipped** (junitxml-verified).
+- `uv run --package gove-zone --extra dev --extra crypto python -m pytest packages/gove-zone/tests packages/gove-zone/benchmarks --import-mode=importlib -q` → **956 passed, 0 failed, 1 skipped post-rebase** (junitxml-verified).
 - New targeted tests: `tests/test_perf_optimizations.py` (17 tests: batch
   chain validity, cross-instance fast-path fallback for both `append` and
   `append_many`, memoization parity with un-memoized hashes, mid-flight
