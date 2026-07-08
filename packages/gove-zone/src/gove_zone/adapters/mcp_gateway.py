@@ -40,6 +40,7 @@ import functools
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -124,6 +125,11 @@ class GatewayConfig:
     server_name: str = "gove-zone-gateway"
     authority: str = "gove-zone-mcp-gateway"
     downstream: Mapping[str, Any] = field(default_factory=dict)
+    # Optional receipt liveness bound: when set, every minted tools/call
+    # receipt carries ``expires_at = now + ttl``. Required in practice for the
+    # ``production_strict`` profile (``require_expiry=True`` rejects receipts
+    # with no expiry at the gate — a TTL-less strict gateway can never forward).
+    receipt_ttl_seconds: float | None = None
 
     def __post_init__(self) -> None:
         # Self-validation guard, fail-closed at config load: the validator must
@@ -290,7 +296,20 @@ class GovernedGateway:
         # ledger instance makes every burn visible to both the ALLOW gate and
         # the escalation-resume gate.
         self._audit = audit_store or ChainHashAuditStore(config.audit_path)
-        self._ledger = ledger or ReceiptConsumptionLedger(config.ledger_path)
+        profile_ledger = config.profile.consumption_ledger
+        if profile_ledger is not None:
+            # The strict profile carries its own ledger. Two live ledgers would
+            # mean two sources of truth for "already spent"; fail loud rather
+            # than silently splitting burns across files.
+            if ledger is not None and ledger is not profile_ledger:
+                raise ValueError(
+                    "ambiguous consumption ledger: the governance profile and the "
+                    "gateway constructor both supply one; configure it in exactly "
+                    "one place"
+                )
+            self._ledger = profile_ledger
+        else:
+            self._ledger = ledger or ReceiptConsumptionLedger(config.ledger_path)
         self._sessions: dict[int, SessionContext] = {}
         # Parked escalations awaiting human approval, keyed by the ESCALATE
         # record's event_id.
@@ -425,9 +444,37 @@ class GovernedGateway:
             request_id=record.decision_request_hash or record.event_id,
             validator=self._config.validator,
             authority=self._config.authority,
+            expires_at=self._receipt_expires_at(),
             signer=self._config.profile.signer,
         )
         return await self._forward_allow(name, raw_args, receipt, ctx.principal, record, audit_hash)
+
+    def _receipt_expires_at(self) -> str:
+        """``expires_at`` for a freshly minted receipt ("" = no liveness bound).
+
+        With ``config.receipt_ttl_seconds`` unset and a strict profile
+        (``require_expiry=True``) the gate rejects every minted receipt —
+        deliberately fail-closed rather than silently immortal.
+        """
+        ttl = self._config.receipt_ttl_seconds
+        if ttl is None:
+            return ""
+        return (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
+
+    def _gate_kwargs(self) -> dict[str, Any]:
+        """Merged side-effect-gate keywords: profile posture + the ledger.
+
+        The strict profile's ``as_gate_kwargs()`` already emits
+        ``consumption_ledger``; passing the gateway's ledger as a second
+        explicit keyword raised ``TypeError`` on every governed call (the bug
+        that made ``production_strict`` unusable through this gateway).
+        ``__init__`` guarantees ``self._ledger`` IS the profile's ledger when
+        the profile carries one, so this override never changes which ledger
+        burns — it only removes the duplicate keyword.
+        """
+        kwargs = dict(self._config.profile.as_gate_kwargs())
+        kwargs["consumption_ledger"] = self._ledger
+        return kwargs
 
     async def _forward_allow(
         self,
@@ -465,8 +512,7 @@ class GovernedGateway:
                     expected_execution_boundary=self._config.execution_boundary,
                     expected_action=name,
                     expected_actor=principal,
-                    consumption_ledger=self._ledger,
-                    **self._config.profile.as_gate_kwargs(),
+                    **self._gate_kwargs(),
                 )
             )
         except ReceiptValidationError as exc:
@@ -553,8 +599,7 @@ class GovernedGateway:
             tenant_id=self._config.tenant_id,
             execution_boundary=self._config.execution_boundary,
             expected_actor=pending.record.actor,
-            consumption_ledger=self._ledger,
-            **self._config.profile.as_gate_kwargs(),
+            **self._gate_kwargs(),
         )
 
         def _forward(**kwargs: Any) -> mcp_types.CallToolResult:
