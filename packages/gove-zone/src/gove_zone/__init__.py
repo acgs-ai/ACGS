@@ -89,6 +89,13 @@ from gove_zone.frontend_contract import (
     receipt_to_governed_action,
     record_to_governed_action,
 )
+from gove_zone.gateway import (
+    BypassAttemptError,
+    GatewayResult,
+    SealedTool,
+    UniversalGateway,
+    http_json_tool,
+)
 from gove_zone.identity import (
     Credential,
     CredentialType,
@@ -226,9 +233,14 @@ __all__ = [
     "Ed25519Signer",
     "EscalateError",
     "ExecutionBoundary",
+    "BypassAttemptError",
     "GateMode",
     "GateModeError",
+    "GatewayResult",
     "GovernanceProfile",
+    "SealedTool",
+    "UniversalGateway",
+    "http_json_tool",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
