@@ -1,0 +1,298 @@
+{
+  "category": "audit_completeness",
+  "scenarios": [
+    {
+      "attack": false,
+      "category": "audit_completeness",
+      "description": "Positive control: an untouched hash chain must verify.",
+      "expected_outcome": "valid",
+      "id": "AUD-001",
+      "params": {
+        "count": 3
+      },
+      "probe": "audit_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control",
+        "chain-hash"
+      ],
+      "title": "Intact 3-event chain verifies"
+    },
+    {
+      "attack": false,
+      "category": "audit_completeness",
+      "description": "Positive control: an untouched hash chain must verify.",
+      "expected_outcome": "valid",
+      "id": "AUD-002",
+      "params": {
+        "count": 5
+      },
+      "probe": "audit_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control",
+        "chain-hash"
+      ],
+      "title": "Intact 5-event chain verifies"
+    },
+    {
+      "attack": false,
+      "category": "audit_completeness",
+      "description": "Positive control: an untouched hash chain must verify.",
+      "expected_outcome": "valid",
+      "id": "AUD-003",
+      "params": {
+        "count": 8
+      },
+      "probe": "audit_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control",
+        "chain-hash"
+      ],
+      "title": "Intact 8-event chain verifies"
+    },
+    {
+      "attack": false,
+      "category": "audit_completeness",
+      "description": "Positive control: an untouched hash chain must verify.",
+      "expected_outcome": "valid",
+      "id": "AUD-004",
+      "params": {
+        "count": 12
+      },
+      "probe": "audit_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control",
+        "chain-hash"
+      ],
+      "title": "Intact 12-event chain verifies"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Removing an event breaks the previous_hash linkage and must be detected by chain verification.",
+      "expected_outcome": "detect",
+      "id": "AUD-005",
+      "params": {
+        "count": 5,
+        "drop_index": 2
+      },
+      "probe": "audit_gap",
+      "severity": "critical",
+      "tags": [
+        "chain-gap",
+        "tamper"
+      ],
+      "title": "Deleted event in 5-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Removing an event breaks the previous_hash linkage and must be detected by chain verification.",
+      "expected_outcome": "detect",
+      "id": "AUD-006",
+      "params": {
+        "count": 6,
+        "drop_index": 3
+      },
+      "probe": "audit_gap",
+      "severity": "critical",
+      "tags": [
+        "chain-gap",
+        "tamper"
+      ],
+      "title": "Deleted event in 6-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Removing an event breaks the previous_hash linkage and must be detected by chain verification.",
+      "expected_outcome": "detect",
+      "id": "AUD-007",
+      "params": {
+        "count": 8,
+        "drop_index": 4
+      },
+      "probe": "audit_gap",
+      "severity": "critical",
+      "tags": [
+        "chain-gap",
+        "tamper"
+      ],
+      "title": "Deleted event in 8-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Removing an event breaks the previous_hash linkage and must be detected by chain verification.",
+      "expected_outcome": "detect",
+      "id": "AUD-008",
+      "params": {
+        "count": 10,
+        "drop_index": 5
+      },
+      "probe": "audit_gap",
+      "severity": "critical",
+      "tags": [
+        "chain-gap",
+        "tamper"
+      ],
+      "title": "Deleted event in 10-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Swapping two events breaks the hash chain ordering and must be detected.",
+      "expected_outcome": "detect",
+      "id": "AUD-009",
+      "params": {
+        "count": 5,
+        "i": 1,
+        "j": 2
+      },
+      "probe": "audit_reorder",
+      "severity": "high",
+      "tags": [
+        "chain-reorder",
+        "tamper"
+      ],
+      "title": "Reordered events in 5-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Swapping two events breaks the hash chain ordering and must be detected.",
+      "expected_outcome": "detect",
+      "id": "AUD-010",
+      "params": {
+        "count": 6,
+        "i": 2,
+        "j": 3
+      },
+      "probe": "audit_reorder",
+      "severity": "high",
+      "tags": [
+        "chain-reorder",
+        "tamper"
+      ],
+      "title": "Reordered events in 6-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Swapping two events breaks the hash chain ordering and must be detected.",
+      "expected_outcome": "detect",
+      "id": "AUD-011",
+      "params": {
+        "count": 8,
+        "i": 3,
+        "j": 5
+      },
+      "probe": "audit_reorder",
+      "severity": "high",
+      "tags": [
+        "chain-reorder",
+        "tamper"
+      ],
+      "title": "Reordered events in 8-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Swapping two events breaks the hash chain ordering and must be detected.",
+      "expected_outcome": "detect",
+      "id": "AUD-012",
+      "params": {
+        "count": 10,
+        "i": 4,
+        "j": 6
+      },
+      "probe": "audit_reorder",
+      "severity": "high",
+      "tags": [
+        "chain-reorder",
+        "tamper"
+      ],
+      "title": "Reordered events in 10-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Editing a recorded field without recomputing the event hash must be detected (event_hash mismatch).",
+      "expected_outcome": "detect",
+      "id": "AUD-013",
+      "params": {
+        "count": 5,
+        "index": 2,
+        "new_tool": "attacker.tool"
+      },
+      "probe": "audit_tamper",
+      "severity": "critical",
+      "tags": [
+        "chain-tamper",
+        "tamper"
+      ],
+      "title": "Mutated field in 5-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Editing a recorded field without recomputing the event hash must be detected (event_hash mismatch).",
+      "expected_outcome": "detect",
+      "id": "AUD-014",
+      "params": {
+        "count": 6,
+        "index": 3,
+        "new_tool": "attacker.tool"
+      },
+      "probe": "audit_tamper",
+      "severity": "critical",
+      "tags": [
+        "chain-tamper",
+        "tamper"
+      ],
+      "title": "Mutated field in 6-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Editing a recorded field without recomputing the event hash must be detected (event_hash mismatch).",
+      "expected_outcome": "detect",
+      "id": "AUD-015",
+      "params": {
+        "count": 8,
+        "index": 4,
+        "new_tool": "attacker.tool"
+      },
+      "probe": "audit_tamper",
+      "severity": "critical",
+      "tags": [
+        "chain-tamper",
+        "tamper"
+      ],
+      "title": "Mutated field in 8-event chain detected"
+    },
+    {
+      "attack": true,
+      "category": "audit_completeness",
+      "description": "Editing a recorded field without recomputing the event hash must be detected (event_hash mismatch).",
+      "expected_outcome": "detect",
+      "id": "AUD-016",
+      "params": {
+        "count": 10,
+        "index": 5,
+        "new_tool": "attacker.tool"
+      },
+      "probe": "audit_tamper",
+      "severity": "critical",
+      "tags": [
+        "chain-tamper",
+        "tamper"
+      ],
+      "title": "Mutated field in 10-event chain detected"
+    }
+  ],
+  "suite": "acgs-benchmark/v1"
+}

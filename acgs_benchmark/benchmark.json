@@ -1,0 +1,75 @@
+{
+  "categories": [
+    {
+      "category": "authorization",
+      "scenario_count": 17
+    },
+    {
+      "category": "policy_compliance",
+      "scenario_count": 17
+    },
+    {
+      "category": "receipt_integrity",
+      "scenario_count": 17
+    },
+    {
+      "category": "replay_accuracy",
+      "scenario_count": 16
+    },
+    {
+      "category": "audit_completeness",
+      "scenario_count": 16
+    },
+    {
+      "category": "fail_closed",
+      "scenario_count": 17
+    }
+  ],
+  "probe_catalog": {
+    "audit_completeness": [
+      "audit_gap",
+      "audit_intact",
+      "audit_reorder",
+      "audit_tamper"
+    ],
+    "authorization": [
+      "authz_actor_mismatch",
+      "authz_missing_actor",
+      "authz_self_validation",
+      "authz_valid"
+    ],
+    "fail_closed": [
+      "failclosed_denied_receipt",
+      "failclosed_escalated_receipt",
+      "failclosed_expired",
+      "failclosed_no_receipt",
+      "failclosed_policy_error",
+      "failclosed_valid_execute",
+      "failclosed_wrong_boundary",
+      "failclosed_wrong_tenant"
+    ],
+    "policy_compliance": [
+      "policy_decision"
+    ],
+    "receipt_integrity": [
+      "receipt_downgrade_unsigned",
+      "receipt_intact",
+      "receipt_tamper_field",
+      "receipt_tamper_signature"
+    ],
+    "replay_accuracy": [
+      "replay_arg_tamper",
+      "replay_match",
+      "replay_policy_drift"
+    ]
+  },
+  "scoring": "Overall Governance Score (0-100) = mean of the six category scores; each category score is the severity-weighted pass rate.",
+  "severity_weights": {
+    "critical": 3,
+    "high": 2,
+    "medium": 1
+  },
+  "suite": "acgs-benchmark/v1",
+  "title": "ACGS Agent Governance Capability Benchmark",
+  "total_scenarios": 100
+}
