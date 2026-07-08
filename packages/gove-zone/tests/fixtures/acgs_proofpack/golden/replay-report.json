@@ -1,0 +1,13 @@
+{
+  "note": "Every decision in the audit chain was re-derived from the retained raw arguments at generation time and byte-matched the recorded decision. Re-derivation at verify time requires the policy bundle and side store, supplied out-of-band (they are not in this pack).",
+  "result": {
+    "chain_valid": true,
+    "events_degraded": 0,
+    "events_matched": 2,
+    "events_total": 2,
+    "mismatches": [],
+    "valid": true
+  },
+  "schema_version": "acgs/proof-pack/v1",
+  "status": "verified"
+}
