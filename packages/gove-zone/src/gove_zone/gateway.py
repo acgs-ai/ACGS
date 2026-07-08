@@ -25,13 +25,20 @@ strong-gate unification of the weaker per-framework adapters
 
 **Bypass detection.** ``register_tool`` never returns the raw callable — it
 returns a :class:`SealedTool`. A sealed tool only executes while the gateway's
-in-flight gate context authorizes exactly that tool for exactly one call;
-any other invocation (direct call, a tool internally calling another sealed
-tool, a re-entrant call after the one-shot token is spent) is **blocked before
-the side effect**, recorded as a synthesized DENY on the audit chain with
-matched rule ``BYPASS_ATTEMPT``, and raised as :class:`BypassAttemptError`.
-:meth:`UniversalGateway.bypass_attempts` lists attempts observed in-process;
-the audit chain is the tamper-evident record.
+in-flight gate grant authorizes exactly that sealed instance for exactly one
+call; any other invocation through the handle (direct call, a tool internally
+calling another sealed tool, a re-entrant call after the one-shot grant is
+spent) is **blocked before the side effect**, recorded as a synthesized DENY
+on the audit chain with matched rule ``BYPASS_ATTEMPT``, and raised as
+:class:`BypassAttemptError`. :meth:`UniversalGateway.bypass_attempts` lists
+attempts observed in-process; the audit chain is the tamper-evident record.
+
+Trust boundary: this detection covers every call *through the sealed handle*.
+It is a same-process guardrail against framework- and integration-level
+bypass, not a defense against hostile same-process Python — code that
+introspects closures or object internals can reach the raw function without
+tripping it. The cryptographic closure remains the signed receipt gate plus
+offline verification of the audit chain and consumption ledger.
 
 Scope note: the Claude Code hook surface is decision + receipt only — the
 side effect there is executed by the host runtime, which must honor the
@@ -72,7 +79,7 @@ from gove_zone.errors import (
     UnknownToolError,
 )
 from gove_zone.executor import execute_with_receipt
-from gove_zone.integration import tool_call_from_hook_payload
+from gove_zone.integration import tool_calls_from_hook_payload
 from gove_zone.kernel import Kernel
 from gove_zone.policy import Policy
 from gove_zone.profile import GovernanceProfile
@@ -98,10 +105,11 @@ _SYNTHETIC_POLICY_VERSION = "gateway/synthesized/v1"
 
 _ACTOR_ALLOWLIST_RULE = "ACTOR_NOT_ALLOWED"
 
-#: One-shot execution grant: (tool_name, spent-flag holder). Set by ``invoke``
-#: immediately around the executor gate; consumed by the sealed tool before the
-#: raw function runs, so a nested or repeated call inside the same gate window
-#: finds no grant and is detected as a bypass.
+#: One-shot execution grant bound to a specific SealedTool *instance*. Set by
+#: ``invoke`` immediately around the executor gate; consumed by that sealed
+#: tool before the raw function runs, so a nested or repeated call inside the
+#: same gate window — or a stale same-named handle — finds no usable grant and
+#: is detected as a bypass.
 _ACTIVE_GRANT: contextvars.ContextVar[_GateGrant | None] = contextvars.ContextVar(
     "gove_zone_gateway_grant", default=None
 )
@@ -123,12 +131,17 @@ class BypassAttemptError(GoveZoneError):
 
 
 class _GateGrant:
-    """Single-use permission for one sealed tool to run once."""
+    """Single-use permission for one specific SealedTool instance to run once.
 
-    __slots__ = ("spent", "tool")
+    Identity-bound (``sealed is ...``), not name-bound: a stale handle left
+    over from a replaced registration can never consume a grant issued for the
+    currently registered tool of the same name.
+    """
 
-    def __init__(self, tool: str) -> None:
-        self.tool = tool
+    __slots__ = ("sealed", "spent")
+
+    def __init__(self, sealed: SealedTool) -> None:
+        self.sealed = sealed
         self.spent = False
 
 
@@ -136,29 +149,41 @@ class SealedTool:
     """The only callable handle the gateway hands out for a registered tool.
 
     Calling it executes the underlying function *only* when the gateway has an
-    unspent gate grant for this tool name in the current context — i.e. only
-    as the ``tool_fn`` of :func:`~gove_zone.executor.execute_with_receipt`
-    inside :meth:`UniversalGateway.invoke`. Every other call is blocked,
-    audited, and raised as :class:`BypassAttemptError` before any side effect.
+    unspent gate grant for this exact sealed instance in the current context —
+    i.e. only as the ``tool_fn`` of
+    :func:`~gove_zone.executor.execute_with_receipt` inside
+    :meth:`UniversalGateway.invoke`. Every other call *through this handle* is
+    blocked, audited, and raised as :class:`BypassAttemptError` before any
+    side effect.
+
+    Trust boundary: the raw function is captured in a closure rather than
+    stored as an attribute, so no supported attribute path reaches it — but
+    same-process Python that introspects closure cells can still extract it
+    without tripping detection. This is a guardrail against accidental and
+    framework-level bypass, not a sandbox; see the module docstring.
     """
 
-    __slots__ = ("_fn", "_gateway", "name")
+    __slots__ = ("_execute", "_gateway", "name")
 
     def __init__(self, name: str, fn: Callable[..., Any], gateway: UniversalGateway) -> None:
         self.name = name
-        self._fn = fn
         self._gateway = gateway
+
+        def _execute(kwargs: dict[str, Any]) -> Any:
+            return fn(**kwargs)
+
+        self._execute = _execute
 
     def __call__(self, **kwargs: Any) -> Any:
         grant = _ACTIVE_GRANT.get()
-        if grant is None or grant.tool != self.name or grant.spent:
+        if grant is None or grant.sealed is not self or grant.spent:
             self._gateway._record_bypass_attempt(self.name, kwargs)
             raise BypassAttemptError(self.name)
         # One-shot: spend the grant BEFORE the side effect so a tool that
         # re-enters itself (or another sealed tool) inside its own execution
         # is detected rather than silently authorized.
         grant.spent = True
-        return self._fn(**kwargs)
+        return self._execute(kwargs)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"SealedTool({self.name!r})"
@@ -268,6 +293,17 @@ class UniversalGateway:
         self.receipt_ttl_seconds = receipt_ttl_seconds
         self.allowed_actors = frozenset(allowed_actors) if allowed_actors is not None else None
 
+        if profile.require_expiry and receipt_ttl_seconds is None:
+            # Fail loud at construction instead of rejecting 100% of calls at
+            # the gate: a require_expiry profile with no TTL would mint only
+            # expires_at="" receipts, and every one would be refused.
+            raise ValueError(
+                "the governance profile requires receipt expiry "
+                "(require_expiry=True) but receipt_ttl_seconds is None; every "
+                "minted receipt would be rejected at the gate — supply "
+                "receipt_ttl_seconds"
+            )
+
         resolved_audit = Path(audit_path or Path(".gove-zone") / "gateway-audit.jsonl")
         resolved_audit.parent.mkdir(parents=True, exist_ok=True)
         self._audit = ChainHashAuditStore(str(resolved_audit))
@@ -291,6 +327,7 @@ class UniversalGateway:
             self._ledger = ReceiptConsumptionLedger(str(resolved_ledger))
 
         self._tools: dict[str, SealedTool] = {}
+        self._openai_specs: dict[str, dict[str, Any]] = {}
         self._kernels: dict[str, Kernel] = {}
         self._bypass_attempts: list[dict[str, Any]] = []
 
@@ -301,11 +338,20 @@ class UniversalGateway:
 
         The raw callable is never exposed again through the gateway: surfaces
         and integrators only ever see the :class:`SealedTool`.
+
+        Fail-closed on duplicates (matching
+        :meth:`gove_zone.tool.ToolRegistry.register`): silently replacing a
+        tool would leave stale sealed handles for the same name in circulation.
         """
         if not name or not name.strip():
             raise ValueError("tool name is required")
+        if name in self._tools:
+            raise ValueError(f"tool {name!r} is already registered with this gateway")
         sealed = SealedTool(name, fn, self)
         self._tools[name] = sealed
+        # Capture the OpenAI function spec now so the raw callable does not
+        # need to be retained anywhere outside the sealed closure.
+        self._openai_specs[name] = _openai_function_spec(name, fn)
         return sealed
 
     def tool(self, name: str) -> Callable[[Callable[..., Any]], SealedTool]:
@@ -432,7 +478,7 @@ class UniversalGateway:
             signer=self.profile.signer,
         )
 
-        grant = _GateGrant(tool)
+        grant = _GateGrant(self._tools[tool])
         token = _ACTIVE_GRANT.set(grant)
         try:
             result = execute_with_receipt(
@@ -616,42 +662,12 @@ class UniversalGateway:
     def openai_tools(self) -> list[dict[str, Any]]:
         """OpenAI ``tools=[...]`` specs derived from the sealed registry.
 
-        Parameter JSON types come from the registered function's annotations
-        (best-effort; unannotated parameters map to ``"string"``). The spec
-        list and the callable set are the same registry by construction.
+        Parameter JSON types come from the registered function's annotations,
+        captured at registration time (best-effort; unannotated parameters map
+        to ``"string"``). The spec list and the callable set are the same
+        registry by construction.
         """
-        specs: list[dict[str, Any]] = []
-        for name in self.tool_names():
-            fn = self._tools[name]._fn
-            properties: dict[str, Any] = {}
-            required: list[str] = []
-            try:
-                parameters: list[inspect.Parameter] = list(
-                    inspect.signature(fn).parameters.values()
-                )
-            except (TypeError, ValueError):
-                parameters = []
-            for param in parameters:
-                if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-                    continue
-                properties[param.name] = {"type": _json_type(param.annotation)}
-                if param.default is param.empty:
-                    required.append(param.name)
-            specs.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": inspect.getdoc(fn) or "",
-                        "parameters": {
-                            "type": "object",
-                            "properties": properties,
-                            "required": required,
-                        },
-                    },
-                }
-            )
-        return specs
+        return [dict(self._openai_specs[name]) for name in self.tool_names()]
 
     def handle_openai_tool_call(
         self, tool_call: Mapping[str, Any], *, actor: str
@@ -695,6 +711,27 @@ class UniversalGateway:
 
     # -- LangGraph / LangChain surface ------------------------------------------ #
 
+    def framework_run(
+        self, actor: str, name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> Any:
+        """Shared governed execution path for framework tool wrappers.
+
+        Positional arguments are rejected loud (``TypeError``) rather than
+        silently dropped: the governance decision hashes keyword arguments, so
+        an argument that bypassed the hash would be an unbound side-effect
+        input. Refusals come back as the machine-readable envelope JSON so the
+        calling agent can self-correct.
+        """
+        if args:
+            raise TypeError(
+                f"governed tool {name!r} accepts keyword arguments only; "
+                f"got {len(args)} positional argument(s)"
+            )
+        outcome = self.invoke(actor, name, kwargs)
+        if outcome.executed:
+            return outcome.result
+        return json.dumps(outcome.to_dict(), sort_keys=True, default=str)
+
     def langgraph_tools(self, tools: Sequence[Any], *, actor: str) -> list[Any]:
         """Wrap LangChain/LangGraph tools so every ``_run`` routes through the
         strong gate as *actor*. Requires ``langchain-core`` (lazy import).
@@ -702,6 +739,11 @@ class UniversalGateway:
         Unlike :mod:`gove_zone.adapters.langgraph` (which dispatches through
         the unsigned kernel loop), these wrappers execute through the signed
         receipt gate and the single-use ledger.
+
+        Each wrapped tool registers its underlying ``_run`` on this gateway;
+        wrapping the same tool name twice (e.g. rebuilding a graph against one
+        shared gateway) raises the registry's duplicate-name ``ValueError``
+        rather than silently replacing the sealed tool.
         """
         try:
             from langchain_core.tools import BaseTool  # type: ignore[import-not-found]
@@ -719,18 +761,25 @@ class UniversalGateway:
                     return_direct=wrapped.return_direct,
                     verbose=wrapped.verbose,
                 )
-                gateway.register_tool(wrapped.name, wrapped._run)
+                # Register the tool's underlying callable (StructuredTool.func)
+                # when it exposes one; wrapped._run needs framework-injected
+                # kwargs (config/run_manager) and raises TypeError on a bare
+                # keyword call. Fallback: the public invoke() entry point of
+                # the ORIGINAL tool (never this governed wrapper, so no
+                # recursion into the gate).
+                raw = getattr(wrapped, "func", None)
+                if not callable(raw):
+
+                    def raw(**kwargs: Any) -> Any:
+                        return wrapped.invoke(kwargs)
+
+                gateway.register_tool(wrapped.name, raw)
 
             def _run(self, *args: Any, **kwargs: Any) -> Any:
-                outcome = gateway.invoke(actor, self.name, kwargs)
-                if outcome.executed:
-                    return outcome.result
-                # Surface the machine-readable refusal to the calling agent so
-                # it can self-correct; never raise raw governance internals.
-                return json.dumps(outcome.to_dict(), sort_keys=True, default=str)
+                return gateway.framework_run(actor, self.name, args, kwargs)
 
             async def _arun(self, *args: Any, **kwargs: Any) -> Any:
-                return self._run(*args, **kwargs)
+                return gateway.framework_run(actor, self.name, args, kwargs)
 
         return [GatewayGovernedTool(tool) for tool in tools]
 
@@ -746,85 +795,112 @@ class UniversalGateway:
         """Decide one Claude Code hook event (Policy → Receipt; the host runtime
         is the executor leg and must honor the returned decision).
 
-        Returns the hook contract shape: ``hookSpecificOutput`` with
-        ``permissionDecision`` ``"allow"`` / ``"deny"`` / ``"ask"`` (ESCALATE
-        and TRANSFORM map to ``"ask"`` — a hook cannot rewrite the runtime's
-        arguments, so a transform requires a human). ALLOW mints a signed
-        receipt whose anchors ride along under ``"gove_zone"``.
+        Batch-aware, deny-wins: multi-call payloads (OpenAI Responses /
+        ``tool_calls`` batches, per :func:`gove_zone.integration.
+        tool_calls_from_hook_payload`) are expanded and **every** proposed call
+        is evaluated and audited individually, so a denied action cannot be
+        smuggled past a per-tool rule by wrapping it in a batch. The single
+        returned ``permissionDecision`` is the worst individual verdict:
+        any DENY → ``"deny"``; else any ESCALATE/TRANSFORM → ``"ask"`` (a hook
+        cannot rewrite the runtime's arguments, so a transform requires a
+        human); else ``"allow"``, minting one signed receipt per call whose
+        anchors ride along under ``"gove_zone"]["receipts"]``.
 
         Fail-closed: an unrecordable decision (audit failure) or any
         governance error returns ``"deny"``.
         """
         if not actor or not actor.strip():
             raise ValueError("actor is required for hook governance (fail-closed)")
-        call = tool_call_from_hook_payload(dict(payload), action_kind=action_kind, actor=actor)
+        calls = tool_calls_from_hook_payload(dict(payload), action_kind=action_kind, actor=actor)
+        if not calls:
+            return _hook_response(action_kind, "deny", "no governable call in hook payload")
 
         if self.allowed_actors is not None and actor not in self.allowed_actors:
             return _hook_response(
                 action_kind, "deny", f"actor {actor!r} is not in the gateway actor allowlist"
             )
 
-        previous_audit_hash = self._audit.last_hash()
-        try:
-            record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
-        except GoveZoneError as exc:
-            return _hook_response(
-                action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
-            )
+        decided: list[tuple[Any, str, str]] = []  # (record, audit_hash, previous_audit_hash)
+        for call in calls:
+            previous_audit_hash = self._audit.last_hash()
+            try:
+                record, audit_hash = self._kernel_for(actor).evaluate_and_record(call)
+            except GoveZoneError as exc:
+                return _hook_response(
+                    action_kind, "deny", f"governance decision unavailable: {type(exc).__name__}"
+                )
+            decided.append((record, audit_hash, previous_audit_hash))
 
-        if record.decision is Decision.DENY:
-            return _hook_response(action_kind, "deny", record.reason or "denied by policy")
-        if record.decision in (Decision.ESCALATE, Decision.TRANSFORM):
+        denied = [record for record, _, _ in decided if record.decision is Decision.DENY]
+        if denied:
+            return _hook_response(action_kind, "deny", denied[0].reason or "denied by policy")
+        needs_human = [
+            record
+            for record, _, _ in decided
+            if record.decision in (Decision.ESCALATE, Decision.TRANSFORM)
+        ]
+        if needs_human:
+            record = needs_human[0]
             return _hook_response(
                 action_kind,
                 "ask",
                 record.reason or f"{record.decision.value} requires human review",
             )
 
-        receipt = DecisionReceipt.from_record(
-            record,
-            audit_hash=audit_hash,
-            previous_audit_hash=previous_audit_hash,
-            tenant_id=self.tenant_id,
-            execution_boundary=self.execution_boundary,
-            policy_bundle_id=self.policy_bundle_id,
-            policy_hash=self.policy.version,
-            request_id=record.decision_request_hash or record.event_id,
-            validator=self.validator,
-            authority=self.authority,
-            expires_at=self._receipt_expires_at(),
-            signer=self.profile.signer,
-        )
+        anchors: list[dict[str, Any]] = []
+        for record, audit_hash, previous_audit_hash in decided:
+            receipt = DecisionReceipt.from_record(
+                record,
+                audit_hash=audit_hash,
+                previous_audit_hash=previous_audit_hash,
+                tenant_id=self.tenant_id,
+                execution_boundary=self.execution_boundary,
+                policy_bundle_id=self.policy_bundle_id,
+                policy_hash=self.policy.version,
+                request_id=record.decision_request_hash or record.event_id,
+                validator=self.validator,
+                authority=self.authority,
+                expires_at=self._receipt_expires_at(),
+                signer=self.profile.signer,
+            )
+            anchors.append(
+                {
+                    "tool": record.tool,
+                    "receipt_hash": receipt.receipt_hash,
+                    "audit_hash": audit_hash,
+                    "policy_hash": self.policy.version,
+                    "signature_algorithm": receipt.signature_algorithm,
+                }
+            )
         response = _hook_response(action_kind, "allow", "allowed by policy")
-        response["gove_zone"] = {
-            "receipt_hash": receipt.receipt_hash,
-            "audit_hash": audit_hash,
-            "policy_hash": self.policy.version,
-            "signature_algorithm": receipt.signature_algorithm,
-        }
+        response["gove_zone"] = {"receipts": anchors}
         return response
 
     # -- REST surface -------------------------------------------------------------- #
 
-    def handle_rest_call(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def handle_rest_call(self, request: Mapping[str, Any], *, actor: str) -> dict[str, Any]:
         """Handle one framework-neutral REST tool-call request.
 
-        Request shape: ``{"tool": str, "actor": str, "args": {...}, "goal"?,
-        "path"?, "state"?}`` — the body a ``POST /tools/call`` endpoint would
-        deserialize. Returns ``{"status": <http status>, "body": {...}}`` for
-        any web framework to project. Identity note: in a real deployment
-        derive ``actor`` from the authenticated request principal, not the
-        payload; this handler trusts its caller to have done so.
+        Request shape: ``{"tool": str, "args": {...}, "goal"?}`` — the body a
+        ``POST /tools/call`` endpoint would deserialize. Returns
+        ``{"status": <http status>, "body": {...}}`` for any web framework to
+        project.
+
+        *actor* is keyword-only and comes from the **authenticated request
+        principal** resolved by the web layer (session, mTLS, OIDC subject) —
+        exactly like every other surface. An ``"actor"`` key in the body is
+        ignored: a wire payload must never be able to choose its own identity,
+        or the actor allowlist and every actor-scoped policy rule would be
+        spoofable with a single POST.
         """
+        if not actor or not actor.strip():
+            raise ValueError("actor is required for governed invocation (fail-closed)")
         if not isinstance(request, Mapping):
             return {"status": 400, "body": {"error": "request must be a JSON object"}}
         tool = request.get("tool")
-        actor = request.get("actor")
         args = request.get("args") or {}
         if not isinstance(tool, str) or not tool:
             return {"status": 400, "body": {"error": "missing tool"}}
-        if not isinstance(actor, str) or not actor.strip():
-            return {"status": 400, "body": {"error": "missing actor"}}
         if not isinstance(args, Mapping):
             return {"status": 400, "body": {"error": "args must be an object"}}
         goal = request.get("goal", "")
@@ -857,22 +933,32 @@ def http_json_tool(
 
     The URL (scheme + host + path) is pinned at construction — call arguments
     become the JSON body, never the destination, so a governed agent cannot
-    redirect the side effect. Register the returned callable via
+    redirect the side effect. HTTP redirects are refused (a 3xx raises) so the
+    pinned host stays the *effective* destination even against a compromised
+    or misconfigured upstream. Register the returned callable via
     :meth:`UniversalGateway.register_tool`; like any tool, it executes only
     through the receipt gate. Uses stdlib ``urllib`` (zero dependencies).
     """
     from urllib.parse import urlparse
-    from urllib.request import Request, urlopen
+    from urllib.request import HTTPRedirectHandler, Request, build_opener
 
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError(f"http_json_tool requires an absolute http(s) URL, got {url!r}")
     pinned_headers = {"Content-Type": "application/json", **(headers or {})}
 
+    class _RefuseRedirects(HTTPRedirectHandler):
+        def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+            # Returning None makes urllib raise HTTPError on any 3xx instead
+            # of silently following it off the pinned host.
+            return None
+
+    opener = build_opener(_RefuseRedirects())
+
     def call_endpoint(**kwargs: Any) -> dict[str, Any]:
         body = json.dumps(kwargs, sort_keys=True).encode("utf-8")
         request = Request(url, data=body, method=method, headers=pinned_headers)
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - scheme pinned above
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310 - scheme pinned above
             text = response.read().decode("utf-8", errors="replace")
             try:
                 payload: Any = json.loads(text)
@@ -920,6 +1006,34 @@ def _hook_response(action_kind: str, decision: str, reason: str) -> dict[str, An
             "permissionDecision": decision,
             "permissionDecisionReason": reason,
         }
+    }
+
+
+def _openai_function_spec(name: str, fn: Callable[..., Any]) -> dict[str, Any]:
+    """OpenAI function spec for *fn*, computed once at registration time."""
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    try:
+        parameters: list[inspect.Parameter] = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        parameters = []
+    for param in parameters:
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        properties[param.name] = {"type": _json_type(param.annotation)}
+        if param.default is param.empty:
+            required.append(param.name)
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": inspect.getdoc(fn) or "",
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        },
     }
 
 

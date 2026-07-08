@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import ProductionProfileError, UnknownToolError
 from gove_zone.gateway import (
@@ -419,11 +420,48 @@ def test_claude_hook_deny_and_allow(tmp_path: Path) -> None:
         actor="claude-session-1",
     )
     assert allowed["hookSpecificOutput"]["permissionDecision"] == "allow"
-    assert allowed["gove_zone"]["receipt_hash"]
-    assert allowed["gove_zone"]["signature_algorithm"] == "test-hmac-sha256"
+    (receipt_anchor,) = allowed["gove_zone"]["receipts"]
+    assert receipt_anchor["receipt_hash"]
+    assert receipt_anchor["signature_algorithm"] == "test-hmac-sha256"
 
     events = audit_events(tmp_path)
     assert [event["decision"] for event in events] == ["deny", "allow"]
+
+
+def test_claude_hook_batch_deny_wins(tmp_path: Path) -> None:
+    # A batch smuggling a denied action alongside an allowed one must be
+    # denied as a whole — every item is evaluated and audited individually.
+    gateway = make_gateway(tmp_path)
+    response = gateway.handle_claude_hook(
+        {
+            "tool_calls": [
+                {"function": {"name": "Read", "arguments": '{"file_path": "/tmp/x"}'}},
+                {"function": {"name": "Bash", "arguments": '{"command": "rm -rf /"}'}},
+            ]
+        },
+        actor="claude-session-1",
+    )
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    events = audit_events(tmp_path)
+    assert len(events) == 2
+    assert sorted(event["decision"] for event in events) == ["allow", "deny"]
+
+
+def test_claude_hook_batch_all_allowed_mints_receipt_per_call(tmp_path: Path) -> None:
+    gateway = make_gateway(tmp_path)
+    response = gateway.handle_claude_hook(
+        {
+            "tool_calls": [
+                {"function": {"name": "Read", "arguments": '{"file_path": "/tmp/a"}'}},
+                {"function": {"name": "Glob", "arguments": '{"pattern": "*.py"}'}},
+            ]
+        },
+        actor="claude-session-1",
+    )
+    assert response["hookSpecificOutput"]["permissionDecision"] == "allow"
+    receipts = response["gove_zone"]["receipts"]
+    assert len(receipts) == 2
+    assert all(anchor["receipt_hash"] for anchor in receipts)
 
 
 def test_claude_hook_actor_allowlist(tmp_path: Path) -> None:
@@ -441,24 +479,40 @@ def test_rest_surface_status_mapping(tmp_path: Path) -> None:
     gateway.register_tool("rm_prod", lambda **kwargs: "never")
     gateway.register_tool("deploy", lambda **kwargs: "never")
 
-    ok = gateway.handle_rest_call({"tool": "echo", "actor": "agent-a", "args": {"message": "hi"}})
+    ok = gateway.handle_rest_call({"tool": "echo", "args": {"message": "hi"}}, actor="agent-a")
     assert ok["status"] == 200
     assert ok["body"]["result"] == "echo:hi"
 
-    forbidden = gateway.handle_rest_call({"tool": "rm_prod", "actor": "agent-a", "args": {}})
+    forbidden = gateway.handle_rest_call({"tool": "rm_prod", "args": {}}, actor="agent-a")
     assert forbidden["status"] == 403
 
-    escalated = gateway.handle_rest_call({"tool": "deploy", "actor": "agent-a", "args": {}})
+    escalated = gateway.handle_rest_call({"tool": "deploy", "args": {}}, actor="agent-a")
     assert escalated["status"] == 202
 
-    missing = gateway.handle_rest_call({"tool": "ghost", "actor": "agent-a", "args": {}})
+    missing = gateway.handle_rest_call({"tool": "ghost", "args": {}}, actor="agent-a")
     assert missing["status"] == 404
 
-    malformed = gateway.handle_rest_call({"actor": "agent-a", "args": {}})
+    malformed = gateway.handle_rest_call({"args": {}}, actor="agent-a")
     assert malformed["status"] == 400
 
-    no_actor = gateway.handle_rest_call({"tool": "echo", "args": {}})
-    assert no_actor["status"] == 400
+    with pytest.raises(ValueError):
+        gateway.handle_rest_call({"tool": "echo", "args": {}}, actor="")
+
+
+def test_rest_surface_ignores_body_supplied_actor(tmp_path: Path) -> None:
+    # Identity spoofing guard: an "actor" key in the wire payload must never
+    # override the authenticated principal supplied by the web layer.
+    gateway = make_gateway(tmp_path, allowed_actors=frozenset({"alice"}))
+    calls: list[Any] = []
+    gateway.register_tool("echo", lambda **kwargs: calls.append(kwargs))
+
+    spoofed = gateway.handle_rest_call(
+        {"tool": "echo", "actor": "alice", "args": {"message": "hi"}},
+        actor="mallory",
+    )
+    assert spoofed["status"] == 403
+    assert calls == []
+    assert spoofed["body"]["actor"] == "mallory"
 
 
 # -- outbound REST tool factory ------------------------------------------------------- #
@@ -471,3 +525,116 @@ def test_http_json_tool_pins_url() -> None:
         http_json_tool("ftp://example.com/x")
     with pytest.raises(ValueError):
         http_json_tool("/relative/path")
+
+
+# -- registry discipline ---------------------------------------------------------------- #
+
+
+def test_duplicate_registration_fails_loud(tmp_path: Path) -> None:
+    gateway = make_gateway(tmp_path)
+    gateway.register_tool("echo", lambda message: message)
+    with pytest.raises(ValueError, match="already registered"):
+        gateway.register_tool("echo", lambda message: f"impostor:{message}")
+
+
+def test_grant_is_bound_to_sealed_instance_not_name(tmp_path: Path) -> None:
+    # A stale handle for the same tool name must not be able to consume a
+    # grant issued for the currently registered sealed tool.
+    gateway = make_gateway(tmp_path)
+    ran: list[str] = []
+    stale = gateway.register_tool("worker", lambda **kwargs: ran.append("real"))
+
+    def hijack(**kwargs: Any) -> None:
+        # Inside worker's gate window, the (already spent or differently
+        # bound) stale handle must still be blocked.
+        with pytest.raises(BypassAttemptError):
+            stale(**kwargs)
+
+    # Fresh gateway sharing nothing: simulate replacement by a second gateway
+    # registering the same name — the grant check is instance-bound.
+    other = make_gateway(tmp_path / "other")
+    other.register_tool("worker", hijack)
+    outcome = other.invoke("agent-a", "worker", {})
+    assert outcome.executed
+    assert ran == []
+
+
+# -- strict profile ----------------------------------------------------------------------- #
+
+
+def test_strict_profile_without_ttl_fails_at_construction(tmp_path: Path) -> None:
+    signer = FakeSigner()
+    profile = GovernanceProfile.production_strict(
+        verifier=signer,
+        signer=signer,
+        consumption_ledger=ReceiptConsumptionLedger(str(tmp_path / "strict-ledger.jsonl")),
+    )
+    with pytest.raises(ValueError, match="receipt_ttl_seconds"):
+        make_gateway(tmp_path, profile=profile)
+
+
+def test_strict_profile_executes_with_ttl(tmp_path: Path) -> None:
+    signer = FakeSigner()
+    profile = GovernanceProfile.production_strict(
+        verifier=signer,
+        signer=signer,
+        consumption_ledger=ReceiptConsumptionLedger(str(tmp_path / "strict-ledger.jsonl")),
+    )
+    gateway = UniversalGateway(
+        tenant_id="tenant-1",
+        execution_boundary="boundary-1",
+        policy=make_policy(),
+        profile=profile,
+        validator=Validator(validator_id="validator-1"),
+        authority="authority-1",
+        audit_path=tmp_path / "audit.jsonl",
+        receipt_ttl_seconds=60,
+    )
+    gateway.register_tool("echo", lambda message: f"echo:{message}")
+    outcome = gateway.invoke("agent-a", "echo", {"message": "hi"})
+    assert outcome.executed
+    assert outcome.receipt is not None
+    assert outcome.receipt.expires_at
+
+
+# -- framework wrapper path (LangGraph et al.) --------------------------------------------- #
+
+
+def test_framework_run_rejects_positional_args(tmp_path: Path) -> None:
+    gateway = make_gateway(tmp_path)
+    calls: list[Any] = []
+    gateway.register_tool("echo", lambda **kwargs: calls.append(kwargs))
+    with pytest.raises(TypeError, match="keyword arguments only"):
+        gateway.framework_run("agent-a", "echo", ("positional",), {})
+    assert calls == []
+
+
+def test_framework_run_returns_result_or_envelope(tmp_path: Path) -> None:
+    gateway = make_gateway(tmp_path)
+    gateway.register_tool("echo", lambda message: f"echo:{message}")
+    gateway.register_tool("rm_prod", lambda **kwargs: "never")
+
+    assert gateway.framework_run("agent-a", "echo", (), {"message": "hi"}) == "echo:hi"
+    refused = json.loads(gateway.framework_run("agent-a", "rm_prod", (), {"target": "db"}))
+    assert refused["status"] == "denied"
+
+
+def test_langgraph_tools_dispatch_through_gate(tmp_path: Path) -> None:
+    pytest.importorskip("langchain_core")
+    from langchain_core.tools import tool as lc_tool
+
+    gateway = make_gateway(tmp_path)
+
+    @lc_tool
+    def shout(message: str) -> str:
+        """Uppercase a message."""
+        return message.upper()
+
+    (governed,) = gateway.langgraph_tools([shout], actor="agent-a")
+    assert governed._run(message="hi") == "HI"
+    events = audit_events(tmp_path)
+    assert events and events[-1]["decision"] == "allow"
+
+    # Re-wrapping the same tool name must fail loud, not silently replace.
+    with pytest.raises(ValueError, match="already registered"):
+        gateway.langgraph_tools([shout], actor="agent-a")
