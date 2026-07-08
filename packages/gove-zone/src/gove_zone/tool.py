@@ -31,7 +31,7 @@ def normalize_path_context(path: str | Sequence[str] | None = None) -> tuple[str
     return tuple(segment for segment in (s.strip() for s in raw_segments) if segment)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ToolCall:
     """A proposed tool invocation.
 
@@ -80,6 +80,22 @@ class ToolCall:
 
         This hash binds actor + path + goal + tool + argument hash + state
         hash without storing potentially large/sensitive state inline.
+
+        Note: the kernel derives this hash from the policy-supplied
+        ``DecisionRecord.argument_hash`` (all built-in policies set it to
+        ``sha256_json(dict(call.args))``); a custom policy that emits a
+        divergent argument_hash will see that value bound here, keeping the
+        decision request consistent with the receipt's stored argument_hash.
+        """
+        return self._decision_request_hash(self.argument_hash())
+
+    def _decision_request_hash(self, argument_hash: str) -> str:
+        """Build the decision-request hash from a precomputed argument hash.
+
+        Factored out so a caller that already holds this call's argument hash
+        (e.g. the kernel, from ``record.argument_hash``) can avoid recomputing
+        it. The public :meth:`decision_request_hash` delegates here with a
+        freshly computed hash, so both produce byte-identical output.
         """
         return sha256_json(
             {
@@ -87,7 +103,7 @@ class ToolCall:
                 "path": list(self.path),
                 "goal": self.goal,
                 "tool": self.name,
-                "argument_hash": self.argument_hash(),
+                "argument_hash": argument_hash,
                 "state_hash": self.state_hash(),
             }
         )

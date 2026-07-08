@@ -158,7 +158,7 @@ class BoundaryPolicy(Policy):
         return DecisionRecord(
             decision=decision,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=tuple(matched),
