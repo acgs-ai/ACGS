@@ -35,6 +35,8 @@ def execute_with_receipt(
     expected_audit_hash: str | None = None,
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
+    expected_validator_role: str | None = None,
+    expected_authority: str | None = None,
     policy: Policy | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = True,
@@ -87,6 +89,17 @@ def execute_with_receipt(
     :class:`~gove_zone.policy.RuleSetPolicy` embeds only a 64-bit-truncated
     content digest, so this binds at ~2**64 second-preimage strength, not full
     SHA-256; it is a same-policy identity check, not a collision-proof seal.
+
+    ``expected_authority`` / ``expected_validator_role`` (opt-in, default
+    ``None``) pin the MACI grant the receipt must carry: when supplied they are
+    forwarded to :meth:`DecisionReceipt.verify` (checks 12b/12c) so a receipt
+    whose ``authority`` grant or ``validator_role`` does not match what this gate
+    requires is rejected before any side effect. Both are hash-bound fields, so a
+    tampered receipt cannot satisfy the check; leaving them ``None`` preserves the
+    prior behavior exactly (the fields are not consulted). This closes the
+    gate-side gap where an authority/role grant was enforceable only via a direct
+    ``verify()`` call, never through the executor gate — least-privilege
+    deployments can now bind the required grant at the gate.
 
     ``require_expiry`` (opt-in, default ``False``) mandates a liveness/TTL
     bound: when ``True`` a receipt whose ``expires_at`` is empty is rejected
@@ -166,6 +179,8 @@ def execute_with_receipt(
         expected_action=expected_action,
         expected_policy_hash=expected_policy_hash,
         expected_policy_bundle_id=expected_policy_bundle_id,
+        expected_validator_role=expected_validator_role,
+        expected_authority=expected_authority,
         expected_actor=expected_actor,
         verifier=verifier,
         require_signature=require_signature,
@@ -228,6 +243,8 @@ class GovernedExecutor:
         tenant_id: str,
         execution_boundary: str,
         expected_actor: str,
+        expected_authority: str | None = None,
+        expected_validator_role: str | None = None,
         policy: Policy | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
@@ -250,6 +267,8 @@ class GovernedExecutor:
         self.tenant_id = tenant_id
         self.execution_boundary = execution_boundary
         self.expected_actor = expected_actor
+        self.expected_authority = expected_authority
+        self.expected_validator_role = expected_validator_role
         self.policy = policy
         self.verifier = verifier
         self.require_signature = require_signature
@@ -277,6 +296,8 @@ class GovernedExecutor:
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
         expected_actor: str | None = None,
+        expected_authority: str | None = None,
+        expected_validator_role: str | None = None,
         policy: Policy | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool | None = None,
@@ -305,6 +326,16 @@ class GovernedExecutor:
             consumption_ledger if consumption_ledger is not None else self.consumption_ledger
         )
         effective_policy = policy if policy is not None else self.policy
+        # Per-call None falls back to the constructor pin, so a per-call argument
+        # can never silently *disable* an authority/role bound at construction.
+        effective_authority = (
+            expected_authority if expected_authority is not None else self.expected_authority
+        )
+        effective_validator_role = (
+            expected_validator_role
+            if expected_validator_role is not None
+            else self.expected_validator_role
+        )
         return execute_with_receipt(
             tool_fn=tool_fn,
             args=args,
@@ -315,6 +346,8 @@ class GovernedExecutor:
             expected_audit_hash=expected_audit_hash,
             expected_policy_hash=expected_policy_hash,
             expected_policy_bundle_id=expected_policy_bundle_id,
+            expected_validator_role=effective_validator_role,
+            expected_authority=effective_authority,
             policy=effective_policy,
             expected_actor=effective_actor,
             verifier=effective_verifier,
