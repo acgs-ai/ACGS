@@ -351,7 +351,9 @@ class GovernedGateway:
 
         server: Server = Server(self._config.server_name)
 
-        @server.list_tools()
+        # The mcp SDK's registration decorators are untyped; the handlers keep
+        # their own annotations so their bodies stay strict-checked.
+        @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
         async def _list_tools() -> list[mcp_types.Tool]:
             downstream_tools = await self._downstream.list_tools()
             return list(downstream_tools.tools)
@@ -359,7 +361,7 @@ class GovernedGateway:
         # validate_input=False: the governance decision runs on RAW args (G6);
         # schema pre-validation must not shadow an arg-keyed deny, and the
         # downstream server does its own validation on forward.
-        @server.call_tool(validate_input=False)
+        @server.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
         async def _call_tool(name: str, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
             return await self._governed_tools_call(server, name, arguments or {})
 
