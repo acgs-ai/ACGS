@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.consumption import ReceiptConsumptionLedger
@@ -310,7 +311,13 @@ class GovernedGateway:
             self._ledger = profile_ledger
         else:
             self._ledger = ledger or ReceiptConsumptionLedger(config.ledger_path)
-        self._sessions: dict[int, SessionContext] = {}
+        # Keyed by the ServerSession object itself via weak references, NOT by
+        # id(session): CPython recycles id() after a session is GC'd, so a
+        # closed session's address can be reused by a later session and collide
+        # in the cache — leaking the earlier session's principal into the newer
+        # one (cross-session actor bleed). A WeakKeyDictionary keys on identity,
+        # never collides, and auto-evicts when the session dies.
+        self._sessions: WeakKeyDictionary[ServerSession, SessionContext] = WeakKeyDictionary()
         # Parked escalations awaiting human approval, keyed by the ESCALATE
         # record's event_id.
         self._pending: dict[str, PendingApproval] = {}
@@ -337,8 +344,7 @@ class GovernedGateway:
         return self._config.principals.get(name)
 
     def _session_context(self, session: ServerSession) -> SessionContext | None:
-        key = id(session)
-        ctx = self._sessions.get(key)
+        ctx = self._sessions.get(session)
         if ctx is not None:
             return ctx
         principal = self._resolve_principal(session)
@@ -348,7 +354,7 @@ class GovernedGateway:
             principal=principal,
             kernel=Kernel(policy=self._config.policy, audit=self._audit, actor=principal),
         )
-        self._sessions[key] = ctx
+        self._sessions[session] = ctx
         return ctx
 
     # -- server wiring ----------------------------------------------------- #
