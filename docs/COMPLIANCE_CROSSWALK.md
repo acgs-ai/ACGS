@@ -125,7 +125,7 @@ These are load-bearing. A crosswalk row means "contributes evidence," bounded by
 7. **Not certified.** Not production-certified, not compliance-certified, not
    regulator-approved; complements (does not replace) sandboxing, content
    moderation, IAM/RBAC/PKI, and is not full formal verification.
-   `docs/CLAIMS.md` rows 27–33.
+   See the “not claimed” rows of `docs/CLAIMS.md`.
 
 ## Scope boundary (one sentence)
 

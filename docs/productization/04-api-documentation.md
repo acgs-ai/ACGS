@@ -121,7 +121,7 @@ events, producing governance-shaped calls. Runtime coverage is tiered — see
 | `gate` / `enable` | Gate an invocation; enable governed integrations |
 | `policy inspect` / `policy export` | Inspect and canonically export policy bundles (id + hash binding) |
 | `eval` | Evaluate a proposed call against a policy bundle |
-| `approve` | Human-approval resume path for `ESCALATE` decisions |
+| `approve-escalation` | Human-approval resume path for `ESCALATE` decisions |
 | `replay` | Re-derive decisions from audit evidence |
 | `proofpack` / `verify-proofpack` | Produce and offline-verify an evidence bundle (receipts, audit chain, verification results, limitations) |
 | `verify-ledger [--audit <chain>]` | Verify the consumption ledger's hash chain; reconcile burns against the audit chain |

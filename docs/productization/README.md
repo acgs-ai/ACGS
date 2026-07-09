@@ -43,8 +43,5 @@ Product docs here summarize; these govern:
 - [`docs/SECURITY_MODEL.md`](../SECURITY_MODEL.md) — threat table + adversary model (ADV1–ADV14)
 - [`docs/CLAIMS.md`](../CLAIMS.md) — the claim ledger (public wording rule)
 - [`docs/INTEGRATION_MATRIX.md`](../INTEGRATION_MATRIX.md) — per-runtime support tiers
-- [`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment).
-  **Landing note:** the crosswalk is not yet on `master` — it must land in the
-  same PR as this pack (or before it), otherwise the crosswalk links in these
-  docs dangle.
+- [`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment)
 - [`docs/PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — strategy canvas
