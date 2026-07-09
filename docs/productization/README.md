@@ -21,6 +21,7 @@ production-certified, compliance-certified, or regulator-approved.
 | [04-api-documentation.md](04-api-documentation.md) | API documentation: Python API, CLI, receipt schema, MCP gateway |
 | [05-security-whitepaper-outline.md](05-security-whitepaper-outline.md) | Security whitepaper outline |
 | [06-pricing-model.md](06-pricing-model.md) | Pricing model: Starter, Enterprise, Regulated Industry |
+| [07-investor-brief.md](07-investor-brief.md) | Investor technical brief: problem, moat, market, business model, risks, thesis |
 
 ## What ACGS is (one paragraph)
 
