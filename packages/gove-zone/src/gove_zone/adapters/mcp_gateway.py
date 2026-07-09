@@ -579,9 +579,7 @@ class GovernedGateway:
         eviction is involved — capacity is freed only by a successful resume.
         """
         global_full = len(self._pending) >= self._config.max_pending
-        principal_pending = sum(
-            1 for p in self._pending.values() if p.record.actor == principal
-        )
+        principal_pending = sum(1 for p in self._pending.values() if p.record.actor == principal)
         principal_full = principal_pending >= self._config.max_pending_per_principal
         if not (global_full or principal_full):
             return None
@@ -863,8 +861,7 @@ class GovernedGateway:
             content=[
                 types.TextContent(
                     type="text",
-                    text=f"gove-zone DENIED {name}: escalation capacity exhausted; "
-                    "call refused",
+                    text=f"gove-zone DENIED {name}: escalation capacity exhausted; call refused",
                 )
             ],
             structuredContent={
