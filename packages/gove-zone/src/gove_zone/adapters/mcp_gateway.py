@@ -18,6 +18,8 @@ trusted local transport (stdio subprocess, same trust domain). The gateway does
 not itself authenticate the host; the session principal is only as strong as
 that transport's authentication. This is a documented limitation, not an
 end-to-end authenticated-identity claim — see ``docs/SECURITY_MODEL.md``.
+See docs/design/mcp-gateway-trust-boundaries.md for the host→gateway and
+out-of-band operator trust boundaries.
 
 Reuse-only assembly: this module adds **no new gate logic**. Every decision goes
 through :meth:`~gove_zone.kernel.Kernel.evaluate_and_record`; every side effect
@@ -56,7 +58,7 @@ from gove_zone.errors import (
 from gove_zone.escalation import PendingApproval, approve_escalation, resume_with_receipt
 from gove_zone.executor import GovernedExecutor, execute_with_receipt
 from gove_zone.kernel import Kernel
-from gove_zone.policy import Policy, RuleSetPolicy
+from gove_zone.policy import Policy, RuleSetPolicy, new_event_id
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
@@ -131,6 +133,14 @@ class GatewayConfig:
     # ``production_strict`` profile (``require_expiry=True`` rejects receipts
     # with no expiry at the gate — a TTL-less strict gateway can never forward).
     receipt_ttl_seconds: float | None = None
+    # Bounded-capacity back-pressure for parked escalations (finding: _pending /
+    # _approvals are only ever written, never cleaned — unbounded growth). These
+    # cap how many escalations may be parked awaiting human approval, globally and
+    # per parking principal. Non-time-based: an escalation leaves _pending only by
+    # a successful resume (post-ledger-burn cleanup), never by a clock. Defaults
+    # are generous so existing embedders/tests are unaffected.
+    max_pending: int = 256
+    max_pending_per_principal: int = 64
 
     def __post_init__(self) -> None:
         # Self-validation guard, fail-closed at config load: the validator must
@@ -143,6 +153,15 @@ class GatewayConfig:
                 "self-validation forbidden at config load: validator_id "
                 f"{self.validator.validator_id!r} also appears as a mapped principal "
                 f"{clashes}; the validator must differ from every actor principal"
+            )
+        # Fail-closed: a non-positive escalation capacity would either reject
+        # every escalation (0) or never bound growth (negative), so refuse it up
+        # front rather than at the first ESCALATE.
+        if self.max_pending <= 0 or self.max_pending_per_principal <= 0:
+            raise ValueError(
+                "escalation capacity caps must be positive: "
+                f"max_pending={self.max_pending}, "
+                f"max_pending_per_principal={self.max_pending_per_principal}"
             )
 
 
@@ -224,6 +243,8 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
     ledger_ref = audit.get("consumption_ledger") or (Path(audit_path).parent / "consumed.jsonl")
     ledger_path = (base / str(ledger_ref)).resolve()
 
+    escalation = raw.get("escalation", {})
+
     return GatewayConfig(
         tenant_id=tenant_id,
         execution_boundary=execution_boundary,
@@ -237,6 +258,8 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
         allow_sampling=bool(raw.get("sampling", {}).get("allow", False)),
         server_name=str(downstream.get("server_name") or "gove-zone-gateway"),
         downstream=dict(downstream),
+        max_pending=int(escalation.get("max_pending", 256)),
+        max_pending_per_principal=int(escalation.get("max_pending_per_principal", 64)),
     )
 
 
@@ -429,6 +452,10 @@ class GovernedGateway:
         if record.decision is Decision.DENY:
             return self._deny_result(record, audit_hash, name)
         if record.decision is Decision.ESCALATE:
+            rejection = self._enforce_pending_capacity(record, ctx.principal, name)
+            if rejection is not None:
+                # Capacity exhausted: fail-closed DENY (audited), never parked.
+                return rejection
             pending = PendingApproval(record, audit_hash, dict(raw_args))
             self._pending[record.event_id] = pending
             return self._escalate_result(record, audit_hash, name)
@@ -531,6 +558,51 @@ class GovernedGateway:
 
         return self._wrap_allow_result(downstream_result, record, audit_hash)
 
+    # -- escalation back-pressure (bounded-capacity, fail-closed) ---------- #
+
+    def _enforce_pending_capacity(
+        self, record: Any, principal: str, name: str
+    ) -> mcp_types.CallToolResult | None:
+        """Reject a new escalation when the parked-escalation cap is exhausted.
+
+        Returns ``None`` when there is room to park (the caller proceeds to
+        park). When either the global cap (``max_pending``) or this principal's
+        cap (``max_pending_per_principal``) is already met, refuses the
+        escalation fail-closed: it appends a rejection audit event (so the
+        refusal is evidenced, never a silent drop) and returns a leak-safe DENY.
+        The escalation is NOT parked — this is the back-pressure that bounds the
+        otherwise write-only ``_pending`` / ``_approvals`` growth.
+
+        Ordering note: the kernel already recorded the ESCALATE decision (via
+        ``evaluate_and_record``); this rejection is a *second*, separate audit
+        event documenting that the gateway refused to park it. No time-based
+        eviction is involved — capacity is freed only by a successful resume.
+        """
+        global_full = len(self._pending) >= self._config.max_pending
+        principal_pending = sum(1 for p in self._pending.values() if p.record.actor == principal)
+        principal_full = principal_pending >= self._config.max_pending_per_principal
+        if not (global_full or principal_full):
+            return None
+        scope = "pending" if global_full else "principal"
+        try:
+            reject_record = DecisionRecord(
+                decision=Decision.DENY,
+                tool=record.tool,
+                argument_hash=record.argument_hash,
+                policy_version=record.policy_version,
+                event_id=new_event_id(),
+                matched_rules=(f"CAPACITY_REJECTED:{scope}",),
+                reason="escalation capacity exhausted; call refused",
+                actor=principal,
+            )
+            event = self._audit.append(reject_record)
+            audit_hash: str | None = str(event.get("event_hash")) or None
+        except AuditError:
+            # Even the rejection could not be recorded -> the fixed leak-safe
+            # unrecordable envelope (still a fail-closed DENY, still not parked).
+            return self._audit_unrecordable_result()
+        return self._capacity_rejected_result(name, audit_hash)
+
     # -- escalation approve / resume (G5, F9, test #8) --------------------- #
 
     def pending_ids(self) -> tuple[str, ...]:
@@ -623,6 +695,16 @@ class GovernedGateway:
                 expected_audit_hash=approval_hash,
             )
         )
+        # Success path only (reached after resume_with_receipt returns, i.e. the
+        # approval receipt has been verified AND burned in the single-use ledger):
+        # evict the now-consumed pending and its captured approval. This bounds
+        # the write-only growth of _pending / _approvals and makes a replayed
+        # event_id short-circuit with KeyError above, before it can reach the
+        # gate. A pre-burn ReceiptValidationError (the ``captured is None`` guard
+        # or any gate refusal) raises before this line, so a legitimate retry of
+        # an unconsumed pending is preserved.
+        del self._pending[event_id]
+        self._approvals.pop(event_id, None)
         return self._wrap_allow_result(downstream_result, pending.record, receipt.audit_event_hash)
 
     # -- MCP result builders (§3.3) ---------------------------------------- #
@@ -761,6 +843,33 @@ class GovernedGateway:
                 "audit_hash": None,
             },
             _meta={"gove_zone": {"decision": "deny", "audit_hash": None}},
+        )
+
+    def _capacity_rejected_result(
+        self, name: str, audit_hash: str | None
+    ) -> mcp_types.CallToolResult:
+        """Leak-safe DENY envelope when escalation capacity is exhausted.
+
+        Mirrors the other leak-safe builders: the tool ``name`` is the only
+        request-derived text (no args, no policy internals). ``audit_hash`` is
+        the anchor of the recorded capacity-rejection event.
+        """
+        import mcp.types as types
+
+        return types.CallToolResult(
+            isError=True,
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"gove-zone DENIED {name}: escalation capacity exhausted; call refused",
+                )
+            ],
+            structuredContent={
+                "decision": "deny",
+                "reason": "escalation capacity exhausted; call refused",
+                "audit_hash": audit_hash,
+            },
+            _meta={"gove_zone": {"decision": "deny", "audit_hash": audit_hash}},
         )
 
     def _gate_refused_result(
