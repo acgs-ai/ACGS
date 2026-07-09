@@ -31,7 +31,6 @@ from gove_zone import (  # noqa: E402
     Decision,
     DecisionRecord,
     Policy,
-    ReceiptAlreadyUsedError,
     Validator,
 )
 from gove_zone.adapters.mcp_gateway import GatewayConfig, GovernedGateway  # noqa: E402
@@ -465,8 +464,17 @@ async def test_escalate_approve_resume_single_use(tmp_path: Path) -> None:
         assert result.isError is False
         assert calls == [("e.txt", "ESCALATEME")]  # ran exactly once
 
-        # Second resume of the same approval → single-use refusal.
-        with pytest.raises(ReceiptAlreadyUsedError):
+        # (ii) LEDGER-WIRING layer: the resume executor carried the single-use
+        # ledger, so the approval receipt's audit anchor is now burned. This
+        # proves the ledger is wired into the resume path INDEPENDENTLY of the
+        # eviction short-circuit checked below (which would raise even if the
+        # ledger were absent).
+        assert gateway._ledger.is_consumed(receipt.audit_event_hash) is True
+
+        # (i) EVICTION layer: the post-burn cleanup deleted the pending, so a
+        # second resume of the same event_id short-circuits with KeyError
+        # DETERMINISTICALLY — it never reaches the ledger. No second side effect.
+        with pytest.raises(KeyError):
             await gateway.resume(event_id, receipt)
         assert len(calls) == 1  # no second side effect
 
