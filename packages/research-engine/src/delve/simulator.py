@@ -21,7 +21,7 @@ class PolicyStressSimulator:
         """Run mutations of tool arguments and state against the policy to find bypass vectors."""
         results = []
         # Lazy import of ToolCall to prevent circular dependencies
-        from gove_zone.tool import ToolCall  # type: ignore[import-untyped]
+        from gove_zone.tool import ToolCall
 
         for idx, mutation in enumerate(mutations):
             args = {**base_args, **mutation.get("args", {})}

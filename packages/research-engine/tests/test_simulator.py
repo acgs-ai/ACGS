@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from gove_zone.decision import Decision  # type: ignore[import-untyped]
-from gove_zone.policy import PolicyRule, RuleSetPolicy  # type: ignore[import-untyped]
+from gove_zone.decision import Decision
+from gove_zone.policy import PolicyRule, RuleSetPolicy
 
 from delve.simulator import (
     LivingComplianceReporter,
