@@ -58,9 +58,20 @@ that without doubling the operational surface area beyond what is justified.
 **Two origins, one brand. Marketing on edge, console on operator-controlled
 infrastructure.**
 
+> **Reality note (2026-07-10).** The live `acgs.ai` / `www.acgs.ai` apex is
+> served by the Cloudflare **Worker `acgs-governance-proxy` (Workers Static
+> Assets)**, not the Pages project: Worker routes on `acgs.ai/*` run before
+> Pages, so the `acgs-marketing` Pages project is a shadow the apex never
+> reads. `marketing-cloudflare.yml` therefore deploys the Worker via
+> `infra/cloudflare/workers/wrangler.toml`, staging `_headers` plus the
+> Workers-compatible `infra/cloudflare/workers/_redirects` (Workers Assets
+> rejects the Pages `_redirects` 404 rules and SPA catch-all). Everything
+> below about edge-vs-container privilege still holds — Cloudflare remains
+> the marketing-only edge; the console path is unchanged.
+
 ```
                      ┌──────────────────────────────┐
-   acgs.ai           │  Cloudflare Pages (CDN edge) │
+   acgs.ai           │  Cloudflare Workers Assets   │
    www.acgs.ai  ───► │  static bundle, CDN-cached   │
                      │  marketing surface only       │
                      └──────────────────────────────┘

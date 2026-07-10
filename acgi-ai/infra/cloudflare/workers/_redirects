@@ -1,0 +1,39 @@
+# Marketing surface — Workers Static Assets routing (live acgs.ai).
+#
+# acgs.ai is served by the Worker `acgs-governance-proxy` (Workers Static
+# Assets), NOT the Pages project — Worker routes on acgs.ai/* run before Pages.
+# This file is the Workers-compatible sibling of ../_redirects (Pages parity):
+# Workers Assets rejects 404-status rules and the `/* /index.html 200`
+# catch-all (infinite-loop detector, error 100324), and normalizes
+# `/index.html` rewrite targets into 307s that strip the deep-link path.
+# Hence: explicit per-route rewrites, target `/`, status 200.
+#
+# Verified live 2026-07-10: deep links 200 with URL preserved, /console 308,
+# missing assets still 404 empty-body (deploy-drift-check asserts this).
+#
+# Keep in lockstep with the marketing route table in
+# src/surfaces/marketing/App.tsx. Unknown paths intentionally 404 at the edge
+# (no SPA catch-all): scanners and agent discovery need real 404s.
+
+# Privilege boundary — /console is a SEPARATE, privileged origin (DEPLOY.md §3).
+/console        https://console.acgs.ai/console          308
+/console/*      https://console.acgs.ai/console/:splat    308
+
+# SPA deep links — explicit 200 rewrites, one per marketing route.
+/ask                  /  200
+/privacy              /  200
+/founder              /  200
+/failure-modes        /  200
+/governance-patterns  /  200
+/agent-readable       /  200
+/agent-bus            /  200
+/eval-mvp             /  200
+/cft-pack             /  200
+/acgs-lite            /  200
+/trust                /  200
+/security             /  200
+/clinicalguard        /  200
+/swarm                /  200
+/products             /  200
+/products/*           /  200
+/login                /  200

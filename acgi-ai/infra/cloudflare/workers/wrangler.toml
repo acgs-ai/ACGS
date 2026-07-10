@@ -1,0 +1,22 @@
+# Workers Static Assets deploy config for the LIVE acgs.ai origin.
+#
+# acgs.ai / www.acgs.ai are served by the Worker `acgs-governance-proxy`
+# (Workers Static Assets), not the Pages project in ../../wrangler.toml —
+# Worker routes shadow Pages. This config is what marketing-cloudflare.yml
+# deploys with (`wrangler deploy --config infra/cloudflare/workers/wrangler.toml`).
+#
+# Deliberately NO `routes` block: the production routes (acgs.ai/*,
+# www.acgs.ai/*, console.acgs.ai/*, api.acgs.ai/telegram/*) are owned in the
+# Cloudflare dashboard; deploying without a routes block leaves them untouched.
+#
+# The deploy step stages infra/cloudflare/_headers and
+# infra/cloudflare/workers/_redirects (Workers-compatible variant) into dist/
+# before deploying. Do NOT stage the Pages ../_redirects here — Workers Assets
+# rejects its 404-status rules and SPA catch-all.
+
+name = "acgs-governance-proxy"
+compatibility_date = "2026-06-14"
+workers_dev = false
+
+[assets]
+directory = "../../../dist"
