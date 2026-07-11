@@ -89,3 +89,15 @@ jobs:
           --cov=gove_zone
           --cov-report=term-missing:skip-covered
           --cov-fail-under=90
+
+  dist-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+      - name: Build + install-smoke the distribution
+        run: bash scripts/release_check.sh
