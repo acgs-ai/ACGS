@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import re
 
-from examples.copilotkit_governed.governance_bridge import admit_action, app, build_app
+import pytest
+
+from examples.copilotkit_governed.governance_bridge import admit_action, build_app
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -102,6 +104,7 @@ def test_allow_path_uses_audit_lock(monkeypatch) -> None:
 
 
 def _client():
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     return TestClient(build_app())
@@ -215,9 +218,13 @@ def test_route_non_string_action_fails_closed() -> None:
 
 
 def test_served_app_object_is_wired() -> None:
-    # Exercise the module-level `app = build_app()` that uvicorn actually serves,
-    # not just a fresh build_app() (per ~/.claude/rules/review-handler-wiring.md).
+    # Exercise the lazily-built, cached module-level `app` that uvicorn actually
+    # serves (resolved via the module's __getattr__), not just a fresh
+    # build_app() (per ~/.claude/rules/review-handler-wiring.md).
+    pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
+
+    from examples.copilotkit_governed.governance_bridge import app
 
     res = TestClient(app).post(
         "/admit", json={"action": "runtime.file.write", "args": {"path": "a", "content": "b"}}
