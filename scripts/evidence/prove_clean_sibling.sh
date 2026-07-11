@@ -1,9 +1,66 @@
-#!/usr/bin/env bash
-# Prove P0-EVIDENCE-000 from a detached, fresh, hash-locked sibling.
+#!/bin/bash
+# Internal P0 prover. Invoke scripts/evidence/prove_clean_sibling instead.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
+
+STATIC_LAUNCHER_SHA256=98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc
+[[ "${ACGS_CLEAN_SIBLING_STATIC_LAUNCHER:-}" == "$STATIC_LAUNCHER_SHA256" ]] || {
+  printf '%s\n' \
+    'CLEAN_SIBLING=FAIL phase=B0 reason=internal prover requires trusted static launcher' >&2
+  exit 2
+}
+ACGS_EXPECTED_LAUNCHER="$(/usr/bin/readlink -f "${BASH_SOURCE[0]%.sh}")"
+ACGS_STATIC_PARENT_PID="$PPID"
+if [[ -n "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
+  # The guardian is a child exec of the first sanitized Bash. That first Bash
+  # remains resident under the static launcher while it waits, so authenticate
+  # the complete Bash -> BusyBox ancestry on the descriptor-bearing pass.
+  [[ "$(/usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true)" == \
+    /usr/bin/bash ]] || {
+    printf '%s\n' \
+      'CLEAN_SIBLING=FAIL phase=B0 reason=sanitized guardian parent identity changed' >&2
+    exit 2
+  }
+  mapfile -d '' -t ACGS_GUARDIAN_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline"
+  [[ "${#ACGS_GUARDIAN_PARENT_ARGV[@]}" == 5 && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[0]}" == /bin/bash && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[1]}" == --noprofile && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[2]}" == --norc && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[3]}" == "${BASH_SOURCE[0]}" && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[4]}" == "${1:-}" ]] || {
+    printf '%s\n' \
+      'CLEAN_SIBLING=FAIL phase=B0 reason=sanitized guardian parent argv changed' >&2
+    exit 2
+  }
+  IFS=' ' read -r _ _ _ ACGS_STATIC_PARENT_PID _ \
+    <"/proc/$ACGS_STATIC_PARENT_PID/stat"
+fi
+[[ "$(/usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true)" == \
+  /usr/bin/busybox ]] || {
+  printf '%s\n' \
+    'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent identity changed' >&2
+  exit 2
+}
+[[ "$(/usr/bin/sha256sum "/proc/$ACGS_STATIC_PARENT_PID/exe" | \
+  /usr/bin/awk '{print $1}')" == "$STATIC_LAUNCHER_SHA256" ]] || {
+  printf '%s\n' \
+    'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent digest changed' >&2
+  exit 2
+}
+mapfile -d '' -t ACGS_STATIC_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline"
+[[ "${#ACGS_STATIC_PARENT_ARGV[@]}" == 4 && \
+  "${ACGS_STATIC_PARENT_ARGV[0]}" == /usr/bin/busybox && \
+  "${ACGS_STATIC_PARENT_ARGV[1]}" == ash && \
+  "${ACGS_STATIC_PARENT_ARGV[2]}" == "$ACGS_EXPECTED_LAUNCHER" && \
+  "${ACGS_STATIC_PARENT_ARGV[3]}" == "${1:-}" ]] || {
+  printf '%s\n' \
+    'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent argv changed' >&2
+  exit 2
+}
+unset ACGS_GUARDIAN_PARENT_ARGV ACGS_STATIC_PARENT_ARGV ACGS_EXPECTED_LAUNCHER
+ACGS_STATIC_LAUNCHED=1
 
 # Proof authority must not be selected by caller-controlled command lookup,
 # ELF loader state, or Git configuration.  This block intentionally uses only
@@ -22,7 +79,7 @@ for variable in ${!LD_@}; do
     "$variable" >&2
   exit 2
 done
-if [[ -z "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
+if [[ -z "${ACGS_CLEAN_SIBLING_TMP_FD:-}" && -z "${ACGS_STATIC_LAUNCHED:-}" ]]; then
   for variable in ${!GIT_@}; do
     case "$variable" in
       GIT_CONFIG_* | GIT_EXEC_PATH | GIT_TEMPLATE_DIR | GIT_EXTERNAL_DIFF | \
@@ -101,7 +158,7 @@ reject_lexists() {
   return 0
 }
 
-[[ $# -eq 1 ]] || die 'usage: P=<reviewed-parent> prove_clean_sibling.sh <exact-T-commit>'
+[[ $# -eq 1 ]] || die 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <exact-T-commit>'
 T="$1"
 [[ "$T" =~ ^[0-9a-f]{40}$ ]] || die 'T must be a lowercase 40-hex commit SHA'
 [[ -n "${P:-}" ]] || die 'P must be exported as the reviewed parent commit SHA'

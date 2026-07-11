@@ -318,8 +318,20 @@ clean_sibling_cleanup() {
       cleanup_status=2
     }
   fi
+  local launcher_attested=0
+  if [[ "${ACGS_STATIC_LAUNCHED:-}" == 1 ]] &&
+    [[ "${ACGS_STATIC_PARENT_PID:-}" =~ ^[1-9][0-9]*$ ]] &&
+    [[ "${ACGS_CLEAN_SIBLING_STATIC_LAUNCHER:-}" == \
+      98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc ]] &&
+    [[ "$(/usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true)" == \
+      /usr/bin/busybox ]] &&
+    [[ "$(/usr/bin/sha256sum "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null | \
+      /usr/bin/awk '{print $1}')" == \
+      98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc ]]; then
+    launcher_attested=1
+  fi
   if [[ "$status" -eq 0 && "$cleanup_status" -eq 0 && "$PROOF_COMPLETE" -eq 1 ]] &&
-    [[ "$TRANSCRIPT_RECORDS" == 10 ]]; then
+    [[ "$TRANSCRIPT_RECORDS" == 10 && "$launcher_attested" == 1 ]]; then
     printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=10 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
       "$P" "$T" "$R"
   elif [[ "$status" -eq 0 ]]; then

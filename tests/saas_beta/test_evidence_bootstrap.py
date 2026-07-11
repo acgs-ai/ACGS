@@ -3123,7 +3123,7 @@ exit "$status"
 def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
     tmp_path: Path,
 ) -> None:
-    """Host loader/config authority must fail before Git, hooks, or proof writes."""
+    """The static launcher scrubs loader, shell-function, and Git authority."""
     caller = tmp_path / "caller"
     caller.mkdir(mode=0o700)
     sentinel = caller / "sentinel"
@@ -3140,8 +3140,45 @@ def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
     hostile_xdg = tmp_path / "hostile-xdg"
     (hostile_xdg / "git").mkdir(parents=True)
     shutil.copy2(hostile, hostile_xdg / "git/config")
+    constructor_marker = tmp_path / "loader-constructor-ran"
+    constructor_source = tmp_path / "constructor.c"
+    constructor_object = tmp_path / "constructor.so"
+    constructor_source.write_text(
+        "#include <fcntl.h>\n#include <unistd.h>\n"
+        f"__attribute__((constructor)) static void loaded(void) {{ int fd = open("
+        f"{json.dumps(str(constructor_marker))}, O_WRONLY|O_CREAT, 0600); "
+        'if (fd >= 0) { (void)write(fd, "loaded\\n", 7); (void)close(fd); } }\n',
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["/usr/bin/cc", "-shared", "-fPIC", "-o", str(constructor_object), str(constructor_source)],
+        check=True,
+    )
+    function_marker = tmp_path / "imported-realpath-ran"
+    constructor_control = dict(os.environ)
+    constructor_control["LD_PRELOAD"] = str(constructor_object)
+    subprocess.run(["/bin/true"], env=constructor_control, check=True)
+    assert constructor_marker.read_bytes() == b"loaded\n"
+    constructor_marker.unlink()
+    function_control = dict(os.environ)
+    function_control["BASH_FUNC_realpath%%"] = (
+        f'() {{ /usr/bin/touch {function_marker}; /usr/bin/realpath "$@"; }}'
+    )
+    subprocess.run(
+        ["/bin/bash", "--noprofile", "--norc", "-c", "realpath /"],
+        env=function_control,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    assert function_marker.is_file()
+    function_marker.unlink()
     cases = {
-        "loader": {"LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/libm.so.6"},
+        "loader": {"LD_PRELOAD": str(constructor_object)},
+        "function": {
+            "BASH_FUNC_realpath%%": (
+                f'() {{ /usr/bin/touch {function_marker}; /usr/bin/realpath "$@"; }}'
+            )
+        },
         "global": {"GIT_CONFIG_GLOBAL": str(hostile)},
         "count": {
             "GIT_CONFIG_COUNT": "1",
@@ -3165,7 +3202,7 @@ def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
             }
         )
         completed = subprocess.run(
-            ["bash", "scripts/evidence/prove_clean_sibling.sh", "0" * 40],
+            ["scripts/evidence/prove_clean_sibling", "0" * 40],
             cwd=ROOT,
             env=env,
             text=True,
@@ -3174,34 +3211,34 @@ def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
         )
         assert completed.returncode == 2
         assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
-        if name in {"loader", "global", "count"}:
-            assert "rejected" in completed.stderr
+        assert "T commit is unavailable" in completed.stderr
         assert sentinel.read_bytes() == b"unchanged"
         assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
         assert not marker.exists()
+        assert not constructor_marker.exists()
+        assert not function_marker.exists()
 
-        cleanup_env = dict(env)
-        cleanup_env.pop("P", None)
-        cleanup_env.pop("TMPDIR", None)
-        cleanup = subprocess.run(
-            ["bash", "scripts/evidence/clean_sibling_cleanup.sh"],
-            cwd=ROOT,
-            env=cleanup_env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if name in {"loader", "global", "count"}:
-            assert cleanup.returncode == 2
-            assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup.stdout
-            assert "rejected" in cleanup.stderr
-        else:
-            assert cleanup.returncode == 0
-        assert not marker.exists()
+
+def test_clean_sibling_internal_script_refuses_direct_invocation(tmp_path: Path) -> None:
+    env = _evidence_env(tmp_path / "unused")
+    env.update({"P": "26d11c2c7a8da37937a7c50c642f18edc75c9345", "TMPDIR": str(tmp_path)})
+    completed = subprocess.run(
+        ["/bin/bash", "scripts/evidence/prove_clean_sibling.sh", "0" * 40],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "requires trusted static launcher" in completed.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
 
 
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
     prover = EVIDENCE_SCRIPTS / "prove_clean_sibling.sh"
+    launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
+    subprocess.run(["/usr/bin/busybox", "ash", "-n", str(launcher)], check=True)
     subprocess.run(["bash", "-n", str(prover)], check=True)
     subprocess.run(["bash", "-n", str(EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh")], check=True)
     source = prover.read_text(encoding="utf-8")
@@ -3559,9 +3596,9 @@ exit $?
         capture_output=True,
         check=False,
     )
-    assert cleanup_result.returncode == 0
+    assert cleanup_result.returncode == 2
     assert "cleanup retry after worktree removal failure" not in cleanup_result.stderr
-    assert "CLEAN_SIBLING_TECHNICAL=PASS" in cleanup_result.stdout
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
     assert not failure_state.exists(), "ambient fake git must never execute"
     assert not cleanup_root.exists()
     assert (
@@ -3602,7 +3639,7 @@ exit $?
         if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
         for relative in (path.relative_to(ROOT),)
     )
-    assert len(candidate_files) == 25
+    assert len(candidate_files) == 26
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False
@@ -3816,7 +3853,7 @@ exec "$REAL_UV" "$@"
                 check=True,
             ).stdout
             completed = subprocess.run(
-                ["bash", "scripts/evidence/prove_clean_sibling.sh", product],
+                ["scripts/evidence/prove_clean_sibling", product],
                 cwd=candidate,
                 env=env,
                 text=True,
