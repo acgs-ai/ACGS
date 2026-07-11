@@ -14,6 +14,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACGI_DIR="$ROOT_DIR/acgi-ai"
 REQUIRED_NODE_VERSION="24.18.0"
+REQUIRED_COREPACK_VERSION="0.35.0"
 REQUIRED_PNPM_SELECTOR='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 
 NODE_VERSION_FILE="$(tr -d '[:space:]' < "$ACGI_DIR/.node-version")"
@@ -59,23 +60,49 @@ if ! command -v fnm >/dev/null 2>&1; then
   exit 1
 fi
 
+# Corepack resolves the nearest package.json from the current working directory.
+# Normalize before any identity lookup so a caller cannot select another
+# package-manager manifest by invoking this wrapper from elsewhere.
+cd "$ROOT_DIR"
+
+if [[ -v COREPACK_INTEGRITY_KEYS ]]; then
+  echo "ERROR: COREPACK_INTEGRITY_KEYS must stay unset; integrity bypasses are forbidden." >&2
+  exit 1
+fi
+export COREPACK_HOME="${XDG_CACHE_HOME:-${HOME}/.cache}/acgs/corepack-node-${REQUIRED_NODE_VERSION}"
+export COREPACK_DEFAULT_TO_LATEST=0
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+export COREPACK_ENABLE_PROJECT_SPEC=1
+export COREPACK_ENABLE_STRICT=1
+export COREPACK_ENV_FILE=0
+
 NODE_VERSION="$(fnm exec --using "$REQUIRED_NODE_VERSION" -- node -p "process.versions.node")"
 if [[ "$NODE_VERSION" != "$REQUIRED_NODE_VERSION" ]]; then
   echo "ERROR: expected Node ${REQUIRED_NODE_VERSION}, got v${NODE_VERSION}." >&2
   exit 1
 fi
 
-PNPM_VERSION="$(fnm exec --using "$REQUIRED_NODE_VERSION" -- pnpm -v)"
+COREPACK_VERSION="$(fnm exec --using "$REQUIRED_NODE_VERSION" -- corepack --version)"
+if [[ "$COREPACK_VERSION" != "$REQUIRED_COREPACK_VERSION" ]]; then
+  echo "ERROR: expected bundled Corepack ${REQUIRED_COREPACK_VERSION}, got ${COREPACK_VERSION}." >&2
+  exit 1
+fi
+
+# `corepack pnpm` consumes the full integrity-qualified packageManager selector
+# from the repository manifest. A bare pnpm executable would prove only the
+# version string, not the downloaded package-manager artifact.
+PNPM_VERSION="$(fnm exec --using "$REQUIRED_NODE_VERSION" -- corepack pnpm -v)"
 if [[ "$PNPM_VERSION" != "$EXPECTED_PNPM" ]]; then
   echo "ERROR: expected pnpm ${EXPECTED_PNPM}, got ${PNPM_VERSION}." >&2
   exit 1
 fi
 
-cd "$ROOT_DIR"
-echo "acgi-ai Node 24 gate: node=v${NODE_VERSION}, pnpm=${PNPM_VERSION}"
+echo "acgi-ai Node 24 gate: node=v${NODE_VERSION}, corepack=${COREPACK_VERSION}, pnpm=${PNPM_VERSION}"
 
 if [[ "$#" -eq 0 ]]; then
-  set -- pnpm -F acgi-ai run test:all
+  set -- corepack pnpm -F acgi-ai run test:all
+elif [[ "$1" == "pnpm" ]]; then
+  set -- corepack "$@"
 fi
 
 exec fnm exec --using "$REQUIRED_NODE_VERSION" -- "$@"

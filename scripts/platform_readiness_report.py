@@ -1535,6 +1535,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "requirements/saas-beta/cp-test.lock",
             "requirements/saas-beta/gz-test.lock",
             "node-version: '24.18.0'",
+            "Prove Corepack enforces the integrity-qualified pnpm selector",
+            "Corepack accepted a forged pnpm SHA-512 selector",
+            "Error: Mismatch hashes. Expected ${forged_hash}, got ${reviewed_hash}",
             "fnm exec --using 24.18.0 -- pnpm test:playwright",
             "test_all_owned_scope_gates_are_required",
             "required branch protection",
@@ -1543,12 +1546,16 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
     items.append(
         _item(
             "saas-beta-required-gate-local",
-            "SaaS-beta PR gate is ordered, hash-locked, hosted, and privilege-separated",
+            (
+                "SaaS-beta PR gate configuration is ordered, hash-locked, hosted, "
+                "and privilege-separated"
+            ),
             saas_gate_files_ok and saas_gate_ok,
             (
-                "local workflow contract runs EVID, control-plane, gove-zone, and console "
-                "gates in one read-only hosted job; enabling the new required status remains "
-                "an external repository-owner branch-protection action"
+                "local static contract verifies configuration for EVID, control-plane, "
+                "gove-zone, and console gates in one read-only hosted job; runtime execution "
+                "is proven only by a successful aggregate workflow run, and enabling the new "
+                "required status remains an external repository-owner branch-protection action"
                 if saas_gate_files_ok and saas_gate_ok
                 else (f"missing_files={saas_gate_missing}, missing_parts={saas_gate_missing_parts}")
             ),
@@ -1581,8 +1588,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "verify-js-node24:",
             'REQUIRED_NODE_VERSION="24.18.0"',
+            'REQUIRED_COREPACK_VERSION="0.35.0"',
             "fnm exec --using",
             "process.versions.node",
+            "corepack pnpm -v",
+            "COREPACK_INTEGRITY_KEYS must stay unset",
             'EXPECTED_PNPM="${ROOT_PNPM_SELECTOR#pnpm@}"',
             'EXPECTED_PNPM="${EXPECTED_PNPM%%+sha512.*}"',
             "make verify-js-node24",
@@ -1607,8 +1617,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             node24_files_ok and node24_ok and package_node_ok,
             (
                 "make verify-js-node24 activates exact Node 24.18.0, derives pnpm "
-                "9.15.4 from the integrity-qualified selector, "
-                "and runs acgi-ai test:all"
+                "9.15.4 from the integrity-qualified selector, consumes that selector "
+                "through bundled Corepack 0.35.0, and runs acgi-ai test:all"
                 if node24_files_ok and node24_ok and package_node_ok
                 else (
                     f"missing_files={node24_missing}, "
@@ -2153,7 +2163,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "hostedProofRequirements",
             "actions/upload-pages-artifact@",
             "actions/deploy-pages@",
-            "vars.STORYBOOK_PAGES_ENABLED == 'true'",
+            "STORYBOOK_PRODUCTION_APPROVED_SHA",
+            '[[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$',
+            "needs: [build, authorize]",
+            "needs.authorize.outputs.approved == 'true'",
             "test:storybook-publication",
             "test:hosted-storybook-handoff",
             "test:hosted-storybook-proof-template",
@@ -2173,8 +2186,10 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             and storybook_publication_ok
             and storybook_publication_scripts_ok,
             (
-                "storybook.acgs.ai Pages workflow scaffold builds claim-safe buyer "
-                "evidence and runs hosted handoff/proof-template checks before deploy"
+                "local storybook.acgs.ai Pages configuration builds claim-safe buyer "
+                "evidence and runs hosted handoff/proof-template checks; every Pages "
+                "mutation requires environment-bound exact-SHA authorization, while "
+                "hosted workflow execution remains separately evidenced"
                 if storybook_publication_files_ok
                 and storybook_publication_ok
                 and storybook_publication_scripts_ok

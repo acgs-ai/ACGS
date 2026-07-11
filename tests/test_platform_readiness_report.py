@@ -103,10 +103,19 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["release-evidence-bundle"].status == "pass"
     assert by_id["saas-beta-required-gate-local"].status == "pass"
     assert (
+        "local static contract verifies configuration"
+        in by_id["saas-beta-required-gate-local"].evidence
+    )
+    assert (
+        "runtime execution is proven only by a successful aggregate workflow run"
+        in by_id["saas-beta-required-gate-local"].evidence
+    )
+    assert (
         "external repository-owner branch-protection action"
         in by_id["saas-beta-required-gate-local"].evidence
     )
     assert by_id["node24-local-toolchain"].status == "pass"
+    assert "bundled Corepack 0.35.0" in by_id["node24-local-toolchain"].evidence
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
     assert "agent framework starter kits" in by_id["buyer-evidence-gallery-local"].evidence
@@ -158,6 +167,14 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["storybook-publication-workflow-local"].status == "pass"
     assert (
         "hosted handoff/proof-template checks"
+        in by_id["storybook-publication-workflow-local"].evidence
+    )
+    assert (
+        "every Pages mutation requires environment-bound exact-SHA authorization"
+        in by_id["storybook-publication-workflow-local"].evidence
+    )
+    assert (
+        "hosted workflow execution remains separately evidenced"
         in by_id["storybook-publication-workflow-local"].evidence
     )
     assert by_id["hosted-storybook-handoff-local"].status == "pass"

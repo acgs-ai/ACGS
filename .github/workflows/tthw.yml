@@ -17,22 +17,76 @@ jobs:
   tthw:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      COREPACK_DEFAULT_TO_LATEST: '0'
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+      COREPACK_ENABLE_PROJECT_SPEC: '1'
+      COREPACK_ENABLE_STRICT: '1'
+      COREPACK_ENV_FILE: '0'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
           submodules: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.18.0'
-          cache: pnpm
-          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Prove Corepack enforces the integrity-qualified pnpm selector
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.versions.node')" = 24.18.0
+          test "$(corepack --version)" = 0.35.0
+          if [[ -v COREPACK_INTEGRITY_KEYS ]]; then
+            echo "COREPACK_INTEGRITY_KEYS must stay unset; bypasses are forbidden" >&2
+            exit 1
+          fi
+
+          selector='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+          reviewed_hash="${selector##*+sha512.}"
+          forged_hash="$(printf '%0128d' 0)"
+          python3 - "$selector" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          expected = sys.argv[1]
+          root = json.loads(Path("package.json").read_text())["packageManager"]
+          app = json.loads(Path("acgi-ai/package.json").read_text())["packageManager"]
+          if root != expected or app != expected:
+              raise SystemExit("root/acgi packageManager selector drift")
+          PY
+
+          corepack_root="$RUNNER_TEMP/acgs-corepack"
+          export COREPACK_HOME="$corepack_root/home"
+          forged_home="${corepack_root}-forged/home"
+          valid_project="$(mktemp -d)"
+          forged_project="$(mktemp -d)"
+          trap 'rm -rf "$valid_project" "$forged_project"' EXIT
+          rm -rf "$corepack_root" "${corepack_root}-forged"
+          install -d -m 0700 "$COREPACK_HOME" "$forged_home" "$corepack_root/bin"
+          printf '{"packageManager":"%s"}\n' "$selector" > "$valid_project/package.json"
+          printf '{"packageManager":"pnpm@9.15.4+sha512.%s"}\n' "$forged_hash" > "$forged_project/package.json"
+
+          test "$(cd "$valid_project" && corepack pnpm --version)" = 9.15.4
+          if (cd "$forged_project" && COREPACK_HOME="$forged_home" corepack pnpm --version) \
+            >"$RUNNER_TEMP/corepack-forged.stdout" \
+            2>"$RUNNER_TEMP/corepack-forged.stderr"; then
+            echo "Corepack accepted a forged pnpm SHA-512 selector" >&2
+            exit 1
+          fi
+          grep -F "Error: Mismatch hashes. Expected ${forged_hash}, got ${reviewed_hash}" \
+            "$RUNNER_TEMP/corepack-forged.stderr"
+
+          corepack enable --install-directory "$corepack_root/bin" pnpm
+          test "$(COREPACK_HOME="$COREPACK_HOME" "$corepack_root/bin/pnpm" --version)" = 9.15.4
+          printf 'COREPACK_HOME=%s\n' "$COREPACK_HOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$corepack_root/bin" >> "$GITHUB_PATH"
 
       - name: Verify exact tool identities
-        run: test "$(node -p 'process.versions.node')" = 24.18.0 && test "$(pnpm --version)" = 9.15.4
+        run: test "$(node -p 'process.versions.node')" = 24.18.0 && test "$(command -v pnpm)" = "${COREPACK_HOME%/home}/bin/pnpm" && test "$(pnpm --version)" = 9.15.4
 
       - name: Time to hello world
         env:

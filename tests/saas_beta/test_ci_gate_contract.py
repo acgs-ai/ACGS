@@ -24,7 +24,6 @@ ACTION_PINS = {
     "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",
     "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
     "astral-sh/setup-uv": "d0cc045d04ccac9d8b7881df0226f9e82c39688e",
-    "pnpm/action-setup": "b906affcce14559ad1aafd4ab0e942779e9f58b1",
     "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
     "actions/download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
     "google-github-actions/auth": "c200f3691d83b41bf9bbd8638997a462592937ed",
@@ -130,6 +129,51 @@ def _assert_pinned_actions(path: Path) -> None:
         )
 
 
+def _assert_corepack_integrity_proof(source: str) -> None:
+    """Require real package-manager artifact verification, not a version-only action."""
+
+    assert "pnpm/action-setup@" not in source
+    assert "cache: pnpm" not in source
+    for marker in (
+        "COREPACK_DEFAULT_TO_LATEST: '0'",
+        "COREPACK_ENABLE_PROJECT_SPEC: '1'",
+        "COREPACK_ENABLE_STRICT: '1'",
+        "COREPACK_ENV_FILE: '0'",
+        'test "$(corepack --version)" = 0.35.0',
+        "if [[ -v COREPACK_INTEGRITY_KEYS ]]",
+        "COREPACK_INTEGRITY_KEYS must stay unset",
+        'corepack_root="$RUNNER_TEMP/acgs-corepack"',
+        'export COREPACK_HOME="$corepack_root/home"',
+        PNPM_SELECTOR,
+        "forged_hash=\"$(printf '%0128d' 0)\"",
+        "pnpm@9.15.4+sha512.%s",
+        'COREPACK_HOME="$forged_home" corepack pnpm --version',
+        "Corepack accepted a forged pnpm SHA-512 selector",
+        'grep -F "Error: Mismatch hashes. Expected ${forged_hash}, got ${reviewed_hash}"',
+        'corepack enable --install-directory "$corepack_root/bin" pnpm',
+        'test "$(command -v pnpm)" = "${COREPACK_HOME%/home}/bin/pnpm"',
+        'printf \'COREPACK_HOME=%s\\n\' "$COREPACK_HOME" >> "$GITHUB_ENV"',
+    ):
+        assert marker in source, f"missing Corepack integrity marker: {marker}"
+
+
+def _assert_corepack_selector_setup(source: str) -> None:
+    """Require every pnpm workflow to consume the reviewed manifest selector."""
+
+    assert "pnpm/action-setup@" not in source
+    assert "cache: pnpm" not in source
+    for marker in (
+        "node-version: '24.18.0'",
+        PNPM_SELECTOR,
+        "Activate integrity-verified pnpm",
+        "COREPACK_HOME=",
+        'corepack enable --install-directory "$corepack_root/bin"',
+        "test \"$(corepack pnpm --version)\" = '9.15.4'",
+        'test "$(command -v pnpm)" = "$corepack_root/bin/pnpm"',
+    ):
+        assert marker in source, f"missing Corepack selector marker: {marker}"
+
+
 def _extract_gate_contract(source: str) -> tuple[tuple[str, str | None], ...]:
     blocks = list(
         re.finditer(
@@ -178,12 +222,7 @@ def _assert_read_only_pr_workflow(path: Path) -> None:
         "gcloud run services replace",
     ):
         assert privileged not in source, f"{path.name} PR workflow contains {privileged}"
-    assert "node-version: '24.18.0'" in source
-    assert "pnpm/action-setup@" in source
-    assert "version: '9.15.4'" not in source, (
-        "pnpm/action-setup must consume the integrity-qualified packageManager selector; "
-        "the pinned action rejects a duplicate plain version"
-    )
+    _assert_corepack_selector_setup(source)
     _assert_pinned_actions(path)
 
 
@@ -197,6 +236,7 @@ def _assert_push_only_deploy_workflow(path: Path) -> None:
     )
     assert "environment:" in source
     assert "version: '9.15.4'" not in source
+    _assert_corepack_selector_setup(source)
     _assert_pinned_actions(path)
 
 
@@ -206,22 +246,8 @@ def test_all_owned_scope_gates_are_required() -> None:
 
     assert "pull_request:" in trigger and "branches: [master]" in trigger
     assert "push:" not in trigger
-    required_paths = (
-        "requirements/saas-beta/**",
-        "schemas/evidence/**",
-        "scripts/evidence/**",
-        "packages/acgs-control-plane/**",
-        "packages/gove-zone/**",
-        "acgi-ai/**",
-        "tests/saas_beta/**",
-        "scripts/run_acgi_node24_gate.sh",
-        "scripts/platform_readiness_report.py",
-        "package.json",
-        "pyproject.toml",
-        "uv.lock",
-    )
-    for required_path in required_paths:
-        assert f"'{required_path}'" in trigger
+    assert "paths:" not in trigger
+    assert "paths-ignore:" not in trigger
 
     jobs = aggregate.split("\njobs:\n", 1)[1]
     assert re.findall(r"^  ([a-zA-Z0-9_-]+):\s*$", jobs, re.M) == ["gates"]
@@ -242,7 +268,7 @@ def test_all_owned_scope_gates_are_required() -> None:
     assert "version: '0.11.19'" in aggregate
     assert "node-version: '24.18.0'" in aggregate
     assert "version: '9.15.4'" not in aggregate
-    assert 'test "$(pnpm --version)" = 9.15.4' in aggregate
+    _assert_corepack_integrity_proof(aggregate)
     assert "uv pip sync --python .venv-evidence/bin/python --require-hashes" in aggregate
     assert (
         "uv pip sync --python packages/acgs-control-plane/.venv/bin/python --require-hashes"
@@ -288,12 +314,47 @@ def test_all_owned_scope_gates_are_required() -> None:
     assert "credentials_json" not in console_deploy
     assert "environment: production" in console_deploy
 
+    authorization_contracts = (
+        (
+            console_deploy,
+            "CONSOLE_PRODUCTION_APPROVED_SHA",
+            ("needs: [verify, authorize]", "needs: [verify, authorize, publish]"),
+        ),
+        (
+            _read(ROOT / ".github/workflows/marketing-cloudflare.yml"),
+            "MARKETING_PRODUCTION_APPROVED_SHA",
+            ("needs: [verify, authorize]",),
+        ),
+        (
+            _read(ROOT / ".github/workflows/storybook-deploy.yml"),
+            "STORYBOOK_PRODUCTION_APPROVED_SHA",
+            ("needs: [build, authorize]",),
+        ),
+    )
+    for workflow, approved_variable, mutation_dependencies in authorization_contracts:
+        for marker in (
+            "  authorize:\n",
+            "    permissions: {}\n",
+            f"APPROVED_SHA: ${{{{ vars.{approved_variable} }}}}",
+            "CANDIDATE_SHA: ${{ github.sha }}",
+            '[[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ && "$APPROVED_SHA" == "$CANDIDATE_SHA" ]]',
+            "echo 'approved=true' >> \"$GITHUB_OUTPUT\"",
+            "echo 'approved=false' >> \"$GITHUB_OUTPUT\"",
+            "needs.authorize.outputs.approved == 'true'",
+        ):
+            assert marker in workflow, f"missing exact-SHA authorization marker: {marker}"
+        for dependency in mutation_dependencies:
+            assert dependency in workflow
+
     marketing_deploy = _read(ROOT / ".github/workflows/marketing-cloudflare.yml")
     for marker in (
         "Cloudflare Workers deploy blocked",
         "infra/cloudflare/workers/_redirects",
         "deploy --config infra/cloudflare/workers/wrangler.toml",
         "environment: production",
+        "wranglerVersion: '4.110.0'",
+        "require('./node_modules/wrangler/package.json').version",
+        "pnpm exec wrangler --version",
     ):
         assert marker in marketing_deploy
 
@@ -306,7 +367,7 @@ def test_all_owned_scope_gates_are_required() -> None:
     tthw = _read(ROOT / ".github/workflows/tthw.yml")
     assert "runs-on: ubuntu-24.04" in tthw
     assert "node-version: '24.18.0'" in tthw
-    assert 'test "$(pnpm --version)" = 9.15.4' in tthw
+    _assert_corepack_integrity_proof(tthw)
     _assert_pinned_actions(ROOT / ".github/workflows/tthw.yml")
 
     root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))

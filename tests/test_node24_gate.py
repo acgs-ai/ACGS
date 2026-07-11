@@ -25,12 +25,16 @@ def test_node24_gate_script_is_executable_and_fail_closed():
     assert os.access(script, os.X_OK)
     assert "set -euo pipefail" in source
     assert 'REQUIRED_NODE_VERSION="24.18.0"' in source
+    assert 'REQUIRED_COREPACK_VERSION="0.35.0"' in source
     assert "fnm exec --using" in source
     assert "process.versions.node" in source
     assert 'EXPECTED_PNPM="${ROOT_PNPM_SELECTOR#pnpm@}"' in source
     assert 'EXPECTED_PNPM="${EXPECTED_PNPM%%+sha512.*}"' in source
     assert "pnpm -F acgi-ai run test:all" in source
     assert 'cd "$ROOT_DIR"' in source
+    assert "corepack pnpm -v" in source
+    assert "COREPACK_INTEGRITY_KEYS must stay unset" in source
+    assert source.index('cd "$ROOT_DIR"') < source.index('PNPM_VERSION="')
 
 
 def test_packagemanager_selector_is_integrity_qualified_and_version_is_derivable():
@@ -53,10 +57,16 @@ def test_node24_gate_uses_repo_root_from_arbitrary_caller_cwd(tmp_path: Path):
         """#!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == exec && "$2" == --using && "$3" == 24.18.0 && "$4" == -- ]]
+[[ "$PWD" == "$EXPECTED_REPO_ROOT" ]] || {
+  echo "wrong wrapper cwd: $PWD" >&2
+  exit 91
+}
 shift 4
 if [[ "$1" == node && "$2" == -p ]]; then
   printf '%s\\n' 24.18.0
-elif [[ "$1" == pnpm && "$2" == -v ]]; then
+elif [[ "$1" == corepack && "$2" == --version ]]; then
+  printf '%s\\n' 0.35.0
+elif [[ "$1" == corepack && "$2" == pnpm && "$3" == -v ]]; then
   printf '%s\\n' 9.15.4
 else
   exec "$@"
@@ -69,6 +79,8 @@ fi
     caller.mkdir()
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["EXPECTED_REPO_ROOT"] = str(ROOT)
+    env.pop("COREPACK_INTEGRITY_KEYS", None)
     result = subprocess.run(
         [
             str(ROOT / "scripts/run_acgi_node24_gate.sh"),
@@ -85,7 +97,7 @@ fi
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == str(ROOT)
-    assert "node=v24.18.0, pnpm=9.15.4" in result.stdout
+    assert "node=v24.18.0, corepack=0.35.0, pnpm=9.15.4" in result.stdout
 
 
 def test_makefile_exposes_node24_verification_target():
