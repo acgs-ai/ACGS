@@ -284,8 +284,19 @@ def managed_contract_stub(
     if forbidden:
         raise ValueError(f"caller-controlled server bindings: {','.join(forbidden)}")
     statuses = [p.preflight() for p in providers]
-    if not statuses or any(not s.ready or s._seal is not _PROVIDER_SEAL for s in statuses):
+    required_provider_components = {
+        "signer-issuer",
+        "trust-verifier",
+        "durable-consumption-uow",
+        "migration-head",
+    }
+    ready_components = {
+        status.component for status in statuses if status.ready and status._seal is _PROVIDER_SEAL
+    }
+    if ready_components != required_provider_components:
         raise RuntimeError("trusted providers not ready")
+    if decision not in {"ALLOW", "DENY", "ESCALATE"}:
+        raise ValueError("unknown decision")
     frozen = _freeze(body)
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     actions = {
@@ -328,7 +339,7 @@ def managed_contract_stub(
         audit_anchor=bindings["audit_anchor"],
         idempotency_key=bindings["idempotency_key"],
     )
-    del decision, mutation
+    del mutation
     # DENY, ESCALATE, and even apparently valid ALLOW stop here. P1/P2 own execution.
     error = ProductionPostureBlocked(
         (
