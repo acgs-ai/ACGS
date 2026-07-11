@@ -156,8 +156,13 @@ class Kernel:
                 pending=PendingApproval(record, audit_hash, dict(call.args)),
             )
         if record.decision is Decision.TRANSFORM:
-            if record.transformed_args is None:
-                # Policy bug: TRANSFORM without args. Fail closed.
+            if record.transformed_args is None:  # pragma: no cover
+                # Defense-in-depth re-raise: unreachable via the public API
+                # because ``_evaluate_only`` already normalizes a malformed
+                # TRANSFORM (transformed_args is None) into a DENY before this
+                # point (the MALFORMED_TRANSFORM synthesis). Kept as a
+                # fail-closed backstop so any future path that bypasses that
+                # normalization still cannot execute a TRANSFORM without args.
                 raise DeniedError(record, audit_hash)
             args_dict = dict(record.transformed_args)
             call = call.with_args(args_dict)
