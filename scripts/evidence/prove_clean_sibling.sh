@@ -699,6 +699,7 @@ run_recorded_gate GZ "$WORKTREE" gz-pytest 'packages/gove-zone:local-gate' \
 
 P0_ROOT_GATE=(.venv-evidence/bin/python -m pytest -q \
   tests/saas_beta/test_evidence_bootstrap.py::test_clean_sibling_hash_locked_bootstraps_and_round_trip \
+  tests/saas_beta/test_evidence_bootstrap.py::test_clean_sibling_rejects_loader_and_git_authority_before_mutation \
   tests/saas_beta/test_evidence_bootstrap.py::test_environment_identities_exactly_match_assignment \
   tests/saas_beta/test_evidence_bootstrap.py::test_missing_extra_or_retained_environment_rejected \
   tests/saas_beta/test_evidence_bootstrap.py::test_pep660_helpers_required_for_assigned_python_scopes)

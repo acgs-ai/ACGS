@@ -142,6 +142,8 @@ REVIEWED_P0_TRANSCRIPT = (
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_clean_sibling_hash_locked_bootstraps_and_round_trip",
             "tests/saas_beta/test_evidence_bootstrap.py::"
+            "test_clean_sibling_rejects_loader_and_git_authority_before_mutation",
+            "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_environment_identities_exactly_match_assignment",
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_missing_extra_or_retained_environment_rejected",
