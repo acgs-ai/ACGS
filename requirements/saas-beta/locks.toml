@@ -1,0 +1,67 @@
+schema_version = "acgs-saas-beta-lock-config/v1"
+
+[meta]
+uv_version = "0.11.19"
+python_version = "3.11"
+python_platform = "x86_64-manylinux_2_28"
+exclude_newer = "2026-07-10T00:00:00Z"
+
+[EVID]
+output = "requirements/saas-beta/evidence-test.in"
+evidence_test = [
+  "rfc8785==0.1.4",
+  "cryptography>=42",
+  "jsonschema>=4.23,<5",
+  "pytest>=8.3,<9",
+]
+
+[CP]
+manifest = "packages/acgs-control-plane/pyproject.toml"
+output = "requirements/saas-beta/cp-test.in"
+dependency_groups = ["dev"]
+extras = ["server", "postgres"]
+editable_no_deps = [
+  "packages/gove-zone",
+  "packages/acgs-control-plane",
+]
+pep517_backend = "hatchling.build"
+pep660_editable_build = ["editables==0.6"]
+
+[GZ]
+manifest = "packages/gove-zone/pyproject.toml"
+output = "requirements/saas-beta/gz-test.in"
+dependency_groups = ["dev"]
+extras = ["schema", "mcp", "yaml"]
+editable_no_deps = ["packages/gove-zone"]
+pep517_backend = "hatchling.build"
+pep660_editable_build = ["editables==0.6"]
+
+[bootstrap_by_scope]
+P0-EVIDENCE-000 = "EVID+CP+GZ"
+P0-MEMBRANE-001 = "EVID+CP"
+P0-CLAIMS-002 = "EVID+CP+GZ"
+P0-GATES-003 = "EVID+CP+GZ+UI"
+P1-MIGRATION-001 = "EVID+CP"
+P1-SCOPE-002 = "EVID+CP"
+P1-LEDGER-003 = "EVID+CP"
+P1-TRUST-004 = "EVID+CP+GZ"
+P2-TENANT-BOOTSTRAP-000 = "EVID+CP+GZ"
+P2-REGISTER-001 = "EVID+CP+GZ"
+P2-IDEMPOTENCY-002 = "EVID+CP"
+P2-VERTICAL-GATE-003 = "EVID+CP+GZ"
+P3-POLICY-001 = "EVID+CP"
+P3-MUTATIONS-002 = "EVID+CP+GZ"
+P3-APPROVAL-003 = "EVID+CP+GZ"
+P4-ENROLLMENT-001 = "EVID+CP+GZ"
+P4-POLICY-SYNC-002 = "EVID+CP+GZ"
+P4-OUTAGE-003 = "EVID+CP+GZ"
+P5-INGEST-001 = "EVID+CP+GZ"
+P5-STORE-002 = "EVID+CP"
+P5-WITNESS-003 = "EVID+CP+GZ"
+P6-BFF-001 = "EVID+CP+UI"
+P6-CONSOLE-002 = "EVID+UI"
+P6-E2E-003 = "EVID+CP+GZ+UI"
+P7-USAGE-001 = "EVID+CP"
+P7-RELIABILITY-002 = "EVID+CP+GZ+UI"
+P7-PROOFPACK-003 = "EVID+CP+GZ+UI"
+P7-BETA-GATE-004 = "EVID+CP+GZ+UI"
