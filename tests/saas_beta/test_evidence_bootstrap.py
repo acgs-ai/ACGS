@@ -2166,6 +2166,11 @@ def test_p0_gates_corpus_is_closed_exact_ordered_and_root_selector_is_last() -> 
         (*_common._UI_LOCKED_PREFIX, command)
         for command in ("lint", "build", "test:all", "test:unit", "test:playwright")
     ]
+    assert all(
+        record["sandbox_profile_version_sha256"]
+        == _common.REVIEWED_UI_SANDBOX_PROFILE_VERSION_SHA256
+        for record in records[10:15]
+    )
     assert reviewed[-1][1][-1] == (
         "tests/saas_beta/test_ci_gate_contract.py::test_all_owned_scope_gates_are_required"
     )
@@ -2799,6 +2804,10 @@ def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> No
         "clear_environment": True,
         "cwd": "{CWD}",
     }
+    assert _common.REVIEWED_UI_SANDBOX_PROFILE["name"] == ("acgs-reviewed-command-bwrap/ui-v3")
+    assert set(_common.REVIEWED_UI_HOST_SECRET_PATHS) <= set(
+        _common.REVIEWED_UI_SANDBOX_PROFILE["masked_paths"]
+    )
 
 
 def test_reviewed_sandbox_masks_ambient_home_credentials(tmp_path: Path) -> None:
@@ -2828,6 +2837,39 @@ def test_reviewed_sandbox_masks_ambient_home_credentials(tmp_path: Path) -> None
     assert completed.returncode == 0, completed.stderr
     masked = {command[index + 1] for index, value in enumerate(command) if value == "--tmpfs"}
     assert {"/home", "/root", "/tmp", "/var/tmp", "/run"} <= masked
+
+
+def test_reviewed_ui_sandbox_masks_host_secret_configuration(tmp_path: Path) -> None:
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    command = capture_reviewed_command._sandbox_command(
+        _common.BWRAP_EXECUTABLE,
+        isolated,
+        ROOT,
+        ROOT,
+        {"PATH": "/usr/bin:/bin", "HOME": str(isolated)},
+        [
+            "/usr/bin/python3",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "assert Path('/etc/environment').read_bytes() == b''; "
+                "assert Path('/etc/profile').read_bytes() == b''; "
+                "assert not any(Path('/etc/ssh').iterdir()); "
+                "assert Path('/etc/resolv.conf').is_file(); "
+                f"assert Path({str(ROOT / 'AGENTS.md')!r}).is_file()"
+            ),
+        ],
+        ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+    )
+    completed = subprocess.run(command, cwd=ROOT, env={}, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert command.count("--ro-bind") >= 3
+    assert ["--ro-bind", str(isolated / "host-secret-mask"), "/etc/environment"] in [
+        command[index : index + 3] for index in range(len(command) - 2)
+    ]
+    masked = {command[index + 1] for index, value in enumerate(command) if value == "--tmpfs"}
+    assert "/etc/ssh" in masked
 
 
 def test_ui_capture_preserves_p6_shape_and_requires_gates_hashes(
@@ -4406,6 +4448,100 @@ def test_clean_sibling_rejects_available_nonbase_parent_before_mutation(
     assert not list(caller.glob("acgs-p0-evidence.*"))
 
 
+def test_ui_bootstrap_network_and_failure_boundaries_are_fail_closed(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+
+    def assert_boundary(candidate: str) -> None:
+        normalized = candidate.replace("\\\n    ", "").replace("\\\n      ", "")
+        bwrap = candidate.split("  ui_bwrap() {", 1)[1].split("\n  for pair in", 1)[0]
+        fetch = (
+            'ui_bwrap fetch "$FNM_BIN" exec --using 24.18.0 -- pnpm fetch '
+            "--ignore-scripts --frozen-lockfile"
+        )
+        install = (
+            'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile'
+        )
+        assert bwrap.count("--share-net") == 1
+        assert "fetch)\n        namespace_args+=(--share-net)" in bwrap
+        assert "offline)\n        offline_env+=(--setenv npm_config_offline true " in bwrap
+        assert "--setenv PNPM_OFFLINE true)" in bwrap
+        assert "install)" not in bwrap
+        assert '"${host_secret_masks[@]}"' in bwrap
+        assert 'host_secret_masks+=(--ro-bind "$UI_EMPTY_SECRET_MASK" "$secret_path")' in bwrap
+        for secret_path in _common.REVIEWED_UI_HOST_SECRET_PATHS:
+            assert f"    {secret_path}\n" in candidate
+        assert normalized.count(fetch) == 1
+        assert normalized.count(install) == 1
+        assert f"if ! {fetch}; then\n    ui_bootstrap_failed fetch" in normalized
+        assert f"if ! {install}; then\n    ui_bootstrap_failed install" in normalized
+        assert normalized.index(fetch) < normalized.index(install)
+        completed_index = normalized.find("UI_BOOTSTRAP_COMPLETE=1")
+        assert completed_index >= 0
+        assert normalized.index(install) < completed_index
+        assert '[[ "$ASSIGNMENT" == *UI* && "$UI_BOOTSTRAP_COMPLETE" != 1 ]]' in candidate
+        failure_guard = candidate.split("  ui_bootstrap_failed() {", 1)[1].split("\n  }", 1)[0]
+        for artifact in (
+            "transcript.jsonl",
+            "run.json",
+            "run.jcs.sha256",
+            "validation-success.json",
+            "validation-report.json",
+        ):
+            assert artifact in failure_guard
+        assert 'reject_lexists "$NODE_EVIDENCE/$artifact"' in failure_guard
+
+    assert_boundary(source)
+    for mutation in (
+        source.replace(
+            "fetch)\n        namespace_args+=(--share-net)",
+            "offline)\n        namespace_args+=(--share-net)",
+            1,
+        ),
+        source.replace("--setenv npm_config_offline true", "--setenv npm_config_offline false", 1),
+        source.replace(
+            'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm install',
+            'ui_bwrap fetch "$FNM_BIN" exec --using 24.18.0 -- pnpm install',
+            1,
+        ),
+        source.replace("ui_bootstrap_failed install", "true", 1),
+        source.replace("UI_BOOTSTRAP_COMPLETE=1", "UI_BOOTSTRAP_COMPLETE=0", 1),
+        source.replace("    /etc/environment\n", "    /etc/environment-unmasked\n", 1),
+    ):
+        with pytest.raises(AssertionError):
+            assert_boundary(mutation)
+
+    failure_body = source.split("  ui_bootstrap_failed() {", 1)[1].split("\n  }", 1)[0]
+    accepted = (
+        "transcript.jsonl",
+        "run.json",
+        "run.jcs.sha256",
+        "validation-success.json",
+        "validation-report.json",
+    )
+    for stage in ("fetch", "install"):
+        node_evidence = tmp_path / stage
+        node_evidence.mkdir()
+        harness = f"""set -euo pipefail
+NODE_EVIDENCE="$1"
+die() {{ printf '%s\\n' "$1" >&2; exit 2; }}
+reject_lexists() {{ [[ ! -e "$1" && ! -L "$1" ]] || exit 97; }}
+ui_bootstrap_failed() {{{failure_body}
+}}
+ui_bootstrap_failed "$2"
+"""
+        completed = subprocess.run(
+            ["/bin/bash", "-c", harness, "ui-bootstrap-test", str(node_evidence), stage],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert f"UI dependency {stage} failed before evidence acceptance" in completed.stderr
+        assert all(not (node_evidence / artifact).exists() for artifact in accepted)
+
+
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
     prover = EVIDENCE_SCRIPTS / "prove_clean_sibling.sh"
     launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
@@ -4440,16 +4576,21 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert 'ui_bwrap offline "$FNM_BIN" install 24.18.0' in source
     assert 'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable' in source
     assert "corepack prepare pnpm@9.15.4" in source
-    assert "pnpm install --frozen-lockfile" in source
     exact_bootstrap = (
         'ui_bwrap offline "$FNM_BIN" install 24.18.0',
         'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable',
         'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack prepare pnpm@9.15.4',
-        'ui_bwrap install "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile',
+        'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile',
     )
     normalized_source = source.replace("\\\n    ", "").replace("\\\n      ", "")
     positions = [normalized_source.index(command) for command in exact_bootstrap]
     assert positions == sorted(positions)
+    exact_fetch = (
+        'ui_bwrap fetch "$FNM_BIN" exec --using 24.18.0 -- pnpm fetch '
+        "--ignore-scripts --frozen-lockfile"
+    )
+    assert normalized_source.count(exact_fetch) == 1
+    assert positions[2] < normalized_source.index(exact_fetch) < positions[3]
     assert "ui_tree_sha256" in source and "copied pnpm tree digest mismatch" in source
     assert "packageManager must match the reviewed pnpm name/version/integrity selector" in source
     for masked_root in ("/home", "/root", "/tmp", "/var/tmp", "/run"):

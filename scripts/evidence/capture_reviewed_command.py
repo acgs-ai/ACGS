@@ -26,6 +26,7 @@ from _common import (
     REVIEWED_ENVIRONMENT_PROFILE,
     REVIEWED_HOST_EXECUTABLE_SHA256,
     REVIEWED_UI_ENVIRONMENT_PROFILE,
+    REVIEWED_UI_HOST_SECRET_PATHS,
     REVIEWED_UI_SANDBOX_WRITABLE_PATHS,
     REVIEWED_UI_TOOLCHAIN,
     EvidenceError,
@@ -268,6 +269,11 @@ def _sandbox_command(
     lexical_command: list[str],
     reviewed_argv: tuple[str, ...],
 ) -> list[str]:
+    empty_secret_mask: Path | None = None
+    if reviewed_argv[:1] == ("fnm",):
+        empty_secret_mask = isolated / "host-secret-mask"
+        fd = os.open(empty_secret_mask, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+        os.close(fd)
     masked_roots = tuple(
         path for path in map(Path, ("/home", "/root", "/tmp", "/var/tmp", "/run")) if path.exists()
     )
@@ -282,6 +288,14 @@ def _sandbox_command(
     ]
     for masked_root in masked_roots:
         command.extend(("--tmpfs", str(masked_root)))
+    if reviewed_argv[:1] == ("fnm",):
+        for secret_path in map(Path, REVIEWED_UI_HOST_SECRET_PATHS):
+            if secret_path.is_dir():
+                command.extend(("--tmpfs", str(secret_path)))
+            elif secret_path.exists() or secret_path.is_symlink():
+                if empty_secret_mask is None:  # pragma: no cover - guarded by fnm branch
+                    fail("UI host-secret mask source is unavailable", phase="B6")
+                command.extend(("--ro-bind", str(empty_secret_mask), str(secret_path)))
     lexical_path = Path(lexical_command[0])
     visible_paths = [repo, lexical_path]
     link = lexical_path

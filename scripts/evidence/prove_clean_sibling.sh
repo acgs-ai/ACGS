@@ -301,6 +301,7 @@ PNPM_STORE_DIR=''
 WORKTREE_ADDED=0
 PROOF_COMPLETE=0
 TRANSCRIPT_RECORDS=0
+UI_BOOTSTRAP_COMPLETE=0
 R=''
 
 cleanup() {
@@ -628,6 +629,37 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
   PNPM_COREPACK_METADATA_SHA256=d0015a0345d683888f46c48caf909f611875ba7e9132ca1afced8f0fef84f117
   UI_WORKSPACE_SHA256=50c15b3f4420b77d890a9bd93844462418daa2df5842ffeaa77d7eeab36b8da6
   PNPM_SELECTOR='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+  UI_HOST_SECRET_PATHS=(
+    /etc/environment
+    /etc/profile
+    /etc/profile.d
+    /etc/ssh
+    /etc/ssl/private
+    /etc/apt/auth.conf
+    /etc/apt/auth.conf.d
+    /etc/NetworkManager/system-connections
+    /etc/kubernetes
+    /etc/docker
+    /etc/containers
+    /etc/sudoers
+    /etc/sudoers.d
+    /etc/krb5.keytab
+    /etc/npmrc
+    /etc/gitconfig
+    /etc/pip.conf
+    /etc/letsencrypt
+    /etc/pki/tls/private
+    /var/lib/cloud
+    /var/lib/private
+    /var/lib/secrets
+    /var/lib/kubelet
+    /var/lib/NetworkManager
+    /var/lib/waagent
+    /var/lib/sss
+  )
+  UI_EMPTY_SECRET_MASK="$SCRATCH_ROOT/ui-empty-secret-mask"
+  (set -o noclobber; : >"$UI_EMPTY_SECRET_MASK") || die 'cannot create UI host-secret mask'
+  chmod 400 "$UI_EMPTY_SECRET_MASK"
   [[ -x "$HOST_FNM_BIN" && ! -L "$HOST_FNM_BIN" && \
     "$(realpath -e "$HOST_FNM_BIN")" == "$HOST_FNM_BIN" ]] || die 'canonical fnm is unavailable'
   [[ "$(sha256sum "$HOST_FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] ||
@@ -666,20 +698,35 @@ PY
     local namespace_args=(--unshare-all)
     local product_writes=()
     local offline_env=()
+    local host_secret_masks=()
+    local secret_path
     local scratch_mount=(--bind "$SCRATCH_ROOT" "$SCRATCH_ROOT")
-    [[ "$network_mode" == install ]] && namespace_args+=(--share-net)
-    [[ "$network_mode" == offline ]] && offline_env+=(--setenv npm_config_offline true)
-    if [[ "$network_mode" == install ]]; then
-      scratch_mount=(--ro-bind "$SCRATCH_ROOT" "$SCRATCH_ROOT" \
-        --bind "$PNPM_STORE_DIR" "$PNPM_STORE_DIR" \
-        --bind "$SCRATCH_ROOT/home" "$SCRATCH_ROOT/home")
-    fi
+    case "$network_mode" in
+      fetch)
+        namespace_args+=(--share-net)
+        scratch_mount=(--ro-bind "$SCRATCH_ROOT" "$SCRATCH_ROOT" \
+          --bind "$PNPM_STORE_DIR" "$PNPM_STORE_DIR" \
+          --bind "$SCRATCH_ROOT/home" "$SCRATCH_ROOT/home")
+        ;;
+      offline)
+        offline_env+=(--setenv npm_config_offline true --setenv PNPM_OFFLINE true)
+        ;;
+      *) die "invalid UI bootstrap network mode: $network_mode" ;;
+    esac
+    for secret_path in "${UI_HOST_SECRET_PATHS[@]}"; do
+      if [[ -d "$secret_path" ]]; then
+        host_secret_masks+=(--tmpfs "$secret_path")
+      elif [[ -e "$secret_path" || -L "$secret_path" ]]; then
+        host_secret_masks+=(--ro-bind "$UI_EMPTY_SECRET_MASK" "$secret_path")
+      fi
+    done
     [[ -d "$WORKTREE/acgi-ai/node_modules" ]] && product_writes+=(
       --bind "$WORKTREE/acgi-ai/node_modules" "$WORKTREE/acgi-ai/node_modules"
     )
     /usr/bin/bwrap --die-with-parent "${namespace_args[@]}" --new-session \
       --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /tmp --tmpfs /var/tmp \
       --tmpfs /run --dir "$TMP_ROOT" --dir "$WORKTREE" --dir "$SCRATCH_ROOT" \
+      "${host_secret_masks[@]}" \
       --ro-bind "$WORKTREE" "$WORKTREE" "${scratch_mount[@]}" \
       "${product_writes[@]}" \
       --chdir "$WORKTREE/acgi-ai" --proc /proc --dev /dev --clearenv \
@@ -744,9 +791,24 @@ PY
   [[ -f "$UI_PNPM" && "$(realpath -e "$UI_PNPM")" == "$UI_COREPACK_JS" ]] || die 'pnpm shim does not resolve to pinned owned corepack dispatcher'
   [[ "$(ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm --version)" == \
     9.15.4 ]] || die 'pnpm version mismatch after activation'
+  ui_bootstrap_failed() {
+    local stage="$1" artifact
+    for artifact in transcript.jsonl run.json run.jcs.sha256 \
+      validation-success.json validation-report.json; do
+      reject_lexists "$NODE_EVIDENCE/$artifact"
+    done
+    die "UI dependency $stage failed before evidence acceptance"
+  }
+  if ! ui_bwrap fetch "$FNM_BIN" exec --using 24.18.0 -- pnpm fetch \
+    --ignore-scripts --frozen-lockfile; then
+    ui_bootstrap_failed fetch
+  fi
   reject_lexists "$WORKTREE/acgi-ai/node_modules"
   mkdir -m 700 "$WORKTREE/acgi-ai/node_modules"
-  ui_bwrap install "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile
+  if ! ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm install \
+    --frozen-lockfile; then
+    ui_bootstrap_failed install
+  fi
   [[ "$(ui_tree_sha256 "$OWNED_NODE_ROOT/lib/node_modules/corepack")" == \
     "$COREPACK_TREE_SHA256" ]] || die 'Corepack tree changed during dependency bootstrap'
   [[ "$(ui_tree_sha256 "$OWNED_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
@@ -756,11 +818,15 @@ PY
     reject_lexists "$WORKTREE/acgi-ai/$output"
     mkdir -m 700 -p "$WORKTREE/acgi-ai/$output"
   done
+  UI_BOOTSTRAP_COMPLETE=1
 fi
 
 append_record() {
   local started="$1" finished="$2" stdout_file="$3" stderr_file="$4" selector="$5"
   shift 5
+  if [[ "$ASSIGNMENT" == *UI* && "$UI_BOOTSTRAP_COMPLETE" != 1 ]]; then
+    die 'UI evidence acceptance refused before offline dependency bootstrap completed'
+  fi
   "$EVIDENCE_PY" - "$WORKTREE/scripts/evidence" "$NODE_EVIDENCE/transcript.jsonl" \
     "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" "$@" <<'PY'
 import hashlib
