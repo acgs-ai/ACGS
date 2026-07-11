@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
@@ -38,7 +39,7 @@ from gove_zone import (
     Kernel,
     Receipt,
 )
-from gove_zone.decision import Decision, DecisionRecord
+from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.policy import Policy, PolicyRule, RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
 from sqlalchemy import select
@@ -240,7 +241,7 @@ class AuthenticatedRuntimeContext:
 
 
 def _issue_authenticated_runtime_context(**bindings: str) -> AuthenticatedRuntimeContext:
-    """Server-only factory; HTTP bodies never reach this boundary."""
+    """In-process P0 convention boundary; not an unforgeable authentication primitive."""
     return AuthenticatedRuntimeContext(_CONTEXT_CAPABILITY, **bindings)
 
 
@@ -313,36 +314,47 @@ def _parse_utc(value: str) -> datetime:
 def _issue_server_managed_bundle(
     *, context: AuthenticatedRuntimeContext, **bindings: str
 ) -> ServerManagedBundle:
-    """Assemble the exact closed server bundle; no provider callback is retained."""
+    """P0 private factory convention; no unforgeable capability or callback is claimed."""
     return ServerManagedBundle(_BUNDLE_CAPABILITY, context=context, **bindings)
 
 
 def _canonical_json_subset(value: Any) -> bytes:
-    """Canonical strict JSON subset: string keys, no floats, compact sorted UTF-8."""
+    """RFC 8785-compatible constrained subset (integers only, exact builtins)."""
 
-    def validate(item: Any) -> None:
-        if item is None or isinstance(item, (str, bool, int)):
-            return
-        if isinstance(item, list):
-            for child in item:
-                validate(child)
-            return
-        if isinstance(item, dict):
-            if any(not isinstance(key, str) for key in item):
+    def string(value: str) -> str:
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("canonical JSON rejects lone surrogates") from exc
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+    def render(item: Any) -> str:
+        if item is None:
+            return "null"
+        if type(item) is bool:
+            return "true" if item else "false"
+        if type(item) is int:
+            if abs(item) > 9_007_199_254_740_991:
+                raise ValueError("canonical JSON integer exceeds I-JSON safe domain")
+            return str(item)
+        if type(item) is str:
+            return string(item)
+        if type(item) is list:
+            return "[" + ",".join(render(child) for child in item) + "]"
+        if type(item) is dict:
+            if any(type(key) is not str for key in item):
                 raise ValueError("canonical JSON object keys must be strings")
-            for child in item.values():
-                validate(child)
-            return
-        raise ValueError("canonical JSON subset rejects floats and non-JSON values")
+            keys = sorted(item, key=lambda key: key.encode("utf-16-be"))
+            return "{" + ",".join(f"{string(key)}:{render(item[key])}" for key in keys) + "}"
+        raise ValueError("canonical JSON subset rejects floats, subclasses, and non-JSON values")
 
-    validate(value)
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return render(value).encode("utf-8")
 
 
 def _immutable_snapshot(value: Any) -> Any:
-    if isinstance(value, dict):
+    if type(value) is dict:
         return MappingProxyType({key: _immutable_snapshot(child) for key, child in value.items()})
-    if isinstance(value, list):
+    if type(value) is list:
         return tuple(_immutable_snapshot(child) for child in value)
     return value
 
@@ -375,7 +387,7 @@ def managed_contract_stub(
         raise ValueError("unknown managed contract")
     if not isinstance(bundle, ServerManagedBundle):
         raise TypeError("closed server bundle required")
-    if not isinstance(body, dict):
+    if type(body) is not dict:
         raise TypeError("plain JSON object body required")
     extra = sorted(set(body) - _CLIENT_BODY_FIELDS[contract])
     if extra:
@@ -439,6 +451,11 @@ def load_active_policy(session: Session, org_id: str) -> Policy:
 
 
 def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
+    """Legacy local-dev writer; production is blocked before this path is reachable.
+
+    This containment check is not claimed as a race-free production writer.
+    P1 replaces the legacy file writer with the durable evidence transaction.
+    """
     if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
         raise ValueError("invalid audit organization identifier")
     if audit_dir.is_symlink():
@@ -452,22 +469,106 @@ def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
     return ChainHashAuditStore(path)
 
 
-def existing_org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore | None:
-    """Open an existing chain for reads without creating directories or files."""
+@dataclass(frozen=True)
+class ReadOnlyAuditSnapshot:
+    """Immutable bytes captured from one no-follow file descriptor."""
+
+    raw: bytes
+
+    def iter_events(self) -> Sequence[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for number, line in enumerate(self.raw.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(f"audit snapshot line {number} is invalid JSON") from exc
+            if type(event) is not dict:
+                raise ValueError(f"audit snapshot line {number} is not an object")
+            events.append(event)
+        return tuple(events)
+
+    def verify_chain(
+        self, *, expected_count: int | None = None, expected_last_hash: str | None = None
+    ) -> dict[str, Any]:
+        previous = "0" * 64
+        failures: list[dict[str, Any]] = []
+        events = self.iter_events()
+        for event in events:
+            if event.get("previous_hash") != previous:
+                failures.append(
+                    {"event_id": event.get("event_id"), "type": "previous_hash_mismatch"}
+                )
+            claimed = event.get("event_hash")
+            payload = dict(event)
+            payload.pop("event_hash", None)
+            if claimed != sha256_json(payload):
+                failures.append({"event_id": event.get("event_id"), "type": "event_hash_mismatch"})
+            previous = str(claimed)
+        if expected_count is not None and len(events) != expected_count:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "length_mismatch",
+                    "expected": expected_count,
+                    "actual": len(events),
+                }
+            )
+        if expected_last_hash is not None and previous != expected_last_hash:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "last_hash_mismatch",
+                    "expected": expected_last_hash,
+                    "actual": previous,
+                }
+            )
+        return {
+            "valid": not failures,
+            "checked": len(events),
+            "failures": failures,
+            "last_hash": previous,
+        }
+
+
+def existing_org_audit_store(audit_dir: Path, org_id: str) -> ReadOnlyAuditSnapshot | None:
+    """Capture a read-only chain through no-follow descriptors; never reopen a path."""
     if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
         raise ValueError("invalid audit organization identifier")
     if audit_dir.is_symlink():
         raise ValueError("audit root symlinks are forbidden")
-    path = audit_dir / f"{org_id}.audit.jsonl"
-    if path.is_symlink():
-        raise ValueError("audit file symlinks are forbidden")
-    if not path.is_file():
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_fd = os.open(audit_dir, flags)
+    except FileNotFoundError:
         return None
-    if not stat.S_ISREG(path.lstat().st_mode):
-        raise ValueError("audit path must be a regular file")
-    if path.parent.resolve() != audit_dir.resolve():
-        raise ValueError("audit path escaped configured root")
-    return ChainHashAuditStore(path)
+    except OSError as exc:
+        raise ValueError("audit root must be a non-symlink directory") from exc
+    try:
+        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(f"{org_id}.audit.jsonl", file_flags, dir_fd=root_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise ValueError("audit file must be a contained non-symlink") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError("audit path must be a regular file")
+            chunks: list[bytes] = []
+            while chunk := os.read(fd, 65536):
+                chunks.append(chunk)
+            return ReadOnlyAuditSnapshot(b"".join(chunks))
+        finally:
+            os.close(fd)
+    finally:
+        os.close(root_fd)
 
 
 def chain_tip(store: ChainHashAuditStore) -> tuple[int, str]:

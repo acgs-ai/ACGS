@@ -200,6 +200,21 @@ def create_app(
         for method in sorted(route.methods or ())
     )
     drift = reconcile_http_routes(actual, protocol)
+    unsupported = tuple(
+        sorted(
+            f"{type(route).__name__} {getattr(route, 'path', getattr(route, 'host', '<unknown>'))}"
+            for route in app.routes
+            if not isinstance(route, Route)
+        )
+    )
+    if unsupported:
+        drift = (
+            *drift,
+            *(
+                PostureBlocker("UNCLASSIFIED_ACTIVE_SURFACE", "route-registry", surface)
+                for surface in unsupported
+            ),
+        )
     if drift:
         raise ProductionPostureBlocked(drift)
     if settings.runtime_posture is None:
@@ -237,7 +252,12 @@ def _register_routes(app: FastAPI) -> None:
         blockers = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
-            content={"status": "not-production-ready", "blockers": [b.to_dict() for b in blockers]},
+            content={
+                "code": ProductionPostureBlocked.code,
+                "stage": ProductionPostureBlocked.stage,
+                "status": "not-production-ready",
+                "blockers": [b.to_dict() for b in blockers],
+            },
         )
 
     # -- organizations (bootstrap) ------------------------------------------

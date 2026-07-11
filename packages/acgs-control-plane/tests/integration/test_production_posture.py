@@ -7,13 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Host, Route
 
 import acgs_control_plane.app as app_module
+import acgs_control_plane.governance as governance_module
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import (
     RuntimePosture,
@@ -26,6 +28,7 @@ from acgs_control_plane.governance import (
     AuthenticatedRuntimeContext,
     ExecutionClass,
     ProductionPostureBlocked,
+    _canonical_json_subset,
     _issue_authenticated_runtime_context,
     _issue_server_managed_bundle,
     existing_org_audit_store,
@@ -63,7 +66,12 @@ def test_production_rejects_legacy_unsigned_routes(
     assert TestClient(local).get("/healthz").status_code == 200
     ready = TestClient(local).get("/readyz")
     assert ready.status_code == 503
-    assert ready.json()["status"] == "not-production-ready"
+    assert ready.json() == {
+        "code": "PRODUCTION_POSTURE_BLOCKED",
+        "stage": "pre-persistence",
+        "status": "not-production-ready",
+        "blockers": [blocker.to_dict() for blocker in local.state.readiness_blockers],
+    }
     local.state.engine.dispose()
     (tmp_path / "must-not-exist.sqlite3").unlink()
 
@@ -109,6 +117,19 @@ def test_production_rejects_legacy_unsigned_routes(
             return PlainTextResponse("unexpected")
 
         app.router.routes.append(Route("/synthetic-raw-route", raw_route, methods=["GET"]))
+        nested = FastAPI()
+
+        @nested.post("/write")
+        def nested_write() -> dict[str, bool]:
+            return {"unexpected": True}
+
+        app.mount("/nested", nested)
+
+        @app.websocket("/synthetic-websocket")
+        async def synthetic_websocket(_socket: Any) -> None:
+            return None
+
+        app.router.routes.append(Host("synthetic.example", app=nested))
 
     monkeypatch.setattr(app_module, "_register_routes", register_with_drift)
     with pytest.raises(ProductionPostureBlocked) as drifted:
@@ -117,6 +138,9 @@ def test_production_rejects_legacy_unsigned_routes(
     assert "GET /synthetic-later-route" in routes
     assert "POST /synthetic-later-write" in routes
     assert "GET /synthetic-raw-route" in routes
+    assert any(route and route.startswith("Mount ") for route in routes)
+    assert any(route and "WebSocketRoute " in route for route in routes)
+    assert any(route and route.startswith("Host ") for route in routes)
     assert calls == {"engine": 0}
 
 
@@ -307,7 +331,7 @@ def test_audit_symlinks_fail_closed(tmp_path: Path) -> None:
     outside_file = target / "outside.jsonl"
     outside_file.write_text("secret")
     file_link.symlink_to(outside_file)
-    with pytest.raises(ValueError, match="file symlinks"):
+    with pytest.raises(ValueError, match="non-symlink"):
         existing_org_audit_store(root_link, "org")
     with pytest.raises(ValueError, match="organization identifier"):
         existing_org_audit_store(root_link, "../outside")
@@ -382,3 +406,76 @@ def test_inert_stub_has_no_provider_executor_or_persistence_callback_surface() -
             external=lambda: callback("external"),
         )
     assert counters == {name: 0 for name in counters}
+
+
+def test_jcs_compatible_constrained_canonical_json_golden_vectors() -> None:
+    # RFC 8785 orders property names by UTF-16 code units, not Unicode scalar value.
+    assert _canonical_json_subset({"\ue000": 1, "\U00010000": 2}) == (
+        '{"\U00010000":2,"\ue000":1}'.encode()
+    )
+    assert _canonical_json_subset({"s": '\b\t\n\f\r"\\\x00'}) == (
+        b'{"s":"\\b\\t\\n\\f\\r\\"\\\\\\u0000"}'
+    )
+    assert _canonical_json_subset({"n": 9_007_199_254_740_991}) == (b'{"n":9007199254740991}')
+    for unsafe in (9_007_199_254_740_992, -9_007_199_254_740_992):
+        with pytest.raises(ValueError, match="safe domain"):
+            _canonical_json_subset({"n": unsafe})
+    for unsupported in (0.0, -0.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="rejects floats"):
+            _canonical_json_subset({"n": unsupported})
+
+    class SneakyDict(dict[str, Any]):
+        pass
+
+    class SneakyList(list[Any]):
+        pass
+
+    with pytest.raises(ValueError, match="subclasses"):
+        _canonical_json_subset(SneakyDict(name="x"))
+    with pytest.raises(ValueError, match="subclasses"):
+        _canonical_json_subset({"configuration": SneakyList([1])})
+
+
+def test_managed_contract_hashes_the_exact_canonical_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {"name": "agent", "configuration": {"\ue000": 1, "\U00010000": 2}}
+    expected = _canonical_json_subset(body)
+    captured: list[bytes] = []
+    original_sha256 = governance_module.hashlib.sha256
+
+    def capture(data: bytes = b"") -> Any:
+        captured.append(data)
+        return original_sha256(data)
+
+    monkeypatch.setattr(governance_module.hashlib, "sha256", capture)
+    with pytest.raises(ProductionPostureBlocked):
+        managed_contract_stub("agent.register/v1", body, _server_bundle(), decision="ALLOW")
+    assert captured == [expected]
+
+
+def test_read_audit_snapshot_survives_path_replacement_without_reading_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "audit"
+    root.mkdir()
+    path = root / "org.audit.jsonl"
+    safe = b'{"safe":true}\n'
+    outside = tmp_path / "outside.jsonl"
+    outside.write_bytes(b'{"outside_secret":true}\n')
+    path.write_bytes(safe)
+    original_read = governance_module.os.read
+    replaced = {"done": False}
+
+    def replace_then_read(fd: int, size: int) -> bytes:
+        if not replaced["done"]:
+            replaced["done"] = True
+            path.rename(root / "opened-original.jsonl")
+            path.symlink_to(outside)
+        return original_read(fd, size)
+
+    monkeypatch.setattr(governance_module.os, "read", replace_then_read)
+    snapshot = existing_org_audit_store(root, "org")
+    assert snapshot is not None
+    assert snapshot.raw == safe
+    assert b"outside_secret" not in snapshot.raw
