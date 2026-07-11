@@ -15,8 +15,13 @@
 # rejects its 404-status rules and SPA catch-all.
 
 name = "acgs-governance-proxy"
+main = "worker.js"
 compatibility_date = "2026-06-14"
 workers_dev = false
 
 [assets]
 directory = "../../../dist"
+binding = "ASSETS"
+# The script must see every request — without this, asset-matching paths
+# (e.g. www.acgs.ai/) bypass worker.js and the www→apex 301 never fires.
+run_worker_first = true

@@ -15,6 +15,9 @@
 # src/surfaces/marketing/App.tsx. Unknown paths intentionally 404 at the edge
 # (no SPA catch-all): scanners and agent discovery need real 404s.
 
+# Canonical www→apex 301 lives in worker.js — Workers Assets _redirects
+# rejects absolute-URL sources (error 100324), unlike Pages.
+
 # Privilege boundary — /console is a SEPARATE, privileged origin (DEPLOY.md §3).
 /console        https://console.acgs.ai/console          308
 /console/*      https://console.acgs.ai/console/:splat    308
