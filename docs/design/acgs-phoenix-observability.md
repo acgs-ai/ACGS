@@ -13,7 +13,7 @@ pipeline under governance control.
 ACGS emits chain-hashed JSONL evidence for every governed action via two
 independent writers:
 
-- `hermes_acgs_bundle/evidence_writer.py::ChainEvidenceWriter` — hook-level
+- `acgs_governance_eval_mvp/governance/adapters/hermes/evidence_writer.py::ChainEvidenceWriter` — hook-level
   events (`pre_tool`, `post_tool`, `final_check`) with canonical-JSON SHA-256
   hashing, `prev_hash` linkage, `event_hash`, Merkle root computation, and
   cross-process fcntl-locked append.
@@ -156,7 +156,7 @@ Rejected. The instrumentation belongs at the **edge** where the LLM/tool call
 is actually made (Hermes agent, calling app, adapter). Keeping
 `acgs_governance_eval_mvp/governance/` free of `phoenix`/`openinference`
 imports preserves its posture as a deterministic, minimal-dep evaluator.
-`hermes_acgs_bundle/` already spans the edge and is the right seam.
+`acgs_governance_eval_mvp/governance/adapters/hermes/` already spans the edge and is the right seam.
 
 ## Consequences
 
@@ -177,7 +177,7 @@ imports preserves its posture as a deterministic, minimal-dep evaluator.
 ### Negative
 
 - A second process to run, monitor, back up, and version-pin. Docker-compose
-  pattern in `hermes_acgs_bundle/phoenix/` contains the operational footprint.
+  pattern in `acgs_governance_eval_mvp/examples/phoenix/` contains the operational footprint.
 - New dependency on the OpenTelemetry Python SDK at the edge (not the gate).
   Optional: middleware no-ops cleanly when absent.
 - Retention asymmetry must be clearly communicated to auditors to prevent
@@ -189,7 +189,7 @@ imports preserves its posture as a deterministic, minimal-dep evaluator.
 
 - Phoenix's own playground / PXI feature surface should be kept disabled or
   network-restricted in governed environments. The self-hosting hardening in
-  `hermes_acgs_bundle/phoenix/docker-compose.yml` and the 15.2+ SSRF fix are
+  `acgs_governance_eval_mvp/examples/phoenix/docker-compose.yml` and the 15.2+ SSRF fix are
   the baseline; air-gapped sites should additionally block outbound model
   APIs at the egress.
 
@@ -209,8 +209,8 @@ imports preserves its posture as a deterministic, minimal-dep evaluator.
 ## References
 
 - ADR-0001: In-Context Procedure Execution with External Runtime Governance
-- `hermes_acgs_bundle/phoenix/docker-compose.yml` — hardened self-host
-- `hermes_acgs_bundle/phoenix/README.md` — operator runbook
+- `acgs_governance_eval_mvp/examples/phoenix/docker-compose.yml` — hardened self-host
+- `acgs_governance_eval_mvp/examples/phoenix/README.md` — operator runbook
 - Phoenix releases: https://github.com/Arize-ai/phoenix/releases (verified v15.4.0, 2026-05-05)
 - Phoenix self-hosting: https://arize.com/docs/phoenix/self-hosting
 - OpenInference semantic conventions: https://github.com/Arize-ai/openinference

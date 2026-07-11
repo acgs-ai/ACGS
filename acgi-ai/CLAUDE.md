@@ -64,7 +64,7 @@ pnpm test:trust-surface # verifies /trust, /security, security.txt, and subproce
 pnpm test:docs-scaffold # verifies ARCHITECTURE/INTEGRATING/GETTING_STARTED and script wiring
 pnpm test:contract # bus proxy + Cloud Run template + auth-boundary contracts
 pnpm audit:eval    # claim matrix + trust surface checks
-pnpm test:marketing-csp # verifies Vercel report-only marketing CSP
+pnpm test:marketing-csp # verifies Cloudflare report-only marketing CSP
 pnpm smoke:bus-proxy # Docker-backed Caddy smoke against a local stub bus
 pnpm test:all       # lint + console build + security/MVP/font/surface/bus/deploy/auth/live-asset/claim/trust/docs/CSP gates
 pnpm format         # biome format --write
@@ -171,7 +171,7 @@ Production domains are pending DNS/ACME provisioning per `PLAN.md §5.6`
 
 ### Marketing surface (Cloudflare Pages)
 
-Cloudflare Pages is the active marketing provider (Vercel retired — see `DEPLOY.md §3a`).
+Cloudflare Pages is the active marketing provider (see `DEPLOY.md §3`).
 
 - **Platform:** Cloudflare Pages (project `acgs-marketing`; config `wrangler.toml` + `infra/cloudflare/{_headers,_redirects}`)
 - **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the `*.pages.dev` from the Cloudflare dashboard)
@@ -212,7 +212,6 @@ Web app (two surfaces). Not a CLI / library. Merge method: **squash** (matches t
 These are not blockers for `/land-and-deploy` once URLs land, but they're CI/CD hygiene the Phase 0 PR series will address:
 
 - Action versions are unpinned (`@vN` not `@vN.M.P`) — see plan A12
-- Vercel CLI is `vercel@latest` — see plan A12
 - Container image/toolchain pinning is now enforced by `pnpm test:container-pins`: `.node-version`, Node `>=24 <25`, `pnpm@9.15.4`, `node:24-alpine`, `caddy:2.10.2-alpine`, and Docker smoke image parity stay aligned.
 - Cloud Run `service.yaml` has `minScale: "0"` for all envs (production should be 1+ per plan A14)
 

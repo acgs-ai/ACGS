@@ -115,11 +115,20 @@ gove-zone verify-proofpack <pack-dir>        # exit 0 iff valid, else 1; prints 
 
 # A SIGNED pack needs the trust anchor supplied out-of-band (NOT from the pack):
 gove-zone verify-proofpack <pack-dir> --verifier-key trusted.pub --key-id <signing_key_id>
+
+# Optionally reject receipts signed by a revoked key (supplied out-of-band):
+gove-zone verify-proofpack <pack-dir> --verifier-key trusted.pub --key-id <id> --revoked-keys revoked.json
 ```
 
 `--verifier-key` is a raw 32-byte Ed25519 **public** key you obtained from a source you
 trust, separate from the pack. Omit it for unsigned (dev) packs; a signed pack verified
 without it fails closed with `SIGNED_RECEIPT_NO_VERIFIER`.
+
+`--revoked-keys` is an optional JSON array of revoked signing `key_id`s (e.g.
+`["key-2024-q1"]`), also supplied out-of-band. A receipt whose `signing_key_id` is on the
+list fails closed with `SIGNING_KEY_REVOKED` even when its signature is otherwise valid —
+so a key compromised *after* the pack was minted cannot be verified as valid. Omit it to
+apply no revocation; a malformed list fails closed (exit 2) rather than degrading to "none".
 
 Or via the Python API:
 

@@ -6,7 +6,15 @@ fail-closed decisions, replayable receipts, and a tamper-evident audit chain.
 
 from importlib import metadata as _metadata
 
+from gove_zone.agent import ManagedAgent
 from gove_zone.audit import GENESIS_HASH, AuditChainError, ChainHashAuditStore
+from gove_zone.authz import (
+    AuthzReason,
+    AuthzRegistryError,
+    PrincipalEntry,
+    PrincipalRegistry,
+    authz_enforce_from_env,
+)
 from gove_zone.benchmark_adapters import (
     agentdojo_scenarios_from_fixture,
     injecagent_scenarios_from_fixture,
@@ -22,6 +30,21 @@ from gove_zone.contracts import (
     ReceiptVerifier,
     TenantPolicyBinding,
 )
+from gove_zone.dag import (
+    AuthorityGrant,
+    AuthorityViolationError,
+    DagReplayError,
+    DagValidationError,
+    EdgeKind,
+    GovernanceDAG,
+    GovernanceEdge,
+    GovernanceNode,
+    NodeKind,
+    resolve_authority_grants,
+    resolve_effective_scopes,
+    validate_authority,
+    verify_dag_replay,
+)
 from gove_zone.decision import (
     Decision,
     DecisionRecord,
@@ -30,10 +53,13 @@ from gove_zone.decision import (
 )
 from gove_zone.errors import (
     AuditError,
+    AuthzDeniedError,
     ConsumptionLedgerError,
     DeniedError,
     EscalateError,
     GoveZoneError,
+    IdentityError,
+    IdentityRejectionReason,
     PolicyError,
     ProductionProfileError,
     ReceiptAlreadyUsedError,
@@ -63,6 +89,27 @@ from gove_zone.frontend_contract import (
     receipt_to_governed_action,
     record_to_governed_action,
 )
+from gove_zone.gateway import (
+    BypassAttemptError,
+    GatewayResult,
+    SealedTool,
+    UniversalGateway,
+    http_json_tool,
+)
+from gove_zone.identity import (
+    Credential,
+    CredentialType,
+    IdentityProviderAdapter,
+    MockAzureADAdapter,
+    MockGoogleWorkspaceAdapter,
+    MockIdentityProvider,
+    MockOktaAdapter,
+    Principal,
+    PrincipalType,
+    RBACMapper,
+    RoleDefinition,
+    govern_identity_action,
+)
 from gove_zone.integration import (
     GateMode,
     GateModeError,
@@ -82,6 +129,8 @@ from gove_zone.policy import (
     PathBoundaryPolicy,
     Policy,
     PolicyRule,
+    RiskTier,
+    RiskTierPolicy,
     RuleSetPolicy,
     new_event_id,
 )
@@ -101,6 +150,13 @@ from gove_zone.replay import (
     replay_from_side_store,
 )
 from gove_zone.replay_store import ReplaySideStore
+from gove_zone.revocation import RevocationList, RevocationListError
+from gove_zone.sandbox import (
+    E2BSandbox,
+    LocalProcessSandbox,
+    SandboxError,
+    SandboxProvider,
+)
 from gove_zone.signing import (
     Ed25519Signer,
     NullSigner,
@@ -127,14 +183,16 @@ from gove_zone.workflow import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone.yaml_policy import YAMLPolicy, YAMLRiskTierPolicy
 
-# Single source of truth is the installed package metadata (pyproject `version`).
-# The literal fallback matches that value for source/editable runs where the
-# distribution is not installed; keep it in sync with pyproject on bumps.
+# Single source of truth is the quoted literal below: hatch extracts it at
+# build time ([tool.hatch.version] pattern in pyproject.toml), so installed
+# metadata always mirrors it. importlib is preferred at runtime only to read
+# the installed distribution's copy; the literal serves source/editable runs.
 try:
     __version__ = _metadata.version("gove-zone")
 except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
-    __version__ = "0.1.0a1"
+    __version__ = "1.0.0rc1"
 
 __all__ = [
     "GENESIS_HASH",
@@ -143,9 +201,28 @@ __all__ = [
     "AuditError",
     "AuditEvent",
     "BoundaryPolicy",
+    "AuthzDeniedError",
+    "AuthzReason",
+    "AuthzRegistryError",
     "ChainHashAuditStore",
+    "AuthorityGrant",
+    "AuthorityViolationError",
+    "DagReplayError",
+    "DagValidationError",
+    "EdgeKind",
+    "GovernanceDAG",
+    "GovernanceEdge",
+    "GovernanceNode",
+    "NodeKind",
+    "PrincipalEntry",
+    "PrincipalRegistry",
+    "RevocationList",
+    "RevocationListError",
+    "authz_enforce_from_env",
     "CompositePolicy",
     "ConsumptionLedgerError",
+    "Credential",
+    "CredentialType",
     "Decision",
     "DecisionRecord",
     "DecisionReceipt",
@@ -157,13 +234,31 @@ __all__ = [
     "Ed25519Signer",
     "EscalateError",
     "ExecutionBoundary",
+    "BypassAttemptError",
     "GateMode",
     "GateModeError",
+    "GatewayResult",
     "GovernanceProfile",
+    "SealedTool",
+    "UniversalGateway",
+    "http_json_tool",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
+    "IdentityError",
+    "IdentityProviderAdapter",
+    "IdentityRejectionReason",
     "Kernel",
+    "ManagedAgent",
+    "MockAzureADAdapter",
+    "MockGoogleWorkspaceAdapter",
+    "MockIdentityProvider",
+    "MockOktaAdapter",
+    "SandboxProvider",
+    "LocalProcessSandbox",
+    "E2BSandbox",
+    "SandboxError",
+    "YAMLPolicy",
     "NullSigner",
     "PathBoundaryPolicy",
     "PendingApproval",
@@ -174,9 +269,15 @@ __all__ = [
     "ProductionProfileError",
     "ProofPackRejectionReason",
     "ProofPackVerificationResult",
+    "Principal",
+    "PrincipalType",
     "ProposedAction",
+    "RBACMapper",
     "Receipt",
     "ReceiptAlreadyUsedError",
+    "RiskTier",
+    "RiskTierPolicy",
+    "YAMLRiskTierPolicy",
     "LedgerObservability",
     "ReceiptConsumptionLedger",
     "ReceiptRejectionReason",
@@ -185,6 +286,7 @@ __all__ = [
     "ReceiptVerifier",
     "ReplayResult",
     "ReplaySideStore",
+    "RoleDefinition",
     "RuleSetPolicy",
     "SCHEMA_VERSION",
     "SigningError",
@@ -216,6 +318,7 @@ __all__ = [
     "load_evaluation_suite",
     "canonical_json",
     "find_event",
+    "govern_identity_action",
     "make_signer",
     "mcp_tools_call",
     "mcp_tools_list",
@@ -228,12 +331,16 @@ __all__ = [
     "replay_call",
     "replay_event",
     "replay_from_side_store",
+    "resolve_authority_grants",
+    "resolve_effective_scopes",
     "resume_with_receipt",
     "run_smoke",
     "safe_result_hash",
     "sha256_json",
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
+    "validate_authority",
+    "verify_dag_replay",
     "verify_proof_pack",
     "verify_workflow_replay",
 ]

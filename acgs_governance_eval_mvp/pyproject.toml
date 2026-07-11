@@ -25,7 +25,12 @@ dspy = [
   "dspy-ai>=2.5"
 ]
 otel = [
-  "opentelemetry-api>=1.24"
+  # api for the optional runtime cross-link; sdk for the hermes adapter's
+  # InMemorySpanExporter cross-link tests (tests/test_hermes_otel_cross_link.py,
+  # rerouted here when hermes_acgs_bundle/ was folded in as
+  # governance/adapters/hermes/).
+  "opentelemetry-api>=1.24",
+  "opentelemetry-sdk>=1.24"
 ]
 test = [
   "pytest>=8.0"

@@ -44,8 +44,11 @@ export const VISUAL_BASELINE_TARGETS = [
 export const VISUAL_BASELINE_CONTRACT = {
   threshold: '0.1%',
   scope: 'manifest gate only',
+  // One console-overview 1440 baseline now executes in the browser-checks CI job
+  // (tests/e2e/visual-overview.spec.ts, non-blocking). The full five-viewport
+  // matrix and the remaining VISUAL_BASELINE_TARGETS stay Phase 3 browser work.
   externalProof:
-    'Playwright screenshot capture and pixel-diff artifacts remain Phase 2 browser work.',
+    'Full-matrix Playwright screenshot capture and the remaining pixel-diff targets remain Phase 3 browser work.',
 }
 
 const packageJson = JSON.parse(read('package.json'))
@@ -83,7 +86,7 @@ for (const needle of [
   'console agents (filled + empty + error + stale + permission-denied + long-content)',
   'Diff threshold 0.1%',
   'test:visual',
-  'browser Playwright and visual-diff execution remains Phase 2 work',
+  'The full viewport matrix and remaining visual targets remain Phase 3 work',
 ]) {
   mustContain(plan, needle, 'PLAN.md')
 }
@@ -106,4 +109,5 @@ if (failures.length > 0) {
 console.log('Visual baseline foundation check passed.')
 console.log(`- manifest gate only: ${VISUAL_BASELINE_TARGETS.length} visual targets`)
 console.log(`- viewports: ${VISUAL_VIEWPORTS.join(', ')}`)
-console.log('- screenshot capture and diff artifacts remain Phase 2 work')
+console.log('- one console-overview 1440 baseline executes in browser-checks CI (non-blocking)')
+console.log('- the full matrix + remaining targets remain Phase 3 browser work')

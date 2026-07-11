@@ -45,7 +45,7 @@ import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gove_zone.consumption import ReceiptConsumptionLedger
 from gove_zone.errors import (
@@ -53,6 +53,12 @@ from gove_zone.errors import (
     ReceiptValidationError,
 )
 from gove_zone.receipt import DecisionReceipt
+
+if TYPE_CHECKING:
+    # Type-only import: keeps the §5.4 independence guard (no engine import at module
+    # scope) green. ``revocation`` is stdlib-only and fail-closed; it is only ever
+    # *passed in* by the relying party, never constructed here.
+    from gove_zone.revocation import RevocationList
 
 SCHEMA_VERSION = "gove-zone/proof-pack/v1"
 
@@ -64,6 +70,7 @@ _SIGNATURE_REASONS = frozenset(
         ReceiptRejectionReason.SIGNATURE_INVALID,
         ReceiptRejectionReason.SIGNATURE_ALG_MISMATCH,
         ReceiptRejectionReason.SIGNING_KEY_UNKNOWN,
+        ReceiptRejectionReason.SIGNING_KEY_REVOKED,
         ReceiptRejectionReason.SIGNED_RECEIPT_NO_VERIFIER,
         ReceiptRejectionReason.UNSIGNED_REJECTED,
     }
@@ -209,6 +216,7 @@ def _verify_one_receipt(
     verifier: Any,
     require_signature: bool,
     now_iso: str | None,
+    revoked_keys: RevocationList | None,
 ) -> ReceiptVerification:
     """Verify a single receipt against its declared verdict (no raw args needed)."""
     reasons: list[str] = []
@@ -240,7 +248,12 @@ def _verify_one_receipt(
         # NO expected_* context: the pack is leak-safe and carries none. This
         # verifies receipt integrity (fields, hash, signature, self-validation,
         # decision class, transform shape, expiry) — the offline-provable surface.
-        receipt.verify(verifier=verifier, require_signature=require_sig_for_this, now_iso=now_iso)
+        receipt.verify(
+            verifier=verifier,
+            require_signature=require_sig_for_this,
+            now_iso=now_iso,
+            revoked_keys=revoked_keys,
+        )
     except ReceiptValidationError as exc:
         observed_verdict = "reject"
         observed_reason = exc.reason_code
@@ -306,6 +319,7 @@ def verify_proof_pack(
     verifier: Any = None,
     require_signature: bool | None = None,
     now_iso: str | None = None,
+    revoked_keys: RevocationList | None = None,
 ) -> ProofPackVerificationResult:
     """Verify a proof pack offline and return a structured, fail-closed verdict.
 
@@ -323,6 +337,14 @@ def verify_proof_pack(
             verify a dev/unsigned pack even with a verifier present.
         now_iso: injected clock for deterministic expiry checks; defaults to wall
             clock inside ``verify()``.
+        revoked_keys: an optional :class:`~gove_zone.revocation.RevocationList` of
+            revoked signing ``key_id``s, supplied out-of-band by the relying party
+            (additive, default ``None`` = no revocation applied). A signed receipt
+            whose ``signing_key_id`` is on the list is rejected
+            (:data:`ReceiptRejectionReason.SIGNING_KEY_REVOKED`), so a key
+            compromised *after* the pack was minted cannot be verified as valid
+            offline. Fail-closed and off-by-default: omitting it preserves the
+            current verdict exactly.
 
     Returns:
         A :class:`ProofPackVerificationResult`. Never raises — any error is folded
@@ -331,7 +353,11 @@ def verify_proof_pack(
     effective_require = require_signature if require_signature is not None else verifier is not None
     try:
         return _verify_proof_pack_inner(
-            pack_dir, verifier=verifier, require_signature=effective_require, now_iso=now_iso
+            pack_dir,
+            verifier=verifier,
+            require_signature=effective_require,
+            now_iso=now_iso,
+            revoked_keys=revoked_keys,
         )
     except Exception:  # noqa: BLE001 — fail-closed: never let an exception escape into "accept".
         return _fail(ProofPackRejectionReason.VERIFIER_ERROR)
@@ -343,6 +369,7 @@ def _verify_proof_pack_inner(
     verifier: Any,
     require_signature: bool,
     now_iso: str | None,
+    revoked_keys: RevocationList | None,
 ) -> ProofPackVerificationResult:
     from gove_zone.audit import ChainHashAuditStore
 
@@ -420,6 +447,7 @@ def _verify_proof_pack_inner(
             verifier=verifier,
             require_signature=require_signature,
             now_iso=now_iso,
+            revoked_keys=revoked_keys,
         )
         receipts.append(rv)
         reasons.extend(r for r in rv.reasons if r not in reasons)

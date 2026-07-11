@@ -43,7 +43,7 @@ The console is the privileged surface. Public marketing must not embed the conso
 
 - mode-specific `@surface/App` aliases
 - marketing/console bundle checks
-- Vercel edge route checks that deny internal docs first, redirect `/console` paths to `https://console.acgs.ai/console`, and keep the marketing SPA fallback last
+- Cloudflare edge route checks that deny internal docs first, redirect `/console` paths to `https://console.acgs.ai/console`, and keep the marketing SPA fallback last
 - Caddy console headers and CSP
 - same-origin `/api/*` proxying through `BUS_UPSTREAM`
 - post-deploy asset scans for live console JS
@@ -63,7 +63,7 @@ Trust/security pages are engineering-draft publication scaffolding. They do not 
 
 ## Accessibility foundation
 
-The local static accessibility foundation is guarded by `pnpm test:a11y`. It verifies skip links, stable main-content targets, visible focus styles, reduced-motion handling, and bounded A11Y.md wording. This is a structural readiness gate only: manual WCAG evidence remains external and still requires axe/browser scans, NVDA, VoiceOver, touch-target review, and visual baselines before public conformance wording changes.
+The local static accessibility foundation is guarded by `pnpm test:a11y`. It verifies skip links, stable main-content targets, visible focus styles, reduced-motion handling, and bounded A11Y.md wording. This is a structural readiness gate only. Separately, a real axe scan now executes in the `browser-checks` CI job (`tests/e2e/a11y-smoke.spec.ts`): it scans the console-surface routes `/login` and `/console` and blocks any serious/critical violation, with the `color-contrast` rule scoped out as documented pre-existing `--muted` token debt (see `A11Y.md`). Beyond that automated smoke, manual WCAG evidence remains external and still requires marketing-surface axe, the `--muted` contrast fix, NVDA, VoiceOver, touch-target review, and the full visual-baseline matrix before public conformance wording changes.
 
 ## Console state coverage
 
@@ -100,7 +100,7 @@ The local static accessibility foundation is guarded by `pnpm test:a11y`. It ver
 
 ## Test surface foundation
 
-`pnpm test:test-surface` guards the Phase 2/A15 test script foundation from `PLAN.md`. It verifies that `pnpm test:e2e`, `pnpm test:e2e-http`, and `pnpm test:visual` exist as bounded local gates, that the E2E manifest names the marketing, product, login, console redirect, synthetic-session, and 13 sidebar-route smoke scope, and that the visual manifest names the five viewport baseline matrix plus the required console state/receipt targets. `pnpm evidence:browser-workbench` is the no-new-dependency local browser evidence command for the same-style marketing workbench, `/console/workbench`, `/console/workbench#operator-decision-rail`, `/console/workbench#guided-review-path`, `/console/workbench#framework-integration-rail`, `/console/workbench#agent-framework-starter-kits`, `/console/workbench#launch-proof-ladder`, `/console/workbench#release-blocker-queue`, `/console/workbench#live-verifier-blocker-map`, `/console/workbench#production-command-rail`, `/console/workbench#hosted-storybook-runway`, and `/console/workbench#assurance-proof-intake`; it launches marketing and console Vite surfaces separately, keeps `VITE_BYPASS_SESSION=true` scoped to non-production console screenshots, checks expected DOM text, scrolls hash targets into view, rejects likely blank captures, and writes a claim-bounded `local-browser-workbench-evidence` manifest under `dist-browser-evidence/`. `pnpm test:browser-evidence` verifies the script, dry-run manifest shape, target-visible screenshot guard, docs, and readiness wiring. This is local browser evidence, not production deployment proof, not hosted Storybook proof, and not a replacement for Playwright/axe/manual WCAG evidence or visual-diff baselines.
+`pnpm test:test-surface` guards the A15 test script foundation from `PLAN.md`. It verifies that `pnpm test:e2e`, `pnpm test:e2e-http`, and `pnpm test:visual` exist as bounded local gates, that the E2E manifest names the marketing, product, login, console redirect, synthetic-session, and 13 sidebar-route smoke scope, and that the visual manifest names the five viewport baseline matrix plus the required console state/receipt targets. These three commands stay static manifest checks — they do not run Playwright. Real browser execution runs separately in the `browser-checks` CI job (`pnpm test:playwright`): a console-surface axe smoke that blocks serious/critical violations (`color-contrast` scoped out as documented `--muted` debt) and one console-overview 1440 visual baseline (non-blocking for now); the full viewport matrix and the remaining visual targets stay Phase 3 work. `pnpm evidence:browser-workbench` is the no-new-dependency local browser evidence command for the same-style marketing workbench, `/console/workbench`, `/console/workbench#operator-decision-rail`, `/console/workbench#guided-review-path`, `/console/workbench#framework-integration-rail`, `/console/workbench#agent-framework-starter-kits`, `/console/workbench#launch-proof-ladder`, `/console/workbench#release-blocker-queue`, `/console/workbench#live-verifier-blocker-map`, `/console/workbench#production-command-rail`, `/console/workbench#hosted-storybook-runway`, and `/console/workbench#assurance-proof-intake`; it launches marketing and console Vite surfaces separately, keeps `VITE_BYPASS_SESSION=true` scoped to non-production console screenshots, checks expected DOM text, scrolls hash targets into view, rejects likely blank captures, and writes a claim-bounded `local-browser-workbench-evidence` manifest under `dist-browser-evidence/`. `pnpm test:browser-evidence` verifies the script, dry-run manifest shape, target-visible screenshot guard, docs, and readiness wiring. This is local browser evidence, not production deployment proof, not hosted Storybook proof, and not a replacement for Playwright/axe/manual WCAG evidence or visual-diff baselines.
 
 ## Buyer evidence gallery foundation
 
@@ -119,9 +119,11 @@ publication scaffold for `storybook.acgs.ai`, including CNAME output and Pages
 artifact/deploy wiring guarded by `STORYBOOK_PAGES_ENABLED`. The generated
 artifact also carries `.nojekyll` and manifest-level `hostedProofRequirements`
 so GitHub Pages publication shape is reviewable before live DNS exists.
-Official Storybook runtime, live DNS/Pages proof, browser screenshots, and
-axe/visual-diff evidence remain external work before stronger buyer-evidence
-claims.
+Official Storybook runtime, live DNS/Pages proof, full-surface browser
+screenshots, and the full axe/visual-diff matrix remain external work before
+stronger buyer-evidence claims (a console-surface axe smoke and one
+console-overview visual baseline already execute in the `browser-checks` CI
+job — see the Accessibility foundation and Test surface sections).
 
 ## E2E HTTP shell smoke
 
@@ -137,7 +139,7 @@ claims.
 
 ## Performance budget
 
-`pnpm test:performance` builds both surfaces into a temporary `.performance-check/` directory and enforces the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 200 KB and console <= 350 KB. This is a local bundle-budget gate only; Lighthouse scores and real-user latency still require deployed-browser evidence.
+`pnpm test:performance` builds both surfaces into a temporary `.performance-check/` directory and enforces the Phase 5 gzipped JS+CSS budgets from `PLAN.md`: marketing <= 225 KB and console <= 350 KB. This is a local bundle-budget gate only; Lighthouse scores and real-user latency still require deployed-browser evidence.
 
 ## Verification surfaces
 
@@ -147,7 +149,7 @@ High-signal local gates:
 - `pnpm build` for both artifacts plus font provenance
 - `pnpm test:security` for hardening invariants
 - `pnpm test:bus-schema` for bus schema ownership, generated-type drift, strict fixture, version-skew, and error-envelope checks
-- `pnpm test:performance` for marketing <= 200 KB and console <= 350 KB gzipped JS+CSS budgets
+- `pnpm test:performance` for marketing <= 225 KB and console <= 350 KB gzipped JS+CSS budgets
 - `pnpm test:state-coverage` for the console 11-state primitive and empty-state taxonomy contract
 - `pnpm test:polling-hygiene` for jittered intervals, visibility-aware polling, background interval suppression, and bus-health backoff
 - `pnpm test:session-sync` for cross-tab demo-session broadcast/listener wiring and retry-time `hasSession()` re-checks

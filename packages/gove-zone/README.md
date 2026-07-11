@@ -28,7 +28,7 @@ verify as a hash-linked audit chain — then exits non-zero if any check fails.
 See [One-command smoke proof](#one-command-smoke-proof) for the full output and
 `--audit` evidence retention.
 
-> Status: foundational / Alpha (`0.1.0.dev0`). Local proof and
+> Status: foundational / Alpha (`0.1.0a1`). Local proof and
 > production-shaped foundation only. **NOT** production-certified and **NOT**
 > compliance-certified. Do not make live production deployment claims without
 > evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for
@@ -109,7 +109,7 @@ you need breadth.
   `resume_with_receipt`), but routing it to a human reviewer — the queue, the
   notification, the UI — is yours to build.
 - You need **production / compliance certification**. gove-zone is alpha
-  (`0.1.0.dev0`); local receipts and smoke proofs are readiness evidence, not
+  (`0.1.0a1`); local receipts and smoke proofs are readiness evidence, not
   certification.
 
 For the full boundary — what is enforced, what is explicitly out of scope, and
@@ -403,6 +403,27 @@ event (`rederivation_status: "redacted"`) or one absent from the side-store
 (`"no-side-record"`), replay reports the chain result only and never claims a
 re-derivation it cannot perform. Redaction is fail-safe: sensitive calls are
 stored as tombstones carrying no raw args.
+
+## Proof packs (portable evidence for one governed action)
+
+The `acgs` CLI packages a governed action's receipt + audit chain into a
+portable, self-describing evidence bundle that engineers, auditors, and
+regulators can verify offline — no access to the producing system required:
+
+```bash
+acgs proofpack generate --receipt receipt.json --audit audit.jsonl \
+  --out proofpack/          # + optional --policy-bundle/--side-store for replay
+acgs proofpack verify proofpack/   # exit 0 valid, 1 invalid (fail-closed)
+```
+
+The bundle is five files — `evidence.json` (per-file SHA-256 manifest),
+`decision-receipt.json`, `audit-chain.json`, `replay-report.json`, and a
+human-readable `verification-summary.md` with sections for engineers,
+auditors, and regulators. Verification is fail-closed and reuses the same
+offline verifier as `gove-zone verify-proofpack`; generation *refuses* to
+package inconsistent inputs (broken chain, unanchored or tampered receipt,
+failed replay). See `gove_zone.proofpack` for the format contract and
+`tests/test_acgs_proofpack.py` for the golden + tamper matrix.
 
 ## Runtime-hook integration
 

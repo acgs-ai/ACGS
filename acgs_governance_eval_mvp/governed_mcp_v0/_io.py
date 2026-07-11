@@ -1,8 +1,12 @@
 """IO + canonicalisation primitives used by the governed MCP runtime.
 
 Kept as private (underscore prefix) because most helpers are internal.
-The two public helpers — ``canonical_json`` and ``sha256_json`` — are also
-re-exported by ``mcp_server`` for back-compat with external callers.
+The two public helpers are ``canonical_json`` and ``sha256_json``; import
+them from this module directly (``mcp_server`` does not re-export them).
+
+NOTE: this module's ``sha256_json`` is NOT the same byte format as
+``governance.models.sha256_json`` — see that function's docstring and
+``tests/test_sha256_json_divergence.py``.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import IO, Any
 
-from governance.audit.jsonl_chain import UnsafeAuditStorageError, _refuse_unreliable_fs
+from governance.audit import UnsafeAuditStorageError, refuse_unreliable_fs
 
 from .constants import GENESIS_HASH
 from .models import RuntimeTargets
@@ -24,10 +28,23 @@ __all__ = ["UnsafeAuditStorageError", "canonical_json", "sha256_json"]
 
 
 def canonical_json(value: Any) -> str:
+    """ASCII-escaped canonical form: ``ensure_ascii=True``, no ``default``
+    (raises ``TypeError`` on non-JSON-serializable values)."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def sha256_json(value: Any) -> str:
+    """Strict-serialization hash over :func:`canonical_json`.
+
+    WARNING — NOT interchangeable with ``governance.models.sha256_json``,
+    which uses ``ensure_ascii=False`` + ``default=str`` (coerces instead of
+    raising). The two produce DIFFERENT hashes for any payload containing
+    non-ASCII text; never verify a hash produced by one with the other.
+    Byte format is pinned by ``tests/test_sha256_json_divergence.py`` —
+    persisted receipts/audit chains depend on it, do not change it. New code
+    needing strict hashing should use
+    ``governance.crypto.canonical.canonical_bytes`` (Phase 2 ABI).
+    """
     return sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
@@ -71,7 +88,7 @@ def _evidence_lock(audit_path: Path) -> IO[str]:
     TODO: ``fcntl`` is POSIX-only; Windows fallback is out of scope because
     the package CI runs on Linux.
     """
-    _refuse_unreliable_fs(audit_path)
+    refuse_unreliable_fs(audit_path)
     lock_path = audit_path.with_suffix(audit_path.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as handle:

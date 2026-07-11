@@ -21,11 +21,11 @@ evidence have run.
 | Evaluation MVP | `acgs_governance_eval_mvp/` | Hash-addressed evaluation report ingestion, claim-safe status, source-tagged benchmark evidence, tenant-scoped `/evidence/evaluation-reports` query | `(cd acgs_governance_eval_mvp && uv run python -m pytest --import-mode=importlib -q)` | Local API/evidence chain only unless deployed behind the console gateway |
 | Buyer/operator interface | `acgi-ai/` | Privileged console, public trust surface, receipt proof journey, evaluation evidence cards, strict CSP/bundle/auth/deploy contracts | `pnpm -F acgi-ai test`; `pnpm -F acgi-ai build` | Local build/test proof only; production console proof still needs Cloud Run deploy, live asset checks, and browser screenshots |
 | Infrastructure governance pack | `acgs-cft-governance-pack/` | Terraform/CFT plan governance and pre-apply evidence for infrastructure changes | `(cd acgs-cft-governance-pack && uv run python -m pytest --import-mode=importlib -q)` | Local pack evidence only; no live Terraform apply evidence here |
-| Hermes/Phoenix integration | `hermes_acgs_bundle/` | External runtime-governance boundary, Phoenix/OpenTelemetry cross-links, governed trace bundles | Package-local pytest through root Python fan-out when enabled | Integration design and local traces only; no live collector proof in this checkout |
+| Hermes/Phoenix integration | `acgs_governance_eval_mvp/governance/adapters/hermes/` | External runtime-governance boundary, Phoenix/OpenTelemetry cross-links, governed trace evidence (folded in from the retired `hermes_acgs_bundle/`) | `(cd acgs_governance_eval_mvp && uv run python -m pytest tests/test_hermes_adapter.py tests/test_hermes_otel_cross_link.py --import-mode=importlib -q)` | Integration design and local traces only; no live collector proof in this checkout |
 | Legal vertical | `ca-legal-agent-skills/` | Matter isolation, citation discipline, legal release gates, lawyer-review escalation, per-matter audit evidence | Path-local runtime/test gates owned by the legal package lane | Domain pack evidence is separate; do not make legal compliance claims from parent local tests |
 | Legal runtime adjunct | `ACGS/packages/legalguard/` | Legal-domain agent/runtime adjunct; should consume shared receipts rather than creating a parallel truth source | `(cd ACGS/packages/legalguard && python -m pytest tests/ -v --import-mode=importlib)` when the ignored adjacent checkout is present | Ignored adjacent checkout, not parent-tracked by the root repo; package-owner local evidence only until promoted into the root registry/deploy surface |
 | Clinical vertical | `clinicalguard-privacy-hardening/` and `packages/clinicalguard/` | PHI/privacy controls, clinical safety escalation, professional-review boundaries | Private submodule/path-filtered gate when initialized; parent CI needs `SUBMODULE_TOKEN`; parent CI skip is not clinical verification | Private checkout can be unavailable; do not claim clinical deploy readiness without live owner evidence |
-| Enterprise admin adjunct | `acgs-enterprise-ai-manager/frontend/` | Candidate admin/CRUD surface; must not compete with the `acgi-ai` evidence console as source of truth | `pnpm -F acgs-enterprise-manager-frontend build` | Parent-tracked workspace member with build proof only; legacy/admin adjunct until owners archive or integrate with the shared evidence API |
+| Enterprise admin adjunct (archived) | `docs/archive/acgs-enterprise-ai-manager/frontend/` | Archived Vue 3 skeleton with no backend, no tests, no CI; must not compete with the `acgi-ai` evidence console as source of truth | none — archived, removed from pnpm workspace | Archived 2026-07-05 per reconstruction audit verdict (owners chose archive over integrate with the shared evidence API); rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
 | Parent orchestration | `MONOREPO.md`, `Makefile`, `.github/workflows/`, `docs/integration-readiness-task-map.md` | Registry of package ownership, CI routing, local gate fan-out, and caveats for claim-safe status reporting | `make verify`; `make lint-docs`; `python3 scripts/check_governance_stack_index.py` | Parent can prove local readiness and routing coherence, not independent live deployment |
 
 ## Evidence vocabulary
@@ -54,11 +54,24 @@ evidence have run.
 - Ignored adjacent checkout rows are current-worktree routing notes, not root
   CI coverage.
 
+## Roadmap of record
+
+`docs/ROADMAP.md` is the single maintained roadmap for the platform.
+Superseded roadmaps and plans (`ROADMAP.md` root draft, `AUTHZ-ROADMAP.md`,
+`MACI-ROADMAP.md`, `ROADMAP-ENFORCEMENT-SUBSTRATE.md`,
+`PLAN-GOVE-ZONE-KERNEL.md`, `workspace-PLAN.md`) are frozen in
+`docs/archive/` — see `docs/archive/README.md` for provenance. Active plans
+that are *not* roadmaps remain in place: `docs/PLAN-MONOREPO.md` (monorepo
+unification; load-bearing for CI path filters) and `acgi-ai/PLAN.md`
+(frontend scope only).
+
 ## Update rule
 
 When a package gains or loses a policy/evidence contract, update this file,
 `MONOREPO.md` if package ownership changed, and
 `docs/integration-readiness-task-map.md` if the change resolves a tracked gap.
+When a roadmap or plan is superseded, move it to `docs/archive/` and update
+`docs/archive/README.md` in the same commit.
 Then run:
 
 ```bash

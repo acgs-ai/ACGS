@@ -45,8 +45,8 @@ The product position is:
 
 This positioning fits existing repo assets:
 
-- `hermes_acgs_bundle/hermes_acgs_middleware.py` already defines `HermesACGSMiddleware` with `check_pre_tool()`, `check_post_tool()`, `check_final()`, actions `ALLOW`, `DENY`, `REQUIRE_HUMAN`, `REWRITE`, `REDACT`, `SOFT_BLOCK_WITH_EXPLANATION`, fail-closed behavior, constitution fields for allowlists, write tools, sensitive operations, risk domains, and optional evidence writing.
-- `hermes_acgs_bundle/evidence_writer.py` already defines `ChainEvidenceWriter`, which writes append-only JSONL governance events with `input_hash`, `decision`, `policy_ids`, `prev_hash`, and `event_hash`, plus chain verification.
+- `acgs_governance_eval_mvp/governance/adapters/hermes/middleware.py` (formerly `hermes_acgs_bundle/hermes_acgs_middleware.py`) already defines `HermesACGSMiddleware` with `check_pre_tool()`, `check_post_tool()`, `check_final()`, actions `ALLOW`, `DENY`, `REQUIRE_HUMAN`, `REWRITE`, `REDACT`, `SOFT_BLOCK_WITH_EXPLANATION`, fail-closed behavior, constitution fields for allowlists, write tools, sensitive operations, risk domains, and optional evidence writing.
+- `acgs_governance_eval_mvp/governance/adapters/hermes/evidence_writer.py` already defines `ChainEvidenceWriter`, which writes append-only JSONL governance events with `input_hash`, `decision`, `policy_ids`, `prev_hash`, and `event_hash`, plus chain verification.
 - A planned `ACGS/packages/acgs-lite/src/acgs_lite/integrations/hermes.py` would define `HermesGovernor.evaluate(tool_name, tool_input, session_meta)`, failing closed on evaluation and audit errors, raising `GovernanceViolationError` on denial, and checking schema, protected paths, secrets, destructive commands, shell tools, workspace writes, network allowlists, and `GovernanceEngine` violations. *(Not yet in the tree.)*
 - A planned `ACGS/.hermes/governance/hermes.constitution.yaml` would define HRM-001 through HRM-008 for shell confirmation, workspace write boundary, secret denial, destructive patterns, network allowlist, read audit, protected governance assets, and required tool names. *(Not yet in the tree.)*
 - `acgs_governance_eval_mvp/governance/adapters/tools.py` already provides a gate-based `GovernedToolAdapter.validate()` and `guard()` path through `AuthorityGate`, `PolicyRecallGate`, `GovernanceRecallGate`, and chain-hash audit records.
@@ -571,8 +571,8 @@ Required evidence assertions:
 
 Phase 0: Repo inspection
 
-- Inspect and document current behavior in `hermes_acgs_bundle/hermes_acgs_middleware.py`.
-- Inspect evidence durability in `hermes_acgs_bundle/evidence_writer.py`.
+- Inspect and document current behavior in `acgs_governance_eval_mvp/governance/adapters/hermes/middleware.py` (formerly `hermes_acgs_bundle/hermes_acgs_middleware.py`).
+- Inspect evidence durability in `acgs_governance_eval_mvp/governance/adapters/hermes/evidence_writer.py`.
 - Inspect existing Hermes integration in `ACGS/packages/acgs-lite/src/acgs_lite/integrations/hermes.py`.
 - Inspect current HRM constitution in `ACGS/.hermes/governance/hermes.constitution.yaml`.
 - Inspect gate and decision models in `acgs_governance_eval_mvp/governance/adapters/tools.py` and `acgs_governance_eval_mvp/governance/models.py`.

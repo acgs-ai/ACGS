@@ -42,7 +42,7 @@ Options:
   --cutover-plan <path>             Optional production-cutover-plan JSON (default: ${DEFAULT_CUTOVER_PLAN} when present)
   --out <path>                      Write the draft JSON to this path (default: ${DEFAULT_OUT})
   --cloud-run-revision-url <url>    Optional real Cloud Run revision URL; otherwise pending-external is recorded
-  --vercel-url <url>                Optional real Vercel deployment URL; otherwise pending-external is recorded
+  --cloudflare-url <url>            Optional real Cloudflare deployment URL; otherwise pending-external is recorded
   --marketing-run-url <url>         Optional real marketing workflow run URL; otherwise pending-external is recorded
   --console-run-url <url>           Optional real console workflow run URL; otherwise pending-external is recorded
   --storybook-run-url <url>         Optional real Storybook workflow run URL; otherwise pending-external is recorded
@@ -61,7 +61,7 @@ function parseArgs(argv) {
     cutoverPlanPath: DEFAULT_CUTOVER_PLAN,
     outPath: DEFAULT_OUT,
     cloudRunRevisionUrl: null,
-    vercelUrl: null,
+    cloudflareUrl: null,
     marketingRunUrl: null,
     consoleRunUrl: null,
     storybookRunUrl: null,
@@ -86,7 +86,7 @@ function parseArgs(argv) {
     else if (arg === '--cutover-plan') options.cutoverPlanPath = next()
     else if (arg === '--out') options.outPath = next()
     else if (arg === '--cloud-run-revision-url') options.cloudRunRevisionUrl = next()
-    else if (arg === '--vercel-url') options.vercelUrl = next()
+    else if (arg === '--cloudflare-url') options.cloudflareUrl = next()
     else if (arg === '--marketing-run-url') options.marketingRunUrl = next()
     else if (arg === '--console-run-url') options.consoleRunUrl = next()
     else if (arg === '--storybook-run-url') options.storybookRunUrl = next()
@@ -188,7 +188,7 @@ function buildDraft({ template, liveOutput, blockerReport, cutoverPlan, options 
       consoleUrl: targets.consoleUrl ?? template.deploy?.consoleUrl ?? 'https://console.acgs.ai',
       cloudRunRevisionUrl:
         options.cloudRunRevisionUrl ?? pendingExternal('cloud-run-revision-url'),
-      vercelUrl: options.vercelUrl ?? pendingExternal('vercel-deployment-url'),
+      cloudflareUrl: options.cloudflareUrl ?? pendingExternal('cloudflare-deployment-url'),
       githubActionsRunUrls: {
         marketing: options.marketingRunUrl ?? pendingExternal('marketing-workflow-run-url'),
         console: options.consoleRunUrl ?? pendingExternal('console-workflow-run-url'),

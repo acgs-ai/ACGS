@@ -1,6 +1,6 @@
 # Security
 
-> Status: foundational / Alpha (`0.1.0.dev0`). gove-zone is **not** production-,
+> Status: foundational / Alpha (`0.1.0a1`). gove-zone is **not** production-,
 > compliance-, or regulator-certified. This document states the security
 > boundary honestly — what is enforced and what is explicitly out of scope.
 
@@ -156,8 +156,19 @@ ask for less.
 - **Key distribution / trust establishment.** There is no PKI, certificate chain,
   or trust-store bootstrapping. The verifier mapping is static; the operator must
   manage it.
-- **Revocation.** A compromised key cannot be revoked; the operator must update
-  and redeploy the verifier mapping.
+- **Revocation.** A compromised signing key *can* be revoked at the live gates
+  (`ReceiptVerifier` / `GovernedExecutor` / `execute_with_receipt`, and via them
+  `resume_with_receipt`), the offline `verify_workflow_replay` inner-receipt path,
+  and the **offline** proof-pack verifier (`verify_proof_pack` /
+  `verify-proofpack --revoked-keys`) by passing a `RevocationList`
+  (`revoked_keys=`): a receipt signed by a revoked `key_id` is rejected before its
+  signature is trusted — at the live gates, even with a valid signature still
+  present in the verifier map (revocation is independent of map membership); and a
+  relying party verifying a distributed pack offline rejects a key compromised
+  *after* the pack was minted. The residual gap is *distribution* — the verifier
+  mapping and the revocation list remain static config the operator deploys (no
+  PKI / CRL fetch / expiry) — and the workflow envelope/authorization signatures
+  (a distinct key population) do not yet honor `revoked_keys`.
 
 ## Workflow receipt chaining
 

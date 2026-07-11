@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gove-zone"
-version = "0.1.0a1"
+dynamic = ["version"]
 description = "Minimal governed agent runtime — fail-closed governance, receipts, audit chain for AI agent tool calls."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Gove Zone Contributors" }]
 keywords = ["ai", "agents", "governance", "audit", "policy"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -25,26 +25,44 @@ dependencies = []
 [project.scripts]
 gove-zone = "gove_zone.cli:main"
 gove-zone-api = "gove_zone.api:main"
+acgs = "gove_zone.proofpack_cli:main"
 
 [project.urls]
 Homepage = "https://acgs.ai"
-Documentation = "https://acgs.ai/docs"
+Documentation = "https://acgs.ai"
 Repository = "https://github.com/dislovelhl/ACGS"
 Issues = "https://github.com/dislovelhl/ACGS/issues"
 
 [project.optional-dependencies]
 schema = ["pydantic>=2.0"]
 crypto = ["cryptography>=42"]
+# YAML-authored policies (gove_zone.yaml_policy). Imported lazily; the core
+# runtime never requires it.
+yaml = ["pyyaml>=6.0"]
+# LangChain/LangGraph adapter (gove_zone.adapters.langgraph). Guarded import;
+# the adapter module loads without it and raises a clear error when used.
+langchain = ["langchain-core>=0.1"]
+# Official Model Context Protocol SDK, for the governed-MCP gateway
+# (gove_zone.adapters.mcp_gateway). Lazy-imported inside the gateway entry
+# points; `import gove_zone` / `import gove_zone.adapters` stay dependency-free
+# and the gateway raises a loud RuntimeError with an install hint when the SDK
+# is absent.
+mcp = ["mcp>=1.27"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
     "cryptography>=42",
+    "pyyaml>=6.0",
+    # Test-only: validates the published acgs/proof-pack/v1 JSON Schemas
+    # (tests/test_proofpack_schema.py). NEVER a runtime dependency — the
+    # offline verifier stays stdlib-only (dependencies = [] is by design).
+    "jsonschema>=4",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/gove_zone"]
+packages = ["src/gove_zone", "src/mcp_gateway"]
 
 [tool.ruff]
 line-length = 100
@@ -58,6 +76,21 @@ strict = true
 python_version = "3.11"
 files = ["src/gove_zone"]
 
+# The adapters guard optional-extra imports (langchain-core / mcp) behind
+# try/except or lazy imports. The inline `type: ignore`s on those guards are
+# load-bearing only when the extra is ABSENT; with the extra installed they
+# would trip strict's warn_unused_ignores (and vice versa for ignores that are
+# only needed when the extra is present). Scope that one warning off for just
+# these modules so the strict gate is green regardless of which extras the
+# environment has synced. All other strict checks remain in force.
+[[tool.mypy.overrides]]
+module = ["gove_zone.adapters.langgraph", "gove_zone.adapters.mcp_gateway"]
+warn_unused_ignores = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "-q"]
+
+[tool.hatch.version]
+path = "src/gove_zone/__init__.py"
+pattern = '__version__ = "(?P<version>[^"]+)"'

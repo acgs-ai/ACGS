@@ -22,7 +22,6 @@ from gove_zone.decision import (
     Decision,
     DecisionRecord,
     canonical_json,
-    sha256_json,
 )
 from gove_zone.tool import ToolCall, normalize_path_context
 
@@ -63,7 +62,7 @@ class AllowAllPolicy(Policy):
         return DecisionRecord(
             decision=Decision.ALLOW,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             reason="allow-all policy",
@@ -84,7 +83,7 @@ class DenyAllPolicy(Policy):
         return DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=("DENY_ALL",),
@@ -138,7 +137,7 @@ class BoundaryPolicy(Policy):
             return DecisionRecord(
                 decision=Decision.ALLOW,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version=self.version,
                 event_id=new_event_id(),
                 reason=f"out of scope for {self._rule_id}",
@@ -158,7 +157,10 @@ class BoundaryPolicy(Policy):
         return DecisionRecord(
             decision=decision,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            # Master's gated hot-path form: reuse the canonical string already
+            # built for the keyword/regex scan (byte-identical to
+            # call.argument_hash(), which re-canonicalizes).
+            argument_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=tuple(matched),
@@ -523,6 +525,241 @@ class RuleSetPolicy(Policy):
             event_id=new_event_id(),
             matched_rules=tuple(exemptions),
             reason=("matched rule exemption(s)" if exemptions else "no rules matched"),
+        )
+
+
+# Severity order used to pick the fail-closed default tier: DENY is the most
+# restrictive enforcement, ALLOW the least.
+_TIER_SEVERITY: dict[Decision, int] = {
+    Decision.ALLOW: 0,
+    Decision.ESCALATE: 1,
+    Decision.DENY: 2,
+}
+
+
+def _tier_enforcement(value: Any) -> Decision:
+    try:
+        decision = value if isinstance(value, Decision) else Decision(str(value).lower())
+    except ValueError as exc:
+        raise ValueError(f"unsupported tier enforcement: {value!r}") from exc
+    if decision not in _TIER_SEVERITY:
+        raise ValueError("risk-tier enforcement is limited to allow/escalate/deny")
+    return decision
+
+
+@dataclasses.dataclass(frozen=True)
+class RiskTier:
+    """One named risk tier used by :class:`RiskTierPolicy`.
+
+    ``enforcement`` is the decision every call in this tier receives:
+    ``allow`` (receipt-logged like every governed call), ``escalate``
+    (human-in-the-loop), or ``deny``. ``requirements`` is free-form policy
+    metadata (e.g. ``("signed", "single-use", "human-approval")``) that
+    downstream profiles and integrators can read via
+    :meth:`RiskTierPolicy.tier_for` — it adds no new enforcement code path.
+    """
+
+    name: str
+    enforcement: Decision = Decision.DENY
+    requirements: tuple[str, ...] = ()
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("risk tier requires a non-empty name")
+        object.__setattr__(self, "enforcement", _tier_enforcement(self.enforcement))
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> RiskTier:
+        return cls(
+            name=str(raw.get("name", "")).strip(),
+            enforcement=_tier_enforcement(raw.get("enforcement", "deny")),
+            requirements=_string_tuple(raw.get("requirements"), field_name="requirements"),
+            description=str(raw.get("description", "")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "enforcement": self.enforcement.value,
+        }
+        if self.requirements:
+            payload["requirements"] = list(self.requirements)
+        if self.description:
+            payload["description"] = self.description
+        return payload
+
+    def version_payload(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "enforcement": self.enforcement.value,
+            "requirements": list(self.requirements),
+            "description": self.description,
+        }
+
+
+class RiskTierPolicy(Policy):
+    """Risk-tiered enforcement surface: per-tool enforcement depth as policy data.
+
+    Answers the uniform-governance objection — one blanket gate for every
+    action class over- or under-governs — by classifying tools into named
+    risk tiers whose enforcement scales with risk (low-risk read → allowed and
+    receipt-logged; high-risk delete/exfiltrate/deploy → escalate or deny).
+
+    Tiers are **policy metadata, not new enforcement code paths**: this class
+    is an ordinary :class:`Policy`, the kernel/executor stay the single gate,
+    and DENY/ESCALATE records remain non-executable. The fail-closed default
+    is preserved — a tool with no tier assignment falls into ``default_tier``,
+    which (unless explicitly configured) is the **most restrictive** tier
+    defined in the bundle.
+    """
+
+    def __init__(
+        self,
+        *,
+        policy_id: str = "risk-tier/v0",
+        tiers: Sequence[RiskTier],
+        tool_tiers: Mapping[str, str] | None = None,
+        default_tier: str | None = None,
+    ) -> None:
+        if not tiers:
+            raise ValueError("RiskTierPolicy requires at least one tier")
+        self._policy_id = policy_id.strip() or "risk-tier/v0"
+        self._tiers = tuple(tiers)
+        self._by_name: dict[str, RiskTier] = {}
+        for tier in self._tiers:
+            if tier.name in self._by_name:
+                raise ValueError(f"duplicate risk tier name: {tier.name!r}")
+            self._by_name[tier.name] = tier
+
+        self._tool_tiers = {
+            str(tool): str(tier_name) for tool, tier_name in (tool_tiers or {}).items()
+        }
+        for tool, tier_name in self._tool_tiers.items():
+            if tier_name not in self._by_name:
+                raise ValueError(f"tool {tool!r} references undefined risk tier {tier_name!r}")
+
+        if default_tier is not None:
+            if default_tier not in self._by_name:
+                raise ValueError(f"default_tier references undefined risk tier {default_tier!r}")
+            self._default_tier = default_tier
+        else:
+            # Fail-closed: unassigned tools get the most restrictive tier
+            # (DENY > ESCALATE > ALLOW; first declared wins ties).
+            self._default_tier = max(
+                self._tiers,
+                key=lambda tier: _TIER_SEVERITY[tier.enforcement],
+            ).name
+        self._version = self._compute_version()
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> RiskTierPolicy:
+        raw_tiers = raw.get("tiers")
+        if not _is_sequence(raw_tiers):
+            raise ValueError("RiskTierPolicy requires a tiers sequence")
+        tiers: list[RiskTier] = []
+        for raw_tier in cast(Sequence[Any], raw_tiers):
+            if not isinstance(raw_tier, Mapping):
+                raise ValueError("each risk tier must be a mapping")
+            tiers.append(RiskTier.from_dict(raw_tier))
+        tools = _mapping_dict(raw.get("tools"), field_name="tools")
+        raw_default = raw.get("default_tier")
+        return cls(
+            policy_id=str(raw.get("id", "risk-tier/v0")),
+            tiers=tuple(tiers),
+            tool_tiers={tool: str(tier_name) for tool, tier_name in tools.items()},
+            default_tier=None if raw_default is None else str(raw_default),
+        )
+
+    @classmethod
+    def from_json(cls, text: str) -> RiskTierPolicy:
+        raw = json.loads(text)
+        if not isinstance(raw, Mapping):
+            raise ValueError("RiskTierPolicy JSON must be an object")
+        return cls.from_dict(raw)
+
+    @classmethod
+    def load(cls, path: str | Path) -> RiskTierPolicy:
+        return cls.from_json(Path(path).read_text(encoding="utf-8"))
+
+    def _compute_version(self) -> str:
+        digest = hashlib.sha256(
+            canonical_json(
+                {
+                    "id": self._policy_id,
+                    "tiers": [tier.version_payload() for tier in self._tiers],
+                    "tools": dict(sorted(self._tool_tiers.items())),
+                    "default_tier": self._default_tier,
+                }
+            ).encode()
+        ).hexdigest()
+        return f"risk-tier/{self._policy_id}/{digest[:16]}"
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    @property
+    def policy_id(self) -> str:
+        return self._policy_id
+
+    @property
+    def tiers(self) -> tuple[RiskTier, ...]:
+        return self._tiers
+
+    @property
+    def default_tier(self) -> str:
+        return self._default_tier
+
+    def tier_for(self, tool_name: str) -> RiskTier:
+        """Resolved tier for *tool_name* (the default tier when unassigned)."""
+        return self._by_name[self._tool_tiers.get(tool_name, self._default_tier)]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self._policy_id,
+            "tiers": [tier.to_dict() for tier in self._tiers],
+            "tools": dict(sorted(self._tool_tiers.items())),
+            "default_tier": self._default_tier,
+        }
+
+    def to_json(self) -> str:
+        return (
+            json.dumps(
+                self.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    def dump(self, path: str | Path) -> None:
+        Path(path).write_text(self.to_json(), encoding="utf-8")
+
+    def evaluate(self, call: ToolCall) -> DecisionRecord:
+        tier_name = self._tool_tiers.get(call.name)
+        defaulted = tier_name is None
+        tier = self._by_name[self._default_tier if tier_name is None else tier_name]
+
+        matched: tuple[str, ...] = (f"RISK_TIER:{tier.name}",)
+        if defaulted:
+            matched = (*matched, "RISK_TIER:default")
+            reason = (
+                f"tool {call.name!r} has no tier assignment; fail-closed default tier "
+                f"{tier.name!r} -> {tier.enforcement.value}"
+            )
+        else:
+            reason = f"tool {call.name!r} in risk tier {tier.name!r} -> {tier.enforcement.value}"
+
+        return DecisionRecord(
+            decision=tier.enforcement,
+            tool=call.name,
+            argument_hash=call.argument_hash(),
+            policy_version=self.version,
+            event_id=new_event_id(),
+            matched_rules=matched,
+            reason=reason,
         )
 
 

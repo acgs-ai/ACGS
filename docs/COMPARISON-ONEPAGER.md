@@ -57,7 +57,7 @@ receipt gate could even compose.** *(COMPARISON.md:61–77.)*
 
 ## What we do not claim
 
-Alpha (`gove-zone` reports `0.1.0.dev0`). **Not** production-certified, **not**
+Alpha (`gove-zone` reports `0.1.0a1`). **Not** production-certified, **not**
 compliance-certified, **not** regulator-approved; not a replacement for
 sandboxing, content moderation, or a complete IAM/PKI system. See
 [`CLAIMS.md`](CLAIMS.md) for the full claim-to-evidence ledger and safe wording.

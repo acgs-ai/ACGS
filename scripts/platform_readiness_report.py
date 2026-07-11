@@ -250,6 +250,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         "\n".join(
             [
                 _maybe_read(repo_root, ".github/workflows/marketing.yml"),
+                _maybe_read(repo_root, ".github/workflows/marketing-cloudflare.yml"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
                 _maybe_read(
                     repo_root,
@@ -259,12 +260,16 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
             ]
         ),
+        # Marketing PRODUCTION deploy moved Vercel -> Pages (#128) -> Workers
+        # Assets (the live acgs.ai origin); the fail-closed marker lives in
+        # marketing-cloudflare.yml. Mirror the markers asserted by
+        # acgi-ai/scripts/check-production-deploy-contract.mjs so this
+        # aggregator stays in lockstep with the live deploy contract.
         [
-            "::error::Vercel production deploy blocked",
+            "::error::Cloudflare Workers deploy blocked",
             "exit 1",
-            "VERCEL_TOKEN",
-            "VERCEL_ORG_ID",
-            "VERCEL_PROJECT_ID",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID",
             "CONSOLE_AUTH_UPSTREAM",
             "CONSOLE_BUS_UPSTREAM",
             "test:production-deploy-contract",
@@ -283,7 +288,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Production deploy workflows fail closed when credentials are absent",
             production_deploy_files_ok and production_deploy_ok and production_deploy_scripts_ok,
             (
-                "marketing push deploy errors on missing Vercel secrets; "
+                "marketing push deploy errors on missing Cloudflare secrets; "
                 "console deploy remains WIF/renderer/postdeploy gated"
                 if production_deploy_files_ok
                 and production_deploy_ok
@@ -323,7 +328,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "Local readiness is not production deployment proof",
             "No stronger claims until live proof is attached",
-            "VERCEL_TOKEN",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_ACCOUNT_ID",
             "GCP_WORKLOAD_IDENTITY_PROVIDER",
             "GCP_ARTIFACT_REGISTRY",
             "CONSOLE_AUTH_UPSTREAM",

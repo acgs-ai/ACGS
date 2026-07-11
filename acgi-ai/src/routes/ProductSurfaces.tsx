@@ -236,7 +236,7 @@ const products: ProductRoute[] = [
     title: 'Evidence, not',
     emphasis: 'logs',
     deck: 'A Hermes runtime review panel for hook decisions, policy snapshots, replay labs, human-release gates, hash-chain verification, and export review.',
-    source: 'hermes_acgs_bundle/ACGS Governed Evidence Panel.html',
+    source: 'acgs_governance_eval_mvp/ACGS Governed Evidence Panel.html',
     status: 'CONFIRMED',
     primaryCta: 'Open trace review',
     cards: [

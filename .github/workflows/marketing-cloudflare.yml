@@ -1,18 +1,25 @@
-# Marketing surface — Cloudflare Pages deploy (DEPLOY.md §3, §7).
+# Marketing surface — Cloudflare Workers Static Assets deploy (DEPLOY.md §3, §7).
 #
 # This is the marketing surface's production deploy path. The legacy Vercel
 # workflow (marketing.yml) is now PR/verify-only — Cloudflare replaced it.
 #
+# LIVE TOPOLOGY (verified 2026-07-10): acgs.ai / www.acgs.ai are served by the
+# Worker `acgs-governance-proxy` (Workers Static Assets). Worker routes run
+# BEFORE Pages, so the older Pages project (`acgs-marketing`, ../wrangler.toml)
+# is a shadow the apex never reads. This workflow therefore deploys the Worker
+# via infra/cloudflare/workers/wrangler.toml (no routes block — production
+# routes stay owned in the Cloudflare dashboard).
+#
 # Required repository secrets (set by a human; deploy is BLOCKED until present):
-#   CLOUDFLARE_API_TOKEN   — Pages:Edit + Account:Read token from the Cloudflare dashboard
+#   CLOUDFLARE_API_TOKEN   — Workers Scripts:Edit + Account:Read token
+#                            (the old Pages:Edit-only token CANNOT deploy the Worker)
 #   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account id
 #
 # Required human setup BEFORE this can deploy (none of this is agent-doable):
-#   1. Create a Cloudflare Pages project named `acgs-marketing` (matches wrangler.toml).
-#   2. Set that project's PRODUCTION branch to `master`.
-#   3. Add a GitHub Environment named `production` with required reviewers — otherwise
+#   1. Ensure the Worker `acgs-governance-proxy` exists with its acgs.ai/* routes.
+#   2. Add a GitHub Environment named `production` with required reviewers — otherwise
 #      the `environment: production` line below is decorative and the deploy is NOT gated.
-#   4. Add the two secrets above.
+#   3. Add the two secrets above (token scope: Workers Scripts:Edit).
 #
 # PRs run verify only. Pushes to master verify, then deploy (gated on `production`).
 #
@@ -50,6 +57,8 @@ defaults:
 
 jobs:
   verify:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
@@ -78,16 +87,19 @@ jobs:
         run: pnpm run build:marketing
 
       # The cp + presence assert is what actually ships headers/redirects — verify it here.
+      # NOTE: the Worker deploy uses infra/cloudflare/workers/_redirects (Workers
+      # Assets rejects the Pages 404-status rules and SPA catch-all); the Pages
+      # sibling stays for the shadow project's parity checks.
       - name: Stage Cloudflare static config + assert it lands
         run: |
-          cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/
+          cp infra/cloudflare/_headers infra/cloudflare/workers/_redirects dist/
           test -f dist/_headers || { echo "::error::dist/_headers missing"; exit 1; }
           test -f dist/_redirects || { echo "::error::dist/_redirects missing"; exit 1; }
           # internal docs must NOT be in the marketing build
           ! ls dist/CLAUDE.md dist/DEPLOY.md dist/AGENTS.md dist/DESIGN.md 2>/dev/null || { echo "::error::internal docs leaked into dist"; exit 1; }
 
   deploy:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs: verify
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
@@ -111,8 +123,8 @@ jobs:
       - name: Build marketing surface
         run: pnpm run build:marketing
 
-      - name: Stage Cloudflare static config (headers + redirects)
-        run: cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/
+      - name: Stage Cloudflare static config (headers + Workers redirects)
+        run: cp infra/cloudflare/_headers infra/cloudflare/workers/_redirects dist/
 
       # Fail loud with a clear message if the Cloudflare secrets are not set, instead
       # of a cryptic wrangler auth error (mirrors marketing.yml's Vercel secret guard).
@@ -125,15 +137,18 @@ jobs:
           if [ "$HAVE_TOKEN" = "true" ] && [ "$HAVE_ACCOUNT" = "true" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Cloudflare Pages deploy blocked: set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to enable."
+            echo "::error::Cloudflare Workers deploy blocked: set CLOUDFLARE_API_TOKEN (Workers Scripts:Edit) and CLOUDFLARE_ACCOUNT_ID secrets to enable."
             exit 1
           fi
 
-      - name: Deploy to Cloudflare Pages (production)
+      # Deploys the LIVE origin: Worker `acgs-governance-proxy` (Workers Static
+      # Assets). --config keeps wrangler off the Pages-flavored acgi-ai/wrangler.toml;
+      # the workers config has no routes block, so production routes are untouched.
+      - name: Deploy to Cloudflare Workers Assets (production)
         if: steps.cf_auth.outputs.available == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: acgi-ai
-          command: pages deploy --branch=master
+          command: deploy --config infra/cloudflare/workers/wrangler.toml

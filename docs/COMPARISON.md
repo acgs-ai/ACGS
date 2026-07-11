@@ -20,6 +20,22 @@ ACGS / gove-zone is not trying to replace the surrounding ecosystem. It fills a 
 
 Most agent tooling focuses on making actions possible. ACGS focuses on proving whether actions are legitimate.
 
+## Governance posture: none vs audit-centric vs receipt-centric
+
+Three postures a system can take at the agent action boundary:
+
+| Posture | Acts… | You get | Example |
+|---|---|---|---|
+| **Ungoverned** (most of the stack today) | agent → tool directly | speed, zero accountability | raw MCP server, vanilla LangGraph |
+| **Audit-centric** | logs *after* the action | a trail you read after harm | Microsoft Agent Governance Toolkit ([detail below](#microsoft-agent-governance)) |
+| **Receipt-centric (ACGS)** | gates *before* the action | every action carries a verifiable, single-use Decision Receipt; fail-closed | gove-zone |
+
+ACGS's distinctive choice is **receipt-centric**: the gate runs before the
+side effect, and the receipt is the artifact that proves it. This is a
+technical membrane, not a compliance certification. See
+[AGENT_STACK_GOVERNANCE.md](AGENT_STACK_GOVERNANCE.md) for where each adapter
+plugs into the agent stack.
+
 ## What to combine
 
 A production-adjacent stack should combine:
@@ -184,3 +200,24 @@ Sources, verified as of June 2026:
 - flue sandboxes guide — <https://flueframework.com/docs/guide/sandboxes/>
 - flue Cloudflare deploy guide (`outboundByHost`) — <https://flueframework.com/docs/ecosystem/deploy/cloudflare/>
 - Cloudflare Sandbox SDK (Beta, Apache-2.0) — <https://github.com/cloudflare/sandbox-sdk> and <https://developers.cloudflare.com/sandbox/>
+
+## How the nearest comparisons relate (different axes)
+
+The two structurally-closest projects above sit near gove-zone on *different
+axes* — they are not interchangeable "same competitor" rivals:
+
+- **Microsoft AGT** is the nearest *governance-paradigm* analogue. It does
+  authorize tool-calls and keeps a fail-closed, Merkle-chained audit, so it
+  shares gove-zone's **authorization** axis; the evidenced difference is the
+  *resolution of the artifact* — audit-centric (forensics after the fact) versus
+  receipt-centric (a pre-execution artifact a relying party can verify outside
+  the runtime).
+- **flue** is a *containment-paradigm* tool. It bounds **where** an agent runs,
+  not **which action-plus-arguments** may execute; even its strongest egress
+  mediation (`outboundByHost`) keys on hostname and protects the secret, not the
+  action. The difference here is one of *paradigm* (authorization versus
+  containment), not merely artifact resolution.
+
+So "closest competitor" means two different things: AGT shares the axis and
+differs on the artifact; flue differs on the axis itself. A receipt gate
+composes with both rather than replacing either.

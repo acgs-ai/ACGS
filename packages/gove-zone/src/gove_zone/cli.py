@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ def _rederive(
         status = "decision-mismatch"
     return {
         "attempted": True,
-        "rederived": result.matches,
+        "rederived": result.re_derived and result.matches,
         "rederivation_status": status,
         "replayed_decision": result.replayed_decision.value,
         "policy_version_match": result.policy_version_match,
@@ -211,6 +212,102 @@ def _verify_ledger(args: argparse.Namespace) -> int:
 
     _emit(payload)
     return 0 if (report["valid"] and reconcile_ok) else 1
+
+
+def _prune_ledger(args: argparse.Namespace) -> int:
+    """TTL-prune a consumption ledger: drop expired burned entries.
+
+    Calls :meth:`~gove_zone.consumption.ReceiptConsumptionLedger.prune`, which
+    removes only entries whose receipt has already expired, re-chains the
+    survivors, and advances the prune watermark (clock-rollback defense) plus
+    the high-water-mark. Checkpointing is auto-detected from a ``<ledger>.hwm``
+    sidecar so prune keeps an existing high-water-mark consistent with the
+    re-chained tail. A corrupt / unreadable ledger (or an unparseable ``--now``)
+    exits 2 and prunes nothing — fail-closed.
+    """
+    ledger_path = Path(args.ledger)
+    checkpoint = ledger_path.with_suffix(ledger_path.suffix + ".hwm").exists()
+    ledger = ReceiptConsumptionLedger(ledger_path, checkpoint=checkpoint)
+
+    now = None
+    if args.now is not None:
+        try:
+            now = datetime.fromisoformat(args.now)
+        except (ValueError, TypeError) as exc:
+            print(f"prune-ledger: unparseable --now {args.now!r}: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        report = ledger.prune(now=now)
+    except ConsumptionLedgerError as exc:
+        print(f"prune-ledger: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "ledger": str(args.ledger),
+            "pruned": report["pruned"],
+            "kept": report["kept"],
+            "last_hash": report["last_hash"],
+            "watermark": report["watermark"],
+        }
+    )
+    return 0
+
+
+def _approve_escalation(args: argparse.Namespace) -> int:
+    """Approve a parked governed-MCP escalation and mint an ALLOW receipt.
+
+    Wraps :func:`gove_zone.escalation.approve_escalation` for the local stdio
+    gateway pilot: reads the gateway config and a pending-escalation descriptor
+    (emitted by ``GovernedGateway.pending_descriptor``), mints a signed approval
+    receipt with the config's *distinct* validator, appends the approval to the
+    audit chain, and prints the receipt plus its ``approval_audit_hash`` — the
+    value the gateway pins as ``expected_audit_hash`` at resume. Single-use is
+    enforced at the resume gate by the gateway's
+    :class:`~gove_zone.consumption.ReceiptConsumptionLedger`, not here.
+
+    A missing/invalid config, descriptor, or a self-validation clash exits 2
+    (fail-closed) and mints nothing.
+    """
+    from gove_zone.adapters.mcp_gateway import load_gateway_config, pending_from_dict
+    from gove_zone.errors import ReceiptValidationError
+    from gove_zone.escalation import approve_escalation
+
+    try:
+        config = load_gateway_config(Path(args.config))
+        descriptor = json.loads(Path(args.pending).read_text(encoding="utf-8"))
+        pending = pending_from_dict(descriptor)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    store = ChainHashAuditStore(config.audit_path)
+    try:
+        receipt = approve_escalation(
+            pending,
+            validator=config.validator,
+            authority=config.authority,
+            tenant_id=config.tenant_id,
+            execution_boundary=config.execution_boundary,
+            policy_bundle_id=config.policy_bundle_id,
+            policy_hash=config.policy.version,
+            audit=store,
+            expires_at=args.expires_at or "",
+            signer=config.profile.signer,
+        )
+    except ReceiptValidationError as exc:
+        print(f"approve-escalation: {exc}", file=sys.stderr)
+        return 2
+
+    _emit(
+        {
+            "pending_event_id": pending.record.event_id,
+            "approval_audit_hash": receipt.audit_event_hash,
+            "receipt": receipt.to_dict(),
+        }
+    )
+    return 0
 
 
 def _setup(args: argparse.Namespace) -> int:
@@ -624,9 +721,9 @@ def _proofpack(args: argparse.Namespace) -> int:
     )
 
     # Write limitations.md
-    limitations_content = """# Conformance Proof Pack Limitations & Disclaimers
+    limitations_content = f"""# Conformance Proof Pack Limitations & Disclaimers
 
-- **Status**: Alpha (`0.1.0.dev0`).
+- **Status**: Alpha (`{__version__}`).
 - **Scope**: Local proof and production-shaped foundation only.
 - **Certification**: NOT production-certified, NOT compliance-certified.
   Do not claim live production deployment or regulatory compliance without direct evidence.
@@ -636,10 +733,49 @@ def _proofpack(args: argparse.Namespace) -> int:
 """
     (dist_dir / "limitations.md").write_text(limitations_content, encoding="utf-8")
 
+    # Remove the audit append lock file so the pack directory contains exactly
+    # the files listed in the manifest; the lock only guards concurrent appends
+    # during generation and carries no evidence value.
+    lock_path = dist_dir / "audit.jsonl.lock"
+    if lock_path.exists():
+        lock_path.unlink()
+
     # Write manifest.json
+    #
+    # Structured manifest the offline verifier (verify_proof_pack) can read: a
+    # `receipts` array with one structured entry per receipt file actually written,
+    # each carrying its declared verdict, plus an explicit `audit_chain` pointer so
+    # accept receipts can be anchored against the pack's own chain. The declared
+    # verdicts below mirror what `DecisionReceipt.verify()` observes for each file
+    # (allow/transform self-validate => "accept"; the deny receipt raises
+    # DENIED_RECEIPT => "reject"). reason_code is left null on the reject entry so
+    # the verifier only requires an observed reject, not a brittle reason match.
+    # The pack is dev-mode UNSIGNED (require_signature=False), so `verify-proofpack`
+    # passes without a --verifier-key.
     manifest = {
-        "version": "0.1.0.dev0",
+        "version": __version__,
         "schema_version": "gove-zone/proof-pack/v1",
+        "audit_chain": "audit.jsonl",
+        "receipts": [
+            {
+                "name": "allowed",
+                "file": "receipts/allowed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+            {
+                "name": "denied",
+                "file": "receipts/denied_receipt.json",
+                "declared_verdict": "reject",
+                "reason_code": None,
+            },
+            {
+                "name": "transformed",
+                "file": "receipts/transformed_receipt.json",
+                "declared_verdict": "accept",
+                "reason_code": None,
+            },
+        ],
         "files": [
             "manifest.json",
             "receipts/allowed_receipt.json",
@@ -683,9 +819,144 @@ def _verify_proofpack(args: argparse.Namespace) -> int:
             return 2
         verifier = {signer.key_id: signer}
 
-    result = verify_proof_pack(args.pack_dir, verifier=verifier, now_iso=args.now_iso)
+    revoked_keys = None
+    if getattr(args, "revoked_keys", None):
+        # Out-of-band revocation list: revoked signing key_ids, supplied SEPARATELY
+        # by the relying party. Fail-closed — an unreadable/malformed list must not
+        # silently degrade to "no revocation applied" (exit 2, same as a bad anchor).
+        from gove_zone.revocation import RevocationList
+
+        try:
+            revoked_keys = RevocationList.from_json(args.revoked_keys)
+        except Exception as exc:  # noqa: BLE001 — a broken revocation list must not verify anything
+            print(f"verify-proofpack: cannot load --revoked-keys: {exc}", file=sys.stderr)
+            return 2
+
+    result = verify_proof_pack(
+        args.pack_dir, verifier=verifier, now_iso=args.now_iso, revoked_keys=revoked_keys
+    )
     print(json.dumps(result.to_dict(), indent=2))
     return 0 if result.valid else 1
+
+
+def _tool_call_from_hook_payload(payload: Mapping[str, Any]) -> Any:
+    """Map a host PreToolUse tool-call payload to a :class:`ToolCall`.
+
+    The governed-loop-v2 reference monitor (``.claude/hooks/loop-pretool-guard.sh``)
+    passes the Claude Code PreToolUse JSON — ``{tool_name, tool_input, ...}`` — on
+    stdin. ``tool_name`` is the real host tool ("Bash", "Write", "Edit", ...), which
+    is what the policy's ``tools:`` field must match; the discriminating content
+    lives in ``tool_input`` (``command`` for Bash, ``file_path`` for the write
+    tools), surfaced as ``state.command`` / ``state.path`` for the policy's
+    ``state_contains`` substring matcher. Rules must key on the real host tool name
+    — a rule scoped to a name the host never sends (e.g. a synthetic ``shell.exec``)
+    can never fire, which is a silent no-op, not a gate.
+
+    ``state.command`` whitespace is collapsed so trivial spacing variants
+    (``git  push``, tabs, newlines) — which the shell treats as equivalent — cannot
+    dodge a substring rule. Substring matching is still COARSE by construction (a
+    declarative defense-in-depth layer, not a hard boundary): the hook's
+    flag-order-independent regex backstop and settings.json remain the primary
+    gates. This mapping does not, and cannot, turn a shell command string into a
+    guarantee about file writes — a ``Bash`` redirect writing a path is opaque to
+    ``state.path``; guarding structured file writes is the host write-tool matcher's
+    and settings.json's job, not this Bash-surface policy's.
+    """
+    from gove_zone.tool import ToolCall
+
+    tool_name = str(payload.get("tool_name", "")).strip()
+    if not tool_name:
+        raise ValueError("payload missing tool_name")
+    raw_input = payload.get("tool_input") or {}
+    if not isinstance(raw_input, Mapping):
+        raise ValueError("tool_input must be a JSON object")
+    raw_command = raw_input.get("command")
+    command = " ".join(raw_command.split()) if isinstance(raw_command, str) else ""
+    path = raw_input.get("file_path") or raw_input.get("path") or raw_input.get("notebook_path")
+    state = {
+        "command": command,
+        "path": path if isinstance(path, str) else "",
+    }
+    return ToolCall(name=tool_name, args=dict(raw_input), state=state)
+
+
+def _validate(args: argparse.Namespace) -> int:
+    """Evaluate one PreToolUse tool-call payload against a YAML build-guard policy.
+
+    Reads the host's tool-call JSON (``{tool_name, tool_input}``) from stdin (or
+    ``--event-file``), maps it to a :class:`ToolCall`, and evaluates it against the
+    :class:`YAMLPolicy` at ``--policy``. Exit 0 iff the decision is ALLOW; DENY and
+    ESCALATE exit 2 so a ``... || deny`` PreToolUse hook blocks the side effect.
+
+    FAIL-CLOSED on a real governance failure — an unparseable payload, a missing
+    ``tool_name``, or a policy file that is PRESENT BUT BROKEN (bad YAML / invalid
+    schema) — exits 2 and denies: an action that cannot be evaluated against a
+    policy that is supposed to exist is never allowed.
+
+    GRACEFUL-DEGRADE on tooling absence only: if PyYAML (the optional ``yaml``
+    extra) is not installed, the policy layer cannot run AT ALL. That is tooling
+    absence, not a policy denial, so it exits 0 (allow) with a stderr advisory
+    rather than denying every call and bricking the loop. This is safe because the
+    calling PreToolUse hook's coarse regex backstop and the settings.json
+    deny-rules remain in force and independently block the catastrophic cases
+    (recursive-force rm, pipe-to-shell, permission-skip, force-push); only the
+    policy's additive rules (secret-file writes, push escalation) are lost until
+    ``yaml`` is installed. A missing optional dep must never be a governance
+    failure. This asymmetry is deliberate.
+    """
+    from gove_zone.decision import Decision
+
+    # 1) Read + map the request. Any read/parse error is a fail-closed deny.
+    try:
+        if args.event_file:
+            payload_text = Path(args.event_file).read_text(encoding="utf-8")
+        else:
+            payload_text = sys.stdin.read()
+        payload = json.loads(payload_text)
+        if not isinstance(payload, dict):
+            raise ValueError("tool-call payload must be a JSON object")
+        call = _tool_call_from_hook_payload(payload)
+    except Exception as exc:  # noqa: BLE001 — an unreadable request is denied
+        print(f"validate: fail-closed deny (bad request): {exc}", file=sys.stderr)
+        return 2
+
+    # 2) Load the YAML policy. Distinguish tooling-absence (PyYAML missing ->
+    #    degrade to allow) from a present-but-broken policy (-> fail closed).
+    try:
+        from gove_zone.yaml_policy import YAMLPolicy
+
+        policy = YAMLPolicy.load_yaml(args.policy)
+    except ModuleNotFoundError as exc:
+        print(
+            "validate: PyYAML not installed; build-guard policy layer inactive "
+            f"(install gove-zone[yaml] to enforce it). Allowing. [{exc}]",
+            file=sys.stderr,
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 — a broken/missing policy denies
+        print(f"validate: fail-closed deny (policy load): {exc}", file=sys.stderr)
+        return 2
+
+    # 3) Evaluate. ALLOW -> 0; DENY/ESCALATE -> 2 (the hook's `|| deny`).
+    try:
+        record = policy.evaluate(call)
+    except Exception as exc:  # noqa: BLE001 — an evaluation error denies
+        print(f"validate: fail-closed deny (evaluate): {exc}", file=sys.stderr)
+        return 2
+
+    allowed = record.decision is Decision.ALLOW
+    _emit(
+        {
+            "policy": str(args.policy),
+            "policy_version": policy.version,
+            "tool": call.name,
+            "decision": record.decision.value,
+            "allowed": allowed,
+            "matched_rules": list(record.matched_rules),
+            "reason": record.reason,
+        }
+    )
+    return 0 if allowed else 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -757,6 +1028,51 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_ledger.set_defaults(func=_verify_ledger)
 
+    prune_ledger = subparsers.add_parser(
+        "prune-ledger",
+        help="TTL-prune a consumption ledger (drop expired burned entries)",
+    )
+    prune_ledger.add_argument(
+        "--ledger",
+        required=True,
+        help="path to the consumption ledger JSONL to prune",
+    )
+    prune_ledger.add_argument(
+        "--now",
+        default=None,
+        help=(
+            "optional ISO-8601 timezone-aware cutoff (default: current UTC time); "
+            "burned entries whose receipt expired strictly before this are removed, "
+            "and the prune watermark advances to the latest expiry removed. A future "
+            "value also prunes not-yet-expired entries — use deliberately"
+        ),
+    )
+    prune_ledger.set_defaults(func=_prune_ledger)
+
+    approve = subparsers.add_parser(
+        "approve-escalation",
+        help="approve a parked governed-MCP escalation and mint an ALLOW receipt",
+    )
+    approve.add_argument(
+        "--config",
+        required=True,
+        help="path to the gateway JSON config (tenant/boundary/policy/validator/signer/audit)",
+    )
+    approve.add_argument(
+        "--pending",
+        required=True,
+        help=(
+            "path to a pending-escalation descriptor JSON "
+            "(GovernedGateway.pending_descriptor output): the ESCALATE record + args"
+        ),
+    )
+    approve.add_argument(
+        "--expires-at",
+        default=None,
+        help="optional ISO-8601 expiry bounding the FIRST use of the approval receipt",
+    )
+    approve.set_defaults(func=_approve_escalation)
+
     setup = subparsers.add_parser(
         "setup",
         help="emit copy-paste setup instructions for the detected host runtime",
@@ -811,6 +1127,29 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     gate.set_defaults(func=_gate)
+
+    validate = subparsers.add_parser(
+        "validate",
+        help=(
+            "evaluate a PreToolUse tool-call payload against a YAML build-guard "
+            "policy; exit 0 iff ALLOW, else 2 (fail-closed)"
+        ),
+    )
+    validate.add_argument(
+        "--policy",
+        required=True,
+        help="path to a YAML policy bundle (loaded via YAMLPolicy.load_yaml)",
+    )
+    validate.add_argument(
+        "--stdin",
+        action="store_true",
+        help="read the tool-call JSON from stdin (the default when no --event-file)",
+    )
+    validate.add_argument(
+        "--event-file",
+        help="path to a JSON file with the tool-call payload (default: stdin)",
+    )
+    validate.set_defaults(func=_validate)
 
     enable = subparsers.add_parser(
         "enable",
@@ -931,6 +1270,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--key-id",
         default=None,
         help="key_id the --verifier-key registers as (must match the receipt's signing_key_id)",
+    )
+    verify_proofpack.add_argument(
+        "--revoked-keys",
+        default=None,
+        help=(
+            "path to a JSON revocation list of revoked signing key_ids, supplied "
+            "out-of-band. A signed receipt whose signing_key_id is revoked fails "
+            "closed (SIGNING_KEY_REVOKED). Omit to apply no revocation."
+        ),
     )
     verify_proofpack.set_defaults(func=_verify_proofpack)
 

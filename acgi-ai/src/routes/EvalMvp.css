@@ -1,0 +1,605 @@
+/* ============================================================================
+ * EvalMvp — governance-eval MVP showcase page
+ * All tints via color-mix(in srgb, var(--token) N%, transparent).
+ * No box-shadow / rgba() / hex literals — all colour from index.css tokens.
+ * ============================================================================ */
+
+/* ── Syntax token colours ───────────────────────────────────────────────── */
+.ev-kw {
+  color: var(--accent);
+}
+.ev-str {
+  color: var(--risk-lo);
+}
+.ev-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+.ev-ident {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ── Page entrance keyframes ────────────────────────────────────────────── */
+@keyframes ev-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ev-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ev-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ── Section 1 — Hero ───────────────────────────────────────────────────── */
+.ev-hero {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-5xl);
+  padding: 80px 0 68px;
+  align-items: center;
+}
+
+.ev-hero-copy {
+  animation: ev-fade-up 0.55s ease both;
+}
+
+.ev-h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.875rem, 3.75vw, 3.125rem);
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: var(--space-lg) 0 var(--space-xl);
+}
+
+.ev-lede {
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  color: var(--muted);
+  max-width: 52ch;
+  margin-bottom: var(--space-3xl);
+}
+
+.ev-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xl);
+  flex-wrap: wrap;
+}
+
+.ev-install-pill {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--muted);
+  background: var(--paper-2);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line-softer);
+  white-space: nowrap;
+}
+
+.ev-hero-diagram {
+  animation: ev-fade-in 0.65s 0.2s ease both;
+}
+
+/* Pipeline SVG ─────────────────────────────────────────────────────────── */
+.ev-pipeline-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ev-pipe-rect {
+  fill: var(--paper-2);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+
+.ev-pipe-num {
+  fill: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.ev-pipe-label {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.ev-pipe-line {
+  stroke: var(--line-soft);
+  fill: none;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: ev-draw 0.6s ease-in-out forwards;
+}
+.ev-pipe-line-1 {
+  animation-delay: 0.4s;
+}
+.ev-pipe-line-2 {
+  animation-delay: 0.85s;
+}
+.ev-pipe-line-3 {
+  animation-delay: 1.3s;
+}
+
+.ev-pipe-arrowhead {
+  fill: var(--line-soft);
+}
+.ev-pipe-arrow-1 {
+  opacity: 0;
+  animation: ev-fade-in 0.25s 0.7s ease forwards;
+}
+.ev-pipe-arrow-2 {
+  opacity: 0;
+  animation: ev-fade-in 0.25s 1.15s ease forwards;
+}
+.ev-pipe-arrow-3 {
+  opacity: 0;
+  animation: ev-fade-in 0.25s 1.6s ease forwards;
+}
+
+/* ── Section 2 — Three Sequential Gates ────────────────────────────────── */
+.ev-gates-section {
+  background: var(--paper-2);
+  border-top: 1px solid var(--line-softer);
+  border-bottom: 1px solid var(--line-softer);
+  padding: 72px 0;
+}
+
+.ev-section-h2 {
+  font-family: var(--font-display);
+  font-size: clamp(1.375rem, 2.5vw, 2rem);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: var(--space-4xl);
+}
+
+.ev-gates-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3xl);
+}
+
+.ev-gate {
+  border-top: 2px solid var(--ink);
+  padding-top: var(--space-xl);
+}
+
+.ev-gate-number {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  color: var(--muted-2);
+  margin-bottom: var(--space-sm);
+  text-transform: uppercase;
+}
+
+.ev-gate-name {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 400;
+  color: var(--ink);
+  margin-bottom: var(--space-xs);
+}
+
+.ev-gate-role {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  margin-bottom: var(--space-lg);
+}
+
+.ev-gate-desc {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--muted);
+  margin-bottom: var(--space-lg);
+}
+
+.ev-gate-detail {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted-2);
+  letter-spacing: 0.04em;
+}
+
+/* ── Section 3 — Audit Chain ────────────────────────────────────────────── */
+.ev-audit-section {
+  padding: 72px 0;
+}
+
+.ev-audit-inner {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: var(--space-5xl);
+  align-items: start;
+}
+
+.ev-audit-copy p {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--muted);
+  max-width: 52ch;
+  margin-bottom: var(--space-2xl);
+}
+
+.ev-audit-facts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.ev-audit-facts li {
+  font-size: 0.875rem;
+  padding-left: var(--space-xl);
+  position: relative;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.ev-audit-facts li::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+
+/* Code block shared styles */
+.ev-code-wrap {
+  background: var(--paper-3);
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.ev-code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--line-softer);
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper-3));
+}
+
+.ev-code-header-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.ev-code-block {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.75;
+  margin: 0;
+  padding: var(--space-lg);
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--ink);
+}
+
+/* ── Section 4 — TOCTOU + guard() ──────────────────────────────────────── */
+.ev-toctou-section {
+  background: var(--paper-2);
+  border-top: 1px solid var(--line-softer);
+  border-bottom: 1px solid var(--line-softer);
+  padding: 72px 0;
+}
+
+.ev-toctou-inner {
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: var(--space-5xl);
+  align-items: start;
+}
+
+.ev-toctou-copy p {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--muted);
+  margin-bottom: var(--space-lg);
+  max-width: 44ch;
+}
+
+/* ── Section 5 — Differentiators bento ─────────────────────────────────── */
+.ev-bento-section {
+  padding: 72px 0;
+}
+
+.ev-bento-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: var(--space-md);
+  margin-top: var(--space-4xl);
+}
+
+.ev-bento-a {
+  grid-column: 1;
+  grid-row: 1;
+}
+.ev-bento-b {
+  grid-column: 2;
+  grid-row: 1;
+}
+.ev-bento-c {
+  grid-column: 3;
+  grid-row: 1;
+}
+.ev-bento-d {
+  grid-column: 1;
+  grid-row: 2;
+}
+.ev-bento-e {
+  grid-column: 2;
+  grid-row: 2;
+}
+.ev-bento-f {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.ev-bento-cell {
+  padding: var(--space-2xl);
+  border: 1px solid var(--line-softer);
+  border-radius: var(--radius-lg);
+  background: var(--paper-2);
+}
+
+.ev-bento-cell-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-sm);
+}
+
+.ev-bento-cell-body {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── Section 6 — Integrations strip ────────────────────────────────────── */
+.ev-integrations-section {
+  padding: var(--space-4xl) 0;
+  border-top: 1px solid var(--line-softer);
+  border-bottom: 1px solid var(--line-softer);
+}
+
+.ev-integrations-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted-2);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  margin-bottom: var(--space-3xl);
+}
+
+.ev-integrations-rail {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-5xl);
+  flex-wrap: wrap;
+  align-items: start;
+}
+
+.ev-integration-item {
+  text-align: center;
+}
+
+.ev-integration-name {
+  font-family: var(--font-display);
+  font-size: 1.125rem;
+  font-weight: 400;
+  color: var(--ink);
+  display: block;
+}
+
+.ev-integration-note {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted-2);
+  margin-top: var(--space-xs);
+  display: block;
+}
+
+/* ── Section 7 — Honest proof points ───────────────────────────────────── */
+.ev-proof-section {
+  background: var(--boundary);
+  padding: 72px 0;
+}
+
+.ev-proof-section .ev-section-h2 {
+  color: var(--boundary-ink);
+}
+
+.ev-proof-intro {
+  font-size: 0.9375rem;
+  color: var(--boundary-ink);
+  max-width: 52ch;
+  margin-bottom: var(--space-4xl);
+  opacity: 0.8;
+}
+
+.ev-proof-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+}
+
+.ev-proof-item {
+  padding: var(--space-xl) var(--space-2xl);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--boundary-line) 30%, var(--boundary));
+  border: 1px solid var(--boundary-line);
+}
+
+.ev-proof-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px var(--space-sm);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.ev-proof-badge-shipped {
+  color: var(--risk-lo);
+  background: color-mix(in srgb, var(--risk-lo) 12%, transparent);
+}
+
+.ev-proof-badge-gate {
+  color: var(--risk-mid);
+  background: color-mix(in srgb, var(--risk-mid) 12%, transparent);
+}
+
+.ev-proof-label {
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--boundary-ink);
+  margin-bottom: var(--space-xs);
+}
+
+.ev-proof-detail {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--boundary-ink);
+  opacity: 0.65;
+}
+
+/* ── Section 8 — Install CTA ────────────────────────────────────────────── */
+.ev-cta-section {
+  background: var(--paper-3);
+  padding: 80px 0 88px;
+  text-align: center;
+}
+
+.ev-cta-section .ev-section-h2 {
+  margin-bottom: var(--space-lg);
+}
+
+.ev-cta-intro {
+  font-size: 1.0625rem;
+  color: var(--muted);
+  max-width: 52ch;
+  margin: 0 auto var(--space-4xl);
+  line-height: 1.65;
+}
+
+.ev-install-cmd-block {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  padding: var(--space-md) var(--space-3xl);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line-softer);
+  background: var(--paper-2);
+  margin-bottom: var(--space-4xl);
+  color: var(--ink);
+}
+
+.ev-install-cmd-prefix {
+  color: var(--muted-2);
+  user-select: none;
+}
+
+.ev-cta-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-xl);
+  flex-wrap: wrap;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .ev-hero {
+    grid-template-columns: 1fr;
+    padding: 56px 0 48px;
+  }
+
+  .ev-hero-diagram {
+    display: none;
+  }
+
+  .ev-gates-grid,
+  .ev-audit-inner,
+  .ev-toctou-inner {
+    grid-template-columns: 1fr;
+  }
+
+  .ev-bento-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ev-bento-a,
+  .ev-bento-b,
+  .ev-bento-c,
+  .ev-bento-d,
+  .ev-bento-e,
+  .ev-bento-f {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .ev-proof-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ev-integrations-rail {
+    gap: var(--space-3xl);
+  }
+
+  .ev-cta-section {
+    padding: 56px 0 64px;
+  }
+}
+
+@media (max-width: 600px) {
+  .ev-hero-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .ev-install-cmd-block {
+    flex-direction: column;
+    text-align: center;
+    padding: var(--space-lg);
+  }
+}

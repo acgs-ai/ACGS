@@ -24,7 +24,7 @@ uv run --package gove-zone python packages/gove-zone/examples/launch-demo/demo.p
 
 ## Honest scope
 
-- **Alpha** (`0.1.0.dev0`). Proves the *local* invariant; **not** a production,
+- **Alpha** (`0.1.0a1`). Proves the *local* invariant; **not** a production,
   compliance, or regulator-ready certification.
 - This demo runs in explicit **dev mode** (`require_signature=False`; receipts are
   `unsigned_local`). The library default is the signed **production profile** — see

@@ -274,6 +274,33 @@ def test_signed_approval_roundtrips(tmp_path):
     assert calls == ["/tmp/safe"]
 
 
+def test_resume_rejects_revoked_signing_key(tmp_path):
+    # B2: the executor carries a revocation list; resume_with_receipt routes
+    # through executor.execute, so a signed approval whose signing key is revoked
+    # is rejected at the resume gate even though the key is a valid verifier and
+    # the signature is sound. The tool never runs.
+    from gove_zone import RevocationList
+
+    err, audit = _escalated(tmp_path)
+    signer = Ed25519Signer.generate(key_id="k1")
+    receipt = _approve(err.pending, audit, signer=signer)
+    verifier = Ed25519Signer.from_public_bytes(signer.public_bytes(), key_id="k1")
+
+    fn, calls = _spy()
+    ex = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=PROPOSER,
+        verifier=verifier,
+        require_signature=True,
+        revoked_keys=RevocationList(["k1"]),
+    )
+    ex.register("write_file", fn)
+    with pytest.raises(ReceiptValidationError, match="signing key revoked"):
+        resume_with_receipt(ex, err.pending, receipt)
+    assert calls == []
+
+
 def test_unsigned_approval_rejected_when_signature_required(tmp_path):
     # Gate configured to verify signatures (verifier present), but the approval is
     # unsigned -> verify check 2a rejects it. (A verifier is supplied so we reach

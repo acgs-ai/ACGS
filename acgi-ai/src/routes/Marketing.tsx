@@ -542,7 +542,7 @@ function signalByKey(key: SignalKey): RiskSignal {
   return riskSignals.find((signal) => signal.key === key) ?? riskSignals[0]
 }
 
-function NavigationLink({
+export function NavigationLink({
   href,
   children,
   onNavigate,
@@ -572,7 +572,7 @@ function NavigationLink({
   )
 }
 
-function MarketingFrame({ children }: { children: ReactNode }) {
+export function MarketingFrame({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false)
 
   useHashScroll()
@@ -641,8 +641,23 @@ function MarketingFrame({ children }: { children: ReactNode }) {
             <NavigationLink href="/agent-readable" onNavigate={() => setNavOpen(false)}>
               Agent-readable
             </NavigationLink>
+            <NavigationLink href="/agent-bus" onNavigate={() => setNavOpen(false)}>
+              Agent bus
+            </NavigationLink>
+            <NavigationLink href="/eval-mvp" onNavigate={() => setNavOpen(false)}>
+              Eval MVP
+            </NavigationLink>
             <NavigationLink href="/products" onNavigate={() => setNavOpen(false)}>
               ACGS
+            </NavigationLink>
+            <NavigationLink href="/clinicalguard" onNavigate={() => setNavOpen(false)}>
+              ClinicalGuard
+            </NavigationLink>
+            <NavigationLink href="/acgs-lite" onNavigate={() => setNavOpen(false)}>
+              acgs-lite
+            </NavigationLink>
+            <NavigationLink href="/swarm" onNavigate={() => setNavOpen(false)}>
+              Swarm
             </NavigationLink>
           </div>
           <a className="m-nav-cta" href="/#interview">
@@ -692,10 +707,39 @@ Guidance for users and agents before real-world action.`}
                 <NavigationLink href="/failure-modes">Failure catalogue</NavigationLink>
               </li>
               <li>
+                <NavigationLink href="/agent-bus">Agent bus</NavigationLink>
+              </li>
+              <li>
                 <NavigationLink href="/governance-patterns">Governance patterns</NavigationLink>
               </li>
               <li>
                 <NavigationLink href="/products">Deeper ACGS products</NavigationLink>
+              </li>
+              <li>
+                <NavigationLink href="/cft-pack">CFT Governance Pack</NavigationLink>
+                <NavigationLink href="/swarm">acgs-swarm showcase</NavigationLink>
+              </li>
+              <li>
+                <a
+                  href="/acgs-lite"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/acgs-lite')
+                  }}
+                >
+                  acgs-lite package
+                </a>
+              </li>
+              <li>
+                <a
+                  href="/clinicalguard"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    navigate('/clinicalguard')
+                  }}
+                >
+                  ClinicalGuard
+                </a>
               </li>
               <li>
                 <a

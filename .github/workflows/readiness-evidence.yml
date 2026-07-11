@@ -1,0 +1,84 @@
+# Readiness-evidence test gate.
+#
+# Closes the "truth-in-CI" hole tracked by docs/reconstruction/05 §87 (audit §6):
+# the five readiness/evidence tests (`test_platform_readiness_report`,
+# `test_readiness_evidence_boundaries`, `test_release_evidence_bundle`,
+# `test_production_blocker_evidence`, `test_production_launch_preflight`) were
+# `--ignore`d by `tests-root.yml` and ran in NO CI, so the readiness claims in
+# docs/readiness-evidence-packet-2026-05-25.md were aspirational, not gated.
+#
+# These tests are self-contained: they build their evidence bundles into pytest
+# tmp dirs via subprocess and read only parent-tracked files (Makefile, README,
+# scripts/, docs/, acgi-ai/ handoff docs + package.json + check scripts). They
+# need neither `make release-evidence` output on disk, initialized submodules,
+# nor a Node toolchain — python + pytest + pyyaml only (verified locally on a
+# submodule-free checkout before this gate was wired).
+#
+# SCOPE: runs EXACTLY the five readiness/evidence test files — nothing else.
+# The environment-independent invariant guards stay in `tests-root.yml`; the
+# two gates partition root `tests/` and must not overlap.
+
+name: readiness-evidence
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'acgi-ai/**'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'README.md'
+      - 'pyproject.toml'
+  push:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'acgi-ai/**'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'README.md'
+      - 'pyproject.toml'
+
+concurrency:
+  group: readiness-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      # Submodules intentionally NOT initialized: the readiness/evidence tests
+      # read parent-tracked files only (proven by running them green on a
+      # checkout with zero submodules initialized).
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Run readiness-evidence tests
+        # `--no-project` skips the workspace sync (no submodule members to
+        # resolve); `--with` supplies the only deps these tests need — pytest
+        # plus pyyaml. tests/conftest.py puts scripts/ on sys.path so
+        # `import platform_readiness_report` etc. resolve.
+        run: |
+          uv python install 3.11
+          uv run --no-project --python 3.11 --with pytest --with pyyaml \
+            python -m pytest \
+            tests/test_platform_readiness_report.py \
+            tests/test_readiness_evidence_boundaries.py \
+            tests/test_release_evidence_bundle.py \
+            tests/test_production_blocker_evidence.py \
+            tests/test_production_launch_preflight.py \
+            -v --import-mode=importlib

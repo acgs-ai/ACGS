@@ -29,7 +29,12 @@ export default defineConfig({
     command: `bash -c "VITE_USE_MOCKS=true pnpm build:console && pnpm exec vite preview --mode console --port ${PORT} --strictPort"`,
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
+    // The webServer rebuilds the console bundle from scratch; on the shared
+    // self-hosted CI runner that build can run slow under concurrent-PR load
+    // (the sibling `build` job's own timeout was raised 15m->30m for the same
+    // reason). 300s keeps a slow cold build from killing the server as a
+    // false-negative.
+    timeout: 300_000,
     stdout: 'pipe',
     stderr: 'pipe',
   },

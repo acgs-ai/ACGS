@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/proof-pack/v1/evidence.schema.json",
+  "title": "ACGS proof pack v1 — evidence.json manifest",
+  "description": "The manifest of an acgs/proof-pack/v1 evidence bundle: the governed action, actor, policy and receipt summaries (re-derived from the hash-bound receipt at verify time), the audit-chain tail, and the SHA-256 digests of the other four artifacts. Frozen format: unknown keys are rejected, mirroring the verifier's fail-closed posture.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "acgs/proof-pack/v1" },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "generated_with": { "type": "string", "minLength": 1 },
+    "governed_action": {
+      "type": "object",
+      "properties": {
+        "proposed_action": { "type": "string" },
+        "declared_goal": { "type": "string" },
+        "execution_boundary": { "type": "string" },
+        "decision": { "$ref": "#/$defs/decision" },
+        "matched_rules": { "$ref": "#/$defs/stringArray" }
+      },
+      "required": [
+        "proposed_action",
+        "declared_goal",
+        "execution_boundary",
+        "decision",
+        "matched_rules"
+      ],
+      "additionalProperties": false
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "authority": { "type": "string" },
+        "validator_id": { "type": "string" },
+        "validator_role": { "type": "string" }
+      },
+      "required": ["id", "tenant_id", "authority", "validator_id", "validator_role"],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "bundle_id": { "type": "string" },
+        "version": { "type": "string" },
+        "hash": { "type": "string" }
+      },
+      "required": ["bundle_id", "version", "hash"],
+      "additionalProperties": false
+    },
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "receipt_id": { "type": "string" },
+        "request_id": { "type": "string" },
+        "receipt_hash": { "$ref": "#/$defs/sha256" },
+        "audit_event_hash": { "$ref": "#/$defs/sha256" },
+        "signature_algorithm": { "type": "string" },
+        "signing_key_id": { "type": "string" }
+      },
+      "required": [
+        "receipt_id",
+        "request_id",
+        "receipt_hash",
+        "audit_event_hash",
+        "signature_algorithm",
+        "signing_key_id"
+      ],
+      "additionalProperties": false
+    },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "event_count": { "type": "integer", "minimum": 0 },
+        "last_hash": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["event_count", "last_hash"],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "decision-receipt.json": { "$ref": "#/$defs/artifactDigest" },
+        "audit-chain.json": { "$ref": "#/$defs/artifactDigest" },
+        "replay-report.json": { "$ref": "#/$defs/artifactDigest" },
+        "verification-summary.md": { "$ref": "#/$defs/artifactDigest" }
+      },
+      "required": [
+        "decision-receipt.json",
+        "audit-chain.json",
+        "replay-report.json",
+        "verification-summary.md"
+      ],
+      "additionalProperties": false
+    },
+    "how_to_verify": { "type": "string", "minLength": 1 }
+  },
+  "required": [
+    "schema_version",
+    "generated_at",
+    "generated_with",
+    "governed_action",
+    "actor",
+    "policy",
+    "receipt",
+    "audit",
+    "artifacts",
+    "how_to_verify"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decision": {
+      "enum": ["allow", "deny", "transform", "escalate"]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifactDigest": {
+      "type": "object",
+      "properties": {
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["sha256", "bytes"],
+      "additionalProperties": false
+    }
+  }
+}

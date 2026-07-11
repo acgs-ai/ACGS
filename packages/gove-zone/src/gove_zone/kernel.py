@@ -26,6 +26,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
+from gove_zone.authz import AuthzReason, PrincipalRegistry
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import (
     AuditError,
@@ -66,11 +67,23 @@ class Kernel:
         actor: str = "anonymous",
         policy_timeout: float | None = None,
         side_store: ReplaySideStore | None = None,
+        authz_enforce: bool = False,
+        principal_registry: PrincipalRegistry | None = None,
     ) -> None:
         self.policy = policy
         self.audit = audit
         self.registry = registry or ToolRegistry()
         self.actor = actor
+        # Principal authorization (B13). When ``authz_enforce`` is False (the
+        # default) the kernel never consults ``principal_registry`` and behaves
+        # exactly as before. When True, every dispatch must come from a
+        # registered, tool-authorized principal — so an enforcing kernel without
+        # a registry is a misconfiguration and fails closed at construction
+        # rather than denying everything silently at runtime.
+        if authz_enforce and principal_registry is None:
+            raise ValueError("authz_enforce=True requires a principal_registry (fail-closed)")
+        self.authz_enforce = authz_enforce
+        self.principal_registry = principal_registry
         # Watchdog: if set, policy.evaluate must return within this many
         # seconds or the kernel synthesizes a fail-closed DENY. None
         # preserves the unbounded synchronous path (default).
@@ -165,6 +178,40 @@ class Kernel:
         )
         return result, receipt
 
+    def evaluate_and_record(self, call: ToolCall) -> tuple[DecisionRecord, str]:
+        """Public governed decision primitive: evaluate *call* under the
+        fail-closed watchdog and append the single decision to the audit chain,
+        returning the real :class:`~gove_zone.decision.DecisionRecord` and its
+        audit ``event_hash``.
+
+        A thin public alias for the private :meth:`_evaluate_and_record` that
+        :meth:`dispatch` itself calls (it delegates verbatim, adding no logic),
+        exposed so transport adapters — e.g. the MCP gateway in
+        :mod:`gove_zone.adapters.mcp_gateway` — can obtain the deciding record
+        for all four verdicts without reconstructing it from a lossy projection:
+        a DENY record still carries ``reason`` / ``decision_request_hash``, an
+        ESCALATE record can be parked as a
+        :class:`~gove_zone.escalation.PendingApproval`, and an ALLOW/TRANSFORM
+        record can mint a :class:`~gove_zone.receipt.DecisionReceipt`.
+
+        Contract (identical to the private method, since it is that method):
+        evaluation runs under the same fail-closed watchdog and DENY synthesis
+        as :meth:`dispatch`; **exactly one** audit event is appended; **no tool
+        is executed** (there is no registry lookup and no ``tool_fn`` call — the
+        caller drives execution through the signed
+        :func:`~gove_zone.executor.execute_with_receipt` gate);
+        :class:`~gove_zone.errors.AuditError` is raised if the append fails; and
+        kernel-owned context is attached via :meth:`_attach_context`. It grants
+        no new authority — it neither bypasses receipt validation nor executes
+        before audit.
+
+        Unlike :meth:`dispatch` it does **not** raise
+        :class:`~gove_zone.errors.DeniedError` /
+        :class:`~gove_zone.errors.EscalateError`: the caller inspects
+        ``record.decision`` and drives the DENY / ESCALATE / ALLOW branch itself.
+        """
+        return self._evaluate_and_record(call)
+
     def simulate(
         self,
         tool_name: str,
@@ -213,7 +260,32 @@ class Kernel:
             actor=call.actor,
             path=call.path,
             state_hash=call.state_hash(),
-            decision_request_hash=call.decision_request_hash(),
+            decision_request_hash=call._decision_request_hash(record.argument_hash),
+        )
+
+    def _authz_check(self, call: ToolCall) -> DecisionRecord | None:
+        """Fail-closed principal authorization (B13).
+
+        Returns a synthesized DENY record if ``call.actor`` is not an authorized
+        principal for ``call.name``, else ``None``. Only consulted when
+        ``authz_enforce`` is set; the constructor guarantees a registry exists.
+        """
+        registry = self.principal_registry
+        reason = (
+            AuthzReason.UNREGISTERED_PRINCIPAL
+            if registry is None
+            else registry.authorize(call.actor, call.name)
+        )
+        if reason is None:
+            return None
+        return DecisionRecord(
+            decision=Decision.DENY,
+            tool=call.name,
+            argument_hash=call.argument_hash(),
+            policy_version="fail-closed/authz",
+            event_id=new_event_id(),
+            matched_rules=(f"AUTHZ_DENY:{reason}",),
+            reason=f"actor {call.actor!r} not authorized for tool {call.name!r} ({reason})",
         )
 
     def _evaluate_only(self, call: ToolCall) -> DecisionRecord:
@@ -224,17 +296,25 @@ class Kernel:
         :meth:`simulate` (which does neither), so a simulated prediction uses the
         exact same evaluation + fail-closed synthesis as a real dispatch.
 
+        - actor not an authorized principal (enforce on) -> ``fail-closed/authz`` DENY
         - policy raises -> synthesize a ``fail-closed/policy-raised`` DENY
         - policy times out -> synthesize a ``fail-closed/policy-timeout`` DENY
         - TRANSFORM without ``transformed_args`` -> DENY (malformed)
         """
+        if self.authz_enforce:
+            denied = self._authz_check(call)
+            if denied is not None:
+                # Short-circuit before policy evaluation: an unauthorized actor
+                # never reaches the policy or the tool, but the DENY is still
+                # attached + audited like any other decision.
+                return self._attach_context(denied, call)
         try:
             record = self._evaluate_with_watchdog(call)
         except FuturesTimeoutError:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
@@ -244,7 +324,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-raised",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
@@ -322,6 +402,15 @@ class Kernel:
         The kernel re-raises the original exception regardless of whether
         this append succeeds — execution failures are surfaced to the caller
         even when we can't anchor them in the audit chain.
+
+        ``argument_hash`` here is deliberately recomputed fresh (NOT the
+        memoized ``call.argument_hash()``): this record is written *after*
+        tool execution, so hashing the args as they are now preserves the
+        audit trail's divergence signal — a tool (or shared nested value)
+        that mutated the args before raising produces a failure record whose
+        hash visibly differs from the pre-execution decision record.
+        ``decision_request_hash``/``state_hash`` stay memoized: they identify
+        the request as originally authorized.
         """
         failure = DecisionRecord(
             decision=Decision.DENY,

@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from gove_zone.authz import AuthzReason
 from gove_zone.decision import DecisionRecord
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
 
@@ -44,6 +45,7 @@ class ReceiptRejectionReason(StrEnum):
     RECEIPT_HASH_MISMATCH = "RECEIPT_HASH_MISMATCH"
     UNSIGNED_REJECTED = "UNSIGNED_REJECTED"
     SIGNING_KEY_UNKNOWN = "SIGNING_KEY_UNKNOWN"
+    SIGNING_KEY_REVOKED = "SIGNING_KEY_REVOKED"
     SIGNED_RECEIPT_NO_VERIFIER = "SIGNED_RECEIPT_NO_VERIFIER"
     SIGNATURE_ALG_MISMATCH = "SIGNATURE_ALG_MISMATCH"
     SIGNATURE_INVALID = "SIGNATURE_INVALID"
@@ -66,10 +68,15 @@ class ReceiptRejectionReason(StrEnum):
     AUTHORITY_MISMATCH = "AUTHORITY_MISMATCH"
     EXPIRY_UNPARSEABLE = "EXPIRY_UNPARSEABLE"
     RECEIPT_EXPIRED = "RECEIPT_EXPIRED"
+    EXPIRY_REQUIRED = "EXPIRY_REQUIRED"
     # gate-level / subclass reasons
     PRODUCTION_PROFILE_NO_VERIFIER = "PRODUCTION_PROFILE_NO_VERIFIER"
     RECEIPT_ALREADY_USED = "RECEIPT_ALREADY_USED"
     CONSUMPTION_LEDGER_UNPROVABLE = "CONSUMPTION_LEDGER_UNPROVABLE"
+    # multi-agent governance DAG reasons (gove_zone.dag)
+    DAG_STRUCTURE_INVALID = "DAG_STRUCTURE_INVALID"
+    AUTHORITY_VIOLATION = "AUTHORITY_VIOLATION"
+    DAG_REPLAY_INVALID = "DAG_REPLAY_INVALID"
 
 
 class ReceiptValidationError(GoveZoneError):
@@ -172,6 +179,67 @@ class SigningError(GoveZoneError):
     and configuration faults: missing ``crypto`` extra, malformed key bytes, or
     attempting to ``sign`` with a verify-only signer.
     """
+
+
+class IdentityRejectionReason(StrEnum):
+    """Machine-readable reason codes for identity-layer refusals.
+
+    The contract a relying party asserts on instead of the human-readable
+    message — mirrors :class:`ReceiptRejectionReason` and
+    :class:`~gove_zone.authz.AuthzReason`. Values equal member names (StrEnum)
+    so they serialise as plain strings.
+    """
+
+    UNKNOWN_SUBJECT = "UNKNOWN_SUBJECT"
+    UNSUPPORTED_CREDENTIAL_TYPE = "UNSUPPORTED_CREDENTIAL_TYPE"
+    CREDENTIAL_KIND_NOT_ALLOWED = "CREDENTIAL_KIND_NOT_ALLOWED"
+    UNKNOWN_OR_REVOKED_CREDENTIAL = "UNKNOWN_OR_REVOKED_CREDENTIAL"
+    CREDENTIAL_TYPE_MISMATCH = "CREDENTIAL_TYPE_MISMATCH"
+    AUDIENCE_MISMATCH = "AUDIENCE_MISMATCH"
+    CREDENTIAL_EXPIRED = "CREDENTIAL_EXPIRED"
+    TIMESTAMP_UNPARSEABLE = "TIMESTAMP_UNPARSEABLE"
+    TIMESTAMP_NAIVE = "TIMESTAMP_NAIVE"
+    NO_ROLE_MAPPED = "NO_ROLE_MAPPED"
+    TOOL_NOT_PERMITTED_BY_ROLE = "TOOL_NOT_PERMITTED_BY_ROLE"
+
+
+class IdentityError(GoveZoneError):
+    """Raised when identity resolution or role mapping fails — fail-closed.
+
+    Covers the Identity/Authority layers (:mod:`gove_zone.identity`): unknown or
+    revoked credentials, credential-type mismatches, workload audience
+    mismatches, expired tokens, and principals with no mapped role. Distinct
+    from :class:`AuthzDeniedError` (a resolved principal refused at the executor
+    allowlist) and :class:`ReceiptValidationError` (a receipt defect): an
+    ``IdentityError`` means no principal was established at all, so no
+    governance request is ever made.
+
+    Carries a machine-readable :class:`IdentityRejectionReason` in
+    ``reason_code`` (the :class:`ReceiptValidationError` precedent): relying
+    parties route on the code, never on message prose. ``None`` only on a
+    hand-constructed instance; every library raise site populates it.
+    """
+
+    def __init__(self, *args: object, reason_code: IdentityRejectionReason | None = None) -> None:
+        super().__init__(*args)
+        self.reason_code = reason_code
+
+
+class AuthzDeniedError(GoveZoneError):
+    """Raised at the executor gate when the acting principal is not authorized.
+
+    Distinct from :class:`ReceiptValidationError` (a receipt defect): the receipt
+    may be perfectly valid; the principal is simply not on the integrator's
+    allowlist for this action. Relying parties assert on ``reason`` — the same
+    :class:`~gove_zone.authz.AuthzReason` taxonomy the kernel emits as
+    ``AUTHZ_DENY:<reason>``.
+    """
+
+    def __init__(self, reason: AuthzReason, actor: str, action: str) -> None:
+        self.reason = reason
+        self.actor = actor
+        self.action = action
+        super().__init__(f"principal {actor!r} not authorized for action {action!r} ({reason})")
 
 
 class DeniedError(GoveZoneError):

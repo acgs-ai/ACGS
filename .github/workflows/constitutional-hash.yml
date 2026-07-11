@@ -4,10 +4,16 @@
 # `# Constitutional Hash: <hash>` marker has drifted from the inventory
 # pinned in docs/constitutional-hashes.lock.
 #
-# Today the inventory is empty (no markers in the parent-tracked tree).
-# Once Phase 2 of docs/PLAN-MONOREPO.md registers submodules, the script
-# will automatically discover markers inside packages/* and the lock
-# regenerates with `python scripts/verify_constitutional_hashes.py --update`.
+# The inventory is POPULATED and this gate is an active control
+# (reconstruction decision 00#7:5 — activate, not descope). The lock pins
+# 221 markers: 209 under packages/acgs-lite (enforced strictly every run)
+# and 12 under packages/clinicalguard (enforced when SUBMODULE_TOKEN can
+# reach its private repo; otherwise reported as an explicit credential-gated
+# gap via --ignore-missing-prefix, never silently passed). The parent-tracked
+# tree itself carries no markers today, but the verifier fails on ADDED
+# entries too, so a new sealed file anywhere in the scanned tree cannot land
+# without regenerating the lock:
+#   python scripts/verify_constitutional_hashes.py --update
 
 name: constitutional-hash
 
@@ -26,6 +32,8 @@ permissions:
 
 jobs:
   verify:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 5
     steps:
@@ -45,6 +53,12 @@ jobs:
         env:
           SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
         run: |
+          # Ephemeral global gitconfig: this job runs on the self-hosted
+          # runner as the operator's user, so a plain `git config --global`
+          # would write SUBMODULE_TOKEN into the real ~/.gitconfig and
+          # persist after the job. Redirect global config to a job-scoped
+          # temp file instead; it dies with the job.
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
           if [ -n "${SUBMODULE_TOKEN}" ]; then
             git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           fi

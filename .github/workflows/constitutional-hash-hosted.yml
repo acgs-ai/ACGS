@@ -1,0 +1,100 @@
+# GitHub-hosted advisory twin of `constitutional-hash.yml`.
+#
+# WHY: `verify` is a required status check on master, and the workflow that
+# produces it on EVERY pull request is `constitutional-hash.yml`, which runs
+# only on the single `[self-hosted, Linux, X64]` runner. If that one box is
+# offline, the required `verify` context sits `pending` indefinitely and every
+# PR merge is blocked — there is no independent signal that the gate would
+# have passed. Same single-runner SPOF that `tests-root-hosted.yml` mitigates
+# for the root invariant guards (docs/reconstruction/05-production-deployment.md §3.1).
+#
+# This job mirrors the self-hosted `verify` job onto a GitHub-hosted runner
+# (free for public repos). It is a faithful copy of that gate's steps — the
+# ONLY differences are `runs-on` and the check-run display name — so the two
+# never diverge in what they assert. The self-hosted `verify` remains the
+# authority; this is a redundant safety net for runner outages. Deploy jobs
+# stay self-hosted (they hold the WIF trust); hosted twins are verify-only.
+#
+# ADVISORY BY DESIGN: the job carries a distinct check-run name so it can
+# never be confused with (or accidentally satisfy) the required `verify`
+# context. Promoting it — pointing branch protection at this check during an
+# outage, or registering a second self-hosted runner box — is a separate
+# human step, same "agent preps, human flips the switch" pattern as
+# `tests-root-hosted.yml`. Keep the steps in lockstep with
+# `constitutional-hash.yml`.
+
+name: constitutional-hash-hosted
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+concurrency:
+  group: constitutional-hash-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Constitutional-hash drift (GitHub-hosted advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Two-step checkout: parent uses the default github.token (always
+      # has contents:read on this repo), then submodules are initialized
+      # separately with SUBMODULE_TOKEN via `git url.insteadOf` rewrite.
+      # Avoids the truthy-fallback trap where an invalid-but-set
+      # SUBMODULE_TOKEN beats `|| github.token` and silently breaks the
+      # parent-repo fetch. SUBMODULE_TOKEN needs `Contents: Read` on each
+      # submodule repo (public submodules ignore the auth header).
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init submodules
+        id: submodules
+        env:
+          SUBMODULE_TOKEN: ${{ secrets.SUBMODULE_TOKEN }}
+        run: |
+          # Ephemeral global gitconfig: this job runs on the self-hosted
+          # runner as the operator's user, so a plain `git config --global`
+          # would write SUBMODULE_TOKEN into the real ~/.gitconfig and
+          # persist after the job. Redirect global config to a job-scoped
+          # temp file instead; it dies with the job.
+          export GIT_CONFIG_GLOBAL="${RUNNER_TEMP}/submodule-gitconfig"
+          if [ -n "${SUBMODULE_TOKEN}" ]; then
+            git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+          git submodule sync -- packages/acgs-lite
+          git submodule update --init --recursive -- packages/acgs-lite
+
+          # clinicalguard is still pinned in docs/constitutional-hashes.lock,
+          # but its private repo can be unavailable until SUBMODULE_TOKEN is
+          # rotated. Keep acgs-lite strict and report clinicalguard as an
+          # explicit credential-gated gap instead of pretending it was checked.
+          git submodule sync -- packages/clinicalguard
+          if git submodule update --init --recursive -- packages/clinicalguard; then
+            echo "clinicalguard_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "clinicalguard_available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::packages/clinicalguard could not be initialized; verifier will ignore removed entries under that prefix for this CI run"
+          fi
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Verify constitutional-hash inventory
+        # uv's python-build-standalone toolchain keeps the interpreter
+        # identical to the self-hosted gate's, so the two lanes assert the
+        # same thing with the same Python.
+        run: |
+          uv python install 3.11
+          PY="$(uv python find 3.11)"
+          if [ "${{ steps.submodules.outputs.clinicalguard_available }}" = "true" ]; then
+            "$PY" scripts/verify_constitutional_hashes.py
+          else
+            "$PY" scripts/verify_constitutional_hashes.py --ignore-missing-prefix packages/clinicalguard/
+          fi

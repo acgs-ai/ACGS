@@ -135,3 +135,43 @@ def test_verify_chain_raises_audit_chain_error_on_non_object_line(tmp_path: Path
 
     with pytest.raises(AuditChainError, match="not a JSON object"):
         ChainHashAuditStore(path).verify_chain()
+
+
+def test_verify_chain_accepts_intact_chain_against_external_anchor(tmp_path: Path) -> None:
+    """A full, untruncated chain passes when checked against its external anchor."""
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+    store.append(_record("e1"))
+    store.append(_record("e2"))
+    last = store.append(_record("e3"))["event_hash"]
+
+    result = store.verify_chain(expected_count=3, expected_last_hash=last)
+
+    assert result["valid"]
+    assert result["checked"] == 3
+    assert result["failures"] == []
+
+
+def test_verify_chain_detects_whole_event_truncation(tmp_path: Path) -> None:
+    """Silently dropping whole trailing events leaves an internally-consistent
+    prefix; only an external anchor (count / last hash) catches the rollback.
+    """
+    path = tmp_path / "audit.jsonl"
+    store = ChainHashAuditStore(path)
+    store.append(_record("e1"))
+    store.append(_record("e2"))
+    trusted_last = store.append(_record("e3"))["event_hash"]
+
+    # Roll the log back to its first two events: a consistent prefix.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+
+    # Internal walk alone cannot tell — the prefix is self-consistent.
+    assert store.verify_chain()["valid"]
+
+    # The external anchor exposes the truncation.
+    result = store.verify_chain(expected_count=3, expected_last_hash=trusted_last)
+    assert not result["valid"]
+    failure_types = {f["type"] for f in result["failures"]}
+    assert "length_mismatch" in failure_types
+    assert "last_hash_mismatch" in failure_types

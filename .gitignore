@@ -79,6 +79,8 @@ credentials/
 .remember
 .omx
 .autopilot
+.agents
+.specify
 
 # Additional agent / tool state (per-developer indexes, eval outputs, scratch
 # generators). Pattern without trailing slash matches both files and dirs.
@@ -108,6 +110,22 @@ credentials/
 !/.claude/agents/**
 !/.claude/workflows/
 !/.claude/workflows/**
+!/.claude/prompts/
+!/.claude/prompts/**
+!/.claude/policy/
+!/.claude/policy/**
+
+# Agent runtime state that leaks into .claude/workflows/ via the workflows/**
+# allow-rule above (session/replay/cooldown jsonl + state dirs). Re-ignore just
+# the .omc state subtree; workflow *.js files stay tracked. (repo-hygiene 2026-07-09)
+/.claude/workflows/.omc/
+
+# Per-developer tool state (repo-hygiene 2026-07-09): rtk filter cache, serena
+# index, fallow config, local skills lock. Never shared, never tracked.
+/.rtk/
+/.serena/
+/.fallowrc.json
+/skills-lock.json
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on
@@ -136,10 +154,6 @@ credentials/
 /acgi-ai/dist-marketing/
 /acgi-ai/test-results/
 
-# Out-of-band exploration clones in external/ that are NOT registered as
-# submodules in .gitmodules. Promote to a real submodule before tracking.
-/external/openswarm/
-
 # Per-session ad-hoc snapshot artifacts (Playwright captures, request bodies).
 # Belong in PR descriptions or evidence bundles, not the repo.
 /gove-zone-actions-*.md
@@ -154,3 +168,10 @@ credentials/
 # Remove these two lines once root-level reproducibility is decided.
 /pnpm-lock.yaml
 /uv.lock
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
+
+# governed-loop-v2 runtime live workload (copy of an *.example.yaml)
+workload.yaml

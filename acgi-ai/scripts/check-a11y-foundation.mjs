@@ -111,6 +111,20 @@ for (const needle of [
   mustContain(a11y, needle, 'A11Y.md')
 }
 
+// B16: A11Y.md must honestly document the executed axe smoke and the
+// intentionally scoped-out color-contrast (--muted) debt — keep this in lockstep
+// with tests/e2e/a11y-smoke.spec.ts and the browser-checks CI job.
+for (const needle of [
+  'Executed axe smoke',
+  '@axe-core/playwright',
+  'browser-checks',
+  'color-contrast',
+  '#6c7382',
+  'design review',
+]) {
+  mustContain(a11y, needle, 'A11Y.md')
+}
+
 check(
   /Accessibility foundation gate/.test(readiness) &&
     /pnpm -F acgi-ai run test:a11y/.test(readiness),

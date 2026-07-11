@@ -32,6 +32,17 @@ def stable_json(value: Any) -> str:
 
 
 def sha256_json(value: Any) -> str:
+    """Phase-1 lenient hash: ``ensure_ascii=False`` + ``default=str``.
+
+    WARNING — NOT interchangeable with ``governed_mcp_v0._io.sha256_json``,
+    which uses ``ensure_ascii=True`` and no ``default`` (raises on
+    non-serializable values). The two produce DIFFERENT hashes for any
+    payload containing non-ASCII text; never verify a hash produced by one
+    with the other. Byte format is pinned by
+    ``tests/test_sha256_json_divergence.py`` — persisted receipts/audit
+    chains depend on it, do not change it. New code needing strict hashing
+    should use ``governance.crypto.canonical.canonical_bytes`` (Phase 2 ABI).
+    """
     return hashlib.sha256(stable_json(value).encode("utf-8")).hexdigest()
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
-from gove_zone.decision import Decision, DecisionRecord, sha256_json
+from gove_zone.decision import Decision, DecisionRecord
 from gove_zone.errors import DeniedError
 from gove_zone.frontend_contract import receipt_to_governed_action, record_to_governed_action
 from gove_zone.kernel import Kernel
@@ -35,7 +35,7 @@ class EscalatePolicy(Policy):
         return DecisionRecord(
             decision=Decision.ESCALATE,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=("P-1214:HUMAN_DELIBERATION",),
@@ -58,7 +58,7 @@ class TransformPolicy(Policy):
         return DecisionRecord(
             decision=Decision.TRANSFORM,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=("P-1212:PHI_REDACTION",),

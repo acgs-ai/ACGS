@@ -57,6 +57,11 @@ class ChainHashAuditStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last_hash: str | None = None
+        # File size observed immediately after this instance's own last
+        # append (while still holding the lock). Lets the next append skip
+        # the tail re-read when nothing else has written in between; any
+        # size change falls back to the authoritative tail read.
+        self._last_size: int | None = None
 
     def append(self, decision: DecisionRecord) -> dict[str, Any]:
         """Append *decision* and return the persisted event dict.
@@ -67,16 +72,13 @@ class ChainHashAuditStore:
         """
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
-            # Always re-read while holding the lock. This instance may
-            # have appended earlier, then another store/process may have
-            # advanced the chain before this append.
-            previous_hash = self._read_last_hash_from_disk()
+            previous_hash = self._previous_hash_locked()
             payload = decision.to_dict()
             payload["previous_hash"] = previous_hash
             payload.pop("event_hash", None)
             payload["event_hash"] = sha256_json(payload)
 
-            line = (
+            data = (
                 json.dumps(
                     payload,
                     sort_keys=True,
@@ -84,17 +86,92 @@ class ChainHashAuditStore:
                     separators=(",", ":"),
                 )
                 + "\n"
-            )
-            with self.path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+            ).encode("utf-8")
+            with self.path.open("ab") as fh:
+                fh.write(data)
                 fh.flush()
                 os.fsync(fh.fileno())
+                self._last_size = fh.tell()
             self._last_hash = str(payload["event_hash"])
         return payload
+
+    def append_many(self, decisions: Iterable[DecisionRecord]) -> list[dict[str, Any]]:
+        """Append a batch of decisions under ONE lock acquisition and ONE fsync.
+
+        Chain semantics are identical to calling :meth:`append` in a loop —
+        every event's ``previous_hash`` still links to the prior event's
+        ``event_hash`` — but the whole batch is serialized, written, and
+        fsync'd as a single storage transaction.
+
+        Durability trade-off (explicit): a crash between the batched write and
+        its single fsync can lose up to the entire batch, whereas per-event
+        :meth:`append` bounds the loss to the newest event. Whatever survives
+        is always a valid *prefix* of the chain — the chain rules themselves
+        are never weakened, and no event is ever readable before it is
+        hash-linked. Callers needing per-event durability must keep using
+        :meth:`append`.
+
+        Returns the persisted event dicts in append order; an empty batch
+        writes nothing and returns ``[]``.
+        """
+        records = list(decisions)
+        if not records:
+            return []
+        payloads: list[dict[str, Any]] = []
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+            previous_hash = self._previous_hash_locked()
+            chunks: list[bytes] = []
+            for decision in records:
+                payload = decision.to_dict()
+                payload["previous_hash"] = previous_hash
+                payload.pop("event_hash", None)
+                payload["event_hash"] = sha256_json(payload)
+                chunks.append(
+                    (
+                        json.dumps(
+                            payload,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                )
+                previous_hash = str(payload["event_hash"])
+                payloads.append(payload)
+            with self.path.open("ab") as fh:
+                fh.write(b"".join(chunks))
+                fh.flush()
+                os.fsync(fh.fileno())
+                self._last_size = fh.tell()
+            self._last_hash = previous_hash
+        return payloads
+
+    def _previous_hash_locked(self) -> str:
+        """Return the chain tail hash. MUST be called while holding the lock.
+
+        Fast path: when this instance performed the most recent append and
+        the file size (stat, under the same lock) is unchanged since, reuse
+        the cached tail hash instead of re-reading the file tail. Any other
+        observation — different size, missing file, stat error, no prior
+        append by this instance — falls back to the authoritative tail read,
+        so cross-process interleaving behaves exactly as before.
+        """
+        if self._last_hash is not None and self._last_size is not None:
+            try:
+                if self.path.stat().st_size == self._last_size:
+                    return self._last_hash
+            except OSError:
+                pass  # deleted/unreadable → authoritative read (genesis or raise)
+        return self._read_last_hash_from_disk()
 
     def last_hash(self) -> str:
         """Return the event_hash of the most recent event, or genesis."""
         self._last_hash = self._read_last_hash_from_disk()
+        # The (_last_hash, _last_size) pair is only trusted as an append
+        # fast-path when both were captured together under the append lock.
+        self._last_size = None
         return self._last_hash
 
     def _read_last_hash_from_disk(self) -> str:
@@ -195,15 +272,39 @@ class ChainHashAuditStore:
                 break
         return out
 
-    def verify_chain(self) -> dict[str, Any]:
+    def verify_chain(
+        self,
+        *,
+        expected_count: int | None = None,
+        expected_last_hash: str | None = None,
+    ) -> dict[str, Any]:
         """Re-walk the chain and report integrity.
 
         Returns a dict with:
-            ``valid`` (bool): True iff every event hash matches and every
-              ``previous_hash`` matches the prior ``event_hash``.
+            ``valid`` (bool): True iff every event hash matches, every
+              ``previous_hash`` matches the prior ``event_hash``, and any
+              supplied external anchor (``expected_count`` / ``expected_last_hash``)
+              matches.
             ``checked`` (int): number of events walked.
             ``failures`` (list): per-failure detail dicts.
             ``last_hash`` (str): final ``event_hash`` walked, or genesis.
+
+        **Truncation/rollback detection.** Internal hash-chaining proves the
+        persisted events are mutually consistent, but a *prefix* of the chain is
+        itself internally consistent: silently deleting whole trailing events
+        yields a shorter chain that still re-walks cleanly. Internal walking
+        alone therefore cannot detect rollback. Supply an out-of-band anchor to
+        close that gap:
+
+        - ``expected_count``: the number of events the chain must contain. A
+          ``checked`` below it is reported as a ``length_mismatch`` failure
+          (the tail was truncated; a larger ``checked`` means unexpected growth).
+        - ``expected_last_hash``: the ``event_hash`` the chain must end on,
+          recorded out-of-band after the last trusted append. A mismatch is a
+          ``last_hash_mismatch`` failure.
+
+        Persist whichever anchor you can (event count and/or last hash) in a
+        store the audit writer cannot rewrite, and pass it here on verification.
         """
         previous = GENESIS_HASH
         checked = 0
@@ -237,6 +338,26 @@ class ChainHashAuditStore:
                 )
 
             previous = str(claimed_hash)
+
+        if expected_count is not None and checked != expected_count:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "length_mismatch",
+                    "expected": expected_count,
+                    "actual": checked,
+                }
+            )
+
+        if expected_last_hash is not None and previous != expected_last_hash:
+            failures.append(
+                {
+                    "event_id": None,
+                    "type": "last_hash_mismatch",
+                    "expected": expected_last_hash,
+                    "actual": previous,
+                }
+            )
 
         return {
             "valid": len(failures) == 0,

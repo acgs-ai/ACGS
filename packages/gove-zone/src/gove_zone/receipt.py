@@ -12,10 +12,13 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.signing import ReceiptSigner
+
+if TYPE_CHECKING:
+    from gove_zone.revocation import RevocationList
 
 
 def _now_iso() -> str:
@@ -36,7 +39,7 @@ def safe_result_hash(value: Any) -> str:
         return sha256_json({"_repr": repr(value)[:512]})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Receipt:
     """Proof-of-decision: the decision, the audit anchor, and the outcome.
 
@@ -66,7 +69,7 @@ class Receipt:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Validator:
     """MACI validating principal. Distinct from the proposer (ToolCall.actor).
 
@@ -86,7 +89,7 @@ class Validator:
             raise ValueError("Validator.role is required (fail-closed)")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DecisionReceipt:
     """Canonical public Decision Receipt schema for AI-agent execution.
 
@@ -238,11 +241,46 @@ class DecisionReceipt:
     def from_json(cls, text: str) -> DecisionReceipt:
         return cls.from_dict(json.loads(text))
 
+    def _hash_payload(self) -> dict[str, Any]:
+        """Payload fed to :meth:`compute_hash`, without the defensive copies
+        :meth:`to_dict` makes for external callers and without the two
+        hash-excluded fields. Byte-identical to ``to_dict()`` with
+        ``receipt_hash``/``signature`` popped: the frozen receipt's fields
+        cannot mutate, and ``sha256_json`` serializes a tuple and a list
+        identically, so referencing the fields directly yields the same
+        canonical bytes.
+        """
+        return {
+            "receipt_id": self.receipt_id,
+            "request_id": self.request_id,
+            "tenant_id": self.tenant_id,
+            "actor": self.actor,
+            "subject": self.subject,
+            "proposed_action": self.proposed_action,
+            "declared_goal": self.declared_goal,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "policy_version": self.policy_version,
+            "policy_hash": self.policy_hash,
+            "decision": self.decision,
+            "matched_rules": self.matched_rules,
+            "constraints": self.constraints,
+            "transformations": self.transformations,
+            "approval_chain_summary": self.approval_chain_summary,
+            "timestamp": self.timestamp,
+            "expires_at": self.expires_at,
+            "authority": self.authority,
+            "validator_id": self.validator_id,
+            "validator_role": self.validator_role,
+            "argument_hash": self.argument_hash,
+            "previous_audit_hash": self.previous_audit_hash,
+            "audit_event_hash": self.audit_event_hash,
+            "signature_algorithm": self.signature_algorithm,
+            "signing_key_id": self.signing_key_id,
+        }
+
     def compute_hash(self) -> str:
-        d = self.to_dict()
-        d.pop("receipt_hash", None)
-        d.pop("signature", None)
-        return sha256_json(d)
+        return sha256_json(self._hash_payload())
 
     @classmethod
     def from_record(
@@ -302,8 +340,6 @@ class DecisionReceipt:
             }
         )
 
-        import dataclasses
-
         receipt = cls(
             receipt_id=record.event_id,
             request_id=request_id,
@@ -336,7 +372,9 @@ class DecisionReceipt:
         # (anti-downgrade), THEN sign that hash so the signature attests it.
         h = receipt.compute_hash()
         signature = signer.sign(h.encode("utf-8")) if signer is not None else "unsigned_local"
-        return dataclasses.replace(receipt, receipt_hash=h, signature=signature)
+        object.__setattr__(receipt, "receipt_hash", h)
+        object.__setattr__(receipt, "signature", signature)
+        return receipt
 
     def verify(
         self,
@@ -353,6 +391,8 @@ class DecisionReceipt:
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
+        require_expiry: bool = False,
+        revoked_keys: RevocationList | None = None,
         now_iso: str | None = None,
     ) -> None:
         """Low-level receipt verification primitive.
@@ -364,6 +404,24 @@ class DecisionReceipt:
         :class:`gove_zone.contracts.ReceiptVerifier`. Authorize side effects through
         those, not by calling this directly; a bare ``verify(...)`` opts into the
         unsigned posture.
+
+        ``require_expiry`` (additive, default ``False``) mandates a *liveness*
+        bound: when ``True`` a receipt whose ``expires_at`` is empty is rejected
+        (:data:`ReceiptRejectionReason.EXPIRY_REQUIRED`) instead of being treated
+        as never-expiring. The plain expiry check below (#13) only rejects a
+        receipt *past* its lifetime — with no TTL it is silently immortal. The
+        strict production profile
+        (:meth:`gove_zone.profile.GovernanceProfile.production_strict`) sets this
+        so a long-lived bearer receipt cannot authorize indefinitely. Default
+        ``False`` keeps every existing caller unaffected.
+
+        ``revoked_keys`` (additive, default ``None``) is a
+        :class:`gove_zone.revocation.RevocationList` of compromised *signing*
+        ``key_id`` values. When supplied, a receipt whose ``signing_key_id`` is
+        revoked is rejected (:data:`ReceiptRejectionReason.SIGNING_KEY_REVOKED`)
+        *before* the signature is trusted — independent of whether the key is
+        still present in ``verifier``. ``None`` (the default) preserves current
+        behavior exactly.
         """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
@@ -437,6 +495,19 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.UNSIGNED_REJECTED,
             )
         if self.signature_algorithm != "none":
+            # 2a-revoke (B2): reject a revoked signing key BEFORE resolving the
+            # verifier or trusting the signature. This is independent of
+            # verifier-map membership — a revoked key still present in the map,
+            # with a cryptographically valid signature, is rejected. Placed
+            # inside the signed branch, so it can never reject an unsigned
+            # receipt (algorithm=="none" ⇒ signing_key_id=="" never reaches
+            # here), and it fires regardless of require_signature (a dev-mode
+            # signed receipt with a revoked key is still rejected).
+            if revoked_keys is not None and revoked_keys.is_revoked(self.signing_key_id):
+                raise ReceiptValidationError(
+                    f"signing key revoked: {self.signing_key_id!r}",
+                    reason_code=ReceiptRejectionReason.SIGNING_KEY_REVOKED,
+                )
             # Resolve the verifier — a missing verifier is a hard rejection here
             # (the receipt claims a signature; we must check it).
             resolved: ReceiptSigner | None
@@ -681,27 +752,59 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.AUTHORITY_MISMATCH,
             )
 
+        # 13a. Liveness floor (opt-in, strict profile). With no TTL a receipt is
+        # silently immortal — the check below only rejects one *past* its
+        # lifetime. When require_expiry is set, an empty expires_at is itself a
+        # failure: a long-lived bearer receipt must not authorize indefinitely.
+        # Default-off, so non-strict callers are unaffected. Fail-closed.
+        if require_expiry and not self.expires_at:
+            raise ReceiptValidationError(
+                "Receipt has no expires_at but the strict profile requires a "
+                "liveness/TTL bound (a receipt without an expiry can authorize "
+                "indefinitely).",
+                reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
+            )
+
         # 13. Expiry (only enforced when expires_at is set). expires_at is bound
         # into receipt_hash, so a tampered expiry is already caught by check 2;
         # this rejects a genuinely-issued receipt used past its lifetime. The
         # clock is injectable so expiry is deterministically testable; in
         # production it defaults to the real UTC wall clock. Fail-closed.
+        #
+        # OPERATOR TRUST ASSUMPTION: expiry trusts the verifying host's wall
+        # clock. A host whose clock is rolled BACK accepts a genuinely-expired
+        # receipt as still-valid (fail-open against time, not against policy).
+        # This is an operator responsibility — keep gate hosts on trusted,
+        # monotonic, NTP-synced time. For expiry-sensitive deployments, inject a
+        # vetted time source via ``now_iso`` rather than relying on the host
+        # clock. gove-zone does not (yet) carry its own trusted time source.
         if self.expires_at:
             current = now_iso if now_iso is not None else _now_iso()
             # Compare timezone-aware datetimes, not strings: a lexicographic
             # compare is wrong across UTC offsets and would fail OPEN (accept an
-            # expired receipt). Unparseable / mixed-awareness timestamps are
-            # treated as a validation failure, never silently accepted.
+            # expired receipt). Unparseable timestamps are a validation failure.
             try:
                 current_dt = datetime.fromisoformat(current)
                 expires_dt = datetime.fromisoformat(self.expires_at)
-                is_expired = current_dt > expires_dt
             except (ValueError, TypeError) as err:
                 raise ReceiptValidationError(
                     f"Unparseable or mismatched expiry timestamp: "
                     f"expires_at={self.expires_at!r}, now={current!r}",
                     reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 ) from err
+            # Reject offset-naive timestamps on either side. Two naive datetimes
+            # parse and compare without error, but their implied zones are
+            # ambiguous — a naive comparison can silently fail OPEN across
+            # offsets. Demand aware-vs-aware so expiry is unambiguous; a naive
+            # input is a validation failure, never silently accepted.
+            if current_dt.tzinfo is None or expires_dt.tzinfo is None:
+                raise ReceiptValidationError(
+                    f"Expiry timestamps must be timezone-aware (offset-naive "
+                    f"compares are ambiguous and can fail open): "
+                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+                )
+            is_expired = current_dt > expires_dt
             if is_expired:
                 raise ReceiptValidationError(
                     f"Receipt expired at {self.expires_at} (now {current})",

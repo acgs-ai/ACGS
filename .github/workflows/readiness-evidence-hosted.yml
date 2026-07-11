@@ -1,0 +1,80 @@
+# GitHub-hosted advisory twin of `readiness-evidence.yml`.
+#
+# WHY: every meaningful gate in this repo runs on the single
+# `[self-hosted, Linux, X64]` runner. If that one box is offline, those checks
+# sit `pending` indefinitely — there is no independent signal that the
+# readiness claims still hold.
+#
+# This job mirrors `readiness-evidence.yml`'s five readiness/evidence tests
+# onto a GitHub-hosted runner (free for public repos). It is a faithful copy
+# of that gate's run step — the ONLY difference is `runs-on` — so the two
+# never diverge in what they assert. The self-hosted `readiness-evidence`
+# remains the authority; this is a redundant safety net for runner outages.
+#
+# ADVISORY BY DESIGN: a newly-added check is not a required status check until
+# a human adds it to branch protection. Leave it advisory, or promote it to
+# required once you trust it — same "agent preps, human flips the switch"
+# pattern as repo secrets. Keep the run step in lockstep with
+# `readiness-evidence.yml`.
+
+name: readiness-evidence-hosted
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'acgi-ai/**'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'README.md'
+      - 'pyproject.toml'
+  push:
+    branches: [master]
+    paths:
+      - 'tests/**'
+      - 'scripts/**'
+      - 'docs/**'
+      - 'acgi-ai/**'
+      - '.github/workflows/**'
+      - 'Makefile'
+      - 'README.md'
+      - 'pyproject.toml'
+
+concurrency:
+  group: readiness-evidence-hosted-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Readiness evidence (GitHub-hosted advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Submodules intentionally NOT initialized — identical to
+      # readiness-evidence.yml; these tests read parent-tracked files only.
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Run readiness-evidence tests
+        # Lockstep copy of readiness-evidence.yml. `--no-project` skips the
+        # workspace sync; `--with` supplies the only deps these tests need
+        # (pytest + pyyaml). tests/conftest.py puts scripts/ on sys.path.
+        run: |
+          uv python install 3.11
+          uv run --no-project --python 3.11 --with pytest --with pyyaml \
+            python -m pytest \
+            tests/test_platform_readiness_report.py \
+            tests/test_readiness_evidence_boundaries.py \
+            tests/test_release_evidence_bundle.py \
+            tests/test_production_blocker_evidence.py \
+            tests/test_production_launch_preflight.py \
+            -v --import-mode=importlib

@@ -37,6 +37,8 @@ on:
       - 'acgi-ai/pnpm-lock.yaml'
       - 'acgi-ai/scripts/**'
       - 'acgi-ai/contracts/**'
+      - 'acgi-ai/tests/**'
+      - 'acgi-ai/playwright.config.ts'
       - 'acgi-ai/vite.config.ts'
       - 'acgi-ai/tsconfig*.json'
       - 'acgi-ai/infra/**'
@@ -62,6 +64,8 @@ on:
       - 'acgi-ai/pnpm-lock.yaml'
       - 'acgi-ai/scripts/**'
       - 'acgi-ai/contracts/**'
+      - 'acgi-ai/tests/**'
+      - 'acgi-ai/playwright.config.ts'
       - 'acgi-ai/vite.config.ts'
       - 'acgi-ai/tsconfig*.json'
       - 'acgi-ai/infra/**'
@@ -93,6 +97,8 @@ defaults:
 
 jobs:
   build:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     # test:all + build:console + evidence build + artifact uploads; on the shared
     # self-hosted runner this can run long under concurrent-PR contention (15m was
@@ -146,6 +152,59 @@ jobs:
           path: acgi-ai/dist
           if-no-files-found: error
 
+  # ---- Real browser execution: axe a11y smoke + visual baseline (B16) ----
+  # Separate from `build` so Playwright's browser install + headed render don't
+  # bloat the readiness gate, and so the visual baseline's flake budget is
+  # isolated. Runs the production console bundle via `vite preview` (the
+  # playwright.config webServer), NOT the dev server — strict console CSP forbids
+  # the HMR <style> injection dev mode emits.
+  browser-checks:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+
+      # No `--with-deps`: that needs apt/sudo. This self-hosted runner is a
+      # long-lived box with the OS libs already provisioned and browsers
+      # persisted in ~/.cache/ms-playwright, so a plain install (cache hit) is
+      # enough. Re-add --with-deps only if the runner is ever reprovisioned bare.
+      - name: Install Playwright chromium
+        run: pnpm exec playwright install chromium
+
+      # Blocking: a real axe WCAG 2.0/2.1 A+AA scan of /login + /console. Fails
+      # on any serious/critical violation. (color-contrast is scoped out as
+      # documented pre-existing --muted token debt — see A11Y.md.)
+      - name: Accessibility smoke (axe, blocking)
+        run: pnpm exec playwright test --config=playwright.config.ts a11y-smoke
+
+      # Non-blocking for the first landings: the visual baseline renders on this
+      # same self-hosted machine (so drift is small), but pixel diffs are the
+      # highest flake risk under concurrent-PR load. Flip to blocking once it
+      # proves stable across several runs.
+      - name: Visual baseline (non-blocking)
+        continue-on-error: true
+        run: pnpm exec playwright test --config=playwright.config.ts visual-overview
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: acgi-ai/test-results
+          if-no-files-found: ignore
+
   # ---- Image build + push: master pushes only, human-gated ----
   # SPLIT OUT of `build` so image publication is itself gated by the
   # `production` GitHub environment. PRs run the `build` job above as
@@ -170,7 +229,7 @@ jobs:
   # path pushes an image.
   publish:
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     environment: production
     runs-on: [self-hosted, Linux, X64]
     # docker build + push to Artifact Registry can run long on the shared runner.
@@ -223,7 +282,7 @@ jobs:
   # step and short-circuit the deploy.
   deploy:
     needs: [build, publish]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     environment: production
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
