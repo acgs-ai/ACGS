@@ -547,3 +547,42 @@ def test_dashboard_and_verify_map_audit_envelope_refusal(
 def test_lone_surrogate_key_is_stably_rejected() -> None:
     with pytest.raises(ValueError, match="lone surrogates"):
         _canonical_json_subset({"\ud800": "invalid"})
+
+
+def test_dashboard_and_verify_map_root_symlink_to_stable_audit_refusal(
+    client: TestClient,
+    org: dict[str, Any],
+    admin_headers: dict[str, str],
+    audit_dir: Path,
+) -> None:
+    org_id = org["org_id"]
+    receipt_id = client.get(f"/orgs/{org_id}/receipts", headers=admin_headers).json()["items"][0][
+        "receipt_id"
+    ]
+    real_root = audit_dir.with_name("real-audit")
+    audit_dir.rename(real_root)
+    audit_dir.symlink_to(real_root, target_is_directory=True)
+    expected = {
+        "code": "AUDIT_READ_REFUSED",
+        "status": "audit-read-refused",
+        "reason": "unsafe-audit-root",
+    }
+    dashboard = client.get(f"/orgs/{org_id}/dashboard", headers=admin_headers)
+    assert dashboard.status_code == 503
+    assert dashboard.json() == expected
+    verify = client.post(f"/orgs/{org_id}/receipts/{receipt_id}/verify", headers=admin_headers)
+    assert verify.status_code == 503
+    assert verify.json() == expected
+
+
+def test_audit_snapshot_events_are_recursively_immutable(tmp_path: Path) -> None:
+    root = tmp_path / "audit"
+    root.mkdir()
+    (root / "org.audit.jsonl").write_text('{"nested":{"items":[{"value":1}]}}\n')
+    snapshot = existing_org_audit_store(root, "org")
+    assert snapshot is not None
+    event: Any = snapshot.events[0]
+    with pytest.raises(TypeError):
+        event["nested"]["items"][0]["value"] = 2
+    with pytest.raises(TypeError):
+        event["nested"]["new"] = "mutation"

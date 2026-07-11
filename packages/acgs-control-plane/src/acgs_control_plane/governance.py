@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from gove_zone import (
     ChainHashAuditStore,
@@ -473,7 +473,7 @@ def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
 
 @dataclass(frozen=True)
 class ReadOnlyAuditSnapshot:
-    """Bounded immutable events captured from one no-follow file descriptor."""
+    """Bounded, recursively immutable events captured from one no-follow descriptor."""
 
     events: tuple[Mapping[str, Any], ...]
 
@@ -556,7 +556,7 @@ def existing_org_audit_store(audit_dir: Path, org_id: str) -> ReadOnlyAuditSnaps
     if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
         raise ValueError("invalid audit organization identifier")
     if audit_dir.is_symlink():
-        raise ValueError("audit root symlinks are forbidden")
+        raise AuditReadError("unsafe-audit-root")
     if (
         os.open not in os.supports_dir_fd
         or not hasattr(os, "O_DIRECTORY")
@@ -598,11 +598,11 @@ def existing_org_audit_store(audit_dir: Path, org_id: str) -> ReadOnlyAuditSnaps
                     del pending[: newline + 1]
                     event = _parse_audit_snapshot_line(line, len(events) + 1)
                     if event is not None:
-                        events.append(MappingProxyType(event))
+                        events.append(cast(Mapping[str, Any], _immutable_snapshot(event)))
             if pending:
                 event = _parse_audit_snapshot_line(bytes(pending), len(events) + 1)
                 if event is not None:
-                    events.append(MappingProxyType(event))
+                    events.append(cast(Mapping[str, Any], _immutable_snapshot(event)))
             return ReadOnlyAuditSnapshot(tuple(events))
         finally:
             os.close(fd)
