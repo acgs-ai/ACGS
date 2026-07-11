@@ -35,6 +35,7 @@ crypto = ["cryptography>=42"]
 dev = [
     "pytest>=7.0",
     "cryptography>=42",
+    "ruff>=0.8",
 ]
 
 [project.urls]
