@@ -510,22 +510,36 @@ PY
 run_recorded_gate() {
   local scope="$1" cwd="$2" basename="$3" selector="$4"
   shift 4
-  local started finished stdout_file stderr_file
+  local started finished stdout_file stderr_file gate_status stderr_sha256
   stdout_file="$NODE_EVIDENCE/$basename.stdout"
   stderr_file="$NODE_EVIDENCE/$basename.stderr"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$scope" == GZ ]]; then
-    (
+    if (
       cd "$cwd"
       VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" "$@"
-    ) >"$stdout_file" 2>"$stderr_file"
+    ) >"$stdout_file" 2>"$stderr_file"; then
+      gate_status=0
+    else
+      gate_status=$?
+    fi
   else
-    (
+    if (
       cd "$cwd"
       "$@"
-    ) >"$stdout_file" 2>"$stderr_file"
+    ) >"$stdout_file" 2>"$stderr_file"; then
+      gate_status=0
+    else
+      gate_status=$?
+    fi
   fi
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$gate_status" -ne 0 ]]; then
+    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
+    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
+      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    return "$gate_status"
+  fi
   append_record "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" "$@"
 }
 

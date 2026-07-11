@@ -3190,11 +3190,13 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         'export UV_CREDENTIALS_DIR="$SCRATCH_ROOT/uv-credentials"',
     ):
         assert scratch_export in source
-    assert source.index('export TMPDIR="$RUNTIME_TMP"') < source.index("uv --version")
+    assert source.index('export TMPDIR="$RUNTIME_TMP"') < source.index('"$UV_BIN" --version')
     assert "TMP_PARENT_ENTRIES_BEFORE" in source
     assert "TMP_PARENT_STAT_BEFORE" in source
     assert "reject_lexists" in source
     assert "clean_sibling_cleanup" in source
+    assert "RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s" in source
+    assert 'cat "$stderr_file"' not in source
     assert 'rm -rf "$SOURCE_REPO' not in source
     assert "git clean" not in source
     assert "git reset --hard" not in source
