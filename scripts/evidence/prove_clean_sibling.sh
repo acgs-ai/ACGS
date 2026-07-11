@@ -732,11 +732,14 @@ else
   for ((index = 0; index < EXPECTED_RECORDS; index++)); do
     capture_tmp="$RUNTIME_TMP/reviewed-command-$index"
     mkdir -m 700 "$capture_tmp"
-    "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_reviewed_command.py" \
-      --node "$NODE_ID" \
-      --index "$index" \
-      --transcript "$NODE_EVIDENCE/transcript.jsonl" \
-      --temp-root "$capture_tmp"
+    (
+      cd "$WORKTREE"
+      "$EVIDENCE_PY" scripts/evidence/capture_reviewed_command.py \
+        --node "$NODE_ID" \
+        --index "$index" \
+        --transcript "$NODE_EVIDENCE/transcript.jsonl" \
+        --temp-root "$capture_tmp"
+    )
   done
 fi
 
