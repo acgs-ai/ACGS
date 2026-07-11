@@ -316,12 +316,18 @@
         "node_version": {
           "const": "24.18.0"
         },
+        "node_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
         "pnpm_executable": {
           "type": "string",
           "pattern": "^/"
         },
         "pnpm_version": {
           "const": "9.15.4"
+        },
+        "pnpm_sha256": {
+          "$ref": "#/$defs/sha256"
         },
         "runtime_ctime_ns": {
           "$ref": "#/$defs/canonicalPositiveDecimal"
@@ -417,6 +423,9 @@
         "executable": {
           "type": "string",
           "pattern": "^/"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },
@@ -850,7 +859,7 @@
           "uniqueItems": true
         },
         "cwd_scope": {
-          "enum": ["REPO_ROOT", "CP"]
+          "enum": ["REPO_ROOT", "CP", "UI"]
         },
         "executable_sha256": {
           "$ref": "#/$defs/sha256"
@@ -868,6 +877,9 @@
           "$ref": "#/$defs/sha256"
         },
         "sandbox_resolved_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "ui_toolchain_sha256": {
           "$ref": "#/$defs/sha256"
         }
       }

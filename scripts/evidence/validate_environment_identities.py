@@ -8,7 +8,6 @@ import importlib
 import importlib.metadata
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tomllib
@@ -81,6 +80,8 @@ UI_KEYS = {
     "bootstrap_record",
     "output_path",
 }
+FNM_EXECUTABLE = Path("/home/martin/.local/share/fnm/fnm")
+FNM_SHA256 = "2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f"
 
 
 def _exact_keys(value: Any, keys: set[str], label: str) -> dict[str, Any]:
@@ -167,8 +168,15 @@ def _validate_marker(
         )
     else:
         expected_marker_keys.update(
-            {"interpreter_realpath", "node_version", "pnpm_executable", "pnpm_version"}
+            {
+                "interpreter_realpath",
+                "node_version",
+                "pnpm_executable",
+                "pnpm_version",
+            }
         )
+        if node == "P0-GATES-003":
+            expected_marker_keys.update({"node_sha256", "pnpm_sha256"})
     _exact_keys(marker, expected_marker_keys, f"{code} bootstrap record")
     if marker.get("schema_version") != "acgs-bootstrap-record/v1":
         fail(f"{code} bootstrap record version mismatch", phase="B5")
@@ -214,6 +222,11 @@ def _validate_marker(
         or marker.get("pnpm_version") != identity.get("pnpm", {}).get("version")
     ):
         fail("UI marker/tool identity mismatch", phase="B5")
+    if code == "UI" and node == "P0-GATES-003" and (
+        marker.get("node_sha256") != identity.get("node", {}).get("sha256")
+        or marker.get("pnpm_sha256") != identity.get("pnpm", {}).get("sha256")
+    ):
+        fail("UI marker/tool hash mismatch", phase="B5")
 
 
 def _validate_lock(
@@ -492,10 +505,14 @@ def _validate_python_product(
 
 
 def _fnm_probe(command: str, repo_root: Path) -> tuple[str, Path]:
-    fnm_raw = shutil.which("fnm")
-    if fnm_raw is None:
-        fail("fnm is unavailable for live UI validation", phase="B5")
-    fnm = Path(fnm_raw).resolve(strict=True)
+    fnm = FNM_EXECUTABLE
+    if (
+        not fnm.is_file()
+        or fnm.is_symlink()
+        or fnm.resolve(strict=True) != fnm
+        or sha256_file(fnm) != FNM_SHA256
+    ):
+        fail("canonical hash-pinned fnm is unavailable for live UI validation", phase="B5")
     env = {
         key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "VIRTUAL_ENV"}
     }
@@ -514,7 +531,7 @@ def _fnm_probe(command: str, repo_root: Path) -> tuple[str, Path]:
         fail(f"live UI {command} executable is unsafe", phase="B5")
     canonical = raw_path.resolve(strict=True)
     completed = subprocess.run(
-        [str(fnm), "exec", "--using", "24.18.0", "--", str(canonical), "--version"],
+        [str(fnm), "exec", "--using", "24.18.0", "--", str(raw_path), "--version"],
         text=True,
         capture_output=True,
         check=False,
@@ -526,9 +543,23 @@ def _fnm_probe(command: str, repo_root: Path) -> tuple[str, Path]:
     return completed.stdout.strip(), canonical
 
 
-def _validate_ui(identity: dict[str, Any], repo_root: Path) -> None:
-    node = _exact_keys(identity.get("node"), {"version", "executable"}, "UI node identity")
-    pnpm = _exact_keys(identity.get("pnpm"), {"version", "executable"}, "UI pnpm identity")
+def _validate_ui(
+    identity: dict[str, Any], repo_root: Path, *, require_hashes: bool = False
+) -> None:
+    tool_keys = {"version", "executable", "sha256"} if require_hashes else None
+    if tool_keys is None:
+        node_value = identity.get("node")
+        pnpm_value = identity.get("pnpm")
+        if not isinstance(node_value, dict) or not isinstance(pnpm_value, dict):
+            fail("UI tool identity is malformed", phase="B5")
+        if set(node_value) not in ({"version", "executable"}, {"version", "executable", "sha256"}):
+            fail("UI node identity is not closed", phase="B5")
+        if set(pnpm_value) not in ({"version", "executable"}, {"version", "executable", "sha256"}):
+            fail("UI pnpm identity is not closed", phase="B5")
+        tool_keys = set(node_value)
+    node = _exact_keys(identity.get("node"), tool_keys, "UI node identity")
+    pnpm_keys = {"version", "executable", "sha256"} if require_hashes else set(identity["pnpm"])
+    pnpm = _exact_keys(identity.get("pnpm"), pnpm_keys, "UI pnpm identity")
     if node.get("version") != "24.18.0" or pnpm.get("version") != "9.15.4":
         fail("UI tool version mismatch", phase="B5")
     lexical_root = (repo_root / "acgi-ai/node_modules").absolute()
@@ -544,6 +575,8 @@ def _validate_ui(identity: dict[str, Any], repo_root: Path) -> None:
         or observed_pnpm != "9.15.4"
         or node.get("executable") != str(node_path)
         or pnpm.get("executable") != str(pnpm_path)
+        or ("sha256" in node and node.get("sha256") != sha256_file(node_path))
+        or ("sha256" in pnpm and pnpm.get("sha256") != sha256_file(pnpm_path))
     ):
         fail("UI live executable/version identity mismatch", phase="B5")
 
@@ -654,7 +687,7 @@ def main(argv: list[str] | None = None) -> int:
             elif code in {"CP", "GZ"}:
                 _validate_python_product(code, identity, locked, repo_root)
             else:
-                _validate_ui(identity, repo_root)
+                _validate_ui(identity, repo_root, require_hashes=args.node == "P0-GATES-003")
             identities[code] = identity
 
         nonces = [identity["bootstrap_record"]["nonce"] for identity in identities.values()]

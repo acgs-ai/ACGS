@@ -20,7 +20,7 @@ busybox_digest="${busybox_digest%% *}"
   fail 'entry interpreter is not trusted static BusyBox'
 [ "$#" -eq 2 ] || fail 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <node-id> <exact-T-commit>'
 case "$1" in
-  P0-EVIDENCE-000 | P0-MEMBRANE-001 | P0-CLAIMS-002) ;;
+  P0-EVIDENCE-000 | P0-MEMBRANE-001 | P0-CLAIMS-002 | P0-GATES-003) ;;
   *) fail 'node-id is outside the reviewed attestation allowlist' ;;
 esac
 

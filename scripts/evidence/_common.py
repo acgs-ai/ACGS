@@ -49,6 +49,9 @@ EXTENDED_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {
     "sandbox_profile_version_sha256",
     "sandbox_resolved_identity_sha256",
 }
+UI_EXTENDED_TRANSCRIPT_RECORD_KEYS = EXTENDED_TRANSCRIPT_RECORD_KEYS | {
+    "ui_toolchain_sha256"
+}
 REVIEWED_ENVIRONMENT_PROFILE = {
     "name": "acgs-reviewed-command-environment/v1",
     "inherit_ambient": False,
@@ -86,6 +89,51 @@ REVIEWED_ENVIRONMENT_PROFILE = {
 REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256 = hashlib.sha256(
     json.dumps(REVIEWED_ENVIRONMENT_PROFILE, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
+REVIEWED_UI_ENVIRONMENT_PROFILE = {
+    **REVIEWED_ENVIRONMENT_PROFILE,
+    "name": "acgs-reviewed-command-environment/ui-v2",
+    "conditional_environment": {
+        "fnm": {
+            "FNM_DIR": "{TRUSTED_ROOT}/scratch/fnm",
+            "COREPACK_HOME": "{TRUSTED_ROOT}/scratch/corepack",
+            "PNPM_HOME": "{TRUSTED_ROOT}/scratch/corepack",
+            "PNPM_STORE_DIR": "{ISOLATED_ROOT}/pnpm-store",
+            "npm_config_cache": "{ISOLATED_ROOT}/npm-cache",
+            "npm_config_userconfig": "{TRUSTED_ROOT}/scratch/npmrc",
+            "COREPACK_ENABLE_NETWORK": "0",
+            "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+            "CI": "1",
+            "PLAYWRIGHT_BROWSERS_PATH": "{TRUSTED_ROOT}/scratch/playwright",
+        }
+    },
+}
+REVIEWED_UI_ENVIRONMENT_PROFILE_VERSION_SHA256 = hashlib.sha256(
+    json.dumps(REVIEWED_UI_ENVIRONMENT_PROFILE, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+LEGACY_MEMBRANE_ENVIRONMENT_PROFILE_VERSION_SHA256 = (
+    "de8c50aa969a9cf4c972ac6af85743dfd2517781f4851730e242535aa4b986f5"
+)
+LEGACY_MEMBRANE_ENVIRONMENT_PROFILE = {
+    key: value
+    for key, value in REVIEWED_ENVIRONMENT_PROFILE.items()
+    if key != "conditional_environment"
+}
+assert (
+    hashlib.sha256(
+        json.dumps(
+            LEGACY_MEMBRANE_ENVIRONMENT_PROFILE, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    == LEGACY_MEMBRANE_ENVIRONMENT_PROFILE_VERSION_SHA256
+)
+
+
+def reviewed_environment_profile_sha256(node_id: str, argv: list[str]) -> str:
+    if node_id == "P0-MEMBRANE-001":
+        return LEGACY_MEMBRANE_ENVIRONMENT_PROFILE_VERSION_SHA256
+    if node_id == "P0-GATES-003" and argv[:1] == ["fnm"]:
+        return REVIEWED_UI_ENVIRONMENT_PROFILE_VERSION_SHA256
+    return REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
 REVIEWED_SANDBOX_PROFILE = {
     "name": "acgs-reviewed-command-bwrap/v1",
     "executable": "/usr/bin/bwrap",
@@ -100,12 +148,73 @@ REVIEWED_SANDBOX_PROFILE = {
 REVIEWED_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
     json.dumps(REVIEWED_SANDBOX_PROFILE, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
+REVIEWED_UI_SANDBOX_WRITABLE_PATHS = {
+    "lint": (),
+    "build": ("dist", "dist-marketing", "node_modules/.tmp", "node_modules/.vite"),
+    "test:all": ("dist", "node_modules/.tmp", "node_modules/.vite"),
+    "test:unit": ("node_modules/.vite",),
+    "test:playwright": (
+        "dist",
+        "playwright-report",
+        "test-results",
+        "node_modules/.tmp",
+        "node_modules/.vite",
+    ),
+}
+REVIEWED_UI_SANDBOX_PROFILE = {
+    **REVIEWED_SANDBOX_PROFILE,
+    "name": "acgs-reviewed-command-bwrap/ui-v2",
+    "command_writable_paths": REVIEWED_UI_SANDBOX_WRITABLE_PATHS,
+}
+REVIEWED_UI_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
+    json.dumps(REVIEWED_UI_SANDBOX_PROFILE, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+
+
+def reviewed_sandbox_profile_sha256(node_id: str, argv: list[str]) -> str:
+    if node_id == "P0-GATES-003" and argv[:1] == ["fnm"]:
+        return REVIEWED_UI_SANDBOX_PROFILE_VERSION_SHA256
+    return REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
+
+
+REVIEWED_UI_TOOLCHAIN = {
+    "node_version": "24.18.0",
+    "pnpm_version": "9.15.4",
+    "pnpm_corepack_selector": (
+        "pnpm@9.15.4+sha512."
+        "b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"
+    ),
+    "sha256": {
+        "fnm": "2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f",
+        "node": "41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c",
+        "corepack_js": "3655bc798f300951f2070fee411b337d626b0c3ae80c2d24c46ccac4595d4bf9",
+        "corepack_package": "1aff4cc6115c15ce4c51c5a3b8d20912c525e295cb09e1a70c4a27998db43fa2",
+        "corepack_library": "89cc83cf02dafbb768017901147933023eb43d6ce6373f9698b8b2f29210a9fd",
+        "pnpm_payload": "4c319da726786d5535aef95fa78ec5e24f1079382da878a35fa5dd044a7bab96",
+        "pnpm_wrapper": "98e6b99a881d64a1cc982c3e60aa260bf02160386b12e74475e06486dc74b090",
+        "pnpm_package": "3b20ec7bebaa078d5ae4ab09651b80434a9f1d6446065ad53779ecafdc7f9936",
+        "pnpm_corepack_metadata": (
+            "d0015a0345d683888f46c48caf909f611875ba7e9132ca1afced8f0fef84f117"
+        ),
+    },
+    "tree_sha256": {
+        "corepack": "6dc22292849f9e176da87530b3c6e7e871b6d153853905472323a30c68e3ef83",
+        "pnpm": "f5024c43f73511fd4405a2af8e5284037c7ce9d740ccbc21b48c82a4372a5e1b",
+        "chromium-1223": "e89612644cb99abe9d57558ba19cb97edb9edab0d3fbcd21e2823e1f055c11f2",
+        "chromium_headless_shell-1223": (
+            "7ffd8f1a7335a0273e19fd847f85116de7d1e80959792bdc07512807f71000a1"
+        ),
+        "ffmpeg-1011": "ffe69e30ed27797d8dfab275cc99ddbd11dc23141182146d517f1c615056f4a3",
+    },
+}
 BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")
 REVIEWED_HOST_EXECUTABLES = {
+    "fnm": Path("/home") / "martin" / ".local" / "share" / "fnm" / "fnm",
     "make": Path("/usr/bin/make"),
     "uv": Path("/home") / "martin" / ".local" / "bin" / "uv",
 }
 REVIEWED_HOST_EXECUTABLE_SHA256 = {
+    "fnm": "2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f",
     "uv": "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b",
 }
 REVIEWED_P0_TRANSCRIPT = (
@@ -326,10 +435,33 @@ REVIEWED_P0_CLAIMS_TRANSCRIPT = (
         ),
     ),
 )
+_UI_LOCKED_PREFIX = ("fnm", "exec", "--using", "24.18.0", "--", "pnpm")
+REVIEWED_P0_GATES_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    REVIEWED_P0_MEMBRANE_TRANSCRIPT[5],
+    *REVIEWED_P0_TRANSCRIPT[5:9],
+    ("acgi-ai:local-gate", (*_UI_LOCKED_PREFIX, "lint")),
+    ("acgi-ai:local-gate", (*_UI_LOCKED_PREFIX, "build")),
+    ("acgi-ai:local-gate", (*_UI_LOCKED_PREFIX, "test:all")),
+    ("acgi-ai:local-gate", (*_UI_LOCKED_PREFIX, "test:unit")),
+    ("acgi-ai:local-gate", (*_UI_LOCKED_PREFIX, "test:playwright")),
+    (
+        "root:P0-GATES-003",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/saas_beta/test_ci_gate_contract.py::test_all_owned_scope_gates_are_required",
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P0-MEMBRANE-001": REVIEWED_P0_MEMBRANE_TRANSCRIPT,
     "P0-CLAIMS-002": REVIEWED_P0_CLAIMS_TRANSCRIPT,
+    "P0-GATES-003": REVIEWED_P0_GATES_TRANSCRIPT,
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 REVIEWED_CWD_SCOPES_BY_NODE = {
@@ -356,6 +488,13 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "REPO_ROOT",
         "REPO_ROOT",
         "REPO_ROOT",
+        "REPO_ROOT",
+    ),
+    "P0-GATES-003": (
+        "REPO_ROOT",
+        *["CP"] * 5,
+        *["REPO_ROOT"] * 4,
+        *["UI"] * 5,
         "REPO_ROOT",
     ),
 }
@@ -642,7 +781,11 @@ def reviewed_node_command(node_id: str, index: int) -> tuple[str, tuple[str, ...
 def reviewed_cwd(repo: Path, cwd_scope: str) -> Path:
     """Map a closed cwd scope to its canonical repository directory."""
 
-    scopes = {"REPO_ROOT": repo, "CP": repo / "packages/acgs-control-plane"}
+    scopes = {
+        "REPO_ROOT": repo,
+        "CP": repo / "packages/acgs-control-plane",
+        "UI": repo / "acgi-ai",
+    }
     cwd = scopes.get(cwd_scope)
     if cwd is None or not cwd.is_dir():
         fail("command cwd scope is unavailable or noncanonical", phase="B6")
@@ -735,7 +878,16 @@ def validate_transcript_record(value: Any, *, expected_node: str | None = None) 
     """Validate the full immutable command record before any persistence or use."""
 
     extended_node = expected_node in REVIEWED_CWD_SCOPES_BY_NODE
-    required_keys = EXTENDED_TRANSCRIPT_RECORD_KEYS if extended_node else TRANSCRIPT_RECORD_KEYS
+    ui_command = expected_node == "P0-GATES-003" and isinstance(value, dict) and (
+        isinstance(value.get("argv"), list) and value["argv"][:1] == ["fnm"]
+    )
+    required_keys = (
+        UI_EXTENDED_TRANSCRIPT_RECORD_KEYS
+        if ui_command
+        else EXTENDED_TRANSCRIPT_RECORD_KEYS
+        if extended_node
+        else TRANSCRIPT_RECORD_KEYS
+    )
     if not isinstance(value, dict) or set(value) != required_keys:
         fail("command record is outside the reviewed closed contract", phase="B6")
     argv, selector = _reviewed_gate(value.get("argv"), expected_node=expected_node)
@@ -758,20 +910,27 @@ def validate_transcript_record(value: Any, *, expected_node: str | None = None) 
     if timestamps[1] < timestamps[0] or value.get("selectors") != [selector]:
         fail("command record is outside the reviewed closed contract", phase="B6")
     if extended_node:
+        expected_environment_profile = reviewed_environment_profile_sha256(expected_node, argv)
         if (
-            value.get("cwd_scope") not in {"REPO_ROOT", "CP"}
+            value.get("cwd_scope") not in {"REPO_ROOT", "CP", "UI"}
             or not isinstance(value.get("executable_sha256"), str)
             or SHA256_RE.fullmatch(value["executable_sha256"]) is None
-            or value.get("environment_profile_version_sha256")
-            != REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+            or value.get("environment_profile_version_sha256") != expected_environment_profile
             or not isinstance(value.get("resolved_executable_identity_sha256"), str)
             or SHA256_RE.fullmatch(value["resolved_executable_identity_sha256"]) is None
             or not isinstance(value.get("sandbox_executable_sha256"), str)
             or SHA256_RE.fullmatch(value["sandbox_executable_sha256"]) is None
             or value.get("sandbox_profile_version_sha256")
-            != REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
+            != reviewed_sandbox_profile_sha256(expected_node or "", argv)
             or not isinstance(value.get("sandbox_resolved_identity_sha256"), str)
             or SHA256_RE.fullmatch(value["sandbox_resolved_identity_sha256"]) is None
+            or (
+                ui_command
+                and (
+                    not isinstance(value.get("ui_toolchain_sha256"), str)
+                    or SHA256_RE.fullmatch(value["ui_toolchain_sha256"]) is None
+                )
+            )
         ):
             fail("command execution identity is outside the reviewed node contract", phase="B6")
     value["argv"] = argv
@@ -816,11 +975,12 @@ def validate_node_execution_identities(repo: Path, node_id: str, commands: Any) 
         if (
             command["executable_sha256"] != sha256_file(executable)
             or command["environment_profile_version_sha256"]
-            != REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+            != reviewed_environment_profile_sha256(node_id, list(argv))
             or command["resolved_executable_identity_sha256"]
             != resolved_executable_identity(repo, executable, metadata)
             or command["sandbox_executable_sha256"] != sha256_file(sandbox)
-            or command["sandbox_profile_version_sha256"] != REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
+            or command["sandbox_profile_version_sha256"]
+            != reviewed_sandbox_profile_sha256(node_id, list(argv))
             or command["sandbox_resolved_identity_sha256"]
             != resolved_executable_identity(repo, sandbox, sandbox_metadata)
         ):

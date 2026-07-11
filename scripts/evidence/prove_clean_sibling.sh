@@ -166,6 +166,7 @@ case "$NODE_ID" in
   P0-EVIDENCE-000) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=10 ;;
   P0-MEMBRANE-001) ASSIGNMENT='EVID+CP'; EXPECTED_RECORDS=7 ;;
   P0-CLAIMS-002) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=14 ;;
+  P0-GATES-003) ASSIGNMENT='EVID+CP+GZ+UI'; EXPECTED_RECORDS=16 ;;
   *) die 'node-id is outside the reviewed attestation allowlist' ;;
 esac
 T="$2"
@@ -183,6 +184,11 @@ for variable in \
   UV_PYTHON_SEARCH_PATH UV_PYTHON_INSTALL_REGISTRY UV_PYTHON_INSTALL_BIN \
   UV_PYTHON_DOWNLOADS_JSON_URL UV_INSTALL_DIR; do
   [[ -z "${!variable:-}" ]] || die "ambient Python identity variable rejected: $variable"
+done
+for prefix in FNM_ COREPACK_ PNPM_ NPM_ npm_config_ NODE_ NVM_ HTTP_ HTTPS_ ALL_PROXY NO_PROXY; do
+  while IFS= read -r variable; do
+    [[ -z "${!variable:-}" ]] || die "ambient UI loader/config/auth/proxy variable rejected: $variable"
+  done < <(compgen -A variable "$prefix")
 done
 
 SOURCE_REPO="$(git rev-parse --show-toplevel)"
@@ -284,6 +290,9 @@ UV_TOOL_DIR=''
 UV_TOOL_BIN_DIR=''
 UV_PYTHON_CACHE_DIR=''
 UV_CREDENTIALS_DIR=''
+FNM_DIR=''
+COREPACK_HOME=''
+PNPM_STORE_DIR=''
 WORKTREE_ADDED=0
 PROOF_COMPLETE=0
 TRANSCRIPT_RECORDS=0
@@ -349,7 +358,11 @@ mkdir -m 700 \
   "$SCRATCH_ROOT/python-user" \
   "$SCRATCH_ROOT/pycache" \
   "$SCRATCH_ROOT/pip-cache" \
-  "$SCRATCH_ROOT/hatch-cache"
+  "$SCRATCH_ROOT/hatch-cache" \
+  "$SCRATCH_ROOT/fnm" \
+  "$SCRATCH_ROOT/corepack" \
+  "$SCRATCH_ROOT/pnpm-store" \
+  "$SCRATCH_ROOT/playwright"
 [[ -z "$(find "$UV_CACHE_DIR" -mindepth 1 -print -quit)" ]] || die 'UV cache must begin empty'
 export TMPDIR="$RUNTIME_TMP"
 export TMP="$RUNTIME_TMP"
@@ -369,6 +382,13 @@ export UV_TOOL_DIR="$SCRATCH_ROOT/uv-tools"
 export UV_TOOL_BIN_DIR="$SCRATCH_ROOT/uv-tool-bin"
 export UV_PYTHON_CACHE_DIR="$SCRATCH_ROOT/uv-python-cache"
 export UV_CREDENTIALS_DIR="$SCRATCH_ROOT/uv-credentials"
+export FNM_DIR="$SCRATCH_ROOT/fnm"
+export COREPACK_HOME="$SCRATCH_ROOT/corepack"
+export PNPM_HOME="$SCRATCH_ROOT/corepack"
+export PNPM_STORE_DIR="$SCRATCH_ROOT/pnpm-store"
+  export npm_config_userconfig="$SCRATCH_ROOT/npmrc"
+export PLAYWRIGHT_BROWSERS_PATH="$SCRATCH_ROOT/playwright"
+printf 'store-dir=%s\n' "$PNPM_STORE_DIR" >"$npm_config_userconfig"
 export UV_NO_CONFIG=1
 export UV_NO_ENV_FILE=1
 export PYTHONUSERBASE="$SCRATCH_ROOT/python-user"
@@ -405,6 +425,7 @@ for path in \
   "$WORKTREE/.venv-evidence" \
   "$WORKTREE/packages/acgs-control-plane/.venv" \
   "$WORKTREE/packages/gove-zone/.venv-beta" \
+  "$WORKTREE/acgi-ai/node_modules" \
   "$NODE_EVIDENCE"; do
   reject_lexists "$path"
 done
@@ -584,6 +605,70 @@ if [[ "$ASSIGNMENT" == *GZ* ]]; then
     "$WORKTREE/packages/gove-zone"
 fi
 
+if [[ "$ASSIGNMENT" == *UI* ]]; then
+  FNM_BIN=/home/martin/.local/share/fnm/fnm
+  HOST_NODE_ROOT=/home/martin/.local/share/fnm/node-versions/v24.18.0/installation
+  HOST_PNPM_ROOT=/home/martin/.cache/node/corepack/v1/pnpm/9.15.4
+  OWNED_NODE_ROOT="$FNM_DIR/node-versions/v24.18.0/installation"
+  OWNED_PNPM_ROOT="$COREPACK_HOME/v1/pnpm/9.15.4"
+  FNM_SHA256=2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f
+  NODE_SHA256=41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c
+  COREPACK_SHA256=3655bc798f300951f2070fee411b337d626b0c3ae80c2d24c46ccac4595d4bf9
+  COREPACK_PACKAGE_SHA256=1aff4cc6115c15ce4c51c5a3b8d20912c525e295cb09e1a70c4a27998db43fa2
+  COREPACK_LIBRARY_SHA256=89cc83cf02dafbb768017901147933023eb43d6ce6373f9698b8b2f29210a9fd
+  PNPM_PAYLOAD_SHA256=4c319da726786d5535aef95fa78ec5e24f1079382da878a35fa5dd044a7bab96
+  PNPM_WRAPPER_SHA256=98e6b99a881d64a1cc982c3e60aa260bf02160386b12e74475e06486dc74b090
+  PNPM_PACKAGE_SHA256=3b20ec7bebaa078d5ae4ab09651b80434a9f1d6446065ad53779ecafdc7f9936
+  PNPM_COREPACK_METADATA_SHA256=d0015a0345d683888f46c48caf909f611875ba7e9132ca1afced8f0fef84f117
+  PNPM_SELECTOR='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+  [[ -x "$FNM_BIN" && ! -L "$FNM_BIN" && "$(realpath -e "$FNM_BIN")" == "$FNM_BIN" ]] || die 'canonical fnm is unavailable'
+  [[ "$(sha256sum "$FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] || die 'canonical fnm digest mismatch'
+  ui_exec() {
+    env -i PATH=/usr/bin:/bin HOME="$SCRATCH_ROOT/home" FNM_DIR="$FNM_DIR" \
+      COREPACK_HOME="$COREPACK_HOME" PNPM_HOME="$PNPM_HOME" \
+      PNPM_STORE_DIR="$PNPM_STORE_DIR" npm_config_userconfig="$npm_config_userconfig" \
+      PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
+      COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 \
+      "$@"
+  }
+  for pair in \
+    "$HOST_NODE_ROOT/bin/node:$NODE_SHA256" \
+    "$HOST_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js:$COREPACK_SHA256" \
+    "$HOST_NODE_ROOT/lib/node_modules/corepack/package.json:$COREPACK_PACKAGE_SHA256" \
+    "$HOST_NODE_ROOT/lib/node_modules/corepack/dist/lib/corepack.cjs:$COREPACK_LIBRARY_SHA256" \
+    "$HOST_PNPM_ROOT/dist/pnpm.cjs:$PNPM_PAYLOAD_SHA256" \
+    "$HOST_PNPM_ROOT/bin/pnpm.cjs:$PNPM_WRAPPER_SHA256" \
+    "$HOST_PNPM_ROOT/package.json:$PNPM_PACKAGE_SHA256" \
+    "$HOST_PNPM_ROOT/.corepack:$PNPM_COREPACK_METADATA_SHA256"; do
+    path="${pair%:*}"; expected="${pair##*:}"
+    [[ -f "$path" && "$(sha256sum "$path" | awk '{print $1}')" == "$expected" ]] || die "preverified UI cache identity mismatch: $path"
+  done
+  mkdir -m 700 -p "$(dirname "$OWNED_NODE_ROOT")" "$(dirname "$OWNED_PNPM_ROOT")"
+  cp -a "$HOST_NODE_ROOT" "$OWNED_NODE_ROOT"
+  cp -a "$HOST_PNPM_ROOT" "$OWNED_PNPM_ROOT"
+  for browser in chromium-1223 chromium_headless_shell-1223 ffmpeg-1011; do
+    [[ -d "/home/martin/.cache/ms-playwright/$browser" ]] ||
+      die "preverified Playwright runtime missing: $browser"
+    cp -a "/home/martin/.cache/ms-playwright/$browser" "$PLAYWRIGHT_BROWSERS_PATH/$browser"
+  done
+  ui_exec "$FNM_BIN" install 24.18.0
+  UI_COREPACK_JS="$OWNED_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js"
+  ui_exec "$FNM_BIN" exec --using 24.18.0 -- corepack enable
+  ui_exec "$FNM_BIN" exec --using 24.18.0 -- corepack prepare "$PNPM_SELECTOR" --activate
+  UI_PNPM="$OWNED_NODE_ROOT/bin/pnpm"
+  [[ -f "$UI_PNPM" && "$(realpath -e "$UI_PNPM")" == "$UI_COREPACK_JS" ]] || die 'pnpm shim does not resolve to pinned owned corepack dispatcher'
+  [[ "$(ui_exec "$FNM_BIN" exec --using 24.18.0 -- pnpm --version)" == 9.15.4 ]] || die 'pnpm version mismatch after activation'
+  (
+    cd "$WORKTREE/acgi-ai"
+    ui_exec "$FNM_BIN" exec --using 24.18.0 -- pnpm install --ignore-workspace --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
+  )
+  [[ -d "$WORKTREE/acgi-ai/node_modules" && ! -L "$WORKTREE/acgi-ai/node_modules" ]] || die 'canonical UI bootstrap did not create node_modules'
+  for output in dist dist-marketing playwright-report test-results node_modules/.tmp node_modules/.vite; do
+    reject_lexists "$WORKTREE/acgi-ai/$output"
+    mkdir -m 700 -p "$WORKTREE/acgi-ai/$output"
+  done
+fi
+
 append_record() {
   local started="$1" finished="$2" stdout_file="$3" stderr_file="$4" selector="$5"
   shift 5
@@ -689,7 +774,6 @@ if [[ "$ASSIGNMENT" == *GZ* ]]; then
     "${GZ_PREFIX[@]}" python -m pytest packages/gove-zone/tests \
     --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
 fi
-
 fi
 
 "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
@@ -705,6 +789,14 @@ if [[ "$ASSIGNMENT" == *GZ* ]]; then
     --lock "$WORKTREE/requirements/saas-beta/gz-test.lock" \
     --require-editables 0.6 \
     --output "$NODE_EVIDENCE/environment-GZ.json"
+fi
+if [[ "$ASSIGNMENT" == *UI* ]]; then
+  "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
+    --code UI \
+    --lock "$WORKTREE/acgi-ai/pnpm-lock.yaml" \
+    --node-version 24.18.0 \
+    --pnpm-version 9.15.4 \
+    --output "$NODE_EVIDENCE/environment-UI.json"
 fi
 "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/validate_environment_identities.py" \
   --node "$NODE_ID" \

@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
-import shutil
 import subprocess
 import sys
 import tomllib
@@ -27,6 +26,9 @@ from _common import (
     utc_now,
     write_bootstrap_identity_exclusive,
 )
+
+FNM_EXECUTABLE = Path("/home/martin/.local/share/fnm/fnm")
+FNM_SHA256 = "2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f"
 
 TARGET_SNIPPET = r"""
 import importlib
@@ -264,10 +266,15 @@ def _capture_python(
     write_bootstrap_identity_exclusive(marker, output, values)
 
 
-def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path]:
-    fnm = shutil.which("fnm")
-    if fnm is None:
-        fail("fnm is required for canonical UI identity capture", phase="B5")
+def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path, str]:
+    fnm = FNM_EXECUTABLE
+    if (
+        not fnm.is_file()
+        or fnm.is_symlink()
+        or fnm.resolve(strict=True) != fnm
+        or sha256_file(fnm) != FNM_SHA256
+    ):
+        fail("canonical hash-pinned fnm is required for UI identity capture", phase="B5")
     env = {
         key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "VIRTUAL_ENV"}
     }
@@ -281,11 +288,12 @@ def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path]:
     )
     if path_output.returncode != 0:
         fail(f"cannot resolve canonical {command}: {path_output.stderr}", phase="B5")
-    executable = Path(path_output.stdout.strip()).resolve(strict=True)
+    lexical = Path(path_output.stdout.strip())
+    executable = lexical.resolve(strict=True)
     if not executable.is_file():
         fail(f"canonical {command} executable is not a regular file", phase="B5")
     completed = subprocess.run(
-        [fnm, "exec", "--using", version, "--", str(executable), "--version"],
+        [fnm, "exec", "--using", version, "--", str(lexical), "--version"],
         text=True,
         capture_output=True,
         check=False,
@@ -294,7 +302,7 @@ def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path]:
     )
     if completed.returncode != 0:
         fail(f"fnm UI identity command failed: {completed.stderr}", phase="B5")
-    return completed.stdout.strip(), executable
+    return completed.stdout.strip(), executable, sha256_file(executable)
 
 
 def _capture_ui(
@@ -316,8 +324,8 @@ def _capture_ui(
     if lock != expected_lock:
         fail("UI lock path mismatch", phase="B5")
     ui_root = repo_root / "acgi-ai"
-    actual_node, node_path = _fnm_capture(node_version, "node", ui_root)
-    actual_pnpm, pnpm_path = _fnm_capture(node_version, "pnpm", ui_root)
+    actual_node, node_path, node_sha256 = _fnm_capture(node_version, "node", ui_root)
+    actual_pnpm, pnpm_path, pnpm_sha256 = _fnm_capture(node_version, "pnpm", ui_root)
     if actual_node != f"v{node_version}" or actual_pnpm != pnpm_version:
         fail(f"UI live tool version mismatch: node={actual_node} pnpm={actual_pnpm}", phase="B5")
     marker = node_modules / ".acgs-product-bootstrap.json"
@@ -332,8 +340,10 @@ def _capture_ui(
             "interpreter": str(node_path),
             "interpreter_realpath": str(node_path),
             "node_version": node_version,
+            "node_sha256": node_sha256,
             "pnpm_executable": str(pnpm_path),
             "pnpm_version": pnpm_version,
+            "pnpm_sha256": pnpm_sha256,
             "runtime_ctime_ns": runtime_ctime_ns,
             "lock_sha256": sha256_file(lock),
             "nonce": secrets.token_hex(32),
@@ -343,8 +353,16 @@ def _capture_ui(
             "code": "UI",
             "node_id": node_id,
             "captured_at_utc": marker_record["captured_at_utc"],
-            "node": {"version": node_version, "executable": str(node_path)},
-            "pnpm": {"version": pnpm_version, "executable": str(pnpm_path)},
+            "node": {
+                "version": node_version,
+                "executable": str(node_path),
+                "sha256": node_sha256,
+            },
+            "pnpm": {
+                "version": pnpm_version,
+                "executable": str(pnpm_path),
+                "sha256": pnpm_sha256,
+            },
             "module_root": str(node_modules),
             "lock": {"path": "acgi-ai/pnpm-lock.yaml", "sha256": sha256_file(lock)},
             "bootstrap_record": marker_record,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -21,10 +22,12 @@ from typing import cast
 
 from _common import (
     BWRAP_EXECUTABLE,
+    LEGACY_MEMBRANE_ENVIRONMENT_PROFILE,
     REVIEWED_ENVIRONMENT_PROFILE,
-    REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256,
     REVIEWED_HOST_EXECUTABLE_SHA256,
-    REVIEWED_SANDBOX_PROFILE_VERSION_SHA256,
+    REVIEWED_UI_ENVIRONMENT_PROFILE,
+    REVIEWED_UI_SANDBOX_WRITABLE_PATHS,
+    REVIEWED_UI_TOOLCHAIN,
     EvidenceError,
     append_safe_transcript_record,
     assert_evidence_runtime,
@@ -33,10 +36,33 @@ from _common import (
     git_root,
     resolved_executable_identity,
     reviewed_cwd,
+    reviewed_environment_profile_sha256,
     reviewed_executable,
     reviewed_node_command,
+    reviewed_sandbox_profile_sha256,
     utc_now,
 )
+
+FNM_EXECUTABLE = Path("/home/martin/.local/share/fnm/fnm")
+UI_TOOL_HASHES = cast(dict[str, str], REVIEWED_UI_TOOLCHAIN["sha256"])
+UI_TREE_HASHES = cast(dict[str, str], REVIEWED_UI_TOOLCHAIN["tree_sha256"])
+
+
+def _tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix().encode()
+        if path.is_symlink():
+            kind, payload = b"L", str(path.readlink()).encode()
+        elif path.is_file():
+            kind = b"F"
+            payload = hashlib.sha256(path.read_bytes()).hexdigest().encode()
+        elif path.is_dir():
+            kind, payload = b"D", b""
+        else:
+            fail(f"unsupported UI tool tree entry: {path}", phase="B6")
+        digest.update(relative + b"\0" + kind + b"\0" + payload + b"\0")
+    return digest.hexdigest()
 
 
 def _require_safe_parent_chain(path: Path, *, trusted_stop: Path | None = None) -> None:
@@ -61,8 +87,60 @@ def _hash_fd(fd: int) -> str:
     return digest.hexdigest()
 
 
+def _ui_toolchain_digest(repo: Path, trusted_root: Path) -> str:
+    node_root = trusted_root / "scratch/fnm/node-versions/v24.18.0/installation"
+    pnpm_root = trusted_root / "scratch/corepack/v1/pnpm/9.15.4"
+    paths = {
+        "node": node_root / "bin/node",
+        "corepack_js": node_root / "lib/node_modules/corepack/dist/corepack.js",
+        "corepack_package": node_root / "lib/node_modules/corepack/package.json",
+        "corepack_library": node_root / "lib/node_modules/corepack/dist/lib/corepack.cjs",
+        "pnpm_payload": pnpm_root / "dist/pnpm.cjs",
+        "pnpm_wrapper": pnpm_root / "bin/pnpm.cjs",
+        "pnpm_package": pnpm_root / "package.json",
+        "pnpm_corepack_metadata": pnpm_root / ".corepack",
+    }
+    identities: dict[str, dict[str, str]] = {}
+    for name, path in paths.items():
+        canonical = path.resolve(strict=True)
+        digest = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        if not canonical.is_relative_to(trusted_root / "scratch") or digest != UI_TOOL_HASHES[name]:
+            fail(f"UI tool identity mismatch: {name}", phase="B6")
+        identities[name] = {"realpath": str(canonical), "sha256": digest}
+    for name, root in {
+        "corepack": node_root / "lib/node_modules/corepack",
+        "pnpm": pnpm_root,
+        "chromium-1223": trusted_root / "scratch/playwright/chromium-1223",
+        "chromium_headless_shell-1223": (
+            trusted_root / "scratch/playwright/chromium_headless_shell-1223"
+        ),
+        "ffmpeg-1011": trusted_root / "scratch/playwright/ffmpeg-1011",
+    }.items():
+        digest = _tree_digest(root)
+        if digest != UI_TREE_HASHES[name]:
+            fail(f"UI tool tree identity mismatch: {name}", phase="B6")
+        identities[f"{name}_tree"] = {"realpath": str(root), "sha256": digest}
+    for name in ("package.json", "pnpm-lock.yaml"):
+        path = repo / "acgi-ai" / name
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        identities[name] = {"realpath": str(path.resolve(strict=True)), "sha256": digest}
+    fnm_digest = hashlib.sha256(FNM_EXECUTABLE.read_bytes()).hexdigest()
+    if fnm_digest != UI_TOOL_HASHES["fnm"]:
+        fail("UI fnm identity mismatch", phase="B6")
+    identities["fnm"] = {"realpath": str(FNM_EXECUTABLE), "sha256": fnm_digest}
+    return hashlib.sha256(
+        json.dumps(identities, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _closed_environment(
-    repo: Path, cwd: Path, temp_root: Path, *, argv0: str | None = None
+    repo: Path,
+    cwd: Path,
+    temp_root: Path,
+    *,
+    argv0: str | None = None,
+    trusted_root: Path | None = None,
+    node_id: str | None = None,
 ) -> tuple[dict[str, str], Path]:
     if not temp_root.is_absolute() or temp_root.is_symlink() or temp_root.resolve() != temp_root:
         fail("temp root must be an absolute canonical non-symlink directory", phase="B6")
@@ -84,6 +162,7 @@ def _closed_environment(
         "pytest-tmp",
         "pytest-cache",
         "coverage",
+        "npm-cache",
     ):
         (isolated / name).mkdir(mode=0o700)
     tool_roots = [cwd / ".venv/bin", repo / ".venv-evidence/bin", Path("/usr/bin"), Path("/bin")]
@@ -114,7 +193,14 @@ def _closed_environment(
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
     }
-    profile_environment = REVIEWED_ENVIRONMENT_PROFILE.get("environment")
+    profile = (
+        LEGACY_MEMBRANE_ENVIRONMENT_PROFILE
+        if node_id == "P0-MEMBRANE-001"
+        else REVIEWED_UI_ENVIRONMENT_PROFILE
+        if argv0 == "fnm"
+        else REVIEWED_ENVIRONMENT_PROFILE
+    )
+    profile_environment = profile.get("environment")
     if not isinstance(profile_environment, dict) or not all(
         isinstance(name, str) and isinstance(value, str)
         for name, value in profile_environment.items()
@@ -129,7 +215,7 @@ def _closed_environment(
     }
     if env != expected:
         fail("constructed environment differs from canonical reviewed profile", phase="B6")
-    conditional = REVIEWED_ENVIRONMENT_PROFILE.get("conditional_environment")
+    conditional = profile.get("conditional_environment", {})
     if not isinstance(conditional, dict):
         fail("reviewed conditional environment profile is malformed", phase="B6")
     selected = conditional.get(argv0, {})
@@ -139,7 +225,10 @@ def _closed_environment(
         fail("reviewed conditional environment entry is malformed", phase="B6")
     env.update(
         {
-            name: value.replace("{REPO_ROOT}", str(repo)).replace("{CWD}", str(cwd))
+            name: value.replace("{REPO_ROOT}", str(repo))
+            .replace("{CWD}", str(cwd))
+            .replace("{TRUSTED_ROOT}", str(trusted_root or temp_root))
+            .replace("{ISOLATED_ROOT}", str(isolated))
             for name, value in selected.items()
         }
     )
@@ -160,6 +249,7 @@ def _sandbox_command(
     cwd: Path,
     env: dict[str, str],
     lexical_command: list[str],
+    reviewed_argv: tuple[str, ...],
 ) -> list[str]:
     command = [
         str(sandbox),
@@ -182,6 +272,15 @@ def _sandbox_command(
     ]
     for name, value in sorted(env.items()):
         command.extend(("--setenv", name, value))
+    if reviewed_argv[:1] == ("fnm",):
+        script = reviewed_argv[-1]
+        for name in REVIEWED_UI_SANDBOX_WRITABLE_PATHS[script]:
+            destination = cwd / name
+            source = isolated / f"ui-{name.replace('/', '-') }"
+            source.mkdir(mode=0o700)
+            if not destination.is_dir() or destination.is_symlink():
+                fail(f"UI writable mount destination is unavailable: {name}", phase="B6")
+            command.extend(("--bind", str(source), str(destination)))
     return [*command, "--", *lexical_command]
 
 
@@ -249,10 +348,29 @@ def main(argv: list[str] | None = None) -> int:
             fail("reviewed sandbox executable must be a non-writable regular file", phase="B6")
         sandbox_sha256 = _hash_fd(sandbox_fd)
         sandbox_identity = resolved_executable_identity(repo, sandbox, sandbox_before)
-        env, isolated = _closed_environment(repo, cwd, args.temp_root, argv0=reviewed_argv[0])
+        ui_toolchain_sha256 = (
+            _ui_toolchain_digest(repo, trusted_root)
+            if reviewed_argv[0] == "fnm" and trusted_root is not None
+            else None
+        )
+        env, isolated = _closed_environment(
+            repo,
+            cwd,
+            args.temp_root,
+            argv0=reviewed_argv[0],
+            trusted_root=trusted_root,
+            node_id=args.node,
+        )
         started = utc_now()
         completed = subprocess.run(
-            _sandbox_command(sandbox, isolated, cwd, env, [str(lexical), *reviewed_argv[1:]]),
+            _sandbox_command(
+                sandbox,
+                isolated,
+                cwd,
+                env,
+                [str(lexical), *reviewed_argv[1:]],
+                reviewed_argv,
+            ),
             cwd=cwd,
             env={},
             capture_output=True,
@@ -263,6 +381,12 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.buffer.write(completed.stderr)
         after = os.fstat(target_fd)
         sandbox_after = os.fstat(sandbox_fd)
+        if (
+            ui_toolchain_sha256 is not None
+            and trusted_root is not None
+            and _ui_toolchain_digest(repo, trusted_root) != ui_toolchain_sha256
+        ):
+            fail("UI toolchain changed during command execution", phase="B6")
         resolved_after = lexical.resolve(strict=True)
         if (
             resolved_after != executable
@@ -305,12 +429,18 @@ def main(argv: list[str] | None = None) -> int:
             "selectors": [selector],
             "cwd_scope": cwd_scope,
             "executable_sha256": executable_sha256,
-            "environment_profile_version_sha256": REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256,
+            "environment_profile_version_sha256": reviewed_environment_profile_sha256(
+                args.node, list(reviewed_argv)
+            ),
             "resolved_executable_identity_sha256": target_identity,
             "sandbox_executable_sha256": sandbox_sha256,
-            "sandbox_profile_version_sha256": REVIEWED_SANDBOX_PROFILE_VERSION_SHA256,
+            "sandbox_profile_version_sha256": reviewed_sandbox_profile_sha256(
+                args.node, list(reviewed_argv)
+            ),
             "sandbox_resolved_identity_sha256": sandbox_identity,
         }
+        if ui_toolchain_sha256 is not None:
+            staged_record["ui_toolchain_sha256"] = ui_toolchain_sha256
         _cleanup_isolated(isolated)
         isolated = None
         append_safe_transcript_record(

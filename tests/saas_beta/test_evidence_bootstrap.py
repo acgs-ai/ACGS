@@ -136,13 +136,19 @@ def _reviewed_node_records(node_id: str) -> list[dict[str, Any]]:
             record.update({"cwd_scope": scopes[index], "executable_sha256": "0" * 64})
             record.update(
                 {
-                    "environment_profile_version_sha256": ENVIRONMENT_PROFILE_VERSION_SHA256,
+                    "environment_profile_version_sha256": (
+                        _common.reviewed_environment_profile_sha256(node_id, list(argv))
+                    ),
                     "resolved_executable_identity_sha256": "0" * 64,
                     "sandbox_executable_sha256": "0" * 64,
-                    "sandbox_profile_version_sha256": SANDBOX_PROFILE_VERSION_SHA256,
+                    "sandbox_profile_version_sha256": (
+                        _common.reviewed_sandbox_profile_sha256(node_id, list(argv))
+                    ),
                     "sandbox_resolved_identity_sha256": "0" * 64,
                 }
             )
+            if node_id == "P0-GATES-003" and argv[0] == "fnm":
+                record["ui_toolchain_sha256"] = "0" * 64
         records.append(record)
     return records
 
@@ -2123,6 +2129,72 @@ def test_p0_claims_corpus_is_closed_exact_ordered_and_final_selector_is_last(
             )
 
 
+def test_literal_durable_membrane_record_keeps_legacy_profile_contract() -> None:
+    record = _reviewed_node_records("P0-MEMBRANE-001")[0]
+    # Literal digest copied from the published G002 transcript; never derive it here.
+    record["environment_profile_version_sha256"] = (
+        "de8c50aa969a9cf4c972ac6af85743dfd2517781f4851730e242535aa4b986f5"
+    )
+    _common.validate_transcript_record(record, expected_node="P0-MEMBRANE-001")
+    forged = {**record, "environment_profile_version_sha256": ENVIRONMENT_PROFILE_VERSION_SHA256}
+    with pytest.raises(_common.EvidenceError, match="execution identity"):
+        _common.validate_transcript_record(forged, expected_node="P0-MEMBRANE-001")
+
+
+def test_p0_gates_corpus_is_closed_exact_ordered_and_root_selector_is_last() -> None:
+    node_id = "P0-GATES-003"
+    reviewed = _common.REVIEWED_P0_GATES_TRANSCRIPT
+    records = _reviewed_node_records(node_id)
+    assert len(reviewed) == 16
+    assert [selector for selector, _ in reviewed] == [
+        "root:EVID-gate",
+        *["packages/acgs-control-plane:local-gate"] * 4,
+        "packages/acgs-control-plane:P0-MEMBRANE-001-exact",
+        *["packages/gove-zone:local-gate"] * 4,
+        *["acgi-ai:local-gate"] * 5,
+        "root:P0-GATES-003",
+    ]
+    assert _common.REVIEWED_CWD_SCOPES_BY_NODE[node_id] == (
+        "REPO_ROOT",
+        *["CP"] * 5,
+        *["REPO_ROOT"] * 4,
+        *["UI"] * 5,
+        "REPO_ROOT",
+    )
+    assert [argv for _, argv in reviewed[10:15]] == [
+        (*_common._UI_LOCKED_PREFIX, command)
+        for command in ("lint", "build", "test:all", "test:unit", "test:playwright")
+    ]
+    assert reviewed[-1][1][-1] == (
+        "tests/saas_beta/test_ci_gate_contract.py::test_all_owned_scope_gates_are_required"
+    )
+    _common.validate_node_transcript_sequence(node_id, records)
+
+    broad = copy.deepcopy(records[-1])
+    broad["argv"][-1] = "tests/saas_beta/test_ci_gate_contract.py"
+    substituted = copy.deepcopy(records[13])
+    substituted["argv"][-1] = "test:all"
+    wrong_cwd = copy.deepcopy(records[10])
+    wrong_cwd["cwd_scope"] = "REPO_ROOT"
+    mutations = (
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:13], records[14], records[13], records[15]],
+        [*records[:-1], broad],
+        [*records[:13], substituted, *records[14:]],
+        [*records[:10], wrong_cwd, *records[11:]],
+        _reviewed_node_records("P0-CLAIMS-002"),
+    )
+    for mutation in mutations:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_node_transcript_sequence(node_id, mutation)
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(
+                {"node_id": node_id, "commands": mutation}, expected_node=node_id
+            )
+
+
 def test_node_specific_commands_do_not_weaken_baseline_or_cross_node_contract() -> None:
     membrane_only = list(_common.REVIEWED_P0_MEMBRANE_TRANSCRIPT[-1][1])
     assert tuple(membrane_only) not in _common.REVIEWED_COMMAND_SELECTORS
@@ -2393,7 +2465,9 @@ def test_capture_launcher_uses_lexical_venv_and_ignores_ambient_python_authority
         )
         == 0
     )
-    assert captured["environment_profile_version_sha256"] == ENVIRONMENT_PROFILE_VERSION_SHA256
+    assert captured["environment_profile_version_sha256"] == (
+        _common.LEGACY_MEMBRANE_ENVIRONMENT_PROFILE_VERSION_SHA256
+    )
     assert {path: path.exists() for path in tool_state} == before
 
 
@@ -2663,12 +2737,28 @@ def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> No
     assert _common.REVIEWED_ENVIRONMENT_PROFILE["conditional_environment"] == {
         "uv": {"VIRTUAL_ENV": "{REPO_ROOT}/packages/gove-zone/.venv-beta"}
     }
+    assert _common.REVIEWED_UI_ENVIRONMENT_PROFILE["conditional_environment"] == {
+        "fnm": {
+            "FNM_DIR": "{TRUSTED_ROOT}/scratch/fnm",
+            "COREPACK_HOME": "{TRUSTED_ROOT}/scratch/corepack",
+            "PNPM_HOME": "{TRUSTED_ROOT}/scratch/corepack",
+            "PNPM_STORE_DIR": "{ISOLATED_ROOT}/pnpm-store",
+            "npm_config_cache": "{ISOLATED_ROOT}/npm-cache",
+            "npm_config_userconfig": "{TRUSTED_ROOT}/scratch/npmrc",
+            "COREPACK_ENABLE_NETWORK": "0",
+            "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0",
+            "CI": "1",
+            "PLAYWRIGHT_BROWSERS_PATH": "{TRUSTED_ROOT}/scratch/playwright",
+        }
+    }
     assert _common.REVIEWED_HOST_EXECUTABLES == {
+        "fnm": Path("/home/martin/.local/share/fnm/fnm"),
         "make": Path("/usr/bin/make"),
         "uv": Path("/home") / "martin" / ".local" / "bin" / "uv",
     }
     assert _common.REVIEWED_HOST_EXECUTABLE_SHA256 == {
-        "uv": "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b"
+        "fnm": "2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f",
+        "uv": "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b",
     }
     assert set(environment) == {
         "PATH",
@@ -3149,8 +3239,16 @@ def test_environment_identities_exactly_match_assignment(
         ),
     )
     ui_identity = {
-        "node": {"version": "24.18.0", "executable": str(node_executable.resolve())},
-        "pnpm": {"version": "9.15.4", "executable": str(pnpm_executable.resolve())},
+        "node": {
+            "version": "24.18.0",
+            "executable": str(node_executable.resolve()),
+            "sha256": _common.sha256_file(node_executable),
+        },
+        "pnpm": {
+            "version": "9.15.4",
+            "executable": str(pnpm_executable.resolve()),
+            "sha256": _common.sha256_file(pnpm_executable),
+        },
         "module_root": str(node_modules.resolve()),
     }
     validate_environment_identities._validate_ui(ui_identity, ui_repo)
@@ -3175,8 +3273,10 @@ def test_environment_identities_exactly_match_assignment(
             "interpreter": str(node_executable.resolve()),
             "interpreter_realpath": str(node_executable.resolve()),
             "node_version": "24.18.0",
+            "node_sha256": ui_identity["node"]["sha256"],
             "pnpm_executable": str(pnpm_executable.resolve()),
             "pnpm_version": "9.15.4",
+            "pnpm_sha256": ui_identity["pnpm"]["sha256"],
             "runtime_ctime_ns": runtime_ctime_ns,
             "lock_sha256": lock_digest,
             "nonce": "a" * 64,
@@ -4178,6 +4278,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P0-EVIDENCE-000) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=10" in source
     assert "P0-MEMBRANE-001) ASSIGNMENT='EVID+CP'; EXPECTED_RECORDS=7" in source
     assert "P0-CLAIMS-002) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=14" in source
+    assert "P0-GATES-003) ASSIGNMENT='EVID+CP+GZ+UI'; EXPECTED_RECORDS=16" in source
     assert "capture_reviewed_command.py" in source
     assert "index < EXPECTED_RECORDS" in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
