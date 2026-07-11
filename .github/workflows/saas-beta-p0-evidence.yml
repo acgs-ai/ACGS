@@ -126,7 +126,7 @@ jobs:
             --output "$node_evidence/environment-identities.json"
 
       - name: Run environment-independent P0 evidence contracts
-        # Four tests require actual outer capture/UI or the exact static host
+        # Five tests require actual outer capture/UI or the exact static host
         # context. Those remain in the authorized exact-proof lane.
         env:
           UV_OFFLINE: '1'
@@ -137,7 +137,7 @@ jobs:
         run: |
           .venv-evidence/bin/python -m pytest -q \
             tests/saas_beta/test_evidence_bootstrap.py \
-            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip"
+            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation"
 
   exact-proof:
     # The standard same-repo conjunct is retained because this file also has a
