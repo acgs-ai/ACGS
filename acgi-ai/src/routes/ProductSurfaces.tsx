@@ -348,9 +348,14 @@ const products: ProductRoute[] = [
   },
 ]
 
+const PRODUCT_SLUG_ALIASES: Readonly<Record<string, string>> = {
+  acgs: 'gove-zone',
+}
+
 function getProduct(path: string): ProductRoute | null {
   const slug = path.replace('/products/', '')
-  return products.find((product) => product.slug === slug) ?? null
+  const canonicalSlug = PRODUCT_SLUG_ALIASES[slug] ?? slug
+  return products.find((product) => product.slug === canonicalSlug) ?? null
 }
 
 function ProductNav({ current }: { current?: string }) {

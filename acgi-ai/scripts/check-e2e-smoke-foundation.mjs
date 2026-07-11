@@ -44,6 +44,12 @@ export const E2E_SMOKE_ROUTES = [
     assertions: ['resolves product detail route', 'keeps public-only shell'],
   },
   {
+    name: 'product hero ACGS alias',
+    path: '/products/acgs',
+    surface: 'marketing',
+    assertions: ['resolves the canonical gove-zone product', 'keeps public-only shell'],
+  },
+  {
     name: 'login privilege handoff',
     path: '/login',
     surface: 'console',
@@ -121,10 +127,15 @@ for (const viewport of E2E_VIEWPORTS) {
 }
 check(E2E_VIEWPORTS.length === 5, 'E2E smoke manifest must keep the five PLAN.md viewports.')
 
-for (const path of ['/products/legalguard', '/products/governance-eval', '/products/acgs']) {
+for (const path of ['/products/legalguard', '/products/governance-eval', '/products/gove-zone']) {
   const slug = path.replace('/products/', '')
   check(productSurfaces.includes(`slug: '${slug}'`), `ProductSurfaces.tsx must define ${path}.`)
 }
+mustContain(productSurfaces, "acgs: 'gove-zone'", 'src/routes/ProductSurfaces.tsx')
+check(
+  !productSurfaces.includes("slug: 'acgs'"),
+  'ProductSurfaces.tsx must resolve /products/acgs as an alias, not duplicate product data.',
+)
 
 for (const route of CONSOLE_SIDEBAR_ROUTES) {
   mustContain(wireDecisions, `path: '${route}'`, 'src/routes/console/wire-decisions.ts')

@@ -52,9 +52,11 @@ describe('governance presentation components', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 
-  it('links product evidence claims to the audit console proof route', () => {
+  it('resolves the acgs product alias to the canonical gove-zone route', () => {
     render(<ProductSurface path="/products/acgs" />)
 
+    expect(screen.getByText('ACGS · Runtime bridge')).toBeInTheDocument()
+    expect(screen.getByText('/products/gove-zone')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /receipt/i })).toHaveAttribute('href', '/console/audit')
     expect(screen.getByRole('link', { name: /audit chain/i })).toHaveAttribute(
       'href',

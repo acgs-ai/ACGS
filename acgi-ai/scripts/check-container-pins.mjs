@@ -6,6 +6,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const failures = []
 const nodeImage = 'node:24-alpine'
 const caddyImage = 'caddy:2.10.2-alpine'
+const nodeVersion = '24.18.0'
+const packageManager =
+  'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 
 function read(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8')
@@ -27,16 +30,19 @@ const securityInvariants = read('scripts/check-security-invariants.mjs')
 const deployDocs = read('DEPLOY.md')
 const contributorGuide = read('CLAUDE.md')
 const readinessMap = readIfExists('../docs/integration-readiness-task-map.md')
-const nodeVersion = readIfExists('.node-version').trim()
+const configuredNodeVersion = readIfExists('.node-version').trim()
 
-check(nodeVersion === '24', 'acgi-ai/.node-version must pin Node 24 for local deploy parity.')
+check(
+  configuredNodeVersion === nodeVersion,
+  `acgi-ai/.node-version must pin exact Node ${nodeVersion} for local deploy parity.`,
+)
 check(
   packageJson.engines?.node === '>=24 <25',
   'package.json engines.node must require the Node 24 major used by CI and console image builds.',
 )
 check(
-  packageJson.packageManager === 'pnpm@9.15.4',
-  'package.json must pin pnpm through packageManager for Corepack and CI parity.',
+  packageJson.packageManager === packageManager,
+  'package.json must integrity-pin pnpm 9.15.4 through packageManager for Corepack and CI parity.',
 )
 check(
   new RegExp(`FROM\\s+${nodeImage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+AS\\s+build`).test(
