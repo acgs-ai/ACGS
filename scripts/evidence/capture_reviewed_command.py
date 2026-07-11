@@ -25,6 +25,7 @@ from _common import (
     LEGACY_MEMBRANE_ENVIRONMENT_PROFILE,
     REVIEWED_ENVIRONMENT_PROFILE,
     REVIEWED_HOST_EXECUTABLE_SHA256,
+    REVIEWED_P0_GATES_TRANSCRIPT,
     REVIEWED_UI_ENVIRONMENT_PROFILE,
     REVIEWED_UI_HOST_SECRET_PATHS,
     REVIEWED_UI_SANDBOX_WRITABLE_PATHS,
@@ -47,6 +48,18 @@ from _common import (
 FNM_EXECUTABLE = Path("/home/martin/.local/share/fnm/fnm")
 UI_TOOL_HASHES = cast(dict[str, str], REVIEWED_UI_TOOLCHAIN["sha256"])
 UI_TREE_HASHES = cast(dict[str, str], REVIEWED_UI_TOOLCHAIN["tree_sha256"])
+HASH_CHUNK_BYTES = 1024 * 1024
+REVIEWED_GATES_UI_ARGV = frozenset(
+    argv for _selector, argv in REVIEWED_P0_GATES_TRANSCRIPT if argv[:1] == ("fnm",)
+)
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(HASH_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _tree_digest(root: Path) -> str:
@@ -57,7 +70,7 @@ def _tree_digest(root: Path) -> str:
             kind, payload = b"L", str(path.readlink()).encode()
         elif path.is_file():
             kind = b"F"
-            payload = hashlib.sha256(path.read_bytes()).hexdigest().encode()
+            payload = _sha256_path(path).encode()
         elif path.is_dir():
             kind, payload = b"D", b""
         else:
@@ -104,7 +117,7 @@ def _ui_toolchain_digest(repo: Path, trusted_root: Path) -> str:
     identities: dict[str, dict[str, str]] = {}
     for name, path in paths.items():
         canonical = path.resolve(strict=True)
-        digest = hashlib.sha256(canonical.read_bytes()).hexdigest()
+        digest = _sha256_path(canonical)
         if not canonical.is_relative_to(trusted_root / "scratch") or digest != UI_TOOL_HASHES[name]:
             fail(f"UI tool identity mismatch: {name}", phase="B6")
         identities[name] = {"realpath": str(canonical), "sha256": digest}
@@ -124,12 +137,12 @@ def _ui_toolchain_digest(repo: Path, trusted_root: Path) -> str:
         identities[f"{name}_tree"] = {"realpath": str(root), "sha256": digest}
     for name in ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"):
         path = repo / "acgi-ai" / name
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest = _sha256_path(path)
         identities[name] = {"realpath": str(path.resolve(strict=True)), "sha256": digest}
     root_package = repo / "package.json"
     identities["root-package.json"] = {
         "realpath": str(root_package.resolve(strict=True)),
-        "sha256": hashlib.sha256(root_package.read_bytes()).hexdigest(),
+        "sha256": _sha256_path(root_package),
     }
     selector = cast(str, REVIEWED_UI_TOOLCHAIN["pnpm_corepack_selector"])
     for package in (root_package, repo / "acgi-ai/package.json"):
@@ -141,7 +154,7 @@ def _ui_toolchain_digest(repo: Path, trusted_root: Path) -> str:
         != "50c15b3f4420b77d890a9bd93844462418daa2df5842ffeaa77d7eeab36b8da6"
     ):
         fail("UI workspace lifecycle policy differs from reviewed policy", phase="B6")
-    fnm_digest = hashlib.sha256(FNM_EXECUTABLE.read_bytes()).hexdigest()
+    fnm_digest = _sha256_path(FNM_EXECUTABLE)
     if fnm_digest != UI_TOOL_HASHES["fnm"]:
         fail("UI fnm identity mismatch", phase="B6")
     identities["fnm"] = {"realpath": str(FNM_EXECUTABLE), "sha256": fnm_digest}
@@ -268,9 +281,21 @@ def _sandbox_command(
     env: dict[str, str],
     lexical_command: list[str],
     reviewed_argv: tuple[str, ...],
+    *,
+    node_id: str,
 ) -> list[str]:
+    is_ui_command = reviewed_argv[:1] == ("fnm",)
+    writable_paths: tuple[str, ...] = ()
+    if is_ui_command:
+        if node_id != "P0-GATES-003" or reviewed_argv not in REVIEWED_GATES_UI_ARGV:
+            fail("fnm execution is outside the exact P0-GATES-003 UI allowlist", phase="B6")
+        script = reviewed_argv[-1]
+        selected_writable_paths = REVIEWED_UI_SANDBOX_WRITABLE_PATHS.get(script)
+        if selected_writable_paths is None:
+            fail("reviewed UI writable-path profile is unavailable", phase="B6")
+        writable_paths = selected_writable_paths
     empty_secret_mask: Path | None = None
-    if reviewed_argv[:1] == ("fnm",):
+    if is_ui_command:
         empty_secret_mask = isolated / "host-secret-mask"
         fd = os.open(empty_secret_mask, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
         os.close(fd)
@@ -288,7 +313,7 @@ def _sandbox_command(
     ]
     for masked_root in masked_roots:
         command.extend(("--tmpfs", str(masked_root)))
-    if reviewed_argv[:1] == ("fnm",):
+    if is_ui_command:
         for secret_path in map(Path, REVIEWED_UI_HOST_SECRET_PATHS):
             if secret_path.is_dir():
                 command.extend(("--tmpfs", str(secret_path)))
@@ -351,9 +376,8 @@ def _sandbox_command(
     command.extend(("--proc", "/proc", "--dev", "/dev", "--chdir", str(cwd), "--clearenv"))
     for name, value in sorted(env.items()):
         command.extend(("--setenv", name, value))
-    if reviewed_argv[:1] == ("fnm",):
-        script = reviewed_argv[-1]
-        for name in REVIEWED_UI_SANDBOX_WRITABLE_PATHS[script]:
+    if is_ui_command:
+        for name in writable_paths:
             destination = cwd / name
             source = isolated / f"ui-{name.replace('/', '-')}"
             source.mkdir(mode=0o700)
@@ -396,6 +420,13 @@ def main(argv: list[str] | None = None) -> int:
             args.transcript, repo, node_id=args.node, filename="transcript.jsonl", must_exist=False
         )
         selector, reviewed_argv, cwd_scope = reviewed_node_command(args.node, args.index)
+        is_ui_command = reviewed_argv[:1] == ("fnm",)
+        if is_ui_command and (
+            args.node != "P0-GATES-003" or reviewed_argv not in REVIEWED_GATES_UI_ARGV
+        ):
+            fail("fnm execution is outside the exact P0-GATES-003 UI allowlist", phase="B6")
+        if is_ui_command and trusted_root is None:
+            fail("P0-GATES-003 UI execution requires canonical --trusted-root", phase="B6")
         cwd = reviewed_cwd(repo, cwd_scope)
         executable = reviewed_executable(cwd, reviewed_argv[0])
         lexical = cwd / reviewed_argv[0] if "/" in reviewed_argv[0] else executable
@@ -429,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
         sandbox_identity = resolved_executable_identity(repo, sandbox, sandbox_before)
         ui_toolchain_sha256 = (
             _ui_toolchain_digest(repo, trusted_root)
-            if reviewed_argv[0] == "fnm" and trusted_root is not None
+            if is_ui_command and trusted_root is not None
             else None
         )
         env, isolated = _closed_environment(
@@ -450,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                 env,
                 [str(lexical), *reviewed_argv[1:]],
                 reviewed_argv,
+                node_id=args.node,
             ),
             cwd=cwd,
             env={},

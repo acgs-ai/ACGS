@@ -44,8 +44,14 @@ fi
     'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent identity changed' >&2
   exit 2
 }
-[[ "$(/usr/bin/sha256sum "/proc/$ACGS_STATIC_PARENT_PID/exe" | \
-  /usr/bin/awk '{print $1}')" == "$STATIC_LAUNCHER_SHA256" ]] || {
+ACGS_STATIC_PARENT_SHA256_OUTPUT="$(
+  /usr/bin/sha256sum -- "/proc/$ACGS_STATIC_PARENT_PID/exe"
+)" || {
+  printf '%s\n' \
+    'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent digest changed' >&2
+  exit 2
+}
+[[ "${ACGS_STATIC_PARENT_SHA256_OUTPUT%% *}" == "$STATIC_LAUNCHER_SHA256" ]] || {
   printf '%s\n' \
     'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent digest changed' >&2
   exit 2
@@ -121,7 +127,11 @@ UV_SHA256=a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b
   printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv path is noncanonical\n' >&2
   exit 2
 }
-[[ "$(/usr/bin/sha256sum "$UV_BIN" | /usr/bin/awk '{print $1}')" == "$UV_SHA256" ]] || {
+UV_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$UV_BIN")" || {
+  printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv digest mismatch\n' >&2
+  exit 2
+}
+[[ "${UV_SHA256_OUTPUT%% *}" == "$UV_SHA256" ]] || {
   printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv digest mismatch\n' >&2
   exit 2
 }
@@ -205,12 +215,22 @@ CLEANUP_HELPER="$SOURCE_REPO/scripts/evidence/clean_sibling_cleanup.sh"
   die 'clean-sibling cleanup helper is missing or noncanonical'
 # shellcheck source=scripts/evidence/clean_sibling_cleanup.sh
 source "$CLEANUP_HELPER"
-git -C "$SOURCE_REPO" cat-file -e "$T^{commit}" || die 'T commit is unavailable'
-git -C "$SOURCE_REPO" cat-file -e "$P^{commit}" || die 'P commit is unavailable'
-git -C "$SOURCE_REPO" merge-base --is-ancestor "$P" "$T" ||
-  die 'P must be an ancestor of exact T'
+ANCESTRY_PYTHON=/usr/bin/python3
+[[ -x "$ANCESTRY_PYTHON" && \
+  "$(realpath -e "$ANCESTRY_PYTHON" 2>/dev/null || true)" == /usr/bin/python3.* ]] ||
+  die 'trusted ancestry interpreter /usr/bin/python3 is unavailable'
+LITERAL_ANCESTRY_HELPER="$SOURCE_REPO/scripts/evidence/verify_literal_ancestry.py"
+[[ -f "$LITERAL_ANCESTRY_HELPER" && ! -L "$LITERAL_ANCESTRY_HELPER" && \
+  "$(realpath -e "$LITERAL_ANCESTRY_HELPER")" == "$LITERAL_ANCESTRY_HELPER" ]] ||
+  die 'literal ancestry helper is missing or noncanonical'
+SOURCE_HEAD="$(git -C "$SOURCE_REPO" rev-parse --verify HEAD)" ||
+  die 'source HEAD is unavailable'
+[[ "$SOURCE_HEAD" == "$T" ]] || die 'source HEAD must equal exact T'
 [[ -z "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'source repository must be clean before proof'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= \
+  "$ANCESTRY_PYTHON" "$LITERAL_ANCESTRY_HELPER" "$SOURCE_REPO" "$P" "$T" ||
+  die 'P must be a literal ancestor of exact T'
 git -C "$SOURCE_REPO" diff --check "$P..$T" || die 'P..T diff check failed'
 [[ "$(uname -m)" == 'x86_64' ]] || die 'lock platform requires x86_64'
 
@@ -408,9 +428,13 @@ git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "$T"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'detached sibling is dirty before bootstrap'
-git -C "$WORKTREE" cat-file -e "$P^{commit}" || die 'detached sibling cannot resolve P'
-git -C "$WORKTREE" merge-base --is-ancestor "$P" "$T" ||
-  die 'detached sibling P/T ancestry mismatch'
+DETACHED_ANCESTRY_HELPER="$WORKTREE/scripts/evidence/verify_literal_ancestry.py"
+[[ -f "$DETACHED_ANCESTRY_HELPER" && ! -L "$DETACHED_ANCESTRY_HELPER" && \
+  "$(realpath -e "$DETACHED_ANCESTRY_HELPER")" == "$DETACHED_ANCESTRY_HELPER" ]] ||
+  die 'detached literal ancestry helper is missing or noncanonical'
+PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= \
+  "$ANCESTRY_PYTHON" "$DETACHED_ANCESTRY_HELPER" "$WORKTREE" "$P" "$T" ||
+  die 'detached sibling literal P/T ancestry mismatch'
 git -C "$WORKTREE" diff --check "$P..$T" || die 'detached sibling P..T diff check failed'
 
 export REPO_ROOT="$WORKTREE"
@@ -662,12 +686,16 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
   chmod 400 "$UI_EMPTY_SECRET_MASK"
   [[ -x "$HOST_FNM_BIN" && ! -L "$HOST_FNM_BIN" && \
     "$(realpath -e "$HOST_FNM_BIN")" == "$HOST_FNM_BIN" ]] || die 'canonical fnm is unavailable'
-  [[ "$(sha256sum "$HOST_FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] ||
+  FNM_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$HOST_FNM_BIN")" ||
+    die 'cannot hash canonical fnm'
+  [[ "${FNM_SHA256_OUTPUT%% *}" == "$FNM_SHA256" ]] ||
     die 'canonical fnm digest mismatch'
   mkdir -m 700 "$SCRATCH_ROOT/ui-bin"
   cp "$HOST_FNM_BIN" "$FNM_BIN"
   chmod 500 "$FNM_BIN"
-  [[ "$(sha256sum "$FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] ||
+  FNM_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$FNM_BIN")" ||
+    die 'cannot hash owned fnm'
+  [[ "${FNM_SHA256_OUTPUT%% *}" == "$FNM_SHA256" ]] ||
     die 'owned fnm digest mismatch'
   ui_tree_sha256() {
     /usr/bin/python3 - "$1" <<'PY'
@@ -677,13 +705,18 @@ import sys
 
 root = Path(sys.argv[1])
 digest = hashlib.sha256()
+chunk_bytes = 1024 * 1024
 for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
     relative = path.relative_to(root).as_posix().encode()
     if path.is_symlink():
         kind, payload = b"L", str(path.readlink()).encode()
     elif path.is_file():
         kind = b"F"
-        payload = hashlib.sha256(path.read_bytes()).hexdigest().encode()
+        file_digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(chunk_bytes):
+                file_digest.update(chunk)
+        payload = file_digest.hexdigest().encode()
     elif path.is_dir():
         kind, payload = b"D", b""
     else:
@@ -749,7 +782,11 @@ PY
     "$HOST_PNPM_ROOT/package.json:$PNPM_PACKAGE_SHA256" \
     "$HOST_PNPM_ROOT/.corepack:$PNPM_COREPACK_METADATA_SHA256"; do
     path="${pair%:*}"; expected="${pair##*:}"
-    [[ -f "$path" && "$(sha256sum "$path" | awk '{print $1}')" == "$expected" ]] || die "preverified UI cache identity mismatch: $path"
+    [[ -f "$path" ]] || die "preverified UI cache identity mismatch: $path"
+    UI_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$path")" ||
+      die "preverified UI cache identity mismatch: $path"
+    [[ "${UI_SHA256_OUTPUT%% *}" == "$expected" ]] ||
+      die "preverified UI cache identity mismatch: $path"
   done
   COREPACK_TREE_SHA256=6dc22292849f9e176da87530b3c6e7e871b6d153853905472323a30c68e3ef83
   PNPM_TREE_SHA256=f5024c43f73511fd4405a2af8e5284037c7ce9d740ccbc21b48c82a4372a5e1b
@@ -776,8 +813,10 @@ PY
     [[ "$OBSERVED_PACKAGE_MANAGER" == "$PNPM_SELECTOR" ]] ||
       die "packageManager must match the reviewed pnpm name/version/integrity selector: $manifest"
   done
-  [[ "$(sha256sum "$WORKTREE/acgi-ai/pnpm-workspace.yaml" | awk '{print $1}')" == \
-    "$UI_WORKSPACE_SHA256" ]] || die 'reviewed UI workspace lifecycle policy mismatch'
+  UI_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$WORKTREE/acgi-ai/pnpm-workspace.yaml")" ||
+    die 'cannot hash reviewed UI workspace lifecycle policy'
+  [[ "${UI_SHA256_OUTPUT%% *}" == "$UI_WORKSPACE_SHA256" ]] ||
+    die 'reviewed UI workspace lifecycle policy mismatch'
   UI_COREPACK_JS="$OWNED_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js"
   ui_bwrap offline "$FNM_BIN" install 24.18.0
   ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable
@@ -892,7 +931,9 @@ run_recorded_gate() {
   fi
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
-    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
+    STDERR_SHA256_OUTPUT="$(/usr/bin/sha256sum -- "$stderr_file")" ||
+      die "cannot hash recorded gate stderr: $stderr_file"
+    stderr_sha256="${STDERR_SHA256_OUTPUT%% *}"
     printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
       "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
     return "$gate_status"

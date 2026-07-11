@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.metadata
 import inspect
+import io
 import json
 import os
 import shutil
@@ -33,6 +34,7 @@ import render_lock_inputs  # noqa: E402
 import validate_attestations  # noqa: E402
 import validate_environment_identities  # noqa: E402
 import validate_run  # noqa: E402
+import verify_literal_ancestry  # noqa: E402
 
 LOCK_ROOT = ROOT / "requirements/saas-beta"
 SCHEMA_ROOT = ROOT / "schemas/evidence"
@@ -2832,6 +2834,7 @@ def test_reviewed_sandbox_masks_ambient_home_credentials(tmp_path: Path) -> None
             ),
         ],
         ("make", "lint-docs"),
+        node_id="P0-MEMBRANE-001",
     )
     completed = subprocess.run(command, cwd=ROOT, env={}, capture_output=True, check=False)
     assert completed.returncode == 0, completed.stderr
@@ -2861,6 +2864,7 @@ def test_reviewed_ui_sandbox_masks_host_secret_configuration(tmp_path: Path) -> 
             ),
         ],
         ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+        node_id="P0-GATES-003",
     )
     completed = subprocess.run(command, cwd=ROOT, env={}, capture_output=True, check=False)
     assert completed.returncode == 0, completed.stderr
@@ -2977,6 +2981,167 @@ def test_ui_composite_binds_installed_node_modules_realization(tmp_path: Path) -
         "packages:\n  - .\n\nonlyBuiltDependencies:\n  - msw\n"
     )
     assert '"pnpm-workspace.yaml"' in source
+
+
+def test_ui_tree_hashing_streams_bounded_chunks_without_changing_tree_semantics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    payload = (b"bounded-ui-tree\n" * 131_073) + b"tail"
+    artifact = root / "artifact.bin"
+    artifact.write_bytes(payload)
+    (root / "directory").mkdir()
+    (root / "link").symlink_to("artifact.bin")
+    expected = hashlib.sha256()
+    expected.update(b"artifact.bin\0F\0" + hashlib.sha256(payload).hexdigest().encode() + b"\0")
+    expected.update(b"directory\0D\0\0")
+    expected.update(b"link\0L\0artifact.bin\0")
+
+    real_open = Path.open
+    read_sizes: list[int] = []
+
+    class BoundedReader:
+        def __init__(self, stream: Any) -> None:
+            self.stream = stream
+
+        def __enter__(self) -> BoundedReader:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.stream.close()
+
+        def read(self, size: int = -1) -> bytes:
+            assert 0 < size <= 1024 * 1024
+            read_sizes.append(size)
+            return self.stream.read(size)
+
+    def bounded_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        stream = real_open(path, *args, **kwargs)
+        return BoundedReader(stream) if path == artifact else stream
+
+    monkeypatch.setattr(Path, "open", bounded_open)
+    assert capture_reviewed_command._tree_digest(root) == expected.hexdigest()
+    assert read_sizes and max(read_sizes) <= 1024 * 1024
+
+    capture_source = inspect.getsource(capture_reviewed_command._tree_digest) + inspect.getsource(
+        capture_reviewed_command._sha256_path
+    )
+    prover_source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    prover_tree = prover_source.split("  ui_tree_sha256() {", 1)[1].split("\n  ui_bwrap() {", 1)[0]
+    for source in (capture_source, prover_tree):
+        assert ".read_bytes(" not in source
+        assert ".read(" in source
+    assert "stream.read(HASH_CHUNK_BYTES)" in capture_source
+    assert "chunk_bytes = 1024 * 1024" in prover_tree
+    assert "stream.read(chunk_bytes)" in prover_tree
+
+
+@pytest.mark.parametrize(
+    ("node_id", "reviewed_argv", "trusted_root_kind"),
+    (
+        (
+            "P0-MEMBRANE-001",
+            ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+            "valid",
+        ),
+        (
+            "P0-GATES-003",
+            ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint", "extra"),
+            "valid",
+        ),
+        (
+            "P0-GATES-003",
+            ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+            "missing",
+        ),
+        (
+            "P0-GATES-003",
+            ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+            "symlink",
+        ),
+    ),
+)
+def test_ui_capture_rejects_noncanonical_execution_before_setup_or_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    node_id: str,
+    reviewed_argv: tuple[str, ...],
+    trusted_root_kind: str,
+) -> None:
+    os.chmod(tmp_path, 0o700)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    transcript = tmp_path / "transcript.jsonl"
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "reviewed_node_command",
+        lambda *_args: ("acgi-ai:local-gate", reviewed_argv, "UI"),
+    )
+    subprocess_calls = 0
+    append_calls = 0
+
+    def forbidden_subprocess(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal subprocess_calls
+        subprocess_calls += 1
+        raise AssertionError("subprocess must not run")
+
+    def forbidden_append(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal append_calls
+        append_calls += 1
+        raise AssertionError("transcript must not append")
+
+    monkeypatch.setattr(capture_reviewed_command.subprocess, "run", forbidden_subprocess)
+    monkeypatch.setattr(capture_reviewed_command, "append_safe_transcript_record", forbidden_append)
+    arguments = [
+        "--node",
+        node_id,
+        "--index",
+        "0",
+        "--transcript",
+        str(transcript),
+        "--temp-root",
+        str(runtime),
+    ]
+    if trusted_root_kind != "missing":
+        trusted_root = tmp_path
+        if trusted_root_kind == "symlink":
+            trusted_root = tmp_path / "trusted-link"
+            trusted_root.symlink_to(tmp_path, target_is_directory=True)
+        arguments.extend(("--trusted-root", str(trusted_root)))
+    assert capture_reviewed_command.main(arguments) == 2
+    assert subprocess_calls == append_calls == 0
+    assert not transcript.exists()
+    assert not list(runtime.iterdir())
+
+
+def test_ui_sandbox_missing_writable_profile_fails_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = tmp_path / "isolated"
+    isolated.mkdir()
+    monkeypatch.delitem(capture_reviewed_command.REVIEWED_UI_SANDBOX_WRITABLE_PATHS, "lint")
+    with pytest.raises(_common.EvidenceError, match="writable-path profile"):
+        capture_reviewed_command._sandbox_command(
+            _common.BWRAP_EXECUTABLE,
+            isolated,
+            ROOT,
+            ROOT / "acgi-ai",
+            {"PATH": "/usr/bin:/bin", "HOME": str(isolated)},
+            ["/home/martin/.local/share/fnm/fnm", "exec"],
+            ("fnm", "exec", "--using", "24.18.0", "--", "pnpm", "lint"),
+            node_id="P0-GATES-003",
+        )
+    assert not list(isolated.iterdir())
 
 
 def test_capture_launcher_rejects_changed_sandbox_binary(
@@ -4337,7 +4502,7 @@ def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
         )
         assert completed.returncode == 2
         assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
-        assert "T commit is unavailable" in completed.stderr
+        assert "source HEAD must equal exact T" in completed.stderr
         assert sentinel.read_bytes() == b"unchanged"
         assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
         assert not marker.exists()
@@ -4402,7 +4567,7 @@ def test_clean_sibling_launcher_requires_explicit_allowlisted_node_and_t(
         check=False,
     )
     assert reached.returncode == 2
-    assert "T commit is unavailable" in reached.stderr
+    assert "source HEAD must equal exact T" in reached.stderr
     assert "ambient UI loader/config/auth/proxy variable rejected: NODE_ID" not in reached.stderr
     wrong_gates_parent = subprocess.run(
         [str(launcher), "P0-GATES-003", "0" * 40],
@@ -4446,6 +4611,294 @@ def test_clean_sibling_rejects_available_nonbase_parent_before_mutation(
     assert completed.returncode == 2
     assert "reviewed parent must be exact" in completed.stderr
     assert not list(caller.glob("acgs-p0-evidence.*"))
+
+
+def _literal_commit_payload(*parents: str) -> bytes:
+    parent_headers = b"".join(f"parent {parent}\n".encode() for parent in parents)
+    return (
+        f"tree {'1' * 40}\n".encode()
+        + parent_headers
+        + b"author Evidence Test <evidence@example.invalid> 1 +0000\n"
+        + b"committer Evidence Test <evidence@example.invalid> 1 +0000\n\nmessage\n"
+    )
+
+
+def _literal_commit_oid(payload: bytes) -> str:
+    canonical = b"commit " + str(len(payload)).encode() + b"\0" + payload
+    return hashlib.sha1(canonical).hexdigest()
+
+
+def test_literal_ancestry_raw_reader_rejects_hash_type_size_and_parser_failures() -> None:
+    payload = _literal_commit_payload()
+    oid = _literal_commit_oid(payload)
+
+    class FakeProcess:
+        def __init__(self, stdout: bytes) -> None:
+            self.stdin = io.BytesIO()
+            self.stdout = io.BytesIO(stdout)
+
+    def read_frame(frame: bytes, requested: str = oid) -> tuple[str, ...]:
+        batch = object.__new__(verify_literal_ancestry.GitObjectBatch)
+        batch.process = FakeProcess(frame)  # type: ignore[assignment]
+        return batch.read_commit(requested)
+
+    valid = f"{oid} commit {len(payload)}\n".encode() + payload + b"\n"
+    assert read_frame(valid) == ()
+    failures = (
+        f"{oid} blob {len(payload)}\n".encode() + payload + b"\n",
+        f"{oid} commit 01\n".encode(),
+        f"{oid} commit {verify_literal_ancestry.MAX_COMMIT_BYTES + 1}\n".encode(),
+        f"{oid} commit {len(payload)}\n".encode() + payload[:-1],
+        b"x" * (verify_literal_ancestry.MAX_BATCH_HEADER_BYTES + 1) + b"\n",
+    )
+    for frame in failures:
+        with pytest.raises(verify_literal_ancestry.LiteralAncestryError):
+            read_frame(frame)
+    forged_oid = "0" * 40
+    forged = f"{forged_oid} commit {len(payload)}\n".encode() + payload + b"\n"
+    with pytest.raises(verify_literal_ancestry.LiteralAncestryError, match="hash mismatch"):
+        read_frame(forged, forged_oid)
+
+    malformed_parent = _literal_commit_payload("A" * 40)
+    with pytest.raises(verify_literal_ancestry.LiteralAncestryError, match="parent"):
+        verify_literal_ancestry._parse_commit_parents(malformed_parent)
+    too_many_parents = _literal_commit_payload(
+        *(f"{index:040x}" for index in range(verify_literal_ancestry.MAX_PARENTS + 1))
+    )
+    with pytest.raises(verify_literal_ancestry.LiteralAncestryError, match="parent bound"):
+        verify_literal_ancestry._parse_commit_parents(too_many_parents)
+
+    class LinearBatch:
+        def read_commit(self, current: str) -> tuple[str, ...]:
+            return {"c" * 40: ("b" * 40,), "b" * 40: ("a" * 40,), "a" * 40: ()}[current]
+
+    with pytest.raises(verify_literal_ancestry.LiteralAncestryError, match="visited commit bound"):
+        verify_literal_ancestry._walk_literal_ancestry(
+            LinearBatch(),  # type: ignore[arg-type]
+            "a" * 40,
+            "c" * 40,
+            max_visited=2,
+        )
+
+
+def test_literal_ancestry_accepts_real_graph_and_rejects_graft_and_replace_forgeries(
+    tmp_path: Path,
+) -> None:
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"], cwd=repo, check=True
+    )
+    (repo / "base").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "base"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    ancestor = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "child").write_text("child\n", encoding="utf-8")
+    subprocess.run(["git", "add", "child"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "child"], cwd=repo, check=True)
+    real_child = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    assert verify_literal_ancestry.main([str(repo), ancestor, real_child]) == 0
+
+    subprocess.run(["git", "checkout", "--orphan", "unrelated"], cwd=repo, check=True)
+    subprocess.run(["git", "rm", "-qrf", "."], cwd=repo, check=True)
+    (repo / "unrelated").write_text("unrelated\n", encoding="utf-8")
+    subprocess.run(["git", "add", "unrelated"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "unrelated"], cwd=repo, check=True)
+    unrelated = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    caller = tmp_path / "caller"
+    caller.mkdir(mode=0o700)
+    (caller / "sentinel").write_text("unchanged\n", encoding="utf-8")
+
+    grafts = repo / ".git/info/grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    grafts.write_text(f"{unrelated} {ancestor}\n", encoding="ascii")
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, unrelated],
+            cwd=repo,
+            check=False,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+    assert verify_literal_ancestry.main([str(repo), ancestor, unrelated]) == 2
+    grafts.unlink()
+
+    tree = subprocess.check_output(
+        ["git", "show", "-s", "--format=%T", unrelated], cwd=repo, text=True
+    ).strip()
+    replacement = subprocess.check_output(
+        ["git", "commit-tree", tree, "-p", ancestor],
+        cwd=repo,
+        text=True,
+        input="replacement\n",
+    ).strip()
+    subprocess.run(["git", "replace", unrelated, replacement], cwd=repo, check=True)
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, unrelated],
+            cwd=repo,
+            check=False,
+        ).returncode
+        == 0
+    )
+    assert verify_literal_ancestry.main([str(repo), ancestor, unrelated]) == 2
+    assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
+    assert not list(caller.glob("acgs-p0-evidence.*"))
+
+
+def test_literal_ancestry_detached_invocation_ignores_graft_metadata(tmp_path: Path) -> None:
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"], cwd=repo, check=True
+    )
+    helper = repo / "scripts/evidence/verify_literal_ancestry.py"
+    helper.parent.mkdir(parents=True)
+    shutil.copy2(EVIDENCE_SCRIPTS / "verify_literal_ancestry.py", helper)
+    subprocess.run(
+        ["git", "add", "scripts/evidence/verify_literal_ancestry.py"], cwd=repo, check=True
+    )
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    ancestor = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "child").write_text("child\n", encoding="utf-8")
+    subprocess.run(["git", "add", "child"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "child"], cwd=repo, check=True)
+    child = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    grafts = repo / ".git/info/grafts"
+    grafts.parent.mkdir(parents=True, exist_ok=True)
+    grafts.write_text(f"{child}\n", encoding="ascii")
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, child],
+            cwd=repo,
+            check=False,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        != 0
+    )
+    detached = (tmp_path / "detached").resolve()
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(detached), child],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    completed = subprocess.run(
+        [
+            "/usr/bin/python3",
+            str(detached / "scripts/evidence/verify_literal_ancestry.py"),
+            str(detached),
+            ancestor,
+            child,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_clean_sibling_uses_literal_ancestry_at_source_and_detached_boundaries() -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    assert "merge-base --is-ancestor" not in source
+    assert "sha256sum" in source
+    assert all("awk" not in line for line in source.splitlines() if "sha256sum" in line)
+    assert source.count("SHA256_OUTPUT%% *") >= 5
+    source_check = '[[ "$SOURCE_HEAD" == "$T" ]] || die \'source HEAD must equal exact T\''
+    source_invocation = '"$LITERAL_ANCESTRY_HELPER" "$SOURCE_REPO" "$P" "$T"'
+    detached_invocation = '"$DETACHED_ANCESTRY_HELPER" "$WORKTREE" "$P" "$T"'
+    assert source_check in source
+    assert source_invocation in source
+    assert detached_invocation in source
+    assert source.index(source_check) < source.index(source_invocation)
+    assert source.index('worktree add --detach "$WORKTREE" "$T"') < source.index(
+        detached_invocation
+    )
+
+
+@pytest.mark.parametrize("forgery", ["graft", "replace"])
+def test_clean_sibling_rejects_forged_ancestry_without_proof_residue(
+    tmp_path: Path, forgery: str
+) -> None:
+    forged_repo = (tmp_path / f"repo-{forgery}").resolve()
+    subprocess.run(["git", "clone", "-q", "--no-checkout", str(ROOT), str(forged_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=forged_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=forged_repo,
+        check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "HEAD"], cwd=forged_repo, check=True)
+    for name in ("prove_clean_sibling.sh", "verify_literal_ancestry.py"):
+        shutil.copy2(EVIDENCE_SCRIPTS / name, forged_repo / "scripts/evidence" / name)
+    subprocess.run(
+        [
+            "git",
+            "add",
+            "scripts/evidence/prove_clean_sibling.sh",
+            "scripts/evidence/verify_literal_ancestry.py",
+        ],
+        cwd=forged_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "test literal ancestry helper"], cwd=forged_repo, check=True
+    )
+    tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=forged_repo, text=True
+    ).strip()
+    unrelated = subprocess.check_output(
+        ["git", "commit-tree", tree], cwd=forged_repo, text=True, input="unrelated\n"
+    ).strip()
+    subprocess.run(["git", "reset", "-q", "--hard", unrelated], cwd=forged_repo, check=True)
+    reviewed_parent = "5918828010125ebcedaaf96fb9cd5e109598f2a8"
+    if forgery == "graft":
+        grafts = forged_repo / ".git/info/grafts"
+        grafts.parent.mkdir(parents=True, exist_ok=True)
+        grafts.write_text(f"{unrelated} {reviewed_parent}\n", encoding="ascii")
+    else:
+        replacement = subprocess.check_output(
+            ["git", "commit-tree", tree, "-p", reviewed_parent],
+            cwd=forged_repo,
+            text=True,
+            input="replacement\n",
+        ).strip()
+        subprocess.run(["git", "replace", unrelated, replacement], cwd=forged_repo, check=True)
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", reviewed_parent, unrelated],
+            cwd=forged_repo,
+            check=False,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
+    caller = tmp_path / f"caller-{forgery}"
+    caller.mkdir(mode=0o700)
+    sentinel = caller / "sentinel"
+    sentinel.write_text("unchanged\n", encoding="utf-8")
+    completed = subprocess.run(
+        [str(forged_repo / "scripts/evidence/prove_clean_sibling"), "P0-GATES-003", unrelated],
+        cwd=forged_repo,
+        env={
+            **_evidence_env(tmp_path / "unused"),
+            "P": reviewed_parent,
+            "TMPDIR": str(caller),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "P must be a literal ancestor of exact T" in completed.stderr
+    assert sentinel.read_text(encoding="utf-8") == "unchanged\n"
+    assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
 
 
 def test_ui_bootstrap_network_and_failure_boundaries_are_fail_closed(
