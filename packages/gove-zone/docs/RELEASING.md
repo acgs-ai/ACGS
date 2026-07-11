@@ -10,6 +10,10 @@ human-pushed tag AND a human environment approval.
    environment `pypi`. (For the very first upload use PyPI's
    "pending publisher" flow — no API token is ever stored in GitHub.)
 2. GitHub → Settings → Environments → `pypi` → required reviewers: repo owner.
+   This step is load-bearing, not hygiene: an environment with no required
+   reviewers is decorative and GitHub runs the publish job immediately — a
+   tag pushed before this is configured would publish unreviewed. Complete
+   it BEFORE registering the Trusted Publisher.
 3. The retired workflow `release.yml` (tag `v*`, environment `production`) was
    the previous, never-used publish lane — if a pending Trusted Publisher or a
    `production` environment was ever registered for it on PyPI/GitHub, delete

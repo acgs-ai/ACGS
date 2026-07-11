@@ -2,6 +2,9 @@
 # Publish is DOUBLY human-gated: (1) only a pushed tag gove-zone-v* reaches
 # the publish job; (2) the job runs in the protected `pypi` environment
 # (required reviewer). Uses PyPI Trusted Publishing (OIDC) — no stored token.
+# WARNING: an environment with no required reviewers is decorative — GitHub
+# runs the job immediately. Until a human configures required reviewers on
+# `pypi`, a pushed tag would publish unreviewed.
 # workflow_dispatch runs build+check+attest only (dry run), never publish.
 
 name: release-gove-zone
@@ -52,12 +55,12 @@ jobs:
         with:
           name: dist
           path: dist
-      - uses: actions/attest-build-provenance@v1
+      - uses: actions/attest-build-provenance@ef244123eb79f2f7a7e75d99086184180e6d0018 # v1.4.4
         with:
           subject-path: 'dist/*'
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/gove-zone-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gove-zone-v')
     needs: [build, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -69,6 +72,6 @@ jobs:
         with:
           name: dist
           path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1 (v1.14.0)
         with:
           packages-dir: dist
