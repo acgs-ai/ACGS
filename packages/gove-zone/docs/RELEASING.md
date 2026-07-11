@@ -10,6 +10,10 @@ human-pushed tag AND a human environment approval.
    environment `pypi`. (For the very first upload use PyPI's
    "pending publisher" flow — no API token is ever stored in GitHub.)
 2. GitHub → Settings → Environments → `pypi` → required reviewers: repo owner.
+3. The retired workflow `release.yml` (tag `v*`, environment `production`) was
+   the previous, never-used publish lane — if a pending Trusted Publisher or a
+   `production` environment was ever registered for it on PyPI/GitHub, delete
+   those entries so `release-gove-zone.yml` + `pypi` is the ONLY publish path.
 
 ## Per-release checklist
 
