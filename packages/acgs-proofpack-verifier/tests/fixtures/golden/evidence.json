@@ -1,0 +1,55 @@
+{
+  "actor": {
+    "authority": "tenant-A/write-grant",
+    "id": "compliance-officer",
+    "tenant_id": "tenant-A",
+    "validator_id": "constitutional-council",
+    "validator_role": "validator"
+  },
+  "artifacts": {
+    "audit-chain.json": {
+      "bytes": 1944,
+      "sha256": "177f1286efab2e6036f70e57c492fe8fbb6af9c0622b5f5a9eb246178d6f8191"
+    },
+    "decision-receipt.json": {
+      "bytes": 1279,
+      "sha256": "f14e1d6077acbe97e5c2d69cb4e0bb1dcd3dbd69bb42a82233f6d12798a84c29"
+    },
+    "replay-report.json": {
+      "bytes": 290,
+      "sha256": "55f01a0cfa2af33a73e9ce4f687fd09fe1719ecff47ac768b02d3f9f2c93544e"
+    },
+    "verification-summary.md": {
+      "bytes": 4424,
+      "sha256": "2bb30eb16fb0ba9255fabd01b2de9600d19bf665c3d99304624a1fb3f1c03cbe"
+    }
+  },
+  "audit": {
+    "event_count": 2,
+    "last_hash": "f60fc833e4e04366f8f1532942add50682ec7da2b597a8f7d1c51e960d2c3959"
+  },
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "generated_with": "acgs proofpack generate (acgs_proofpack_verifier.proofpack)",
+  "governed_action": {
+    "decision": "allow",
+    "declared_goal": "g-1",
+    "execution_boundary": "local-sandbox",
+    "matched_rules": [],
+    "proposed_action": "runtime.file.write"
+  },
+  "how_to_verify": "acgs proofpack verify <pack-dir> [--verifier-key <pubkey>]",
+  "policy": {
+    "bundle_id": "compliance-ruleset/v1",
+    "hash": "ruleset/compliance-ruleset/v1/be02ba386af91111",
+    "version": "ruleset/compliance-ruleset/v1/be02ba386af91111"
+  },
+  "receipt": {
+    "audit_event_hash": "f3260c70dfb9402b402950db41adbe0895b36bfd085d73a2e5aba128dc6ca430",
+    "receipt_hash": "8f7153b5d58d00bbe077ceca455c94a1f2c3b75ced5a64eb1054c8eae62f8671",
+    "receipt_id": "ev_91173c10c1094a6c",
+    "request_id": "req-1",
+    "signature_algorithm": "none",
+    "signing_key_id": ""
+  },
+  "schema_version": "acgs/proof-pack/v1"
+}

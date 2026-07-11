@@ -26,6 +26,7 @@ members = [
     "packages/Acgs-Swarm",
     "packages/clinicalguard",
     "packages/gove-zone",
+    "packages/acgs-proofpack-verifier",
     "packages/agent-bus-analyzer",
     "packages/acgs-control-plane",
     "acgs_governance_eval_mvp",
