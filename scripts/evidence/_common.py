@@ -103,7 +103,10 @@ REVIEWED_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
 BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")
 REVIEWED_HOST_EXECUTABLES = {
     "make": Path("/usr/bin/make"),
-    "uv": Path.home() / ".local" / "bin" / "uv",
+    "uv": Path("/home") / "martin" / ".local" / "bin" / "uv",
+}
+REVIEWED_HOST_EXECUTABLE_SHA256 = {
+    "uv": "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b",
 }
 REVIEWED_P0_TRANSCRIPT = (
     (
@@ -656,12 +659,17 @@ def reviewed_executable(cwd: Path, argv0: str) -> Path:
         fail("reviewed executable must be cwd-relative and PATH-independent", phase="B6")
     else:
         lexical = cwd / argv0
+    if lexical.is_symlink():
+        fail("reviewed executable lexical path must not be a symlink", phase="B6")
     try:
         executable = lexical.resolve(strict=True)
     except OSError as exc:
         fail(f"reviewed executable is unavailable: {exc}", phase="B6")
     if not executable.is_file() or executable.is_symlink():
         fail("reviewed executable target must be a regular non-symlink file", phase="B6")
+    expected_sha256 = REVIEWED_HOST_EXECUTABLE_SHA256.get(argv0)
+    if expected_sha256 is not None and sha256_file(executable) != expected_sha256:
+        fail("reviewed host executable identity mismatch", phase="B6")
     return executable
 
 

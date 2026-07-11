@@ -2540,7 +2540,10 @@ def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> No
     }
     assert _common.REVIEWED_HOST_EXECUTABLES == {
         "make": Path("/usr/bin/make"),
-        "uv": Path.home() / ".local" / "bin" / "uv",
+        "uv": Path("/home") / "martin" / ".local" / "bin" / "uv",
+    }
+    assert _common.REVIEWED_HOST_EXECUTABLE_SHA256 == {
+        "uv": "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b"
     }
     assert set(environment) == {
         "PATH",
@@ -4741,3 +4744,25 @@ def test_pinned_uv_execution_is_normalized_only_for_transcript_metadata() -> Non
     assert _common.validate_safe_argv(reviewed) == reviewed
     with pytest.raises(_common.EvidenceError):
         _common.validate_safe_argv(["/home/martin/.local/bin/uv", *reviewed[1:]])
+
+
+def test_reviewed_uv_identity_rejects_hostile_home_symlink_and_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusted = (Path("/home") / "martin" / ".local" / "bin" / "uv").resolve(strict=True)
+    monkeypatch.setenv("HOME", str(tmp_path / "hostile-home"))
+    assert _common.REVIEWED_HOST_EXECUTABLES["uv"] == trusted
+    assert _common.reviewed_executable(ROOT, "uv") == trusted
+
+    lexical_symlink = tmp_path / "uv-symlink"
+    lexical_symlink.symlink_to(trusted)
+    monkeypatch.setitem(_common.REVIEWED_HOST_EXECUTABLES, "uv", lexical_symlink)
+    with pytest.raises(_common.EvidenceError, match="lexical path must not be a symlink"):
+        _common.reviewed_executable(ROOT, "uv")
+
+    substituted = tmp_path / "uv-substituted"
+    substituted.write_bytes(trusted.read_bytes() + b"substitution")
+    substituted.chmod(0o755)
+    monkeypatch.setitem(_common.REVIEWED_HOST_EXECUTABLES, "uv", substituted)
+    with pytest.raises(_common.EvidenceError, match="host executable identity mismatch"):
+        _common.reviewed_executable(ROOT, "uv")
