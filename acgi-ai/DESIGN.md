@@ -3,25 +3,27 @@ version: alpha
 name: ACGS GovernZone
 description: Editorial constitutional governance for marketing, product atlases, privileged consoles, and evidence panels.
 colors:
-  primary: "#1A1A1A"
-  secondary: "#6B6B6B"
-  tertiary: "#B8422E"
-  neutral: "#FAFAF7"
-  paper: "#FAFAF7"
-  paper-alt: "#F2F1EC"
-  paper-deep: "#EBEAE2"
-  card: "#FFFFFF"
-  ink: "#1A1A1A"
-  ink-secondary: "#2B2B2B"
-  ink-tertiary: "#424242"
-  muted: "#6B6B6B"
-  muted-light: "#999999"
-  line: "#1A1A1A"
-  line-soft: "#CFCFCF"
-  line-softer: "#E5E5E5"
-  rust: "#B8422E"
-  rust-hover: "#8F361E"
-  rust-soft: "#F4E2D8"
+  primary: "#171310"
+  secondary: "#57503F"
+  tertiary: "#9E2B25"
+  neutral: "#E9E5DA"
+  paper: "#E9E5DA"
+  paper-alt: "#F0EDE4"
+  paper-deep: "#E2DDD0"
+  card: "#F6F4EC"
+  ink: "#171310"
+  ink-secondary: "#26211B"
+  ink-tertiary: "#3E3831"
+  muted: "#57503F"
+  muted-light: "#8A8170"
+  line: "#171310"
+  line-soft: "#C6BFAF"
+  line-softer: "#D8D2C2"
+  rust: "#9E2B25"
+  rust-hover: "#7A1E1A"
+  rust-soft: "#E8D5CD"
+  gold: "#A5843B"
+  gold-ink: "#6E5A25"
   parchment: "#F3EAD4"
   parchment-ink: "#5A4111"
   parchment-line: "#E3D5A8"
@@ -161,12 +163,13 @@ The design contract is product-wide:
 
 ## Colors
 
-- **Paper (#FAFAF7):** the default background across all products. It keeps legal/governance surfaces calm and archival.
-- **Paper Alt (#F2F1EC):** cards, sidebars, code blocks, product atlas tiles, and console panels.
-- **Ink (#1A1A1A):** primary copy, strong rules, and high-emphasis actions.
-- **Rust (#B8422E):** the single brand accent for links, active states, asterisms, italic emphasis, and controlled approval actions. It is darkened from the legacy decorative rust so normal-size rust text passes WCAG AA on paper.
+- **Paper (#E9E5DA):** the default background across all products — bone drafting paper (2026-07-10 drafting-print revision; deepened from the legacy #FAFAF7 warm paper). It keeps legal/governance surfaces calm and archival.
+- **Paper Alt (#F0EDE4):** cards, sidebars, code blocks, product atlas tiles, and console panels.
+- **Ink (#171310):** primary copy, strong rules, and high-emphasis actions — warmed drafting ink.
+- **Rust (#9E2B25):** the single brand accent for links, active states, asterisms, italic emphasis, and controlled approval actions — deepened to an oxide crimson in the drafting-print revision; normal-size accent text passes WCAG AA on paper (5.9:1).
+- **Gold (#A5843B / ink #6E5A25):** the seal. Decorative drafting marks only — section rules, ticks, plate corners — at #A5843B (2.8:1, never body text); any text-bearing gold uses #6E5A25 (AA, 5.3:1). Gold never replaces rust as the interaction accent.
 - **Parchment (#F3EAD4):** privilege boundary surfaces, sign-in caveats, matter-bearing warnings, and no-advice disclaimers.
-- **Risk colors:** forest for confirmed, mustard for partial, crimson for blocked. They are semantic status colors, never decorative accents.
+- **Risk colors:** forest for confirmed, mustard for partial, signal red for blocked. They are semantic status colors, never decorative accents.
 
 Banned product-wide: purple/violet/indigo palettes, blue-to-teal SaaS gradients, neon glow, traffic-light status dots, and one-off hex literals outside the token declaration layer.
 
