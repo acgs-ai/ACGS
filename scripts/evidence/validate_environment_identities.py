@@ -83,6 +83,40 @@ UI_KEYS = {
 }
 
 
+def _manifest_expected_version(manifest: dict[str, Any], manifest_path: Path) -> str | None:
+    """Resolve a manifest's expected version, including PEP 621 ``dynamic`` versions.
+
+    Mirrors the same-named helper in ``capture_environment.py``: a static
+    ``[project] version`` is returned as-is; a dynamic version sourced from
+    ``[tool.hatch.version]`` (``path`` + regex ``pattern``) is read from the
+    referenced file, so editable-identity checks resolve a concrete version for
+    Hatch-versioned packages (e.g. gove-zone, whose ``project.version`` is absent)
+    instead of tripping the B5 mismatch. Returns ``None`` when undeterminable.
+    """
+    project = manifest.get("project", {})
+    static = project.get("version")
+    if isinstance(static, str):
+        return static
+    if "version" not in project.get("dynamic", []):
+        return None
+    hatch = manifest.get("tool", {}).get("hatch", {}).get("version", {})
+    rel_path = hatch.get("path")
+    pattern = hatch.get("pattern")
+    if not isinstance(rel_path, str) or not isinstance(pattern, str):
+        return None
+    try:
+        text = (manifest_path.parent / rel_path).read_text(encoding="utf-8")
+        match = re.search(pattern, text)
+    except (OSError, re.error):
+        return None
+    if match is None:
+        return None
+    try:
+        return match.group("version")
+    except (IndexError, re.error):
+        return None
+
+
 def _exact_keys(value: Any, keys: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != keys:
         actual = set(value) if isinstance(value, dict) else set()
@@ -467,10 +501,9 @@ def _validate_python_product(
         "acgs-control-plane": repo_root / "packages/acgs-control-plane/pyproject.toml",
     }
     for name in required_editables:
-        expected_version = (
-            tomllib.loads(editable_manifests[name].read_text(encoding="utf-8"))
-            .get("project", {})
-            .get("version")
+        manifest_path = editable_manifests[name]
+        expected_version = _manifest_expected_version(
+            tomllib.loads(manifest_path.read_text(encoding="utf-8")), manifest_path
         )
         observed = live["distributions"].get(name, {})
         location = Path(str(observed.get("location", ""))).resolve(strict=True)
