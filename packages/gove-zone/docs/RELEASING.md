@@ -30,6 +30,6 @@ human-pushed tag AND a human environment approval.
 
 ## Final 1.0.0 only
 
-In the same release PR: classifier `4 - Beta` →
+**HUMAN (in the same release PR):** classifier `4 - Beta` →
 `5 - Production/Stable`, and update `test_development_status_is_beta` to pin
 the new classifier. Do not flip earlier — claim-safety rule.
