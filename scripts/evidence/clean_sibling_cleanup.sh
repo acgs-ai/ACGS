@@ -3,9 +3,47 @@
 
 # This helper participates in the proof boundary even when sourced directly.
 # Never inherit caller-selected implementations of filesystem or git tools.
+for variable in ${!LD_@}; do
+  printf 'clean-sibling cleanup rejected ambient loader environment: %s\n' "$variable" >&2
+  return 2 2>/dev/null || exit 2
+done
+for variable in ${!GIT_@}; do
+  case "$variable:${!variable}" in
+    GIT_CONFIG_NOSYSTEM:1 | GIT_CONFIG_GLOBAL:/dev/null) ;;
+    GIT_CONFIG_* | GIT_EXEC_PATH:* | GIT_TEMPLATE_DIR:* | GIT_EXTERNAL_DIFF:* | \
+      GIT_ASKPASS:* | GIT_SSH:* | GIT_SSH_COMMAND:* | GIT_PROXY_COMMAND:* | \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES:* | GIT_OBJECT_DIRECTORY:* | \
+      GIT_INDEX_FILE:* | GIT_WORK_TREE:* | GIT_DIR:* | GIT_COMMON_DIR:* | \
+      GIT_NAMESPACE:* | GIT_REPLACE_REF_BASE:* | GIT_ATTR_NOSYSTEM:*)
+      printf 'clean-sibling cleanup rejected ambient Git environment: %s\n' "$variable" >&2
+      return 2 2>/dev/null || exit 2
+      ;;
+  esac
+done
+unset GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR
 PATH=/usr/bin:/bin
 export PATH
 hash -r
+
+# Standalone callers receive the same Git boundary as the prover.  When the
+# prover sourced us its stricter wrapper is already defined and is preserved.
+if ! declare -F git >/dev/null; then
+  GIT_CONFIG_NOSYSTEM=1
+  GIT_CONFIG_GLOBAL=/dev/null
+  HOME=/dev/null
+  XDG_CONFIG_HOME=/dev/null
+  export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL HOME XDG_CONFIG_HOME
+  git() {
+    /usr/bin/git --no-optional-locks \
+      -c core.hooksPath=/dev/null \
+      -c core.fsmonitor=false \
+      -c core.untrackedCache=false \
+      -c credential.helper= \
+      -c core.askPass= \
+      -c core.attributesFile=/dev/null \
+      "$@"
+  }
+fi
 
 clean_sibling_snapshot_direct_entries() {
   local root_fd="$1"

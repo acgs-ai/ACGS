@@ -3120,6 +3120,86 @@ exit "$status"
     assert not moved.exists()
 
 
+def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
+    tmp_path: Path,
+) -> None:
+    """Host loader/config authority must fail before Git, hooks, or proof writes."""
+    caller = tmp_path / "caller"
+    caller.mkdir(mode=0o700)
+    sentinel = caller / "sentinel"
+    sentinel.write_bytes(b"unchanged")
+    hostile = tmp_path / "hostile.gitconfig"
+    marker = tmp_path / "injected-command-ran"
+    hostile.write_text(
+        f"[core]\n\tfsmonitor = !touch {marker}\n\thooksPath = {tmp_path / 'hooks'}\n",
+        encoding="utf-8",
+    )
+    hostile_home = tmp_path / "hostile-home"
+    hostile_home.mkdir()
+    shutil.copy2(hostile, hostile_home / ".gitconfig")
+    hostile_xdg = tmp_path / "hostile-xdg"
+    (hostile_xdg / "git").mkdir(parents=True)
+    shutil.copy2(hostile, hostile_xdg / "git/config")
+    cases = {
+        "loader": {"LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/libm.so.6"},
+        "global": {"GIT_CONFIG_GLOBAL": str(hostile)},
+        "count": {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.fsmonitor",
+            "GIT_CONFIG_VALUE_0": f"!touch {marker}",
+        },
+        "home": {"HOME": str(hostile_home)},
+        "xdg": {"XDG_CONFIG_HOME": str(hostile_xdg)},
+    }
+    for name, injected in cases.items():
+        env = _evidence_env(tmp_path / f"unused-{name}")
+        env.pop("ACGS_CLEAN_SIBLING_TMP_FD", None)
+        for key in tuple(env):
+            if key.startswith("LD_") or key.startswith("GIT_"):
+                env.pop(key)
+        env.update(injected)
+        env.update(
+            {
+                "P": "26d11c2c7a8da37937a7c50c642f18edc75c9345",
+                "TMPDIR": str(caller),
+            }
+        )
+        completed = subprocess.run(
+            ["bash", "scripts/evidence/prove_clean_sibling.sh", "0" * 40],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
+        if name in {"loader", "global", "count"}:
+            assert "rejected" in completed.stderr
+        assert sentinel.read_bytes() == b"unchanged"
+        assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
+        assert not marker.exists()
+
+        cleanup_env = dict(env)
+        cleanup_env.pop("P", None)
+        cleanup_env.pop("TMPDIR", None)
+        cleanup = subprocess.run(
+            ["bash", "scripts/evidence/clean_sibling_cleanup.sh"],
+            cwd=ROOT,
+            env=cleanup_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if name in {"loader", "global", "count"}:
+            assert cleanup.returncode == 2
+            assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup.stdout
+            assert "rejected" in cleanup.stderr
+        else:
+            assert cleanup.returncode == 0
+        assert not marker.exists()
+
+
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
     prover = EVIDENCE_SCRIPTS / "prove_clean_sibling.sh"
     subprocess.run(["bash", "-n", str(prover)], check=True)

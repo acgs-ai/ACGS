@@ -5,16 +5,49 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-# Proof authority must not be selected by caller-controlled command lookup.
+# Proof authority must not be selected by caller-controlled command lookup,
+# ELF loader state, or Git configuration.  This block intentionally uses only
+# shell builtins: rejection must happen before the first external command.
 # The system toolset is restricted before the first external command; uv is
 # separately pinned to its canonical installation path.
-for variable in BASH_ENV ENV CDPATH GIT_EXEC_PATH GIT_TEMPLATE_DIR; do
+for variable in BASH_ENV ENV CDPATH; do
   [[ -z "${!variable:-}" ]] || {
     printf 'CLEAN_SIBLING=FAIL phase=B0 reason=ambient command environment rejected: %s\n' \
       "$variable" >&2
     exit 2
   }
 done
+for variable in ${!LD_@}; do
+  printf 'CLEAN_SIBLING=FAIL phase=B0 reason=ambient loader environment rejected: %s\n' \
+    "$variable" >&2
+  exit 2
+done
+if [[ -z "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
+  for variable in ${!GIT_@}; do
+    case "$variable" in
+      GIT_CONFIG_* | GIT_EXEC_PATH | GIT_TEMPLATE_DIR | GIT_EXTERNAL_DIFF | \
+        GIT_ASKPASS | GIT_SSH | GIT_SSH_COMMAND | GIT_PROXY_COMMAND | \
+        GIT_ALTERNATE_OBJECT_DIRECTORIES | GIT_OBJECT_DIRECTORY | GIT_INDEX_FILE | \
+        GIT_WORK_TREE | GIT_DIR | GIT_COMMON_DIR | GIT_NAMESPACE | \
+        GIT_REPLACE_REF_BASE | GIT_ATTR_NOSYSTEM)
+        printf 'CLEAN_SIBLING=FAIL phase=B0 reason=ambient Git environment rejected: %s\n' \
+          "$variable" >&2
+        exit 2
+        ;;
+    esac
+  done
+else
+  [[ "${GIT_CONFIG_NOSYSTEM:-}" == 1 && "${GIT_CONFIG_GLOBAL:-}" == /dev/null ]] || {
+    printf 'CLEAN_SIBLING=FAIL phase=B0 reason=internal Git boundary changed\n' >&2
+    exit 2
+  }
+fi
+unset GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR
+GIT_CONFIG_NOSYSTEM=1
+GIT_CONFIG_GLOBAL=/dev/null
+HOME=/dev/null
+XDG_CONFIG_HOME=/dev/null
+export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL HOME XDG_CONFIG_HOME
 unset -f command_not_found_handle 2>/dev/null || true
 PATH=/usr/bin:/bin
 export PATH
@@ -34,6 +67,20 @@ UV_SHA256=a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b
   exit 2
 }
 export UV_BIN
+
+# Every Git call, including EXIT cleanup calls from the sourced helper, crosses
+# the same closed boundary.  Hooks and executable fsmonitor authority are
+# disabled explicitly rather than relying on ambient HOME or host policy.
+git() {
+  /usr/bin/git --no-optional-locks \
+    -c core.hooksPath=/dev/null \
+    -c core.fsmonitor=false \
+    -c core.untrackedCache=false \
+    -c credential.helper= \
+    -c core.askPass= \
+    -c core.attributesFile=/dev/null \
+    "$@"
+}
 
 die() {
   printf 'CLEAN_SIBLING=FAIL phase=%s reason=%s\n' "${PHASE:-B0}" "$*" >&2
