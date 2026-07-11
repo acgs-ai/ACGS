@@ -3,17 +3,18 @@
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
 ACGS / gove-zone is an **alpha, local receipt-gated kernel**, not a deployed
-managed service. Its current differentiator is a portable Decision Receipt that
-binds actor, action, canonical arguments, policy, and audit evidence so a
-separate executor can verify the decision. Signing requires configured trust
-material; single-use enforcement is optional.
+managed service. Its current differentiator is a self-contained Decision Receipt
+with exact actor, action, canonical-argument, policy, and audit bindings that a
+local governed executor can verify. Signing requires configured trust material;
+single-use enforcement is optional. Cross-host portability validators remain
+roadmap work.
 
 This is not a claim that other systems only log after execution. Several current
 systems enforce policy before a tool call.
 
 | System or category | Evidenced strength | ACGS's narrower emphasis | Composition posture |
 |---|---|---|---|
-| AWS AgentCore Policy | Deterministic pre-tool-call authorization and policy-decision logs. | Portable executor-verifiable receipts with exact bindings. | Preserve an authenticated upstream decision as federated provenance. |
+| AWS AgentCore Policy | Deterministic pre-tool-call authorization and policy-decision logs. | Self-contained, locally executor-verifiable receipts with exact bindings. | Preserve an authenticated upstream decision as federated provenance. |
 | Microsoft Agent Control Specification / Agent Governance Toolkit | Fail-closed runtime intervention, evidence fields, broad framework support, and audit integrity/inclusion proofs. | A sealed per-decision artifact verified by the local executor before the side effect, with optional local consumption. | Preserve the original decision and adapter provenance as a federated attestation. |
 | Galileo Agent Control | Centralized runtime policy control and an open-source integration surface. | Offline receipt verification and exact execution-boundary bindings. | Adapter candidate; no shipped production adapter is claimed. |
 | OPA / Cedar | Mature deterministic policy evaluation. | Connects a verdict to executor validation, receipt evidence, audit, and replay. | Use as a decision source rather than forcing replacement. |

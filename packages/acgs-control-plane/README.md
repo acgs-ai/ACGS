@@ -56,7 +56,13 @@ explorer, dashboard, and exports stay consistent with the chain.
 
 ## Run
 
+> **INSECURE LOCAL DEVELOPMENT ONLY.** The current mutation API uses legacy,
+> unsigned receipts. It must be started only with the explicit local-development
+> posture below. Production posture refuses these routes; do not use this profile
+> for staging, production, or consequential side effects.
+
 ```bash
+export ACP_RUNTIME_POSTURE="local-dev-legacy-unsigned"
 export ACP_DATABASE_URL="postgresql+psycopg://acgs:acgs@localhost:5432/acgs_control_plane"
 export ACP_AUDIT_DIR="/var/lib/acgs/audit"
 export ACP_BOOTSTRAP_TOKEN="<one-time provisioning secret>"   # unset ⇒ org creation disabled (fail closed)

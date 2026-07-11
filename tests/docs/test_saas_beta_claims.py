@@ -39,6 +39,22 @@ def test_claim_boundaries_and_control_plane_readme() -> None:
     assert "audit append is outside the sql transaction" in control_plane_lower
     assert "transaction spine is not shipped" in comparison_lower
     assert "never represented as pre-execution authorization proof" in comparison_lower
+    assert "self-contained decision receipt" in comparison_lower
+    assert "locally executor-verifiable receipts with exact bindings" in comparison_lower
+    assert "cross-host portability validators remain" in comparison_lower
+    assert "portable decision receipt" not in comparison_lower
+    assert 'acp_runtime_posture="local-dev-legacy-unsigned"' in control_plane_lower
+    assert "insecure local development only" in control_plane_lower
+    assert "production posture refuses these routes" in control_plane_lower
+    roadmap_lower = roadmap.lower()
+    roadmap_words = " ".join(roadmap_lower.split())
+    assert "`f36b06a` (2026-07-11)" in roadmap
+    assert "code-and-test reference" in roadmap_lower
+    assert "not deployment evidence" in roadmap_words
+    assert "signature verification required by default" in roadmap_lower
+    assert "does not automatically sign receipts" in roadmap_lower
+    assert "origin/master` @ `9dd118c" not in roadmap
+    assert "signed receipts on by default" not in roadmap_lower
 
     for forbidden in (
         "production-ready",
