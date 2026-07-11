@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
-from gove_zone.decision import Decision, canonical_json, sha256_json
+from gove_zone.decision import Decision, DecisionRecord, canonical_json, sha256_json
 from gove_zone.errors import AuditError
 from gove_zone.policy import Policy
 from gove_zone.replay_store import ReplaySideStore
@@ -132,6 +132,77 @@ def _call_from_side_record(event: dict[str, Any], side_record: dict[str, Any]) -
     )
 
 
+def _rederive_from_side_store(
+    event: dict[str, Any],
+    side_record: dict[str, Any],
+    policy: Policy,
+) -> tuple[ReplayResult, DecisionRecord | None, ToolCall | None]:
+    """Shared re-derivation engine for :func:`replay_from_side_store` and
+    :func:`replay_bundle`.
+
+    Performs the chain cross-check, then re-runs *policy* exactly **once**,
+    returning ``(result, fresh_record, call)`` so bundle-scope callers can
+    reuse the same evaluation for the byte-equivalence check instead of
+    evaluating the policy a second time. ``fresh_record``/``call`` are ``None``
+    when the cross-check failed or the policy raised.
+    """
+    event_id = str(event.get("event_id", ""))
+    original = Decision(event["decision"])
+    call = _call_from_side_record(event, side_record)
+
+    if call.argument_hash() != event.get("argument_hash"):
+        return (
+            ReplayResult(
+                event_id=event_id,
+                matches=False,
+                original_decision=original,
+                replayed_decision=original,
+                policy_version_match=event.get("policy_version") == policy.version,
+                argument_hash_match=False,
+                reason="side-store argument_hash does not match audit chain",
+                re_derived=False,
+            ),
+            None,
+            None,
+        )
+
+    try:
+        fresh = policy.evaluate(call)
+    except Exception as exc:
+        return (
+            ReplayResult(
+                event_id=event_id,
+                matches=False,
+                original_decision=original,
+                replayed_decision=original,
+                policy_version_match=False,
+                argument_hash_match=True,
+                reason=f"policy re-derivation raised: {exc}",
+                re_derived=False,
+            ),
+            None,
+            None,
+        )
+
+    # Same acceptance rules as replay_call: decision, policy version (absent
+    # recorded version passes, as before), and argument hash must all agree.
+    expected_pv = event.get("policy_version")
+    pv_match = expected_pv is None or fresh.policy_version == expected_pv
+    arg_hash = call.argument_hash()
+    arg_match = fresh.argument_hash == arg_hash
+    result = ReplayResult(
+        event_id=event_id,
+        matches=fresh.decision is original and pv_match and arg_match,
+        original_decision=original,
+        replayed_decision=fresh.decision,
+        policy_version_match=pv_match,
+        argument_hash_match=arg_match,
+        reason=fresh.reason,
+        re_derived=True,
+    )
+    return result, fresh, call
+
+
 def replay_from_side_store(
     event: dict[str, Any],
     side_record: dict[str, Any],
@@ -146,48 +217,15 @@ def replay_from_side_store(
        *audit event's* recorded ``argument_hash`` — the chain, not the side
        record, is the source of truth. A mismatch means the side-store drifted
        from the chain and is reported as a failed re-derivation.
-    2. **Re-derivation (R3, R5):** delegate to :func:`replay_call`, which re-runs
-       *policy* against the call and confirms the decision and policy version
-       match what the chain recorded.
+    2. **Re-derivation (R3, R5):** re-run *policy* against the call and confirm
+       the decision and policy version match what the chain recorded (same
+       acceptance rules as :func:`replay_call`).
 
     Callers must not pass a redacted/tombstone ``side_record`` (it carries no raw
     args); those fall back to :func:`replay_event` instead.
     """
-    event_id = str(event.get("event_id", ""))
-    original = Decision(event["decision"])
-    call = _call_from_side_record(event, side_record)
-
-    if call.argument_hash() != event.get("argument_hash"):
-        return ReplayResult(
-            event_id=event_id,
-            matches=False,
-            original_decision=original,
-            replayed_decision=original,
-            policy_version_match=event.get("policy_version") == policy.version,
-            argument_hash_match=False,
-            reason="side-store argument_hash does not match audit chain",
-            re_derived=False,
-        )
-
-    try:
-        result = replay_call(
-            call,
-            expected_decision=original,
-            policy=policy,
-            expected_policy_version=event.get("policy_version"),
-        )
-    except Exception as exc:
-        return ReplayResult(
-            event_id=event_id,
-            matches=False,
-            original_decision=original,
-            replayed_decision=original,
-            policy_version_match=False,
-            argument_hash_match=True,
-            reason=f"policy re-derivation raised: {exc}",
-            re_derived=False,
-        )
-    return replace(result, event_id=event_id)
+    result, _fresh, _call = _rederive_from_side_store(event, side_record, policy)
+    return result
 
 
 def replay_bundle(
@@ -211,13 +249,14 @@ def replay_bundle(
        and are counted as *degraded*, never as *matched*.
     2. Cross-check + semantic re-derivation via :func:`replay_from_side_store`
        (argument-hash against the chain, decision + policy version re-run).
-    3. Byte equivalence: re-run ``policy.evaluate`` on the reconstructed call,
-       re-attach the kernel-owned context exactly as ``Kernel.dispatch`` does
-       (goal/actor/path/state_hash/decision_request_hash), pin the two
-       nondeterministic identity fields (``event_id``, ``timestamp_iso``) to
-       the recorded values, then require ``canonical_json`` of the re-derived
-       record to be byte-identical to the recorded event payload (the event
-       minus its chain fields ``previous_hash``/``event_hash``).
+    3. Byte equivalence: take the re-derived record from that same single
+       ``policy.evaluate`` run, re-attach the kernel-owned context exactly as
+       ``Kernel.dispatch`` does (goal/actor/path/state_hash/
+       decision_request_hash), pin the two nondeterministic identity fields
+       (``event_id``, ``timestamp_iso``) to the recorded values, then require
+       ``canonical_json`` of the re-derived record to be byte-identical to the
+       recorded event payload (the event minus its chain fields
+       ``previous_hash``/``event_hash``).
 
     Returns a dict with ``valid`` (bool), ``chain_valid`` (bool),
     ``events_total``, ``events_matched``, ``events_degraded`` (ints), and
@@ -252,10 +291,19 @@ def replay_bundle(
             }
         )
 
+    # Index the side-store once (last record per event_id wins, matching
+    # ReplaySideStore.get) instead of rescanning the whole JSONL file per
+    # event — the per-event get() made bundle replay O(events²).
+    side_index: dict[str, dict[str, Any]] = {}
+    for entry in side_store.iter_records():
+        entry_id = entry.get("event_id")
+        if isinstance(entry_id, str):
+            side_index[entry_id] = entry
+
     for event in events:
         events_total += 1
         event_id = str(event.get("event_id", ""))
-        side_record = side_store.get(event_id)
+        side_record = side_index.get(event_id)
 
         if side_record is None or side_record.get("redacted"):
             # Honest degradation: no raw args retained, so only the
@@ -273,36 +321,34 @@ def replay_bundle(
                 )
             continue
 
-        semantic = replay_from_side_store(event, side_record, policy)
-        if not semantic.matches:
+        semantic, fresh, call = _rederive_from_side_store(event, side_record, policy)
+        if not semantic.matches or fresh is None or call is None:
+            # Three distinct consumer-visible failure labels:
+            # - argument_hash_mismatch: side-store drifted from the chain
+            # - replay_policy_error: the policy itself RAISED during the
+            #   (single) re-derivation — infrastructure failure, not a flipped
+            #   decision (fresh is None with the cross-check having passed)
+            # - decision_mismatch: policy ran but decision/version disagree
+            if not semantic.argument_hash_match:
+                mismatch_type = "argument_hash_mismatch"
+            elif fresh is None:
+                mismatch_type = "replay_policy_error"
+            else:
+                mismatch_type = "decision_mismatch"
             mismatches.append(
                 {
                     "event_id": event_id,
-                    "type": (
-                        "argument_hash_mismatch"
-                        if not semantic.argument_hash_match
-                        else "decision_mismatch"
-                    ),
+                    "type": mismatch_type,
                     "detail": semantic.to_dict(),
                 }
             )
             continue
 
-        # Byte equivalence: re-derive the full DecisionRecord the way the
-        # kernel produced it, normalize only the nondeterministic identity
-        # fields to the recorded values, and compare canonical JSON bytes.
-        call = _call_from_side_record(event, side_record)
-        try:
-            fresh = policy.evaluate(call)
-        except Exception as exc:
-            mismatches.append(
-                {
-                    "event_id": event_id,
-                    "type": "replay_policy_error",
-                    "detail": str(exc),
-                }
-            )
-            continue
+        # Byte equivalence: reuse the SAME policy evaluation as the semantic
+        # check above (one policy run per event), re-attach the kernel-owned
+        # context exactly as Kernel.dispatch does, normalize only the
+        # nondeterministic identity fields to the recorded values, and compare
+        # canonical JSON bytes.
         fresh = replace(
             fresh,
             goal=call.goal,

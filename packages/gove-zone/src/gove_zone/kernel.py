@@ -281,7 +281,7 @@ class Kernel:
         return DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version="fail-closed/authz",
             event_id=new_event_id(),
             matched_rules=(f"AUTHZ_DENY:{reason}",),
@@ -314,7 +314,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
@@ -324,7 +324,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-raised",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
@@ -402,6 +402,15 @@ class Kernel:
         The kernel re-raises the original exception regardless of whether
         this append succeeds — execution failures are surfaced to the caller
         even when we can't anchor them in the audit chain.
+
+        ``argument_hash`` here is deliberately recomputed fresh (NOT the
+        memoized ``call.argument_hash()``): this record is written *after*
+        tool execution, so hashing the args as they are now preserves the
+        audit trail's divergence signal — a tool (or shared nested value)
+        that mutated the args before raising produces a failure record whose
+        hash visibly differs from the pre-execution decision record.
+        ``decision_request_hash``/``state_hash`` stay memoized: they identify
+        the request as originally authorized.
         """
         failure = DecisionRecord(
             decision=Decision.DENY,
