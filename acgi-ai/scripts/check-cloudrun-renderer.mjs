@@ -28,7 +28,7 @@ const renderScript = read('scripts/render-cloudrun-service.mjs')
 const cloudrunCheck = read('scripts/check-cloudrun-templates.mjs')
 const authCheck = read('scripts/check-auth-boundary.mjs')
 const busCheck = read('scripts/check-bus-proxy-contract.mjs')
-const consoleWorkflow = readRepo('.github/workflows/console.yml')
+const consoleDeployWorkflow = readRepo('.github/workflows/console-deploy.yml')
 const deployDoc = read('DEPLOY.md')
 const readinessMap = readRepo('docs/integration-readiness-task-map.md')
 const platformReadiness = readRepo('scripts/platform_readiness_report.py')
@@ -72,14 +72,15 @@ for (const source of [cloudrunCheck, authCheck, busCheck]) {
 }
 
 check(
-  /node scripts\/render-cloudrun-service\.mjs[\s\S]*--env "\$\{DEPLOY_ENV\}"[\s\S]*--image "\$\{IMAGE_URI\}"[\s\S]*--build-id "\$\{BUILD_ID\}"[\s\S]*--auth-upstream "\$\{AUTH_UPSTREAM\}"[\s\S]*--bus-upstream "\$\{BUS_UPSTREAM\}"[\s\S]*--out infra\/cloudrun\/service\.yaml/.test(
-    consoleWorkflow,
+  /node scripts\/render-cloudrun-service\.mjs[\s\S]*--env "\$DEPLOY_ENV"[\s\S]*--image "\$IMAGE_URI"[\s\S]*--build-id "\$\{GITHUB_SHA::12\}"[\s\S]*--auth-upstream "\$AUTH_UPSTREAM"[\s\S]*--bus-upstream "\$BUS_UPSTREAM"[\s\S]*--out infra\/cloudrun\/service\.yaml/.test(
+    consoleDeployWorkflow,
   ),
-  'console.yml must render service.yaml through the shared fail-closed renderer.',
+  'console-deploy.yml must render service.yaml through the shared fail-closed renderer.',
 )
 check(
-  !/sed -i "s\|REPLACE_/.test(consoleWorkflow) && !/cp "\$SERVICE_TEMPLATE"/.test(consoleWorkflow),
-  'console.yml must not duplicate renderer substitutions with cp/sed.',
+  !/sed -i "s\|REPLACE_/.test(consoleDeployWorkflow) &&
+    !/cp "\$SERVICE_TEMPLATE"/.test(consoleDeployWorkflow),
+  'console-deploy.yml must not duplicate renderer substitutions with cp/sed.',
 )
 
 for (const source of [deployDoc, readinessMap, platformReadiness, releaseEvidence]) {

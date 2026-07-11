@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = resolve(root, '..')
 const failures = []
+const PACKAGE_MANAGER =
+  'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 
 function read(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8')
@@ -23,6 +25,33 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+function mustNotContain(source, needle, label) {
+  check(!source.includes(needle), `${label} must not include ${JSON.stringify(needle)}.`)
+}
+
+function assertImmutableActionPins(source, label) {
+  const refs = [...source.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)\s*$/gm)].map((match) => match[1])
+  check(refs.length > 0, `${label} must use at least one GitHub Action.`)
+  for (const ref of refs) {
+    check(/@[0-9a-f]{40}$/.test(ref), `${label} action ${ref} must use an immutable 40-hex SHA.`)
+  }
+}
+
+function assertCorepackIntegritySetup(source, label) {
+  for (const needle of [
+    `REVIEWED_PNPM_SELECTOR: '${PACKAGE_MANAGER}'`,
+    'name: Activate integrity-verified pnpm',
+    'corepack enable --install-directory "$corepack_root/bin"',
+    'test "$(corepack pnpm --version)" = \'9.15.4\'',
+    'test "$(command -v pnpm)" = "$corepack_root/bin/pnpm"',
+  ]) {
+    mustContain(source, needle, label)
+  }
+  for (const forbidden of ['pnpm/action-setup@', 'cache: pnpm', 'cache-dependency-path']) {
+    mustNotContain(source, forbidden, label)
+  }
+}
+
 function pathFilterCount(workflow, path) {
   return (workflow.match(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
 }
@@ -30,6 +59,7 @@ function pathFilterCount(workflow, path) {
 const packageJson = JSON.parse(read('package.json'))
 const buildScript = read('scripts/build-buyer-evidence.mjs')
 const workflow = readRepo('.github/workflows/storybook.yml')
+const deployWorkflow = readRepo('.github/workflows/storybook-deploy.yml')
 const deploy = read('DEPLOY.md')
 const readiness = readRepo('docs/integration-readiness-task-map.md')
 const platformReadiness = readRepo('scripts/platform_readiness_report.py')
@@ -39,6 +69,10 @@ const hostedStorybookHandoffCheck = read('scripts/check-hosted-storybook-handoff
 const hostedStorybookProofGapBuilder = read('scripts/build-hosted-storybook-proof-gap-report.mjs')
 const hostedStorybookProofGapCheck = read('scripts/check-hosted-storybook-proof-gap-report.mjs')
 
+check(
+  packageJson.packageManager === PACKAGE_MANAGER,
+  'package.json must retain the exact integrity-qualified pnpm selector.',
+)
 check(
   packageJson.scripts?.['storybook:build'] === 'pnpm run evidence:build',
   'package.json must keep storybook:build as the current buyer-evidence build entry point.',
@@ -98,8 +132,11 @@ for (const needle of [
 
 for (const needle of [
   'name: buyer-evidence-storybook',
+  'pull_request:',
   'branches: [master]',
-  "node-version: '24'",
+  "node-version: '24.18.0'",
+  'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5',
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
   'pnpm install --frozen-lockfile --ignore-workspace',
   'pnpm test:storybook-publication',
   'pnpm test:hosted-storybook-handoff',
@@ -108,13 +145,45 @@ for (const needle of [
   'ACGI_EVIDENCE_CNAME: storybook.acgs.ai',
   'pnpm storybook:build',
   'buyer-evidence-storybook',
-  'actions/upload-pages-artifact@v3',
-  "vars.STORYBOOK_PAGES_ENABLED == 'true'",
-  'actions/deploy-pages@v4',
-  'url: https://storybook.acgs.ai',
+  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
 ]) {
   mustContain(workflow, needle, '.github/workflows/storybook.yml')
 }
+for (const forbidden of [
+  '\n  push:',
+  'pages: write',
+  'id-token: write',
+  '${{ secrets.',
+  'actions/upload-pages-artifact@',
+  'actions/deploy-pages@',
+]) {
+  mustNotContain(workflow, forbidden, '.github/workflows/storybook.yml')
+}
+assertImmutableActionPins(workflow, '.github/workflows/storybook.yml')
+assertCorepackIntegritySetup(workflow, '.github/workflows/storybook.yml')
+
+for (const needle of [
+  'name: buyer-evidence-storybook-deploy',
+  '\n  push:',
+  'permissions: {}',
+  "node-version: '24.18.0'",
+  'actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5',
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
+  'actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa',
+  'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e',
+  'contents: read',
+  'pages: write',
+  'id-token: write',
+  'name: github-pages',
+  'url: https://storybook.acgs.ai',
+]) {
+  mustContain(deployWorkflow, needle, '.github/workflows/storybook-deploy.yml')
+}
+for (const forbidden of ['pull_request:', '${{ secrets.', 'environment: production', 'CONSOLE_']) {
+  mustNotContain(deployWorkflow, forbidden, '.github/workflows/storybook-deploy.yml')
+}
+assertImmutableActionPins(deployWorkflow, '.github/workflows/storybook-deploy.yml')
+assertCorepackIntegritySetup(deployWorkflow, '.github/workflows/storybook-deploy.yml')
 
 for (const path of [
   'acgi-ai/scripts/build-hosted-storybook-handoff.mjs',
@@ -124,10 +193,12 @@ for (const path of [
   'acgi-ai/scripts/check-hosted-storybook-proof-gap-report.mjs',
   'acgi-ai/hosted-storybook-proof.example.json',
 ]) {
-  check(
-    pathFilterCount(workflow, path) >= 2,
-    `.github/workflows/storybook.yml pull_request and push path filters must include ${path}.`,
-  )
+  for (const [label, source] of [
+    ['.github/workflows/storybook.yml', workflow],
+    ['.github/workflows/storybook-deploy.yml', deployWorkflow],
+  ]) {
+    check(pathFilterCount(source, path) >= 1, `${label} path filters must include ${path}.`)
+  }
 }
 
 for (const source of [deploy, readiness, platformReadiness, releaseEvidence]) {

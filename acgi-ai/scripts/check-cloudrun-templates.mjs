@@ -95,17 +95,17 @@ check(
   'package.json test:all must include Cloud Run template and renderer verification.',
 )
 
-const consoleWorkflow = read('../.github/workflows/console.yml')
+const consoleDeployWorkflow = read('../.github/workflows/console-deploy.yml')
 const renderScript = read('scripts/render-cloudrun-service.mjs')
 check(
-  /DEPLOY_ENV:\s+production/.test(consoleWorkflow) &&
-    /CONSOLE_AUTH_UPSTREAM/.test(consoleWorkflow) &&
-    /node scripts\/render-cloudrun-service\.mjs/.test(consoleWorkflow) &&
-    /--env "\$\{DEPLOY_ENV\}"/.test(consoleWorkflow) &&
-    /--auth-upstream "\$\{AUTH_UPSTREAM\}"/.test(consoleWorkflow) &&
-    /--bus-upstream "\$\{BUS_UPSTREAM\}"/.test(consoleWorkflow) &&
-    /--out infra\/cloudrun\/service\.yaml/.test(consoleWorkflow),
-  'console.yml must render infra/cloudrun/service.yaml through the shared renderer.',
+  /DEPLOY_ENV:\s+production/.test(consoleDeployWorkflow) &&
+    /CONSOLE_AUTH_UPSTREAM/.test(consoleDeployWorkflow) &&
+    /node scripts\/render-cloudrun-service\.mjs/.test(consoleDeployWorkflow) &&
+    /--env "\$DEPLOY_ENV"/.test(consoleDeployWorkflow) &&
+    /--auth-upstream "\$AUTH_UPSTREAM"/.test(consoleDeployWorkflow) &&
+    /--bus-upstream "\$BUS_UPSTREAM"/.test(consoleDeployWorkflow) &&
+    /--out infra\/cloudrun\/service\.yaml/.test(consoleDeployWorkflow),
+  'console-deploy.yml must render infra/cloudrun/service.yaml through the shared renderer.',
 )
 check(
   /unsupported DEPLOY_ENV/.test(renderScript) &&
@@ -117,9 +117,9 @@ check(
   'render-cloudrun-service.mjs must fail closed when the console auth upstream secret is missing.',
 )
 check(
-  !/sed -i ['"]s\|autoscaling\.knative\.dev\/minScale/.test(consoleWorkflow) &&
-    !/cp "\$SERVICE_TEMPLATE" infra\/cloudrun\/service\.yaml/.test(consoleWorkflow),
-  'console.yml must not patch Cloud Run fields with cp/sed; use the shared renderer and per-environment templates instead.',
+  !/sed -i ['"]s\|autoscaling\.knative\.dev\/minScale/.test(consoleDeployWorkflow) &&
+    !/cp "\$SERVICE_TEMPLATE" infra\/cloudrun\/service\.yaml/.test(consoleDeployWorkflow),
+  'console-deploy.yml must not patch Cloud Run fields with cp/sed; use the shared renderer and per-environment templates instead.',
 )
 
 const deployDocs = read('DEPLOY.md')

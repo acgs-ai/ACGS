@@ -4,29 +4,30 @@ This guide is for a fresh local checkout of the frontend package inside the gove
 
 ## Prerequisites
 
-- Node >=24 <25 for CI/deploy parity
-- pnpm 9.15.4 from `packageManager`
+- Node 24.18.0 for exact CI/deploy parity (`acgi-ai/.node-version`)
+- Corepack-provided pnpm 9.15.4 from the integrity-qualified `packageManager`
+  selector (CI forbids `pnpm/action-setup` because it does not enforce the hash)
 - Python and uv only when running the root monorepo gates
 - Docker only when running the optional Caddy bus-proxy smoke
 
 For local deploy-readiness parity from the monorepo root, run
 `make verify-js-node24`. It uses the existing `fnm` installation plus
-`acgi-ai/.node-version`, verifies Node 24 and pnpm 9.15.4, then runs
+`acgi-ai/.node-version`, verifies Node 24.18.0 and pnpm 9.15.4, then runs
 `pnpm -F acgi-ai run test:all`. This is the preferred local gate when the
 shell-default `node` is older and would otherwise emit engine warnings.
 
 ## First commands
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile --ignore-workspace
 pnpm -F acgi-ai run hello
-make verify-js-node24  # from repo root, exact Node 24 frontend gate
+make verify-js-node24  # from repo root, exact Node 24.18.0 frontend gate
 pnpm -F acgi-ai run test:all
 pnpm -F acgi-ai build
 make verify
 ```
 
-`pnpm -F acgi-ai run hello` checks that the local DX documents and high-signal scripts are present. `make verify-js-node24` runs the frontend lint/build/static contract gate under Node 24. `pnpm -F acgi-ai run test:all` is the direct package command if your shell is already on Node 24. `make verify` runs the root monorepo verification fan-out.
+`pnpm -F acgi-ai run hello` checks that the local DX documents and high-signal scripts are present. `make verify-js-node24` runs the frontend lint/build/static contract gate under Node 24.18.0. `pnpm -F acgi-ai run test:all` is the direct package command if your shell is already on Node 24.18.0. `make verify` runs the root monorepo verification fan-out.
 
 ## TTHW foundation
 
@@ -35,7 +36,7 @@ pnpm -F acgi-ai run test:tthw
 pnpm -F acgi-ai run hello:world:local
 ```
 
-`test:tthw` is the static contract for the time-to-hello-world foundation. `hello:world:local` skips install, allows local Node drift, starts the mock dev server, and proves only the `/` and `/console` HTTP shells return the Vite root. The clean-runner measurement is `.github/workflows/tthw.yml` running `acgi-ai/scripts/hello-world.sh` on Node 24 with a 300-second budget. This is not production deployment evidence, and headless browser proof remains external until the Phase 2 Playwright gate runs.
+`test:tthw` is the static contract for the time-to-hello-world foundation. `hello:world:local` skips install, allows local Node drift, starts the mock dev server, and proves only the `/` and `/console` HTTP shells return the Vite root. The clean-runner measurement is `.github/workflows/tthw.yml` running `acgi-ai/scripts/hello-world.sh` on exact Node 24.18.0 with a 300-second budget. This is not production deployment evidence, and headless browser proof remains external until the Phase 2 Playwright gate runs.
 
 ## Local route smoke
 
@@ -83,8 +84,10 @@ trust surface, visual governance workbench, hosted Storybook runway, and deploy-
 without unsupported production claims. Console CI uploads the same gallery as the `buyer-evidence-gallery`
 artifact before credentialed deploy steps. `storybook:build` is a local
 compatibility alias for this gallery. `test:storybook-publication` verifies the
-gated Pages scaffold that can publish the claim-safe artifact to
-`storybook.acgs.ai` when `STORYBOOK_PAGES_ENABLED` is set. The artifact includes
+physically separated publication contract: `.github/workflows/storybook.yml`
+verifies pull requests with a read-only token, while push-only
+`.github/workflows/storybook-deploy.yml` can publish the claim-safe artifact to
+`storybook.acgs.ai` through the protected `github-pages` environment. The artifact includes
 Pages publication files (`CNAME` when a custom domain is supplied and
 `.nojekyll`) plus manifest-level `hostedProofRequirements`, but official
 Storybook runtime and live browser/axe/visual proof remain external.
@@ -118,4 +121,4 @@ Use the narrow gate first, then the broader gate:
 - docs scaffold changes: `pnpm -F acgi-ai run test:docs-scaffold`
 - monorepo-wide confidence: `make verify`
 
-local verification does not equal production deployment. Production evidence requires live Cloudflare Pages and Cloud Run domains, real headers, `/healthz` served-hash/build-id proof, OIDC or server-cookie auth, legal review, pentest evidence, CSP report processing, and manual WCAG review.
+Local verification does not equal production deployment. Production evidence requires the live Cloudflare Workers and Cloud Run domains, real headers, `/healthz` served-hash/build-id proof, OIDC or server-cookie auth, legal review, pentest evidence, CSP report processing, and manual WCAG review.

@@ -18,7 +18,7 @@ const consoleAppSource = read('src/surfaces/console/App.tsx')
 const packageJson = JSON.parse(read('package.json'))
 const plan = read('PLAN.md')
 const caddyfile = read('infra/Caddyfile')
-const consoleWorkflow = read('../.github/workflows/console.yml')
+const consoleDeployWorkflow = read('../.github/workflows/console-deploy.yml')
 const renderScript = read('scripts/render-cloudrun-service.mjs')
 const deployDoc = read('DEPLOY.md')
 const readinessMap = read('../docs/integration-readiness-task-map.md')
@@ -99,11 +99,11 @@ for (const environment of ['preview', 'staging', 'production']) {
   )
 }
 check(
-  /CONSOLE_AUTH_UPSTREAM/.test(consoleWorkflow) &&
-    /AUTH_UPSTREAM/.test(consoleWorkflow) &&
-    /node scripts\/render-cloudrun-service\.mjs/.test(consoleWorkflow) &&
-    /--auth-upstream "\$\{AUTH_UPSTREAM\}"/.test(consoleWorkflow),
-  'console.yml must read CONSOLE_AUTH_UPSTREAM and render AUTH_UPSTREAM through the shared service renderer.',
+  /CONSOLE_AUTH_UPSTREAM/.test(consoleDeployWorkflow) &&
+    /AUTH_UPSTREAM/.test(consoleDeployWorkflow) &&
+    /node scripts\/render-cloudrun-service\.mjs/.test(consoleDeployWorkflow) &&
+    /--auth-upstream "\$AUTH_UPSTREAM"/.test(consoleDeployWorkflow),
+  'console-deploy.yml must read CONSOLE_AUTH_UPSTREAM and render AUTH_UPSTREAM through the shared service renderer.',
 )
 check(
   /REPLACE_AUTH_UPSTREAM_AT_DEPLOY_TIME/.test(renderScript) &&

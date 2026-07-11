@@ -10,6 +10,8 @@ const DEFAULT_LIVE_OUTPUT = '../dist-release-evidence/production-live-verificati
 const DEFAULT_OUT = '../dist-release-evidence/hosted-storybook-handoff.json'
 const STORYBOOK_TARGET = 'https://storybook.acgs.ai'
 const STORYBOOK_MANIFEST_URL = 'https://storybook.acgs.ai/manifest.json'
+const PACKAGE_MANAGER =
+  'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 const COMMAND_TEMPLATE =
   'pnpm -F acgi-ai run build:hosted-storybook-handoff -- --buyer-evidence-manifest <dist-buyer-evidence/manifest.json> --live-output <verify-production-live.json> --out <hosted-storybook-handoff.json>'
 const CLAIM_BOUNDARY =
@@ -24,7 +26,8 @@ function usage() {
   return `Usage: node scripts/build-hosted-storybook-handoff.mjs [options]
 
 Builds a local hosted-storybook-handoff artifact from the buyer-evidence manifest,
-Storybook Pages workflow, and optional verify:production-live JSON. This command
+read-only Storybook verification workflow, push-only Pages deployment workflow,
+and optional verify:production-live JSON. This command
 performs local file I/O only: it does not deploy, mutate DNS, fetch live origins,
 install Storybook, or create hosted Storybook proof.
 
@@ -130,18 +133,69 @@ function storybookCheckStatuses(liveOutput) {
     .map((check) => ({ id: check.id, status: check.status, error: check.error ?? null }))
 }
 
-function workflowHasPublicationContract(workflow) {
-  return [
-    'name: buyer-evidence-storybook',
-    'ACGI_EVIDENCE_CNAME: storybook.acgs.ai',
-    'actions/upload-pages-artifact@v3',
-    'actions/deploy-pages@v4',
-    "vars.STORYBOOK_PAGES_ENABLED == 'true'",
-    'url: https://storybook.acgs.ai',
-  ].every((needle) => workflow.includes(needle))
+function hasImmutableActionPins(workflow) {
+  const refs = [...workflow.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)\s*$/gm)].map((match) => match[1])
+  return refs.length > 0 && refs.every((ref) => /@[0-9a-f]{40}$/.test(ref))
 }
 
-function buildHandoff({ buyerManifest, liveOutput, workflow, options }) {
+function workflowHasPublicationContract(verificationWorkflow, deployWorkflow) {
+  const verificationReady = [
+    'name: buyer-evidence-storybook',
+    'pull_request:',
+    'permissions:\n  contents: read',
+    "node-version: '24.18.0'",
+    `REVIEWED_PNPM_SELECTOR: '${PACKAGE_MANAGER}'`,
+    'name: Activate integrity-verified pnpm',
+    'corepack enable --install-directory "$corepack_root/bin"',
+    'test "$(corepack pnpm --version)" = \'9.15.4\'',
+    'ACGI_EVIDENCE_CNAME: storybook.acgs.ai',
+    'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+  ].every((needle) => verificationWorkflow.includes(needle))
+  const verificationUnprivileged = [
+    '\n  push:',
+    'pages: write',
+    'id-token: write',
+    '${{ secrets.',
+    'pnpm/action-setup@',
+    'cache: pnpm',
+    'cache-dependency-path',
+    'actions/deploy-pages@',
+  ].every((needle) => !verificationWorkflow.includes(needle))
+  const deploymentReady = [
+    'name: buyer-evidence-storybook-deploy',
+    '\n  push:',
+    'permissions: {}',
+    "node-version: '24.18.0'",
+    `REVIEWED_PNPM_SELECTOR: '${PACKAGE_MANAGER}'`,
+    'name: Activate integrity-verified pnpm',
+    'corepack enable --install-directory "$corepack_root/bin"',
+    'test "$(corepack pnpm --version)" = \'9.15.4\'',
+    'pages: write',
+    'id-token: write',
+    'name: github-pages',
+    'actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa',
+    'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e',
+    'url: https://storybook.acgs.ai',
+  ].every((needle) => deployWorkflow.includes(needle))
+  const deploymentBounded = [
+    'pull_request:',
+    '${{ secrets.',
+    'environment: production',
+    'pnpm/action-setup@',
+    'cache: pnpm',
+    'cache-dependency-path',
+  ].every((needle) => !deployWorkflow.includes(needle))
+  return (
+    verificationReady &&
+    verificationUnprivileged &&
+    deploymentReady &&
+    deploymentBounded &&
+    hasImmutableActionPins(verificationWorkflow) &&
+    hasImmutableActionPins(deployWorkflow)
+  )
+}
+
+function buildHandoff({ buyerManifest, liveOutput, verificationWorkflow, deployWorkflow, options }) {
   if (buyerManifest?.artifactKind !== 'local-buyer-evidence-gallery') {
     throw new Error('buyer evidence manifest artifactKind must be local-buyer-evidence-gallery')
   }
@@ -149,7 +203,7 @@ function buildHandoff({ buyerManifest, liveOutput, workflow, options }) {
     throw new Error('live output artifactKind must be production-live-verification')
   }
 
-  const workflowReady = workflowHasPublicationContract(workflow)
+  const workflowReady = workflowHasPublicationContract(verificationWorkflow, deployWorkflow)
   const publishTargetReady = buyerManifest.publishTarget === STORYBOOK_TARGET
   const stories = Array.isArray(buyerManifest.stories) ? buyerManifest.stories.map(compactStory) : []
   const storyIds = stories.map((story) => story.id).filter(isNonEmptyString)
@@ -173,8 +227,9 @@ function buildHandoff({ buyerManifest, liveOutput, workflow, options }) {
     target: {
       url: STORYBOOK_TARGET,
       manifestUrl: STORYBOOK_MANIFEST_URL,
-      requiredRepoVariable: 'STORYBOOK_PAGES_ENABLED=true',
-      requiredWorkflow: '.github/workflows/storybook.yml',
+      requiredRepoVariable: null,
+      verificationWorkflow: '.github/workflows/storybook.yml',
+      requiredWorkflow: '.github/workflows/storybook-deploy.yml',
       requiredArtifactName: 'buyer-evidence-storybook',
       dns: {
         host: 'storybook.acgs.ai',
@@ -192,9 +247,10 @@ function buildHandoff({ buyerManifest, liveOutput, workflow, options }) {
       claimBoundary: buyerManifest.claimBoundary,
     },
     workflow: {
-      path: '.github/workflows/storybook.yml',
+      verificationPath: '.github/workflows/storybook.yml',
+      deploymentPath: '.github/workflows/storybook-deploy.yml',
       ready: workflowReady,
-      pagesDeployGatedBy: 'vars.STORYBOOK_PAGES_ENABLED == true',
+      pagesDeployGatedBy: 'push to master plus github-pages environment',
       claimBoundary:
         'Workflow presence is local configuration evidence only; hosted proof requires a successful external Pages deploy and live verifier pass.',
     },
@@ -226,7 +282,7 @@ function buildHandoff({ buyerManifest, liveOutput, workflow, options }) {
     },
     operatorNextSteps: [
       'Build the buyer evidence artifact with ACGI_EVIDENCE_CNAME=storybook.acgs.ai so manifest publishTarget is https://storybook.acgs.ai and CNAME is present.',
-      'Enable STORYBOOK_PAGES_ENABLED=true only for the intended repository/environment and confirm GitHub Pages custom-domain settings.',
+      'Obtain repository-owner approval for the push-only Pages workflow and confirm GitHub Pages custom-domain and github-pages environment settings.',
       'Configure storybook.acgs.ai DNS for the GitHub Pages custom-domain target.',
       'Run the buyer-evidence-storybook workflow on master and attach the Pages deploy URL plus buyer-evidence-storybook artifact.',
       'Rerun pnpm -F acgi-ai run verify:production-live -- --json and require storybook-dns-live, storybook-https-live, and storybook-manifest-live to pass before claiming hosted Storybook proof.',
@@ -254,10 +310,21 @@ function main() {
     }
     const buyerManifest = readJson(options.buyerManifestPath, 'buyer evidence manifest')
     const liveOutput = readJson(options.liveOutputPath, 'live output', { optional: true })
-    const workflow = readText('.github/workflows/storybook.yml', 'Storybook workflow', {
+    const verificationWorkflow = readText(
+      '.github/workflows/storybook.yml',
+      'Storybook verification workflow',
+      { fromRepoRoot: true },
+    )
+    const deployWorkflow = readText('.github/workflows/storybook-deploy.yml', 'Storybook deploy workflow', {
       fromRepoRoot: true,
     })
-    const handoff = buildHandoff({ buyerManifest, liveOutput, workflow, options })
+    const handoff = buildHandoff({
+      buyerManifest,
+      liveOutput,
+      verificationWorkflow,
+      deployWorkflow,
+      options,
+    })
     const encoded = `${JSON.stringify(handoff, null, 2)}\n`
     if (options.outPath) writeFileSync(resolve(root, options.outPath), encoded)
     if (options.json || !options.outPath) process.stdout.write(encoded)

@@ -43,6 +43,7 @@ const productionEvidenceValidatorCheck = read('scripts/check-production-evidence
 const hostedStorybookProofTemplate = read('hosted-storybook-proof.example.json')
 const hostedStorybookProofTemplateCheck = read('scripts/check-hosted-storybook-proof-template.mjs')
 const consoleWorkflow = readRepo('.github/workflows/console.yml')
+const consoleDeployWorkflow = readRepo('.github/workflows/console-deploy.yml')
 
 check(existsSync(resolve(root, templatePath)), `${templatePath} must exist.`)
 check(template.schemaVersion === 1, `${templatePath} schemaVersion must be 1.`)
@@ -359,14 +360,19 @@ for (const needle of [
   }
 }
 
-check(
-  pathFilterCount(consoleWorkflow, 'acgi-ai/production-evidence.example.json') >= 2,
-  'console.yml pull_request and push path filters must include acgi-ai/production-evidence.example.json.',
-)
-check(
-  pathFilterCount(consoleWorkflow, 'acgi-ai/hosted-storybook-proof.example.json') >= 2,
-  'console.yml pull_request and push path filters must include acgi-ai/hosted-storybook-proof.example.json.',
-)
+for (const [label, workflow] of [
+  ['console.yml', consoleWorkflow],
+  ['console-deploy.yml', consoleDeployWorkflow],
+]) {
+  check(
+    pathFilterCount(workflow, 'acgi-ai/production-evidence.example.json') >= 1,
+    `${label} path filters must include acgi-ai/production-evidence.example.json.`,
+  )
+  check(
+    pathFilterCount(workflow, 'acgi-ai/hosted-storybook-proof.example.json') >= 1,
+    `${label} path filters must include acgi-ai/hosted-storybook-proof.example.json.`,
+  )
+}
 
 if (failures.length > 0) {
   console.error('Production evidence template check failed:')

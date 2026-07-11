@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repoRoot = resolve(root, '..')
 const failures = []
+const PACKAGE_MANAGER =
+  'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 
 function read(relativePath) {
   return readFileSync(resolve(root, relativePath), 'utf8')
@@ -47,6 +49,10 @@ check(
   'package.json must expose hello:world as the full TTHW runner.',
 )
 check(
+  packageJson.packageManager === PACKAGE_MANAGER,
+  'package.json must retain the exact integrity-qualified pnpm selector.',
+)
+check(
   packageJson.scripts?.['hello:world:local'] ===
     'bash scripts/hello-world.sh --skip-install --allow-node-drift --http-only',
   'package.json must expose hello:world:local as the bounded local HTTP-shell smoke.',
@@ -78,12 +84,29 @@ for (const needle of [
 for (const needle of [
   'schedule:',
   'workflow_dispatch:',
-  "node-version: '24'",
+  "node-version: '24.18.0'",
+  'name: Prove Corepack enforces the integrity-qualified pnpm selector',
+  `selector='${PACKAGE_MANAGER}'`,
+  'test "$(corepack --version)" = 0.35.0',
+  'COREPACK_INTEGRITY_KEYS must stay unset; bypasses are forbidden',
+  'COREPACK_DEFAULT_TO_LATEST:',
+  'COREPACK_ENABLE_STRICT:',
+  'forged_project=',
+  'Mismatch hashes',
+  'corepack enable --install-directory "$corepack_root/bin" pnpm',
+  "test \"$(node -p 'process.versions.node')\" = 24.18.0",
+  'test "$(pnpm --version)" = 9.15.4',
   'bash acgi-ai/scripts/hello-world.sh',
   'ACGI_TTHW_BUDGET_SECONDS: 300',
 ]) {
   mustContain(workflow, needle, '.github/workflows/tthw.yml')
 }
+check(
+  !workflow.includes('pnpm/action-setup@') &&
+    !workflow.includes('cache: pnpm') &&
+    !workflow.includes('cache-dependency-path'),
+  '.github/workflows/tthw.yml must use integrity-verifying Corepack without action/cache pre-resolution.',
+)
 
 for (const needle of ['test:tthw', 'hello-world.sh', 'tthw.yml']) {
   mustContain(security, needle, 'scripts/check-security-invariants.mjs')

@@ -122,6 +122,7 @@ const releaseEvidence = readRepo('scripts/build_release_evidence.py')
 const securityCheck = read('scripts/check-security-invariants.mjs')
 const ciReadinessGateCheck = read('scripts/check-ci-readiness-gates.mjs')
 const workflow = readRepo('.github/workflows/storybook.yml')
+const deployWorkflow = readRepo('.github/workflows/storybook-deploy.yml')
 
 check(
   packageJson.scripts?.['build:hosted-storybook-handoff'] ===
@@ -159,7 +160,8 @@ for (const needle of [
   '--require-live-clear',
   'storybook.acgs.ai',
   'https://storybook.acgs.ai/manifest.json',
-  'STORYBOOK_PAGES_ENABLED=true',
+  '.github/workflows/storybook-deploy.yml',
+  'push to master plus github-pages environment',
   'buyer-evidence-storybook',
   'storybook-manifest-live',
   'pending-external:storybook-pages-proof',
@@ -175,12 +177,42 @@ for (const needle of ['ACGI_EVIDENCE_CNAME', 'publishTarget', 'storybook.acgs.ai
   mustContain(buildBuyerEvidence, needle, 'scripts/build-buyer-evidence.mjs')
 }
 for (const needle of [
-  'actions/upload-pages-artifact@v3',
-  'actions/deploy-pages@v4',
-  "vars.STORYBOOK_PAGES_ENABLED == 'true'",
+  'pull_request:',
+  'permissions:\n  contents: read',
+  "node-version: '24.18.0'",
+  'name: Activate integrity-verified pnpm',
+  'corepack enable --install-directory "$corepack_root/bin"',
+  'test "$(corepack pnpm --version)" = \'9.15.4\'',
+  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
 ]) {
   mustContain(workflow, needle, '.github/workflows/storybook.yml')
 }
+for (const needle of [
+  '\n  push:',
+  'permissions: {}',
+  "node-version: '24.18.0'",
+  'name: Activate integrity-verified pnpm',
+  'corepack enable --install-directory "$corepack_root/bin"',
+  'test "$(corepack pnpm --version)" = \'9.15.4\'',
+  'pages: write',
+  'id-token: write',
+  'actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa',
+  'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e',
+]) {
+  mustContain(deployWorkflow, needle, '.github/workflows/storybook-deploy.yml')
+}
+check(!workflow.includes('actions/deploy-pages@'), 'storybook.yml must remain verification-only.')
+check(!workflow.includes('pnpm/action-setup@'), 'storybook.yml must use integrity-verifying Corepack, not pnpm/action-setup.')
+check(!workflow.includes('cache: pnpm'), 'storybook.yml must not pre-resolve a pnpm cache before Corepack verification.')
+check(!workflow.includes('cache-dependency-path'), 'storybook.yml must not configure pnpm caching before Corepack verification.')
+check(!deployWorkflow.includes('pull_request:'), 'storybook-deploy.yml must remain push-only.')
+check(!deployWorkflow.includes('${{ secrets.'), 'storybook-deploy.yml must not receive repository secrets.')
+check(
+  !deployWorkflow.includes('pnpm/action-setup@') &&
+    !deployWorkflow.includes('cache: pnpm') &&
+    !deployWorkflow.includes('cache-dependency-path'),
+  'storybook-deploy.yml must use integrity-verifying Corepack without action/cache pre-resolution.',
+)
 
 for (const needle of [
   'build:hosted-storybook-handoff',
@@ -296,6 +328,13 @@ try {
     payload.claimBoundary.includes('not live production proof') &&
       payload.claimBoundary.includes('does not deploy'),
     'handoff claim boundary must stay conservative.',
+  )
+  check(
+    payload.target.requiredRepoVariable === null &&
+      payload.target.verificationWorkflow === '.github/workflows/storybook.yml' &&
+      payload.target.requiredWorkflow === '.github/workflows/storybook-deploy.yml' &&
+      payload.workflow.pagesDeployGatedBy === 'push to master plus github-pages environment',
+    'handoff must describe the physically separated verification and push-only Pages workflows.',
   )
 
   const requireClearResult = runBuilder([

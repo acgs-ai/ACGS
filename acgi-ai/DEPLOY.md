@@ -91,7 +91,7 @@ Why split, when the bundle is one file:
   The console CDN provider does not exist; the request path is end-to-end
   under operator control. This is the deployment-layer expression of
   `DESIGN.md §4.3`.
-- **Subprocessor story.** "Cloudflare Pages sees public marketing visitors; nothing
+- **Subprocessor story.** "Cloudflare's marketing Worker sees public marketing visitors; nothing
   third-party sits between a customer and `console.acgs.ai`." That is a
   one-line answer to a question every regulated-AI buyer asks.
 - **API homing.** The bus client calls `console.acgs.ai/api/*` — same
@@ -116,14 +116,15 @@ Why not a Cloudflare-in-front-of-origin single-domain plan:
 
 ## §3 Marketing surface — `acgs.ai`, `www.acgs.ai`
 
-**Provider:** Cloudflare Pages (project `acgs-marketing`). The design is
-provider-agnostic at this layer; the routing and header contract is expressed
-in Cloudflare's static-config files.
+**Provider:** Cloudflare Worker `acgs-governance-proxy` with Workers Static
+Assets. The older `acgs-marketing` Pages project is a shadow and is not the live
+apex origin. The routing and header contract is expressed in the committed
+Workers configuration.
 
 **Build:**
 
 ```
-pnpm install --frozen-lockfile
+pnpm install --frozen-lockfile --ignore-workspace
 pnpm build:marketing
 # output: dist/
 ```
@@ -132,8 +133,8 @@ The marketing build is mode-specific: `vite --mode marketing` aliases the
 React entry to `src/surfaces/marketing/App.tsx`. It must not embed the
 privileged console route tree.
 
-**Routing config** (`acgi-ai/infra/cloudflare/_redirects`, applied to the
-marketing Cloudflare Pages project — see §7):
+**Routing config** (`acgi-ai/infra/cloudflare/workers/_redirects`, staged into
+the Workers Static Assets payload — see §7):
 
 - Internal `*.md` docs requests → 404 (before redirect rules)
 - `/console` → 308 redirect to `https://console.acgs.ai/console` (privilege boundary)
@@ -147,21 +148,25 @@ nosniff, SAMEORIGIN, referrer, permissions, and immutable `/assets/*` cache.
 *enforced* CSP is unaffected — it is served by Caddy on the Cloud Run origin
 (§5), not here.
 
-**Config** — `acgi-ai/wrangler.toml` (project `acgs-marketing`, output `dist/`).
+**Config** — `acgi-ai/infra/cloudflare/workers/wrangler.toml`, including the
+four reviewed live routes for `acgs.ai`, `www.acgs.ai`, `console.acgs.ai`, and
+`api.acgs.ai/telegram/*`.
 
 **Build + deploy:**
 - `pnpm build:marketing` → `dist/`, then
   `cp infra/cloudflare/_headers infra/cloudflare/_redirects dist/` before deploy.
-- Deploy workflow: repo-root `.github/workflows/marketing-cloudflare.yml`:
-  verify on PR, gated production deploy on push to `master`.
-- `marketing.yml` is verify-only (lint + build + `test:all`); it does not deploy.
+- `.github/workflows/marketing.yml` is pull-request verification only (lint,
+  build, `test:all`) and has no credentials or deployment authority.
+- `.github/workflows/marketing-cloudflare.yml` is the physically separate,
+  push-only production Worker deployment. It reverifies the pushed commit
+  before entering its protected production job.
 
 **Required secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 
-**Required human setup:** create the `acgs-marketing` Pages project, set its
-production branch to `master`, configure a GitHub `production` Environment with
-required reviewers (the `environment: production` gate is decorative without it),
-then add the two secrets. Deploy is BLOCKED (loud `::error::`) until the secrets exist.
+**Required human setup:** configure the GitHub `production` Environment with
+required reviewers, authorize the exact target and commit, then add the two
+Worker-scoped secrets. Deploy is BLOCKED (loud `::error::`) until those external
+settings and credentials exist. Committed configuration is not deployment proof.
 
 **Deploy status:** `gh run list -w marketing-cloudflare -L 1`.
 
@@ -401,23 +406,26 @@ never embedded in `dist/`.
 
 ```
 .github/workflows/
-  marketing-cloudflare.yml  # → Cloudflare Pages marketing deploy (push to master)
+  marketing-cloudflare.yml  # → push-only Cloudflare Workers deploy
   marketing.yml             # → verify-only (lint + build + test:all, no deploy)
-  console.yml               # → Cloud Run / Fly.io console project
+  console.yml               # → pull-request console verification only
+  console-deploy.yml        # → push-only Cloud Run console deploy
+  storybook.yml             # → pull-request buyer-evidence verification only
+  storybook-deploy.yml      # → push-only GitHub Pages publication
 infra/
   Caddyfile          # console origin config
   cloudflare/
     _redirects       # marketing-only routing (308 /console → console.acgs.ai/console, SPA fallback)
     _headers         # marketing-only headers + report-only CSP
+    workers/          # live Worker script, redirects, four-route wrangler config
   cloudrun/service.preview.yaml
   cloudrun/service.staging.yaml
   cloudrun/service.production.yaml
   cloudrun/service.yaml  # render target produced from service.${DEPLOY_ENV}.yaml
   Dockerfile.console
-wrangler.toml        # Cloudflare Pages project config (marketing)
 ```
 
-The console deploy workflow requires `CONSOLE_AUTH_UPSTREAM` and
+The push-only `console-deploy.yml` workflow requires `CONSOLE_AUTH_UPSTREAM` and
 `CONSOLE_BUS_UPSTREAM` alongside the Cloud Run/GCP secrets. It calls the
 shared fail-closed renderer, `scripts/render-cloudrun-service.mjs`, to turn
 `infra/cloudrun/service.${DEPLOY_ENV}.yaml` into
@@ -453,8 +461,13 @@ pnpm run test:auth-boundary
 pnpm run smoke:bus-proxy
 ```
 
-`pnpm run test:ci-gates` statically checks that both deploy workflows run the
-full `pnpm test:all` readiness suite before any credentialed deploy step. It
+`pnpm run test:ci-gates` statically checks that pull-request verification is
+read-only and physically separate from the push-only console, marketing, and
+Storybook deployment workflows. It also verifies exact Node 24.18.0, the
+integrity-qualified pnpm selector through an isolated Corepack activation
+(`pnpm/action-setup` is forbidden because it does not enforce the selector
+hash), immutable Action pins, and that pushed
+commits are reverified before any credentialed deploy step. It
 also keeps console path filters aligned with script/docs changes so readiness
 gate edits cannot silently bypass the production-bound workflows.
 
@@ -645,7 +658,7 @@ The console image build is pinned to `node:24-alpine` and the runtime image
 is pinned to `caddy:2.10.2-alpine`; `pnpm run test:container-pins` keeps
 those tags aligned with the Docker-backed bus-proxy smoke test and package
 toolchain contract. From the monorepo root, `make verify-js-node24` activates
-the repo's `fnm` Node 24 from `acgi-ai/.node-version`, verifies pnpm 9.15.4,
+the repo's `fnm` Node 24.18.0 from `acgi-ai/.node-version`, verifies pnpm 9.15.4,
 and runs `pnpm -F acgi-ai run test:all`; use that command for local
 deploy-readiness evidence when the shell-default `node` is not Node 24.
 
@@ -661,7 +674,7 @@ bridge. Caddy serves that JSON only after the same
 `/console` and `/console/*` has accepted the request, so a public marketing
 SPA navigation cannot mint a console session in JavaScript. Every Cloud Run
 template carries `AUTH_UPSTREAM`, and the shared `render-cloudrun-service.mjs`
-path used by `console.yml` refuses to deploy until the
+path used by `console-deploy.yml` refuses to deploy until the
 `CONSOLE_AUTH_UPSTREAM`-derived `AUTH_UPSTREAM` value is present. The localhost
 fallback is a closed port so a missing authorizer fails closed before the SPA
 fallback can serve privileged deep links or a positive `/auth/status` response.
@@ -684,20 +697,20 @@ Playwright assertion that p99 first-request latency under cold-start scenario
 stays below 800ms. Local template checks only prove the intended Cloud Run
 shape is present before deploy.
 
-**One PR, two deploy targets.** Both workflows trigger on PR + main. Both run
-the full `pnpm test:all` readiness suite before any credentialed deploy step;
-marketing then runs `pnpm build:marketing`, while console runs
-`pnpm build:console` before packaging/deploying the console image. Current PR
-runs are readiness/lint/build only; preview deploys are disabled until
-secrets, projects, and domains are configured. Pushes to `master` deploy
-production, and missing production credentials fail closed rather than
-green-skipping deploy.
+**Physically separated verification and deploy.** `console.yml`, `marketing.yml`,
+and `storybook.yml` are pull-request-only, read-only verification workflows.
+`console-deploy.yml`, `marketing-cloudflare.yml`, and `storybook-deploy.yml`
+are push-only and reverify the exact pushed commit before their authorization
+jobs. A target-specific environment variable must equal that exact 40-hex
+commit before any credentialed job is eligible to run. Missing/stale approval
+skips side effects; missing production credentials fail the already-authorized
+deploy loudly. Committed workflows prove configuration, not a completed deploy.
 
 **Preview environments are fixture-data only.** No PR preview ever sees
 real tenant data; that is enforced by §10 (production access logs +
 synthetic-tenant-only banner on staging).
 
-**Branch protection on `main`:**
+**Branch protection on `master` (owner configuration, not proved by this file):**
 
 1. Required check: `pnpm test:all`
 2. Required check: `pnpm run test:ci-gates` for workflow/deploy-contract edits
@@ -853,13 +866,15 @@ artifact. `pnpm run test:storybook-runtime-plan` verifies the
 `storybook-runtime.plan.json` dependency plan and keeps official Storybook
 runtime work behind `pending-external:dependency-owner-approval` until an owner
 approves adding dependencies and replacing the shim. `pnpm run test:storybook-publication` verifies the gated
-`.github/workflows/storybook.yml` publication scaffold: it builds the same
+split `.github/workflows/storybook.yml` verification and
+`.github/workflows/storybook-deploy.yml` publication scaffolds: they build the same
 claim-safe gallery with `ACGI_EVIDENCE_CNAME=storybook.acgs.ai`, writes the
 Pages `CNAME`, writes `.nojekyll`, includes a `/manifest.json` for the live
 `storybook-manifest-live` check, records hosted-proof requirements in that
-manifest, uploads the `buyer-evidence-storybook` artifact, and only enables GitHub Pages deployment when
-`STORYBOOK_PAGES_ENABLED` is explicitly set. Before upload or deploy, the
-Storybook workflow also runs `test:hosted-storybook-handoff`,
+manifest, and upload the `buyer-evidence-storybook` artifact. Pull requests run
+only the read-only verifier; Pages/OIDC authority exists only in the push-only
+deploy workflow's `github-pages` job. Before upload or deploy, both workflows
+also run `test:hosted-storybook-handoff`,
 `test:hosted-storybook-proof-template`, and
 `test:hosted-storybook-proof-gap-report` so the Pages path cannot drift from the
 operator proof handoff or proof-intake contract. The console workflow also runs
@@ -961,10 +976,12 @@ the production banner.
 **Zone:** `acgs.ai` on Cloudflare nameservers (`stan`/`zita.ns.cloudflare.com`).
 Enable DNSSEC at the Cloudflare zone and verify before launch.
 
-**Live state — audited 2026-06-19** (read-only `dig`, confirmed via `@1.1.1.1`).
-This is the expected pre-launch / deployment-blocked posture; it matches the
-`production-deploy-fail-closed-local` readiness item (the marketing deploy fails
-closed until the Pages project + secrets exist):
+**Historical DNS snapshot — audited 2026-06-19** (read-only `dig`, confirmed via
+`@1.1.1.1`). This snapshot is retained for comparison only and must not be
+treated as current live proof. The current Worker topology is described in the
+2026-07-10 reality note above; a release still requires a fresh live verifier
+artifact. The `production-deploy-fail-closed-local` readiness item now checks
+exact-commit authorization and Worker credentials, not Pages-project presence:
 
 | Name | Live | Target |
 |---|---|---|

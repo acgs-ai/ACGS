@@ -249,7 +249,9 @@ const checker = read(checkerPath)
 const validator = read(validatorPath)
 const packageJson = JSON.parse(read('package.json'))
 const storybookWorkflow = readRepo('.github/workflows/storybook.yml')
+const storybookDeployWorkflow = readRepo('.github/workflows/storybook-deploy.yml')
 const consoleWorkflow = readRepo('.github/workflows/console.yml')
+const consoleDeployWorkflow = readRepo('.github/workflows/console-deploy.yml')
 const deploy = read('DEPLOY.md')
 const launch = read('PRODUCTION-LAUNCH.md')
 const readiness = readRepo('docs/integration-readiness-task-map.md')
@@ -488,17 +490,26 @@ check(
   'package.json test:all must not run live production network checks.',
 )
 
-for (const workflow of [storybookWorkflow, consoleWorkflow]) {
+for (const [label, workflow] of [
+  ['storybook.yml', storybookWorkflow],
+  ['storybook-deploy.yml', storybookDeployWorkflow],
+  ['console.yml', consoleWorkflow],
+  ['console-deploy.yml', consoleDeployWorkflow],
+]) {
   check(
-    pathFilterCount(workflow, 'acgi-ai/hosted-storybook-proof.example.json') >= 2,
-    'workflow path filters must include hosted-storybook-proof.example.json for pull_request and push.',
+    pathFilterCount(workflow, 'acgi-ai/hosted-storybook-proof.example.json') >= 1,
+    `${label} path filters must include hosted-storybook-proof.example.json.`,
   )
 }
-check(
-  pathFilterCount(storybookWorkflow, 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs') >=
-    2,
-  'storybook workflow path filters must include check-hosted-storybook-proof-template.mjs.',
-)
+for (const [label, workflow] of [
+  ['storybook.yml', storybookWorkflow],
+  ['storybook-deploy.yml', storybookDeployWorkflow],
+]) {
+  check(
+    pathFilterCount(workflow, 'acgi-ai/scripts/check-hosted-storybook-proof-template.mjs') >= 1,
+    `${label} path filters must include check-hosted-storybook-proof-template.mjs.`,
+  )
+}
 
 for (const needle of [
   'hosted-storybook-proof.example.json',

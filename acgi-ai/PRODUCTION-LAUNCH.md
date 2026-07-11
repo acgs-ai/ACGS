@@ -26,10 +26,12 @@ runtime evidence from the deployed origins.
 
 ## Required GitHub secrets and variables
 
-Marketing / Cloudflare Pages production deploy:
+Marketing / Cloudflare Workers production deploy:
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
+- `MARKETING_PRODUCTION_APPROVED_SHA` environment variable set to the exact
+  reviewed 40-hex commit
 
 Console / Cloud Run production deploy:
 
@@ -40,11 +42,18 @@ Console / Cloud Run production deploy:
 - `GCP_ARTIFACT_REGISTRY`
 - `CONSOLE_AUTH_UPSTREAM`
 - `CONSOLE_BUS_UPSTREAM`
+- `CONSOLE_PRODUCTION_APPROVED_SHA` environment variable set to the exact
+  reviewed 40-hex commit
 
 Buyer-evidence publication:
 
-- `STORYBOOK_PAGES_ENABLED=true` after DNS, GitHub Pages, and `storybook.acgs.ai`
+- `STORYBOOK_PRODUCTION_APPROVED_SHA` on the `github-pages` environment, set to
+  the exact reviewed 40-hex commit after DNS, Pages, and `storybook.acgs.ai`
   are ready for a live publication attempt.
+
+These target-specific variables authorize one commit only. Missing, malformed,
+stale, or different values leave verification green but skip every credentialed
+side effect. Their presence is configuration evidence, not deployment proof.
 
 ## Local preflight commands
 
@@ -72,7 +81,7 @@ pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report
 ```
 
 The production-blocker wrapper routes acgi-ai `pnpm` evidence commands through
-`scripts/run_acgi_node24_gate.sh`, so operator-copied plans use the same Node 24
+`scripts/run_acgi_node24_gate.sh`, so operator-copied plans use the same Node 24.18.0
 toolchain required by deploy and CI instead of the caller's shell-default Node.
 
 Expected local state today: `make platform-readiness` may still report the
@@ -113,7 +122,9 @@ claims but does not weaken the production deploy fail-closed contract.
    owners are asked for signed external proof. Guard the builder with
    `pnpm -F acgi-ai run test:hosted-storybook-proof-gap-report`; this checklist
    is not hosted Storybook proof or live production proof.
-5. Confirm the secrets and `STORYBOOK_PAGES_ENABLED` setting above in GitHub.
+5. Confirm the secrets and three exact-commit approval variables above in their
+   target environments. Each approval value must equal the intended `master`
+   commit before the credentialed job can run.
 6. Push or merge to `master` and record the GitHub Actions run URL.
 7. For marketing, record the Cloudflare deployment URL and confirm that missing
    Cloudflare secrets would fail closed via `test:production-deploy-contract`.
@@ -282,7 +293,7 @@ pnpm -F acgi-ai run validate:production-evidence -- --manifest <completed-produc
 - `buyer-evidence-gallery` CI artifact
 - `console-dist` CI artifact from the production push run
 - GitHub Actions run URL for `marketing.yml`
-- GitHub Actions run URL for `console.yml`
+- GitHub Actions run URL for `console-deploy.yml`
 - Cloudflare deployment URL for `acgs.ai`
 - Cloud Run revision URL for `console.acgs.ai`
 - Output from `scripts/postdeploy-verify.sh`

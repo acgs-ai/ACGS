@@ -15,7 +15,7 @@ function check(condition, message) {
 
 const caddyfile = read('infra/Caddyfile')
 const serviceYaml = read('infra/cloudrun/service.yaml')
-const consoleWorkflow = read('../.github/workflows/console.yml')
+const consoleDeployWorkflow = read('../.github/workflows/console-deploy.yml')
 const renderScript = read('scripts/render-cloudrun-service.mjs')
 const deployDoc = read('DEPLOY.md')
 const plan = read('PLAN.md')
@@ -51,15 +51,15 @@ check(
   'Cloud Run service must define ACGS_SCHEMA_VERSION.',
 )
 check(
-  /CONSOLE_BUS_UPSTREAM/.test(consoleWorkflow) &&
-    /BUS_UPSTREAM/.test(consoleWorkflow) &&
-    /node scripts\/render-cloudrun-service\.mjs/.test(consoleWorkflow),
-  'console.yml must read CONSOLE_BUS_UPSTREAM into BUS_UPSTREAM and call the shared renderer.',
+  /CONSOLE_BUS_UPSTREAM/.test(consoleDeployWorkflow) &&
+    /BUS_UPSTREAM/.test(consoleDeployWorkflow) &&
+    /node scripts\/render-cloudrun-service\.mjs/.test(consoleDeployWorkflow),
+  'console-deploy.yml must read CONSOLE_BUS_UPSTREAM into BUS_UPSTREAM and call the shared renderer.',
 )
 check(
   /REPLACE_BUS_UPSTREAM_AT_DEPLOY_TIME/.test(renderScript) &&
-    /--bus-upstream/.test(consoleWorkflow),
-  'console.yml must render BUS_UPSTREAM into service.yaml through render-cloudrun-service.mjs.',
+    /--bus-upstream "\$BUS_UPSTREAM"/.test(consoleDeployWorkflow),
+  'console-deploy.yml must render BUS_UPSTREAM into service.yaml through render-cloudrun-service.mjs.',
 )
 check(
   /requireUpstream\(\s*'BUS_UPSTREAM'/.test(renderScript) && /is required/.test(renderScript),

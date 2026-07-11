@@ -22,6 +22,10 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+function mustNotContain(source, needle, label) {
+  check(!source.includes(needle), `${label} must not include ${JSON.stringify(needle)}.`)
+}
+
 const packageJson = JSON.parse(read('package.json'))
 const handoffPath = 'PRODUCTION-LAUNCH.md'
 const deploy = read('DEPLOY.md')
@@ -36,7 +40,11 @@ const productionBlockerReportCheck = read('scripts/check-production-blocker-repo
 const productionEvidenceValidatorCheck = read('scripts/check-production-evidence-validator.mjs')
 const productionEvidenceDraftCheck = read('scripts/check-production-evidence-draft.mjs')
 const consoleWorkflow = readRepo('.github/workflows/console.yml')
+const consoleDeployWorkflow = readRepo('.github/workflows/console-deploy.yml')
 const marketingWorkflow = readRepo('.github/workflows/marketing.yml')
+const marketingDeployWorkflow = readRepo('.github/workflows/marketing-cloudflare.yml')
+const storybookWorkflow = readRepo('.github/workflows/storybook.yml')
+const storybookDeployWorkflow = readRepo('.github/workflows/storybook-deploy.yml')
 
 check(existsSync(resolve(root, handoffPath)), `${handoffPath} must exist.`)
 check(
@@ -177,7 +185,10 @@ for (const secret of [
   'GCP_ARTIFACT_REGISTRY',
   'CONSOLE_AUTH_UPSTREAM',
   'CONSOLE_BUS_UPSTREAM',
-  'STORYBOOK_PAGES_ENABLED=true',
+  'CONSOLE_PRODUCTION_APPROVED_SHA',
+  'MARKETING_PRODUCTION_APPROVED_SHA',
+  'STORYBOOK_PRODUCTION_APPROVED_SHA',
+  'exact reviewed 40-hex commit',
 ]) {
   mustContain(handoff, secret, handoffPath)
 }
@@ -231,7 +242,57 @@ for (const [label, workflow] of [
   ['marketing.yml', marketingWorkflow],
 ]) {
   mustContain(workflow, 'pnpm test:all', label)
-  mustContain(workflow, "node-version: '24'", label)
+  mustContain(workflow, "node-version: '24.18.0'", label)
+  mustContain(workflow, 'pull_request:', label)
+  mustContain(workflow, 'permissions:\n  contents: read', label)
+  for (const forbidden of ['\n  push:', 'id-token: write', '${{ secrets.', 'environment: production']) {
+    mustNotContain(workflow, forbidden, label)
+  }
+  mustContain(workflow, 'name: Activate integrity-verified pnpm', label)
+  mustContain(workflow, 'corepack enable --install-directory "$corepack_root/bin"', label)
+  mustNotContain(workflow, 'pnpm/action-setup@', label)
+  mustNotContain(workflow, 'cache: pnpm', label)
+  mustNotContain(workflow, 'cache-dependency-path', label)
+}
+
+for (const [label, workflow] of [
+  ['console-deploy.yml', consoleDeployWorkflow],
+  ['marketing-cloudflare.yml', marketingDeployWorkflow],
+  ['storybook-deploy.yml', storybookDeployWorkflow],
+]) {
+  mustContain(workflow, '\n  push:', label)
+  mustContain(workflow, 'permissions: {}', label)
+  mustContain(workflow, "node-version: '24.18.0'", label)
+  mustNotContain(workflow, 'pull_request:', label)
+  mustContain(workflow, 'name: Activate integrity-verified pnpm', label)
+  mustContain(workflow, 'corepack enable --install-directory "$corepack_root/bin"', label)
+  mustNotContain(workflow, 'pnpm/action-setup@', label)
+  mustNotContain(workflow, 'cache: pnpm', label)
+  mustNotContain(workflow, 'cache-dependency-path', label)
+}
+
+mustContain(storybookWorkflow, 'pull_request:', 'storybook.yml')
+mustContain(storybookWorkflow, "node-version: '24.18.0'", 'storybook.yml')
+mustContain(storybookWorkflow, 'name: Activate integrity-verified pnpm', 'storybook.yml')
+mustNotContain(storybookWorkflow, 'pnpm/action-setup@', 'storybook.yml')
+mustNotContain(storybookWorkflow, 'cache: pnpm', 'storybook.yml')
+mustNotContain(storybookWorkflow, 'cache-dependency-path', 'storybook.yml')
+mustNotContain(storybookWorkflow, 'actions/deploy-pages@', 'storybook.yml')
+mustContain(
+  storybookDeployWorkflow,
+  'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e',
+  'storybook-deploy.yml',
+)
+
+for (const [label, workflow, variable] of [
+  ['console-deploy.yml', consoleDeployWorkflow, 'CONSOLE_PRODUCTION_APPROVED_SHA'],
+  ['marketing-cloudflare.yml', marketingDeployWorkflow, 'MARKETING_PRODUCTION_APPROVED_SHA'],
+  ['storybook-deploy.yml', storybookDeployWorkflow, 'STORYBOOK_PRODUCTION_APPROVED_SHA'],
+]) {
+  mustContain(workflow, `APPROVED_SHA: \${{ vars.${variable} }}`, label)
+  mustContain(workflow, 'CANDIDATE_SHA: ${{ github.sha }}', label)
+  mustContain(workflow, '^[0-9a-f]{40}$', label)
+  mustContain(workflow, "needs.authorize.outputs.approved == 'true'", label)
 }
 
 if (failures.length > 0) {

@@ -101,7 +101,8 @@ mustContain(integrating, 'VITE_USE_MOCKS=true', 'INTEGRATING.md')
 mustContain(integrating, 'Known unstable fields', 'INTEGRATING.md')
 mustContain(integrating, 'BUS_UPSTREAM', 'INTEGRATING.md')
 
-mustContain(gettingStarted, 'Node >=24 <25', 'GETTING_STARTED.md')
+mustContain(gettingStarted, 'Node 24.18.0', 'GETTING_STARTED.md')
+mustContain(gettingStarted, 'Corepack-provided pnpm 9.15.4', 'GETTING_STARTED.md')
 mustContain(gettingStarted, 'pnpm 9.15.4', 'GETTING_STARTED.md')
 mustContain(gettingStarted, 'pnpm -F acgi-ai run hello', 'GETTING_STARTED.md')
 mustContain(gettingStarted, 'pnpm -F acgi-ai run test:tthw', 'GETTING_STARTED.md')
@@ -109,7 +110,7 @@ mustContain(gettingStarted, 'pnpm -F acgi-ai run hello:world:local', 'GETTING_ST
 mustContain(gettingStarted, 'pnpm -F acgi-ai run test:all', 'GETTING_STARTED.md')
 mustContain(gettingStarted, 'make verify', 'GETTING_STARTED.md')
 mustContain(
-  gettingStarted,
+  gettingStarted.toLowerCase(),
   'local verification does not equal production deployment',
   'GETTING_STARTED.md',
 )

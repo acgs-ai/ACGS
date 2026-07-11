@@ -34,11 +34,105 @@ function pathFilterCount(workflow, path) {
   return (workflow.match(new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
 }
 
+function assertImmutableActionPins(workflow, label) {
+  const refs = [...workflow.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)\s*$/gm)].map((match) => match[1])
+  check(refs.length > 0, `${label} must use at least one GitHub Action.`)
+  for (const ref of refs) {
+    check(/@[0-9a-f]{40}$/.test(ref), `${label} action ${ref} must use an immutable 40-hex SHA.`)
+  }
+}
+
+function occurrenceCount(source, needle) {
+  return source.split(needle).length - 1
+}
+
+function assertCorepackIntegritySetup(workflow, label, expectedActivations = 1) {
+  check(
+    workflow.includes(`REVIEWED_PNPM_SELECTOR: '${PACKAGE_MANAGER}'`),
+    `${label} must bind the exact integrity-qualified pnpm selector.`,
+  )
+  for (const forbidden of ['pnpm/action-setup@', 'cache: pnpm', 'cache-dependency-path']) {
+    check(!workflow.includes(forbidden), `${label} must not include ${forbidden}.`)
+  }
+  for (const needle of [
+    'name: Activate integrity-verified pnpm',
+    'corepack_root="$RUNNER_TEMP/acgs-corepack"',
+    'export COREPACK_HOME="$corepack_root/home"',
+    'corepack enable --install-directory "$corepack_root/bin"',
+    'test "$(corepack pnpm --version)" = \'9.15.4\'',
+    'test "$(command -v pnpm)" = "$corepack_root/bin/pnpm"',
+  ]) {
+    check(
+      occurrenceCount(workflow, needle) >= expectedActivations,
+      `${label} must include ${expectedActivations} isolated Corepack activation(s) with ${JSON.stringify(needle)}.`,
+    )
+  }
+}
+
+function assertCorepackIntegrityProof(workflow, label) {
+  for (const needle of [
+    'name: Prove Corepack enforces the integrity-qualified pnpm selector',
+    `selector='${PACKAGE_MANAGER}'`,
+    'test "$(corepack --version)" = 0.35.0',
+    'COREPACK_INTEGRITY_KEYS must stay unset; bypasses are forbidden',
+    'COREPACK_DEFAULT_TO_LATEST:',
+    'COREPACK_ENABLE_STRICT:',
+    'forged_project=',
+    'Corepack accepted a forged pnpm SHA-512 selector',
+    'Mismatch hashes',
+    'corepack enable --install-directory "$corepack_root/bin" pnpm',
+    'test "$(command -v pnpm)" = "${COREPACK_HOME%/home}/bin/pnpm"',
+  ]) {
+    check(workflow.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
+  }
+  for (const forbidden of ['pnpm/action-setup@', 'cache: pnpm', 'cache-dependency-path']) {
+    check(!workflow.includes(forbidden), `${label} must not include ${forbidden}.`)
+  }
+}
+
+function jobBlock(source, jobName) {
+  const escaped = jobName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return source.match(new RegExp(`(?:^|\\n)  ${escaped}:\\n[\\s\\S]*?(?=\\n  [A-Za-z0-9_-]+:\\n|$)`))?.[0] ?? ''
+}
+
+function assertCommitAuthorization(workflow, label, variable, environment, downstreamJobs) {
+  const authorization = jobBlock(workflow, 'authorize')
+  for (const needle of [
+    'permissions: {}',
+    `environment: ${environment}`,
+    `APPROVED_SHA: \${{ vars.${variable} }}`,
+    'CANDIDATE_SHA: ${{ github.sha }}',
+    '^[0-9a-f]{40}$',
+    '"$APPROVED_SHA" == "$CANDIDATE_SHA"',
+  ]) {
+    check(authorization.includes(needle), `${label} authorize job must include ${needle}.`)
+  }
+  for (const forbidden of ['uses:', '${{ secrets.', 'id-token: write', 'pages: write', 'deployments: write']) {
+    check(!authorization.includes(forbidden), `${label} authorize job must not include ${forbidden}.`)
+  }
+  for (const downstreamJob of downstreamJobs) {
+    const downstream = jobBlock(workflow, downstreamJob)
+    check(downstream.includes('authorize'), `${label} ${downstreamJob} must depend on authorize.`)
+    check(
+      downstream.includes("needs.authorize.outputs.approved == 'true'"),
+      `${label} ${downstreamJob} must require exact-commit authorization.`,
+    )
+  }
+}
+
+const NODE_VERSION = '24.18.0'
+const PACKAGE_MANAGER =
+  'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+
 const packageJson = JSON.parse(read('package.json'))
+const rootPackageJson = JSON.parse(readRepo('package.json'))
 const consoleWorkflowPath = '.github/workflows/console.yml'
+const consoleDeployWorkflowPath = '.github/workflows/console-deploy.yml'
 const marketingWorkflowPath = '.github/workflows/marketing.yml'
 const marketingCfWorkflowPath = '.github/workflows/marketing-cloudflare.yml'
 const storybookWorkflowPath = '.github/workflows/storybook.yml'
+const storybookDeployWorkflowPath = '.github/workflows/storybook-deploy.yml'
+const saasBetaWorkflowPath = '.github/workflows/saas-beta-required.yml'
 const tthwWorkflowPath = '.github/workflows/tthw.yml'
 const productionDeployCheckPath = 'scripts/check-production-deploy-contract.mjs'
 const productionLaunchCheckPath = 'scripts/check-production-launch-handoff.mjs'
@@ -72,9 +166,12 @@ const browserEvidenceCapturePath = 'scripts/capture-workbench-browser-evidence.m
 const browserEvidenceFoundationCheckPath = 'scripts/check-browser-evidence-foundation.mjs'
 const mswNodeServerPath = 'src/mocks/server.ts'
 const consoleWorkflow = readRepo(consoleWorkflowPath)
+const consoleDeployWorkflow = readRepo(consoleDeployWorkflowPath)
 const marketingWorkflow = readRepo(marketingWorkflowPath)
 const marketingCfWorkflow = readRepo(marketingCfWorkflowPath)
 const storybookWorkflow = readRepo(storybookWorkflowPath)
+const storybookDeployWorkflow = readRepo(storybookDeployWorkflowPath)
+const saasBetaWorkflow = readRepo(saasBetaWorkflowPath)
 const tthwWorkflow = readRepo(tthwWorkflowPath)
 const productionDeployCheck = read(productionDeployCheckPath)
 const productionLaunchCheck = read(productionLaunchCheckPath)
@@ -115,6 +212,10 @@ check(
   '.github/workflows/console.yml must exist.',
 )
 check(
+  existsSync(resolve(repoRoot, consoleDeployWorkflowPath)),
+  '.github/workflows/console-deploy.yml must exist.',
+)
+check(
   existsSync(resolve(repoRoot, marketingWorkflowPath)),
   '.github/workflows/marketing.yml must exist.',
 )
@@ -122,7 +223,19 @@ check(
   existsSync(resolve(repoRoot, storybookWorkflowPath)),
   '.github/workflows/storybook.yml must exist.',
 )
+check(
+  existsSync(resolve(repoRoot, storybookDeployWorkflowPath)),
+  '.github/workflows/storybook-deploy.yml must exist.',
+)
+check(
+  existsSync(resolve(repoRoot, saasBetaWorkflowPath)),
+  '.github/workflows/saas-beta-required.yml must exist.',
+)
 check(existsSync(resolve(repoRoot, tthwWorkflowPath)), '.github/workflows/tthw.yml must exist.')
+check(
+  packageJson.packageManager === PACKAGE_MANAGER && rootPackageJson.packageManager === PACKAGE_MANAGER,
+  'root and acgi-ai packageManager selectors must match the exact integrity-qualified pnpm 9.15.4 selector.',
+)
 check(
   packageJson.scripts?.['test:ci-gates'] === 'node scripts/check-ci-readiness-gates.mjs',
   'package.json must expose test:ci-gates.',
@@ -297,25 +410,161 @@ check(
   'package.json test:all must include test:ci-gates, test:bus-schema, test:cloudrun-renderer, test:production-deploy-contract, test:production-launch-handoff, test:production-authority-packet, test:production-evidence-template, test:production-live-verifier, test:production-blocker-report, test:production-evidence-validator, test:production-cutover-plan, test:production-evidence-draft, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:performance, test:state-coverage, test:polling-hygiene, test:session-sync, test:login-interstitial, test:privilege-banner, test:wire-decisions, test:test-surface, test:buyer-evidence, test:storybook-runtime-plan, test:storybook-publication, test:hosted-storybook-handoff, test:hosted-storybook-proof-template, test:hosted-storybook-proof-gap-report, test:tthw, test:e2e-http, test:browser-evidence, test:msw-node, and test:app-errors; it must not run live/operator-specific production proof commands.',
 )
 
+for (const [label, workflow, readinessCommand] of [
+  ['console.yml', consoleWorkflow, 'pnpm test:all'],
+  ['marketing.yml', marketingWorkflow, 'pnpm test:all'],
+  ['storybook.yml', storybookWorkflow, 'pnpm test:storybook-publication'],
+]) {
+  check(
+    workflow.includes(`node-version: '${NODE_VERSION}'`),
+    `${label} must run exact Node ${NODE_VERSION}.`,
+  )
+  check(workflow.includes('pull_request:'), `${label} must be a pull-request verification workflow.`)
+  check(!workflow.includes('\n  push:'), `${label} must not have a push deploy trigger.`)
+  check(
+    workflow.includes('permissions:\n  contents: read'),
+    `${label} must keep a read-only workflow token.`,
+  )
+  check(workflow.includes(readinessCommand), `${label} must run ${readinessCommand}.`)
+  for (const forbidden of [
+    'id-token: write',
+    'pages: write',
+    'deployments: write',
+    '${{ secrets.',
+    'environment: production',
+  ]) {
+    check(!workflow.includes(forbidden), `${label} must not include ${forbidden}.`)
+  }
+}
+
+for (const command of [
+  'pnpm test:storybook-runtime-plan',
+  'pnpm test:storybook-publication',
+  'pnpm test:hosted-storybook-handoff',
+  'pnpm test:hosted-storybook-proof-template',
+  'pnpm test:hosted-storybook-proof-gap-report',
+]) {
+  check(storybookWorkflow.includes(command), `storybook.yml must run ${command}.`)
+}
+
+for (const [label, workflow] of [
+  ['console-deploy.yml', consoleDeployWorkflow],
+  ['marketing-cloudflare.yml', marketingCfWorkflow],
+  ['storybook-deploy.yml', storybookDeployWorkflow],
+]) {
+  check(workflow.includes('\n  push:'), `${label} must be push-only.`)
+  check(!workflow.includes('pull_request:'), `${label} must not run for pull requests.`)
+  check(workflow.includes('permissions: {}'), `${label} must default to no token permissions.`)
+  check(
+    workflow.includes(`node-version: '${NODE_VERSION}'`),
+    `${label} must run exact Node ${NODE_VERSION}.`,
+  )
+}
+
 for (const [label, workflow] of [
   ['console.yml', consoleWorkflow],
+  ['console-deploy.yml', consoleDeployWorkflow],
   ['marketing.yml', marketingWorkflow],
+  ['marketing-cloudflare.yml', marketingCfWorkflow],
+  ['storybook.yml', storybookWorkflow],
+  ['storybook-deploy.yml', storybookDeployWorkflow],
+  ['tthw.yml', tthwWorkflow],
+  ['saas-beta-required.yml', saasBetaWorkflow],
 ]) {
-  check(/node-version:\s*['"]24['"]/.test(workflow), `${label} must run Node 24.`)
+  assertImmutableActionPins(workflow, label)
+}
+assertCorepackIntegritySetup(consoleWorkflow, 'console.yml', 2)
+assertCorepackIntegritySetup(consoleDeployWorkflow, 'console-deploy.yml', 1)
+assertCorepackIntegritySetup(marketingWorkflow, 'marketing.yml', 1)
+assertCorepackIntegritySetup(marketingCfWorkflow, 'marketing-cloudflare.yml', 2)
+assertCorepackIntegritySetup(storybookWorkflow, 'storybook.yml', 1)
+assertCorepackIntegritySetup(storybookDeployWorkflow, 'storybook-deploy.yml', 1)
+assertCorepackIntegrityProof(tthwWorkflow, 'tthw.yml')
+assertCorepackIntegrityProof(saasBetaWorkflow, 'saas-beta-required.yml')
+
+assertCommitAuthorization(
+  consoleDeployWorkflow,
+  'console-deploy.yml',
+  'CONSOLE_PRODUCTION_APPROVED_SHA',
+  'production',
+  ['publish', 'deploy'],
+)
+assertCommitAuthorization(
+  marketingCfWorkflow,
+  'marketing-cloudflare.yml',
+  'MARKETING_PRODUCTION_APPROVED_SHA',
+  'production',
+  ['deploy'],
+)
+assertCommitAuthorization(
+  storybookDeployWorkflow,
+  'storybook-deploy.yml',
+  'STORYBOOK_PRODUCTION_APPROVED_SHA',
+  'github-pages',
+  ['deploy-pages'],
+)
+
+for (const needle of [
+  'pnpm install --frozen-lockfile --ignore-workspace',
+  'node_modules/wrangler/package.json',
+  "= '4.110.0'",
+  'packageManager: pnpm',
+  "wranglerVersion: '4.110.0'",
+  'command: deploy --config infra/cloudflare/workers/wrangler.toml',
+]) {
   check(
-    /name:\s+Readiness gate[\s\S]*run:\s+pnpm test:all/.test(workflow),
-    `${label} must run pnpm test:all in a named Readiness gate step.`,
+    marketingCfWorkflow.includes(needle),
+    `marketing-cloudflare.yml must pin the locked Wrangler 4.110.0 path with ${JSON.stringify(needle)}.`,
   )
 }
 
 check(
-  /name:\s+Verify buyer evidence publication contract[\s\S]*pnpm test:storybook-runtime-plan && pnpm test:storybook-publication && pnpm test:hosted-storybook-handoff && pnpm test:hosted-storybook-proof-template && pnpm test:hosted-storybook-proof-gap-report/.test(
-    storybookWorkflow,
-  ),
-  'storybook.yml must run runtime, publication, hosted handoff, hosted proof-template, and hosted proof gap report checks before artifact upload/deploy.',
+  saasBetaWorkflow.includes('pull_request:') &&
+    !saasBetaWorkflow.includes('\n  push:') &&
+    saasBetaWorkflow.includes('permissions:\n  contents: read') &&
+    !saasBetaWorkflow.includes('${{ secrets.') &&
+    !saasBetaWorkflow.includes('id-token: write'),
+  'saas-beta-required.yml must remain a pull-request-only, read-only, secretless required gate.',
+)
+for (const command of [
+  'fnm exec --using 24.18.0 -- pnpm lint',
+  'fnm exec --using 24.18.0 -- pnpm build',
+  'fnm exec --using 24.18.0 -- pnpm test:all',
+  'fnm exec --using 24.18.0 -- pnpm test:unit',
+  'fnm exec --using 24.18.0 -- pnpm test:playwright',
+]) {
+  check(saasBetaWorkflow.includes(command), `saas-beta-required.yml must include ${command}.`)
+}
+before(saasBetaWorkflow, 'Gate 11 - console lint', 'Gate 12 - console build', 'saas-beta-required.yml')
+before(
+  saasBetaWorkflow,
+  'Gate 12 - console build',
+  'Gate 13 - console readiness',
+  'saas-beta-required.yml',
+)
+before(
+  saasBetaWorkflow,
+  'Gate 13 - console readiness',
+  'Gate 14 - console unit suite',
+  'saas-beta-required.yml',
+)
+before(
+  saasBetaWorkflow,
+  'Gate 14 - console unit suite',
+  'Gate 15 - console browser suite',
+  'saas-beta-required.yml',
+)
+before(
+  saasBetaWorkflow,
+  'Gate 15 - console browser suite',
+  'Gate 16 - required-gate contract',
+  'saas-beta-required.yml',
+)
+check(
+  saasBetaWorkflow.includes(PACKAGE_MANAGER),
+  'saas-beta-required.yml must verify the exact integrity-qualified packageManager selector.',
 )
 
-before(consoleWorkflow, 'pnpm test:all', 'Auth to GCP via WIF', 'console.yml')
 before(consoleWorkflow, 'pnpm test:all', 'Build buyer evidence gallery artifact', 'console.yml')
 before(
   consoleWorkflow,
@@ -323,37 +572,23 @@ before(
   'Upload buyer evidence gallery artifact',
   'console.yml',
 )
-before(
-  consoleWorkflow,
-  'Upload buyer evidence gallery artifact',
-  'Auth to GCP via WIF',
-  'console.yml',
-)
-before(consoleWorkflow, 'pnpm test:all', 'Build & push image', 'console.yml')
-before(consoleWorkflow, 'pnpm test:all', 'Deploy to Cloud Run', 'console.yml')
-// Marketing production deploy is Cloudflare Pages (marketing-cloudflare.yml). Its deploy
-// job `needs: verify`, and the verify job runs the full `pnpm test:all` readiness gate, so
-// the gate precedes deploy. The Vercel path (marketing.yml) is retired to verify-only.
+for (const [label, workflow] of [
+  ['console-deploy.yml', consoleDeployWorkflow],
+  ['marketing-cloudflare.yml', marketingCfWorkflow],
+]) {
+  check(
+    /needs:\s*(?:verify\b|\[[^\]]*\bverify\b[^\]]*\])/.test(workflow),
+    `${label} credentialed jobs must depend on the verification job.`,
+  )
+  check(workflow.includes('pnpm test:all'), `${label} must reverify the exact pushed commit.`)
+}
 check(
-  // accept both the scalar (`needs: verify`) and YAML array (`needs: [verify]`) forms
-  /needs:\s*(?:verify\b|\[[^\]]*\bverify\b[^\]]*\])/.test(marketingCfWorkflow),
-  'marketing-cloudflare.yml deploy job must depend on the verify (readiness gate) job.',
-)
-before(
-  marketingCfWorkflow,
-  'pnpm test:all',
-  'Deploy to Cloudflare Pages',
-  'marketing-cloudflare.yml',
-)
-before(
-  marketingCfWorkflow,
-  'Check Cloudflare secrets present',
-  'Deploy to Cloudflare Pages',
-  'marketing-cloudflare.yml',
+  /needs:\s*build\b/.test(storybookDeployWorkflow),
+  'storybook-deploy.yml Pages deployment must depend on its read-only build job.',
 )
 
 check(
-  /::error::Cloudflare Pages deploy blocked/.test(marketingCfWorkflow) &&
+  /::error::Cloudflare Workers deploy blocked/.test(marketingCfWorkflow) &&
     /exit 1/.test(marketingCfWorkflow) &&
     !/::warning::/.test(marketingCfWorkflow) &&
     !/available=false/.test(marketingCfWorkflow),
@@ -683,7 +918,10 @@ check(
     ),
   'production-evidence.example.json must keep a claim-safe live evidence intake template plus live-verifier and validator output slots.',
 )
-check(/node-version:\s*['"]24['"]/.test(tthwWorkflow), 'tthw.yml must run Node 24.')
+check(
+  tthwWorkflow.includes(`node-version: '${NODE_VERSION}'`),
+  `tthw.yml must run exact Node ${NODE_VERSION}.`,
+)
 check(/workflow_dispatch:/.test(tthwWorkflow), 'tthw.yml must expose workflow_dispatch.')
 check(/schedule:/.test(tthwWorkflow), 'tthw.yml must run on a schedule.')
 check(
@@ -698,7 +936,7 @@ check(
   /name:\s+Build buyer evidence gallery artifact[\s\S]*run:\s+pnpm evidence:build/.test(
     consoleWorkflow,
   ) &&
-    /name:\s+Upload buyer evidence gallery artifact[\s\S]*uses:\s+actions\/upload-artifact@v4[\s\S]*name:\s+buyer-evidence-gallery[\s\S]*path:\s+acgi-ai\/dist-buyer-evidence[\s\S]*if-no-files-found:\s+error/.test(
+    /name:\s+Upload buyer evidence gallery artifact[\s\S]*uses:\s+actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02[\s\S]*name:\s+buyer-evidence-gallery[\s\S]*path:\s+acgi-ai\/dist-buyer-evidence[\s\S]*if-no-files-found:\s+error/.test(
       consoleWorkflow,
     ),
   'console.yml must build and upload the buyer evidence gallery artifact before credentialed deploy steps.',
@@ -765,8 +1003,9 @@ for (const path of [
   'docs/integration-readiness-task-map.md',
 ]) {
   check(
-    pathFilterCount(consoleWorkflow, path) >= 2,
-    `console.yml pull_request and push path filters must include ${path}.`,
+    pathFilterCount(consoleWorkflow, path) >= 1 &&
+      pathFilterCount(consoleDeployWorkflow, path) >= 1,
+    `console.yml and console-deploy.yml path filters must each include ${path}.`,
   )
 }
 
@@ -785,8 +1024,9 @@ for (const path of [
   '.github/workflows/storybook.yml',
 ]) {
   check(
-    pathFilterCount(storybookWorkflow, path) >= 2,
-    `storybook.yml pull_request and push path filters must include ${path}.`,
+    pathFilterCount(storybookWorkflow, path) >= 1 &&
+      pathFilterCount(storybookDeployWorkflow, path) >= 1,
+    `storybook.yml and storybook-deploy.yml path filters must each include ${path}.`,
   )
 }
 
