@@ -1,0 +1,201 @@
+# P0 SaaS-beta evidence contract and exact-proof gates.
+#
+# Pull requests receive an automatic GitHub-hosted contract lane. It recreates
+# the three hash-locked environments and runs every environment-independent
+# evidence test. The exact-T clean-sibling proof remains authorization-gated:
+# an authenticated maintainer must explicitly dispatch the reviewed branch
+# before its code can run on the persistent private, node-specific runner.
+
+name: saas-beta-p0-evidence
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'requirements/saas-beta/**'
+      - 'schemas/evidence/**'
+      - 'scripts/evidence/**'
+      - 'tests/saas_beta/**'
+      - 'packages/acgs-control-plane/pyproject.toml'
+      - 'packages/gove-zone/pyproject.toml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/saas-beta-p0-evidence.yml'
+      - '.github/workflows/tests-root.yml'
+      - '.github/workflows/tests-root-hosted.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: saas-beta-p0-evidence-${{ github.event_name }}-${{ github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: 0.11.19
+          enable-cache: false
+
+      - name: Authenticate and install canonical uv
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          expected=a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b
+          source_uv="$(command -v uv)"
+          actual="$(sha256sum "$source_uv" | awk '{print $1}')"
+          [[ "$actual" == "$expected" ]]
+          sudo install -D -m 0755 "$source_uv" /home/martin/.local/bin/uv
+          [[ ! -L /home/martin/.local/bin/uv ]]
+          [[ "$(sha256sum /home/martin/.local/bin/uv | awk '{print $1}')" == "$expected" ]]
+
+      - name: Recreate exact locked environments
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          UV_BIN=/home/martin/.local/bin/uv
+          "$UV_BIN" python install 3.11
+          "$UV_BIN" venv --python 3.11 .venv-evidence
+          "$UV_BIN" pip sync --python .venv-evidence/bin/python --require-hashes \
+            requirements/saas-beta/evidence-test.lock
+
+          "$UV_BIN" venv --python 3.11 packages/acgs-control-plane/.venv
+          "$UV_BIN" pip sync --python packages/acgs-control-plane/.venv/bin/python --require-hashes \
+            requirements/saas-beta/cp-test.lock
+
+          "$UV_BIN" venv --python 3.11 packages/gove-zone/.venv-beta
+          "$UV_BIN" pip sync --python packages/gove-zone/.venv-beta/bin/python --require-hashes \
+            requirements/saas-beta/gz-test.lock
+
+          export UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1
+          "$UV_BIN" pip install --python packages/acgs-control-plane/.venv/bin/python \
+            --offline --no-index --no-cache --no-build-isolation --no-deps \
+            --editable packages/gove-zone --editable packages/acgs-control-plane
+          "$UV_BIN" pip install --python packages/gove-zone/.venv-beta/bin/python \
+            --offline --no-index --no-cache --no-build-isolation --no-deps \
+            --editable packages/gove-zone
+
+          evidence_root="${RUNNER_TEMP:?}/acgs-p0-contract-evidence"
+          node_evidence="$evidence_root/P0-EVIDENCE-000"
+          install -d -m 0700 "$evidence_root" "$node_evidence"
+          export ACGS_EVIDENCE_ROOT="$evidence_root"
+          printf 'ACGS_EVIDENCE_ROOT=%s\n' "$evidence_root" >>"$GITHUB_ENV"
+          .venv-evidence/bin/python scripts/evidence/verify_environment.py \
+            --code EVID \
+            --lock requirements/saas-beta/evidence-test.lock \
+            --expected-interpreter "$PWD/.venv-evidence/bin/python" \
+            --expected-python 3.11 \
+            --expected-uv 0.11.19 \
+            --expected-uv-executable "$UV_BIN" \
+            --require-module-root "$PWD/.venv-evidence" \
+            --require 'rfc8785==0.1.4' \
+            --require 'cryptography>=42' \
+            --require jsonschema \
+            --require pytest \
+            --output "$node_evidence/environment-EVID.json"
+          .venv-evidence/bin/python scripts/evidence/capture_environment.py \
+            --code CP \
+            --interpreter "$PWD/packages/acgs-control-plane/.venv/bin/python" \
+            --lock requirements/saas-beta/cp-test.lock \
+            --require-editables 0.6 \
+            --output "$node_evidence/environment-CP.json"
+          .venv-evidence/bin/python scripts/evidence/capture_environment.py \
+            --code GZ \
+            --interpreter "$PWD/packages/gove-zone/.venv-beta/bin/python" \
+            --lock requirements/saas-beta/gz-test.lock \
+            --require-editables 0.6 \
+            --output "$node_evidence/environment-GZ.json"
+          .venv-evidence/bin/python scripts/evidence/validate_environment_identities.py \
+            --node P0-EVIDENCE-000 \
+            --assignment-map requirements/saas-beta/bootstrap-by-scope.json \
+            --assignment EVID+CP+GZ \
+            --identity-dir "$node_evidence" \
+            --require-fresh-bootstrap-records \
+            --reject-missing \
+            --reject-extra \
+            --reject-unassigned-runtime-paths \
+            --output "$node_evidence/environment-identities.json"
+
+      - name: Run environment-independent P0 evidence contracts
+        # Four tests require actual outer capture/UI or the exact static host
+        # context. Those remain in the authorized exact-proof lane.
+        env:
+          UV_OFFLINE: '1'
+          UV_NO_INDEX: '1'
+          UV_NO_CACHE: '1'
+          RUFF_NO_CACHE: 'true'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          .venv-evidence/bin/python -m pytest -q \
+            tests/saas_beta/test_evidence_bootstrap.py \
+            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip"
+
+  exact-proof:
+    # The standard same-repo conjunct is retained because this file also has a
+    # pull_request trigger; event gating keeps this job manual-only.
+    if: github.event_name == 'workflow_dispatch' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Assert evidence-only CI repair
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          T=93719b8c1df3aae7eb31cf3087518d90efffe8ee
+          git() {
+            /usr/bin/git --no-optional-locks \
+              -c core.hooksPath=/dev/null \
+              -c core.fsmonitor=false \
+              -c core.untrackedCache=false \
+              -c credential.helper= \
+              -c core.askPass= \
+              "$@"
+          }
+          git cat-file -e "$T^{commit}"
+          git merge-base --is-ancestor "$T" HEAD
+          mapfile -t changed < <(git diff --name-only "$T..HEAD")
+          approved=(
+            .github/workflows/saas-beta-p0-evidence.yml
+            .github/workflows/tests-root-hosted.yml
+            .github/workflows/tests-root.yml
+          )
+          [[ "${#changed[@]}" -eq "${#approved[@]}" ]]
+          diff -u \
+            <(printf '%s\n' "${approved[@]}" | LC_ALL=C sort) \
+            <(printf '%s\n' "${changed[@]}" | LC_ALL=C sort)
+          [[ -z "$(git status --porcelain=v1 --untracked-files=all)" ]]
+
+      - name: Prove exact reviewed candidate in clean sibling
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          P=26d11c2c7a8da37937a7c50c642f18edc75c9345
+          T=93719b8c1df3aae7eb31cf3087518d90efffe8ee
+          caller_tmpdir="$(mktemp -d "${RUNNER_TEMP:?}/acgs-p0-proof.XXXXXXXX")"
+          chmod 0700 "$caller_tmpdir"
+          cleanup() {
+            status=$?
+            trap - EXIT
+            if [[ -n "$(find "$caller_tmpdir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+              printf '%s\n' 'P0 proof left residue in caller TMPDIR' >&2
+              exit 1
+            fi
+            rmdir -- "$caller_tmpdir" || exit 1
+            exit "$status"
+          }
+          trap cleanup EXIT
+          P="$P" TMPDIR="$caller_tmpdir" scripts/evidence/prove_clean_sibling "$T"
