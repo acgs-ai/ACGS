@@ -96,7 +96,7 @@ environment["PYTHONDONTWRITEBYTECODE"] = "1"
 environment.pop("PYTHONPYCACHEPREFIX", None)
 os.execve("/bin/bash", ["bash", sys.argv[1], *sys.argv[2:]], environment)
 PY
-  exit 2
+  exit "$?"
 fi
 TMP_PARENT_DEVICE=''
 TMP_PARENT_INODE=''

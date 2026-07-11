@@ -3143,6 +3143,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert required in source
     assert "CLEAN_SIBLING_TECHNICAL=PASS" in cleanup_source
     assert "attestations=pending-independent-lanes" in cleanup_source
+    assert '  exit "$?"\nfi' in source
+    assert "  exit 2\nfi" not in source
     assert '"$T^"' not in source
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
@@ -3601,6 +3603,9 @@ exit $?
                 assert list(caller.iterdir()) == []
 
             env = _evidence_env(tmp_path / f"unused-outer-evidence-{case}")
+            # Exercise the first-pass guardian even when this test is itself
+            # running under the clean-sibling prover.
+            env.pop("ACGS_CLEAN_SIBLING_TMP_FD", None)
             env.update(
                 {
                     "P": reviewed_parent,
