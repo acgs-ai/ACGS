@@ -55,6 +55,10 @@ dev = [
     "mypy>=1.0",
     "cryptography>=42",
     "pyyaml>=6.0",
+    # Test-only: validates the published acgs/proof-pack/v1 JSON Schemas
+    # (tests/test_proofpack_schema.py). NEVER a runtime dependency — the
+    # offline verifier stays stdlib-only (dependencies = [] is by design).
+    "jsonschema>=4",
 ]
 
 [tool.hatch.build.targets.wheel]
