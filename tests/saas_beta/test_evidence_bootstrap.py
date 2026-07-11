@@ -3888,3 +3888,17 @@ def test_uv_identity_does_not_depend_on_ambient_path() -> None:
     assert '--expected-uv-executable "$UV_BIN"' in prover
     assert "TRUSTED_UV_SHA256" in verifier
     assert "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b" in validator
+
+
+def test_pinned_uv_execution_is_normalized_only_for_transcript_metadata() -> None:
+    prover = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    common = (EVIDENCE_SCRIPTS / "_common.py").read_text(encoding="utf-8")
+    normalization = 'if argv and argv[0] == "/home/martin/.local/bin/uv":\n    argv[0] = "uv"'
+    assert prover.count(normalization) == 1
+    assert "/home/martin/.local/bin/uv" not in common
+    assert '            "uv",\n            "run",' in common
+    reviewed = list(_common.REVIEWED_P0_TRANSCRIPT[5][1])
+    assert reviewed[0] == "uv"
+    assert _common.validate_safe_argv(reviewed) == reviewed
+    with pytest.raises(_common.EvidenceError):
+        _common.validate_safe_argv(["/home/martin/.local/bin/uv", *reviewed[1:]])

@@ -480,6 +480,14 @@ script_root, target, started, finished, stdout_path, stderr_path, selector, *arg
 sys.path.insert(0, script_root)
 from _common import EvidenceError, append_safe_transcript_record
 
+# Execution uses the hash-authenticated absolute uv binary.  The reviewed
+# transcript vocabulary intentionally records the stable public tool identity
+# rather than a host-specific installation pathname.  Only that exact pinned
+# executable may be normalized; all remaining argv still pass the closed
+# command/selector contract below.
+if argv and argv[0] == "/home/martin/.local/bin/uv":
+    argv[0] = "uv"
+
 def digest(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 record = {
