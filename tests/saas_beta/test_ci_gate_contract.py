@@ -37,6 +37,8 @@ ACTION_PINS = {
 }
 
 AGGREGATE = ROOT / ".github/workflows/saas-beta-required.yml"
+GITHUB_INSTRUCTIONS = ROOT / ".github/AGENTS.md"
+WORKFLOW_INSTRUCTIONS = ROOT / ".github/workflows/AGENTS.md"
 VERIFY_WORKFLOWS = (
     ROOT / ".github/workflows/console.yml",
     ROOT / ".github/workflows/marketing.yml",
@@ -57,7 +59,7 @@ OWNED_WORKFLOWS = (
 )
 
 GATE_COMMANDS = (
-    "env -u VIRTUAL_ENV -u PYTHONPATH .venv-evidence/bin/python -m pytest -q "
+    ".venv-evidence/bin/python -m pytest -q "
     "tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline",
     ".venv/bin/ruff check .",
     ".venv/bin/ruff format --check .",
@@ -84,6 +86,10 @@ GATE_COMMANDS = (
     "tests/saas_beta/test_ci_gate_contract.py::test_all_owned_scope_gates_are_required",
 )
 
+GATE_01_SHELL = (
+    "/usr/bin/env -u VIRTUAL_ENV -u PYTHONPATH /bin/bash --noprofile --norc -e -o pipefail {0}"
+)
+
 GATE_WORKING_DIRECTORIES = (
     None,
     "packages/acgs-control-plane",
@@ -107,6 +113,54 @@ GATE_WORKING_DIRECTORIES = (
 def _read(path: Path) -> str:
     assert path.is_file(), f"missing required workflow: {path.relative_to(ROOT)}"
     return path.read_text(encoding="utf-8")
+
+
+def _assert_local_workflow_instructions_are_current() -> None:
+    parent = _read(GITHUB_INSTRUCTIONS)
+    workflows = _read(WORKFLOW_INSTRUCTIONS)
+    for source, parent_tag in (
+        (parent, "<!-- Parent: ../AGENTS.md -->"),
+        (workflows, "<!-- Parent: ../AGENTS.md -->"),
+    ):
+        assert source.startswith(parent_tag)
+        assert "<!-- Generated: 2026-05-04 | Updated: 2026-07-11 -->" in source
+        assert "<!-- MANUAL: Any manually added notes below this line are preserved" in source
+
+    for marker in (
+        "default branch name as `master`",
+        "exact-approved-SHA authorization",
+        "saas-beta-required.yml",
+        "free of path filters",
+        "immutable 40-hex commit",
+        "Do not add `pnpm/action-setup`",
+        "Cloudflare Workers Static Assets",
+        "configuration, not evidence",
+    ):
+        assert marker in parent
+
+    for marker in (
+        "saas-beta-required.yml",
+        "console.yml",
+        "console-deploy.yml",
+        "marketing.yml",
+        "marketing-cloudflare.yml",
+        "storybook.yml",
+        "storybook-deploy.yml",
+        "CONSOLE_PRODUCTION_APPROVED_SHA",
+        "MARKETING_PRODUCTION_APPROVED_SHA",
+        "STORYBOOK_PRODUCTION_APPROVED_SHA",
+        "Gate 16",
+        "VIRTUAL_ENV",
+        "PYTHONPATH",
+        "UV_OFFLINE",
+        "UV_NO_INDEX",
+        "UV_NO_CACHE",
+        "Do not add `pnpm/action-setup`",
+        "infra/cloudflare/workers/wrangler.toml",
+        "not proof",
+    ):
+        assert marker in workflows
+    assert "Console deploys only on push to `main`" not in workflows
 
 
 def _trigger_block(source: str) -> str:
@@ -300,10 +354,18 @@ def test_all_owned_scope_gates_are_required() -> None:
         r"          UV_OFFLINE: '1'\n"
         r"          UV_NO_INDEX: '1'\n"
         r"          UV_NO_CACHE: '1'\n"
+        rf"        shell: {re.escape(GATE_01_SHELL)}\n"
         rf"        run: {re.escape(GATE_COMMANDS[0])}$",
         gate_01,
         re.M,
     )
+    assert GATE_COMMANDS[0].split() == [
+        ".venv-evidence/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline",
+    ]
     assert aggregate.count("UV_OFFLINE: '1'") == 1
     assert aggregate.count("UV_NO_INDEX: '1'") == 1
     assert aggregate.count("UV_NO_CACHE: '1'") == 1
@@ -312,6 +374,7 @@ def test_all_owned_scope_gates_are_required() -> None:
             name in block.group("body") for name in ("UV_OFFLINE", "UV_NO_INDEX", "UV_NO_CACHE")
         )
     assert aggregate.rstrip().endswith(f"run: {GATE_COMMANDS[-1]}")
+    _assert_local_workflow_instructions_are_current()
     _assert_pinned_actions(AGGREGATE)
 
     for package_workflow in (

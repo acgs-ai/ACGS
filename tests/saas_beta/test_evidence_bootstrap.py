@@ -5051,8 +5051,10 @@ exit $?
         if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
         for relative in (path.relative_to(ROOT),)
     )
-    assert len(candidate_files) == 27
+    assert len(candidate_files) == 28
     assert Path("scripts/evidence/capture_reviewed_command.py") in candidate_files
+    assert Path("tests/saas_beta/test_ci_gate_contract.py") in candidate_files
+    assert Path("tests/saas_beta/test_evidence_bootstrap.py") in candidate_files
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False

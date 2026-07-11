@@ -158,7 +158,8 @@ jobs:
           UV_OFFLINE: '1'
           UV_NO_INDEX: '1'
           UV_NO_CACHE: '1'
-        run: env -u VIRTUAL_ENV -u PYTHONPATH .venv-evidence/bin/python -m pytest -q tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline
+        shell: /usr/bin/env -u VIRTUAL_ENV -u PYTHONPATH /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: .venv-evidence/bin/python -m pytest -q tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline
 
       - name: Gate 02 - control-plane lint
         working-directory: packages/acgs-control-plane
