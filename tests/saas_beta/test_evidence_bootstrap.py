@@ -4093,6 +4093,32 @@ def test_clean_sibling_launcher_requires_explicit_allowlisted_node_and_t(
         assert not list(tmp_path.glob("acgs-p0-evidence.*"))
 
 
+def test_clean_sibling_rejects_available_nonbase_parent_before_mutation(
+    tmp_path: Path,
+) -> None:
+    launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    available_nonbase = subprocess.run(
+        ["git", "rev-parse", "HEAD^"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    assert available_nonbase != "26d11c2c7a8da37937a7c50c642f18edc75c9345"
+    caller = tmp_path / "caller"
+    caller.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [str(launcher), "P0-MEMBRANE-001", head],
+        cwd=ROOT,
+        env={**_evidence_env(tmp_path / "unused"), "P": available_nonbase, "TMPDIR": str(caller)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "reviewed parent must be exact" in completed.stderr
+    assert not list(caller.glob("acgs-p0-evidence.*"))
+
+
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
     prover = EVIDENCE_SCRIPTS / "prove_clean_sibling.sh"
     launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
@@ -4106,6 +4132,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "phase B7" not in source and "phase B8" not in source
     for required in (
         'git -C "$SOURCE_REPO" worktree add --detach',
+        "P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'",
         'git -C "$SOURCE_REPO" diff --check "$P..$T"',
         "--require-hashes",
         "--offline --no-index --no-cache --no-build-isolation --no-deps",
@@ -4125,14 +4152,14 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 5
-    assert source.count("run_recorded_gate GZ") == 5
-    assert source.count("run_recorded_gate P0") == 5
+    assert source.count("run_recorded_gate CP") == 4
+    assert source.count("run_recorded_gate GZ") == 4
+    assert source.count("run_recorded_gate P0") == 1
     assert "P0-EVIDENCE-000) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=10" in source
     assert "P0-MEMBRANE-001) ASSIGNMENT='EVID+CP'; EXPECTED_RECORDS=7" in source
     assert "P0-CLAIMS-002) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=14" in source
-    assert source.index("'root:lint-docs'") < source.index("'root:docs-full'")
-    assert source.index("'root:docs-full'") < source.index("'root:P0-CLAIMS-002'")
+    assert "capture_reviewed_command.py" in source
+    assert "index < EXPECTED_RECORDS" in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -4316,7 +4343,15 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert omitted_parent.returncode == 2
     assert "P must be exported" in omitted_parent.stderr
     altered_parent_env = dict(omitted_parent_env)
-    altered_parent_env["P"] = "1" * 40
+    available_nonbase_parent = subprocess.run(
+        ["git", "rev-parse", "HEAD^"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    assert available_nonbase_parent != reviewed_parent
+    altered_parent_env["P"] = available_nonbase_parent
     altered_parent = subprocess.run(
         [str(launcher), "P0-EVIDENCE-000", head],
         cwd=ROOT,
@@ -4326,7 +4361,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         check=False,
     )
     assert altered_parent.returncode == 2
-    assert "P commit is unavailable" in altered_parent.stderr
+    assert "reviewed parent must be exact" in altered_parent.stderr
     if head != reviewed_parent:
         contained = ROOT / "tests"
         symlink = tmp_path / "tmpdir-link"

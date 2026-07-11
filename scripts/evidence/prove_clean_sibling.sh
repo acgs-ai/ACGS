@@ -172,6 +172,9 @@ T="$2"
 [[ "$T" =~ ^[0-9a-f]{40}$ ]] || die 'T must be a lowercase 40-hex commit SHA'
 [[ -n "${P:-}" ]] || die 'P must be exported as the reviewed parent commit SHA'
 [[ "$P" =~ ^[0-9a-f]{40}$ ]] || die 'P must be a lowercase 40-hex commit SHA'
+P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
+[[ "$P" == "$P0_REVIEWED_BASE" ]] ||
+  die "reviewed parent must be exact $P0_REVIEWED_BASE"
 [[ "$P" != "$T" ]] || die 'P and T must be distinct'
 for variable in \
   VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT \
@@ -658,6 +661,7 @@ run_recorded_gate() {
 }
 
 phase B5
+if [[ "$NODE_ID" == P0-EVIDENCE-000 ]]; then
 append_record "$EVID_GATE_STARTED" "$EVID_GATE_FINISHED" \
   "$NODE_EVIDENCE/evid-gate.stdout" "$NODE_EVIDENCE/evid-gate.stderr" \
   'root:EVID-gate' "${EVID_GATE[@]}"
@@ -670,13 +674,6 @@ run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-mypy \
   'packages/acgs-control-plane:local-gate' .venv/bin/mypy src/
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-pytest \
   'packages/acgs-control-plane:local-gate' .venv/bin/pytest -q
-
-if [[ "$NODE_ID" == P0-MEMBRANE-001 || "$NODE_ID" == P0-CLAIMS-002 ]]; then
-  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-membrane-exact \
-    'packages/acgs-control-plane:P0-MEMBRANE-001-exact' .venv/bin/pytest -q \
-    tests/integration/test_production_posture.py::test_production_rejects_legacy_unsigned_routes \
-    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation
-fi
 
 if [[ "$ASSIGNMENT" == *GZ* ]]; then
   GZ_PREFIX=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone)
@@ -693,27 +690,6 @@ if [[ "$ASSIGNMENT" == *GZ* ]]; then
     --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
 fi
 
-if [[ "$NODE_ID" == P0-CLAIMS-002 ]]; then
-  run_recorded_gate GZ "$WORKTREE" gz-claims-exact \
-    'packages/gove-zone:P0-CLAIMS-002-exact' "${GZ_PREFIX[@]}" python -m pytest -q \
-    packages/gove-zone/tests/test_receipt_signing.py::test_production_default_no_verifier_fails_loud \
-    packages/gove-zone/tests/test_receipt_signing.py::test_unsigned_rejected_when_required \
-    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_no_receipt \
-    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_denied_receipt \
-    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_escalated_receipt \
-    packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger \
-    packages/gove-zone/tests/test_receipt_consumption.py::test_replay_without_ledger_pins_stateless_gate \
-    packages/gove-zone/tests/test_replay.py::test_replay_call_diverges_when_args_change \
-    packages/gove-zone/tests/test_replay.py::test_side_store_tamper_cross_check \
-    packages/gove-zone/tests/test_acgs_proofpack.py::test_signed_pack_without_key_fails_closed \
-    packages/gove-zone/tests/test_acgs_proofpack.py::test_replay_report_status_never_upgrades_validity \
-    packages/gove-zone/tests/test_acgs_proofpack.py::test_cli_require_signature_rejects_unsigned_pack
-  run_recorded_gate P0 "$WORKTREE" claims-lint-docs 'root:lint-docs' make lint-docs
-  run_recorded_gate P0 "$WORKTREE" claims-docs-full 'root:docs-full' \
-    packages/acgs-control-plane/.venv/bin/python -m pytest -q tests/docs --import-mode=importlib
-  run_recorded_gate P0 "$WORKTREE" claims-focused 'root:P0-CLAIMS-002' \
-    packages/acgs-control-plane/.venv/bin/python -m pytest -q \
-    tests/docs/test_saas_beta_claims.py::test_claim_boundaries_and_control_plane_readme
 fi
 
 "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
@@ -752,11 +728,16 @@ if [[ "$NODE_ID" == P0-EVIDENCE-000 ]]; then
   run_recorded_gate P0 "$WORKTREE" p0-root-gate 'root:P0-EVIDENCE-000' \
     "${P0_ROOT_GATE[@]}"
   unset ACGS_P0_LITERAL_PROVER_INNER_T
-elif [[ "$NODE_ID" == P0-MEMBRANE-001 ]]; then
-  run_recorded_gate P0 "$WORKTREE" membrane-root-exact 'root:P0-MEMBRANE-001' \
-    packages/acgs-control-plane/.venv/bin/python -m pytest -q \
-    packages/acgs-control-plane/tests/integration/test_production_posture.py::test_production_rejects_legacy_unsigned_routes \
-    packages/acgs-control-plane/tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation
+else
+  for ((index = 0; index < EXPECTED_RECORDS; index++)); do
+    capture_tmp="$RUNTIME_TMP/reviewed-command-$index"
+    mkdir -m 700 "$capture_tmp"
+    "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_reviewed_command.py" \
+      --node "$NODE_ID" \
+      --index "$index" \
+      --transcript "$NODE_EVIDENCE/transcript.jsonl" \
+      --temp-root "$capture_tmp"
+  done
 fi
 
 phase B6
