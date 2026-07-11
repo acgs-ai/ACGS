@@ -189,7 +189,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "acgi-ai/scripts/render-cloudrun-service.mjs",
             "acgi-ai/scripts/check-cloudrun-renderer.mjs",
-            ".github/workflows/console.yml",
+            ".github/workflows/console-deploy.yml",
         ],
     )
     cloudrun_renderer_ok, cloudrun_renderer_missing_parts = _contains_all(
@@ -197,7 +197,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             [
                 _maybe_read(repo_root, "acgi-ai/scripts/render-cloudrun-service.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/check-cloudrun-renderer.mjs"),
-                _maybe_read(repo_root, ".github/workflows/console.yml"),
+                _maybe_read(repo_root, ".github/workflows/console-deploy.yml"),
                 _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
             ]
@@ -242,7 +242,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         repo_root,
         [
             ".github/workflows/marketing.yml",
+            ".github/workflows/marketing-cloudflare.yml",
             ".github/workflows/console.yml",
+            ".github/workflows/console-deploy.yml",
             "acgi-ai/scripts/check-production-deploy-contract.mjs",
         ],
     )
@@ -252,6 +254,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, ".github/workflows/marketing.yml"),
                 _maybe_read(repo_root, ".github/workflows/marketing-cloudflare.yml"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
+                _maybe_read(repo_root, ".github/workflows/console-deploy.yml"),
                 _maybe_read(
                     repo_root,
                     "acgi-ai/scripts/check-production-deploy-contract.mjs",
@@ -260,12 +263,11 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
             ]
         ),
-        # Marketing PRODUCTION deploy moved Vercel -> Cloudflare Pages (#128); the
-        # fail-closed marker now lives in marketing-cloudflare.yml. Mirror the
-        # markers asserted by acgi-ai/scripts/check-production-deploy-contract.mjs
-        # so this aggregator stays in lockstep with the live deploy contract.
+        # Marketing production deploy moved Vercel -> Pages -> Workers Assets,
+        # the live acgs.ai origin. The fail-closed marker lives in the push-only
+        # marketing-cloudflare workflow. Mirror the app contract here.
         [
-            "::error::Cloudflare Pages deploy blocked",
+            "::error::Cloudflare Workers deploy blocked",
             "exit 1",
             "CLOUDFLARE_API_TOKEN",
             "CLOUDFLARE_ACCOUNT_ID",
@@ -307,8 +309,9 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         [
             "acgi-ai/PRODUCTION-LAUNCH.md",
             "acgi-ai/scripts/check-production-launch-handoff.mjs",
-            ".github/workflows/console.yml",
+            ".github/workflows/console-deploy.yml",
             ".github/workflows/marketing.yml",
+            ".github/workflows/marketing-cloudflare.yml",
         ],
     )
     production_launch_ok, production_launch_missing_parts = _contains_all(
@@ -458,6 +461,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "acgi-ai/PRODUCTION-LAUNCH.md",
             "acgi-ai/DEPLOY.md",
             ".github/workflows/console.yml",
+            ".github/workflows/console-deploy.yml",
         ],
     )
     production_evidence_template = _maybe_read(
@@ -518,6 +522,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "scripts/build_release_evidence.py"),
                 _maybe_read(repo_root, "acgi-ai/scripts/check-production-live-verifier.mjs"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
+                _maybe_read(repo_root, ".github/workflows/console-deploy.yml"),
             ]
         ),
         [
@@ -1231,6 +1236,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/scripts/check-auth-boundary.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/render-cloudrun-service.mjs"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
+                _maybe_read(repo_root, ".github/workflows/console-deploy.yml"),
                 _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
             ]
@@ -1498,6 +1504,62 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
+    saas_gate_files_ok, saas_gate_missing = _all_files_exist(
+        repo_root,
+        [
+            ".github/workflows/saas-beta-required.yml",
+            ".github/workflows/python-acgs-control-plane.yml",
+            ".github/workflows/python-gove-zone.yml",
+            ".github/workflows/console.yml",
+            ".github/workflows/console-deploy.yml",
+            ".github/workflows/marketing.yml",
+            ".github/workflows/marketing-cloudflare.yml",
+            ".github/workflows/storybook.yml",
+            ".github/workflows/storybook-deploy.yml",
+            "tests/saas_beta/test_ci_gate_contract.py",
+        ],
+    )
+    saas_gate_ok, saas_gate_missing_parts = _contains_all(
+        "\n".join(
+            [
+                _maybe_read(repo_root, ".github/workflows/saas-beta-required.yml"),
+                _maybe_read(repo_root, "tests/saas_beta/test_ci_gate_contract.py"),
+                _maybe_read(repo_root, "docs/integration-readiness-task-map.md"),
+            ]
+        ),
+        [
+            "name: saas-beta-required",
+            "runs-on: ubuntu-24.04",
+            "permissions:\n  contents: read",
+            "requirements/saas-beta/evidence-test.lock",
+            "requirements/saas-beta/cp-test.lock",
+            "requirements/saas-beta/gz-test.lock",
+            "node-version: '24.18.0'",
+            "fnm exec --using 24.18.0 -- pnpm test:playwright",
+            "test_all_owned_scope_gates_are_required",
+            "required branch protection",
+        ],
+    )
+    items.append(
+        _item(
+            "saas-beta-required-gate-local",
+            "SaaS-beta PR gate is ordered, hash-locked, hosted, and privilege-separated",
+            saas_gate_files_ok and saas_gate_ok,
+            (
+                "local workflow contract runs EVID, control-plane, gove-zone, and console "
+                "gates in one read-only hosted job; enabling the new required status remains "
+                "an external repository-owner branch-protection action"
+                if saas_gate_files_ok and saas_gate_ok
+                else (f"missing_files={saas_gate_missing}, missing_parts={saas_gate_missing_parts}")
+            ),
+            (
+                "packages/acgs-control-plane/.venv/bin/python -m pytest -q "
+                "tests/saas_beta/test_ci_gate_contract.py::"
+                "test_all_owned_scope_gates_are_required"
+            ),
+        )
+    )
+
     node24_files_ok, node24_missing = _all_files_exist(
         repo_root,
         [
@@ -1518,16 +1580,25 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         ),
         [
             "verify-js-node24:",
-            "fnm use",
+            'REQUIRED_NODE_VERSION="24.18.0"',
+            "fnm exec --using",
             "process.versions.node",
-            "packageManager.split('@')",
+            'EXPECTED_PNPM="${ROOT_PNPM_SELECTOR#pnpm@}"',
+            'EXPECTED_PNPM="${EXPECTED_PNPM%%+sha512.*}"',
             "make verify-js-node24",
         ],
     )
+    expected_pnpm_selector = (
+        "pnpm@9.15.4+sha512."
+        "b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb"
+        "40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"
+    )
+    root_package_json = _load_json(repo_root, "package.json")
     package_node_ok = (
-        _maybe_read(repo_root, "acgi-ai/.node-version").strip() == "24"
+        _maybe_read(repo_root, "acgi-ai/.node-version").strip() == "24.18.0"
         and package_json.get("engines", {}).get("node") == ">=24 <25"
-        and package_json.get("packageManager") == "pnpm@9.15.4"
+        and package_json.get("packageManager") == expected_pnpm_selector
+        and root_package_json.get("packageManager") == expected_pnpm_selector
     )
     items.append(
         _item(
@@ -1535,7 +1606,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "Local frontend verification can run on the exact Node 24 toolchain",
             node24_files_ok and node24_ok and package_node_ok,
             (
-                "make verify-js-node24 activates fnm Node 24, checks pnpm, "
+                "make verify-js-node24 activates exact Node 24.18.0, derives pnpm "
+                "9.15.4 from the integrity-qualified selector, "
                 "and runs acgi-ai test:all"
                 if node24_files_ok and node24_ok and package_node_ok
                 else (
@@ -2050,11 +2122,17 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
         )
     )
 
-    storybook_workflow = _maybe_read(repo_root, ".github/workflows/storybook.yml")
+    storybook_workflow = "\n".join(
+        [
+            _maybe_read(repo_root, ".github/workflows/storybook.yml"),
+            _maybe_read(repo_root, ".github/workflows/storybook-deploy.yml"),
+        ]
+    )
     storybook_publication_files_ok, storybook_publication_missing = _all_files_exist(
         repo_root,
         [
             ".github/workflows/storybook.yml",
+            ".github/workflows/storybook-deploy.yml",
             "acgi-ai/scripts/check-storybook-publication.mjs",
         ],
     )
@@ -2073,8 +2151,8 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "ACGI_EVIDENCE_CNAME: storybook.acgs.ai",
             ".nojekyll",
             "hostedProofRequirements",
-            "actions/upload-pages-artifact@v3",
-            "actions/deploy-pages@v4",
+            "actions/upload-pages-artifact@",
+            "actions/deploy-pages@",
             "vars.STORYBOOK_PAGES_ENABLED == 'true'",
             "test:storybook-publication",
             "test:hosted-storybook-handoff",
@@ -2194,6 +2272,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
             "acgi-ai/scripts/build-hosted-storybook-handoff.mjs",
             "acgi-ai/scripts/verify-production-live.mjs",
             ".github/workflows/storybook.yml",
+            ".github/workflows/storybook-deploy.yml",
             ".github/workflows/console.yml",
             "acgi-ai/PRODUCTION-LAUNCH.md",
             "acgi-ai/DEPLOY.md",
@@ -2215,6 +2294,7 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/scripts/build-hosted-storybook-handoff.mjs"),
                 _maybe_read(repo_root, "acgi-ai/scripts/verify-production-live.mjs"),
                 _maybe_read(repo_root, ".github/workflows/storybook.yml"),
+                _maybe_read(repo_root, ".github/workflows/storybook-deploy.yml"),
                 _maybe_read(repo_root, ".github/workflows/console.yml"),
                 _maybe_read(repo_root, "acgi-ai/PRODUCTION-LAUNCH.md"),
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),

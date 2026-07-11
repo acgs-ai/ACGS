@@ -101,6 +101,11 @@ def test_build_items_tracks_local_passes_and_pending_hosted_storybook():
     assert by_id["local-verification-fanout"].status == "pass"
     assert "configured pyproject mypy fan-out" in by_id["local-verification-fanout"].evidence
     assert by_id["release-evidence-bundle"].status == "pass"
+    assert by_id["saas-beta-required-gate-local"].status == "pass"
+    assert (
+        "external repository-owner branch-protection action"
+        in by_id["saas-beta-required-gate-local"].evidence
+    )
     assert by_id["node24-local-toolchain"].status == "pass"
     assert by_id["buyer-evidence-gallery-local"].status == "pass"
     assert "visual workbench story" in by_id["buyer-evidence-gallery-local"].evidence
@@ -241,6 +246,7 @@ def test_render_markdown_keeps_deployment_claim_conservative():
     assert "production-launch-preflight-local" in report
     assert "fixture-fallback-fail-closed-local" in report
     assert "platform-blueprint-ui-local" in report
+    assert "saas-beta-required-gate-local" in report
     assert "node24-local-toolchain" in report
     assert "buyer-evidence-gallery-local" in report
     assert "browser-workbench-evidence-local" in report

@@ -177,9 +177,15 @@ def test_uv_root_is_virtual_workspace():
 def test_packagemanager_pin_matches_acgi_ai():
     root = _load_json("package.json")
     app = _load_json("acgi-ai/package.json")
-    assert root["packageManager"] == app["packageManager"], (
-        "Root and acgi-ai must agree on pnpm version; mismatch breaks workspace install."
+    expected = (
+        "pnpm@9.15.4+sha512."
+        "b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb"
+        "40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"
     )
+    assert root["packageManager"] == app["packageManager"] == expected, (
+        "Root and acgi-ai must agree on the reviewed integrity-qualified pnpm selector."
+    )
+    assert (ROOT / "acgi-ai/.node-version").read_text().strip() == "24.18.0"
 
 
 def test_pnpm_workspace_lists_acgi_ai():
@@ -237,15 +243,24 @@ def test_constitutional_hash_workflow_pulls_submodules():
     assert "--ignore-missing-prefix packages/clinicalguard/" in text
 
 
-def test_existing_console_and_marketing_workflows_untouched():
-    """Phase 1 promised: no edits to acgi-ai deploy workflows."""
-    for name in ("console.yml", "marketing.yml"):
+def test_console_marketing_and_storybook_workflows_split_pr_from_deploy():
+    """Fork-editable PR code must never share a credentialed deploy workflow."""
+    for name in ("console.yml", "marketing.yml", "storybook.yml"):
         path = ROOT / ".github/workflows" / name
-        assert path.exists(), f"Existing workflow vanished: {name}"
-        # Spot-check the working-directory pin that anchors the deploy contract.
-        if name == "console.yml":
-            text = path.read_text()
-            assert "working-directory: acgi-ai" in text
+        assert path.exists(), f"Missing PR verification workflow: {name}"
+        text = path.read_text()
+        assert "pull_request:" in text
+        assert "${{ secrets." not in text
+        assert "id-token: write" not in text
+        assert "self-hosted" not in text
+
+    for name in ("console-deploy.yml", "marketing-cloudflare.yml", "storybook-deploy.yml"):
+        path = ROOT / ".github/workflows" / name
+        assert path.exists(), f"Missing push-only deployment workflow: {name}"
+        text = path.read_text()
+        trigger = text.split("\nconcurrency:", 1)[0]
+        assert "push:" in trigger
+        assert "pull_request:" not in trigger
 
 
 def test_archon_harness_lessons_keep_acgs_boundary():

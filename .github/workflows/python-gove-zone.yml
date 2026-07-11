@@ -1,7 +1,6 @@
-# Path-filtered CI for packages/gove-zone/ — minimal governed agent runtime.
-# Triggers only when the kernel package, the workspace pyproject, or this
-# workflow change. No submodule init needed: gove-zone is a first-class
-# in-tree package, not a gitlink.
+# Hash-locked, GitHub-hosted CI for the gove-zone execution membrane.
+# The canonical cross-scope order lives in saas-beta-required.yml; this workflow
+# preserves the package status context without offering a weaker green path.
 
 name: python-gove-zone
 
@@ -10,20 +9,18 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/gz-test.lock'
+      - 'requirements/saas-beta/locks.toml'
       - '.claude/policy/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'Makefile'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
   push:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/gz-test.lock'
+      - 'requirements/saas-beta/locks.toml'
       - '.claude/policy/**'
-      - 'scripts/**'
-      - 'tests/**'
-      - 'Makefile'
       - 'pyproject.toml'
       - '.github/workflows/python-gove-zone.yml'
 
@@ -34,58 +31,46 @@ concurrency:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: packages/gove-zone
-
 jobs:
   test:
-    # Block fork PRs: untrusted code must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 10
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.12']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      VIRTUAL_ENV: ${{ github.workspace }}/packages/gove-zone/.venv-beta
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v3
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          enable-cache: true
-          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+          persist-credentials: false
+          submodules: false
 
-      - name: Install (dev + schema extras)
-        # Standalone CI: no parent uv workspace context. The package
-        # declares zero runtime deps and an optional pydantic via
-        # [project.optional-dependencies].schema. Use uv's python-build-standalone
-        # toolchain because actions/setup-python has no prebuilds for Ubuntu
-        # 25.10 on the self-hosted runner.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+
+      - name: Set up uv 0.11.19
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          version: '0.11.19'
+          enable-cache: false
+
+      - name: Install the reviewed hash-locked environment
+        shell: bash
         run: |
-          uv python install ${{ matrix.python-version }}
-          uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp,yaml]'
+          set -euo pipefail
+          uv venv --python 3.11 packages/gove-zone/.venv-beta
+          uv pip sync --python packages/gove-zone/.venv-beta/bin/python --require-hashes requirements/saas-beta/gz-test.lock
+          UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1 uv pip install --python packages/gove-zone/.venv-beta/bin/python --no-build-isolation --no-deps --editable packages/gove-zone
 
       - name: Lint
-        run: |
-          .venv/bin/python -m ruff check src tests examples
-          .venv/bin/python -m ruff format --check src tests examples
+        run: uv run --active --no-sync --python 3.11 --package gove-zone ruff check packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
 
-      - name: Test
-        # `--import-mode=importlib` matches the package's pytest config and
-        # keeps tests insulated from sys.path leakage from sibling packages.
-        # Coverage floor: the kernel sits on the critical "no valid receipt, no
-        # side effect" path, so a regression that silently drops a tested branch
-        # must fail CI. 90% is a deliberate floor below the ~91% actual (leaving
-        # headroom for platform-specific branches: the Windows msvcrt audit lock
-        # and the no-crypto-extra ImportError paths are unreachable on this
-        # Linux+crypto runner). The `mcp` extra is installed above so the
-        # governed-MCP gateway (adapters/mcp_gateway.py) is exercised by its
-        # conformance suite here rather than skipped — without it the gateway
-        # sits at ~43% and drags the total under the floor. Raise the floor as
-        # coverage climbs; never lower it to make a red build pass.
-        run: >
-          .venv/bin/python -m pytest tests/ -v
-          --cov=gove_zone
-          --cov-report=term-missing:skip-covered
-          --cov-fail-under=90
+      - name: Format
+        run: uv run --active --no-sync --python 3.11 --package gove-zone ruff format --check packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
+
+      - name: Typecheck
+        run: uv run --active --no-sync --python 3.11 --package gove-zone mypy packages/gove-zone/src/gove_zone
+
+      - name: Test and coverage
+        run: uv run --active --no-sync --python 3.11 --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90

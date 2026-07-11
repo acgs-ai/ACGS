@@ -15,18 +15,24 @@ permissions:
 
 jobs:
   tthw:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          node-version: '24'
+          persist-credentials: false
+          submodules: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
           cache: pnpm
           cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Verify exact tool identities
+        run: test "$(node -p 'process.versions.node')" = 24.18.0 && test "$(pnpm --version)" = 9.15.4
 
       - name: Time to hello world
         env:
