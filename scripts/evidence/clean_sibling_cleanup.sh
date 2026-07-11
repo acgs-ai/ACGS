@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Cleanup primitive shared by the clean-sibling prover and its failure tests.
 
+# This helper participates in the proof boundary even when sourced directly.
+# Never inherit caller-selected implementations of filesystem or git tools.
+PATH=/usr/bin:/bin
+export PATH
+hash -r
+
 clean_sibling_snapshot_direct_entries() {
   local root_fd="$1"
   local expected_identity="$2"
@@ -130,6 +136,81 @@ print(hashlib.sha256(field(b"R", root_binding) + snapshot).hexdigest())
 PY
 }
 
+clean_sibling_remove_owned_root() {
+  local parent_fd="$1" root="$2" expected="$3" marker_pid="$4"
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= /usr/bin/python3 - \
+    "$parent_fd" "$root" "$expected" "$marker_pid" <<'PY'
+import os
+import secrets
+import stat
+import sys
+
+
+def fail(message: str) -> "None":
+    print(f"descriptor-safe cleanup refused: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+parent_fd = int(sys.argv[1])
+root = sys.argv[2]
+expected = tuple(int(part, 8 if index == 3 else 10)
+                 for index, part in enumerate(sys.argv[3].split(":")))
+marker_pid = sys.argv[4].encode() + b"\n"
+name = os.path.basename(root)
+if os.path.dirname(root) != os.readlink(f"/proc/self/fd/{parent_fd}"):
+    fail("root is outside authenticated parent")
+fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=parent_fd)
+st = os.fstat(fd)
+identity = (st.st_dev, st.st_ino, st.st_uid, stat.S_IMODE(st.st_mode))
+if identity != expected:
+    fail("root identity changed")
+marker_fd = os.open(".acgs-clean-sibling-owned", os.O_RDONLY | os.O_NOFOLLOW,
+                    dir_fd=fd)
+try:
+    marker_st = os.fstat(marker_fd)
+    if (not stat.S_ISREG(marker_st.st_mode) or marker_st.st_nlink != 1 or
+            marker_st.st_uid != st.st_uid or os.read(marker_fd, 128) != marker_pid):
+        fail("ownership marker changed")
+finally:
+    os.close(marker_fd)
+tomb = f".acgs-cleanup-{secrets.token_hex(16)}"
+os.rename(name, tomb, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+try:
+    moved = os.stat(tomb, dir_fd=parent_fd, follow_symlinks=False)
+    moved_identity = (moved.st_dev, moved.st_ino, moved.st_uid,
+                      stat.S_IMODE(moved.st_mode))
+    if moved_identity != expected or os.fstat(fd).st_ino != moved.st_ino:
+        # The atomic rename captured a substituted path. Put it back without
+        # deleting any of its bytes; never fall through to recursive removal.
+        try:
+            os.rename(tomb, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        except OSError:
+            pass
+        fail("root substituted at teardown boundary")
+
+    def empty(directory_fd: int) -> None:
+        for child in list(os.listdir(directory_fd)):
+            child_st = os.stat(child, dir_fd=directory_fd, follow_symlinks=False)
+            if stat.S_ISDIR(child_st.st_mode):
+                child_fd = os.open(child, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY,
+                                   dir_fd=directory_fd)
+                try:
+                    empty(child_fd)
+                finally:
+                    os.close(child_fd)
+                os.rmdir(child, dir_fd=directory_fd)
+            else:
+                os.unlink(child, dir_fd=directory_fd)
+
+    empty(fd)
+    if os.fstat(fd).st_ino != moved.st_ino:
+        fail("root descriptor changed during teardown")
+finally:
+    os.close(fd)
+os.rmdir(tomb, dir_fd=parent_fd)
+PY
+}
+
 clean_sibling_cleanup() {
   local status="$1"
   local cleanup_status=0
@@ -148,14 +229,11 @@ clean_sibling_cleanup() {
       git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
     fi
   fi
-  if [[ -n "$TMP_ROOT" ]] && [[ -f "$OWNER_MARKER" ]] && [[ ! -L "$OWNER_MARKER" ]] &&
-    [[ "$(stat -c '%h:%u' -- "$OWNER_MARKER" 2>/dev/null || true)" == "1:$TMP_ROOT_UID" ]] &&
-    [[ "$(cat "$OWNER_MARKER" 2>/dev/null || true)" == "$$" ]] &&
-    [[ "$(stat -c '%d:%i:%u:%a' -- "$TMP_ROOT" 2>/dev/null || true)" == \
-      "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" ]]; then
+  if [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
     case "$TMP_ROOT" in
       "$TMP_PARENT"/acgs-p0-evidence.*)
-        rm -rf --one-file-system -- "$TMP_ROOT" || cleanup_status=2
+        clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
+          "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
       *)
         printf 'cleanup refused for unowned path: %s\n' "$TMP_ROOT" >&2

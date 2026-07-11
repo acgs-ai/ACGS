@@ -5,6 +5,36 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
+# Proof authority must not be selected by caller-controlled command lookup.
+# The system toolset is restricted before the first external command; uv is
+# separately pinned to its canonical installation path.
+for variable in BASH_ENV ENV CDPATH GIT_EXEC_PATH GIT_TEMPLATE_DIR; do
+  [[ -z "${!variable:-}" ]] || {
+    printf 'CLEAN_SIBLING=FAIL phase=B0 reason=ambient command environment rejected: %s\n' \
+      "$variable" >&2
+    exit 2
+  }
+done
+unset -f command_not_found_handle 2>/dev/null || true
+PATH=/usr/bin:/bin
+export PATH
+hash -r
+UV_BIN=/home/martin/.local/bin/uv
+UV_SHA256=a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b
+[[ -x "$UV_BIN" && ! -L "$UV_BIN" ]] || {
+  printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv unavailable: %s\n' "$UV_BIN" >&2
+  exit 2
+}
+[[ "$(/usr/bin/realpath -e "$UV_BIN" 2>/dev/null || true)" == "$UV_BIN" ]] || {
+  printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv path is noncanonical\n' >&2
+  exit 2
+}
+[[ "$(/usr/bin/sha256sum "$UV_BIN" | /usr/bin/awk '{print $1}')" == "$UV_SHA256" ]] || {
+  printf 'CLEAN_SIBLING=FAIL phase=B0 reason=trusted uv digest mismatch\n' >&2
+  exit 2
+}
+export UV_BIN
+
 die() {
   printf 'CLEAN_SIBLING=FAIL phase=%s reason=%s\n' "${PHASE:-B0}" "$*" >&2
   exit 2
@@ -233,7 +263,7 @@ export PYTHONPYCACHEPREFIX="$SCRATCH_ROOT/pycache"
 export PIP_CACHE_DIR="$SCRATCH_ROOT/pip-cache"
 export HATCH_CACHE_DIR="$SCRATCH_ROOT/hatch-cache"
 export UV_CACHE_DIR
-[[ "$(uv --version | awk '{print $2}')" == '0.11.19' ]] || die 'uv must be exactly 0.11.19'
+[[ "$("$UV_BIN" --version | awk '{print $2}')" == '0.11.19' ]] || die 'uv must be exactly 0.11.19'
 WORKTREE_ADDED=1
 git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "$T"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
@@ -285,19 +315,19 @@ for relative in "${LOCK_FILES[@]}"; do
 done
 (
   cd "$WORKTREE"
-  LC_ALL=C TZ=UTC PYTHONHASHSEED=0 uv run --no-project --python 3.11 python \
+  LC_ALL=C TZ=UTC PYTHONHASHSEED=0 "$UV_BIN" run --no-project --python 3.11 python \
     scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml
-  LC_ALL=C TZ=UTC uv pip compile --python-version 3.11 \
+  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
     --python-platform x86_64-manylinux_2_28 \
     --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
     requirements/saas-beta/evidence-test.in \
     --output-file requirements/saas-beta/evidence-test.lock
-  LC_ALL=C TZ=UTC uv pip compile --python-version 3.11 \
+  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
     --python-platform x86_64-manylinux_2_28 \
     --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
     requirements/saas-beta/cp-test.in \
     --output-file requirements/saas-beta/cp-test.lock
-  LC_ALL=C TZ=UTC uv pip compile --python-version 3.11 \
+  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
     --python-platform x86_64-manylinux_2_28 \
     --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
     requirements/saas-beta/gz-test.in \
@@ -311,10 +341,10 @@ done
   die 'lock regeneration left product-tree drift'
 
 phase B2
-uv python install 3.11
-uv venv --python 3.11 "$WORKTREE/.venv-evidence"
+"$UV_BIN" python install 3.11
+"$UV_BIN" venv --python 3.11 "$WORKTREE/.venv-evidence"
 mkdir -p "$NODE_EVIDENCE"
-uv pip sync --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes \
+"$UV_BIN" pip sync --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes \
   "$WORKTREE/requirements/saas-beta/evidence-test.lock"
 export UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1
 export RUFF_NO_CACHE=true PYTHONDONTWRITEBYTECODE=1
@@ -331,7 +361,7 @@ EVIDENCE_PY="$WORKTREE/.venv-evidence/bin/python"
   --require jsonschema \
   --require pytest \
   --output "$NODE_EVIDENCE/environment-EVID.json"
-uv pip freeze --python "$EVIDENCE_PY" >"$NODE_EVIDENCE/evidence.freeze"
+"$UV_BIN" pip freeze --python "$EVIDENCE_PY" >"$NODE_EVIDENCE/evidence.freeze"
 EVID_GATE=(.venv-evidence/bin/python -m pytest -q \
   tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline)
 EVID_GATE_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -392,44 +422,44 @@ PY
 }
 
 phase B3
-uv venv --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
-env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE uv pip sync \
+"$UV_BIN" venv --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
+env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
   --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" --require-hashes \
   "$WORKTREE/requirements/saas-beta/cp-test.lock"
 precheck_product CP \
   "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   "$WORKTREE/requirements/saas-beta/cp-test.lock" \
   "$NODE_EVIDENCE/cp-editables-version.txt"
-uv pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+"$UV_BIN" pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   >"$NODE_EVIDENCE/cp-pre-editable.freeze"
 
-uv venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
-env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE uv pip sync \
+"$UV_BIN" venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
+env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
   --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" --require-hashes \
   "$WORKTREE/requirements/saas-beta/gz-test.lock"
 precheck_product GZ \
   "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
   "$WORKTREE/requirements/saas-beta/gz-test.lock" \
   "$NODE_EVIDENCE/gz-editables-version.txt"
-uv pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+"$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
   >"$NODE_EVIDENCE/gz-pre-editable.freeze"
 
 phase B4
-uv pip install --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+"$UV_BIN" pip install --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   --offline --no-index --no-cache --no-build-isolation --no-deps \
   --editable "$WORKTREE/packages/gove-zone" \
   --editable "$WORKTREE/packages/acgs-control-plane"
-uv pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+"$UV_BIN" pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   >"$NODE_EVIDENCE/cp-post-editable.freeze"
 verify_freeze_delta CP \
   "$NODE_EVIDENCE/cp-pre-editable.freeze" \
   "$NODE_EVIDENCE/cp-post-editable.freeze" \
   "$WORKTREE/packages/gove-zone" "$WORKTREE/packages/acgs-control-plane"
 
-uv pip install --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+"$UV_BIN" pip install --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
   --offline --no-index --no-cache --no-build-isolation --no-deps \
   --editable "$WORKTREE/packages/gove-zone"
-uv pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+"$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
   >"$NODE_EVIDENCE/gz-post-editable.freeze"
 verify_freeze_delta GZ \
   "$NODE_EVIDENCE/gz-pre-editable.freeze" \
@@ -504,7 +534,7 @@ run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-mypy \
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-pytest \
   'packages/acgs-control-plane:local-gate' .venv/bin/pytest -q
 
-GZ_PREFIX=(uv run --active --no-sync --python 3.11 --package gove-zone)
+GZ_PREFIX=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone)
 run_recorded_gate GZ "$WORKTREE" gz-ruff-check 'packages/gove-zone:local-gate' \
   "${GZ_PREFIX[@]}" ruff check \
   packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples

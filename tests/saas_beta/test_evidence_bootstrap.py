@@ -3475,9 +3475,10 @@ exit $?
         capture_output=True,
         check=False,
     )
-    assert cleanup_result.returncode == 2
-    assert "cleanup retry after worktree removal failure" in cleanup_result.stderr
-    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
+    assert cleanup_result.returncode == 0
+    assert "cleanup retry after worktree removal failure" not in cleanup_result.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" in cleanup_result.stdout
+    assert not failure_state.exists(), "ambient fake git must never execute"
     assert not cleanup_root.exists()
     assert (
         subprocess.run(
@@ -3646,9 +3647,13 @@ exit $?
             fake_bin.mkdir()
             injection_marker = fake_bin / "triggered"
             env["INJECTION_MARKER"] = str(injection_marker)
-            if case in {"early", "leak", *mutation_cases}:
+            if case in {"success", "early", "leak", *mutation_cases}:
                 git_wrapper = """#!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ "${ACGS_TEST_CASE:-}" == success ]]; then
+  : >"$INJECTION_MARKER"
+  exit 99
+fi
 if {
   [[ "${ACGS_TEST_CASE:-}" == early ]] ||
     [[ "${ACGS_TEST_CASE:-}" == mutate-* ]] ||
@@ -3779,46 +3784,12 @@ exec "$REAL_UV" "$@"
         assert fields["records"] == "10"
         assert fields["assignments"] == "EVID+CP+GZ"
         assert fields["attestations"] == "pending-independent-lanes"
+        assert not (tmp_path / "literal-prover-bin-success/triggered").exists()
         assert list(success_parent.iterdir()) == []
 
-        for case, latest_phase in (("early", "B0"), ("mid", "B3"), ("late", "B5")):
-            failed, failure_parent = invoke_literal_prover(case)
-            assert failed.returncode != 0, (failed.stdout, failed.stderr)
-            assert f"CLEAN_SIBLING_PHASE={latest_phase}" in failed.stdout
-            assert "CLEAN_SIBLING_TECHNICAL=PASS" not in failed.stdout
-            assert (tmp_path / f"literal-prover-bin-{case}/triggered").is_file()
-            assert list(failure_parent.iterdir()) == []
-
-        for case in ("mutate-bytes", "mutate-mode", "mutate-link", "mutate-nested", "root-replace"):
-            mutated, mutation_parent = invoke_literal_prover(case)
-            assert mutated.returncode == 2, (mutated.stdout, mutated.stderr)
-            assert "CLEAN_SIBLING_PHASE=B0" in mutated.stdout
-            assert "CLEAN_SIBLING_TECHNICAL=PASS" not in mutated.stdout
-            assert "caller TMPDIR direct entries changed across proof" in mutated.stderr
-            assert (tmp_path / f"literal-prover-bin-{case}/triggered").is_file()
-            if case == "mutate-bytes":
-                assert (mutation_parent / "existing").read_bytes() == b"after"
-            elif case == "mutate-mode":
-                assert stat.S_IMODE((mutation_parent / "existing").stat().st_mode) == 0o640
-            elif case == "mutate-link":
-                assert (mutation_parent / "link").readlink() == Path("directory")
-            elif case == "mutate-nested":
-                assert (mutation_parent / "directory/nested").read_bytes() == b"nested-after"
-            else:
-                assert (mutation_parent / "existing").read_bytes() == b"after-root-replace"
-            shutil.rmtree(mutation_parent / "directory")
-            (mutation_parent / "link").unlink()
-            (mutation_parent / "existing").unlink()
-            assert list(mutation_parent.iterdir()) == []
-
-        leaked, leak_parent = invoke_literal_prover("leak")
-        assert leaked.returncode == 2, (leaked.stdout, leaked.stderr)
-        assert "CLEAN_SIBLING_PHASE=B6" in leaked.stdout
-        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in leaked.stdout
-        assert "caller TMPDIR direct entries changed across proof" in leaked.stderr
-        assert [path.name for path in leak_parent.iterdir()] == ["deliberate-sibling-leak"]
-        (leak_parent / "deliberate-sibling-leak").unlink()
-        assert list(leak_parent.iterdir()) == []
+        # Ambient fake git/uv are deliberately no longer a fault-injection
+        # seam: command lookup is closed before the first external tool. The
+        # direct cleanup and snapshot tests above retain mutation/race coverage.
         assert (
             subprocess.run(
                 ["git", "status", "--porcelain=v1", "--untracked-files=all"],
@@ -3869,3 +3840,36 @@ def test_write_once_outputs_reject_existing_regular_and_dangling_symlink(tmp_pat
     dangling.symlink_to(tmp_path / "absent")
     with pytest.raises(_common.EvidenceError):
         _common.write_json_exclusive(dangling, {"three": 3})
+
+
+def test_descriptor_safe_cleanup_refuses_substituted_root(tmp_path: Path) -> None:
+    """A same-UID substituted deletion target must remain byte-for-byte intact."""
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+    original = parent / "acgs-p0-evidence.race"
+    original.mkdir(mode=0o700)
+    original_stat = original.stat()
+    (original / ".acgs-clean-sibling-owned").write_text("placeholder\n", encoding="utf-8")
+    displaced = parent / "displaced"
+    original.rename(displaced)
+    victim = parent / "acgs-p0-evidence.race"
+    victim.mkdir(mode=0o700)
+    (victim / "valuable").write_bytes(b"must-survive")
+    command = r"""
+set -u
+source "$1"
+exec {parent_fd}<"$2"
+clean_sibling_remove_owned_root "$parent_fd" "$3" "$4" placeholder
+"""
+    expected = f"{original_stat.st_dev}:{original_stat.st_ino}:{original_stat.st_uid}:700"
+    completed = subprocess.run(
+        ["bash", "-c", command, "_", str(helper), str(parent), str(victim), expected],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "root identity changed" in completed.stderr
+    assert (victim / "valuable").read_bytes() == b"must-survive"
+    assert (displaced / ".acgs-clean-sibling-owned").is_file()
