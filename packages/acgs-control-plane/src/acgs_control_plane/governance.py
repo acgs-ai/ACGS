@@ -19,10 +19,14 @@ dispatch so file-level truncation is detectable from the database.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Protocol
 
 from gove_zone import (
     ChainHashAuditStore,
@@ -41,6 +45,302 @@ from acgs_control_plane.auth import Principal
 from acgs_control_plane.models import Organization, PolicyBundle, ReceiptRow
 
 BASELINE_POLICY_ID = "acp-baseline/v1"
+
+
+class ExecutionClass(StrEnum):
+    LEGACY_UNSIGNED_WRITE = "legacy_unsigned_write"
+    READ_ONLY_OPERATION = "read_only_operation"
+    PROTOCOL_OPERATION = "protocol_operation"
+    CANONICAL_MANAGED_WRITE = "canonical_managed_write"
+
+
+@dataclass(frozen=True)
+class RouteContract:
+    method: str
+    path: str
+    execution_class: ExecutionClass
+    action: str | None = None
+    permits_persistent_effect: bool = False
+    permits_filesystem_effect: bool = False
+    permits_external_effect: bool = False
+
+
+_READ_PATHS = (
+    ("GET", "/orgs/{org_id}"),
+    ("GET", "/orgs/{org_id}/users"),
+    ("GET", "/orgs/{org_id}/agents"),
+    ("GET", "/orgs/{org_id}/agents/{agent_id}"),
+    ("GET", "/orgs/{org_id}/policies"),
+    ("POST", "/orgs/{org_id}/policies/simulate"),
+    ("GET", "/orgs/{org_id}/receipts"),
+    ("GET", "/orgs/{org_id}/receipts/{receipt_id}"),
+    ("POST", "/orgs/{org_id}/receipts/{receipt_id}/verify"),
+    ("GET", "/orgs/{org_id}/dashboard"),
+    ("GET", "/orgs/{org_id}/exports"),
+    ("GET", "/orgs/{org_id}/exports/{export_id}"),
+)
+_LEGACY_WRITES = (
+    ("POST", "/orgs", "org.create"),
+    ("POST", "/orgs/{org_id}/users", "user.create"),
+    ("POST", "/orgs/{org_id}/agents", "agent.register"),
+    ("PATCH", "/orgs/{org_id}/agents/{agent_id}/status", "agent.set_status"),
+    ("POST", "/orgs/{org_id}/policies", "policy.publish"),
+    ("POST", "/orgs/{org_id}/policies/{bundle_id}/activate", "policy.activate"),
+    ("POST", "/orgs/{org_id}/exports", "export.generate"),
+)
+ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
+    RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
+    RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),
+    *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
+    *(
+        RouteContract(m, p, ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
+        for m, p, a in _LEGACY_WRITES
+    ),
+)
+
+
+@dataclass(frozen=True, order=True)
+class PostureBlocker:
+    code: str
+    component: str
+    route: str | None = None
+    execution_class: str | None = None
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            "code": self.code,
+            "component": self.component,
+            "route": self.route,
+            "execution_class": self.execution_class,
+        }
+
+
+class ProductionPostureBlocked(RuntimeError):
+    code = "PRODUCTION_POSTURE_BLOCKED"
+    stage = "pre-persistence"
+
+    def __init__(self, blockers: Sequence[PostureBlocker]) -> None:
+        self.blockers = tuple(sorted(blockers))
+        self.contract: Any | None = None
+        super().__init__(
+            json.dumps(
+                {
+                    "code": self.code,
+                    "stage": self.stage,
+                    "blockers": [b.to_dict() for b in self.blockers],
+                },
+                sort_keys=True,
+            )
+        )
+
+
+def reconcile_route_contracts(actual: Sequence[tuple[str, str]]) -> tuple[PostureBlocker, ...]:
+    expected = [(r.method, r.path) for r in ROUTE_CONTRACTS]
+    blockers: list[PostureBlocker] = []
+    for key in sorted(set(actual) | set(expected)):
+        if expected.count(key) != 1 or actual.count(key) != 1:
+            blockers.append(
+                PostureBlocker("ROUTE_CONTRACT_DRIFT", "route-registry", f"{key[0]} {key[1]}")
+            )
+    for key in sorted(set(actual) - set(expected)):
+        blockers.append(
+            PostureBlocker("UNCLASSIFIED_ROUTE", "route-registry", f"{key[0]} {key[1]}")
+        )
+    return tuple(blockers)
+
+
+class ProviderPreflight(Protocol):
+    def preflight(self) -> SealedProviderStatus: ...
+
+
+_PROVIDER_SEAL = object()
+
+
+@dataclass(frozen=True)
+class SealedProviderStatus:
+    component: str
+    ready: bool
+    _seal: object
+
+    @classmethod
+    def from_provider(cls, component: str, ready: bool) -> SealedProviderStatus:
+        return cls(component, ready, _PROVIDER_SEAL)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _PROVIDER_SEAL:
+            raise ValueError("provider status must be issued by the server provider boundary")
+
+
+def production_blockers(
+    route_drift: Sequence[PostureBlocker], providers: Sequence[ProviderPreflight] = ()
+) -> tuple[PostureBlocker, ...]:
+    blockers = list(route_drift)
+    legacy = [
+        PostureBlocker(
+            "LEGACY_UNSIGNED_WRITE",
+            "governance-membrane",
+            f"{r.method} {r.path}",
+            r.execution_class.value,
+        )
+        for r in ROUTE_CONTRACTS
+        if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
+    ]
+    blockers.extend(legacy)
+    required = {"signer-issuer", "trust-verifier", "durable-consumption-uow", "migration-head"}
+    if legacy:
+        # Do not cross provider boundaries while a local invariant already
+        # proves production impossible. This is a pre-persistence short circuit.
+        blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in sorted(required))
+        return tuple(sorted(blockers))
+    statuses = [p.preflight() for p in providers]
+    ready = {s.component for s in statuses if s.ready and s._seal is _PROVIDER_SEAL}
+    blockers.extend(PostureBlocker("PROVIDER_NOT_READY", c) for c in sorted(required - ready))
+    return tuple(sorted(blockers))
+
+
+_CONTEXT_SEAL = object()
+
+
+@dataclass(frozen=True)
+class AuthenticatedRuntimeContext:
+    actor: str
+    tenant: str
+    project: str
+    environment: str
+    authentication_method: str
+    authority_domain: str
+    validated_at: str
+    _seal: object
+
+    @classmethod
+    def from_server_provider(cls, **bindings: str) -> AuthenticatedRuntimeContext:
+        return cls(**bindings, _seal=_CONTEXT_SEAL)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _CONTEXT_SEAL:
+            raise ValueError("runtime context must be issued by server authentication")
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(k): _freeze(v) for k, v in sorted(value.items())})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
+@dataclass(frozen=True)
+class ManagedMutationContract:
+    contract: str
+    action: str
+    execution_boundary: str
+    context: AuthenticatedRuntimeContext
+    canonical_arguments: Mapping[str, Any]
+    argument_hash: str
+    authority: str
+    validator: str
+    policy_id: str
+    policy_version: str
+    policy_hash: str
+    issued_at: str
+    expires_at: str
+    key_id: str
+    audit_anchor: str
+    idempotency_key: str
+    canonical_path_enabled: bool = False
+
+
+_FORBIDDEN_BODY_BINDINGS = frozenset(
+    {
+        "actor",
+        "tenant",
+        "org_id",
+        "project",
+        "environment",
+        "authority",
+        "validator",
+        "policy_id",
+        "policy_version",
+        "policy_hash",
+        "execution_boundary",
+        "idempotency_key",
+    }
+)
+
+
+def managed_contract_stub(
+    contract: str,
+    body: Mapping[str, Any],
+    context: AuthenticatedRuntimeContext,
+    *,
+    providers: Sequence[ProviderPreflight],
+    bindings: Mapping[str, str],
+    decision: str,
+    mutation: Callable[[], Any] | None = None,
+) -> ManagedMutationContract:
+    if not isinstance(context, AuthenticatedRuntimeContext) or context._seal is not _CONTEXT_SEAL:
+        raise TypeError("typed authenticated runtime context required")
+    forbidden = sorted(_FORBIDDEN_BODY_BINDINGS & body.keys())
+    if forbidden:
+        raise ValueError(f"caller-controlled server bindings: {','.join(forbidden)}")
+    statuses = [p.preflight() for p in providers]
+    if not statuses or any(not s.ready or s._seal is not _PROVIDER_SEAL for s in statuses):
+        raise RuntimeError("trusted providers not ready")
+    frozen = _freeze(body)
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    actions = {
+        "tenant.bootstrap/v1": ("tenant.bootstrap", "control-plane:tenant.bootstrap/v1"),
+        "agent.register/v1": ("agent.register", "control-plane:agent.register/v1"),
+    }
+    if contract not in actions:
+        raise ValueError("unknown managed contract")
+    action, boundary = actions[contract]
+    required_bindings = {
+        "authority",
+        "validator",
+        "policy_id",
+        "policy_version",
+        "policy_hash",
+        "issued_at",
+        "expires_at",
+        "key_id",
+        "audit_anchor",
+        "idempotency_key",
+    }
+    missing = sorted(required_bindings - bindings.keys())
+    if missing:
+        raise ValueError(f"missing server bindings: {','.join(missing)}")
+    shape = ManagedMutationContract(
+        contract=contract,
+        action=action,
+        execution_boundary=boundary,
+        context=context,
+        canonical_arguments=frozen,
+        argument_hash=hashlib.sha256(canonical.encode()).hexdigest(),
+        authority=bindings["authority"],
+        validator=bindings["validator"],
+        policy_id=bindings["policy_id"],
+        policy_version=bindings["policy_version"],
+        policy_hash=bindings["policy_hash"],
+        issued_at=bindings["issued_at"],
+        expires_at=bindings["expires_at"],
+        key_id=bindings["key_id"],
+        audit_anchor=bindings["audit_anchor"],
+        idempotency_key=bindings["idempotency_key"],
+    )
+    del decision, mutation
+    # DENY, ESCALATE, and even apparently valid ALLOW stop here. P1/P2 own execution.
+    error = ProductionPostureBlocked(
+        (
+            PostureBlocker(
+                "CANONICAL_PATH_NOT_ENABLED",
+                contract,
+                execution_class=ExecutionClass.CANONICAL_MANAGED_WRITE.value,
+            ),
+        )
+    )
+    error.contract = shape
+    raise error
 
 
 def baseline_policy() -> RuleSetPolicy:
@@ -75,6 +375,14 @@ def load_active_policy(session: Session, org_id: str) -> Policy:
 def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
     audit_dir.mkdir(parents=True, exist_ok=True)
     return ChainHashAuditStore(audit_dir / f"{org_id}.audit.jsonl")
+
+
+def existing_org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore | None:
+    """Open an existing chain for reads without creating directories or files."""
+    path = audit_dir / f"{org_id}.audit.jsonl"
+    if not path.is_file():
+        return None
+    return ChainHashAuditStore(path)
 
 
 def chain_tip(store: ChainHashAuditStore) -> tuple[int, str]:

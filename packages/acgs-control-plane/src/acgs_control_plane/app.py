@@ -32,14 +32,18 @@ from acgs_control_plane.auth import (
     generate_api_key,
     resolve_principal,
 )
-from acgs_control_plane.config import Settings
+from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import Base, make_engine, make_session_factory
 from acgs_control_plane.exports import build_export_bundle
 from acgs_control_plane.governance import (
     GovernanceMembrane,
     PolicyDeniedError,
     PolicyEscalatedError,
-    org_audit_store,
+    PostureBlocker,
+    ProductionPostureBlocked,
+    existing_org_audit_store,
+    production_blockers,
+    reconcile_route_contracts,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -155,12 +159,10 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
 # ---------------------------------------------------------------------------
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, production_providers: tuple[Any, ...] = ()
+) -> FastAPI:
     settings = settings or Settings.from_env()
-    engine = make_engine(settings.database_url)
-    if settings.create_tables:
-        Base.metadata.create_all(engine)
-
     app = FastAPI(
         title="ACGS Enterprise Governance Control Plane",
         version="0.1.0",
@@ -168,8 +170,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "No valid Decision Receipt, no side effect.",
     )
     app.state.settings = settings
-    app.state.engine = engine
-    app.state.session_factory = make_session_factory(engine)
 
     @app.exception_handler(PolicyDeniedError)
     def _denied(_request: Request, exc: PolicyDeniedError) -> JSONResponse:
@@ -180,6 +180,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _blocked_json(202, "pending_approval", exc)
 
     _register_routes(app)
+    # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
+    # protocol Route types are intentionally outside this HTTP contract.
+    from fastapi.routing import APIRoute
+
+    actual = tuple(
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in sorted(route.methods or ())
+    )
+    drift = reconcile_route_contracts(actual)
+    if drift:
+        raise ProductionPostureBlocked(drift)
+    if settings.runtime_posture is None:
+        raise ProductionPostureBlocked(
+            (
+                # Missing posture is refused before engine/provider construction.
+                PostureBlocker("RUNTIME_POSTURE_REQUIRED", "runtime-posture"),
+            )
+        )
+    if not isinstance(settings.runtime_posture, RuntimePosture):
+        raise ProductionPostureBlocked(
+            (PostureBlocker("RUNTIME_POSTURE_UNKNOWN", "runtime-posture"),)
+        )
+    blockers = production_blockers(drift, production_providers)
+    app.state.readiness_blockers = blockers
+    if settings.runtime_posture is RuntimePosture.PRODUCTION:
+        raise ProductionPostureBlocked(blockers)
+    engine = make_engine(settings.database_url)
+    if settings.create_tables:
+        Base.metadata.create_all(engine)
+    app.state.engine = engine
+    app.state.session_factory = make_session_factory(engine)
     return app
 
 
@@ -189,6 +222,14 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/healthz", tags=["meta"])
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz", tags=["meta"])
+    def readyz(request: Request) -> JSONResponse:
+        blockers = request.app.state.readiness_blockers
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not-production-ready", "blockers": [b.to_dict() for b in blockers]},
+        )
 
     # -- organizations (bootstrap) ------------------------------------------
 
@@ -642,14 +683,22 @@ def _register_routes(app: FastAPI) -> None:
     ) -> ReceiptVerifyResponse:
         row = _get_receipt_or_404(session, org.id, receipt_id)
         settings: Settings = request.app.state.settings
-        store = org_audit_store(settings.audit_dir, org.id)
-        in_chain = any(event.get("event_hash") == row.audit_hash for event in store.iter_events())
-        result = store.verify_chain(
-            # 0 is a legitimate anchor (org exists, chain empty) — always
-            # pass the count so truncation-to-empty is still detected.
-            expected_count=org.audit_anchor_count,
-            expected_last_hash=org.audit_anchor_hash or None,
-        )
+        store = existing_org_audit_store(settings.audit_dir, org.id)
+        result: dict[str, Any]
+        if store is None:
+            in_chain = False
+            failures = [] if org.audit_anchor_count == 0 else [{"type": "length_mismatch"}]
+            result = {"valid": not failures, "checked": 0, "failures": failures}
+        else:
+            in_chain = any(
+                event.get("event_hash") == row.audit_hash for event in store.iter_events()
+            )
+            result = store.verify_chain(
+                # 0 is a legitimate anchor (org exists, chain empty) — always
+                # pass the count so truncation-to-empty is still detected.
+                expected_count=org.audit_anchor_count,
+                expected_last_hash=org.audit_anchor_hash or None,
+            )
         # verify_chain reports anchor mismatches as failures; split them out
         # so callers can distinguish "file corrupted" from "file truncated".
         anchor_failures = [
@@ -707,13 +756,18 @@ def _register_routes(app: FastAPI) -> None:
             .select_from(AgentRecord)
             .where(AgentRecord.org_id == org.id, AgentRecord.status == "suspended")
         ).scalar_one()
-        store = org_audit_store(settings.audit_dir, org.id)
-        chain = store.verify_chain(
-            # 0 is a legitimate anchor (org exists, chain empty) — always
-            # pass the count so truncation-to-empty is still detected.
-            expected_count=org.audit_anchor_count,
-            expected_last_hash=org.audit_anchor_hash or None,
-        )
+        store = existing_org_audit_store(settings.audit_dir, org.id)
+        chain: dict[str, Any]
+        if store is None:
+            failures = [] if org.audit_anchor_count == 0 else [{"type": "length_mismatch"}]
+            chain = {"valid": not failures, "checked": 0, "failures": failures}
+        else:
+            chain = store.verify_chain(
+                # 0 is a legitimate anchor (org exists, chain empty) — always
+                # pass the count so truncation-to-empty is still detected.
+                expected_count=org.audit_anchor_count,
+                expected_last_hash=org.audit_anchor_hash or None,
+            )
         return DashboardResponse(
             org_id=org.id,
             total_receipts=int(total),
