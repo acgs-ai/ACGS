@@ -23,6 +23,7 @@ from _common import (
     BWRAP_EXECUTABLE,
     REVIEWED_ENVIRONMENT_PROFILE,
     REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256,
+    REVIEWED_HOST_EXECUTABLE_SHA256,
     REVIEWED_SANDBOX_PROFILE_VERSION_SHA256,
     EvidenceError,
     append_safe_transcript_record,
@@ -211,6 +212,9 @@ def main(argv: list[str] | None = None) -> int:
         if not stat.S_ISREG(before.st_mode) or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             fail("resolved executable target must be a non-writable regular file", phase="B6")
         executable_sha256 = _hash_fd(target_fd)
+        expected_host_sha256 = REVIEWED_HOST_EXECUTABLE_SHA256.get(reviewed_argv[0])
+        if expected_host_sha256 is not None and executable_sha256 != expected_host_sha256:
+            fail("reviewed host executable identity mismatch", phase="B6")
         target_identity = resolved_executable_identity(repo, executable, before)
         sandbox = BWRAP_EXECUTABLE.resolve(strict=True)
         if sandbox != BWRAP_EXECUTABLE or not sandbox.is_file() or sandbox.is_symlink():

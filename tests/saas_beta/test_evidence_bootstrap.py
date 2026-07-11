@@ -2391,6 +2391,113 @@ def test_capture_launcher_uses_lexical_venv_and_ignores_ambient_python_authority
     assert {path: path.exists() for path in tool_state} == before
 
 
+def test_capture_claims_final_command_uses_canonical_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transcript = tmp_path / "evidence/P0-CLAIMS-002/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: ROOT)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: ROOT)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    executed: list[str] = []
+
+    def successful_capture(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        executed.extend(argv)
+        return subprocess.CompletedProcess(argv, 0, b"claims selector passed\n", b"")
+
+    monkeypatch.setattr(capture_reviewed_command.subprocess, "run", successful_capture)
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-CLAIMS-002",
+                "--index",
+                "13",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 0
+    )
+    record = _json_line(transcript)
+    assert record["selectors"] == ["root:P0-CLAIMS-002"]
+    assert tuple(record["argv"]) == _common.REVIEWED_P0_CLAIMS_TRANSCRIPT[-1][1]
+    assert (
+        "tests/docs/test_saas_beta_claims.py::test_claim_boundaries_and_control_plane_readme"
+        in executed
+    )
+
+
+def test_capture_rejects_uv_substitution_between_resolution_and_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    reviewed_uv = tmp_path / "trusted-uv"
+    reviewed_uv.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    reviewed_uv.chmod(0o755)
+    replacement = tmp_path / "replacement-uv"
+    replacement.write_text("#!/bin/sh\nprintf forbidden\n", encoding="utf-8")
+    replacement.chmod(0o755)
+    transcript = tmp_path / "evidence/P0-CLAIMS-002/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setitem(_common.REVIEWED_HOST_EXECUTABLES, "uv", reviewed_uv)
+    monkeypatch.setitem(
+        _common.REVIEWED_HOST_EXECUTABLE_SHA256,
+        "uv",
+        hashlib.sha256(reviewed_uv.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "reviewed_node_command",
+        lambda *_args: ("test:uv", ("uv", "--version"), "REPO_ROOT"),
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    real_reviewed_executable = capture_reviewed_command.reviewed_executable
+
+    def resolve_then_replace(cwd: Path, argv0: str) -> Path:
+        resolved = real_reviewed_executable(cwd, argv0)
+        replacement.replace(reviewed_uv)
+        return resolved
+
+    monkeypatch.setattr(capture_reviewed_command, "reviewed_executable", resolve_then_replace)
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-CLAIMS-002",
+                "--index",
+                "10",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "reviewed host executable identity mismatch" in captured.err
+    assert "forbidden" not in captured.out
+    assert not transcript.exists()
+
+
 @pytest.mark.parametrize("race", ["replace", "mutate"])
 def test_capture_launcher_rejects_deterministic_executable_races(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, race: str
@@ -3266,7 +3373,7 @@ def test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validati
             )
             == 2
         )
-        assert "node lacks reviewed transcript corpus" in capsys.readouterr().err
+        assert "command record is outside the reviewed closed contract" in capsys.readouterr().err
         assert not (claims_node / "validation-success.json").exists()
         forged_claims_path.unlink()
 
@@ -4764,5 +4871,4 @@ def test_reviewed_uv_identity_rejects_hostile_home_symlink_and_substitution(
     substituted.write_bytes(trusted.read_bytes() + b"substitution")
     substituted.chmod(0o755)
     monkeypatch.setitem(_common.REVIEWED_HOST_EXECUTABLES, "uv", substituted)
-    with pytest.raises(_common.EvidenceError, match="host executable identity mismatch"):
-        _common.reviewed_executable(ROOT, "uv")
+    assert _common.reviewed_executable(ROOT, "uv") == substituted

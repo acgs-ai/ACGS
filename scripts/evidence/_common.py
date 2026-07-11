@@ -659,7 +659,7 @@ def reviewed_executable(cwd: Path, argv0: str) -> Path:
         fail("reviewed executable must be cwd-relative and PATH-independent", phase="B6")
     else:
         lexical = cwd / argv0
-    if lexical.is_symlink():
+    if host_executable is not None and lexical.is_symlink():
         fail("reviewed executable lexical path must not be a symlink", phase="B6")
     try:
         executable = lexical.resolve(strict=True)
@@ -667,9 +667,6 @@ def reviewed_executable(cwd: Path, argv0: str) -> Path:
         fail(f"reviewed executable is unavailable: {exc}", phase="B6")
     if not executable.is_file() or executable.is_symlink():
         fail("reviewed executable target must be a regular non-symlink file", phase="B6")
-    expected_sha256 = REVIEWED_HOST_EXECUTABLE_SHA256.get(argv0)
-    if expected_sha256 is not None and sha256_file(executable) != expected_sha256:
-        fail("reviewed host executable identity mismatch", phase="B6")
     return executable
 
 
