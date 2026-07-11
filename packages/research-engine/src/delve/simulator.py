@@ -20,8 +20,13 @@ class PolicyStressSimulator:
     ) -> list[dict[str, Any]]:
         """Run mutations of tool arguments and state against the policy to find bypass vectors."""
         results = []
-        # Lazy import of ToolCall to prevent circular dependencies
-        from gove_zone.tool import ToolCall
+        try:
+            from gove_zone.tool import ToolCall
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "PolicyStressSimulator requires the optional gove-zone integration. "
+                "Install gove-zone to use stress_test_tool."
+            ) from exc
 
         for idx, mutation in enumerate(mutations):
             args = {**base_args, **mutation.get("args", {})}
@@ -52,11 +57,10 @@ class LoopholeIdentificationCritic:
     """LLM or heuristic critic agent scanning rulesets for security vulnerabilities."""
 
     def find_loopholes(self, policy_dict: dict[str, Any]) -> list[dict[str, Any]]:
-        """Analyze policy dictionary for typical bypasses:
+        """Analyze policy dictionaries for permissive actors and broad rule matches.
 
-        - Rules that match path_prefix but lack state checks.
-        - Rules that permit anonymous actor access.
-        - Overlapping tools where a highly privileged tool is not covered by any rule.
+        Flags rules that permit anonymous or wildcard actors and rules without a
+        path or state constraint. It does not establish coverage for privileged tools.
         """
         loopholes = []
         rules = policy_dict.get("rules", [])

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from gove_zone.decision import Decision
-from gove_zone.policy import PolicyRule, RuleSetPolicy
+import sys
+from dataclasses import dataclass
+from enum import Enum
+from types import ModuleType
+from typing import Any
+
+import pytest
 
 from delve.simulator import (
     LivingComplianceReporter,
@@ -12,15 +17,49 @@ from delve.simulator import (
 )
 
 
-def test_stress_simulator() -> None:
-    # Set up a policy rule that denies tool-1 if vendor is not approved
-    rule = PolicyRule(
-        rule_id="deny-unapproved-vendor",
-        effect=Decision.DENY,
-        tools=frozenset(["tool-1"]),
-        state_equals={"vendor_approved": False},
-    )
-    policy = RuleSetPolicy(policy_id="p-perf", rules=[rule])
+class FakeDecision(Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+
+
+@dataclass
+class FakeRecord:
+    decision: FakeDecision
+    reason: str
+    matched_rules: list[str]
+
+
+@dataclass
+class FakeToolCall:
+    name: str
+    args: dict[str, Any]
+    goal: str
+    actor: str
+    state: dict[str, Any]
+
+
+class FakePolicy:
+    def evaluate(self, call: FakeToolCall) -> FakeRecord:
+        if call.state.get("vendor_approved") is False:
+            return FakeRecord(
+                FakeDecision.DENY,
+                "Vendor is not approved.",
+                ["deny-unapproved-vendor"],
+            )
+        return FakeRecord(FakeDecision.ALLOW, "No matching rule.", [])
+
+
+@pytest.fixture
+def fake_gove_zone(monkeypatch: pytest.MonkeyPatch) -> None:
+    gove_zone = ModuleType("gove_zone")
+    tool = ModuleType("gove_zone.tool")
+    tool.__dict__["ToolCall"] = FakeToolCall
+    monkeypatch.setitem(sys.modules, "gove_zone", gove_zone)
+    monkeypatch.setitem(sys.modules, "gove_zone.tool", tool)
+
+
+def test_stress_simulator(fake_gove_zone: None) -> None:
+    policy = FakePolicy()
 
     simulator = PolicyStressSimulator(policy)
 
