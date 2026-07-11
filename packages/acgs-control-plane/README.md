@@ -1,17 +1,19 @@
 # acgs-control-plane
 
-**ACGS Enterprise Governance Control Plane** — a multi-tenant management API over the
+**ACGS control-plane alpha** — a local multi-tenant management API over the
 [gove-zone](../gove-zone/) governed runtime.
 
 > **No valid Decision Receipt, no side effect.**
 
-The control plane applies gove-zone's core invariant to *itself*: every mutating
-operation (register an agent, publish a policy, activate a policy, provision a user,
-generate a compliance export) is dispatched through the organization's gove-zone
-`Kernel` under the organization's **active policy bundle**. The Decision Receipt —
-ALLOW, DENY, or ESCALATE — commits atomically with the side effect:
+The current development path dispatches mutations through the organization's
+legacy gove-zone `Kernel` under its **active policy bundle**. It stores legacy,
+unsigned `Receipt` records, not signed canonical `DecisionReceipt` artifacts
+verified through `execute_with_receipt`. Production posture refuses these legacy
+mutation routes rather than representing them as a production governance
+membrane. In the local development profile:
 
-- **ALLOW** → side effect + receipt row + audit-chain anchor commit in one transaction.
+- **ALLOW** → database side effect + receipt row commit together; the file-backed
+  audit append is outside the SQL transaction and is not atomic with it.
 - **DENY** → transaction rolled back; only the deny receipt commits; HTTP 403.
 - **ESCALATE** → transaction rolled back; only the escalate receipt commits; HTTP 202.
 
@@ -38,11 +40,12 @@ ALLOW, DENY, or ESCALATE — commits atomically with the side effect:
 
 ## Tamper evidence
 
-Each org has a file-backed `ChainHashAuditStore` chain; its tip (event count + last
+Each org has a local file-backed `ChainHashAuditStore` chain; its tip (event count + last
 hash) is anchored in the `organizations` row inside the same transaction as every
 receipt. `POST .../receipts/{id}/verify` re-walks the chain **and** cross-checks the
 database anchor, so both in-place edits (hash mismatch) and truncation/rollback
-(anchor mismatch) are detected — neither store can silently rewrite the other.
+(anchor mismatch) are detected in the tested local threat model. The same
+service controls both stores, so this is not independent witnessing.
 Anchor writes take a row-level lock (PostgreSQL) and are monotonic — a stale
 concurrent writer skips rather than regressing the anchor, so ordinary
 concurrent traffic cannot produce false tamper reports.
@@ -53,7 +56,13 @@ explorer, dashboard, and exports stay consistent with the chain.
 
 ## Run
 
+> **INSECURE LOCAL DEVELOPMENT ONLY.** The current mutation API uses legacy,
+> unsigned receipts. It must be started only with the explicit local-development
+> posture below. Production posture refuses these routes; do not use this profile
+> for staging, production, or consequential side effects.
+
 ```bash
+export ACP_RUNTIME_POSTURE="local-dev-legacy-unsigned"
 export ACP_DATABASE_URL="postgresql+psycopg://acgs:acgs@localhost:5432/acgs_control_plane"
 export ACP_AUDIT_DIR="/var/lib/acgs/audit"
 export ACP_BOOTSTRAP_TOKEN="<one-time provisioning secret>"   # unset ⇒ org creation disabled (fail closed)
@@ -81,8 +90,9 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **Escalation is record-only**: ESCALATE persists a receipt and returns 202; there is
   no approve/resume endpoint yet (gove-zone's `escalation.PendingApproval` is the
   intended substrate).
-- **Receipts are unsigned** by default, matching gove-zone's default posture; wiring a
-  `ReceiptSigner`/verifier pair per org is future work.
+- **Receipts are legacy and unsigned.** This differs from gove-zone's secure
+  `require_signature=True` profile, which fails loudly without configured trust
+  material; production posture refuses the legacy mutation routes.
 - **Schema migrations** are `create_all` (idempotent, additive-only); Alembic arrives
   when the schema stabilises.
 - The chain-tip anchor is written by the same service that writes the chain — it
@@ -93,3 +103,6 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **An export never references its own receipt**: the `export.generate` receipt is
   minted after the bundle is sealed, so it appears in the *next* export — evidence
   chains forward.
+- There is no authenticated customer-runtime evidence-ingestion API, signed
+  policy-sync API, or approve/resume API. Horizontal operation is constrained by
+  per-org local JSONL files, and verification scans the chain.

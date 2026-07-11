@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from acgs_control_plane.app import create_app
-from acgs_control_plane.config import Settings
+from acgs_control_plane.config import RuntimePosture, Settings
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
@@ -37,6 +37,7 @@ def client(tmp_path: Path, audit_dir: Path) -> TestClient:
         audit_dir=audit_dir,
         bootstrap_token=BOOTSTRAP_TOKEN,
         create_tables=True,
+        runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
     app = create_app(settings)
     # raise_server_exceptions=False: policy DENY/ESCALATE map to HTTP via
