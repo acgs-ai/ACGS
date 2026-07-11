@@ -196,6 +196,12 @@
   --accent-2: var(--gz-brand-2);
   --accent-soft: color-mix(in srgb, var(--gz-brand) 20%, transparent);
 
+  /* gold seal brightened for near-black (light-register values are 2.8:1 /
+   * 2.9:1 here). Both map to one dark-safe gold: decorative marks and
+   * text-bearing gold share it (8.4:1 on --gz-bg). */
+  --gold: #c9a75c;
+  --gold-ink: #c9a75c;
+
   /* Risk pills brightened for legibility on near-black (map to bright status). */
   --risk-lo: var(--allow);
   --risk-mid: var(--review);
