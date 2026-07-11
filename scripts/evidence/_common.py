@@ -40,6 +40,64 @@ TRANSCRIPT_RECORD_KEYS = {
     "finished_at_utc",
     "selectors",
 }
+EXTENDED_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {
+    "cwd_scope",
+    "executable_sha256",
+    "environment_profile_version_sha256",
+    "resolved_executable_identity_sha256",
+    "sandbox_executable_sha256",
+    "sandbox_profile_version_sha256",
+    "sandbox_resolved_identity_sha256",
+}
+REVIEWED_ENVIRONMENT_PROFILE = {
+    "name": "acgs-reviewed-command-environment/v1",
+    "inherit_ambient": False,
+    "environment": {
+        "PATH": "{CWD}/.venv/bin:{REPO_ROOT}/.venv-evidence/bin:/usr/bin:/bin",
+        "HOME": "{ISOLATED_ROOT}/home",
+        "TMPDIR": "{ISOLATED_ROOT}/tmp",
+        "TMP": "{ISOLATED_ROOT}/tmp",
+        "TEMP": "{ISOLATED_ROOT}/tmp",
+        "XDG_CACHE_HOME": "{ISOLATED_ROOT}/xdg-cache",
+        "XDG_CONFIG_HOME": "{ISOLATED_ROOT}/xdg-config",
+        "XDG_DATA_HOME": "{ISOLATED_ROOT}/xdg-data",
+        "XDG_STATE_HOME": "{ISOLATED_ROOT}/xdg-state",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "UV_OFFLINE": "1",
+        "UV_NO_INDEX": "1",
+        "UV_NO_CACHE": "1",
+        "UV_PYTHON_DOWNLOADS": "never",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "RUFF_CACHE_DIR": "{ISOLATED_ROOT}/ruff",
+        "MYPY_CACHE_DIR": "{ISOLATED_ROOT}/mypy",
+        "PYTEST_DEBUG_TEMPROOT": "{ISOLATED_ROOT}/pytest-tmp",
+        "PYTEST_ADDOPTS": "-o cache_dir={ISOLATED_ROOT}/pytest-cache",
+        "COVERAGE_FILE": "{ISOLATED_ROOT}/coverage/.coverage",
+    },
+}
+REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256 = hashlib.sha256(
+    json.dumps(REVIEWED_ENVIRONMENT_PROFILE, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+REVIEWED_SANDBOX_PROFILE = {
+    "name": "acgs-reviewed-command-bwrap/v1",
+    "executable": "/usr/bin/bwrap",
+    "host_filesystem": "ro-bind-root",
+    "writable_paths": ("{ISOLATED_ROOT}",),
+    "namespaces": ("user", "ipc", "pid", "uts", "cgroup", "network"),
+    "die_with_parent": True,
+    "new_session": True,
+    "clear_environment": True,
+    "cwd": "{CWD}",
+}
+REVIEWED_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
+    json.dumps(REVIEWED_SANDBOX_PROFILE, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")
 REVIEWED_P0_TRANSCRIPT = (
     (
         "root:EVID-gate",
@@ -152,7 +210,50 @@ REVIEWED_P0_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P0_MEMBRANE_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P0-MEMBRANE-001-exact",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            "tests/integration/test_production_posture.py::"
+            "test_production_rejects_legacy_unsigned_routes",
+            "tests/integration/test_production_posture.py::"
+            "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+        ),
+    ),
+    (
+        "root:P0-MEMBRANE-001",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "packages/acgs-control-plane/tests/integration/test_production_posture.py::"
+            "test_production_rejects_legacy_unsigned_routes",
+            "packages/acgs-control-plane/tests/integration/test_production_posture.py::"
+            "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+        ),
+    ),
+)
+REVIEWED_TRANSCRIPTS_BY_NODE = {
+    "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
+    "P0-MEMBRANE-001": REVIEWED_P0_MEMBRANE_TRANSCRIPT,
+}
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
+REVIEWED_CWD_SCOPES_BY_NODE = {
+    "P0-MEMBRANE-001": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+    )
+}
 ALLOWED_ASSIGNMENTS = {
     "EVID",
     "EVID+CP",
@@ -420,7 +521,68 @@ def parse_canonical_positive_decimal(value: Any, *, label: str) -> int:
     return int(value)
 
 
-def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
+def reviewed_node_command(node_id: str, index: int) -> tuple[str, tuple[str, ...], str]:
+    """Resolve one exact node/index command without consulting a global union."""
+
+    transcript = REVIEWED_TRANSCRIPTS_BY_NODE.get(node_id)
+    scopes = REVIEWED_CWD_SCOPES_BY_NODE.get(node_id)
+    if transcript is None or scopes is None:
+        fail("node lacks reviewed transcript corpus", phase="B6")
+    if type(index) is not int or index < 0 or index >= len(transcript):
+        fail("command index is outside the reviewed node contract", phase="B6")
+    selector, argv = transcript[index]
+    return selector, argv, scopes[index]
+
+
+def reviewed_cwd(repo: Path, cwd_scope: str) -> Path:
+    """Map a closed cwd scope to its canonical repository directory."""
+
+    scopes = {"REPO_ROOT": repo, "CP": repo / "packages/acgs-control-plane"}
+    cwd = scopes.get(cwd_scope)
+    if cwd is None or not cwd.is_dir():
+        fail("command cwd scope is unavailable or noncanonical", phase="B6")
+    return cwd.resolve(strict=True)
+
+
+def reviewed_executable(cwd: Path, argv0: str) -> Path:
+    """Resolve a reviewed slash-qualified executable and require a regular target."""
+
+    if "/" not in argv0 or Path(argv0).is_absolute():
+        fail("reviewed executable must be cwd-relative and PATH-independent", phase="B6")
+    lexical = cwd / argv0
+    try:
+        executable = lexical.resolve(strict=True)
+    except OSError as exc:
+        fail(f"reviewed executable is unavailable: {exc}", phase="B6")
+    if not executable.is_file() or executable.is_symlink():
+        fail("reviewed executable target must be a regular non-symlink file", phase="B6")
+    return executable
+
+
+def resolved_executable_identity(repo: Path, executable: Path, metadata: os.stat_result) -> str:
+    """Hash the resolved target identity without exposing host paths in the record."""
+
+    try:
+        path_identity = executable.relative_to(repo).as_posix()
+        path_kind = "repo-relative"
+    except ValueError:
+        path_identity = hashlib.sha256(str(executable).encode()).hexdigest()
+        path_kind = "host-path-sha256"
+    payload = {
+        "profile": "acgs-resolved-executable/v1",
+        "path_kind": path_kind,
+        "path_identity": path_identity,
+        "device": str(metadata.st_dev),
+        "inode": str(metadata.st_ino),
+        "size": str(metadata.st_size),
+        "mtime_ns": str(metadata.st_mtime_ns),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _reviewed_gate(argv: Any, *, expected_node: str | None = None) -> tuple[list[str], str]:
     """Classify one exact, reviewed transcript command; deny every extension."""
 
     if (
@@ -435,7 +597,18 @@ def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
         )
     ):
         fail("command argv is outside the reviewed closed contract", phase="B6")
-    selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
+    if expected_node is None or expected_node == "P0-EVIDENCE-000":
+        selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
+    else:
+        transcript = REVIEWED_TRANSCRIPTS_BY_NODE.get(expected_node)
+        if transcript is None:
+            fail("node lacks reviewed transcript corpus", phase="B6")
+        matches = [
+            selector for selector, reviewed_argv in transcript if reviewed_argv == tuple(argv)
+        ]
+        if len(matches) != 1:
+            fail("command argv is outside the reviewed node contract", phase="B6")
+        selector = matches[0]
     if selector is None:
         fail("command argv is outside the reviewed closed contract", phase="B6")
     return argv, selector
@@ -447,12 +620,17 @@ def validate_safe_argv(argv: Any) -> list[str]:
     return _reviewed_gate(argv)[0]
 
 
-def validate_transcript_record(value: Any) -> dict[str, Any]:
+def validate_transcript_record(value: Any, *, expected_node: str | None = None) -> dict[str, Any]:
     """Validate the full immutable command record before any persistence or use."""
 
-    if not isinstance(value, dict) or set(value) != TRANSCRIPT_RECORD_KEYS:
+    required_keys = (
+        EXTENDED_TRANSCRIPT_RECORD_KEYS
+        if expected_node == "P0-MEMBRANE-001"
+        else TRANSCRIPT_RECORD_KEYS
+    )
+    if not isinstance(value, dict) or set(value) != required_keys:
         fail("command record is outside the reviewed closed contract", phase="B6")
-    argv, selector = _reviewed_gate(value.get("argv"))
+    argv, selector = _reviewed_gate(value.get("argv"), expected_node=expected_node)
     if type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         fail("command record is outside the reviewed closed contract", phase="B6")
     if any(
@@ -471,21 +649,80 @@ def validate_transcript_record(value: Any) -> dict[str, Any]:
             fail("command record is outside the reviewed closed contract", phase="B6")
     if timestamps[1] < timestamps[0] or value.get("selectors") != [selector]:
         fail("command record is outside the reviewed closed contract", phase="B6")
+    if expected_node == "P0-MEMBRANE-001":
+        if (
+            value.get("cwd_scope") not in {"REPO_ROOT", "CP"}
+            or not isinstance(value.get("executable_sha256"), str)
+            or SHA256_RE.fullmatch(value["executable_sha256"]) is None
+            or value.get("environment_profile_version_sha256")
+            != REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+            or not isinstance(value.get("resolved_executable_identity_sha256"), str)
+            or SHA256_RE.fullmatch(value["resolved_executable_identity_sha256"]) is None
+            or not isinstance(value.get("sandbox_executable_sha256"), str)
+            or SHA256_RE.fullmatch(value["sandbox_executable_sha256"]) is None
+            or value.get("sandbox_profile_version_sha256")
+            != REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
+            or not isinstance(value.get("sandbox_resolved_identity_sha256"), str)
+            or SHA256_RE.fullmatch(value["sandbox_resolved_identity_sha256"]) is None
+        ):
+            fail("command execution identity is outside the reviewed node contract", phase="B6")
     value["argv"] = argv
     return value
 
 
-def validate_p0_transcript_sequence(commands: Any) -> None:
-    """Require EVID, product gates, and the P0 root selector in exact order."""
+def validate_node_transcript_sequence(node_id: str, commands: Any) -> None:
+    """Require one node's reviewed gates and selectors in exact order."""
 
+    reviewed = REVIEWED_TRANSCRIPTS_BY_NODE.get(node_id)
+    scopes = REVIEWED_CWD_SCOPES_BY_NODE.get(node_id)
+    if reviewed is None:
+        fail("node lacks reviewed transcript corpus", phase="B6")
     if not isinstance(commands, list):
-        fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
+        fail("node transcript differs from the reviewed ordered command corpus", phase="B6")
     observed: list[tuple[str, tuple[str, ...]]] = []
-    for command in commands:
-        validated = validate_transcript_record(command)
+    for index, command in enumerate(commands):
+        validated = validate_transcript_record(command, expected_node=node_id)
         observed.append((validated["selectors"][0], tuple(validated["argv"])))
-    if tuple(observed) != REVIEWED_P0_TRANSCRIPT:
-        fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
+        if scopes is not None and (index >= len(scopes) or validated["cwd_scope"] != scopes[index]):
+            fail("node transcript cwd scope differs from reviewed corpus", phase="B6")
+    if tuple(observed) != reviewed:
+        fail("node transcript differs from the reviewed ordered command corpus", phase="B6")
+
+
+def validate_node_execution_identities(repo: Path, node_id: str, commands: Any) -> None:
+    """Bind extended records to the canonical cwd and current executable bytes."""
+
+    validate_node_transcript_sequence(node_id, commands)
+    if node_id != "P0-MEMBRANE-001":
+        return
+    for index, command in enumerate(commands):
+        _, argv, cwd_scope = reviewed_node_command(node_id, index)
+        cwd = reviewed_cwd(repo, cwd_scope)
+        executable = reviewed_executable(cwd, argv[0])
+        metadata = executable.stat()
+        try:
+            sandbox = BWRAP_EXECUTABLE.resolve(strict=True)
+        except OSError as exc:
+            fail(f"reviewed sandbox executable is unavailable: {exc}", phase="B6")
+        sandbox_metadata = sandbox.stat()
+        if (
+            command["executable_sha256"] != sha256_file(executable)
+            or command["environment_profile_version_sha256"]
+            != REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+            or command["resolved_executable_identity_sha256"]
+            != resolved_executable_identity(repo, executable, metadata)
+            or command["sandbox_executable_sha256"] != sha256_file(sandbox)
+            or command["sandbox_profile_version_sha256"] != REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
+            or command["sandbox_resolved_identity_sha256"]
+            != resolved_executable_identity(repo, sandbox, sandbox_metadata)
+        ):
+            fail("command executable digest differs from current reviewed executable", phase="B6")
+
+
+def validate_p0_transcript_sequence(commands: Any) -> None:
+    """Compatibility entry point for the P0-EVIDENCE-000 corpus."""
+
+    validate_node_transcript_sequence("P0-EVIDENCE-000", commands)
 
 
 def validate_secret_free_run(value: Any, *, expected_node: str | None = None) -> None:
@@ -497,13 +734,14 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or not value["commands"]
     ):
         fail("run command metadata is outside the closed safe structure", phase="B6")
+    node_id = expected_node if expected_node is not None else value.get("node_id")
+    if not isinstance(node_id, str):
+        fail("run node identity is outside the closed safe structure", phase="B6")
     for command in value["commands"]:
-        validate_transcript_record(command)
+        validate_transcript_record(command, expected_node=node_id)
     if expected_node is not None and value.get("node_id") != expected_node:
         fail("run node identity differs from its evidence path", phase="B6")
-    if expected_node == "P0-EVIDENCE-000" or value.get("node_id") == "P0-EVIDENCE-000":
-        validate_p0_transcript_sequence(value["commands"])
-    node_id = expected_node if expected_node is not None else value.get("node_id")
+    validate_node_transcript_sequence(node_id, value["commands"])
     reviewed = REVIEWED_RUN_METADATA_BY_NODE.get(node_id)
     determinism = value.get("determinism")
     clock = value.get("clock")
@@ -521,10 +759,12 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
 
 
-def append_safe_transcript_record(path: Path, record: Mapping[str, Any]) -> None:
+def append_safe_transcript_record(
+    path: Path, record: Mapping[str, Any], *, expected_node: str | None = None
+) -> None:
     """Validate a command record before its first byte can enter evidence."""
 
-    validated = validate_transcript_record(dict(record))
+    validated = validate_transcript_record(dict(record), expected_node=expected_node)
     payload = (
         json.dumps(validated, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
     ).encode("utf-8")

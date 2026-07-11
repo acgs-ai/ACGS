@@ -848,6 +848,27 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "cwd_scope": {
+          "enum": ["REPO_ROOT", "CP"]
+        },
+        "executable_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "environment_profile_version_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "resolved_executable_identity_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sandbox_executable_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sandbox_profile_version_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sandbox_resolved_identity_sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },

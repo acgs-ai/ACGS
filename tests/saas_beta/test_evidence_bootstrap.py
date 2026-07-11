@@ -25,6 +25,7 @@ sys.path.insert(0, str(EVIDENCE_SCRIPTS))
 import _common  # noqa: E402
 import attest  # noqa: E402
 import capture_environment  # noqa: E402
+import capture_reviewed_command  # noqa: E402
 import generate_run  # noqa: E402
 import hash_run_jcs  # noqa: E402
 import render_lock_inputs  # noqa: E402
@@ -34,6 +35,8 @@ import validate_run  # noqa: E402
 
 LOCK_ROOT = ROOT / "requirements/saas-beta"
 SCHEMA_ROOT = ROOT / "schemas/evidence"
+ENVIRONMENT_PROFILE_VERSION_SHA256 = _common.REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+SANDBOX_PROFILE_VERSION_SHA256 = _common.REVIEWED_SANDBOX_PROFILE_VERSION_SHA256
 EXPECTED_DIRECT = (
     "rfc8785==0.1.4",
     "cryptography>=42",
@@ -122,6 +125,31 @@ def _reviewed_p0_records() -> list[dict[str, Any]]:
 def _write_reviewed_p0_transcript(path: Path) -> None:
     for record in _reviewed_p0_records():
         _common.append_safe_transcript_record(path, record)
+
+
+def _reviewed_node_records(node_id: str) -> list[dict[str, Any]]:
+    records = []
+    scopes = _common.REVIEWED_CWD_SCOPES_BY_NODE.get(node_id)
+    for index, (selector, argv) in enumerate(_common.REVIEWED_TRANSCRIPTS_BY_NODE[node_id]):
+        record = _transcript_record(list(argv), selector)
+        if scopes is not None:
+            record.update({"cwd_scope": scopes[index], "executable_sha256": "0" * 64})
+            record.update(
+                {
+                    "environment_profile_version_sha256": ENVIRONMENT_PROFILE_VERSION_SHA256,
+                    "resolved_executable_identity_sha256": "0" * 64,
+                    "sandbox_executable_sha256": "0" * 64,
+                    "sandbox_profile_version_sha256": SANDBOX_PROFILE_VERSION_SHA256,
+                    "sandbox_resolved_identity_sha256": "0" * 64,
+                }
+            )
+        records.append(record)
+    return records
+
+
+def _write_raw_transcript(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
 
 def _unsafe_command_corpus(sentinel: str) -> tuple[list[str], ...]:
@@ -1913,8 +1941,8 @@ def test_canonical_transcript_capture_rejects_secrets_before_write_and_preserves
     safe_argv = list(reviewed_argv)
     accepted = tmp_path / "accepted/transcript.jsonl"
     _common.append_safe_transcript_record(accepted, _transcript_record(safe_argv, safe_selector))
-    commands = generate_run._read_transcript(accepted)
-    assert commands[0]["argv"] == safe_argv
+    command = _common.validate_transcript_record(_json_line(accepted))
+    assert command["argv"] == safe_argv
     assert _json_line(accepted)["argv"] == safe_argv
 
 
@@ -1947,6 +1975,551 @@ def test_closed_p0_command_corpus_is_exact_ordered_and_contains_no_shell_compoun
     ):
         with pytest.raises(_common.EvidenceError, match="reviewed ordered command corpus"):
             _common.validate_p0_transcript_sequence(mutation)
+
+
+def test_p0_membrane_corpus_is_node_bound_exact_and_ordered(tmp_path: Path) -> None:
+    node_id = "P0-MEMBRANE-001"
+    reviewed = _common.REVIEWED_P0_MEMBRANE_TRANSCRIPT
+    records = _reviewed_node_records(node_id)
+    transcript = tmp_path / node_id / "transcript.jsonl"
+    _write_raw_transcript(transcript, records)
+
+    assert len(reviewed) == 7
+    assert [selector for selector, _ in reviewed] == [
+        "root:EVID-gate",
+        *["packages/acgs-control-plane:local-gate"] * 4,
+        "packages/acgs-control-plane:P0-MEMBRANE-001-exact",
+        "root:P0-MEMBRANE-001",
+    ]
+    assert generate_run._read_transcript(transcript, node_id=node_id) == records
+    _common.validate_node_transcript_sequence(node_id, records)
+
+    package = records[-2]
+    root = records[-1]
+    one_test = copy.deepcopy(package)
+    one_test["argv"] = one_test["argv"][:-1]
+    broad = copy.deepcopy(package)
+    broad["argv"] = [".venv/bin/pytest", "-q"]
+    filtered = copy.deepcopy(package)
+    filtered["argv"] = [*filtered["argv"], "-k", "production"]
+    alternate = copy.deepcopy(root)
+    alternate["argv"][0] = "python3"
+    alternate_path = copy.deepcopy(root)
+    alternate_path["argv"][4] = alternate_path["argv"][4].replace(
+        "packages/acgs-control-plane/", "./packages/acgs-control-plane/"
+    )
+    alternate_arg = copy.deepcopy(root)
+    alternate_arg["argv"].insert(3, "--disable-warnings")
+    selector_mismatch = copy.deepcopy(package)
+    selector_mismatch["selectors"] = ["root:P0-MEMBRANE-001"]
+    cross_node = _reviewed_p0_records()
+    mutations = (
+        [],
+        cross_node,
+        records[1:5],
+        [package],
+        [root],
+        [one_test],
+        records[:-1],
+        [*records[:-1], package],
+        [records[1], records[0], *records[2:]],
+        [*records, root],
+        [*records, broad],
+        [*records[:-2], filtered, root],
+        [*records[:-1], alternate],
+        [*records[:-1], alternate_path],
+        [*records[:-1], alternate_arg],
+        [*records[:-2], selector_mismatch, root],
+    )
+    for index, mutation in enumerate(mutations):
+        forged = tmp_path / f"forged-{index}" / node_id / "transcript.jsonl"
+        _write_raw_transcript(forged, mutation)
+        output = forged.with_name("run.json")
+        with pytest.raises(_common.EvidenceError):
+            generate_run._read_transcript(forged, node_id=node_id)
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(
+                {"node_id": node_id, "commands": mutation}, expected_node=node_id
+            )
+        assert not output.exists()
+
+
+def test_node_specific_commands_do_not_weaken_baseline_or_cross_node_contract() -> None:
+    membrane_only = list(_common.REVIEWED_P0_MEMBRANE_TRANSCRIPT[-1][1])
+    assert tuple(membrane_only) not in _common.REVIEWED_COMMAND_SELECTORS
+    with pytest.raises(_common.EvidenceError, match="reviewed closed contract"):
+        _common.validate_safe_argv(membrane_only)
+    with pytest.raises(_common.EvidenceError, match="lacks reviewed transcript corpus"):
+        _common.validate_transcript_record(
+            _transcript_record(membrane_only, "root:P0-MEMBRANE-001"),
+            expected_node="P0-CLAIMS-002",
+        )
+    with pytest.raises(_common.EvidenceError, match="lacks reviewed transcript corpus"):
+        _common.validate_node_transcript_sequence("P0-CLAIMS-002", _reviewed_p0_records())
+
+
+def test_duplicate_node_argv_cannot_resolve_conflicting_selector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    argv = _common.REVIEWED_P0_MEMBRANE_TRANSCRIPT[0][1]
+    monkeypatch.setitem(
+        _common.REVIEWED_TRANSCRIPTS_BY_NODE,
+        "P0-MEMBRANE-001",
+        (("selector:one", argv), ("selector:two", argv)),
+    )
+    record = _transcript_record(list(argv), "selector:one")
+    record.update(
+        {
+            "cwd_scope": "REPO_ROOT",
+            "executable_sha256": "0" * 64,
+            "environment_profile_version_sha256": ENVIRONMENT_PROFILE_VERSION_SHA256,
+            "resolved_executable_identity_sha256": "0" * 64,
+            "sandbox_executable_sha256": "0" * 64,
+            "sandbox_profile_version_sha256": SANDBOX_PROFILE_VERSION_SHA256,
+            "sandbox_resolved_identity_sha256": "0" * 64,
+        }
+    )
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.validate_transcript_record(record, expected_node="P0-MEMBRANE-001")
+
+
+def test_generate_run_cli_rejects_membrane_mutations_and_claims_substitution_without_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = (tmp_path / "evidence").resolve()
+    monkeypatch.setenv("ACGS_EVIDENCE_ROOT", str(evidence))
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    parent = subprocess.run(
+        ["git", "rev-parse", "HEAD^"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    monkeypatch.setattr(generate_run, "assert_evidence_runtime", lambda **_kwargs: ROOT)
+    monkeypatch.setattr(generate_run, "git_root", lambda: ROOT)
+    monkeypatch.setattr(generate_run, "verify_git_range", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(generate_run, "reject_outer_evidence_in_product", lambda *_args: None)
+    monkeypatch.setattr(
+        generate_run, "validate_node_execution_identities", lambda *_args, **_kwargs: None
+    )
+    real_load_json = generate_run.load_json
+
+    cases = {
+        "subset": _reviewed_node_records("P0-MEMBRANE-001")[:-1],
+        "reorder": [
+            _reviewed_node_records("P0-MEMBRANE-001")[1],
+            _reviewed_node_records("P0-MEMBRANE-001")[0],
+            *_reviewed_node_records("P0-MEMBRANE-001")[2:],
+        ],
+        "injection": [
+            {
+                **_reviewed_node_records("P0-MEMBRANE-001")[0],
+                "argv": [".venv-evidence/bin/python", "-c", "print('injected')"],
+            },
+            *_reviewed_node_records("P0-MEMBRANE-001")[1:],
+        ],
+        "claims-cross-node": _reviewed_node_records("P0-MEMBRANE-001"),
+    }
+    for name, records in cases.items():
+        node_id = "P0-CLAIMS-002" if name == "claims-cross-node" else "P0-MEMBRANE-001"
+        assignment = "EVID+CP+GZ" if node_id == "P0-CLAIMS-002" else "EVID+CP"
+        node = evidence / node_id
+        node.mkdir(parents=True, exist_ok=True)
+        transcript = node / "transcript.jsonl"
+        output = node / "run.json"
+        _write_raw_transcript(transcript, records)
+        identity_bundle = {
+            "schema_version": "acgs-environment-identities/v1",
+            "node_id": node_id,
+            "assignment": assignment,
+            "environment_identities": {code: {} for code in assignment.split("+")},
+            "pep660_editable_build": {},
+            "ed25519_implementation": {},
+        }
+        identity_path = node / "environment-identities.json"
+        identity_path.write_text(json.dumps(identity_bundle), encoding="utf-8")
+
+        def load_json(path: Path, bundle: dict[str, Any] = identity_bundle) -> Any:
+            if Path(path).name == "environment-identities.json":
+                return bundle
+            return real_load_json(path)
+
+        monkeypatch.setattr(generate_run, "load_json", load_json)
+        result = generate_run.main(
+            [
+                "--schema",
+                str(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json"),
+                "--node",
+                node_id,
+                "--parent",
+                parent,
+                "--product",
+                head,
+                "--assignment",
+                assignment,
+                "--environment-identities",
+                str(identity_path),
+                "--transcript",
+                str(transcript),
+                "--output",
+                str(output),
+            ]
+        )
+        assert result == 2
+        assert not output.exists()
+
+
+def test_capture_launcher_binds_cwd_executable_and_appends_only_after_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    executable = repo / ".venv-evidence/bin/python"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nprintf captured\n", encoding="utf-8")
+    executable.chmod(0o755)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    temp_root = tmp_path / "runtime"
+    temp_root.mkdir(mode=0o700)
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(temp_root),
+            ]
+        )
+        == 0
+    )
+    record = _json_line(transcript)
+    assert record["cwd_scope"] == "REPO_ROOT"
+    assert record["executable_sha256"] == hashlib.sha256(executable.read_bytes()).hexdigest()
+    assert record["selectors"] == ["root:EVID-gate"]
+
+    transcript.unlink()
+    executable.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(temp_root),
+            ]
+        )
+        == 2
+    )
+    assert not transcript.exists()
+
+
+def test_capture_launcher_uses_lexical_venv_and_ignores_ambient_python_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    cp = repo / "packages/acgs-control-plane"
+    cp.mkdir(parents=True)
+    subprocess.run([sys.executable, "-m", "venv", str(cp / ".venv")], check=True)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    code = (
+        "import os,sys; "
+        "assert sys.prefix.endswith('packages/acgs-control-plane/.venv'); "
+        "assert 'PYTHONPATH' not in os.environ; "
+        "assert os.environ['PYTEST_ADDOPTS'].startswith('-o cache_dir='); "
+        "assert 'LD_PRELOAD' not in os.environ"
+    )
+    monkeypatch.setenv("PYTHONPATH", "/malicious")
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--trace")
+    monkeypatch.setenv("LD_PRELOAD", "/malicious/preload.so")
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "reviewed_node_command",
+        lambda *_args: ("test:lexical-venv", (".venv/bin/python", "-c", code), "CP"),
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "append_safe_transcript_record",
+        lambda _path, record, **_kwargs: captured.update(record),
+    )
+    tool_state = [
+        repo / name for name in (".ruff_cache", ".mypy_cache", ".pytest_cache", ".coverage")
+    ]
+    before = {path: path.exists() for path in tool_state}
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 0
+    )
+    assert captured["environment_profile_version_sha256"] == ENVIRONMENT_PROFILE_VERSION_SHA256
+    assert {path: path.exists() for path in tool_state} == before
+
+
+@pytest.mark.parametrize("race", ["replace", "mutate"])
+def test_capture_launcher_rejects_deterministic_executable_races(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, race: str
+) -> None:
+    repo = tmp_path / "repo"
+    executable = repo / ".venv-evidence/bin/python"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    real_run = subprocess.run
+
+    def racing_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        completed = real_run(*args, **kwargs)
+        if race == "replace":
+            replacement = executable.with_suffix(".replacement")
+            replacement.write_text("#!/bin/sh\nexit 0\n#replacement\n", encoding="utf-8")
+            replacement.chmod(0o755)
+            replacement.replace(executable)
+        else:
+            executable.write_text("#!/bin/sh\nexit 0\n#mutation\n", encoding="utf-8")
+            executable.chmod(0o755)
+        return completed
+
+    monkeypatch.setattr(capture_reviewed_command.subprocess, "run", racing_run)
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 2
+    )
+    assert not transcript.exists()
+
+
+@pytest.mark.parametrize("cleanup_failure", ["noop", "raise"])
+def test_capture_launcher_publishes_nothing_when_isolated_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_failure: str
+) -> None:
+    repo = tmp_path / "repo"
+    executable = repo / ".venv-evidence/bin/python"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    if cleanup_failure == "noop":
+        monkeypatch.setattr(capture_reviewed_command.shutil, "rmtree", lambda *_args: None)
+    else:
+        monkeypatch.setattr(
+            capture_reviewed_command.shutil,
+            "rmtree",
+            lambda *_args: (_ for _ in ()).throw(OSError("deterministic cleanup failure")),
+        )
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 2
+    )
+    assert not transcript.exists()
+
+
+def test_capture_launcher_sandbox_denies_ignored_repo_write_and_missing_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    cp = repo / "packages/acgs-control-plane"
+    cp.mkdir(parents=True)
+    subprocess.run([sys.executable, "-m", "venv", str(cp / ".venv")], check=True)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    ignored = repo / ".ignored-adversary"
+    code = f"from pathlib import Path; Path({str(ignored)!r}).write_text('mutated')"
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "reviewed_node_command",
+        lambda *_args: ("test:write", (".venv/bin/python", "-c", code), "CP"),
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    args = [
+        "--node",
+        "P0-MEMBRANE-001",
+        "--index",
+        "0",
+        "--transcript",
+        str(transcript),
+        "--temp-root",
+        str(runtime),
+    ]
+    assert capture_reviewed_command.main(args) == 2
+    assert not ignored.exists() and not transcript.exists()
+
+    monkeypatch.setattr(capture_reviewed_command, "BWRAP_EXECUTABLE", tmp_path / "missing-bwrap")
+    assert capture_reviewed_command.main(args) == 2
+    assert not ignored.exists() and not transcript.exists()
+
+
+def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> None:
+    environment = _common.REVIEWED_ENVIRONMENT_PROFILE["environment"]
+    assert set(environment) == {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "LANG",
+        "LC_ALL",
+        "PYTHONNOUSERSITE",
+        "PYTHONDONTWRITEBYTECODE",
+        "UV_OFFLINE",
+        "UV_NO_INDEX",
+        "UV_NO_CACHE",
+        "UV_PYTHON_DOWNLOADS",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "RUFF_CACHE_DIR",
+        "MYPY_CACHE_DIR",
+        "PYTEST_DEBUG_TEMPROOT",
+        "PYTEST_ADDOPTS",
+        "COVERAGE_FILE",
+    }
+    assert _common.REVIEWED_SANDBOX_PROFILE == {
+        "name": "acgs-reviewed-command-bwrap/v1",
+        "executable": "/usr/bin/bwrap",
+        "host_filesystem": "ro-bind-root",
+        "writable_paths": ("{ISOLATED_ROOT}",),
+        "namespaces": ("user", "ipc", "pid", "uts", "cgroup", "network"),
+        "die_with_parent": True,
+        "new_session": True,
+        "clear_environment": True,
+        "cwd": "{CWD}",
+    }
+
+
+def test_capture_launcher_rejects_changed_sandbox_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    executable = repo / ".venv-evidence/bin/python"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    sandbox = tmp_path / "bwrap"
+    shutil.copy2("/usr/bin/bwrap", sandbox)
+    transcript = tmp_path / "evidence/P0-MEMBRANE-001/transcript.jsonl"
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(capture_reviewed_command, "BWRAP_EXECUTABLE", sandbox)
+    monkeypatch.setattr(capture_reviewed_command, "assert_evidence_runtime", lambda **_kw: repo)
+    monkeypatch.setattr(capture_reviewed_command, "git_root", lambda: repo)
+    monkeypatch.setattr(
+        capture_reviewed_command,
+        "canonical_node_evidence_path",
+        lambda *_args, **_kwargs: transcript,
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    real_run = subprocess.run
+
+    def mutate_sandbox(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        completed = real_run(*args, **kwargs)
+        sandbox.write_bytes(sandbox.read_bytes() + b"mutation")
+        sandbox.chmod(0o755)
+        return completed
+
+    monkeypatch.setattr(capture_reviewed_command.subprocess, "run", mutate_sandbox)
+    assert (
+        capture_reviewed_command.main(
+            [
+                "--node",
+                "P0-MEMBRANE-001",
+                "--index",
+                "0",
+                "--transcript",
+                str(transcript),
+                "--temp-root",
+                str(runtime),
+            ]
+        )
+        == 2
+    )
+    assert not transcript.exists()
 
 
 def _json_line(path: Path) -> dict[str, Any]:
@@ -2553,6 +3126,78 @@ def test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validati
         run_hash = capsys.readouterr().out.strip()
         assert _common.SHA256_RE.fullmatch(run_hash)
         assert run_hash == hashlib.sha256(_common.jcs_bytes(run)).hexdigest()
+
+        claims_node = evidence / "P0-CLAIMS-002"
+        claims_node.mkdir(exist_ok=True)
+        forged_claims = copy.deepcopy(run)
+        forged_claims["node_id"] = "P0-CLAIMS-002"
+        forged_claims_path = claims_node / "run.json"
+        forged_claims_path.write_text(json.dumps(forged_claims) + "\n", encoding="utf-8")
+        jsonschema.validate(forged_claims, _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json"))
+        assert (
+            validate_run.main(
+                [
+                    "--schema",
+                    str(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json"),
+                    "--expected-node",
+                    "P0-CLAIMS-002",
+                    "--assignment-map",
+                    str(LOCK_ROOT / "bootstrap-by-scope.json"),
+                    "--expected-environments",
+                    "EVID+CP+GZ",
+                    "--expected-parent",
+                    parent,
+                    "--expected-product",
+                    product,
+                    str(forged_claims_path),
+                ]
+            )
+            == 2
+        )
+        assert "node lacks reviewed transcript corpus" in capsys.readouterr().err
+        assert not (claims_node / "validation-success.json").exists()
+        forged_claims_path.unlink()
+
+        membrane_node = evidence / "P0-MEMBRANE-001"
+        membrane_node.mkdir(exist_ok=True)
+        forged_membrane = copy.deepcopy(run)
+        forged_membrane["node_id"] = "P0-MEMBRANE-001"
+        forged_membrane["assignment"] = "EVID+CP"
+        forged_membrane["commands"] = _reviewed_node_records("P0-MEMBRANE-001")
+        forged_membrane["commands"][0], forged_membrane["commands"][1] = (
+            forged_membrane["commands"][1],
+            forged_membrane["commands"][0],
+        )
+        forged_membrane["selectors"] = list(
+            dict.fromkeys(command["selectors"][0] for command in forged_membrane["commands"])
+        )
+        forged_membrane_path = membrane_node / "run.json"
+        forged_membrane_path.write_text(json.dumps(forged_membrane) + "\n", encoding="utf-8")
+        jsonschema.validate(
+            forged_membrane, _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
+        )
+        assert (
+            validate_run.main(
+                [
+                    "--schema",
+                    str(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json"),
+                    "--expected-node",
+                    "P0-MEMBRANE-001",
+                    "--assignment-map",
+                    str(LOCK_ROOT / "bootstrap-by-scope.json"),
+                    "--expected-environments",
+                    "EVID+CP",
+                    "--expected-parent",
+                    parent,
+                    "--expected-product",
+                    product,
+                    str(forged_membrane_path),
+                ]
+            )
+            == 2
+        )
+        assert not (membrane_node / "validation-success.json").exists()
+        forged_membrane_path.unlink()
     finally:
         output.unlink(missing_ok=True)
         transcript.unlink(missing_ok=True)
@@ -2658,7 +3303,9 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
     env["PATH"] = f"{ui_tool_bin}:{env['PATH']}"
     env["COREPACK_ENABLE_DOWNLOAD_PROMPT"] = "0"
 
-    def run_script(script: str, *args: str | Path) -> subprocess.CompletedProcess[str]:
+    def run_script(
+        script: str, *args: str | Path, expected: int = 0
+    ) -> subprocess.CompletedProcess[str]:
         completed = subprocess.run(
             [
                 str(evidence_python),
@@ -2671,7 +3318,7 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
             capture_output=True,
             check=False,
         )
-        assert completed.returncode == 0, (script, completed.stdout, completed.stderr)
+        assert completed.returncode == expected, (script, completed.stdout, completed.stderr)
         return completed
 
     run_script(
@@ -2737,7 +3384,7 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
         node / "transcript.jsonl",
         _transcript_record(safe_argv, safe_selector),
     )
-    run_script(
+    rejected = run_script(
         "generate_run.py",
         "--schema",
         product_repo / "schemas/evidence/acgs-run-evidence-v1.schema.json",
@@ -2755,47 +3402,10 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
         node / "transcript.jsonl",
         "--output",
         node / "run.json",
+        expected=2,
     )
-    validated = run_script(
-        "validate_run.py",
-        "--schema",
-        product_repo / "schemas/evidence/acgs-run-evidence-v1.schema.json",
-        "--expected-node",
-        node.name,
-        "--assignment-map",
-        product_repo / "requirements/saas-beta/bootstrap-by-scope.json",
-        "--expected-environments",
-        "EVID+UI",
-        "--expected-parent",
-        parent,
-        "--expected-product",
-        product,
-        node / "run.json",
-    )
-    assert "RUN_VALIDATION=PASS node=P6-CONSOLE-002 environments=EVID+UI" in validated.stdout
-    run = _json(node / "run.json")
-    assert set(run["environment_identities"]) == {"EVID", "UI"}
-    assert run["determinism"]["process_schedule"] == ["single-process"]
-    assert run["clock"]["source"] == "system-utc"
-    assert run["skipped"] == [] and run["external"] == []
-    assert run["pep660_editable_build"]["environments"] == {}
-    assert run["commands"][0]["argv"] == safe_argv
-    ui_marker = run["environment_identities"]["UI"]["bootstrap_record"]
-    for code in ("EVID", "UI"):
-        marker = run["environment_identities"][code]["bootstrap_record"]
-        runtime_ctime_ns = marker["runtime_ctime_ns"]
-        assert _common.CANONICAL_POSITIVE_DECIMAL_RE.fullmatch(runtime_ctime_ns)
-        assert runtime_ctime_ns == str(Path(marker["runtime_root"]).stat().st_ctime_ns)
-    assert {
-        "interpreter_realpath",
-        "node_version",
-        "pnpm_executable",
-        "pnpm_version",
-    }.issubset(ui_marker)
-    hashed = run_script("hash_run_jcs.py", node / "run.json")
-    run_hash = hashed.stdout.strip()
-    assert _common.SHA256_RE.fullmatch(run_hash)
-    assert run_hash == hashlib.sha256(_common.jcs_bytes(run)).hexdigest()
+    assert "node lacks reviewed transcript corpus" in rejected.stderr
+    assert not (node / "run.json").exists()
     assert (
         subprocess.run(
             ["git", "status", "--porcelain=v1", "--untracked-files=all"],
@@ -3639,7 +4249,8 @@ exit $?
         if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
         for relative in (path.relative_to(ROOT),)
     )
-    assert len(candidate_files) == 26
+    assert len(candidate_files) == 27
+    assert Path("scripts/evidence/capture_reviewed_command.py") in candidate_files
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False

@@ -15,6 +15,7 @@ from typing import Any
 
 from _common import (
     EXPECTED_BOOTSTRAP_MAP,
+    EXTENDED_TRANSCRIPT_RECORD_KEYS,
     JSON_SAFE_INTEGER_MAX,
     NODE_RE,
     REVIEWED_RUN_METADATA_BY_NODE,
@@ -31,7 +32,8 @@ from _common import (
     sha256_file,
     strict_json_loads,
     utc_now,
-    validate_p0_transcript_sequence,
+    validate_node_execution_identities,
+    validate_node_transcript_sequence,
     validate_schema,
     validate_secret_free_run,
     validate_transcript_record,
@@ -40,7 +42,7 @@ from _common import (
 )
 
 
-def _read_transcript(path: Path) -> list[dict[str, Any]]:
+def _read_transcript(path: Path, *, node_id: str | None = None) -> list[dict[str, Any]]:
     try:
         raw_lines = path.read_bytes().splitlines()
     except OSError as exc:
@@ -52,14 +54,17 @@ def _read_transcript(path: Path) -> list[dict[str, Any]]:
         if not raw.strip():
             fail(f"blank transcript line {number}", phase="B6")
         value = strict_json_loads(raw)
-        if not isinstance(value, dict) or set(value) != TRANSCRIPT_RECORD_KEYS:
+        if not isinstance(value, dict) or set(value) not in {
+            frozenset(TRANSCRIPT_RECORD_KEYS),
+            frozenset(EXTENDED_TRANSCRIPT_RECORD_KEYS),
+        }:
             fail(f"transcript line {number} is not a closed command object", phase="B6")
-        commands.append(validate_transcript_record(value))
+        commands.append(validate_transcript_record(value, expected_node=node_id))
     for earlier, later in pairwise(commands):
         if parse_utc(later["started_at_utc"]) < parse_utc(earlier["started_at_utc"]):
             fail("transcript command ordering is nonmonotonic", phase="B6")
-    if path.parent.name == "P0-EVIDENCE-000":
-        validate_p0_transcript_sequence(commands)
+    transcript_node = node_id if node_id is not None else path.parent.name
+    validate_node_transcript_sequence(transcript_node, commands)
     return commands
 
 
@@ -171,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         ):
             fail("environment identity bundle does not match node assignment", phase="B6")
 
-        commands = _read_transcript(transcript_path)
+        commands = _read_transcript(transcript_path, node_id=args.node)
+        validate_node_execution_identities(repo, args.node, commands)
         selectors: list[str] = []
         for command in commands:
             for selector in command["selectors"]:

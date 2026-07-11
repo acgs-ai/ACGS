@@ -23,6 +23,8 @@ from _common import (
     parse_utc,
     reject_outer_evidence_in_product,
     sha256_file,
+    validate_node_execution_identities,
+    validate_node_transcript_sequence,
     validate_schema,
     validate_secret_free_run,
     verify_git_range,
@@ -223,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
                     selectors.append(selector)
         if selectors != run["selectors"]:
             fail("run selector index differs from immutable command transcript", phase="B6")
+        validate_node_transcript_sequence(args.expected_node, run["commands"])
+        validate_node_execution_identities(repo, args.expected_node, run["commands"])
         _reject_product_evidence_runners(run, repo)
 
         verify_git_range(repo, args.expected_parent, args.expected_product, require_clean=True)
