@@ -50,10 +50,19 @@ class ReplaySideStore:
         path: str | Path,
         *,
         redact: Callable[[ToolCall], bool] | None = None,
+        durable: bool = True,
     ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._redact = redact
+        # ``durable=False`` (opt-in) skips the per-append fsync — writes are
+        # still flushed to the OS, but a machine crash can lose recent side
+        # records. This store is deliberately NON-authoritative: the audit
+        # chain records the decision either way, and a missing side record
+        # degrades replay to the honest event-only fallback (never a false
+        # "matched"). ``replay_bundle`` still fail-closes: a degraded event
+        # makes ``valid`` False. Default True preserves fsync-per-append.
+        self._durable = durable
 
     def append(self, call: ToolCall, record: DecisionRecord) -> dict[str, Any]:
         """Persist one record for ``record.event_id`` and return the written entry.
@@ -91,7 +100,8 @@ class ReplaySideStore:
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
-            os.fsync(fh.fileno())
+            if self._durable:
+                os.fsync(fh.fileno())
         return entry
 
     def get(self, event_id: str) -> dict[str, Any] | None:

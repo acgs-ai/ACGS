@@ -22,7 +22,6 @@ from gove_zone.decision import (
     Decision,
     DecisionRecord,
     canonical_json,
-    sha256_json,
 )
 from gove_zone.tool import ToolCall, normalize_path_context
 
@@ -63,7 +62,7 @@ class AllowAllPolicy(Policy):
         return DecisionRecord(
             decision=Decision.ALLOW,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             reason="allow-all policy",
@@ -84,7 +83,7 @@ class DenyAllPolicy(Policy):
         return DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version=self.version,
             event_id=new_event_id(),
             matched_rules=("DENY_ALL",),
@@ -138,7 +137,7 @@ class BoundaryPolicy(Policy):
             return DecisionRecord(
                 decision=Decision.ALLOW,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version=self.version,
                 event_id=new_event_id(),
                 reason=f"out of scope for {self._rule_id}",
@@ -158,6 +157,9 @@ class BoundaryPolicy(Policy):
         return DecisionRecord(
             decision=decision,
             tool=call.name,
+            # Master's gated hot-path form: reuse the canonical string already
+            # built for the keyword/regex scan (byte-identical to
+            # call.argument_hash(), which re-canonicalizes).
             argument_hash=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             policy_version=self.version,
             event_id=new_event_id(),

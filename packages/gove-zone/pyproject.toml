@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gove-zone"
-version = "0.1.0a1"
+dynamic = ["version"]
 description = "Minimal governed agent runtime — fail-closed governance, receipts, audit chain for AI agent tool calls."
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "Gove Zone Contributors" }]
 keywords = ["ai", "agents", "governance", "audit", "policy"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -55,6 +55,10 @@ dev = [
     "mypy>=1.0",
     "cryptography>=42",
     "pyyaml>=6.0",
+    # Test-only: validates the published acgs/proof-pack/v1 JSON Schemas
+    # (tests/test_proofpack_schema.py). NEVER a runtime dependency — the
+    # offline verifier stays stdlib-only (dependencies = [] is by design).
+    "jsonschema>=4",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -86,3 +90,7 @@ warn_unused_ignores = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "-q"]
+
+[tool.hatch.version]
+path = "src/gove_zone/__init__.py"
+pattern = '__version__ = "(?P<version>[^"]+)"'

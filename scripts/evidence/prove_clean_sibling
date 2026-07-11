@@ -1,0 +1,58 @@
+#!/usr/bin/busybox ash
+# Static entry boundary for the P0 clean-sibling proof.
+
+set -eu
+
+BUSYBOX=/usr/bin/busybox
+BUSYBOX_SHA256=98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc
+
+fail() {
+  "$BUSYBOX" printf '%s\n' "CLEAN_SIBLING=FAIL phase=B0 reason=$1" >&2
+  exit 2
+}
+
+[ -x "$BUSYBOX" ] || fail 'trusted static BusyBox is unavailable'
+[ ! -L "$BUSYBOX" ] || fail 'trusted static BusyBox must not be a symlink'
+busybox_digest="$($BUSYBOX sha256sum "$BUSYBOX")"
+busybox_digest="${busybox_digest%% *}"
+[ "$busybox_digest" = "$BUSYBOX_SHA256" ] || fail 'trusted static BusyBox digest mismatch'
+[ "$($BUSYBOX readlink -f /proc/$$/exe)" = "$BUSYBOX" ] ||
+  fail 'entry interpreter is not trusted static BusyBox'
+[ "$#" -eq 1 ] || fail 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <exact-T-commit>'
+
+launcher="$($BUSYBOX readlink -f "$0")"
+repo="${launcher%/scripts/evidence/prove_clean_sibling}"
+[ "$repo" != "$launcher" ] || fail 'launcher path is not canonical'
+[ "$launcher" = "$repo/scripts/evidence/prove_clean_sibling" ] ||
+  fail 'launcher must execute from its owning repository'
+# Normalize the kernel-supplied script argv before the dynamic child is born.
+# The child authenticates this exact parent argv in addition to its executable.
+if [ "$0" != "$launcher" ]; then
+  exec "$BUSYBOX" ash "$launcher" "$@"
+fi
+internal="$repo/scripts/evidence/prove_clean_sibling.sh"
+[ -f "$internal" ] && [ ! -L "$internal" ] || fail 'internal prover is unavailable'
+
+# Capture only the two reviewed caller inputs before replacing the entire
+# environment. BusyBox is static, so hostile ELF-loader state cannot run while
+# this boundary is being established. The dynamic Bash interpreter is loaded
+# only by env -i below.
+reviewed_parent="${P-}"
+caller_tmpdir="${TMPDIR-/tmp}"
+set +e
+"$BUSYBOX" env -i \
+  PATH=/usr/bin:/bin \
+  HOME=/dev/null \
+  XDG_CONFIG_HOME=/dev/null \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  P="$reviewed_parent" \
+  TMPDIR="$caller_tmpdir" \
+  GIT_CONFIG_NOSYSTEM=1 \
+  GIT_CONFIG_GLOBAL=/dev/null \
+  PYTHONDONTWRITEBYTECODE=1 \
+  ACGS_CLEAN_SIBLING_STATIC_LAUNCHER="$BUSYBOX_SHA256" \
+  /bin/bash --noprofile --norc "$internal" "$1"
+status=$?
+set -e
+exit "$status"

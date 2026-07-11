@@ -349,13 +349,27 @@
   gap: var(--space-4xl);
   padding-bottom: 24px;
   border-bottom: 1px solid var(--line-soft);
+  position: relative;
+}
+
+/* gold seal segment on the section rule — decorative drafting mark only
+   (DESIGN.md: gold never replaces rust as the interaction accent) */
+.m-sec-head::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 64px;
+  height: 1px;
+  background: var(--gold);
 }
 
 .m-sec-head .num {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--ink-3);
+  /* plate numbering in gold ink, matching .folio-no (AA text-safe gold) */
+  color: var(--gold-ink);
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
@@ -404,7 +418,8 @@
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--ink-3);
+  /* text-bearing gold uses --gold-ink (5.3:1 AA); bare --gold is decorative-only */
+  color: var(--gold-ink);
   font-variant-numeric: tabular-nums;
   margin-top: 16px;
 }

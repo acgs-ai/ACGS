@@ -185,13 +185,14 @@ from gove_zone.workflow import (
 )
 from gove_zone.yaml_policy import YAMLPolicy, YAMLRiskTierPolicy
 
-# Single source of truth is the installed package metadata (pyproject `version`).
-# The literal fallback matches that value for source/editable runs where the
-# distribution is not installed; keep it in sync with pyproject on bumps.
+# Single source of truth is the quoted literal below: hatch extracts it at
+# build time ([tool.hatch.version] pattern in pyproject.toml), so installed
+# metadata always mirrors it. importlib is preferred at runtime only to read
+# the installed distribution's copy; the literal serves source/editable runs.
 try:
     __version__ = _metadata.version("gove-zone")
 except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
-    __version__ = "0.1.0a1"
+    __version__ = "1.0.0rc1"
 
 __all__ = [
     "GENESIS_HASH",
