@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, cast
@@ -10,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from gove_zone.decision import sha256_json
 from sqlalchemy import func, select
 from starlette.responses import PlainTextResponse
 from starlette.routing import Host, Route
@@ -586,3 +588,27 @@ def test_audit_snapshot_events_are_recursively_immutable(tmp_path: Path) -> None
         event["nested"]["items"][0]["value"] = 2
     with pytest.raises(TypeError):
         event["nested"]["new"] = "mutation"
+
+
+def test_nested_frozen_audit_event_verifies_without_exposing_mutability(tmp_path: Path) -> None:
+    root = tmp_path / "audit"
+    root.mkdir()
+    payload = {
+        "event_id": "event-1",
+        "previous_hash": "0" * 64,
+        "nested": {"items": [{"value": 1, "labels": ["a", "b"]}]},
+    }
+    event_hash = sha256_json(payload)
+    event = {**payload, "event_hash": event_hash}
+    (root / "org.audit.jsonl").write_text(json.dumps(event) + "\n")
+    snapshot = existing_org_audit_store(root, "org")
+    assert snapshot is not None
+    assert snapshot.verify_chain(expected_count=1, expected_last_hash=event_hash) == {
+        "valid": True,
+        "checked": 1,
+        "failures": [],
+        "last_hash": event_hash,
+    }
+    exposed: Any = snapshot.events[0]
+    with pytest.raises(TypeError):
+        exposed["nested"]["items"][0]["labels"][0] = "mutated"

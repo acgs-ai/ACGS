@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -494,7 +495,7 @@ class ReadOnlyAuditSnapshot:
             claimed = event.get("event_hash")
             payload = dict(event)
             payload.pop("event_hash", None)
-            if claimed != sha256_json(payload):
+            if claimed != sha256_json(_thaw_frozen_json(payload)):
                 failures.append({"event_id": event.get("event_id"), "type": "event_hash_mismatch"})
             previous = str(claimed)
         if expected_count is not None and len(events) != expected_count:
@@ -521,6 +522,24 @@ class ReadOnlyAuditSnapshot:
             "failures": failures,
             "last_hash": previous,
         }
+
+
+_MAPPING_PROXY_TYPE: type[Any] = type(MappingProxyType({}))
+
+
+def _thaw_frozen_json(value: Any) -> Any:
+    """Copy only exact frozen/JSON-native types for internal hash verification."""
+    if type(value) is _MAPPING_PROXY_TYPE or type(value) is dict:
+        if any(type(key) is not str for key in value):
+            raise AuditReadError("unsupported-frozen-event-type")
+        return {key: _thaw_frozen_json(child) for key, child in value.items()}
+    if type(value) is tuple or type(value) is list:
+        return [_thaw_frozen_json(child) for child in value]
+    if value is None or type(value) in {str, bool, int}:
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    raise AuditReadError("unsupported-frozen-event-type")
 
 
 AUDIT_READ_MAX_BYTES = 8 * 1024 * 1024
