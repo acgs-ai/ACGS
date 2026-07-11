@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -88,6 +89,40 @@ def _run_target(interpreter: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         fail("live target interpreter returned a non-object", phase="B3")
     return value
+
+
+def _manifest_expected_version(manifest: dict[str, Any], manifest_path: Path) -> str | None:
+    """Resolve a manifest's expected version, including PEP 621 ``dynamic`` versions.
+
+    A static ``[project] version`` is returned as-is. When the version is declared
+    dynamic and sourced from ``[tool.hatch.version]`` (``path`` + regex ``pattern``),
+    read it from the referenced file so editable-identity checks resolve a concrete
+    version for Hatch-versioned packages (e.g. gove-zone, whose ``project.version``
+    is absent) instead of always tripping the B4 mismatch. Returns ``None`` only when
+    no version can be determined.
+    """
+    project = manifest.get("project", {})
+    static = project.get("version")
+    if isinstance(static, str):
+        return static
+    if "version" not in project.get("dynamic", []):
+        return None
+    hatch = manifest.get("tool", {}).get("hatch", {}).get("version", {})
+    rel_path = hatch.get("path")
+    pattern = hatch.get("pattern")
+    if not isinstance(rel_path, str) or not isinstance(pattern, str):
+        return None
+    try:
+        text = (manifest_path.parent / rel_path).read_text(encoding="utf-8")
+        match = re.search(pattern, text)
+    except (OSError, re.error):
+        return None
+    if match is None:
+        return None
+    try:
+        return match.group("version")
+    except (IndexError, re.error):
+        return None
 
 
 def _validate_pep660_lock_contract(
@@ -174,8 +209,9 @@ def _capture_python(
     }
     for name in required_editables:
         observed_entry = distributions.get(name)
-        manifest = tomllib.loads(editable_manifests[name].read_text(encoding="utf-8"))
-        expected_version = manifest.get("project", {}).get("version")
+        manifest_path = editable_manifests[name]
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_version = _manifest_expected_version(manifest, manifest_path)
         if (
             not isinstance(observed_entry, dict)
             or not isinstance(expected_version, str)
