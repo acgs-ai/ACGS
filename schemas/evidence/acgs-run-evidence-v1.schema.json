@@ -423,9 +423,6 @@
         "executable": {
           "type": "string",
           "pattern": "^/"
-        },
-        "sha256": {
-          "$ref": "#/$defs/sha256"
         }
       }
     },
@@ -658,6 +655,9 @@
         "executable": {
           "type": "string",
           "pattern": "^/"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     },

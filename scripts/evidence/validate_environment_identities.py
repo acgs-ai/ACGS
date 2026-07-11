@@ -222,9 +222,13 @@ def _validate_marker(
         or marker.get("pnpm_version") != identity.get("pnpm", {}).get("version")
     ):
         fail("UI marker/tool identity mismatch", phase="B5")
-    if code == "UI" and node == "P0-GATES-003" and (
-        marker.get("node_sha256") != identity.get("node", {}).get("sha256")
-        or marker.get("pnpm_sha256") != identity.get("pnpm", {}).get("sha256")
+    if (
+        code == "UI"
+        and node == "P0-GATES-003"
+        and (
+            marker.get("node_sha256") != identity.get("node", {}).get("sha256")
+            or marker.get("pnpm_sha256") != identity.get("pnpm", {}).get("sha256")
+        )
     ):
         fail("UI marker/tool hash mismatch", phase="B5")
 
@@ -504,7 +508,7 @@ def _validate_python_product(
         fail(f"{code} copied/fabricated Hatchling path rejected", phase="B5")
 
 
-def _fnm_probe(command: str, repo_root: Path) -> tuple[str, Path]:
+def _fnm_probe(command: str, repo_root: Path, *, require_owned: bool = False) -> tuple[str, Path]:
     fnm = FNM_EXECUTABLE
     if (
         not fnm.is_file()
@@ -516,17 +520,23 @@ def _fnm_probe(command: str, repo_root: Path) -> tuple[str, Path]:
     env = {
         key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "VIRTUAL_ENV"}
     }
-    located = subprocess.run(
-        [str(fnm), "exec", "--using", "24.18.0", "--", "which", command],
-        text=True,
-        capture_output=True,
-        check=False,
-        env=env,
-        cwd=repo_root / "acgi-ai",
-    )
-    if located.returncode != 0:
-        fail(f"live UI {command} probe failed", phase="B5")
-    raw_path = Path(located.stdout.strip())
+    if require_owned:
+        fnm_dir = os.environ.get("FNM_DIR")
+        if not fnm_dir:
+            fail("owned UI validation requires FNM_DIR", phase="B5")
+        raw_path = Path(fnm_dir) / f"node-versions/v24.18.0/installation/bin/{command}"
+    else:
+        located = subprocess.run(
+            [str(fnm), "exec", "--using", "24.18.0", "--", "which", command],
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+            cwd=repo_root / "acgi-ai",
+        )
+        if located.returncode != 0:
+            fail(f"live UI {command} probe failed", phase="B5")
+        raw_path = Path(located.stdout.strip())
     if not raw_path.is_absolute() or not raw_path.is_file():
         fail(f"live UI {command} executable is unsafe", phase="B5")
     canonical = raw_path.resolve(strict=True)
@@ -568,8 +578,12 @@ def _validate_ui(
         fail("UI node_modules is symlinked or noncanonical", phase="B5")
     if identity.get("module_root") != str(expected_root):
         fail("UI module root mismatch", phase="B5")
-    observed_node, node_path = _fnm_probe("node", repo_root)
-    observed_pnpm, pnpm_path = _fnm_probe("pnpm", repo_root)
+    if require_hashes:
+        observed_node, node_path = _fnm_probe("node", repo_root, require_owned=True)
+        observed_pnpm, pnpm_path = _fnm_probe("pnpm", repo_root, require_owned=True)
+    else:
+        observed_node, node_path = _fnm_probe("node", repo_root)
+        observed_pnpm, pnpm_path = _fnm_probe("pnpm", repo_root)
     if (
         observed_node != "v24.18.0"
         or observed_pnpm != "9.15.4"

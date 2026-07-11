@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.metadata
+import inspect
 import json
 import os
 import shutil
@@ -2800,6 +2801,142 @@ def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> No
     }
 
 
+def test_reviewed_sandbox_masks_ambient_home_credentials(tmp_path: Path) -> None:
+    isolated = tmp_path / "isolated"
+    ambient_temp_secret = tmp_path / "ambient-token"
+    ambient_temp_secret.write_text("must-not-be-visible\n", encoding="utf-8")
+    isolated.mkdir()
+    command = capture_reviewed_command._sandbox_command(
+        _common.BWRAP_EXECUTABLE,
+        isolated,
+        ROOT,
+        ROOT,
+        {"PATH": "/usr/bin:/bin", "HOME": str(isolated)},
+        [
+            "/usr/bin/python3",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "assert not Path('/home/martin/.ssh').exists(); "
+                f"assert not Path({str(ambient_temp_secret)!r}).exists(); "
+                f"assert Path({str(ROOT / 'AGENTS.md')!r}).is_file()"
+            ),
+        ],
+        ("make", "lint-docs"),
+    )
+    completed = subprocess.run(command, cwd=ROOT, env={}, capture_output=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    masked = {command[index + 1] for index, value in enumerate(command) if value == "--tmpfs"}
+    assert {"/home", "/root", "/tmp", "/var/tmp", "/run"} <= masked
+
+
+def test_ui_capture_preserves_p6_shape_and_requires_gates_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    node_modules = repo / "acgi-ai/node_modules"
+    node_modules.mkdir(parents=True)
+    lock = repo / "acgi-ai/pnpm-lock.yaml"
+    lock.write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+    node = tmp_path / "node"
+    pnpm = tmp_path / "pnpm"
+    node.write_bytes(b"node")
+    pnpm.write_bytes(b"pnpm")
+
+    def fake_capture(
+        _version: str, command: str, _cwd: Path, **_kwargs: Any
+    ) -> tuple[str, Path, str]:
+        path = node if command == "node" else pnpm
+        version = "v24.18.0" if command == "node" else "9.15.4"
+        return version, path.resolve(), _common.sha256_file(path)
+
+    captured: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    monkeypatch.setattr(capture_environment, "_fnm_capture", fake_capture)
+    monkeypatch.setattr(
+        capture_environment,
+        "write_bootstrap_identity_exclusive",
+        lambda _marker, _output, values: captured.append(values("1")),
+    )
+    for node_id in ("P6-CONSOLE-002", "P0-GATES-003"):
+        capture_environment._capture_ui(
+            "24.18.0", "9.15.4", lock, repo, node_id, tmp_path / f"{node_id}.json"
+        )
+    p6_marker, p6_identity = captured[0]
+    gates_marker, gates_identity = captured[1]
+    assert "node_sha256" not in p6_marker and "sha256" not in p6_identity["node"]
+    assert gates_marker["node_sha256"] == gates_identity["node"]["sha256"]
+    assert gates_marker["pnpm_sha256"] == gates_identity["pnpm"]["sha256"]
+    with pytest.raises(_common.EvidenceError, match="UI node identity"):
+        validate_environment_identities._validate_ui(p6_identity, repo, require_hashes=True)
+
+
+def test_ui_identity_schema_accepts_legacy_and_hashed_tool_shapes() -> None:
+    run_schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
+    validator = jsonschema.Draft202012Validator(
+        {
+            "$schema": run_schema["$schema"],
+            "$ref": "#/$defs/toolIdentity",
+            "$defs": run_schema["$defs"],
+        }
+    )
+    validator.validate({"version": "24.18.0", "executable": "/owned/node"})
+    validator.validate({"version": "24.18.0", "executable": "/owned/node", "sha256": "a" * 64})
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate({"version": "24.18.0", "executable": "/owned/node", "sha256": "bad"})
+
+
+def test_live_gates_validation_rejects_forged_ui_toolchain_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fnm_dir = tmp_path / "scratch/fnm"
+    fnm_dir.mkdir(parents=True)
+    monkeypatch.setenv("FNM_DIR", str(fnm_dir))
+    monkeypatch.setattr(_common, "validate_node_transcript_sequence", lambda *_args: None)
+    monkeypatch.setattr(
+        _common,
+        "reviewed_node_command",
+        lambda *_args: ("acgi-ai:local-gate", (*_common._UI_LOCKED_PREFIX, "lint"), "UI"),
+    )
+    monkeypatch.setattr(capture_reviewed_command, "_ui_toolchain_digest", lambda *_args: "a" * 64)
+    executable = _common.REVIEWED_HOST_EXECUTABLES["fnm"]
+    sandbox = _common.BWRAP_EXECUTABLE
+    command = {
+        "executable_sha256": _common.sha256_file(executable),
+        "environment_profile_version_sha256": (
+            _common.REVIEWED_UI_ENVIRONMENT_PROFILE_VERSION_SHA256
+        ),
+        "resolved_executable_identity_sha256": _common.resolved_executable_identity(
+            ROOT, executable, executable.stat()
+        ),
+        "sandbox_executable_sha256": _common.sha256_file(sandbox),
+        "sandbox_profile_version_sha256": _common.REVIEWED_UI_SANDBOX_PROFILE_VERSION_SHA256,
+        "sandbox_resolved_identity_sha256": _common.resolved_executable_identity(
+            ROOT, sandbox, sandbox.stat()
+        ),
+        "ui_toolchain_sha256": "f" * 64,
+    }
+    with pytest.raises(_common.EvidenceError, match="UI toolchain digest"):
+        _common.validate_node_execution_identities(ROOT, "P0-GATES-003", [command])
+    command["ui_toolchain_sha256"] = "a" * 64
+    _common.validate_node_execution_identities(ROOT, "P0-GATES-003", [command])
+
+
+def test_ui_composite_binds_installed_node_modules_realization(tmp_path: Path) -> None:
+    realization = tmp_path / "node_modules"
+    package = realization / "package/index.js"
+    package.parent.mkdir(parents=True)
+    package.write_text("first\n", encoding="utf-8")
+    before = capture_reviewed_command._tree_digest(realization)
+    package.write_text("substituted\n", encoding="utf-8")
+    assert capture_reviewed_command._tree_digest(realization) != before
+    source = inspect.getsource(capture_reviewed_command._ui_toolchain_digest)
+    assert '"node_modules": repo / "acgi-ai/node_modules"' in source
+    assert (ROOT / "acgi-ai/pnpm-workspace.yaml").read_text(encoding="utf-8") == (
+        "packages:\n  - .\n\nonlyBuiltDependencies:\n  - msw\n"
+    )
+    assert '"pnpm-workspace.yaml"' in source
+
+
 def test_capture_launcher_rejects_changed_sandbox_binary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3273,10 +3410,8 @@ def test_environment_identities_exactly_match_assignment(
             "interpreter": str(node_executable.resolve()),
             "interpreter_realpath": str(node_executable.resolve()),
             "node_version": "24.18.0",
-            "node_sha256": ui_identity["node"]["sha256"],
             "pnpm_executable": str(pnpm_executable.resolve()),
             "pnpm_version": "9.15.4",
-            "pnpm_sha256": ui_identity["pnpm"]["sha256"],
             "runtime_ctime_ns": runtime_ctime_ns,
             "lock_sha256": lock_digest,
             "nonce": "a" * 64,
@@ -4212,6 +4347,38 @@ def test_clean_sibling_launcher_requires_explicit_allowlisted_node_and_t(
         assert message in completed.stderr
         assert not list(tmp_path.glob("acgs-p0-evidence.*"))
 
+    reached = subprocess.run(
+        [str(launcher), "P0-EVIDENCE-000", "0" * 40],
+        cwd=ROOT,
+        env={
+            **_evidence_env(tmp_path / "unused-reachable"),
+            "P": "26d11c2c7a8da37937a7c50c642f18edc75c9345",
+            "TMPDIR": str(tmp_path),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert reached.returncode == 2
+    assert "T commit is unavailable" in reached.stderr
+    assert "ambient UI loader/config/auth/proxy variable rejected: NODE_ID" not in reached.stderr
+    wrong_gates_parent = subprocess.run(
+        [str(launcher), "P0-GATES-003", "0" * 40],
+        cwd=ROOT,
+        env={
+            **_evidence_env(tmp_path / "unused-gates-parent"),
+            "P": "26d11c2c7a8da37937a7c50c642f18edc75c9345",
+            "TMPDIR": str(tmp_path),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert wrong_gates_parent.returncode == 2
+    assert "reviewed parent must be exact 5918828010125ebcedaaf96fb9cd5e109598f2a8" in (
+        wrong_gates_parent.stderr
+    )
+
 
 def test_clean_sibling_rejects_available_nonbase_parent_before_mutation(
     tmp_path: Path,
@@ -4270,6 +4437,23 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "  exit 2\nfi" not in source
     assert '"$T^"' not in source
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
+    assert 'ui_bwrap offline "$FNM_BIN" install 24.18.0' in source
+    assert 'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable' in source
+    assert "corepack prepare pnpm@9.15.4" in source
+    assert "pnpm install --frozen-lockfile" in source
+    exact_bootstrap = (
+        'ui_bwrap offline "$FNM_BIN" install 24.18.0',
+        'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable',
+        'ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack prepare pnpm@9.15.4',
+        'ui_bwrap install "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile',
+    )
+    normalized_source = source.replace("\\\n    ", "").replace("\\\n      ", "")
+    positions = [normalized_source.index(command) for command in exact_bootstrap]
+    assert positions == sorted(positions)
+    assert "ui_tree_sha256" in source and "copied pnpm tree digest mismatch" in source
+    assert "packageManager must match the reviewed pnpm name/version/integrity selector" in source
+    for masked_root in ("/home", "/root", "/tmp", "/var/tmp", "/run"):
+        assert f"--tmpfs {masked_root}" in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
     assert source.count("run_recorded_gate CP") == 4

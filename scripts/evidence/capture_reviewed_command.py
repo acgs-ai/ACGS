@@ -115,15 +115,31 @@ def _ui_toolchain_digest(repo: Path, trusted_root: Path) -> str:
             trusted_root / "scratch/playwright/chromium_headless_shell-1223"
         ),
         "ffmpeg-1011": trusted_root / "scratch/playwright/ffmpeg-1011",
+        "node_modules": repo / "acgi-ai/node_modules",
     }.items():
         digest = _tree_digest(root)
-        if digest != UI_TREE_HASHES[name]:
+        if name != "node_modules" and digest != UI_TREE_HASHES[name]:
             fail(f"UI tool tree identity mismatch: {name}", phase="B6")
         identities[f"{name}_tree"] = {"realpath": str(root), "sha256": digest}
-    for name in ("package.json", "pnpm-lock.yaml"):
+    for name in ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"):
         path = repo / "acgi-ai" / name
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         identities[name] = {"realpath": str(path.resolve(strict=True)), "sha256": digest}
+    root_package = repo / "package.json"
+    identities["root-package.json"] = {
+        "realpath": str(root_package.resolve(strict=True)),
+        "sha256": hashlib.sha256(root_package.read_bytes()).hexdigest(),
+    }
+    selector = cast(str, REVIEWED_UI_TOOLCHAIN["pnpm_corepack_selector"])
+    for package in (root_package, repo / "acgi-ai/package.json"):
+        parsed = json.loads(package.read_text(encoding="utf-8"))
+        if not isinstance(parsed, dict) or parsed.get("packageManager") != selector:
+            fail("UI packageManager differs from reviewed pnpm selector", phase="B6")
+    if (
+        identities["pnpm-workspace.yaml"]["sha256"]
+        != "50c15b3f4420b77d890a9bd93844462418daa2df5842ffeaa77d7eeab36b8da6"
+    ):
+        fail("UI workspace lifecycle policy differs from reviewed policy", phase="B6")
     fnm_digest = hashlib.sha256(FNM_EXECUTABLE.read_bytes()).hexdigest()
     if fnm_digest != UI_TOOL_HASHES["fnm"]:
         fail("UI fnm identity mismatch", phase="B6")
@@ -246,11 +262,15 @@ def _cleanup_isolated(isolated: Path) -> None:
 def _sandbox_command(
     sandbox: Path,
     isolated: Path,
+    repo: Path,
     cwd: Path,
     env: dict[str, str],
     lexical_command: list[str],
     reviewed_argv: tuple[str, ...],
 ) -> list[str]:
+    masked_roots = tuple(
+        path for path in map(Path, ("/home", "/root", "/tmp", "/var/tmp", "/run")) if path.exists()
+    )
     command = [
         str(sandbox),
         "--die-with-parent",
@@ -259,24 +279,69 @@ def _sandbox_command(
         "--ro-bind",
         "/",
         "/",
-        "--bind",
-        str(isolated),
-        str(isolated),
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--chdir",
-        str(cwd),
-        "--clearenv",
     ]
+    for masked_root in masked_roots:
+        command.extend(("--tmpfs", str(masked_root)))
+    lexical_path = Path(lexical_command[0])
+    visible_paths = [repo, lexical_path]
+    link = lexical_path
+    seen_links: set[Path] = set()
+    while link.is_symlink() and link not in seen_links:
+        seen_links.add(link)
+        target = link.readlink()
+        link = target if target.is_absolute() else link.parent / target
+        if link.is_absolute() and link.parent.name == "bin":
+            visible_paths.append(link.parent.parent)
+    try:
+        resolved_lexical = lexical_path.resolve(strict=True)
+    except OSError:
+        resolved_lexical = lexical_path
+    if resolved_lexical != lexical_path:
+        visible_paths.append(
+            resolved_lexical.parent.parent
+            if resolved_lexical.parent.name == "bin"
+            else resolved_lexical
+        )
+    for variable in (
+        "FNM_DIR",
+        "COREPACK_HOME",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "npm_config_userconfig",
+    ):
+        if variable in env:
+            visible_paths.append(Path(env[variable]))
+    visible_paths.append(isolated)
+    visible_paths = [
+        path
+        for path in visible_paths
+        if path.is_absolute() and any(path.is_relative_to(root) for root in masked_roots)
+    ]
+    mount_sources: list[Path] = []
+    for path in visible_paths:
+        if path != isolated and path.is_relative_to(repo):
+            path = repo
+        if path not in mount_sources:
+            mount_sources.append(path)
+    directories: set[Path] = set()
+    for source in mount_sources:
+        masked_root = next(root for root in masked_roots if source.is_relative_to(root))
+        parent = source if source.is_dir() else source.parent
+        while parent != masked_root:
+            directories.add(parent)
+            parent = parent.parent
+    for directory in sorted(directories, key=lambda item: len(item.parts)):
+        command.extend(("--dir", str(directory)))
+    for source in mount_sources:
+        mode = "--bind" if source == isolated else "--ro-bind"
+        command.extend((mode, str(source), str(source)))
+    command.extend(("--proc", "/proc", "--dev", "/dev", "--chdir", str(cwd), "--clearenv"))
     for name, value in sorted(env.items()):
         command.extend(("--setenv", name, value))
     if reviewed_argv[:1] == ("fnm",):
         script = reviewed_argv[-1]
         for name in REVIEWED_UI_SANDBOX_WRITABLE_PATHS[script]:
             destination = cwd / name
-            source = isolated / f"ui-{name.replace('/', '-') }"
+            source = isolated / f"ui-{name.replace('/', '-')}"
             source.mkdir(mode=0o700)
             if not destination.is_dir() or destination.is_symlink():
                 fail(f"UI writable mount destination is unavailable: {name}", phase="B6")
@@ -366,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             _sandbox_command(
                 sandbox,
                 isolated,
+                repo,
                 cwd,
                 env,
                 [str(lexical), *reviewed_argv[1:]],

@@ -49,9 +49,7 @@ EXTENDED_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {
     "sandbox_profile_version_sha256",
     "sandbox_resolved_identity_sha256",
 }
-UI_EXTENDED_TRANSCRIPT_RECORD_KEYS = EXTENDED_TRANSCRIPT_RECORD_KEYS | {
-    "ui_toolchain_sha256"
-}
+UI_EXTENDED_TRANSCRIPT_RECORD_KEYS = EXTENDED_TRANSCRIPT_RECORD_KEYS | {"ui_toolchain_sha256"}
 REVIEWED_ENVIRONMENT_PROFILE = {
     "name": "acgs-reviewed-command-environment/v1",
     "inherit_ambient": False,
@@ -134,6 +132,8 @@ def reviewed_environment_profile_sha256(node_id: str, argv: list[str]) -> str:
     if node_id == "P0-GATES-003" and argv[:1] == ["fnm"]:
         return REVIEWED_UI_ENVIRONMENT_PROFILE_VERSION_SHA256
     return REVIEWED_ENVIRONMENT_PROFILE_VERSION_SHA256
+
+
 REVIEWED_SANDBOX_PROFILE = {
     "name": "acgs-reviewed-command-bwrap/v1",
     "executable": "/usr/bin/bwrap",
@@ -165,6 +165,8 @@ REVIEWED_UI_SANDBOX_PROFILE = {
     **REVIEWED_SANDBOX_PROFILE,
     "name": "acgs-reviewed-command-bwrap/ui-v2",
     "command_writable_paths": REVIEWED_UI_SANDBOX_WRITABLE_PATHS,
+    "masked_paths": ("/home", "/root", "/tmp", "/var/tmp", "/run"),
+    "home_read_allowlist": ("{REPO_ROOT}", "reviewed executable", "reviewed UI tool roots"),
 }
 REVIEWED_UI_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
     json.dumps(REVIEWED_UI_SANDBOX_PROFILE, sort_keys=True, separators=(",", ":")).encode()
@@ -878,8 +880,10 @@ def validate_transcript_record(value: Any, *, expected_node: str | None = None) 
     """Validate the full immutable command record before any persistence or use."""
 
     extended_node = expected_node in REVIEWED_CWD_SCOPES_BY_NODE
-    ui_command = expected_node == "P0-GATES-003" and isinstance(value, dict) and (
-        isinstance(value.get("argv"), list) and value["argv"][:1] == ["fnm"]
+    ui_command = (
+        expected_node == "P0-GATES-003"
+        and isinstance(value, dict)
+        and (isinstance(value.get("argv"), list) and value["argv"][:1] == ["fnm"])
     )
     required_keys = (
         UI_EXTENDED_TRANSCRIPT_RECORD_KEYS
@@ -962,6 +966,15 @@ def validate_node_execution_identities(repo: Path, node_id: str, commands: Any) 
     validate_node_transcript_sequence(node_id, commands)
     if node_id not in REVIEWED_CWD_SCOPES_BY_NODE:
         return
+    expected_ui_toolchain: str | None = None
+    if node_id == "P0-GATES-003":
+        fnm_dir = os.environ.get("FNM_DIR")
+        if not fnm_dir:
+            fail("P0-GATES-003 live validation requires the owned FNM_DIR", phase="B6")
+        trusted_root = Path(fnm_dir).resolve(strict=True).parent.parent
+        from capture_reviewed_command import _ui_toolchain_digest
+
+        expected_ui_toolchain = _ui_toolchain_digest(repo, trusted_root)
     for index, command in enumerate(commands):
         _, argv, cwd_scope = reviewed_node_command(node_id, index)
         cwd = reviewed_cwd(repo, cwd_scope)
@@ -985,6 +998,8 @@ def validate_node_execution_identities(repo: Path, node_id: str, commands: Any) 
             != resolved_executable_identity(repo, sandbox, sandbox_metadata)
         ):
             fail("command executable digest differs from current reviewed executable", phase="B6")
+        if argv[0] == "fnm" and command.get("ui_toolchain_sha256") != expected_ui_toolchain:
+            fail("command UI toolchain digest differs from current reviewed toolchain", phase="B6")
 
 
 def validate_p0_transcript_sequence(commands: Any) -> None:

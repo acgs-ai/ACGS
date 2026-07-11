@@ -266,7 +266,9 @@ def _capture_python(
     write_bootstrap_identity_exclusive(marker, output, values)
 
 
-def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path, str]:
+def _fnm_capture(
+    version: str, command: str, cwd: Path, *, require_owned: bool = False
+) -> tuple[str, Path, str]:
     fnm = FNM_EXECUTABLE
     if (
         not fnm.is_file()
@@ -278,17 +280,23 @@ def _fnm_capture(version: str, command: str, cwd: Path) -> tuple[str, Path, str]
     env = {
         key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "VIRTUAL_ENV"}
     }
-    path_output = subprocess.run(
-        [fnm, "exec", "--using", version, "--", "which", command],
-        text=True,
-        capture_output=True,
-        check=False,
-        cwd=cwd,
-        env=env,
-    )
-    if path_output.returncode != 0:
-        fail(f"cannot resolve canonical {command}: {path_output.stderr}", phase="B5")
-    lexical = Path(path_output.stdout.strip())
+    if require_owned:
+        fnm_dir = os.environ.get("FNM_DIR")
+        if not fnm_dir:
+            fail("owned UI capture requires FNM_DIR", phase="B5")
+        lexical = Path(fnm_dir) / f"node-versions/v{version}/installation/bin" / command
+    else:
+        path_output = subprocess.run(
+            [fnm, "exec", "--using", version, "--", "which", command],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=cwd,
+            env=env,
+        )
+        if path_output.returncode != 0:
+            fail(f"cannot resolve canonical {command}: {path_output.stderr}", phase="B5")
+        lexical = Path(path_output.stdout.strip())
     executable = lexical.resolve(strict=True)
     if not executable.is_file():
         fail(f"canonical {command} executable is not a regular file", phase="B5")
@@ -324,8 +332,17 @@ def _capture_ui(
     if lock != expected_lock:
         fail("UI lock path mismatch", phase="B5")
     ui_root = repo_root / "acgi-ai"
-    actual_node, node_path, node_sha256 = _fnm_capture(node_version, "node", ui_root)
-    actual_pnpm, pnpm_path, pnpm_sha256 = _fnm_capture(node_version, "pnpm", ui_root)
+    require_owned = node_id == "P0-GATES-003"
+    if require_owned:
+        actual_node, node_path, node_sha256 = _fnm_capture(
+            node_version, "node", ui_root, require_owned=True
+        )
+        actual_pnpm, pnpm_path, pnpm_sha256 = _fnm_capture(
+            node_version, "pnpm", ui_root, require_owned=True
+        )
+    else:
+        actual_node, node_path, node_sha256 = _fnm_capture(node_version, "node", ui_root)
+        actual_pnpm, pnpm_path, pnpm_sha256 = _fnm_capture(node_version, "pnpm", ui_root)
     if actual_node != f"v{node_version}" or actual_pnpm != pnpm_version:
         fail(f"UI live tool version mismatch: node={actual_node} pnpm={actual_pnpm}", phase="B5")
     marker = node_modules / ".acgs-product-bootstrap.json"
@@ -340,10 +357,8 @@ def _capture_ui(
             "interpreter": str(node_path),
             "interpreter_realpath": str(node_path),
             "node_version": node_version,
-            "node_sha256": node_sha256,
             "pnpm_executable": str(pnpm_path),
             "pnpm_version": pnpm_version,
-            "pnpm_sha256": pnpm_sha256,
             "runtime_ctime_ns": runtime_ctime_ns,
             "lock_sha256": sha256_file(lock),
             "nonce": secrets.token_hex(32),
@@ -353,21 +368,17 @@ def _capture_ui(
             "code": "UI",
             "node_id": node_id,
             "captured_at_utc": marker_record["captured_at_utc"],
-            "node": {
-                "version": node_version,
-                "executable": str(node_path),
-                "sha256": node_sha256,
-            },
-            "pnpm": {
-                "version": pnpm_version,
-                "executable": str(pnpm_path),
-                "sha256": pnpm_sha256,
-            },
+            "node": {"version": node_version, "executable": str(node_path)},
+            "pnpm": {"version": pnpm_version, "executable": str(pnpm_path)},
             "module_root": str(node_modules),
             "lock": {"path": "acgi-ai/pnpm-lock.yaml", "sha256": sha256_file(lock)},
             "bootstrap_record": marker_record,
             "output_path": str(output),
         }
+        if node_id == "P0-GATES-003":
+            marker_record.update({"node_sha256": node_sha256, "pnpm_sha256": pnpm_sha256})
+            identity["node"]["sha256"] = node_sha256
+            identity["pnpm"]["sha256"] = pnpm_sha256
         return marker_record, identity
 
     write_bootstrap_identity_exclusive(marker, output, values)

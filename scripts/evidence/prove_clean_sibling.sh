@@ -174,8 +174,12 @@ T="$2"
 [[ -n "${P:-}" ]] || die 'P must be exported as the reviewed parent commit SHA'
 [[ "$P" =~ ^[0-9a-f]{40}$ ]] || die 'P must be a lowercase 40-hex commit SHA'
 P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
-[[ "$P" == "$P0_REVIEWED_BASE" ]] ||
-  die "reviewed parent must be exact $P0_REVIEWED_BASE"
+P0_CLAIMS_REVIEWED_BASE='5918828010125ebcedaaf96fb9cd5e109598f2a8'
+case "$NODE_ID" in
+  P0-GATES-003) EXPECTED_PARENT="$P0_CLAIMS_REVIEWED_BASE" ;;
+  *) EXPECTED_PARENT="$P0_REVIEWED_BASE" ;;
+esac
+[[ "$P" == "$EXPECTED_PARENT" ]] || die "reviewed parent must be exact $EXPECTED_PARENT"
 [[ "$P" != "$T" ]] || die 'P and T must be distinct'
 for variable in \
   VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT \
@@ -187,6 +191,7 @@ for variable in \
 done
 for prefix in FNM_ COREPACK_ PNPM_ NPM_ npm_config_ NODE_ NVM_ HTTP_ HTTPS_ ALL_PROXY NO_PROXY; do
   while IFS= read -r variable; do
+    [[ "$variable" == NODE_ID ]] && continue
     [[ -z "${!variable:-}" ]] || die "ambient UI loader/config/auth/proxy variable rejected: $variable"
   done < <(compgen -A variable "$prefix")
 done
@@ -606,7 +611,8 @@ if [[ "$ASSIGNMENT" == *GZ* ]]; then
 fi
 
 if [[ "$ASSIGNMENT" == *UI* ]]; then
-  FNM_BIN=/home/martin/.local/share/fnm/fnm
+  HOST_FNM_BIN=/home/martin/.local/share/fnm/fnm
+  FNM_BIN="$SCRATCH_ROOT/ui-bin/fnm"
   HOST_NODE_ROOT=/home/martin/.local/share/fnm/node-versions/v24.18.0/installation
   HOST_PNPM_ROOT=/home/martin/.cache/node/corepack/v1/pnpm/9.15.4
   OWNED_NODE_ROOT="$FNM_DIR/node-versions/v24.18.0/installation"
@@ -620,16 +626,71 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
   PNPM_WRAPPER_SHA256=98e6b99a881d64a1cc982c3e60aa260bf02160386b12e74475e06486dc74b090
   PNPM_PACKAGE_SHA256=3b20ec7bebaa078d5ae4ab09651b80434a9f1d6446065ad53779ecafdc7f9936
   PNPM_COREPACK_METADATA_SHA256=d0015a0345d683888f46c48caf909f611875ba7e9132ca1afced8f0fef84f117
+  UI_WORKSPACE_SHA256=50c15b3f4420b77d890a9bd93844462418daa2df5842ffeaa77d7eeab36b8da6
   PNPM_SELECTOR='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
-  [[ -x "$FNM_BIN" && ! -L "$FNM_BIN" && "$(realpath -e "$FNM_BIN")" == "$FNM_BIN" ]] || die 'canonical fnm is unavailable'
-  [[ "$(sha256sum "$FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] || die 'canonical fnm digest mismatch'
-  ui_exec() {
-    env -i PATH=/usr/bin:/bin HOME="$SCRATCH_ROOT/home" FNM_DIR="$FNM_DIR" \
-      COREPACK_HOME="$COREPACK_HOME" PNPM_HOME="$PNPM_HOME" \
-      PNPM_STORE_DIR="$PNPM_STORE_DIR" npm_config_userconfig="$npm_config_userconfig" \
-      PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH" \
-      COREPACK_ENABLE_NETWORK=0 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=1 \
-      "$@"
+  [[ -x "$HOST_FNM_BIN" && ! -L "$HOST_FNM_BIN" && \
+    "$(realpath -e "$HOST_FNM_BIN")" == "$HOST_FNM_BIN" ]] || die 'canonical fnm is unavailable'
+  [[ "$(sha256sum "$HOST_FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] ||
+    die 'canonical fnm digest mismatch'
+  mkdir -m 700 "$SCRATCH_ROOT/ui-bin"
+  cp "$HOST_FNM_BIN" "$FNM_BIN"
+  chmod 500 "$FNM_BIN"
+  [[ "$(sha256sum "$FNM_BIN" | awk '{print $1}')" == "$FNM_SHA256" ]] ||
+    die 'owned fnm digest mismatch'
+  ui_tree_sha256() {
+    /usr/bin/python3 - "$1" <<'PY'
+from pathlib import Path
+import hashlib
+import sys
+
+root = Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+    relative = path.relative_to(root).as_posix().encode()
+    if path.is_symlink():
+        kind, payload = b"L", str(path.readlink()).encode()
+    elif path.is_file():
+        kind = b"F"
+        payload = hashlib.sha256(path.read_bytes()).hexdigest().encode()
+    elif path.is_dir():
+        kind, payload = b"D", b""
+    else:
+        raise SystemExit(2)
+    digest.update(relative + b"\0" + kind + b"\0" + payload + b"\0")
+print(digest.hexdigest())
+PY
+  }
+  ui_bwrap() {
+    local network_mode="$1"
+    shift
+    local namespace_args=(--unshare-all)
+    local product_writes=()
+    local offline_env=()
+    local scratch_mount=(--bind "$SCRATCH_ROOT" "$SCRATCH_ROOT")
+    [[ "$network_mode" == install ]] && namespace_args+=(--share-net)
+    [[ "$network_mode" == offline ]] && offline_env+=(--setenv npm_config_offline true)
+    if [[ "$network_mode" == install ]]; then
+      scratch_mount=(--ro-bind "$SCRATCH_ROOT" "$SCRATCH_ROOT" \
+        --bind "$PNPM_STORE_DIR" "$PNPM_STORE_DIR" \
+        --bind "$SCRATCH_ROOT/home" "$SCRATCH_ROOT/home")
+    fi
+    [[ -d "$WORKTREE/acgi-ai/node_modules" ]] && product_writes+=(
+      --bind "$WORKTREE/acgi-ai/node_modules" "$WORKTREE/acgi-ai/node_modules"
+    )
+    /usr/bin/bwrap --die-with-parent "${namespace_args[@]}" --new-session \
+      --ro-bind / / --tmpfs /home --tmpfs /root --tmpfs /tmp --tmpfs /var/tmp \
+      --tmpfs /run --dir "$TMP_ROOT" --dir "$WORKTREE" --dir "$SCRATCH_ROOT" \
+      --ro-bind "$WORKTREE" "$WORKTREE" "${scratch_mount[@]}" \
+      "${product_writes[@]}" \
+      --chdir "$WORKTREE/acgi-ai" --proc /proc --dev /dev --clearenv \
+      --setenv PATH "$OWNED_NODE_ROOT/bin:/usr/bin:/bin" \
+      --setenv HOME "$SCRATCH_ROOT/home" --setenv FNM_DIR "$FNM_DIR" \
+      --setenv COREPACK_HOME "$COREPACK_HOME" --setenv PNPM_HOME "$PNPM_HOME" \
+      --setenv PNPM_STORE_DIR "$PNPM_STORE_DIR" \
+      --setenv npm_config_userconfig "$npm_config_userconfig" \
+      --setenv PLAYWRIGHT_BROWSERS_PATH "$PLAYWRIGHT_BROWSERS_PATH" \
+      --setenv COREPACK_ENABLE_NETWORK 0 --setenv COREPACK_ENABLE_DOWNLOAD_PROMPT 0 \
+      --setenv CI 1 "${offline_env[@]}" -- "$@"
   }
   for pair in \
     "$HOST_NODE_ROOT/bin/node:$NODE_SHA256" \
@@ -643,6 +704,12 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
     path="${pair%:*}"; expected="${pair##*:}"
     [[ -f "$path" && "$(sha256sum "$path" | awk '{print $1}')" == "$expected" ]] || die "preverified UI cache identity mismatch: $path"
   done
+  COREPACK_TREE_SHA256=6dc22292849f9e176da87530b3c6e7e871b6d153853905472323a30c68e3ef83
+  PNPM_TREE_SHA256=f5024c43f73511fd4405a2af8e5284037c7ce9d740ccbc21b48c82a4372a5e1b
+  [[ "$(ui_tree_sha256 "$HOST_NODE_ROOT/lib/node_modules/corepack")" == \
+    "$COREPACK_TREE_SHA256" ]] || die 'preverified Corepack tree digest mismatch'
+  [[ "$(ui_tree_sha256 "$HOST_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
+    die 'preverified pnpm tree digest mismatch'
   mkdir -m 700 -p "$(dirname "$OWNED_NODE_ROOT")" "$(dirname "$OWNED_PNPM_ROOT")"
   cp -a "$HOST_NODE_ROOT" "$OWNED_NODE_ROOT"
   cp -a "$HOST_PNPM_ROOT" "$OWNED_PNPM_ROOT"
@@ -651,17 +718,39 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
       die "preverified Playwright runtime missing: $browser"
     cp -a "/home/martin/.cache/ms-playwright/$browser" "$PLAYWRIGHT_BROWSERS_PATH/$browser"
   done
-  ui_exec "$FNM_BIN" install 24.18.0
+  [[ "$(ui_tree_sha256 "$OWNED_NODE_ROOT/lib/node_modules/corepack")" == \
+    "$COREPACK_TREE_SHA256" ]] || die 'copied Corepack tree digest mismatch'
+  [[ "$(ui_tree_sha256 "$OWNED_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
+    die 'copied pnpm tree digest mismatch'
+  for manifest in "$WORKTREE/package.json" "$WORKTREE/acgi-ai/package.json"; do
+    OBSERVED_PACKAGE_MANAGER="$(/usr/bin/python3 -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("packageManager", ""))' \
+      "$manifest")"
+    [[ "$OBSERVED_PACKAGE_MANAGER" == "$PNPM_SELECTOR" ]] ||
+      die "packageManager must match the reviewed pnpm name/version/integrity selector: $manifest"
+  done
+  [[ "$(sha256sum "$WORKTREE/acgi-ai/pnpm-workspace.yaml" | awk '{print $1}')" == \
+    "$UI_WORKSPACE_SHA256" ]] || die 'reviewed UI workspace lifecycle policy mismatch'
   UI_COREPACK_JS="$OWNED_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js"
-  ui_exec "$FNM_BIN" exec --using 24.18.0 -- corepack enable
-  ui_exec "$FNM_BIN" exec --using 24.18.0 -- corepack prepare "$PNPM_SELECTOR" --activate
+  ui_bwrap offline "$FNM_BIN" install 24.18.0
+  ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable
+  ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack prepare pnpm@9.15.4 \
+    --activate
+  [[ "$(ui_tree_sha256 "$OWNED_NODE_ROOT/lib/node_modules/corepack")" == \
+    "$COREPACK_TREE_SHA256" ]] || die 'Corepack tree changed during activation'
+  [[ "$(ui_tree_sha256 "$OWNED_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
+    die 'pnpm tree changed during activation'
   UI_PNPM="$OWNED_NODE_ROOT/bin/pnpm"
   [[ -f "$UI_PNPM" && "$(realpath -e "$UI_PNPM")" == "$UI_COREPACK_JS" ]] || die 'pnpm shim does not resolve to pinned owned corepack dispatcher'
-  [[ "$(ui_exec "$FNM_BIN" exec --using 24.18.0 -- pnpm --version)" == 9.15.4 ]] || die 'pnpm version mismatch after activation'
-  (
-    cd "$WORKTREE/acgi-ai"
-    ui_exec "$FNM_BIN" exec --using 24.18.0 -- pnpm install --ignore-workspace --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
-  )
+  [[ "$(ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm --version)" == \
+    9.15.4 ]] || die 'pnpm version mismatch after activation'
+  reject_lexists "$WORKTREE/acgi-ai/node_modules"
+  mkdir -m 700 "$WORKTREE/acgi-ai/node_modules"
+  ui_bwrap install "$FNM_BIN" exec --using 24.18.0 -- pnpm install --frozen-lockfile
+  [[ "$(ui_tree_sha256 "$OWNED_NODE_ROOT/lib/node_modules/corepack")" == \
+    "$COREPACK_TREE_SHA256" ]] || die 'Corepack tree changed during dependency bootstrap'
+  [[ "$(ui_tree_sha256 "$OWNED_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
+    die 'pnpm tree changed during dependency bootstrap'
   [[ -d "$WORKTREE/acgi-ai/node_modules" && ! -L "$WORKTREE/acgi-ai/node_modules" ]] || die 'canonical UI bootstrap did not create node_modules'
   for output in dist dist-marketing playwright-report test-results node_modules/.tmp node_modules/.vite; do
     reject_lexists "$WORKTREE/acgi-ai/$output"
