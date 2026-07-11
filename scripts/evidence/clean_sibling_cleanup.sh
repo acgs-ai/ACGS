@@ -331,9 +331,9 @@ clean_sibling_cleanup() {
     launcher_attested=1
   fi
   if [[ "$status" -eq 0 && "$cleanup_status" -eq 0 && "$PROOF_COMPLETE" -eq 1 ]] &&
-    [[ "$TRANSCRIPT_RECORDS" == 10 && "$launcher_attested" == 1 ]]; then
-    printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=10 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
-      "$P" "$T" "$R"
+    [[ "$TRANSCRIPT_RECORDS" == "$EXPECTED_RECORDS" && "$launcher_attested" == 1 ]]; then
+    printf 'CLEAN_SIBLING_TECHNICAL=PASS node=%s P=%s T=%s R=%s records=%s assignments=%s attestations=pending-independent-lanes\n' \
+      "$NODE_ID" "$P" "$T" "$R" "$EXPECTED_RECORDS" "$ASSIGNMENT"
   elif [[ "$status" -eq 0 ]]; then
     status=2
   fi

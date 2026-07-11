@@ -24,12 +24,13 @@ if [[ -n "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
     exit 2
   }
   mapfile -d '' -t ACGS_GUARDIAN_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline"
-  [[ "${#ACGS_GUARDIAN_PARENT_ARGV[@]}" == 5 && \
+  [[ "${#ACGS_GUARDIAN_PARENT_ARGV[@]}" == 6 && \
     "${ACGS_GUARDIAN_PARENT_ARGV[0]}" == /bin/bash && \
     "${ACGS_GUARDIAN_PARENT_ARGV[1]}" == --noprofile && \
     "${ACGS_GUARDIAN_PARENT_ARGV[2]}" == --norc && \
     "${ACGS_GUARDIAN_PARENT_ARGV[3]}" == "${BASH_SOURCE[0]}" && \
-    "${ACGS_GUARDIAN_PARENT_ARGV[4]}" == "${1:-}" ]] || {
+    "${ACGS_GUARDIAN_PARENT_ARGV[4]}" == "${1:-}" && \
+    "${ACGS_GUARDIAN_PARENT_ARGV[5]}" == "${2:-}" ]] || {
     printf '%s\n' \
       'CLEAN_SIBLING=FAIL phase=B0 reason=sanitized guardian parent argv changed' >&2
     exit 2
@@ -50,11 +51,12 @@ fi
   exit 2
 }
 mapfile -d '' -t ACGS_STATIC_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline"
-[[ "${#ACGS_STATIC_PARENT_ARGV[@]}" == 4 && \
+[[ "${#ACGS_STATIC_PARENT_ARGV[@]}" == 5 && \
   "${ACGS_STATIC_PARENT_ARGV[0]}" == /usr/bin/busybox && \
   "${ACGS_STATIC_PARENT_ARGV[1]}" == ash && \
   "${ACGS_STATIC_PARENT_ARGV[2]}" == "$ACGS_EXPECTED_LAUNCHER" && \
-  "${ACGS_STATIC_PARENT_ARGV[3]}" == "${1:-}" ]] || {
+  "${ACGS_STATIC_PARENT_ARGV[3]}" == "${1:-}" && \
+  "${ACGS_STATIC_PARENT_ARGV[4]}" == "${2:-}" ]] || {
   printf '%s\n' \
     'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent argv changed' >&2
   exit 2
@@ -158,13 +160,18 @@ reject_lexists() {
   return 0
 }
 
-[[ $# -eq 1 ]] || die 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <exact-T-commit>'
-T="$1"
+[[ $# -eq 2 ]] || die 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <node-id> <exact-T-commit>'
+NODE_ID="$1"
+case "$NODE_ID" in
+  P0-EVIDENCE-000) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=10 ;;
+  P0-MEMBRANE-001) ASSIGNMENT='EVID+CP'; EXPECTED_RECORDS=7 ;;
+  P0-CLAIMS-002) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=14 ;;
+  *) die 'node-id is outside the reviewed attestation allowlist' ;;
+esac
+T="$2"
 [[ "$T" =~ ^[0-9a-f]{40}$ ]] || die 'T must be a lowercase 40-hex commit SHA'
 [[ -n "${P:-}" ]] || die 'P must be exported as the reviewed parent commit SHA'
 [[ "$P" =~ ^[0-9a-f]{40}$ ]] || die 'P must be a lowercase 40-hex commit SHA'
-P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
-[[ "$P" == "$P0_REVIEWED_BASE" ]] || die "P0 reviewed parent must be exact $P0_REVIEWED_BASE"
 [[ "$P" != "$T" ]] || die 'P and T must be distinct'
 for variable in \
   VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT \
@@ -265,7 +272,6 @@ TMP_ROOT_UID=''
 TMP_ROOT_MODE=''
 WORKTREE=''
 EVIDENCE_ROOT=''
-NODE_ID='P0-EVIDENCE-000'
 NODE_EVIDENCE=''
 SCRATCH_ROOT=''
 RUNTIME_TMP=''
@@ -538,16 +544,18 @@ precheck_product CP \
 "$UV_BIN" pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   >"$NODE_EVIDENCE/cp-pre-editable.freeze"
 
-"$UV_BIN" venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
-env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
-  --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" --require-hashes \
-  "$WORKTREE/requirements/saas-beta/gz-test.lock"
-precheck_product GZ \
-  "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
-  "$WORKTREE/requirements/saas-beta/gz-test.lock" \
-  "$NODE_EVIDENCE/gz-editables-version.txt"
-"$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
-  >"$NODE_EVIDENCE/gz-pre-editable.freeze"
+if [[ "$ASSIGNMENT" == *GZ* ]]; then
+  "$UV_BIN" venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
+  env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
+    --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" --require-hashes \
+    "$WORKTREE/requirements/saas-beta/gz-test.lock"
+  precheck_product GZ \
+    "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+    "$WORKTREE/requirements/saas-beta/gz-test.lock" \
+    "$NODE_EVIDENCE/gz-editables-version.txt"
+  "$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+    >"$NODE_EVIDENCE/gz-pre-editable.freeze"
+fi
 
 phase B4
 "$UV_BIN" pip install --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
@@ -561,15 +569,17 @@ verify_freeze_delta CP \
   "$NODE_EVIDENCE/cp-post-editable.freeze" \
   "$WORKTREE/packages/gove-zone" "$WORKTREE/packages/acgs-control-plane"
 
-"$UV_BIN" pip install --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
-  --offline --no-index --no-cache --no-build-isolation --no-deps \
-  --editable "$WORKTREE/packages/gove-zone"
-"$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
-  >"$NODE_EVIDENCE/gz-post-editable.freeze"
-verify_freeze_delta GZ \
-  "$NODE_EVIDENCE/gz-pre-editable.freeze" \
-  "$NODE_EVIDENCE/gz-post-editable.freeze" \
-  "$WORKTREE/packages/gove-zone"
+if [[ "$ASSIGNMENT" == *GZ* ]]; then
+  "$UV_BIN" pip install --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+    --offline --no-index --no-cache --no-build-isolation --no-deps \
+    --editable "$WORKTREE/packages/gove-zone"
+  "$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+    >"$NODE_EVIDENCE/gz-post-editable.freeze"
+  verify_freeze_delta GZ \
+    "$NODE_EVIDENCE/gz-pre-editable.freeze" \
+    "$NODE_EVIDENCE/gz-post-editable.freeze" \
+    "$WORKTREE/packages/gove-zone"
+fi
 
 append_record() {
   local started="$1" finished="$2" stdout_file="$3" stderr_file="$4" selector="$5"
@@ -661,18 +671,50 @@ run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-mypy \
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-pytest \
   'packages/acgs-control-plane:local-gate' .venv/bin/pytest -q
 
-GZ_PREFIX=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone)
-run_recorded_gate GZ "$WORKTREE" gz-ruff-check 'packages/gove-zone:local-gate' \
-  "${GZ_PREFIX[@]}" ruff check \
-  packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
-run_recorded_gate GZ "$WORKTREE" gz-ruff-format 'packages/gove-zone:local-gate' \
-  "${GZ_PREFIX[@]}" ruff format --check \
-  packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
-run_recorded_gate GZ "$WORKTREE" gz-mypy 'packages/gove-zone:local-gate' \
-  "${GZ_PREFIX[@]}" mypy packages/gove-zone/src/gove_zone
-run_recorded_gate GZ "$WORKTREE" gz-pytest 'packages/gove-zone:local-gate' \
-  "${GZ_PREFIX[@]}" python -m pytest packages/gove-zone/tests \
-  --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
+if [[ "$NODE_ID" == P0-MEMBRANE-001 || "$NODE_ID" == P0-CLAIMS-002 ]]; then
+  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-membrane-exact \
+    'packages/acgs-control-plane:P0-MEMBRANE-001-exact' .venv/bin/pytest -q \
+    tests/integration/test_production_posture.py::test_production_rejects_legacy_unsigned_routes \
+    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation
+fi
+
+if [[ "$ASSIGNMENT" == *GZ* ]]; then
+  GZ_PREFIX=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone)
+  run_recorded_gate GZ "$WORKTREE" gz-ruff-check 'packages/gove-zone:local-gate' \
+    "${GZ_PREFIX[@]}" ruff check \
+    packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
+  run_recorded_gate GZ "$WORKTREE" gz-ruff-format 'packages/gove-zone:local-gate' \
+    "${GZ_PREFIX[@]}" ruff format --check \
+    packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
+  run_recorded_gate GZ "$WORKTREE" gz-mypy 'packages/gove-zone:local-gate' \
+    "${GZ_PREFIX[@]}" mypy packages/gove-zone/src/gove_zone
+  run_recorded_gate GZ "$WORKTREE" gz-pytest 'packages/gove-zone:local-gate' \
+    "${GZ_PREFIX[@]}" python -m pytest packages/gove-zone/tests \
+    --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
+fi
+
+if [[ "$NODE_ID" == P0-CLAIMS-002 ]]; then
+  run_recorded_gate GZ "$WORKTREE" gz-claims-exact \
+    'packages/gove-zone:P0-CLAIMS-002-exact' "${GZ_PREFIX[@]}" python -m pytest -q \
+    packages/gove-zone/tests/test_receipt_signing.py::test_production_default_no_verifier_fails_loud \
+    packages/gove-zone/tests/test_receipt_signing.py::test_unsigned_rejected_when_required \
+    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_no_receipt \
+    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_denied_receipt \
+    packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_escalated_receipt \
+    packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger \
+    packages/gove-zone/tests/test_receipt_consumption.py::test_replay_without_ledger_pins_stateless_gate \
+    packages/gove-zone/tests/test_replay.py::test_replay_call_diverges_when_args_change \
+    packages/gove-zone/tests/test_replay.py::test_side_store_tamper_cross_check \
+    packages/gove-zone/tests/test_acgs_proofpack.py::test_signed_pack_without_key_fails_closed \
+    packages/gove-zone/tests/test_acgs_proofpack.py::test_replay_report_status_never_upgrades_validity \
+    packages/gove-zone/tests/test_acgs_proofpack.py::test_cli_require_signature_rejects_unsigned_pack
+  run_recorded_gate P0 "$WORKTREE" claims-lint-docs 'root:lint-docs' make lint-docs
+  run_recorded_gate P0 "$WORKTREE" claims-docs-full 'root:docs-full' \
+    packages/acgs-control-plane/.venv/bin/python -m pytest -q tests/docs --import-mode=importlib
+  run_recorded_gate P0 "$WORKTREE" claims-focused 'root:P0-CLAIMS-002' \
+    packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+    tests/docs/test_saas_beta_claims.py::test_claim_boundaries_and_control_plane_readme
+fi
 
 "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
   --code CP \
@@ -680,16 +722,18 @@ run_recorded_gate GZ "$WORKTREE" gz-pytest 'packages/gove-zone:local-gate' \
   --lock "$WORKTREE/requirements/saas-beta/cp-test.lock" \
   --require-editables 0.6 \
   --output "$NODE_EVIDENCE/environment-CP.json"
-"$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
-  --code GZ \
-  --interpreter "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
-  --lock "$WORKTREE/requirements/saas-beta/gz-test.lock" \
-  --require-editables 0.6 \
-  --output "$NODE_EVIDENCE/environment-GZ.json"
+if [[ "$ASSIGNMENT" == *GZ* ]]; then
+  "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
+    --code GZ \
+    --interpreter "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+    --lock "$WORKTREE/requirements/saas-beta/gz-test.lock" \
+    --require-editables 0.6 \
+    --output "$NODE_EVIDENCE/environment-GZ.json"
+fi
 "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/validate_environment_identities.py" \
   --node "$NODE_ID" \
   --assignment-map "$WORKTREE/requirements/saas-beta/bootstrap-by-scope.json" \
-  --assignment EVID+CP+GZ \
+  --assignment "$ASSIGNMENT" \
   --identity-dir "$NODE_EVIDENCE" \
   --require-fresh-bootstrap-records \
   --reject-missing \
@@ -703,10 +747,17 @@ P0_ROOT_GATE=(.venv-evidence/bin/python -m pytest -q \
   tests/saas_beta/test_evidence_bootstrap.py::test_environment_identities_exactly_match_assignment \
   tests/saas_beta/test_evidence_bootstrap.py::test_missing_extra_or_retained_environment_rejected \
   tests/saas_beta/test_evidence_bootstrap.py::test_pep660_helpers_required_for_assigned_python_scopes)
-export ACGS_P0_LITERAL_PROVER_INNER_T="$T"
-run_recorded_gate P0 "$WORKTREE" p0-root-gate 'root:P0-EVIDENCE-000' \
-  "${P0_ROOT_GATE[@]}"
-unset ACGS_P0_LITERAL_PROVER_INNER_T
+if [[ "$NODE_ID" == P0-EVIDENCE-000 ]]; then
+  export ACGS_P0_LITERAL_PROVER_INNER_T="$T"
+  run_recorded_gate P0 "$WORKTREE" p0-root-gate 'root:P0-EVIDENCE-000' \
+    "${P0_ROOT_GATE[@]}"
+  unset ACGS_P0_LITERAL_PROVER_INNER_T
+elif [[ "$NODE_ID" == P0-MEMBRANE-001 ]]; then
+  run_recorded_gate P0 "$WORKTREE" membrane-root-exact 'root:P0-MEMBRANE-001' \
+    packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+    packages/acgs-control-plane/tests/integration/test_production_posture.py::test_production_rejects_legacy_unsigned_routes \
+    packages/acgs-control-plane/tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation
+fi
 
 phase B6
 TRANSCRIPT_RECORDS="$("$EVIDENCE_PY" - "$NODE_EVIDENCE/transcript.jsonl" <<'PY'
@@ -716,12 +767,13 @@ import sys
 print(len(pathlib.Path(sys.argv[1]).read_bytes().splitlines()))
 PY
 )"
-[[ "$TRANSCRIPT_RECORDS" == 10 ]] || die 'reviewed transcript must contain exactly ten records'
+[[ "$TRANSCRIPT_RECORDS" == "$EXPECTED_RECORDS" ]] ||
+  die "reviewed transcript record count mismatch for $NODE_ID"
 (
   cd "$WORKTREE"
   "$EVIDENCE_PY" scripts/evidence/generate_run.py \
     --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
-    --node "$NODE_ID" --parent "$P" --product "$T" --assignment EVID+CP+GZ \
+    --node "$NODE_ID" --parent "$P" --product "$T" --assignment "$ASSIGNMENT" \
     --environment-identities "$NODE_EVIDENCE/environment-identities.json" \
     --transcript "$NODE_EVIDENCE/transcript.jsonl" \
     --output "$NODE_EVIDENCE/run.json"
@@ -732,7 +784,7 @@ PY
     --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
     --expected-node "$NODE_ID" \
     --assignment-map requirements/saas-beta/bootstrap-by-scope.json \
-    --expected-environments EVID+CP+GZ \
+    --expected-environments "$ASSIGNMENT" \
     --expected-parent "$P" --expected-product "$T" \
     "$NODE_EVIDENCE/run.json"
 )

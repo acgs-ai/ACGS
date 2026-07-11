@@ -18,7 +18,11 @@ busybox_digest="${busybox_digest%% *}"
 [ "$busybox_digest" = "$BUSYBOX_SHA256" ] || fail 'trusted static BusyBox digest mismatch'
 [ "$($BUSYBOX readlink -f /proc/$$/exe)" = "$BUSYBOX" ] ||
   fail 'entry interpreter is not trusted static BusyBox'
-[ "$#" -eq 1 ] || fail 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <exact-T-commit>'
+[ "$#" -eq 2 ] || fail 'usage: P=<reviewed-parent> scripts/evidence/prove_clean_sibling <node-id> <exact-T-commit>'
+case "$1" in
+  P0-EVIDENCE-000 | P0-MEMBRANE-001 | P0-CLAIMS-002) ;;
+  *) fail 'node-id is outside the reviewed attestation allowlist' ;;
+esac
 
 launcher="$($BUSYBOX readlink -f "$0")"
 repo="${launcher%/scripts/evidence/prove_clean_sibling}"
@@ -33,7 +37,7 @@ fi
 internal="$repo/scripts/evidence/prove_clean_sibling.sh"
 [ -f "$internal" ] && [ ! -L "$internal" ] || fail 'internal prover is unavailable'
 
-# Capture only the two reviewed caller inputs before replacing the entire
+# Capture only the reviewed caller inputs before replacing the entire
 # environment. BusyBox is static, so hostile ELF-loader state cannot run while
 # this boundary is being established. The dynamic Bash interpreter is loaded
 # only by env -i below.
@@ -52,7 +56,7 @@ set +e
   GIT_CONFIG_GLOBAL=/dev/null \
   PYTHONDONTWRITEBYTECODE=1 \
   ACGS_CLEAN_SIBLING_STATIC_LAUNCHER="$BUSYBOX_SHA256" \
-  /bin/bash --noprofile --norc "$internal" "$1"
+  /bin/bash --noprofile --norc "$internal" "$1" "$2"
 status=$?
 set -e
 exit "$status"

@@ -4031,7 +4031,7 @@ def test_clean_sibling_rejects_loader_and_git_authority_before_mutation(
             }
         )
         completed = subprocess.run(
-            ["scripts/evidence/prove_clean_sibling", "0" * 40],
+            ["scripts/evidence/prove_clean_sibling", "P0-EVIDENCE-000", "0" * 40],
             cwd=ROOT,
             env=env,
             text=True,
@@ -4052,7 +4052,12 @@ def test_clean_sibling_internal_script_refuses_direct_invocation(tmp_path: Path)
     env = _evidence_env(tmp_path / "unused")
     env.update({"P": "26d11c2c7a8da37937a7c50c642f18edc75c9345", "TMPDIR": str(tmp_path)})
     completed = subprocess.run(
-        ["/bin/bash", "scripts/evidence/prove_clean_sibling.sh", "0" * 40],
+        [
+            "/bin/bash",
+            "scripts/evidence/prove_clean_sibling.sh",
+            "P0-EVIDENCE-000",
+            "0" * 40,
+        ],
         cwd=ROOT,
         env=env,
         text=True,
@@ -4062,6 +4067,30 @@ def test_clean_sibling_internal_script_refuses_direct_invocation(tmp_path: Path)
     assert completed.returncode == 2
     assert "requires trusted static launcher" in completed.stderr
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
+
+
+def test_clean_sibling_launcher_requires_explicit_allowlisted_node_and_t(
+    tmp_path: Path,
+) -> None:
+    launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
+    env = _evidence_env(tmp_path / "unused")
+    env["P"] = "1" * 40
+    for argv, message in (
+        ([], "usage:"),
+        (["P0-EVIDENCE-000"], "usage:"),
+        (["P0-UNKNOWN-999", "2" * 40], "outside the reviewed attestation allowlist"),
+    ):
+        completed = subprocess.run(
+            [str(launcher), *argv],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert message in completed.stderr
+        assert not list(tmp_path.glob("acgs-p0-evidence.*"))
 
 
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
@@ -4077,7 +4106,6 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "phase B7" not in source and "phase B8" not in source
     for required in (
         'git -C "$SOURCE_REPO" worktree add --detach',
-        "P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'",
         'git -C "$SOURCE_REPO" diff --check "$P..$T"',
         "--require-hashes",
         "--offline --no-index --no-cache --no-build-isolation --no-deps",
@@ -4097,9 +4125,14 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 4
-    assert source.count("run_recorded_gate GZ") == 4
-    assert source.count("run_recorded_gate P0") == 1
+    assert source.count("run_recorded_gate CP") == 5
+    assert source.count("run_recorded_gate GZ") == 5
+    assert source.count("run_recorded_gate P0") == 5
+    assert "P0-EVIDENCE-000) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=10" in source
+    assert "P0-MEMBRANE-001) ASSIGNMENT='EVID+CP'; EXPECTED_RECORDS=7" in source
+    assert "P0-CLAIMS-002) ASSIGNMENT='EVID+CP+GZ'; EXPECTED_RECORDS=14" in source
+    assert source.index("'root:lint-docs'") < source.index("'root:docs-full'")
+    assert source.index("'root:docs-full'") < source.index("'root:P0-CLAIMS-002'")
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -4273,7 +4306,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     omitted_parent_env = _evidence_env(tmp_path / "unused-evidence")
     omitted_parent_env.pop("P", None)
     omitted_parent = subprocess.run(
-        [str(launcher), head],
+        [str(launcher), "P0-EVIDENCE-000", head],
         cwd=ROOT,
         env=omitted_parent_env,
         text=True,
@@ -4285,7 +4318,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     altered_parent_env = dict(omitted_parent_env)
     altered_parent_env["P"] = "1" * 40
     altered_parent = subprocess.run(
-        [str(launcher), head],
+        [str(launcher), "P0-EVIDENCE-000", head],
         cwd=ROOT,
         env=altered_parent_env,
         text=True,
@@ -4293,7 +4326,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         check=False,
     )
     assert altered_parent.returncode == 2
-    assert "reviewed parent must be exact" in altered_parent.stderr
+    assert "P commit is unavailable" in altered_parent.stderr
     if head != reviewed_parent:
         contained = ROOT / "tests"
         symlink = tmp_path / "tmpdir-link"
@@ -4309,7 +4342,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
                 env = _evidence_env(tmp_path / "unused-evidence")
                 env.update({"P": reviewed_parent, "TMPDIR": supplied})
                 completed = subprocess.run(
-                    [str(launcher), head],
+                    [str(launcher), "P0-EVIDENCE-000", head],
                     cwd=ROOT,
                     env=env,
                     text=True,
@@ -4402,6 +4435,9 @@ WORKTREE="$TMP_ROOT/product"
 WORKTREE_ADDED=1
 PROOF_COMPLETE=1
 TRANSCRIPT_RECORDS=10
+EXPECTED_RECORDS=10
+NODE_ID=P0-EVIDENCE-000
+ASSIGNMENT=EVID+CP+GZ
 P=1111111111111111111111111111111111111111
 T=2222222222222222222222222222222222222222
 R=3333333333333333333333333333333333333333333333333333333333333333
@@ -4683,7 +4719,7 @@ exec "$REAL_UV" "$@"
                 check=True,
             ).stdout
             completed = subprocess.run(
-                ["scripts/evidence/prove_clean_sibling", product],
+                ["scripts/evidence/prove_clean_sibling", "P0-EVIDENCE-000", product],
                 cwd=candidate,
                 env=env,
                 text=True,
