@@ -38,6 +38,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  REVIEWED_PNPM_SELECTOR: 'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -51,15 +54,26 @@ jobs:
           persist-credentials: false
           submodules: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-        with:
-          package_json_file: acgi-ai/package.json
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.18.0'
-          cache: pnpm
-          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Activate integrity-verified pnpm
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.versions.node')" = '24.18.0'
+          test "$(node -p "require('./package.json').packageManager")" = "$REVIEWED_PNPM_SELECTOR"
+          corepack_root="$RUNNER_TEMP/acgs-corepack"
+          rm -rf "$corepack_root"
+          install -d -m 0700 "$corepack_root/home" "$corepack_root/bin"
+          export COREPACK_HOME="$corepack_root/home"
+          corepack enable --install-directory "$corepack_root/bin"
+          export PATH="$corepack_root/bin:$PATH"
+          test "$(corepack pnpm --version)" = '9.15.4'
+          test "$(pnpm --version)" = '9.15.4'
+          test "$(command -v pnpm)" = "$corepack_root/bin/pnpm"
+          printf 'COREPACK_HOME=%s\n' "$COREPACK_HOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$corepack_root/bin" >> "$GITHUB_PATH"
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile --ignore-workspace

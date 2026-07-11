@@ -43,6 +43,9 @@ concurrency:
 
 permissions: {}
 
+env:
+  REVIEWED_PNPM_SELECTOR: 'pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
+
 defaults:
   run:
     working-directory: acgi-ai
@@ -59,15 +62,27 @@ jobs:
           persist-credentials: false
           submodules: false
 
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
-        with:
-          package_json_file: acgi-ai/package.json
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.18.0'
-          cache: pnpm
-          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Activate integrity-verified pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p 'process.versions.node')" = '24.18.0'
+          test "$(node -p "require('./package.json').packageManager")" = "$REVIEWED_PNPM_SELECTOR"
+          corepack_root="$RUNNER_TEMP/acgs-corepack"
+          rm -rf "$corepack_root"
+          install -d -m 0700 "$corepack_root/home" "$corepack_root/bin"
+          export COREPACK_HOME="$corepack_root/home"
+          corepack enable --install-directory "$corepack_root/bin"
+          export PATH="$corepack_root/bin:$PATH"
+          test "$(corepack pnpm --version)" = '9.15.4'
+          test "$(pnpm --version)" = '9.15.4'
+          test "$(command -v pnpm)" = "$corepack_root/bin/pnpm"
+          printf 'COREPACK_HOME=%s\n' "$COREPACK_HOME" >> "$GITHUB_ENV"
+          printf '%s\n' "$corepack_root/bin" >> "$GITHUB_PATH"
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile --ignore-workspace
@@ -97,8 +112,36 @@ jobs:
           path: acgi-ai/dist
           if-no-files-found: error
 
-  publish:
+  # Set CONSOLE_PRODUCTION_APPROVED_SHA on the production environment to the
+  # exact 40-hex commit to authorize. This job checks no repository code and
+  # receives no token, OIDC, or secret authority. An unset, malformed, stale,
+  # or different value keeps verification green while all side effects skip.
+  authorize:
     needs: verify
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: production
+    outputs:
+      approved: ${{ steps.commit_authorization.outputs.approved }}
+    steps:
+      - name: Authorize exact console production commit
+        id: commit_authorization
+        env:
+          APPROVED_SHA: ${{ vars.CONSOLE_PRODUCTION_APPROVED_SHA }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ && "$APPROVED_SHA" == "$CANDIDATE_SHA" ]]; then
+            echo 'approved=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'approved=false' >> "$GITHUB_OUTPUT"
+          echo '::notice::Console production skipped: set production environment variable CONSOLE_PRODUCTION_APPROVED_SHA to this exact commit, then rerun.'
+
+  publish:
+    needs: [verify, authorize]
+    if: needs.authorize.outputs.approved == 'true'
     permissions:
       contents: read
       id-token: write
@@ -152,7 +195,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    needs: [verify, publish]
+    needs: [verify, authorize, publish]
+    if: needs.authorize.outputs.approved == 'true' && needs.publish.result == 'success'
     permissions:
       contents: read
       id-token: write
