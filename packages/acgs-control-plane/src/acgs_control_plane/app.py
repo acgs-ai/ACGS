@@ -22,6 +22,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from gove_zone.policy import RuleSetPolicy
+from gove_zone.tool import ToolCall, normalize_path_context
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -42,8 +43,9 @@ from acgs_control_plane.governance import (
     PostureBlocker,
     ProductionPostureBlocked,
     existing_org_audit_store,
+    load_active_policy,
     production_blockers,
-    reconcile_route_contracts,
+    reconcile_http_routes,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -183,6 +185,7 @@ def create_app(
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
     # protocol Route types are intentionally outside this HTTP contract.
     from fastapi.routing import APIRoute
+    from starlette.routing import Route
 
     actual = tuple(
         (method, route.path)
@@ -190,7 +193,13 @@ def create_app(
         if isinstance(route, APIRoute)
         for method in sorted(route.methods or ())
     )
-    drift = reconcile_route_contracts(actual)
+    protocol = tuple(
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, Route) and not isinstance(route, APIRoute)
+        for method in sorted(route.methods or ())
+    )
+    drift = reconcile_http_routes(actual, protocol)
     if drift:
         raise ProductionPostureBlocked(drift)
     if settings.runtime_posture is None:
@@ -595,19 +604,18 @@ def _register_routes(app: FastAPI) -> None:
     def simulate(
         body: SimulateRequest,
         org: OrgDep,
-        request: Request,
         session: SessionDep,
-        principal: Annotated[Principal, require(Permission.POLICY_SIMULATE)],
+        _principal: Annotated[Principal, require(Permission.POLICY_SIMULATE)],
     ) -> SimulateResponse:
-        membrane = _membrane(request, session, org, principal)
-        record = membrane.simulate_decision(
-            body.tool,
-            body.args,
+        call = ToolCall(
+            name=body.tool,
+            args=dict(body.args),
             actor=body.actor,
             goal=body.goal,
-            path=body.path,
-            state=body.state,
+            path=normalize_path_context(list(body.path)),
+            state=dict(body.state),
         )
+        record = load_active_policy(session, org.id).evaluate(call)
         return SimulateResponse(
             decision=record.decision.value,
             reason=record.reason,

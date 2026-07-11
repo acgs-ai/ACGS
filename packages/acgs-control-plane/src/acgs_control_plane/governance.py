@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
@@ -97,6 +100,16 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         for m, p, a in _LEGACY_WRITES
     ),
 )
+FRAMEWORK_PROTOCOL_ROUTES: tuple[tuple[str, str], ...] = (
+    ("GET", "/docs"),
+    ("HEAD", "/docs"),
+    ("GET", "/docs/oauth2-redirect"),
+    ("HEAD", "/docs/oauth2-redirect"),
+    ("GET", "/openapi.json"),
+    ("HEAD", "/openapi.json"),
+    ("GET", "/redoc"),
+    ("HEAD", "/redoc"),
+)
 
 
 @dataclass(frozen=True, order=True)
@@ -121,7 +134,6 @@ class ProductionPostureBlocked(RuntimeError):
 
     def __init__(self, blockers: Sequence[PostureBlocker]) -> None:
         self.blockers = tuple(sorted(blockers))
-        self.contract: Any | None = None
         super().__init__(
             json.dumps(
                 {
@@ -149,31 +161,28 @@ def reconcile_route_contracts(actual: Sequence[tuple[str, str]]) -> tuple[Postur
     return tuple(blockers)
 
 
+def reconcile_http_routes(
+    actual_application: Sequence[tuple[str, str]],
+    actual_protocol: Sequence[tuple[str, str]],
+) -> tuple[PostureBlocker, ...]:
+    blockers = list(reconcile_route_contracts(actual_application))
+    for key in sorted(set(actual_protocol) | set(FRAMEWORK_PROTOCOL_ROUTES)):
+        if actual_protocol.count(key) != 1 or FRAMEWORK_PROTOCOL_ROUTES.count(key) != 1:
+            blockers.append(
+                PostureBlocker("UNCLASSIFIED_HTTP_ROUTE", "route-registry", f"{key[0]} {key[1]}")
+            )
+    return tuple(sorted(blockers))
+
+
 class ProviderPreflight(Protocol):
-    def preflight(self) -> SealedProviderStatus: ...
-
-
-_PROVIDER_SEAL = object()
-
-
-@dataclass(frozen=True)
-class SealedProviderStatus:
-    component: str
-    ready: bool
-    _seal: object
-
-    @classmethod
-    def from_provider(cls, component: str, ready: bool) -> SealedProviderStatus:
-        return cls(component, ready, _PROVIDER_SEAL)
-
-    def __post_init__(self) -> None:
-        if self._seal is not _PROVIDER_SEAL:
-            raise ValueError("provider status must be issued by the server provider boundary")
+    def preflight(self) -> object: ...
 
 
 def production_blockers(
     route_drift: Sequence[PostureBlocker], providers: Sequence[ProviderPreflight] = ()
 ) -> tuple[PostureBlocker, ...]:
+    """Return blockers without invoking providers while legacy writes exist."""
+    del providers
     blockers = list(route_drift)
     legacy = [
         PostureBlocker(
@@ -186,22 +195,17 @@ def production_blockers(
         if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
     blockers.extend(legacy)
-    required = {"signer-issuer", "trust-verifier", "durable-consumption-uow", "migration-head"}
-    if legacy:
-        # Do not cross provider boundaries while a local invariant already
-        # proves production impossible. This is a pre-persistence short circuit.
-        blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in sorted(required))
-        return tuple(sorted(blockers))
-    statuses = [p.preflight() for p in providers]
-    ready = {s.component for s in statuses if s.ready and s._seal is _PROVIDER_SEAL}
-    blockers.extend(PostureBlocker("PROVIDER_NOT_READY", c) for c in sorted(required - ready))
+    required = ("durable-consumption-uow", "migration-head", "signer-issuer", "trust-verifier")
+    blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in required)
     return tuple(sorted(blockers))
 
 
-_CONTEXT_SEAL = object()
+_CONTEXT_CAPABILITY = object()
+_BUNDLE_CAPABILITY = object()
+_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class AuthenticatedRuntimeContext:
     actor: str
     tenant: str
@@ -210,33 +214,39 @@ class AuthenticatedRuntimeContext:
     authentication_method: str
     authority_domain: str
     validated_at: str
-    _seal: object
 
-    @classmethod
-    def from_server_provider(cls, **bindings: str) -> AuthenticatedRuntimeContext:
-        return cls(**bindings, _seal=_CONTEXT_SEAL)
+    def __init__(self, capability: object, **bindings: str) -> None:
+        if capability is not _CONTEXT_CAPABILITY:
+            raise TypeError("server authentication capability required")
+        names = {
+            "actor",
+            "tenant",
+            "project",
+            "environment",
+            "authentication_method",
+            "authority_domain",
+            "validated_at",
+        }
+        if set(bindings) != names or any(
+            not isinstance(bindings[n], str) or not bindings[n].strip() for n in names
+        ):
+            raise ValueError("complete nonempty authenticated context required")
+        for name in names:
+            object.__setattr__(self, name, bindings[name])
+        _parse_utc(bindings["validated_at"])
+        for name in names - {"validated_at"}:
+            if not _IDENTIFIER.fullmatch(bindings[name]):
+                raise ValueError(f"invalid context identifier: {name}")
 
-    def __post_init__(self) -> None:
-        if self._seal is not _CONTEXT_SEAL:
-            raise ValueError("runtime context must be issued by server authentication")
+
+def _issue_authenticated_runtime_context(**bindings: str) -> AuthenticatedRuntimeContext:
+    """Server-only factory; HTTP bodies never reach this boundary."""
+    return AuthenticatedRuntimeContext(_CONTEXT_CAPABILITY, **bindings)
 
 
-def _freeze(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return MappingProxyType({str(k): _freeze(v) for k, v in sorted(value.items())})
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze(v) for v in value)
-    return value
-
-
-@dataclass(frozen=True)
-class ManagedMutationContract:
-    contract: str
-    action: str
-    execution_boundary: str
+@dataclass(frozen=True, init=False)
+class ServerManagedBundle:
     context: AuthenticatedRuntimeContext
-    canonical_arguments: Mapping[str, Any]
-    argument_hash: str
     authority: str
     validator: str
     policy_id: str
@@ -247,111 +257,156 @@ class ManagedMutationContract:
     key_id: str
     audit_anchor: str
     idempotency_key: str
+
+    def __init__(self, capability: object, **values: Any) -> None:
+        if capability is not _BUNDLE_CAPABILITY:
+            raise TypeError("server bundle capability required")
+        context = values.pop("context", None)
+        if not isinstance(context, AuthenticatedRuntimeContext):
+            raise TypeError("authenticated runtime context required")
+        names = {
+            "authority",
+            "validator",
+            "policy_id",
+            "policy_version",
+            "policy_hash",
+            "issued_at",
+            "expires_at",
+            "key_id",
+            "audit_anchor",
+            "idempotency_key",
+        }
+        if set(values) != names or any(
+            not isinstance(values[n], str) or not values[n].strip() for n in names
+        ):
+            raise ValueError("complete nonempty server bundle required")
+        if values["authority"] == values["validator"]:
+            raise ValueError("authority and validator must be distinct")
+        for name in names - {"policy_hash", "audit_anchor", "issued_at", "expires_at"}:
+            if not _IDENTIFIER.fullmatch(values[name]):
+                raise ValueError(f"invalid server identifier: {name}")
+        for name in ("policy_hash", "audit_anchor"):
+            if len(values[name]) != 64 or any(c not in "0123456789abcdef" for c in values[name]):
+                raise ValueError(f"{name} must be lowercase SHA-256")
+        issued = _parse_utc(values["issued_at"])
+        expires = _parse_utc(values["expires_at"])
+        lifetime = (expires - issued).total_seconds()
+        if lifetime <= 0 or lifetime > 300:
+            raise ValueError("expiry must be after issuance and bounded to 300 seconds")
+        object.__setattr__(self, "context", context)
+        for name in names:
+            object.__setattr__(self, name, values[name])
+
+
+def _parse_utc(value: str) -> datetime:
+    if not value.endswith("Z"):
+        raise ValueError("timestamp must be UTC Z form")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ValueError("invalid UTC timestamp") from exc
+    if parsed.utcoffset() != timedelta(0):
+        raise ValueError("timestamp must be UTC")
+    return parsed
+
+
+def _issue_server_managed_bundle(
+    *, context: AuthenticatedRuntimeContext, **bindings: str
+) -> ServerManagedBundle:
+    """Assemble the exact closed server bundle; no provider callback is retained."""
+    return ServerManagedBundle(_BUNDLE_CAPABILITY, context=context, **bindings)
+
+
+def _canonical_json_subset(value: Any) -> bytes:
+    """Canonical strict JSON subset: string keys, no floats, compact sorted UTF-8."""
+
+    def validate(item: Any) -> None:
+        if item is None or isinstance(item, (str, bool, int)):
+            return
+        if isinstance(item, list):
+            for child in item:
+                validate(child)
+            return
+        if isinstance(item, dict):
+            if any(not isinstance(key, str) for key in item):
+                raise ValueError("canonical JSON object keys must be strings")
+            for child in item.values():
+                validate(child)
+            return
+        raise ValueError("canonical JSON subset rejects floats and non-JSON values")
+
+    validate(value)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+def _immutable_snapshot(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _immutable_snapshot(child) for key, child in value.items()})
+    if isinstance(value, list):
+        return tuple(_immutable_snapshot(child) for child in value)
+    return value
+
+
+@dataclass(frozen=True)
+class ManagedMutationContract:
+    contract: str
+    action: str
+    execution_boundary: str
+    argument_hash: str
+    canonical_arguments: Mapping[str, Any]
     canonical_path_enabled: bool = False
 
 
-_FORBIDDEN_BODY_BINDINGS = frozenset(
-    {
-        "actor",
-        "tenant",
-        "org_id",
-        "project",
-        "environment",
-        "authority",
-        "validator",
-        "policy_id",
-        "policy_version",
-        "policy_hash",
-        "execution_boundary",
-        "idempotency_key",
-    }
-)
+_CLIENT_BODY_FIELDS = {
+    "tenant.bootstrap/v1": frozenset({"display_name", "admin_name", "admin_email"}),
+    "agent.register/v1": frozenset({"name", "description", "configuration"}),
+}
+_CONTRACT_ACTIONS = {
+    "tenant.bootstrap/v1": ("tenant.bootstrap", "control-plane:tenant.bootstrap/v1"),
+    "agent.register/v1": ("agent.register", "control-plane:agent.register/v1"),
+}
 
 
 def managed_contract_stub(
-    contract: str,
-    body: Mapping[str, Any],
-    context: AuthenticatedRuntimeContext,
-    *,
-    providers: Sequence[ProviderPreflight],
-    bindings: Mapping[str, str],
-    decision: str,
-    mutation: Callable[[], Any] | None = None,
-) -> ManagedMutationContract:
-    if not isinstance(context, AuthenticatedRuntimeContext) or context._seal is not _CONTEXT_SEAL:
-        raise TypeError("typed authenticated runtime context required")
-    forbidden = sorted(_FORBIDDEN_BODY_BINDINGS & body.keys())
-    if forbidden:
-        raise ValueError(f"caller-controlled server bindings: {','.join(forbidden)}")
-    statuses = [p.preflight() for p in providers]
-    required_provider_components = {
-        "signer-issuer",
-        "trust-verifier",
-        "durable-consumption-uow",
-        "migration-head",
-    }
-    ready_components = {
-        status.component for status in statuses if status.ready and status._seal is _PROVIDER_SEAL
-    }
-    if ready_components != required_provider_components:
-        raise RuntimeError("trusted providers not ready")
-    if decision not in {"ALLOW", "DENY", "ESCALATE"}:
-        raise ValueError("unknown decision")
-    frozen = _freeze(body)
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    actions = {
-        "tenant.bootstrap/v1": ("tenant.bootstrap", "control-plane:tenant.bootstrap/v1"),
-        "agent.register/v1": ("agent.register", "control-plane:agent.register/v1"),
-    }
-    if contract not in actions:
+    contract: str, body: Mapping[str, Any], bundle: ServerManagedBundle, *, decision: str
+) -> None:
+    """Validate the inert contract and always stop without callbacks or retained arguments."""
+    if contract not in _CONTRACT_ACTIONS:
         raise ValueError("unknown managed contract")
-    action, boundary = actions[contract]
-    required_bindings = {
-        "authority",
-        "validator",
-        "policy_id",
-        "policy_version",
-        "policy_hash",
-        "issued_at",
-        "expires_at",
-        "key_id",
-        "audit_anchor",
-        "idempotency_key",
-    }
-    missing = sorted(required_bindings - bindings.keys())
-    if missing:
-        raise ValueError(f"missing server bindings: {','.join(missing)}")
-    shape = ManagedMutationContract(
-        contract=contract,
-        action=action,
-        execution_boundary=boundary,
-        context=context,
-        canonical_arguments=frozen,
-        argument_hash=hashlib.sha256(canonical.encode()).hexdigest(),
-        authority=bindings["authority"],
-        validator=bindings["validator"],
-        policy_id=bindings["policy_id"],
-        policy_version=bindings["policy_version"],
-        policy_hash=bindings["policy_hash"],
-        issued_at=bindings["issued_at"],
-        expires_at=bindings["expires_at"],
-        key_id=bindings["key_id"],
-        audit_anchor=bindings["audit_anchor"],
-        idempotency_key=bindings["idempotency_key"],
+    if not isinstance(bundle, ServerManagedBundle):
+        raise TypeError("closed server bundle required")
+    if not isinstance(body, dict):
+        raise TypeError("plain JSON object body required")
+    extra = sorted(set(body) - _CLIENT_BODY_FIELDS[contract])
+    if extra:
+        raise ValueError(f"caller-controlled or unknown fields: {','.join(extra)}")
+    canonical = _canonical_json_subset(body)
+    # Hash and snapshot come from the exact same bytes; nothing is retained on refusal.
+    snapshot = json.loads(canonical)
+    action, boundary = _CONTRACT_ACTIONS[contract]
+    _ = ManagedMutationContract(
+        contract,
+        action,
+        boundary,
+        hashlib.sha256(canonical).hexdigest(),
+        _immutable_snapshot(snapshot),
     )
-    del mutation
-    # DENY, ESCALATE, and even apparently valid ALLOW stop here. P1/P2 own execution.
-    error = ProductionPostureBlocked(
+    codes = {
+        "DENY": "MANAGED_DECISION_DENIED",
+        "ESCALATE": "MANAGED_DECISION_ESCALATED",
+        "ALLOW": "CANONICAL_PATH_NOT_ENABLED",
+    }
+    if decision not in codes:
+        raise ValueError("unknown decision")
+    raise ProductionPostureBlocked(
         (
             PostureBlocker(
-                "CANONICAL_PATH_NOT_ENABLED",
+                codes[decision],
                 contract,
                 execution_class=ExecutionClass.CANONICAL_MANAGED_WRITE.value,
             ),
         )
     )
-    error.contract = shape
-    raise error
 
 
 def baseline_policy() -> RuleSetPolicy:
@@ -384,15 +439,34 @@ def load_active_policy(session: Session, org_id: str) -> Policy:
 
 
 def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
+        raise ValueError("invalid audit organization identifier")
+    if audit_dir.is_symlink():
+        raise ValueError("audit root symlinks are forbidden")
     audit_dir.mkdir(parents=True, exist_ok=True)
-    return ChainHashAuditStore(audit_dir / f"{org_id}.audit.jsonl")
+    path = audit_dir / f"{org_id}.audit.jsonl"
+    if path.is_symlink() or path.parent.resolve() != audit_dir.resolve():
+        raise ValueError("audit path must be a contained regular path")
+    if path.exists() and not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("audit path must be a regular file")
+    return ChainHashAuditStore(path)
 
 
 def existing_org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore | None:
     """Open an existing chain for reads without creating directories or files."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
+        raise ValueError("invalid audit organization identifier")
+    if audit_dir.is_symlink():
+        raise ValueError("audit root symlinks are forbidden")
     path = audit_dir / f"{org_id}.audit.jsonl"
+    if path.is_symlink():
+        raise ValueError("audit file symlinks are forbidden")
     if not path.is_file():
         return None
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("audit path must be a regular file")
+    if path.parent.resolve() != audit_dir.resolve():
+        raise ValueError("audit path escaped configured root")
     return ChainHashAuditStore(path)
 
 
