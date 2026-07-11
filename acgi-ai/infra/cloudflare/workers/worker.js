@@ -12,6 +12,12 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
+    // Protocol before host: hstspreload.org requires http://<host> to 301 to
+    // https on the SAME host first (zone-level "Always Use HTTPS" is off).
+    if (url.protocol === 'http:') {
+      url.protocol = 'https:'
+      return Response.redirect(url.toString(), 301)
+    }
     if (url.hostname === 'www.acgs.ai') {
       url.hostname = 'acgs.ai'
       return Response.redirect(url.toString(), 301)
