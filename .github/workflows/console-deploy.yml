@@ -1,0 +1,229 @@
+# Console production publication and Cloud Run deployment.
+#
+# This workflow has no pull_request trigger. It independently verifies the exact
+# master commit before entering production-environment jobs. Only jobs that call
+# Google WIF receive OIDC token-minting authority.
+
+name: console-deploy
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'acgi-ai/src/**'
+      - 'acgi-ai/public/**'
+      - 'acgi-ai/index.html'
+      - 'acgi-ai/package.json'
+      - 'acgi-ai/pnpm-lock.yaml'
+      - 'acgi-ai/pnpm-workspace.yaml'
+      - 'acgi-ai/scripts/**'
+      - 'acgi-ai/contracts/**'
+      - 'acgi-ai/tests/**'
+      - 'acgi-ai/playwright.config.ts'
+      - 'acgi-ai/vite.config.ts'
+      - 'acgi-ai/tsconfig*.json'
+      - 'acgi-ai/infra/**'
+      - 'acgi-ai/DEPLOY.md'
+      - 'acgi-ai/PRODUCTION-LAUNCH.md'
+      - 'acgi-ai/production-authority.example.json'
+      - 'acgi-ai/production-evidence.example.json'
+      - 'acgi-ai/hosted-storybook-proof.example.json'
+      - 'acgi-ai/storybook-runtime.plan.json'
+      - 'acgi-ai/A11Y.md'
+      - 'acgi-ai/ARCHITECTURE.md'
+      - 'acgi-ai/INTEGRATING.md'
+      - 'acgi-ai/GETTING_STARTED.md'
+      - 'docs/integration-readiness-task-map.md'
+      - '.github/workflows/console.yml'
+      - '.github/workflows/console-deploy.yml'
+
+concurrency:
+  group: console-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+defaults:
+  run:
+    working-directory: acgi-ai
+
+jobs:
+  verify:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          package_json_file: acgi-ai/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+          cache: pnpm
+          cache-dependency-path: acgi-ai/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Gate 1 - lint
+        run: pnpm lint
+
+      - name: Gate 2 - build
+        run: pnpm build
+
+      - name: Gate 3 - readiness
+        run: pnpm test:all
+
+      - name: Gate 4 - unit suite
+        run: pnpm test:unit
+
+      - name: Gate 5 - browser suite
+        run: pnpm test:playwright
+
+      - name: Upload verified console artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - id: auth
+        name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Configure Artifact Registry authentication
+        env:
+          ARTIFACT_REGISTRY: ${{ secrets.GCP_ARTIFACT_REGISTRY }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_REGISTRY"
+          gcloud auth configure-docker "${ARTIFACT_REGISTRY%%/*}" --quiet
+
+      - name: Compute immutable image URI
+        id: image
+        env:
+          ARTIFACT_REGISTRY: ${{ secrets.GCP_ARTIFACT_REGISTRY }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_REGISTRY"
+          printf 'uri=%s/acgi-console:%s\n' "$ARTIFACT_REGISTRY" "${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build and publish console image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: acgi-ai
+          file: acgi-ai/infra/Dockerfile.console
+          push: true
+          tags: ${{ steps.image.outputs.uri }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [verify, publish]
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+          submodules: false
+
+      - name: Download verified console artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: console-dist
+          path: acgi-ai/dist
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.18.0'
+
+      - id: auth
+        name: Authenticate to GCP with Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Render reviewed Cloud Run service
+        env:
+          DEPLOY_ENV: production
+          AUTH_UPSTREAM: ${{ secrets.CONSOLE_AUTH_UPSTREAM }}
+          BUS_UPSTREAM: ${{ secrets.CONSOLE_BUS_UPSTREAM }}
+          IMAGE_URI: ${{ needs.publish.outputs.image }}
+        run: |
+          set -euo pipefail
+          test -n "$AUTH_UPSTREAM"
+          test -n "$BUS_UPSTREAM"
+          test -n "$IMAGE_URI"
+          node scripts/render-cloudrun-service.mjs \
+            --env "$DEPLOY_ENV" \
+            --image "$IMAGE_URI" \
+            --build-id "${GITHUB_SHA::12}" \
+            --auth-upstream "$AUTH_UPSTREAM" \
+            --bus-upstream "$BUS_UPSTREAM" \
+            --out infra/cloudrun/service.yaml
+
+      - name: Deploy to Cloud Run
+        env:
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$GCP_REGION"
+          test -n "$GCP_PROJECT_ID"
+          gcloud run services replace infra/cloudrun/service.yaml \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID"
+
+      - name: Verify deployed console
+        env:
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe acgi-console \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT_ID" \
+            --format='value(status.url)')"
+          test -n "$URL"
+          EXPECTED_BUILD_ID="${GITHUB_SHA::12}" bash scripts/postdeploy-verify.sh "$URL"

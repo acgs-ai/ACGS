@@ -1,13 +1,13 @@
-# Buyer-evidence gallery verification — no Pages deployment authority.
+# Push-only GitHub Pages publication for the buyer-evidence gallery.
 #
-# This dependency-free gallery is intentionally routed as Storybook but is not
-# evidence that the official Storybook runtime is installed. Push-only Pages
-# publication is isolated in storybook-deploy.yml.
+# The build job is read-only. Only the deploy job receives Pages and OIDC
+# authority, and GitHub's github-pages environment remains the approval/audit
+# boundary. This is not proof that the official Storybook runtime is installed.
 
-name: buyer-evidence-storybook
+name: buyer-evidence-storybook-deploy
 
 on:
-  pull_request:
+  push:
     branches: [master]
     paths:
       - 'acgi-ai/package.json'
@@ -32,14 +32,15 @@ on:
       - '.github/workflows/storybook-deploy.yml'
 
 concurrency:
-  group: buyer-evidence-storybook-${{ github.ref }}
-  cancel-in-progress: true
+  group: buyer-evidence-storybook-deploy-${{ github.ref }}
+  cancel-in-progress: false
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -72,14 +73,26 @@ jobs:
           pnpm test:hosted-storybook-proof-template &&
           pnpm test:hosted-storybook-proof-gap-report
 
-      - name: Build buyer evidence Storybook artifact
+      - name: Build Pages artifact
         env:
           ACGI_EVIDENCE_CNAME: storybook.acgs.ai
         run: pnpm storybook:build
 
-      - name: Upload buyer evidence Storybook artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
-          name: buyer-evidence-storybook
           path: acgi-ai/dist-buyer-evidence
-          if-no-files-found: error
+
+  deploy-pages:
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: https://storybook.acgs.ai
+    steps:
+      - name: Deploy buyer evidence Storybook to Pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
