@@ -5,9 +5,12 @@
 # Worker routes shadow Pages. This config is what marketing-cloudflare.yml
 # deploys with (`wrangler deploy --config infra/cloudflare/workers/wrangler.toml`).
 #
-# Deliberately NO `routes` block: the production routes (acgs.ai/*,
-# www.acgs.ai/*, console.acgs.ai/*, api.acgs.ai/telegram/*) are owned in the
-# Cloudflare dashboard; deploying without a routes block leaves them untouched.
+# Routes are pinned HERE, not the dashboard. INCIDENT 2026-07-11: deploying
+# with this config and no routes block DETACHED the dashboard routes (wrangler
+# treats config triggers as source of truth when workers_dev = false) and
+# 404'd the whole apex until routes were redeclared. Never remove this block;
+# `--name`-style CLI deploys without a config preserve routes, config deploys
+# do not.
 #
 # The deploy step stages infra/cloudflare/_headers and
 # infra/cloudflare/workers/_redirects (Workers-compatible variant) into dist/
@@ -18,6 +21,12 @@ name = "acgs-governance-proxy"
 main = "worker.js"
 compatibility_date = "2026-06-14"
 workers_dev = false
+routes = [
+  { pattern = "acgs.ai/*", zone_name = "acgs.ai" },
+  { pattern = "www.acgs.ai/*", zone_name = "acgs.ai" },
+  { pattern = "console.acgs.ai/*", zone_name = "acgs.ai" },
+  { pattern = "api.acgs.ai/telegram/*", zone_name = "acgs.ai" },
+]
 
 [assets]
 directory = "../../../dist"
