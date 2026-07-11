@@ -106,6 +106,47 @@ jobs:
           --cov-fail-under=100
           -q
 
+  cross-platform-lock:
+    # Cross-platform proof for the stdlib audit-lock branch (POSIX ``fcntl`` /
+    # Windows ``msvcrt``) and the OS-agnostic concurrent-writer test. The
+    # self-hosted `test` job above is Linux-only and owns lint + the 90%
+    # coverage floor; this job runs on GitHub-hosted macOS and Windows so the
+    # Windows ``msvcrt`` lock branch — unreachable on the Linux runner — is
+    # actually exercised. No coverage floor here: platform-specific branches
+    # make a shared floor meaningless off the Linux+crypto reference runner.
+    #
+    # Same fork-guard as the Linux job: never run untrusted fork-PR code.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+      - name: Test (cross-platform audit lock + concurrent writers)
+        # `shell: bash` on every OS (Git Bash on the Windows runner) so one
+        # script works everywhere; the venv interpreter lives at .venv/bin on
+        # POSIX and .venv/Scripts on Windows, resolved below. Standalone install
+        # (no `uv sync`) mirrors the Linux job: gove-zone is a first-class
+        # in-tree package with zero runtime deps, so no submodule init or
+        # workspace resolution is needed. dev+crypto extras match the local
+        # validation command; the concurrent test launches subprocess writers
+        # that exercise THIS platform's real audit-lock branch.
+        shell: bash
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          VENV_PY="$([ -x .venv/bin/python ] && echo .venv/bin/python || echo .venv/Scripts/python.exe)"
+          uv pip install --python "$VENV_PY" --no-config --editable '.[dev,crypto]'
+          "$VENV_PY" -m pytest tests/test_audit_chain.py tests/test_locking_reexport.py -v --import-mode=importlib
+
   wheel-smoke:
     # Release-readiness gate (G1.1): build the wheel, install it ALONE into a
     # throwaway venv (no extras, no --editable), and prove `gove-zone smoke`

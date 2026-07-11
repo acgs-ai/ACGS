@@ -4,9 +4,11 @@ Ported from ``acgs_governance_eval_mvp/governance/audit/jsonl_chain.py``.
 Process-safe via a standard-library file lock: ``fcntl.flock`` on POSIX and
 ``msvcrt.locking`` on Windows. Importing the package requires neither; the lock
 primitive is resolved lazily at append time. A host exposing neither primitive
-fails closed at append rather than writing without serialization. The POSIX
-path is exercised by ``test_concurrent_appends_preserve_chain_integrity``; the
-Windows path uses stdlib ``msvcrt`` and is not exercised on POSIX CI.
+fails closed at append rather than writing without serialization. Both paths
+are exercised by ``test_concurrent_appends_preserve_chain_integrity``, which
+launches writers in separate OS processes so the POSIX ``fcntl`` branch runs
+on the Linux/macOS CI legs and the Windows ``msvcrt`` branch runs on the
+Windows CI leg.
 
 Chain rules:
 
