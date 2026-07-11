@@ -25,7 +25,7 @@ class PolicyStressSimulator:
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "PolicyStressSimulator requires the optional gove-zone integration. "
-                "Install gove-zone to use stress_test_tool."
+                "Install it with: pip install gove-zone."
             ) from exc
 
         for idx, mutation in enumerate(mutations):
