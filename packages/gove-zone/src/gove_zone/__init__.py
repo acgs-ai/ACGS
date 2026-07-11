@@ -191,7 +191,7 @@ from gove_zone.yaml_policy import YAMLPolicy, YAMLRiskTierPolicy
 try:
     __version__ = _metadata.version("gove-zone")
 except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
-    __version__ = "0.1.0a1"
+    __version__ = "1.0.0rc1"
 
 __all__ = [
     "GENESIS_HASH",
