@@ -35,9 +35,9 @@ def _gate_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path]:
     ambient_calls = tmp_path / "ambient-pnpm-calls"
     ambient_pnpm = fake_bin / "pnpm"
     ambient_pnpm.write_text(
-        """#!/usr/bin/env bash
+        f"""#!/usr/bin/env bash
 set -euo pipefail
-printf 'ambient-pnpm-11\\n' >> "$AMBIENT_CALLS"
+printf 'ambient-pnpm-11\\n' >> {shlex.quote(str(ambient_calls))}
 printf '%s\\n' 11.1.2
 """
     )
@@ -52,8 +52,6 @@ printf '%s\\n' 11.1.2
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
-            "AMBIENT_CALLS": str(ambient_calls),
-            "LAUNCHER_RECORD": str(launcher_record),
             "TMPDIR": str(launcher_parent),
         }
     )
@@ -84,6 +82,17 @@ def _canonical_runtime() -> tuple[Path, Path, Path]:
     fnm = Path(shutil.which("fnm", path=os.environ["PATH"]) or "").resolve(strict=True)
     prefix = fnm.parent / f"node-versions/v{EXPECTED_NODE}/installation"
     return fnm, prefix / "bin/node", prefix / "lib/node_modules/corepack"
+
+
+def _copy_verified_pnpm_cache(destination_home: Path) -> None:
+    source = Path.home() / f".cache/node/corepack/v1/pnpm/{EXPECTED_PNPM}"
+    target = destination_home / f".cache/node/corepack/v1/pnpm/{EXPECTED_PNPM}"
+    assert source.is_dir(), f"reviewed pnpm cache is required for this gate test: {source}"
+    target.parent.mkdir(parents=True)
+    subprocess.run(
+        ["/usr/bin/cp", "-a", "--reflink=auto", f"{source}/.", str(target)],
+        check=True,
+    )
 
 
 def _copy_runtime_with_tampered_corepack(
@@ -140,8 +149,20 @@ def test_node24_gate_script_is_executable_and_fail_closed():
     assert "BASH_ENV ENV NODE_OPTIONS" in source
     assert "NODE_COMPILE_CACHE_PORTABLE" in source
     assert "NODE_DISABLE_COMPILE_CACHE=1" in source
+    assert "/usr/bin/env -i" in source
+    assert 'HOME="$PRIVATE_HOME"' in source
     assert 'TMPDIR="$PRIVATE_TMPDIR"' in source
     assert 'XDG_CACHE_HOME="$PRIVATE_CACHE_HOME"' in source
+    assert 'XDG_CONFIG_HOME="$PRIVATE_CONFIG_HOME"' in source
+    assert 'XDG_DATA_HOME="$PRIVATE_DATA_HOME"' in source
+    assert 'XDG_STATE_HOME="$PRIVATE_STATE_HOME"' in source
+    assert 'NPM_CONFIG_USERCONFIG="$PRIVATE_NPM_USERCONFIG"' in source
+    assert 'NPM_CONFIG_GLOBALCONFIG="$PRIVATE_NPM_GLOBALCONFIG"' in source
+    assert "CI=1" in source
+    assert "SHELL=/bin/sh" in source
+    assert "LANG=C.UTF-8" in source
+    assert "LC_ALL=C.UTF-8" in source
+    assert 'PASSTHROUGH_CHILD_ENV+=("ACGI_EVIDENCE_CNAME=${ACGI_EVIDENCE_CNAME}")' in source
     assert "/usr/bin/python3 -I -" in source
     assert 'run_corepack prepare "pnpm@${EXPECTED_PNPM}" --activate' in source
     assert "validate_runtime" in source
@@ -166,7 +187,7 @@ def test_real_nested_pnpm_uses_private_pinned_corepack_not_host_ambient(
     tmp_path: Path,
 ):
     env, caller, launcher_record, ambient_calls = _gate_env(tmp_path)
-    command = 'command -v pnpm > "$LAUNCHER_RECORD"; pnpm -v'
+    command = f"command -v pnpm > {shlex.quote(str(launcher_record))}; pnpm -v"
 
     result = _run_gate(
         env,
@@ -195,18 +216,17 @@ def test_real_nested_pnpm_uses_private_pinned_corepack_not_host_ambient(
 def test_child_uses_private_temp_cache_and_disables_node_compile_cache(tmp_path: Path):
     env, caller, _, _ = _gate_env(tmp_path)
     record = tmp_path / "isolated-child-env.json"
-    env["CHILD_ENV_RECORD"] = str(record)
-    program = """
+    program = f"""
 const fs = require('node:fs');
 const moduleApi = require('node:module');
 const compileCache = moduleApi.enableCompileCache();
-fs.writeFileSync(process.env.CHILD_ENV_RECORD, JSON.stringify({
+fs.writeFileSync({json.dumps(str(record))}, JSON.stringify({{
   tmpdir: process.env.TMPDIR,
   cacheHome: process.env.XDG_CACHE_HOME,
   disableCompileCache: process.env.NODE_DISABLE_COMPILE_CACHE,
   compileCacheVariable: process.env.NODE_COMPILE_CACHE,
   compileCacheDirectory: compileCache.directory,
-}));
+}}));
 """
 
     result = _run_gate(env, caller, "node", "-e", program)
@@ -226,6 +246,124 @@ fs.writeFileSync(process.env.CHILD_ENV_RECORD, JSON.stringify({
     launcher_parent = Path(env["TMPDIR"])
     assert not (launcher_parent / "node-compile-cache").exists()
     assert list(launcher_parent.iterdir()) == []
+
+
+def test_child_environment_is_allowlisted_private_and_preserves_only_valid_cname(
+    tmp_path: Path,
+):
+    env, caller, _, ambient_calls = _gate_env(tmp_path)
+    record = tmp_path / "clean-child-env.json"
+    env.update(
+        {
+            "ACGI_EVIDENCE_CNAME": "storybook.acgs.ai",
+            "UNRELATED_AMBIENT_SECRET": "must-not-pass",
+            "npm_config_script_shell": "/tmp/ambient-lower-shell",
+            "NPM_CONFIG_SCRIPT_SHELL": "/tmp/ambient-upper-shell",
+            "npm_config_userconfig": "/tmp/ambient-userconfig",
+            "NPM_CONFIG_USERCONFIG": "/tmp/ambient-userconfig-upper",
+            "npm_config_pnpmfile": "/tmp/ambient-pnpmfile.cjs",
+            "NPM_CONFIG_PNPMFILE": "/tmp/ambient-pnpmfile-upper.cjs",
+            "PNPM_HOME": "/tmp/ambient-pnpm-home",
+            "SHELL": "/tmp/ambient-shell",
+            "XDG_CONFIG_HOME": "/tmp/ambient-config",
+        }
+    )
+    program = f"""
+const fs = require('node:fs');
+const userConfig = process.env.NPM_CONFIG_USERCONFIG;
+const globalConfig = process.env.NPM_CONFIG_GLOBALCONFIG;
+fs.writeFileSync({json.dumps(str(record))}, JSON.stringify({{
+  environment: process.env,
+  userConfigContents: fs.readFileSync(userConfig, 'utf8'),
+  globalConfigContents: fs.readFileSync(globalConfig, 'utf8'),
+  userConfigMode: fs.statSync(userConfig).mode & 0o777,
+  globalConfigMode: fs.statSync(globalConfig).mode & 0o777,
+}}));
+"""
+
+    result = _run_gate(env, caller, "node", "-e", program)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(record.read_text())
+    child_env = payload["environment"]
+    expected_keys = {
+        "ACGI_EVIDENCE_CNAME",
+        "CI",
+        "COREPACK_DEFAULT_TO_LATEST",
+        "COREPACK_ENABLE_DOWNLOAD_PROMPT",
+        "COREPACK_ENABLE_PROJECT_SPEC",
+        "COREPACK_ENABLE_STRICT",
+        "COREPACK_ENV_FILE",
+        "COREPACK_HOME",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "NODE_DISABLE_COMPILE_CACHE",
+        "NPM_CONFIG_CACHE",
+        "NPM_CONFIG_GLOBALCONFIG",
+        "NPM_CONFIG_USERCONFIG",
+        "PATH",
+        "PNPM_HOME",
+        "SHELL",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "npm_config_cache",
+        "npm_config_globalconfig",
+        "npm_config_userconfig",
+    }
+    assert set(child_env) == expected_keys
+    assert child_env["ACGI_EVIDENCE_CNAME"] == "storybook.acgs.ai"
+    assert child_env["CI"] == "1"
+    assert child_env["LANG"] == child_env["LC_ALL"] == "C.UTF-8"
+    assert child_env["SHELL"] == "/bin/sh"
+    assert child_env["NODE_DISABLE_COMPILE_CACHE"] == "1"
+    assert payload["userConfigContents"] == payload["globalConfigContents"] == ""
+    assert payload["userConfigMode"] == payload["globalConfigMode"] == 0o600
+    private_root = Path(child_env["HOME"]).parent
+    assert private_root.name.startswith("acgs-node24-gate.")
+    for key in (
+        "HOME",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "COREPACK_HOME",
+        "NPM_CONFIG_CACHE",
+        "NPM_CONFIG_GLOBALCONFIG",
+        "NPM_CONFIG_USERCONFIG",
+        "PNPM_HOME",
+    ):
+        assert Path(child_env[key]).is_relative_to(private_root), key
+    assert not private_root.exists(), "clean child runtime must be removed"
+    assert not ambient_calls.exists()
+
+
+def test_invalid_evidence_cname_fails_before_child_or_runtime_creation(tmp_path: Path):
+    invalid_values = (
+        "",
+        "Storybook.acgs.ai",
+        "https://storybook.acgs.ai",
+        "storybook.acgs.ai.",
+        "storybook_acgs.ai",
+        "-storybook.acgs.ai",
+        f"{'a' * 64}.acgs.ai",
+    )
+    for index, value in enumerate(invalid_values):
+        case = tmp_path / str(index)
+        case.mkdir()
+        env, caller, _, ambient_calls = _gate_env(case)
+        env["ACGI_EVIDENCE_CNAME"] = value
+
+        result = _run_gate(env, caller, "node", "-e", "process.exit(91)")
+
+        assert result.returncode == 1
+        assert "must be a lowercase DNS hostname" in result.stderr
+        assert not ambient_calls.exists()
+        assert not list(Path(env["TMPDIR"]).glob("acgs-node24-gate.*"))
 
 
 def test_absolute_pnpm_argv0_is_mapped_to_private_launcher(tmp_path: Path):
@@ -252,9 +390,94 @@ def test_node24_gate_preserves_exact_argv_from_arbitrary_caller_cwd(tmp_path: Pa
     assert not ambient_calls.exists()
 
 
+def test_ambient_npm_pnpm_and_shell_configs_execute_zero_marker_side_effects(
+    tmp_path: Path,
+):
+    env, caller, _, ambient_calls = _gate_env(tmp_path)
+    caller_home = tmp_path / "caller-home"
+    _copy_verified_pnpm_cache(caller_home)
+    attack_marker = tmp_path / "ambient-config-executed"
+    safe_marker = tmp_path / "safe-package-script-executed"
+    attack_shell = tmp_path / "attack-script-shell"
+    attack_shell.write_text(
+        f'#!/bin/sh\nprintf attacked > {shlex.quote(str(attack_marker))}\nexec /bin/sh "$@"\n'
+    )
+    attack_shell.chmod(0o700)
+    attack_pnpmfile = tmp_path / "attack-pnpmfile.cjs"
+    attack_pnpmfile.write_text(
+        f"require('node:fs').writeFileSync({json.dumps(str(attack_marker))}, 'attacked');\n"
+        "module.exports = { hooks: { readPackage(pkg) { return pkg; } } };\n"
+    )
+    malicious_config = (
+        f"script-shell={attack_shell}\n"
+        f"pnpmfile={attack_pnpmfile}\n"
+        f"global-pnpmfile={attack_pnpmfile}\n"
+    )
+    (caller_home / ".npmrc").write_text(malicious_config)
+    caller_pnpm_config = caller_home / ".config/pnpm/rc"
+    caller_pnpm_config.parent.mkdir(parents=True)
+    caller_pnpm_config.write_text(malicious_config)
+    explicit_userconfig = tmp_path / "attacker-user-npmrc"
+    explicit_userconfig.write_text(malicious_config)
+    ambient_pnpm_home = tmp_path / "ambient-pnpm-home"
+    ambient_pnpm_home.mkdir()
+    ambient_pnpm = ambient_pnpm_home / "pnpm"
+    ambient_pnpm.write_text(
+        f"#!/bin/sh\nprintf attacked > {shlex.quote(str(attack_marker))}\nexit 99\n"
+    )
+    ambient_pnpm.chmod(0o700)
+
+    package = tmp_path / "probe-package"
+    package.mkdir()
+    safe_program = f"require('node:fs').writeFileSync({json.dumps(str(safe_marker))}, 'safe')"
+    (package / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "clean-env-probe",
+                "version": "1.0.0",
+                "private": True,
+                "scripts": {"probe": f"node -e {shlex.quote(safe_program)}"},
+            }
+        )
+    )
+    env.update(
+        {
+            "HOME": str(caller_home),
+            "XDG_CONFIG_HOME": str(caller_home / ".config"),
+            "SHELL": str(attack_shell),
+            "npm_config_script_shell": str(attack_shell),
+            "NPM_CONFIG_SCRIPT_SHELL": str(attack_shell),
+            "npm_config_userconfig": str(explicit_userconfig),
+            "NPM_CONFIG_USERCONFIG": str(explicit_userconfig),
+            "npm_config_pnpmfile": str(attack_pnpmfile),
+            "NPM_CONFIG_PNPMFILE": str(attack_pnpmfile),
+            "PNPM_HOME": str(ambient_pnpm_home),
+        }
+    )
+
+    run_result = _run_gate(env, caller, "pnpm", "--dir", str(package), "run", "probe")
+    install_result = _run_gate(
+        env,
+        caller,
+        "pnpm",
+        "--dir",
+        str(package),
+        "install",
+        "--lockfile=false",
+        "--ignore-scripts",
+    )
+
+    assert run_result.returncode == 0, run_result.stderr
+    assert install_result.returncode == 0, install_result.stderr
+    assert safe_marker.read_text() == "safe"
+    assert not attack_marker.exists(), "ambient npm/pnpm/shell config executed"
+    assert not ambient_calls.exists(), "ambient pnpm 11 executed"
+    assert list(Path(env["TMPDIR"]).iterdir()) == []
+
+
 def test_launcher_is_cleaned_when_nested_command_fails(tmp_path: Path):
     env, caller, launcher_record, ambient_calls = _gate_env(tmp_path)
-    command = 'command -v pnpm > "$LAUNCHER_RECORD"; exit 47'
+    command = f"command -v pnpm > {shlex.quote(str(launcher_record))}; exit 47"
 
     result = _run_gate(
         env,
@@ -279,18 +502,16 @@ def test_launcher_is_cleaned_when_nested_command_fails(tmp_path: Path):
 def test_term_kills_entire_child_group_and_cleans_launcher(tmp_path: Path):
     env, caller, launcher_record, _ = _gate_env(tmp_path)
     orphan_marker = tmp_path / "orphan-side-effect"
-    env["ORPHAN_MARKER"] = str(orphan_marker)
     child_program = (
         "import os, pathlib, time; time.sleep(0.8); "
-        "pathlib.Path(os.environ['ORPHAN_MARKER']).write_text('orphan-ran')"
+        f"pathlib.Path({str(orphan_marker)!r}).write_text('orphan-ran')"
     )
     parent_program = (
         "import os, pathlib, shutil, subprocess, sys, time; "
-        "subprocess.Popen([sys.executable, '-c', os.environ['CHILD_PROGRAM']]); "
-        "pathlib.Path(os.environ['LAUNCHER_RECORD']).write_text(shutil.which('pnpm')); "
+        f"subprocess.Popen([sys.executable, '-c', {child_program!r}]); "
+        f"pathlib.Path({str(launcher_record)!r}).write_text(shutil.which('pnpm')); "
         "time.sleep(10)"
     )
-    env["CHILD_PROGRAM"] = child_program
     process = subprocess.Popen(
         [str(SCRIPT), "python3", "-c", parent_program],
         cwd=caller,

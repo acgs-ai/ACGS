@@ -25,6 +25,15 @@ REQUIRED_COREPACK_TREE_SHA256="6dc22292849f9e176da87530b3c6e7e871b6d153853905472
 REQUIRED_PNPM_TREE_SHA256="f5024c43f73511fd4405a2af8e5284037c7ce9d740ccbc21b48c82a4372a5e1b"
 REQUIRED_PNPM_SELECTOR='pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0'
 
+# HOME is caller-controlled input. Retain it only long enough to locate an
+# already-cached pnpm tree; that tree is copied only after its full digest is
+# verified. No child receives this value or any other ambient variable.
+CALLER_HOME="${HOME:-}"
+[[ -n "$CALLER_HOME" ]] || {
+  echo "ERROR: HOME must be set to locate the digest-verified pnpm cache." >&2
+  exit 1
+}
+
 fail() {
   echo "ERROR: $*" >&2
   exit 1
@@ -41,6 +50,22 @@ for injection_var in \
   [[ ! -v "$injection_var" ]] ||
     fail "${injection_var} must stay unset; startup and Node injection controls are forbidden"
 done
+[[ ! -v COREPACK_INTEGRITY_KEYS ]] ||
+  fail "COREPACK_INTEGRITY_KEYS must stay unset; integrity bypasses are forbidden"
+unset COREPACK_ROOT
+
+# This is the sole caller-controlled value permitted into the clean child
+# environment. Keep the contract intentionally narrow: an ASCII lowercase DNS
+# hostname with RFC-sized labels, no scheme, port, path, trailing dot, or
+# leading/trailing hyphen.
+PASSTHROUGH_CHILD_ENV=()
+if [[ -v ACGI_EVIDENCE_CNAME ]]; then
+  (( ${#ACGI_EVIDENCE_CNAME} <= 253 )) ||
+    fail "ACGI_EVIDENCE_CNAME must be a lowercase DNS hostname"
+  [[ "$ACGI_EVIDENCE_CNAME" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$ ]] ||
+    fail "ACGI_EVIDENCE_CNAME must be a lowercase DNS hostname"
+  PASSTHROUGH_CHILD_ENV+=("ACGI_EVIDENCE_CNAME=${ACGI_EVIDENCE_CNAME}")
+fi
 
 if ! command -v fnm >/dev/null 2>&1; then
   fail "fnm is required for exact Node ${REQUIRED_NODE_VERSION} identity"
@@ -159,14 +184,6 @@ EXPECTED_PNPM="${EXPECTED_PNPM%%+sha512.*}"
   fail "could not derive pnpm version from the reviewed selector"
 
 cd "$ROOT_DIR"
-[[ ! -v COREPACK_INTEGRITY_KEYS ]] ||
-  fail "COREPACK_INTEGRITY_KEYS must stay unset; integrity bypasses are forbidden"
-unset COREPACK_ROOT
-export COREPACK_DEFAULT_TO_LATEST=0
-export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-export COREPACK_ENABLE_PROJECT_SPEC=1
-export COREPACK_ENABLE_STRICT=1
-export COREPACK_ENV_FILE=0
 
 LAUNCHER_PARENT="${TMPDIR:-/tmp}"
 [[ "$LAUNCHER_PARENT" == /* && -d "$LAUNCHER_PARENT" && ! -L "$LAUNCHER_PARENT" ]] ||
@@ -218,27 +235,62 @@ RUN_DIR="$(/usr/bin/mktemp -d "${LAUNCHER_PARENT_CANONICAL}/acgs-node24-gate.XXX
 [[ "$(/usr/bin/stat -c '%u:%a' -- "$RUN_DIR")" == "${CURRENT_UID}:700" ]] ||
   fail "private runtime must be caller-owned mode 0700"
 
+PRIVATE_HOME="${RUN_DIR}/home"
 PRIVATE_TMPDIR="${RUN_DIR}/tmp"
 PRIVATE_CACHE_HOME="${RUN_DIR}/cache"
-PRIVATE_COREPACK_HOME="${RUN_DIR}/corepack-home"
-/usr/bin/mkdir -m 700 "$PRIVATE_TMPDIR" "$PRIVATE_CACHE_HOME" "$PRIVATE_COREPACK_HOME"
+PRIVATE_CONFIG_HOME="${RUN_DIR}/config"
+PRIVATE_DATA_HOME="${RUN_DIR}/data"
+PRIVATE_STATE_HOME="${RUN_DIR}/state"
+PRIVATE_COREPACK_HOME="${PRIVATE_CACHE_HOME}/corepack"
+PRIVATE_NPM_CACHE="${PRIVATE_CACHE_HOME}/npm"
+PRIVATE_NPM_CONFIG_DIR="${PRIVATE_CONFIG_HOME}/npm"
+PRIVATE_NPM_USERCONFIG="${PRIVATE_NPM_CONFIG_DIR}/user-npmrc"
+PRIVATE_NPM_GLOBALCONFIG="${PRIVATE_NPM_CONFIG_DIR}/global-npmrc"
+PRIVATE_PNPM_HOME="${PRIVATE_DATA_HOME}/pnpm"
+/usr/bin/mkdir -m 700 \
+  "$PRIVATE_HOME" "$PRIVATE_TMPDIR" "$PRIVATE_CACHE_HOME" \
+  "$PRIVATE_CONFIG_HOME" "$PRIVATE_DATA_HOME" "$PRIVATE_STATE_HOME" \
+  "$PRIVATE_COREPACK_HOME" "$PRIVATE_NPM_CACHE" \
+  "$PRIVATE_NPM_CONFIG_DIR" "$PRIVATE_PNPM_HOME"
+: > "$PRIVATE_NPM_USERCONFIG"
+: > "$PRIVATE_NPM_GLOBALCONFIG"
+/usr/bin/chmod 600 "$PRIVATE_NPM_USERCONFIG" "$PRIVATE_NPM_GLOBALCONFIG"
 
-# Every Node, Corepack, pnpm, and final child receives only private temporary
-# and cache paths. Node's compile cache is disabled explicitly because Corepack
-# may enable it through the module API even when NODE_COMPILE_CACHE is unset.
-ISOLATED_CHILD_ENV=(
-  /usr/bin/env
-  -u BASH_ENV -u ENV -u COREPACK_ROOT
-  -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE
-  -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE
-  -u NODE_DISABLE_COMPILE_CACHE
-  NODE_DISABLE_COMPILE_CACHE=1
+# Every Node, Corepack, pnpm, and final child starts from an empty environment.
+# The explicit values below are deterministic and point only into RUN_DIR. Node
+# compile caching is disabled because Corepack may enable it through the module
+# API even when NODE_COMPILE_CACHE itself is absent.
+CLEAN_CHILD_ENV=(
+  /usr/bin/env -i
+  HOME="$PRIVATE_HOME"
   TMPDIR="$PRIVATE_TMPDIR"
   XDG_CACHE_HOME="$PRIVATE_CACHE_HOME"
+  XDG_CONFIG_HOME="$PRIVATE_CONFIG_HOME"
+  XDG_DATA_HOME="$PRIVATE_DATA_HOME"
+  XDG_STATE_HOME="$PRIVATE_STATE_HOME"
+  CI=1
+  LANG=C.UTF-8
+  LC_ALL=C.UTF-8
+  SHELL=/bin/sh
+  NODE_DISABLE_COMPILE_CACHE=1
+  COREPACK_HOME="$PRIVATE_COREPACK_HOME"
+  COREPACK_DEFAULT_TO_LATEST=0
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  COREPACK_ENABLE_PROJECT_SPEC=1
+  COREPACK_ENABLE_STRICT=1
+  COREPACK_ENV_FILE=0
+  NPM_CONFIG_USERCONFIG="$PRIVATE_NPM_USERCONFIG"
+  npm_config_userconfig="$PRIVATE_NPM_USERCONFIG"
+  NPM_CONFIG_GLOBALCONFIG="$PRIVATE_NPM_GLOBALCONFIG"
+  npm_config_globalconfig="$PRIVATE_NPM_GLOBALCONFIG"
+  NPM_CONFIG_CACHE="$PRIVATE_NPM_CACHE"
+  npm_config_cache="$PRIVATE_NPM_CACHE"
+  PNPM_HOME="$PRIVATE_PNPM_HOME"
+  "${PASSTHROUGH_CHILD_ENV[@]}"
 )
 
 NODE_VERSION="$(
-  "${ISOLATED_CHILD_ENV[@]}" PATH="${NODE_BIN_DIR}:/usr/bin:/bin" \
+  "${CLEAN_CHILD_ENV[@]}" PATH="${NODE_BIN_DIR}:/usr/bin:/bin" \
     "$NODE_BIN" -p 'process.versions.node'
 )"
 [[ "$NODE_VERSION" == "$REQUIRED_NODE_VERSION" ]] ||
@@ -263,8 +315,7 @@ validate_private_corepack() {
 }
 run_corepack() {
   validate_private_corepack
-  "${ISOLATED_CHILD_ENV[@]}" \
-    COREPACK_HOME="$PRIVATE_COREPACK_HOME" \
+  "${CLEAN_CHILD_ENV[@]}" \
     PATH="${NODE_BIN_DIR}:/usr/bin:/bin" \
     "$NODE_BIN" "$PRIVATE_COREPACK_ENTRY" "$@"
 }
@@ -273,7 +324,7 @@ COREPACK_VERSION="$(run_corepack --version)"
 [[ "$COREPACK_VERSION" == "$REQUIRED_COREPACK_VERSION" ]] ||
   fail "expected Corepack ${REQUIRED_COREPACK_VERSION}, got ${COREPACK_VERSION}"
 
-HOST_PNPM_ROOT="${HOME:?HOME must be set}/.cache/node/corepack/v1/pnpm/${EXPECTED_PNPM}"
+HOST_PNPM_ROOT="${CALLER_HOME}/.cache/node/corepack/v1/pnpm/${EXPECTED_PNPM}"
 PRIVATE_PNPM_PARENT="${PRIVATE_COREPACK_HOME}/v1/pnpm"
 PRIVATE_PNPM_ROOT="${PRIVATE_PNPM_PARENT}/${EXPECTED_PNPM}"
 /usr/bin/mkdir -m 700 "${PRIVATE_COREPACK_HOME}/v1"
@@ -330,8 +381,7 @@ CONTROLLED_PATH="${LAUNCHER_DIR}:${NODE_BIN_DIR}:/usr/bin:/bin"
 # This is the hardened equivalent of `corepack pnpm -v`: both the full private
 # Corepack tree and the full private pnpm payload are revalidated first.
 validate_runtime
-PNPM_VERSION="$("${ISOLATED_CHILD_ENV[@]}" \
-  COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH" \
+PNPM_VERSION="$("${CLEAN_CHILD_ENV[@]}" PATH="$CONTROLLED_PATH" \
   "$PNPM_LAUNCHER" -v)"
 [[ "$PNPM_VERSION" == "$EXPECTED_PNPM" ]] ||
   fail "expected pnpm ${EXPECTED_PNPM}, got ${PNPM_VERSION}"
@@ -348,23 +398,23 @@ case "$ARGV0_BASENAME" in
   pnpm)
     shift
     FINAL_COMMAND=(
-      "${ISOLATED_CHILD_ENV[@]}"
-      COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH"
+      "${CLEAN_CHILD_ENV[@]}"
+      PATH="$CONTROLLED_PATH"
       "$PNPM_LAUNCHER" "$@"
     )
     ;;
   corepack)
     shift
     FINAL_COMMAND=(
-      "${ISOLATED_CHILD_ENV[@]}"
-      COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="${NODE_BIN_DIR}:/usr/bin:/bin"
+      "${CLEAN_CHILD_ENV[@]}"
+      PATH="${NODE_BIN_DIR}:/usr/bin:/bin"
       "$NODE_BIN" "$PRIVATE_COREPACK_ENTRY" "$@"
     )
     ;;
   *)
     FINAL_COMMAND=(
-      "${ISOLATED_CHILD_ENV[@]}"
-      COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH"
+      "${CLEAN_CHILD_ENV[@]}"
+      PATH="$CONTROLLED_PATH"
       "$@"
     )
     ;;
