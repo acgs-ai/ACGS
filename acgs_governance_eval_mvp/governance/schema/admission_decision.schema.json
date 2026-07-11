@@ -28,6 +28,7 @@
       "type": "string",
       "enum": [
         "allowed_with_constraints",
+        "canonicalization_failure",
         "missing_authority",
         "no_matching_policy",
         "prohibited_output",

@@ -14,6 +14,8 @@ on:
 
 jobs:
   governed-mcp-v0:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     env:
       PYTHONPATH: acgs_governance_eval_mvp

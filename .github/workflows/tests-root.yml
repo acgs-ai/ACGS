@@ -12,7 +12,10 @@
 #
 # Scope (deliberate — see EXCLUSIONS in the run step): this gate runs only the
 # environment-independent invariant guards (82 tests, green on master). The
-# five release-evidence / readiness tests are gated by the dedicated
+# SaaS-beta evidence proof requires its locked, three-environment bootstrap and
+# is gated by the automatic hosted contract lane in
+# `saas-beta-p0-evidence.yml`; its exact proof remains authorized/manual. It is
+# not a generic root test. The five release-evidence / readiness tests use the dedicated
 # `readiness-evidence.yml` workflow (+ its hosted twin); the package-floor /
 # mypy-scope tests need initialized submodules and remain a follow-up.
 
@@ -53,6 +56,8 @@ permissions:
 
 jobs:
   test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
@@ -73,6 +78,7 @@ jobs:
         #
         # EXCLUSIONS — tests gated elsewhere or deferred:
         #   tests/docs/**                      -> already covered by tests-docs.yml
+        #   tests/saas_beta/**                 -> hosted contract; exact proof authorized/manual
         #   test_platform_readiness_report     -> covered by readiness-evidence.yml
         #   test_readiness_evidence_boundaries -> covered by readiness-evidence.yml
         #   test_release_evidence_bundle       -> covered by readiness-evidence.yml
@@ -84,6 +90,7 @@ jobs:
           uv run --no-project --python 3.11 --with pytest --with pyyaml \
             python -m pytest tests/ \
             --ignore=tests/docs \
+            --ignore=tests/saas_beta \
             --ignore=tests/test_platform_readiness_report.py \
             --ignore=tests/test_readiness_evidence_boundaries.py \
             --ignore=tests/test_release_evidence_bundle.py \

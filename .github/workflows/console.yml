@@ -97,6 +97,8 @@ defaults:
 
 jobs:
   build:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     # test:all + build:console + evidence build + artifact uploads; on the shared
     # self-hosted runner this can run long under concurrent-PR contention (15m was
@@ -157,6 +159,8 @@ jobs:
   # playwright.config webServer), NOT the dev server — strict console CSP forbids
   # the HMR <style> injection dev mode emits.
   browser-checks:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
@@ -225,7 +229,7 @@ jobs:
   # path pushes an image.
   publish:
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     environment: production
     runs-on: [self-hosted, Linux, X64]
     # docker build + push to Artifact Registry can run long on the shared runner.
@@ -278,7 +282,7 @@ jobs:
   # step and short-circuit the deploy.
   deploy:
     needs: [build, publish]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     environment: production
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10

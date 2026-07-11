@@ -1,0 +1,365 @@
+{
+  "version": "1.0.0",
+  "title": "ACGS / gove-zone compliance control mapping",
+  "disclaimer": "Self-assessment mapping, not a certification, attestation, or audit result. gove-zone is alpha / local-proof software. A mapping row means the receipt membrane produces evidence toward the requirement at the executor boundary; it does not mean adopting gove-zone makes a system compliant. Compliance is a property of an organization and its full control set. See docs/COMPLIANCE_CROSSWALK.md and docs/CLAIMS.md rows 27-33.",
+  "status_rollup_rule": "When a requirement maps to a mix of default-on and opt-in controls, status reflects whether the default-on subset alone delivers the core of the requirement; opt-in components are disclosed in the limitation field. If the requirement's core depends on an opt-in control (or on operator-supplied strength, e.g. identity), the row is downgraded to partial.",
+  "status_vocabulary": {
+    "implemented": "Control is on by default and covered by tests in this repository.",
+    "opt-in": "Control exists and is tested but must be explicitly enabled by the integrator.",
+    "partial": "Control contributes evidence toward the requirement but does not satisfy it alone.",
+    "operator-owned": "Requirement is an organizational/operator responsibility; ACGS only supplies supporting evidence.",
+    "gap": "Requirement is in scope for ACGS but not yet covered.",
+    "not-applicable": "Requirement targets system types or obligations outside ACGS scope."
+  },
+  "controls": {
+    "RECEIPT-REQUIRED": {
+      "enforces": "No receipt, no execution at the governed executor boundary",
+      "evidence": "packages/gove-zone/src/gove_zone/executor.py",
+      "default": "on"
+    },
+    "ACTOR-ANCHOR": {
+      "enforces": "Gate caller identity must equal receipt.actor; validator != caller",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py",
+      "default": "on"
+    },
+    "HASH-INTEGRITY": {
+      "enforces": "Recompute receipt_hash; any field edit rejected (anti-downgrade)",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py",
+      "default": "on"
+    },
+    "SIG-VERIFY": {
+      "enforces": "A receipt claiming a signature must verify (Ed25519)",
+      "evidence": "packages/gove-zone/src/gove_zone/signing.py",
+      "default": "on-when-claimed"
+    },
+    "DECISION-GATE": {
+      "enforces": "DENY / ESCALATE / unknown decisions cannot authorize execution",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py",
+      "default": "on"
+    },
+    "ARG-BIND": {
+      "enforces": "Executed arguments must hash to argument_hash or equal the approved transformed set",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py",
+      "default": "on"
+    },
+    "POLICY-TENANT-BIND": {
+      "enforces": "Policy bundle/hash, tenant, boundary, action, audit-event hash must match expected",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/tenant.py",
+      "default": "on"
+    },
+    "MACI-VALIDATOR-SEP": {
+      "enforces": "Proposer != validator at issuance and at the gate",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/tenant.py",
+      "default": "on"
+    },
+    "POLICY-BEFORE-EXEC": {
+      "enforces": "Policy evaluated and appended to audit before any tool runs",
+      "evidence": "packages/gove-zone/src/gove_zone/kernel.py",
+      "default": "on"
+    },
+    "FAILCLOSED": {
+      "enforces": "Policy exception/timeout -> synthesized DENY; audit append failure -> AuditError",
+      "evidence": "packages/gove-zone/src/gove_zone/kernel.py",
+      "default": "on"
+    },
+    "AUDIT-HASHCHAIN": {
+      "enforces": "Append-only JSONL, previous_hash -> event_hash chain, flock+fsync, verify_chain re-walk",
+      "evidence": "packages/gove-zone/src/gove_zone/audit.py",
+      "default": "on"
+    },
+    "EXPIRY": {
+      "enforces": "expires_at enforced when set; unparseable timestamps reject",
+      "evidence": "packages/gove-zone/src/gove_zone/receipt.py",
+      "default": "opt-in-field"
+    },
+    "SIG-REQUIRED": {
+      "enforces": "require_signature=True rejects unsigned receipts",
+      "evidence": "packages/gove-zone/src/gove_zone/executor.py, packages/gove-zone/src/gove_zone/signing.py",
+      "default": "opt-in"
+    },
+    "ANTI-REPLAY": {
+      "enforces": "Single-use receipts via persistent consumption ledger keyed on audit_event_hash",
+      "evidence": "packages/gove-zone/src/gove_zone/consumption.py",
+      "default": "opt-in"
+    },
+    "REPLAY-VERIFY": {
+      "enforces": "Re-derive decision by re-running policy; side-store args cross-checked against chain argument_hash",
+      "evidence": "packages/gove-zone/src/gove_zone/replay.py, packages/gove-zone/src/gove_zone/replay_store.py",
+      "default": "opt-in"
+    },
+    "ESCALATE-HUMAN": {
+      "enforces": "ESCALATE decisions route to human authority and are not executable until resolved",
+      "evidence": "packages/gove-zone/src/gove_zone/escalation.py",
+      "default": "on"
+    }
+  },
+  "frameworks": {
+    "eu_ai_act": {
+      "name": "EU AI Act (Regulation (EU) 2024/1689) — logging requirements",
+      "scope_note": "Mapped against the record-keeping obligations for high-risk AI systems. ACGS is a governance component, not itself a classified high-risk AI system; these rows describe the logging evidence ACGS supplies to a provider/deployer who carries the obligation.",
+      "requirements": [
+        {
+          "id": "EU-AIA-ART12-1",
+          "requirement": "Art. 12(1) — high-risk AI systems shall technically allow automatic recording of events (logs) over the lifetime of the system",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "RECEIPT-REQUIRED"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/executor.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_chain.py packages/gove-zone/tests/test_executor_guard.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Automatic recording covers governed side effects only; calls not routed through the executor gate are not logged."
+        },
+        {
+          "id": "EU-AIA-ART12-2A",
+          "requirement": "Art. 12(2)(a) — logging shall enable identification of situations that may result in the AI system presenting a risk or in a substantial modification",
+          "acgs_controls": ["DECISION-GATE", "FAILCLOSED", "ESCALATE-HUMAN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/kernel.py, packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/escalation.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_fail_closed.py packages/gove-zone/tests/test_escalation_resume.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "DENY/ESCALATE events are recorded with full context; interpreting which events constitute 'risk situations' is operator analysis on top of the log."
+        },
+        {
+          "id": "EU-AIA-ART12-2B",
+          "requirement": "Art. 12(2)(b) — logging shall facilitate post-market monitoring referred to in Art. 72",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "REPLAY-VERIFY"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/replay.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_replay.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Hash-chained decisions are replayable evidence inputs to a post-market monitoring plan; the plan itself is a provider obligation."
+        },
+        {
+          "id": "EU-AIA-ART12-2C",
+          "requirement": "Art. 12(2)(c) — logging shall facilitate monitoring of the operation of the high-risk AI system by deployers (Art. 26(5))",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "REPLAY-VERIFY"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/cli.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_cli.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "CLI verify/proofpack surfaces chain integrity locally; continuous operational monitoring tooling is deployer-owned."
+        },
+        {
+          "id": "EU-AIA-ART12-3",
+          "requirement": "Art. 12(3) — biometric-specific minimum logging (period of each use, reference database, input data leading to a match, identity of verifying persons)",
+          "acgs_controls": [],
+          "evidence_source": "none",
+          "verification_method": "none",
+          "status": "not-applicable",
+          "limitation": "ACGS is not a remote biometric identification system; generic receipts do record actor, timestamp, and bound arguments if an integrator governs such a system."
+        },
+        {
+          "id": "EU-AIA-ART19",
+          "requirement": "Art. 19 — providers shall keep automatically generated logs under their control for a period appropriate to the intended purpose, at least six months",
+          "acgs_controls": ["AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "documentation review: docs/SECURITY_MODEL.md (audit durability section)",
+          "status": "operator-owned",
+          "limitation": "Audit is local JSONL, tamper-evident not tamper-proof; retention period, off-host/WORM durability, and custody are operator responsibilities."
+        },
+        {
+          "id": "EU-AIA-ART26-6",
+          "requirement": "Art. 26(6) — deployers shall keep logs automatically generated by the high-risk AI system for a period appropriate to the intended purpose, at least six months",
+          "acgs_controls": ["AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "documentation review: docs/SECURITY_MODEL.md (audit durability section)",
+          "status": "operator-owned",
+          "limitation": "Same as Art. 19: ACGS produces the log artifact; retention/storage lifecycle is the deployer's."
+        }
+      ]
+    },
+    "nist_ai_rmf": {
+      "name": "NIST AI Risk Management Framework 1.0",
+      "scope_note": "Function-level mapping consistent with docs/COMPLIANCE_CROSSWALK.md; a row means 'contributes evidence toward the outcome', not full subcategory satisfaction.",
+      "requirements": [
+        {
+          "id": "NIST-AIRMF-GOVERN-1",
+          "requirement": "GOVERN 1 — policies, processes, and procedures to manage AI risk are in place and enforced",
+          "acgs_controls": ["POLICY-TENANT-BIND", "POLICY-BEFORE-EXEC"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/policy.py, packages/gove-zone/src/gove_zone/kernel.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_policy_bundle_io.py packages/gove-zone/tests/test_kernel_dispatch.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Runtime policy bundles are not an organizational AI risk management program; they are its enforcement point."
+        },
+        {
+          "id": "NIST-AIRMF-GOVERN-2",
+          "requirement": "GOVERN 2 — accountability structures and separation of duties for AI actors",
+          "acgs_controls": ["MACI-VALIDATOR-SEP", "ACTOR-ANCHOR"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/tenant.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_maci_role_separation.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Actor identity is opaque strings bound into receipts; authentication and IAM are external."
+        },
+        {
+          "id": "NIST-AIRMF-GOVERN-4",
+          "requirement": "GOVERN 1.5 / 4.1 — accountability, transparency, and documentation of AI system decisions",
+          "acgs_controls": ["RECEIPT-REQUIRED", "AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_decision_receipt.py packages/gove-zone/tests/test_audit_chain.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Every governed side effect emits a tamper-evident Decision Receipt; ungoverned paths emit nothing."
+        },
+        {
+          "id": "NIST-AIRMF-MAP-1-5",
+          "requirement": "MAP 1 / MAP 5 — context establishment and per-action risk framing",
+          "acgs_controls": ["DECISION-GATE", "ARG-BIND"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_argument_binding.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Decisions are categorized ALLOW/DENY/ESCALATE/TRANSFORM with bound arguments; upstream risk assessment quality is integrator-owned."
+        },
+        {
+          "id": "NIST-AIRMF-MEASURE-2-4",
+          "requirement": "MEASURE 2 / MEASURE 4 — evaluate trustworthiness characteristics and track them over time",
+          "acgs_controls": ["REPLAY-VERIFY", "AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/replay.py, packages/gove-zone/src/gove_zone/replay_store.py, packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_replay.py packages/gove-zone/tests/test_replay_store.py --import-mode=importlib -q",
+          "status": "opt-in",
+          "limitation": "Audit-only replay is policy-version-only; strong replay of full arguments requires the opt-in side store."
+        },
+        {
+          "id": "NIST-AIRMF-MANAGE-2-4",
+          "requirement": "MANAGE 2 / MANAGE 4 — risk treatment, fail-safe behavior, monitoring and response",
+          "acgs_controls": ["FAILCLOSED", "DECISION-GATE", "EXPIRY", "ANTI-REPLAY"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/kernel.py, packages/gove-zone/src/gove_zone/receipt.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_fail_closed.py packages/gove-zone/tests/test_receipt_expiry.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Fail-closed and decision gating are default-on; expiry is an opt-in field and anti-replay is an opt-in ledger."
+        }
+      ]
+    },
+    "iso_42001": {
+      "name": "ISO/IEC 42001:2023 — AI management system (Annex A controls)",
+      "scope_note": "ISO 42001 certifies an organization's AI management system. ACGS cannot be ISO 42001 certified; these rows identify Annex A controls where ACGS runtime evidence supports an AIMS audit.",
+      "requirements": [
+        {
+          "id": "ISO42001-A2.2",
+          "requirement": "A.2.2 — AI policy: documented policy for the development or use of AI systems",
+          "acgs_controls": ["POLICY-TENANT-BIND", "POLICY-BEFORE-EXEC"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/policy.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_policy_bundle_io.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Hash-bound runtime policy bundles evidence enforcement of a policy; the organizational AI policy document itself is operator-owned."
+        },
+        {
+          "id": "ISO42001-A3.2",
+          "requirement": "A.3.2 — AI roles and responsibilities: roles allocated and separation maintained",
+          "acgs_controls": ["MACI-VALIDATOR-SEP", "ACTOR-ANCHOR"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/tenant.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_maci_role_separation.py packages/gove-zone/tests/test_tenant_safety.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Proposer/validator separation is machine-enforced per decision; org-level role definitions remain operator-owned."
+        },
+        {
+          "id": "ISO42001-A6.2.6",
+          "requirement": "A.6.2.6 — AI system operation and monitoring",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "REPLAY-VERIFY", "FAILCLOSED"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/replay.py, packages/gove-zone/src/gove_zone/kernel.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_chain.py packages/gove-zone/tests/test_fail_closed.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Runtime produces verifiable operational evidence; dashboards, alerting, and review cadence are operator-owned."
+        },
+        {
+          "id": "ISO42001-A6.2.8",
+          "requirement": "A.6.2.8 — AI system recording of event logs",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "RECEIPT-REQUIRED"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_chain.py packages/gove-zone/tests/test_audit_chain_corruption.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Append-only hash-chained JSONL for governed side effects; log storage lifecycle is operator-owned."
+        },
+        {
+          "id": "ISO42001-A8.2",
+          "requirement": "A.8.2 — system documentation and information for users",
+          "acgs_controls": [],
+          "evidence_source": "docs/DECISION_RECEIPT_SPEC.md, docs/SECURITY_MODEL.md, docs/CLAIMS.md",
+          "verification_method": "documentation review: docs/DECISION_RECEIPT_SPEC.md, docs/SECURITY_MODEL.md, docs/CLAIMS.md (make lint-docs does not cover these files)",
+          "status": "implemented",
+          "limitation": "Documentation covers the governance component; whole-system documentation is the integrator's."
+        },
+        {
+          "id": "ISO42001-A9.2",
+          "requirement": "A.9.2 — processes for responsible use of AI systems",
+          "acgs_controls": ["DECISION-GATE", "ESCALATE-HUMAN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/escalation.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_escalation_resume.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "ESCALATE-to-human and non-executable DENY are enforcement primitives inside a responsible-use process the organization must define."
+        }
+      ]
+    },
+    "soc2": {
+      "name": "SOC 2 — Trust Services Criteria (2017, with 2022 points of focus)",
+      "scope_note": "SOC 2 reports on an organization's controls, audited by a CPA firm. ACGS is not SOC 2 attested; these rows identify criteria where ACGS runtime evidence would support an auditor's testing.",
+      "requirements": [
+        {
+          "id": "SOC2-CC2.1",
+          "requirement": "CC2.1 — the entity obtains/generates relevant, quality information to support the functioning of internal control",
+          "acgs_controls": ["RECEIPT-REQUIRED", "AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/audit.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_decision_receipt.py packages/gove-zone/tests/test_audit_chain.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Receipts and the hash chain are audit-quality decision evidence for governed actions only."
+        },
+        {
+          "id": "SOC2-CC4.1",
+          "requirement": "CC4.1 — ongoing and/or separate evaluations to ascertain whether internal control components are present and functioning",
+          "acgs_controls": ["REPLAY-VERIFY", "AUDIT-HASHCHAIN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/cli.py, packages/gove-zone/src/gove_zone/replay.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_cli.py packages/gove-zone/tests/test_replay.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "verify_chain / proofpack / replay are point-in-time local evaluations; scheduled evaluation programs are operator-owned."
+        },
+        {
+          "id": "SOC2-CC5.2",
+          "requirement": "CC5.2 — the entity selects and develops general control activities over technology to support the achievement of objectives",
+          "acgs_controls": ["RECEIPT-REQUIRED", "POLICY-BEFORE-EXEC", "FAILCLOSED"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/executor.py, packages/gove-zone/src/gove_zone/kernel.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_executor_guard.py packages/gove-zone/tests/test_fail_closed.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "The receipt gate is a technology control activity; entity-level control selection is organizational."
+        },
+        {
+          "id": "SOC2-CC6.1",
+          "requirement": "CC6.1 — logical access security software, infrastructure, and architectures over protected information assets",
+          "acgs_controls": ["RECEIPT-REQUIRED", "ACTOR-ANCHOR", "POLICY-TENANT-BIND", "SIG-REQUIRED"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/executor.py, packages/gove-zone/src/gove_zone/receipt.py, packages/gove-zone/src/gove_zone/tenant.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_executor_guard.py packages/gove-zone/tests/test_tenant_safety.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Access to side effects is receipt-mediated, but actor identity is opaque strings — no IAM/PKI, key custody, or revocation; unsigned mode is the default."
+        },
+        {
+          "id": "SOC2-CC7.2",
+          "requirement": "CC7.2 — the entity monitors system components for anomalies indicative of malicious acts, natural disasters, and errors",
+          "acgs_controls": ["AUDIT-HASHCHAIN", "HASH-INTEGRITY"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/audit.py, packages/gove-zone/src/gove_zone/receipt.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_audit_chain_corruption.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Tampering is detectable (hash chain breaks, receipt hash mismatch); detection is on-verify, not continuous monitoring."
+        },
+        {
+          "id": "SOC2-CC7.3",
+          "requirement": "CC7.3 — the entity evaluates security events to determine whether they could or have resulted in a failure to meet objectives",
+          "acgs_controls": ["DECISION-GATE", "FAILCLOSED", "ESCALATE-HUMAN"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/kernel.py, packages/gove-zone/src/gove_zone/escalation.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_fail_closed.py packages/gove-zone/tests/test_escalation_resume.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "DENY/ESCALATE events carry full decision context for evaluation; incident-response process is operator-owned."
+        },
+        {
+          "id": "SOC2-CC8.1",
+          "requirement": "CC8.1 — the entity authorizes, designs, develops, configures, documents, tests, approves, and implements changes to infrastructure, data, software, and procedures",
+          "acgs_controls": ["POLICY-TENANT-BIND", "HASH-INTEGRITY"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/policy.py, packages/gove-zone/src/gove_zone/receipt.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_policy_bundle_io.py --import-mode=importlib -q",
+          "status": "partial",
+          "limitation": "Policy id+hash binding blocks unauthorized policy substitution at decision time; there is no policy lifecycle/approval registry."
+        },
+        {
+          "id": "SOC2-PI1.2",
+          "requirement": "PI1.2 — system inputs are processed completely, accurately, and timely as authorized (processing integrity over inputs)",
+          "acgs_controls": ["ARG-BIND", "DECISION-GATE"],
+          "evidence_source": "packages/gove-zone/src/gove_zone/receipt.py",
+          "verification_method": "uv run --package gove-zone python -m pytest packages/gove-zone/tests/test_argument_binding.py --import-mode=importlib -q",
+          "status": "implemented",
+          "limitation": "Executed arguments must hash-match the authorized set for governed calls; ungoverned inputs are out of scope."
+        }
+      ]
+    }
+  }
+}

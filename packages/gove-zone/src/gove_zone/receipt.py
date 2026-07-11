@@ -39,7 +39,7 @@ def safe_result_hash(value: Any) -> str:
         return sha256_json({"_repr": repr(value)[:512]})
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Receipt:
     """Proof-of-decision: the decision, the audit anchor, and the outcome.
 
@@ -69,7 +69,7 @@ class Receipt:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Validator:
     """MACI validating principal. Distinct from the proposer (ToolCall.actor).
 
@@ -89,7 +89,7 @@ class Validator:
             raise ValueError("Validator.role is required (fail-closed)")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DecisionReceipt:
     """Canonical public Decision Receipt schema for AI-agent execution.
 
@@ -241,11 +241,46 @@ class DecisionReceipt:
     def from_json(cls, text: str) -> DecisionReceipt:
         return cls.from_dict(json.loads(text))
 
+    def _hash_payload(self) -> dict[str, Any]:
+        """Payload fed to :meth:`compute_hash`, without the defensive copies
+        :meth:`to_dict` makes for external callers and without the two
+        hash-excluded fields. Byte-identical to ``to_dict()`` with
+        ``receipt_hash``/``signature`` popped: the frozen receipt's fields
+        cannot mutate, and ``sha256_json`` serializes a tuple and a list
+        identically, so referencing the fields directly yields the same
+        canonical bytes.
+        """
+        return {
+            "receipt_id": self.receipt_id,
+            "request_id": self.request_id,
+            "tenant_id": self.tenant_id,
+            "actor": self.actor,
+            "subject": self.subject,
+            "proposed_action": self.proposed_action,
+            "declared_goal": self.declared_goal,
+            "execution_boundary": self.execution_boundary,
+            "policy_bundle_id": self.policy_bundle_id,
+            "policy_version": self.policy_version,
+            "policy_hash": self.policy_hash,
+            "decision": self.decision,
+            "matched_rules": self.matched_rules,
+            "constraints": self.constraints,
+            "transformations": self.transformations,
+            "approval_chain_summary": self.approval_chain_summary,
+            "timestamp": self.timestamp,
+            "expires_at": self.expires_at,
+            "authority": self.authority,
+            "validator_id": self.validator_id,
+            "validator_role": self.validator_role,
+            "argument_hash": self.argument_hash,
+            "previous_audit_hash": self.previous_audit_hash,
+            "audit_event_hash": self.audit_event_hash,
+            "signature_algorithm": self.signature_algorithm,
+            "signing_key_id": self.signing_key_id,
+        }
+
     def compute_hash(self) -> str:
-        d = self.to_dict()
-        d.pop("receipt_hash", None)
-        d.pop("signature", None)
-        return sha256_json(d)
+        return sha256_json(self._hash_payload())
 
     @classmethod
     def from_record(
@@ -305,8 +340,6 @@ class DecisionReceipt:
             }
         )
 
-        import dataclasses
-
         receipt = cls(
             receipt_id=record.event_id,
             request_id=request_id,
@@ -339,7 +372,9 @@ class DecisionReceipt:
         # (anti-downgrade), THEN sign that hash so the signature attests it.
         h = receipt.compute_hash()
         signature = signer.sign(h.encode("utf-8")) if signer is not None else "unsigned_local"
-        return dataclasses.replace(receipt, receipt_hash=h, signature=signature)
+        object.__setattr__(receipt, "receipt_hash", h)
+        object.__setattr__(receipt, "signature", signature)
+        return receipt
 
     def verify(
         self,

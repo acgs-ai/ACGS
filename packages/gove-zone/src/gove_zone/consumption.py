@@ -725,9 +725,9 @@ class ReceiptConsumptionLedger:
                 else:
                     existing_wm = None
                 new_wm = max_pruned_exp
+                assert new_wm is not None  # pruned > 0 ⇒ at least one aware expiry removed
                 if existing_wm is not None and existing_wm > new_wm:
                     new_wm = existing_wm
-                assert new_wm is not None  # pruned > 0 ⇒ at least one aware expiry removed
 
                 # WRITE-AHEAD: advance the watermark BEFORE any entry is deleted.
                 # A crash between here and the file replace leaves entries-present +

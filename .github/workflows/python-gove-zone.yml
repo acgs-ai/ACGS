@@ -10,6 +10,7 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - '.claude/policy/**'
       - 'scripts/**'
       - 'tests/**'
       - 'Makefile'
@@ -19,6 +20,7 @@ on:
     branches: [master]
     paths:
       - 'packages/gove-zone/**'
+      - '.claude/policy/**'
       - 'scripts/**'
       - 'tests/**'
       - 'Makefile'
@@ -38,6 +40,8 @@ defaults:
 
 jobs:
   test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
@@ -60,7 +64,7 @@ jobs:
         run: |
           uv python install ${{ matrix.python-version }}
           uv venv --python ${{ matrix.python-version }} .venv
-          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp]'
+          uv pip install --python .venv/bin/python --no-config --editable '.[dev,schema,mcp,yaml]'
 
       - name: Lint
         run: |
@@ -85,3 +89,15 @@ jobs:
           --cov=gove_zone
           --cov-report=term-missing:skip-covered
           --cov-fail-under=90
+
+  dist-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+      - name: Build + install-smoke the distribution
+        run: bash scripts/release_check.sh

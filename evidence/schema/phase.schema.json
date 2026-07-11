@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.local/schema/governed-loop-v2/phase-evidence/v1",
+  "title": "governed-loop-v2 phase exit evidence",
+  "$comment": "Machine form of the phase-N.json contract in evidence/README.md. The Executor writes evidence/phase-N.json every cycle — including not-yet-passing snapshots that loop-stop-gate.sh blocks on — so this schema validates STRUCTURE only (field presence, types, ledger_head_hash format, exit_criteria as criterion-id STRINGS) and deliberately does NOT pin the three pass/fail values (exit_criteria_met/validator_signoff true, test_results.failed 0); those are owned by the jq Stop gate, not the schema. additionalProperties is true so forward-compatible evidence is never rejected.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "phase",
+    "exit_criteria",
+    "exit_criteria_met",
+    "validator_signoff",
+    "test_results",
+    "artifacts",
+    "ledger_head_hash",
+    "timestamp"
+  ],
+  "properties": {
+    "phase": { "type": "integer", "minimum": 1 },
+    "exit_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Criterion ids for this phase (from workload.yaml), as written by the Executor."
+    },
+    "exit_criteria_met": {
+      "type": "boolean",
+      "description": "True iff every criterion exited 0. The Observer computes it; the stop gate requires it true."
+    },
+    "validator_signoff": {
+      "type": "boolean",
+      "description": "True only when the validator returned PASS this cycle AND every command exited 0. The stop gate requires it true."
+    },
+    "test_results": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["passed", "failed"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Failing-check count. The jq Stop gate (not this schema) requires failed==0 to close a phase; a mid-cycle snapshot may legitimately have failed>0, so the schema only requires the field, typed."
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "ledger_head_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "Head hash of evidence/ledger.jsonl (sha256, lowercase hex)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "open_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "note"],
+        "properties": {
+          "severity": { "enum": ["BLOCKER", "MAJOR", "MINOR"] },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  }
+}

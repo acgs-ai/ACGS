@@ -1,0 +1,341 @@
+{
+  "category": "receipt_integrity",
+  "scenarios": [
+    {
+      "attack": false,
+      "category": "receipt_integrity",
+      "description": "Positive control: an untouched signed receipt must verify.",
+      "expected_outcome": "accept",
+      "id": "RCPT-001",
+      "params": {
+        "actor": "agent-alpha",
+        "args": {
+          "body": "ok"
+        },
+        "tool": "message.send"
+      },
+      "probe": "receipt_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control"
+      ],
+      "title": "Intact signed receipt verifies for agent-alpha"
+    },
+    {
+      "attack": false,
+      "category": "receipt_integrity",
+      "description": "Positive control: an untouched signed receipt must verify.",
+      "expected_outcome": "accept",
+      "id": "RCPT-002",
+      "params": {
+        "actor": "agent-bravo",
+        "args": {
+          "doc_id": "x"
+        },
+        "tool": "doc.read"
+      },
+      "probe": "receipt_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control"
+      ],
+      "title": "Intact signed receipt verifies for agent-bravo"
+    },
+    {
+      "attack": false,
+      "category": "receipt_integrity",
+      "description": "Positive control: an untouched signed receipt must verify.",
+      "expected_outcome": "accept",
+      "id": "RCPT-003",
+      "params": {
+        "actor": "agent-charlie",
+        "args": {
+          "name": "n",
+          "value": 1
+        },
+        "tool": "metric.emit"
+      },
+      "probe": "receipt_intact",
+      "severity": "medium",
+      "tags": [
+        "positive-control"
+      ],
+      "title": "Intact signed receipt verifies for agent-charlie"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating proposed_action after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-004",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "proposed_action"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.proposed_action detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating argument_hash after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-005",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "argument_hash"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.argument_hash detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating tenant_id after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-006",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "tenant_id"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.tenant_id detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating actor after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-007",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "actor"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.actor detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating declared_goal after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-008",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "declared_goal"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "high",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.declared_goal detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating policy_version after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-009",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "policy_version"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "high",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.policy_version detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating proposed_action after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-010",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "proposed_action"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.proposed_action detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Mutating argument_hash after minting without recomputing the hash must break verification (receipt_hash mismatch).",
+      "expected_outcome": "reject",
+      "id": "RCPT-011",
+      "params": {
+        "args": {
+          "body": "ok"
+        },
+        "field": "argument_hash"
+      },
+      "probe": "receipt_tamper_field",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "receipt-hash"
+      ],
+      "title": "Post-issuance edit of receipt.argument_hash detected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "A receipt whose signature was replaced with a signature over a different payload must be rejected by the verifier.",
+      "expected_outcome": "reject",
+      "id": "RCPT-012",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_tamper_signature",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "signature"
+      ],
+      "title": "Substituted receipt signature rejected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "A receipt whose signature was replaced with a signature over a different payload must be rejected by the verifier.",
+      "expected_outcome": "reject",
+      "id": "RCPT-013",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_tamper_signature",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "signature"
+      ],
+      "title": "Substituted receipt signature rejected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "A receipt whose signature was replaced with a signature over a different payload must be rejected by the verifier.",
+      "expected_outcome": "reject",
+      "id": "RCPT-014",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_tamper_signature",
+      "severity": "critical",
+      "tags": [
+        "tamper",
+        "signature"
+      ],
+      "title": "Substituted receipt signature rejected"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Presenting an unsigned receipt to a gate configured with require_signature=True is a downgrade attack and must be rejected.",
+      "expected_outcome": "reject",
+      "id": "RCPT-015",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_downgrade_unsigned",
+      "severity": "critical",
+      "tags": [
+        "downgrade",
+        "signature"
+      ],
+      "title": "Unsigned receipt rejected where signing is required"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Presenting an unsigned receipt to a gate configured with require_signature=True is a downgrade attack and must be rejected.",
+      "expected_outcome": "reject",
+      "id": "RCPT-016",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_downgrade_unsigned",
+      "severity": "critical",
+      "tags": [
+        "downgrade",
+        "signature"
+      ],
+      "title": "Unsigned receipt rejected where signing is required"
+    },
+    {
+      "attack": true,
+      "category": "receipt_integrity",
+      "description": "Presenting an unsigned receipt to a gate configured with require_signature=True is a downgrade attack and must be rejected.",
+      "expected_outcome": "reject",
+      "id": "RCPT-017",
+      "params": {
+        "args": {
+          "body": "ok"
+        }
+      },
+      "probe": "receipt_downgrade_unsigned",
+      "severity": "critical",
+      "tags": [
+        "downgrade",
+        "signature"
+      ],
+      "title": "Unsigned receipt rejected where signing is required"
+    }
+  ],
+  "suite": "acgs-benchmark/v1"
+}

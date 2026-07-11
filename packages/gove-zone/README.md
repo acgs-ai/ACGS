@@ -404,6 +404,27 @@ event (`rederivation_status: "redacted"`) or one absent from the side-store
 re-derivation it cannot perform. Redaction is fail-safe: sensitive calls are
 stored as tombstones carrying no raw args.
 
+## Proof packs (portable evidence for one governed action)
+
+The `acgs` CLI packages a governed action's receipt + audit chain into a
+portable, self-describing evidence bundle that engineers, auditors, and
+regulators can verify offline — no access to the producing system required:
+
+```bash
+acgs proofpack generate --receipt receipt.json --audit audit.jsonl \
+  --out proofpack/          # + optional --policy-bundle/--side-store for replay
+acgs proofpack verify proofpack/   # exit 0 valid, 1 invalid (fail-closed)
+```
+
+The bundle is five files — `evidence.json` (per-file SHA-256 manifest),
+`decision-receipt.json`, `audit-chain.json`, `replay-report.json`, and a
+human-readable `verification-summary.md` with sections for engineers,
+auditors, and regulators. Verification is fail-closed and reuses the same
+offline verifier as `gove-zone verify-proofpack`; generation *refuses* to
+package inconsistent inputs (broken chain, unanchored or tampered receipt,
+failed replay). See `gove_zone.proofpack` for the format contract and
+`tests/test_acgs_proofpack.py` for the golden + tamper matrix.
+
 ## Runtime-hook integration
 
 `gove_zone.integration` is the canonical adapter between any agent runtime

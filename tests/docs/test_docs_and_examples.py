@@ -41,6 +41,9 @@ EXAMPLE_SCRIPTS = [
     "examples/ci_deploy_gate/demo.py",
     "examples/tamper_demo/demo.py",
     "examples/dynamic_swarm/demo.py",
+    "examples/mcp-governed-agent/demo.py",
+    "examples/governed_aml_screening/demo.py",
+    "examples/governed_legal_drafting/demo.py",
 ]
 
 EXAMPLE_READMES = [
@@ -50,6 +53,9 @@ EXAMPLE_READMES = [
     "examples/ci_deploy_gate/README.md",
     "examples/tamper_demo/README.md",
     "examples/dynamic_swarm/README.md",
+    "examples/mcp-governed-agent/README.md",
+    "examples/governed_aml_screening/README.md",
+    "examples/governed_legal_drafting/README.md",
 ]
 
 

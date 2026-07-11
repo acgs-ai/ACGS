@@ -28,6 +28,8 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      - 'compliance/**'
+      - 'evidence/**'
       - 'docs/**'
       - 'README.md'
       - 'AGENTS.md'
@@ -42,6 +44,8 @@ on:
     paths:
       - 'examples/**'
       - 'tests/docs/**'
+      - 'compliance/**'
+      - 'evidence/**'
       - 'docs/**'
       - 'README.md'
       - 'AGENTS.md'

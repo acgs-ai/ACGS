@@ -18,6 +18,8 @@ trusted local transport (stdio subprocess, same trust domain). The gateway does
 not itself authenticate the host; the session principal is only as strong as
 that transport's authentication. This is a documented limitation, not an
 end-to-end authenticated-identity claim — see ``docs/SECURITY_MODEL.md``.
+See docs/design/mcp-gateway-trust-boundaries.md for the host→gateway and
+out-of-band operator trust boundaries.
 
 Reuse-only assembly: this module adds **no new gate logic**. Every decision goes
 through :meth:`~gove_zone.kernel.Kernel.evaluate_and_record`; every side effect
@@ -40,8 +42,10 @@ import functools
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.consumption import ReceiptConsumptionLedger
@@ -54,7 +58,7 @@ from gove_zone.errors import (
 from gove_zone.escalation import PendingApproval, approve_escalation, resume_with_receipt
 from gove_zone.executor import GovernedExecutor, execute_with_receipt
 from gove_zone.kernel import Kernel
-from gove_zone.policy import Policy, RuleSetPolicy
+from gove_zone.policy import Policy, RuleSetPolicy, new_event_id
 from gove_zone.profile import GovernanceProfile
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.rejection import HUMAN_APPROVAL, REVISE_AND_RETRY, rejection_dict
@@ -124,6 +128,19 @@ class GatewayConfig:
     server_name: str = "gove-zone-gateway"
     authority: str = "gove-zone-mcp-gateway"
     downstream: Mapping[str, Any] = field(default_factory=dict)
+    # Optional receipt liveness bound: when set, every minted tools/call
+    # receipt carries ``expires_at = now + ttl``. Required in practice for the
+    # ``production_strict`` profile (``require_expiry=True`` rejects receipts
+    # with no expiry at the gate — a TTL-less strict gateway can never forward).
+    receipt_ttl_seconds: float | None = None
+    # Bounded-capacity back-pressure for parked escalations (finding: _pending /
+    # _approvals are only ever written, never cleaned — unbounded growth). These
+    # cap how many escalations may be parked awaiting human approval, globally and
+    # per parking principal. Non-time-based: an escalation leaves _pending only by
+    # a successful resume (post-ledger-burn cleanup), never by a clock. Defaults
+    # are generous so existing embedders/tests are unaffected.
+    max_pending: int = 256
+    max_pending_per_principal: int = 64
 
     def __post_init__(self) -> None:
         # Self-validation guard, fail-closed at config load: the validator must
@@ -136,6 +153,15 @@ class GatewayConfig:
                 "self-validation forbidden at config load: validator_id "
                 f"{self.validator.validator_id!r} also appears as a mapped principal "
                 f"{clashes}; the validator must differ from every actor principal"
+            )
+        # Fail-closed: a non-positive escalation capacity would either reject
+        # every escalation (0) or never bound growth (negative), so refuse it up
+        # front rather than at the first ESCALATE.
+        if self.max_pending <= 0 or self.max_pending_per_principal <= 0:
+            raise ValueError(
+                "escalation capacity caps must be positive: "
+                f"max_pending={self.max_pending}, "
+                f"max_pending_per_principal={self.max_pending_per_principal}"
             )
 
 
@@ -217,6 +243,8 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
     ledger_ref = audit.get("consumption_ledger") or (Path(audit_path).parent / "consumed.jsonl")
     ledger_path = (base / str(ledger_ref)).resolve()
 
+    escalation = raw.get("escalation", {})
+
     return GatewayConfig(
         tenant_id=tenant_id,
         execution_boundary=execution_boundary,
@@ -230,6 +258,8 @@ def load_gateway_config(path: str | Path) -> GatewayConfig:
         allow_sampling=bool(raw.get("sampling", {}).get("allow", False)),
         server_name=str(downstream.get("server_name") or "gove-zone-gateway"),
         downstream=dict(downstream),
+        max_pending=int(escalation.get("max_pending", 256)),
+        max_pending_per_principal=int(escalation.get("max_pending_per_principal", 64)),
     )
 
 
@@ -290,8 +320,27 @@ class GovernedGateway:
         # ledger instance makes every burn visible to both the ALLOW gate and
         # the escalation-resume gate.
         self._audit = audit_store or ChainHashAuditStore(config.audit_path)
-        self._ledger = ledger or ReceiptConsumptionLedger(config.ledger_path)
-        self._sessions: dict[int, SessionContext] = {}
+        profile_ledger = config.profile.consumption_ledger
+        if profile_ledger is not None:
+            # The strict profile carries its own ledger. Two live ledgers would
+            # mean two sources of truth for "already spent"; fail loud rather
+            # than silently splitting burns across files.
+            if ledger is not None and ledger is not profile_ledger:
+                raise ValueError(
+                    "ambiguous consumption ledger: the governance profile and the "
+                    "gateway constructor both supply one; configure it in exactly "
+                    "one place"
+                )
+            self._ledger = profile_ledger
+        else:
+            self._ledger = ledger or ReceiptConsumptionLedger(config.ledger_path)
+        # Keyed by the ServerSession object itself via weak references, NOT by
+        # id(session): CPython recycles id() after a session is GC'd, so a
+        # closed session's address can be reused by a later session and collide
+        # in the cache — leaking the earlier session's principal into the newer
+        # one (cross-session actor bleed). A WeakKeyDictionary keys on identity,
+        # never collides, and auto-evicts when the session dies.
+        self._sessions: WeakKeyDictionary[ServerSession, SessionContext] = WeakKeyDictionary()
         # Parked escalations awaiting human approval, keyed by the ESCALATE
         # record's event_id.
         self._pending: dict[str, PendingApproval] = {}
@@ -318,8 +367,7 @@ class GovernedGateway:
         return self._config.principals.get(name)
 
     def _session_context(self, session: ServerSession) -> SessionContext | None:
-        key = id(session)
-        ctx = self._sessions.get(key)
+        ctx = self._sessions.get(session)
         if ctx is not None:
             return ctx
         principal = self._resolve_principal(session)
@@ -329,7 +377,7 @@ class GovernedGateway:
             principal=principal,
             kernel=Kernel(policy=self._config.policy, audit=self._audit, actor=principal),
         )
-        self._sessions[key] = ctx
+        self._sessions[session] = ctx
         return ctx
 
     # -- server wiring ----------------------------------------------------- #
@@ -351,7 +399,9 @@ class GovernedGateway:
 
         server: Server = Server(self._config.server_name)
 
-        @server.list_tools()
+        # The mcp SDK's registration decorators are untyped; the handlers keep
+        # their own annotations so their bodies stay strict-checked.
+        @server.list_tools()  # type: ignore[no-untyped-call, untyped-decorator]
         async def _list_tools() -> list[mcp_types.Tool]:
             downstream_tools = await self._downstream.list_tools()
             return list(downstream_tools.tools)
@@ -359,7 +409,7 @@ class GovernedGateway:
         # validate_input=False: the governance decision runs on RAW args (G6);
         # schema pre-validation must not shadow an arg-keyed deny, and the
         # downstream server does its own validation on forward.
-        @server.call_tool(validate_input=False)
+        @server.call_tool(validate_input=False)  # type: ignore[untyped-decorator]
         async def _call_tool(name: str, arguments: dict[str, Any]) -> mcp_types.CallToolResult:
             return await self._governed_tools_call(server, name, arguments or {})
 
@@ -402,6 +452,10 @@ class GovernedGateway:
         if record.decision is Decision.DENY:
             return self._deny_result(record, audit_hash, name)
         if record.decision is Decision.ESCALATE:
+            rejection = self._enforce_pending_capacity(record, ctx.principal, name)
+            if rejection is not None:
+                # Capacity exhausted: fail-closed DENY (audited), never parked.
+                return rejection
             pending = PendingApproval(record, audit_hash, dict(raw_args))
             self._pending[record.event_id] = pending
             return self._escalate_result(record, audit_hash, name)
@@ -423,9 +477,37 @@ class GovernedGateway:
             request_id=record.decision_request_hash or record.event_id,
             validator=self._config.validator,
             authority=self._config.authority,
+            expires_at=self._receipt_expires_at(),
             signer=self._config.profile.signer,
         )
         return await self._forward_allow(name, raw_args, receipt, ctx.principal, record, audit_hash)
+
+    def _receipt_expires_at(self) -> str:
+        """``expires_at`` for a freshly minted receipt ("" = no liveness bound).
+
+        With ``config.receipt_ttl_seconds`` unset and a strict profile
+        (``require_expiry=True``) the gate rejects every minted receipt —
+        deliberately fail-closed rather than silently immortal.
+        """
+        ttl = self._config.receipt_ttl_seconds
+        if ttl is None:
+            return ""
+        return (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
+
+    def _gate_kwargs(self) -> dict[str, Any]:
+        """Merged side-effect-gate keywords: profile posture + the ledger.
+
+        The strict profile's ``as_gate_kwargs()`` already emits
+        ``consumption_ledger``; passing the gateway's ledger as a second
+        explicit keyword raised ``TypeError`` on every governed call (the bug
+        that made ``production_strict`` unusable through this gateway).
+        ``__init__`` guarantees ``self._ledger`` IS the profile's ledger when
+        the profile carries one, so this override never changes which ledger
+        burns — it only removes the duplicate keyword.
+        """
+        kwargs = dict(self._config.profile.as_gate_kwargs())
+        kwargs["consumption_ledger"] = self._ledger
+        return kwargs
 
     async def _forward_allow(
         self,
@@ -463,8 +545,7 @@ class GovernedGateway:
                     expected_execution_boundary=self._config.execution_boundary,
                     expected_action=name,
                     expected_actor=principal,
-                    consumption_ledger=self._ledger,
-                    **self._config.profile.as_gate_kwargs(),
+                    **self._gate_kwargs(),
                 )
             )
         except ReceiptValidationError as exc:
@@ -476,6 +557,51 @@ class GovernedGateway:
             return self._downstream_failure_result(name, audit_hash)
 
         return self._wrap_allow_result(downstream_result, record, audit_hash)
+
+    # -- escalation back-pressure (bounded-capacity, fail-closed) ---------- #
+
+    def _enforce_pending_capacity(
+        self, record: Any, principal: str, name: str
+    ) -> mcp_types.CallToolResult | None:
+        """Reject a new escalation when the parked-escalation cap is exhausted.
+
+        Returns ``None`` when there is room to park (the caller proceeds to
+        park). When either the global cap (``max_pending``) or this principal's
+        cap (``max_pending_per_principal``) is already met, refuses the
+        escalation fail-closed: it appends a rejection audit event (so the
+        refusal is evidenced, never a silent drop) and returns a leak-safe DENY.
+        The escalation is NOT parked — this is the back-pressure that bounds the
+        otherwise write-only ``_pending`` / ``_approvals`` growth.
+
+        Ordering note: the kernel already recorded the ESCALATE decision (via
+        ``evaluate_and_record``); this rejection is a *second*, separate audit
+        event documenting that the gateway refused to park it. No time-based
+        eviction is involved — capacity is freed only by a successful resume.
+        """
+        global_full = len(self._pending) >= self._config.max_pending
+        principal_pending = sum(1 for p in self._pending.values() if p.record.actor == principal)
+        principal_full = principal_pending >= self._config.max_pending_per_principal
+        if not (global_full or principal_full):
+            return None
+        scope = "pending" if global_full else "principal"
+        try:
+            reject_record = DecisionRecord(
+                decision=Decision.DENY,
+                tool=record.tool,
+                argument_hash=record.argument_hash,
+                policy_version=record.policy_version,
+                event_id=new_event_id(),
+                matched_rules=(f"CAPACITY_REJECTED:{scope}",),
+                reason="escalation capacity exhausted; call refused",
+                actor=principal,
+            )
+            event = self._audit.append(reject_record)
+            audit_hash: str | None = str(event.get("event_hash")) or None
+        except AuditError:
+            # Even the rejection could not be recorded -> the fixed leak-safe
+            # unrecordable envelope (still a fail-closed DENY, still not parked).
+            return self._audit_unrecordable_result()
+        return self._capacity_rejected_result(name, audit_hash)
 
     # -- escalation approve / resume (G5, F9, test #8) --------------------- #
 
@@ -551,8 +677,7 @@ class GovernedGateway:
             tenant_id=self._config.tenant_id,
             execution_boundary=self._config.execution_boundary,
             expected_actor=pending.record.actor,
-            consumption_ledger=self._ledger,
-            **self._config.profile.as_gate_kwargs(),
+            **self._gate_kwargs(),
         )
 
         def _forward(**kwargs: Any) -> mcp_types.CallToolResult:
@@ -570,6 +695,16 @@ class GovernedGateway:
                 expected_audit_hash=approval_hash,
             )
         )
+        # Success path only (reached after resume_with_receipt returns, i.e. the
+        # approval receipt has been verified AND burned in the single-use ledger):
+        # evict the now-consumed pending and its captured approval. This bounds
+        # the write-only growth of _pending / _approvals and makes a replayed
+        # event_id short-circuit with KeyError above, before it can reach the
+        # gate. A pre-burn ReceiptValidationError (the ``captured is None`` guard
+        # or any gate refusal) raises before this line, so a legitimate retry of
+        # an unconsumed pending is preserved.
+        del self._pending[event_id]
+        self._approvals.pop(event_id, None)
         return self._wrap_allow_result(downstream_result, pending.record, receipt.audit_event_hash)
 
     # -- MCP result builders (§3.3) ---------------------------------------- #
@@ -708,6 +843,33 @@ class GovernedGateway:
                 "audit_hash": None,
             },
             _meta={"gove_zone": {"decision": "deny", "audit_hash": None}},
+        )
+
+    def _capacity_rejected_result(
+        self, name: str, audit_hash: str | None
+    ) -> mcp_types.CallToolResult:
+        """Leak-safe DENY envelope when escalation capacity is exhausted.
+
+        Mirrors the other leak-safe builders: the tool ``name`` is the only
+        request-derived text (no args, no policy internals). ``audit_hash`` is
+        the anchor of the recorded capacity-rejection event.
+        """
+        import mcp.types as types
+
+        return types.CallToolResult(
+            isError=True,
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"gove-zone DENIED {name}: escalation capacity exhausted; call refused",
+                )
+            ],
+            structuredContent={
+                "decision": "deny",
+                "reason": "escalation capacity exhausted; call refused",
+                "audit_hash": audit_hash,
+            },
+            _meta={"gove_zone": {"decision": "deny", "audit_hash": audit_hash}},
         )
 
     def _gate_refused_result(

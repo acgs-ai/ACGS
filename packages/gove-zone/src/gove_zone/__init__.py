@@ -58,6 +58,8 @@ from gove_zone.errors import (
     DeniedError,
     EscalateError,
     GoveZoneError,
+    IdentityError,
+    IdentityRejectionReason,
     PolicyError,
     ProductionProfileError,
     ReceiptAlreadyUsedError,
@@ -86,6 +88,27 @@ from gove_zone.executor import (
 from gove_zone.frontend_contract import (
     receipt_to_governed_action,
     record_to_governed_action,
+)
+from gove_zone.gateway import (
+    BypassAttemptError,
+    GatewayResult,
+    SealedTool,
+    UniversalGateway,
+    http_json_tool,
+)
+from gove_zone.identity import (
+    Credential,
+    CredentialType,
+    IdentityProviderAdapter,
+    MockAzureADAdapter,
+    MockGoogleWorkspaceAdapter,
+    MockIdentityProvider,
+    MockOktaAdapter,
+    Principal,
+    PrincipalType,
+    RBACMapper,
+    RoleDefinition,
+    govern_identity_action,
 )
 from gove_zone.integration import (
     GateMode,
@@ -162,13 +185,14 @@ from gove_zone.workflow import (
 )
 from gove_zone.yaml_policy import YAMLPolicy, YAMLRiskTierPolicy
 
-# Single source of truth is the installed package metadata (pyproject `version`).
-# The literal fallback matches that value for source/editable runs where the
-# distribution is not installed; keep it in sync with pyproject on bumps.
+# Single source of truth is the quoted literal below: hatch extracts it at
+# build time ([tool.hatch.version] pattern in pyproject.toml), so installed
+# metadata always mirrors it. importlib is preferred at runtime only to read
+# the installed distribution's copy; the literal serves source/editable runs.
 try:
     __version__ = _metadata.version("gove-zone")
 except _metadata.PackageNotFoundError:  # pragma: no cover - source/editable runs
-    __version__ = "0.1.0a1"
+    __version__ = "1.0.0rc1"
 
 __all__ = [
     "GENESIS_HASH",
@@ -197,6 +221,8 @@ __all__ = [
     "authz_enforce_from_env",
     "CompositePolicy",
     "ConsumptionLedgerError",
+    "Credential",
+    "CredentialType",
     "Decision",
     "DecisionRecord",
     "DecisionReceipt",
@@ -208,14 +234,26 @@ __all__ = [
     "Ed25519Signer",
     "EscalateError",
     "ExecutionBoundary",
+    "BypassAttemptError",
     "GateMode",
     "GateModeError",
+    "GatewayResult",
     "GovernanceProfile",
+    "SealedTool",
+    "UniversalGateway",
+    "http_json_tool",
     "GovernanceRequest",
     "GovernedExecutor",
     "GoveZoneError",
+    "IdentityError",
+    "IdentityProviderAdapter",
+    "IdentityRejectionReason",
     "Kernel",
     "ManagedAgent",
+    "MockAzureADAdapter",
+    "MockGoogleWorkspaceAdapter",
+    "MockIdentityProvider",
+    "MockOktaAdapter",
     "SandboxProvider",
     "LocalProcessSandbox",
     "E2BSandbox",
@@ -231,7 +269,10 @@ __all__ = [
     "ProductionProfileError",
     "ProofPackRejectionReason",
     "ProofPackVerificationResult",
+    "Principal",
+    "PrincipalType",
     "ProposedAction",
+    "RBACMapper",
     "Receipt",
     "ReceiptAlreadyUsedError",
     "RiskTier",
@@ -245,6 +286,7 @@ __all__ = [
     "ReceiptVerifier",
     "ReplayResult",
     "ReplaySideStore",
+    "RoleDefinition",
     "RuleSetPolicy",
     "SCHEMA_VERSION",
     "SigningError",
@@ -276,6 +318,7 @@ __all__ = [
     "load_evaluation_suite",
     "canonical_json",
     "find_event",
+    "govern_identity_action",
     "make_signer",
     "mcp_tools_call",
     "mcp_tools_list",

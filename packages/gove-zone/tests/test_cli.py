@@ -52,6 +52,7 @@ def test_cli_defines_expected_commands() -> None:
         "doctor",
         "smoke",
         "gate",
+        "validate",
         "replay",
         "setup",
         "enable",
