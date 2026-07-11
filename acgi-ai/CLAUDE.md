@@ -154,65 +154,115 @@ The two `!important` declarations in the `prefers-reduced-motion` reset in
 `src/index.css` carry `biome-ignore` comments — they are spec-mandated
 (DESIGN.md §2.5) and must remain.
 
-## Deploy Configuration (configured by /setup-deploy 2026-05-06)
+## Deploy configuration
 
-Two-origin topology per `DEPLOY.md`. Workflows live at **repo-root**
-`.github/workflows/{console,marketing}.yml` (NOT under `acgi-ai/.github/`).
-GitHub Actions only discovers workflows from the repo root; the workflows
-were originally placed under `acgi-ai/.github/workflows/` and silently never
-ran (verified by `gh run list` showing zero runs). They were moved to the
-root in this PR. The acgi-ai app is in a subdirectory, so each workflow
-sets `defaults.run.working-directory: acgi-ai` and prefixes path filters
-(e.g. `acgi-ai/src/**`) so commands run in the subdirectory while GitHub's
-file-change detection works at repo-root scope.
+The deployment contract is defined by `DEPLOY.md` and six workflows under the
+repository-root `.github/workflows/` directory. GitHub Actions does not discover
+workflows under `acgi-ai/.github/`. The package remains a two-surface web app;
+marketing and the privileged console have different origins and deployment
+authority.
 
-Production domains are pending DNS/ACME provisioning per `PLAN.md §5.6`
-(formerly Phase 5, now Phase 6 after the /autoplan reorder).
+### Verification and deployment are physically separated
 
-### Marketing surface (Cloudflare Pages)
+Pull requests run only the read-only verification workflows:
 
-Cloudflare Pages is the active marketing provider (see `DEPLOY.md §3`).
+- `.github/workflows/marketing.yml`
+- `.github/workflows/console.yml`
+- `.github/workflows/storybook.yml`
 
-- **Platform:** Cloudflare Pages (project `acgs-marketing`; config `wrangler.toml` + `infra/cloudflare/{_headers,_redirects}`)
-- **Production URL:** `https://acgs.ai` (pending DNS — staging URL is the `*.pages.dev` from the Cloudflare dashboard)
-- **Deploy workflow:** repo-root `.github/workflows/marketing-cloudflare.yml` (gated production deploy on push to `master`)
-- **Verify workflow:** repo-root `.github/workflows/marketing.yml` is now PR/verify-only (lint + build + `test:all`), no deploy
-- **Deploy trigger:** auto on push to `master`; PRs verify only
-- **Required secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (deploy BLOCKED until set)
-- **Required human setup:** create the `acgs-marketing` Pages project, set its production branch to `master`, configure a GitHub `production` Environment with required reviewers, then add the secrets (`DEPLOY.md §3a`)
-- **Deploy status command:** `gh run list -w marketing-cloudflare -L 1`
-- **Health check URL:** the production URL (200 OK on `/`)
+Those workflows may build and upload review artifacts, but they must not read
+deployment secrets, request OIDC/Pages write authority, or perform a deploy.
+Production mutations exist only in the push-to-`master` workflows:
+
+- `.github/workflows/marketing-cloudflare.yml`
+- `.github/workflows/console-deploy.yml`
+- `.github/workflows/storybook-deploy.yml`
+
+Each push workflow reverifies the pushed commit before authorization. Its
+credentialed job remains unreachable unless the target environment contains an
+exact 40-lowercase-hex match for that commit:
+
+- `MARKETING_PRODUCTION_APPROVED_SHA` on the `production` environment;
+- `CONSOLE_PRODUCTION_APPROVED_SHA` on the `production` environment;
+- `STORYBOOK_PRODUCTION_APPROVED_SHA` on the `github-pages` environment.
+
+Missing, malformed, stale, or different values skip the side-effectful job;
+they are not a bypass. All `uses:` references remain immutable 40-hex commit
+SHA pins. CI uses exact Node 24.18.0 and the integrity-qualified pnpm 9.15.4
+selector through an isolated Corepack activation.
+
+### Marketing surface (Cloudflare Workers Static Assets)
+
+- **Committed target:** Cloudflare Worker `acgs-governance-proxy` with Workers
+  Static Assets, configured by `infra/cloudflare/workers/wrangler.toml`.
+- **Routes:** the config owns exactly `acgs.ai/*`, `www.acgs.ai/*`,
+  `console.acgs.ai/*`, and `api.acgs.ai/telegram/*`; removing the routes block
+  can detach the live zone routes.
+- **Verification:** `.github/workflows/marketing.yml` is pull-request only.
+- **Deployment:** `.github/workflows/marketing-cloudflare.yml` is push only,
+  requires exact-commit authorization, and uses the locked Wrangler CLI.
+- **External blockers:** the protected `production` environment, required
+  reviewers, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, DNS, and a live
+  post-deploy verification artifact are owner-controlled and not proved by the
+  repository.
+
+The older Cloudflare Pages project/configuration is a shadow compatibility
+surface, not the committed marketing deployment target. GitHub Pages is used
+only for the separately privileged buyer-evidence publication below.
 
 ### Console surface (Cloud Run + Caddy)
 
-- **Platform:** Google Cloud Run (Caddy container per `infra/Dockerfile.console` + `infra/cloudrun/service.yaml`, both under `acgi-ai/`)
-- **Production URL:** `https://console.acgs.ai` (pending DNS — staging URL is the auto-generated `*.run.app`)
-- **Deploy workflow:** repo-root `.github/workflows/console.yml` (docker build context: `acgi-ai/`, file: `acgi-ai/infra/Dockerfile.console`)
-- **Deploy trigger:** image build on PR; deploy on push to `master`
-- **Auth:** Workload Identity Federation (no service-account JSON in secrets)
-- **Required secrets:** `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_ARTIFACT_REGISTRY`, `CONSOLE_BUS_UPSTREAM`
-- **Deploy status command:** `gcloud run services describe acgi-console --region=$GCP_REGION --project=$GCP_PROJECT_ID --format='value(status.url,status.latestReadyRevisionName)'`
-- **Health check URL:** `${PRODUCTION_URL}/healthz` returning `{ ok, served_hash, build_id }` per `DEPLOY.md §10`
-- **Bus proxy contract:** Cloud Run renders `BUS_UPSTREAM` from `CONSOLE_BUS_UPSTREAM`; Caddy proxies `/api/*` to it and forwards/echoes `X-ACGS-Schema-Version`.
+- **Committed target:** Google Cloud Run with `infra/Dockerfile.console`,
+  `infra/Caddyfile`, and per-environment templates under `infra/cloudrun/`.
+- **Verification:** `.github/workflows/console.yml` is pull-request only.
+- **Deployment:** `.github/workflows/console-deploy.yml` is push only and owns
+  image publication plus the rendered Cloud Run deployment.
+- **Identity:** Google Workload Identity Federation; do not add a long-lived
+  service-account JSON key.
+- **External blockers:** the protected `production` environment, required
+  reviewers, `GCP_PROJECT_ID`, `GCP_REGION`,
+  `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`,
+  `GCP_ARTIFACT_REGISTRY`, `CONSOLE_AUTH_UPSTREAM`, `CONSOLE_BUS_UPSTREAM`,
+  DNS, and live `/healthz` evidence remain owner-controlled.
+- **Fail-closed boundary:** the renderer requires both authenticated upstreams;
+  Caddy must not serve privileged console routes or `/api/*` through fixture or
+  demo fallbacks in production.
 
-### Project type
+### Buyer-evidence publication (GitHub Pages)
 
-Web app (two surfaces). Not a CLI / library. Merge method: **squash** (matches the recent PR history pattern).
+- `.github/workflows/storybook.yml` verifies the claim-safe gallery on pull
+  requests without Pages/OIDC authority.
+- `.github/workflows/storybook-deploy.yml` is the only Pages publication path;
+  its deploy job is gated by exact-commit authorization and the protected
+  `github-pages` environment.
+- The gallery is not proof that the official Storybook runtime is installed,
+  hosted, or reviewed in a live browser.
 
-### Custom deploy hooks
+### Evidence boundary and operator checks
 
-- **Pre-merge:** `pnpm lint && pnpm build:console && pnpm build:marketing && pnpm test:all`
-- **Infra smoke:** `pnpm build:console && pnpm smoke:bus-proxy` after Caddy, Cloud Run, or bus proxy changes when Docker is available
-- **Deploy trigger:** automatic on push to `master`
-- **Deploy status:** the platform CLI commands above; or `gh run list -w marketing -L 1` / `gh run list -w console -L 1`
-- **Health check:** Curl `${PRODUCTION_URL}/healthz` for console (returns 200 + JSON), curl `${PRODUCTION_URL}` for marketing (returns 200)
+Configured workflow and infrastructure files are not live deployment evidence.
+Do not claim a production deploy from repository state, a green local gate, DNS
+history, or the presence of environment-variable names. External environment protection
+and owner-controlled credentials remain blockers; domains and runtime health
+must be verified by an authorized operator and captured in the production
+evidence manifest.
 
-### Known gaps (per `PLAN.md §13` /autoplan review)
+Before handoff, run:
 
-These are not blockers for `/land-and-deploy` once URLs land, but they're CI/CD hygiene the Phase 0 PR series will address:
+```bash
+pnpm lint
+pnpm build
+pnpm test:all
+pnpm test:production-deploy-contract
+pnpm test:ci-gates
+```
 
-- Action versions are unpinned (`@vN` not `@vN.M.P`) — see plan A12
-- Container image/toolchain pinning is now enforced by `pnpm test:container-pins`: `.node-version`, Node `>=24 <25`, `pnpm@9.15.4`, `node:24-alpine`, `caddy:2.10.2-alpine`, and Docker smoke image parity stay aligned.
-- Cloud Run `service.yaml` has `minScale: "0"` for all envs (production should be 1+ per plan A14)
+For Caddy, Cloud Run, or proxy changes, also run
+`pnpm build:console && pnpm smoke:bus-proxy` when Docker is available. Only
+after an authorized deploy may an operator use `gh run list`, Cloudflare/gcloud
+status commands, and `scripts/postdeploy-verify.sh` as live evidence.
 
-`/land-and-deploy` works without these fixes; they improve safety, not correctness.
+Container/toolchain pinning is enforced by `pnpm test:container-pins`:
+`.node-version` is exact Node 24.18.0, `packageManager` integrity-pins pnpm
+9.15.4, the console build uses `node:24-alpine`, and the runtime uses
+`caddy:2.10.2-alpine`.

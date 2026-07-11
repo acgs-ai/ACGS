@@ -22,9 +22,16 @@ function mustContain(source, needle, label) {
   check(source.includes(needle), `${label} must include ${JSON.stringify(needle)}.`)
 }
 
+function mustNotContain(source, needle, label) {
+  check(!source.includes(needle), `${label} must not include ${JSON.stringify(needle)}.`)
+}
+
 const packageJson = JSON.parse(read('package.json'))
 const claude = read('CLAUDE.md')
 const agents = read('AGENTS.md')
+const scriptsAgents = read('scripts/AGENTS.md')
+const infraAgents = read('infra/AGENTS.md')
+const cloudrunAgents = read('infra/cloudrun/AGENTS.md')
 const readiness = read('../docs/integration-readiness-task-map.md')
 const securityCheck = read('scripts/check-security-invariants.mjs')
 const architecture = maybeRead('ARCHITECTURE.md')
@@ -174,15 +181,106 @@ check(
 mustContain(claude, 'ARCHITECTURE.md', 'CLAUDE.md')
 mustContain(claude, 'INTEGRATING.md', 'CLAUDE.md')
 mustContain(claude, 'pnpm hello', 'CLAUDE.md')
+for (const needle of [
+  'Cloudflare Workers Static Assets',
+  '.github/workflows/marketing.yml',
+  '.github/workflows/marketing-cloudflare.yml',
+  '.github/workflows/console.yml',
+  '.github/workflows/console-deploy.yml',
+  '.github/workflows/storybook.yml',
+  '.github/workflows/storybook-deploy.yml',
+  'MARKETING_PRODUCTION_APPROVED_SHA',
+  'CONSOLE_PRODUCTION_APPROVED_SHA',
+  'STORYBOOK_PRODUCTION_APPROVED_SHA',
+  'immutable 40-hex commit',
+  'Configured workflow and infrastructure files are not live deployment evidence.',
+  'External environment protection',
+]) {
+  mustContain(claude, needle, 'CLAUDE.md deployment instructions')
+}
 check(
   !/as a single bundle/i.test(claude),
   'CLAUDE.md must not describe the app as a single bundle after the surface split.',
 )
 check(!/There is no API client/i.test(claude), 'CLAUDE.md must not claim there is no API client.')
+mustNotContain(
+  claude,
+  'Cloudflare Pages is the active marketing provider',
+  'CLAUDE.md deployment instructions',
+)
+mustNotContain(
+  claude,
+  'Action versions are unpinned',
+  'CLAUDE.md deployment instructions',
+)
 
 mustContain(agents, 'ARCHITECTURE.md', 'AGENTS.md')
 mustContain(agents, 'INTEGRATING.md', 'AGENTS.md')
 mustContain(agents, 'test:docs-scaffold', 'AGENTS.md')
+for (const needle of [
+  'Cloudflare Workers Static Assets',
+  'console-deploy.yml',
+  'marketing-cloudflare.yml',
+  'storybook-deploy.yml',
+]) {
+  mustContain(agents, needle, 'AGENTS.md deployment instructions')
+}
+
+for (const [label, source] of [
+  ['scripts/AGENTS.md', scriptsAgents],
+  ['infra/AGENTS.md', infraAgents],
+]) {
+  mustContain(source, 'Workers Static Assets', `${label} deployment instructions`)
+}
+mustContain(scriptsAgents, 'console-deploy.yml', 'scripts/AGENTS.md deployment instructions')
+mustContain(
+  scriptsAgents,
+  'SPA_SMOKE_PATH=/trust',
+  'scripts/AGENTS.md deployment instructions',
+)
+mustContain(
+  scriptsAgents,
+  'configured-state evidence',
+  'scripts/AGENTS.md deployment instructions',
+)
+mustContain(
+  scriptsAgents,
+  'live deployment',
+  'scripts/AGENTS.md deployment instructions',
+)
+mustContain(
+  infraAgents,
+  '.github/workflows/console-deploy.yml',
+  'infra/AGENTS.md deployment instructions',
+)
+mustContain(
+  cloudrunAgents,
+  '.github/workflows/console-deploy.yml',
+  'infra/cloudrun/AGENTS.md deployment instructions',
+)
+
+for (const [label, source] of [
+  ['AGENTS.md', agents],
+  ['scripts/AGENTS.md', scriptsAgents],
+  ['infra/AGENTS.md', infraAgents],
+  ['infra/cloudrun/AGENTS.md', cloudrunAgents],
+]) {
+  mustNotContain(
+    source,
+    'Marketing now deploys via Cloudflare Pages',
+    `${label} deployment instructions`,
+  )
+  mustNotContain(
+    source,
+    '.github/workflows/console.yml builds and deploys',
+    `${label} deployment instructions`,
+  )
+}
+mustNotContain(
+  scriptsAgents,
+  'preview-xxx.pages.dev',
+  'scripts/AGENTS.md deployment instructions',
+)
 
 mustContain(securityCheck, 'check-dx-scaffold.mjs', 'security invariant check')
 mustContain(securityCheck, 'test:docs-scaffold', 'security invariant check')

@@ -1,85 +1,93 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-05-04 | Updated: 2026-05-04 -->
+<!-- Generated: 2026-05-04 | Updated: 2026-07-11 -->
 
 # acgi-ai
 
 ## Purpose
-This repository is a React + Vite application that ships the ACGS marketing landing page and the governance console from one bundle. The public marketing surface lives at `/`; the privileged console lives under `/console/*` and is designed around a structural privilege boundary, same-origin fonts, fixture-backed console data until the API client lands, a same-origin fail-closed `/api/*` bus proxy, and deployment separation between the marketing and console origins.
+This package is the single React + Vite frontend for ACGS. It builds a public marketing surface and a separately deployed privileged governance console from one source tree. The committed marketing delivery contract uses Cloudflare Workers Static Assets; the console deployment contract uses a Caddy container on Cloud Run with fail-closed server-side authorization and same-origin API proxying. It also builds a dependency-free buyer-evidence gallery for a Storybook-named GitHub Pages handoff; that gallery is not proof that the official Storybook runtime or any production origin is deployed.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `CLAUDE.md` | Project-specific agent contract, architecture notes, commands, and design constraints. |
-| `DESIGN.md` | Project-local design system for typography, tokens, layout, motion, and surface behavior. |
-| `DEPLOY.md` | Deployment topology and security-header contract for marketing and console origins. |
-| `ARCHITECTURE.md` | Current routing, build-surface, data-flow, privilege-boundary, and claim-boundary map. |
-| `INTEGRATING.md` | Same-origin API and governed bus integration contract for console authors. |
-| `GETTING_STARTED.md` | Fresh-checkout onboarding and verification guide. |
-| `README.md` | Default Vite README; not the authoritative project guide. Prefer `CLAUDE.md`, `DESIGN.md`, and `DEPLOY.md`. |
-| `package.json` | pnpm scripts, pinned package manager, dependencies, and dev dependencies. |
-| `pnpm-lock.yaml` | Locked pnpm dependency graph. |
-| `index.html` | Vite HTML entry document with the root mount node and app title. |
-| `vite.config.ts` | Vite config for React, Tailwind plugin availability, `@/*` alias, and `/api` dev proxy. |
-| `tsconfig.json` | Root TypeScript project references and `@/*` alias. |
-| `tsconfig.app.json` | Strict browser app TypeScript settings and `src` include. |
-| `tsconfig.node.json` | TypeScript settings for Node-side config files. |
-| `biome.json` | Primary formatting and lint configuration used by `pnpm lint` and `pnpm format`. |
-| `eslint.config.js` | Secondary ESLint config for React refresh rules; not wired to an npm script. |
+| `CLAUDE.md` | Package-local agent contract, architecture summary, commands, and design constraints. |
+| `DESIGN.md` | Authoritative package-local visual system, layout, motion, and privilege-surface rules. |
+| `ARCHITECTURE.md` | Current surface, route, data-flow, trust-boundary, and claim-boundary map. |
+| `DEPLOY.md` | Deployment topology, supply-chain, CSP, auth, and configured-versus-deployed contract. |
+| `INTEGRATING.md` | Same-origin management API and governed bus integration contract. |
+| `GETTING_STARTED.md` | Exact Node/pnpm setup, local development, and verification guide. |
+| `PRODUCTION-LAUNCH.md` | Conservative production evidence checklist and external-authority blockers. |
+| `A11Y.md` | Accessibility requirements and current evidence boundaries. |
+| `CLAIM_VALIDATION.md` | Rules for mapping product claims to implementation and test evidence. |
+| `PLAN.md` | Package delivery plan; use the root roadmap for cross-project status. |
+| `package.json` | Integrity-qualified pnpm selector, Node engine, scripts, and dependencies. |
+| `.node-version` | Exact Node 24.18.0 toolchain version used by the frontend gates. |
+| `pnpm-lock.yaml` | Locked frontend dependency graph; install with the frozen-lockfile contract. |
+| `vite.config.ts` | Mode-specific marketing/console aliases, output selection, and local API proxy. |
+| `vitest.config.ts` | Unit/component test configuration. |
+| `playwright.config.ts` | Browser end-to-end and accessibility test configuration. |
+| `claim-matrix.json` | Machine-checked public claim inventory. |
+| `fonts.sha256` | Integrity manifest for self-hosted WOFF2 assets. |
+| `production-authority.example.json` | Non-live template for human-owned production authority evidence. |
+| `production-evidence.example.json` | Non-live template for production verification evidence. |
+| `hosted-storybook-proof.example.json` | Non-live template for hosted buyer-evidence proof. |
+| `storybook-runtime.plan.json` | Pending dependency-owner plan; not official Storybook runtime proof. |
+| `wrangler.toml` | Older Cloudflare Pages project configuration; the configured apex workflow uses `infra/cloudflare/workers/wrangler.toml`. |
 
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `.github/` | GitHub Actions workflows for marketing and console deployment (see `.github/AGENTS.md`). |
-| `infra/` | Console-origin container, Caddy, and Cloud Run configuration (see `infra/AGENTS.md`). |
-| `public/` | Public static assets, MSW worker, icons, and self-hosted fonts (see `public/AGENTS.md`). |
-| `src/` | React application source, styling, API hooks, mocks, and routes (see `src/AGENTS.md`). |
+| `contracts/` | Versioned OpenAPI contract and fixtures for the governed bus boundary. |
+| `infra/` | Cloudflare Workers Static Assets, Caddy, Docker, and Cloud Run deployment contracts (see `infra/AGENTS.md`). |
+| `public/` | Static discovery files, icons, mock worker, and same-origin font assets (see `public/AGENTS.md`). |
+| `scripts/` | Builds, static contract gates, renderers, smoke tests, and evidence helpers (see `scripts/AGENTS.md`). |
+| `src/` | React surfaces, routes, API hooks, mocks, tokens, and styles (see `src/AGENTS.md`). |
+| `tests/` | Vitest setup plus Playwright console, governance, copilot, and end-to-end suites. |
 
 ## For AI Agents
 
 ### Working In This Directory
-- Read `DESIGN.md` before any visual or UI change and `DEPLOY.md` before deployment, CSP, font, or hosting changes.
-- Keep the app as two Vite build surfaces from one source tree unless a task explicitly changes that architecture.
-- Do not add Tailwind utility classes in JSX; use project CSS classes and custom properties.
-- Do not add inline `style={{}}`; the console CSP forbids inline styles.
-- Keep hardcoded hex literals confined to `src/index.css`.
-- Do not create AGENTS.md files for generated or tool-state directories such as `node_modules/`, `dist/`, `.omc/`, `.omx/`, `.remember/`, or `.gstack/` unless explicitly requested.
+- Read `DESIGN.md` before UI changes and read `ARCHITECTURE.md`, `INTEGRATING.md`, and `DEPLOY.md` before changing routing, API, authentication, CSP, or deployment behavior.
+- Use Node 24.18.0 and the exact integrity-qualified pnpm selector in `package.json`; do not replace the Corepack proof with an unqualified package-manager install.
+- Keep marketing and console as distinct Vite build surfaces. Never allow marketing assets, fixture fallbacks, analytics, or browser-held service credentials to cross into the production console trust boundary.
+- Production console access must stay server-authorized and fail closed. `AUTH_UPSTREAM`, `BUS_UPSTREAM`, and authenticated runtime identity are deployment inputs, not agent- or browser-controlled defaults.
+- Treat `dist/`, `dist-marketing/`, `dist-buyer-evidence/`, `node_modules/`, coverage, and Playwright reports as generated output. Change their source or generator instead.
+- Regenerate `src/api/bus.generated.ts` from `contracts/bus.openapi.json` with `pnpm gen:api`; do not hand-edit the generated client.
+- Root workflows are deliberately split: `console.yml`, `marketing.yml`, and `storybook.yml` are pull-request verification only; `console-deploy.yml`, `marketing-cloudflare.yml`, and `storybook-deploy.yml` are push-only deployment workflows. Do not recombine verification and production authority.
+- The production deploy workflows require exact-commit environment authorization before credentialed jobs. Committed workflow/configuration state is not evidence of DNS, credentials, a successful deploy, or a live production control.
+- Do not create AGENTS.md files in generated or tool-state directories unless explicitly requested.
 
 ### Testing Requirements
-- Run `pnpm lint` for source, config, and workflow-adjacent changes covered by Biome.
-- Run `pnpm build` after source, dependency, TypeScript, Vite, or surface-routing changes; it leaves console in `dist/` and marketing in `dist-marketing/`.
-- Run `pnpm test:surfaces` when changing the marketing/console bundle split.
-- Run `pnpm test:bus-proxy` after Caddy, Cloud Run, or console workflow bus proxy changes.
-- Run `pnpm test:auth-boundary` after changing `src/lib/session.ts`, login/session behavior, or production auth gating.
-- Run `pnpm test:font-manifest` after adding, deleting, renaming, or replacing files under `public/static/fonts/` or editing `src/fonts.css`.
-- Run `pnpm test:postdeploy-live-assets` after changing `scripts/postdeploy-verify.sh`, console production asset loading, or demo-auth sentinel checks.
-- Run `pnpm test:claim-matrix` after changing public compliance/security copy, `claim-matrix.json`, or claim-review wording.
-- Run `pnpm test:trust-surface` after changing `/trust`, `/security`, `security.txt`, subprocessor RSS, DPA/SOC2 roadmap wording, or trust/security publication links.
-- Run `pnpm test:docs-scaffold` after changing `ARCHITECTURE.md`, `INTEGRATING.md`, `GETTING_STARTED.md`, `CLAUDE.md`, `AGENTS.md`, or DX script aliases.
-- Run `pnpm test:marketing-csp` after changing `infra/cloudflare/_headers`, marketing-origin headers, or CSP report-only policy.
-- Run `pnpm build:console && pnpm smoke:bus-proxy` when Docker is available and `/api/*` runtime proxy behavior changes.
-- There is no configured test runner; use existing scripts only.
+- Run package commands under Node 24.18.0. From the repository root, `make verify-js-node24` is the authoritative exact-Node frontend gate.
+- Run `pnpm lint`, `pnpm build`, `pnpm test:all`, and `pnpm test:unit` for package-wide changes.
+- Run `pnpm test:playwright` for user journeys, routing, session, accessibility, or browser-state changes.
+- Run `pnpm test:surfaces` after changes to the marketing/console split and `pnpm test:auth-boundary` after changes to login, session, Caddy auth, or production gating.
+- Run `pnpm test:bus-schema`, `pnpm test:bus-proxy`, `pnpm test:cloudrun-templates`, and `pnpm test:cloudrun-renderer` after API, proxy, renderer, Cloud Run, or console workflow changes.
+- Run `pnpm test:marketing-csp` and `pnpm test:marketing-routes` after Cloudflare header, redirect, Worker, route, or marketing-origin changes.
+- Run `pnpm test:production-deploy-contract`, `pnpm test:production-launch-handoff`, `pnpm test:storybook-publication`, and `pnpm test:ci-gates` after root workflow or production-handoff changes.
+- Run `pnpm test:font-manifest`, `pnpm test:claim-matrix`, `pnpm test:trust-surface`, or `pnpm test:docs-scaffold` when their named assets, claims, trust pages, or package guides change.
+- When Docker is available, run `pnpm build:console && pnpm smoke:bus-proxy` after changing Caddy, container, auth, or bus-proxy behavior.
 
 ### Common Patterns
-- `src/main.tsx` imports `@surface/App`; `vite.config.ts` aliases that module to `src/surfaces/marketing/App.tsx` or `src/surfaces/console/App.tsx`.
-- `src/lib/navigate.ts` pushes history and dispatches `popstate` inside the active surface.
-- Console data flows through `src/api/hooks.ts` and `src/api/client.ts`; MSW fixtures mirror those contracts.
-- Console `/api/*` requests terminate at Caddy and reverse-proxy to `BUS_UPSTREAM` with `X-ACGS-Schema-Version`.
-- `src/lib/session.ts` is a non-production demo escape hatch only; production auth must be OIDC/server-cookie backed and `hasSession()` must remain fail-closed until that layer exists.
-- Design tokens live in `src/index.css`; component layout lives in `src/App.css`; CSP-safe utilities live in `src/csp-utilities.css`.
+- `src/main.tsx` imports `@surface/App`; `vite.config.ts` resolves that alias to the marketing or console application for the active mode.
+- `pnpm build` leaves the console artifact in `dist/` and the marketing artifact in `dist-marketing/`; deployment workflows rebuild the one artifact they publish.
+- TanStack Router owns each surface route tree. React Query hooks use the same-origin API client, and fixture fallback is opt-in for non-production development only.
+- Console routes and `/auth/status` pass through Caddy `forward_auth`; `/api/*` passes through the fail-closed governed bus proxy before any SPA fallback.
+- Marketing deep links are explicit Workers Static Assets rewrites. Unknown paths remain real 404s, while `/console` routes redirect to the privileged origin.
+- Design tokens live in `src/index.css`; component layout lives in `src/App.css`; CSP-safe utility classes live in `src/csp-utilities.css`. Inline styles and hardcoded hex values outside `src/index.css` are forbidden.
 
 ## Dependencies
 
 ### Internal
-- `src/` implements both runtime surfaces and consumes `public/static/fonts/`.
-- `infra/` serves the built `dist/` output and enforces console-origin CSP and headers.
-- `.github/workflows/` runs lint, build, image, and deploy automation.
+- The repository-root `.github/workflows/{console,marketing,storybook}.yml` files verify pull requests without production authority.
+- The repository-root `.github/workflows/console-deploy.yml`, `marketing-cloudflare.yml`, and `storybook-deploy.yml` independently verify pushed commits before authorized publication.
+- `contracts/` supplies generated API types consumed by `src/api/`; `public/` supplies same-origin assets; `infra/` serves and deploys the build artifacts.
+- The root gove-zone/control-plane services own governed runtime behavior; this package consumes their versioned same-origin contracts rather than implementing a second authorization path.
 
 ### External
-- React 19 and React DOM for UI rendering.
-- Vite 8 and TypeScript 6 for bundling and strict type checking.
-- TanStack React Router for surface route trees and React Query for API hook caching.
-- MSW for optional local API mocks.
-- Biome for linting and formatting.
-- Caddy, Docker, Cloud Run, Cloudflare Pages, and GitHub Actions for deployment.
+- React 19, React DOM, TanStack Router, and React Query for the application runtime.
+- Vite 8 and TypeScript 6 for strict, mode-specific builds.
+- Vitest, Testing Library, Playwright, axe, and MSW for unit, browser, accessibility, and non-production fixture testing.
+- Biome for the package lint/format gate.
+- Caddy, Docker, Google Cloud Run, Cloudflare Workers Static Assets, GitHub Pages, and GitHub Actions for the configured delivery paths.
 
 <!-- MANUAL: Any manually added notes below this line are preserved on regeneration -->
