@@ -260,12 +260,13 @@ def build_items(repo_root: Path = REPO_ROOT) -> list[ReadinessItem]:
                 _maybe_read(repo_root, "acgi-ai/DEPLOY.md"),
             ]
         ),
-        # Marketing PRODUCTION deploy moved Vercel -> Cloudflare Pages (#128); the
-        # fail-closed marker now lives in marketing-cloudflare.yml. Mirror the
-        # markers asserted by acgi-ai/scripts/check-production-deploy-contract.mjs
-        # so this aggregator stays in lockstep with the live deploy contract.
+        # Marketing PRODUCTION deploy moved Vercel -> Pages (#128) -> Workers
+        # Assets (the live acgs.ai origin); the fail-closed marker lives in
+        # marketing-cloudflare.yml. Mirror the markers asserted by
+        # acgi-ai/scripts/check-production-deploy-contract.mjs so this
+        # aggregator stays in lockstep with the live deploy contract.
         [
-            "::error::Cloudflare Pages deploy blocked",
+            "::error::Cloudflare Workers deploy blocked",
             "exit 1",
             "CLOUDFLARE_API_TOKEN",
             "CLOUDFLARE_ACCOUNT_ID",
