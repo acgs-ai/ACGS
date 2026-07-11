@@ -10,6 +10,14 @@ must never execute.
 
 Identified as a gap by the /cca round-2 advisor pass (agy) against the
 existing fail-closed suite.
+
+Broker-unavailable descope (G1.3): the kernel has no broker surface — a
+dispatch calls policy + audit-store + tool directly, with no message broker
+in the path. The equivalent "an external dependency the kernel relies on is
+unavailable" fail-closed path is audit-store failure, which is already
+covered by ``test_fail_closed.test_audit_append_failure_raises_audit_error``
+(a raising audit store makes the tool never run and raises ``AuditError``).
+No broker fixture is invented here; there is nothing to simulate.
 """
 
 from __future__ import annotations

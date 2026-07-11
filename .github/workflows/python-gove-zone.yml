@@ -90,6 +90,22 @@ jobs:
           --cov-report=term-missing:skip-covered
           --cov-fail-under=90
 
+      - name: Fail-closed deny-path coverage gate (kernel, 100%)
+        # G1.3: the kernel is the deny-synthesis module — it turns policy
+        # DENY/ESCALATE/malformed-TRANSFORM and audit/exec failures into
+        # fail-closed outcomes. A single uncovered deny line is a hole in the
+        # fail-closed guarantee, so this gate demands 100% statement + branch
+        # coverage on gove_zone.kernel specifically. Separate from the 90%
+        # whole-package floor above so the deny-path contract is enforced on
+        # its own axis and can never be diluted by the wider package average.
+        run: >
+          .venv/bin/python -m pytest tests/
+          --cov=gove_zone.kernel
+          --cov-branch
+          --cov-report=term-missing
+          --cov-fail-under=100
+          -q
+
   wheel-smoke:
     # Release-readiness gate (G1.1): build the wheel, install it ALONE into a
     # throwaway venv (no extras, no --editable), and prove `gove-zone smoke`
