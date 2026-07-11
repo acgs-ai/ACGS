@@ -2176,7 +2176,9 @@ def test_generate_run_cli_rejects_membrane_mutations_and_claims_substitution_wit
     monkeypatch.setattr(generate_run, "assert_evidence_runtime", lambda **_kwargs: ROOT)
     monkeypatch.setattr(generate_run, "git_root", lambda: ROOT)
     monkeypatch.setattr(generate_run, "verify_git_range", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(generate_run, "reject_outer_evidence_in_product", lambda *_args: None)
+    monkeypatch.setattr(
+        generate_run, "reject_outer_evidence_in_product", lambda *_args, **_kwargs: None
+    )
     monkeypatch.setattr(
         generate_run, "validate_node_execution_identities", lambda *_args, **_kwargs: None
     )
@@ -2286,7 +2288,9 @@ def test_capture_launcher_binds_cwd_executable_and_appends_only_after_success(
         "canonical_node_evidence_path",
         lambda *_args, **_kwargs: transcript,
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     temp_root = tmp_path / "runtime"
     temp_root.mkdir(mode=0o700)
     assert (
@@ -2361,7 +2365,9 @@ def test_capture_launcher_uses_lexical_venv_and_ignores_ambient_python_authority
         "reviewed_node_command",
         lambda *_args: ("test:lexical-venv", (".venv/bin/python", "-c", code), "CP"),
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
         capture_reviewed_command,
@@ -2404,7 +2410,9 @@ def test_capture_claims_final_command_uses_canonical_selector(
         "canonical_node_evidence_path",
         lambda *_args, **_kwargs: transcript,
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     executed: list[str] = []
 
     def successful_capture(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -2468,7 +2476,9 @@ def test_capture_rejects_uv_substitution_between_resolution_and_open(
         "reviewed_node_command",
         lambda *_args: ("test:uv", ("uv", "--version"), "REPO_ROOT"),
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     real_reviewed_executable = capture_reviewed_command.reviewed_executable
 
     def resolve_then_replace(cwd: Path, argv0: str) -> Path:
@@ -2517,7 +2527,9 @@ def test_capture_launcher_rejects_deterministic_executable_races(
         "canonical_node_evidence_path",
         lambda *_args, **_kwargs: transcript,
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     real_run = subprocess.run
 
     def racing_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -2570,9 +2582,13 @@ def test_capture_launcher_publishes_nothing_when_isolated_cleanup_fails(
         "canonical_node_evidence_path",
         lambda *_args, **_kwargs: transcript,
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     if cleanup_failure == "noop":
-        monkeypatch.setattr(capture_reviewed_command.shutil, "rmtree", lambda *_args: None)
+        monkeypatch.setattr(
+            capture_reviewed_command.shutil, "rmtree", lambda *_args, **_kwargs: None
+        )
     else:
         monkeypatch.setattr(
             capture_reviewed_command.shutil,
@@ -2621,7 +2637,9 @@ def test_capture_launcher_sandbox_denies_ignored_repo_write_and_missing_binary(
         "reviewed_node_command",
         lambda *_args: ("test:write", (".venv/bin/python", "-c", code), "CP"),
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     args = [
         "--node",
         "P0-MEMBRANE-001",
@@ -2713,7 +2731,9 @@ def test_capture_launcher_rejects_changed_sandbox_binary(
         "canonical_node_evidence_path",
         lambda *_args, **_kwargs: transcript,
     )
-    monkeypatch.setattr(capture_reviewed_command, "_require_safe_parent_chain", lambda *_args: None)
+    monkeypatch.setattr(
+        capture_reviewed_command, "_require_safe_parent_chain", lambda *_args, **_kwargs: None
+    )
     real_run = subprocess.run
 
     def mutate_sandbox(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:

@@ -39,12 +39,14 @@ from _common import (
 )
 
 
-def _require_safe_parent_chain(path: Path) -> None:
+def _require_safe_parent_chain(path: Path, *, trusted_stop: Path | None = None) -> None:
     current = path.parent
     while True:
         mode = current.stat().st_mode
         if mode & (stat.S_IWGRP | stat.S_IWOTH):
             fail(f"executable parent chain is group/world writable: {current}", phase="B6")
+        if trusted_stop is not None and current == trusted_stop:
+            return
         if current.parent == current:
             return
         current = current.parent
@@ -205,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         cwd = reviewed_cwd(repo, cwd_scope)
         executable = reviewed_executable(cwd, reviewed_argv[0])
         lexical = cwd / reviewed_argv[0] if "/" in reviewed_argv[0] else executable
-        _require_safe_parent_chain(lexical)
+        _require_safe_parent_chain(lexical, trusted_stop=repo)
         _require_safe_parent_chain(executable)
         target_fd = os.open(executable, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         before = os.fstat(target_fd)
