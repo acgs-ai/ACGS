@@ -4,9 +4,11 @@ Ported from ``acgs_governance_eval_mvp/governance/audit/jsonl_chain.py``.
 Process-safe via a standard-library file lock: ``fcntl.flock`` on POSIX and
 ``msvcrt.locking`` on Windows. Importing the package requires neither; the lock
 primitive is resolved lazily at append time. A host exposing neither primitive
-fails closed at append rather than writing without serialization. The POSIX
-path is exercised by ``test_concurrent_appends_preserve_chain_integrity``; the
-Windows path uses stdlib ``msvcrt`` and is not exercised on POSIX CI.
+fails closed at append rather than writing without serialization. Both paths
+are exercised by ``test_concurrent_appends_preserve_chain_integrity``, which
+launches writers in separate OS processes so the POSIX ``fcntl`` branch runs
+on the Linux/macOS CI legs and the Windows ``msvcrt`` branch runs on the
+Windows CI leg.
 
 Chain rules:
 
@@ -57,6 +59,11 @@ class ChainHashAuditStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last_hash: str | None = None
+        # File size observed immediately after this instance's own last
+        # append (while still holding the lock). Lets the next append skip
+        # the tail re-read when nothing else has written in between; any
+        # size change falls back to the authoritative tail read.
+        self._last_size: int | None = None
 
     def append(self, decision: DecisionRecord) -> dict[str, Any]:
         """Append *decision* and return the persisted event dict.
@@ -67,16 +74,13 @@ class ChainHashAuditStore:
         """
         lock_path = self.path.with_suffix(self.path.suffix + ".lock")
         with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
-            # Always re-read while holding the lock. This instance may
-            # have appended earlier, then another store/process may have
-            # advanced the chain before this append.
-            previous_hash = self._read_last_hash_from_disk()
+            previous_hash = self._previous_hash_locked()
             payload = decision.to_dict()
             payload["previous_hash"] = previous_hash
             payload.pop("event_hash", None)
             payload["event_hash"] = sha256_json(payload)
 
-            line = (
+            data = (
                 json.dumps(
                     payload,
                     sort_keys=True,
@@ -84,17 +88,92 @@ class ChainHashAuditStore:
                     separators=(",", ":"),
                 )
                 + "\n"
-            )
-            with self.path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+            ).encode("utf-8")
+            with self.path.open("ab") as fh:
+                fh.write(data)
                 fh.flush()
                 os.fsync(fh.fileno())
+                self._last_size = fh.tell()
             self._last_hash = str(payload["event_hash"])
         return payload
+
+    def append_many(self, decisions: Iterable[DecisionRecord]) -> list[dict[str, Any]]:
+        """Append a batch of decisions under ONE lock acquisition and ONE fsync.
+
+        Chain semantics are identical to calling :meth:`append` in a loop —
+        every event's ``previous_hash`` still links to the prior event's
+        ``event_hash`` — but the whole batch is serialized, written, and
+        fsync'd as a single storage transaction.
+
+        Durability trade-off (explicit): a crash between the batched write and
+        its single fsync can lose up to the entire batch, whereas per-event
+        :meth:`append` bounds the loss to the newest event. Whatever survives
+        is always a valid *prefix* of the chain — the chain rules themselves
+        are never weakened, and no event is ever readable before it is
+        hash-linked. Callers needing per-event durability must keep using
+        :meth:`append`.
+
+        Returns the persisted event dicts in append order; an empty batch
+        writes nothing and returns ``[]``.
+        """
+        records = list(decisions)
+        if not records:
+            return []
+        payloads: list[dict[str, Any]] = []
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        with lock_path.open("a+") as lock_fh, _exclusive_file_lock(lock_fh):
+            previous_hash = self._previous_hash_locked()
+            chunks: list[bytes] = []
+            for decision in records:
+                payload = decision.to_dict()
+                payload["previous_hash"] = previous_hash
+                payload.pop("event_hash", None)
+                payload["event_hash"] = sha256_json(payload)
+                chunks.append(
+                    (
+                        json.dumps(
+                            payload,
+                            sort_keys=True,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                )
+                previous_hash = str(payload["event_hash"])
+                payloads.append(payload)
+            with self.path.open("ab") as fh:
+                fh.write(b"".join(chunks))
+                fh.flush()
+                os.fsync(fh.fileno())
+                self._last_size = fh.tell()
+            self._last_hash = previous_hash
+        return payloads
+
+    def _previous_hash_locked(self) -> str:
+        """Return the chain tail hash. MUST be called while holding the lock.
+
+        Fast path: when this instance performed the most recent append and
+        the file size (stat, under the same lock) is unchanged since, reuse
+        the cached tail hash instead of re-reading the file tail. Any other
+        observation — different size, missing file, stat error, no prior
+        append by this instance — falls back to the authoritative tail read,
+        so cross-process interleaving behaves exactly as before.
+        """
+        if self._last_hash is not None and self._last_size is not None:
+            try:
+                if self.path.stat().st_size == self._last_size:
+                    return self._last_hash
+            except OSError:
+                pass  # deleted/unreadable → authoritative read (genesis or raise)
+        return self._read_last_hash_from_disk()
 
     def last_hash(self) -> str:
         """Return the event_hash of the most recent event, or genesis."""
         self._last_hash = self._read_last_hash_from_disk()
+        # The (_last_hash, _last_size) pair is only trusted as an append
+        # fast-path when both were captured together under the append lock.
+        self._last_size = None
         return self._last_hash
 
     def _read_last_hash_from_disk(self) -> str:

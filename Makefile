@@ -46,7 +46,7 @@ UV ?= uv
 .PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence verify-js-node24 production-blocker-evidence production-launch-preflight \
         build-js test-js lint-js typecheck-js \
         build-py test-py lint-py typecheck-py lint-docs \
-        submodule-status verify-fresh
+        submodule-status verify-fresh test-fail-closed
 
 help:
 	@echo "govern-zone monorepo"
@@ -149,6 +149,16 @@ typecheck-py:
 	echo "  STRICT (gated, clean):$$strict"; \
 	echo "  INFORMATIONAL (reported, not gated):$$informational"
 
+# ---- Fail-closed deny-path coverage gate (G1.3) ----
+# Enforce 100% statement + branch coverage on the gove-zone kernel — the
+# deny-synthesis module that turns policy DENY/ESCALATE/malformed-TRANSFORM
+# and audit/exec failures into fail-closed outcomes. A single uncovered deny
+# line is a hole in the fail-closed guarantee, so this gate fails the build.
+test-fail-closed:
+	@echo "==> fail-closed deny-path coverage gate (gove_zone.kernel, 100%)"
+	cd packages/gove-zone && $(UV) run --extra dev --extra schema --extra mcp --extra yaml python -m pytest \
+		--cov=gove_zone.kernel --cov-branch --cov-fail-under=100 -q
+
 # ---- Root governance docs ----
 
 lint-docs:
@@ -194,7 +204,7 @@ submodule-status:
 		fi; \
 	done
 
-verify: submodule-status lint typecheck test
+verify: submodule-status lint typecheck test test-fail-closed
 
 openapi:
 	$(UV) run --package agent-bus-analyzer agent-bus-analyzer export-openapi --output acgi-ai/contracts/bus.openapi.json

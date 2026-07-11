@@ -9,14 +9,18 @@ Covers:
 - Tampering with ``previous_hash`` is detected.
 - ``query`` filters by predicate.
 - N concurrent process-level writers preserve chain integrity (no two events
-  share a ``previous_hash``; ``verify_chain`` accepts the result).
+  share a ``previous_hash``; ``verify_chain`` accepts the result). Writers run in
+  separate interpreter processes (not fork), so the test runs identically on
+  Linux, macOS, and Windows, exercising each platform's real audit-lock branch.
 """
 
 from __future__ import annotations
 
 import builtins
 import json
-import multiprocessing
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -146,11 +150,35 @@ def test_query_filter_predicate(tmp_path: Path) -> None:
     assert all(w["tool"] == "write_file" for w in writes)
 
 
-def _concurrent_writer(path: str, count: int, prefix: str) -> None:
-    """Worker process target: append *count* records tagged with *prefix*."""
+# Worker program run in a *separate* interpreter process (one per concurrent
+# writer). Launching real OS processes -- rather than multiprocessing with the
+# "fork" start method -- makes this test OS-agnostic: it runs identically on
+# Linux, macOS, and Windows (which has no "fork"), and each worker exercises the
+# platform's real audit-lock branch (POSIX ``fcntl`` or Windows ``msvcrt``).
+# Using ``sys.executable`` guarantees the workers share this test run's venv, so
+# ``import gove_zone`` resolves without any sys.path juggling. A subprocess also
+# sidesteps the spawn/pickle constraint under pytest's ``--import-mode=importlib``
+# (the test module is not re-importable by name in a fresh interpreter).
+_WORKER_PROGRAM = textwrap.dedent(
+    """
+    import sys
+    from gove_zone import ChainHashAuditStore, Decision, DecisionRecord, sha256_json
+
+    path, count, prefix = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     store = ChainHashAuditStore(path)
     for i in range(count):
-        store.append(_record(f"{prefix}-{i}"))
+        event_id = f"{prefix}-{i}"
+        store.append(
+            DecisionRecord(
+                decision=Decision.ALLOW,
+                tool="write_file",
+                argument_hash=sha256_json({"id": event_id}),
+                policy_version="v0",
+                event_id=event_id,
+            )
+        )
+    """
+)
 
 
 def test_concurrent_appends_preserve_chain_integrity(tmp_path: Path) -> None:
@@ -158,23 +186,20 @@ def test_concurrent_appends_preserve_chain_integrity(tmp_path: Path) -> None:
     n_workers = 4
     per_worker = 25
 
-    # Use fork explicitly. The audit store relies on fcntl (Unix-only), so
-    # fork is always available where the store works. forkserver/spawn would
-    # need the test module to be re-importable in workers; fork inherits.
-    ctx = multiprocessing.get_context("fork")
     procs = [
-        ctx.Process(
-            target=_concurrent_writer,
-            args=(path, per_worker, f"w{i}"),
+        subprocess.Popen(
+            [sys.executable, "-c", _WORKER_PROGRAM, path, str(per_worker), f"w{i}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         for i in range(n_workers)
     ]
-    for p in procs:
-        p.start()
-    for p in procs:
-        p.join()
-    for p in procs:
-        assert p.exitcode == 0, f"worker exited with {p.exitcode}"
+    for proc in procs:
+        stdout, stderr = proc.communicate(timeout=120)
+        assert proc.returncode == 0, (
+            f"worker exited with {proc.returncode}\nstdout: {stdout}\nstderr: {stderr}"
+        )
 
     result = ChainHashAuditStore(path).verify_chain()
     assert result["valid"] is True, f"chain broken: {result['failures'][:3]}"

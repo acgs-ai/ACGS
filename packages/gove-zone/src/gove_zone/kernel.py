@@ -156,8 +156,13 @@ class Kernel:
                 pending=PendingApproval(record, audit_hash, dict(call.args)),
             )
         if record.decision is Decision.TRANSFORM:
-            if record.transformed_args is None:
-                # Policy bug: TRANSFORM without args. Fail closed.
+            if record.transformed_args is None:  # pragma: no cover
+                # Defense-in-depth re-raise: unreachable via the public API
+                # because ``_evaluate_only`` already normalizes a malformed
+                # TRANSFORM (transformed_args is None) into a DENY before this
+                # point (the MALFORMED_TRANSFORM synthesis). Kept as a
+                # fail-closed backstop so any future path that bypasses that
+                # normalization still cannot execute a TRANSFORM without args.
                 raise DeniedError(record, audit_hash)
             args_dict = dict(record.transformed_args)
             call = call.with_args(args_dict)
@@ -281,7 +286,7 @@ class Kernel:
         return DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=call.argument_hash(),
             policy_version="fail-closed/authz",
             event_id=new_event_id(),
             matched_rules=(f"AUTHZ_DENY:{reason}",),
@@ -314,7 +319,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-timeout",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:TIMEOUT:{self.policy_timeout}s",),
@@ -324,7 +329,7 @@ class Kernel:
             record = DecisionRecord(
                 decision=Decision.DENY,
                 tool=call.name,
-                argument_hash=sha256_json(dict(call.args)),
+                argument_hash=call.argument_hash(),
                 policy_version="fail-closed/policy-raised",
                 event_id=new_event_id(),
                 matched_rules=(f"POLICY_ERROR:{type(exc).__name__}",),
@@ -402,6 +407,15 @@ class Kernel:
         The kernel re-raises the original exception regardless of whether
         this append succeeds — execution failures are surfaced to the caller
         even when we can't anchor them in the audit chain.
+
+        ``argument_hash`` here is deliberately recomputed fresh (NOT the
+        memoized ``call.argument_hash()``): this record is written *after*
+        tool execution, so hashing the args as they are now preserves the
+        audit trail's divergence signal — a tool (or shared nested value)
+        that mutated the args before raising produces a failure record whose
+        hash visibly differs from the pre-execution decision record.
+        ``decision_request_hash``/``state_hash`` stay memoized: they identify
+        the request as originally authorized.
         """
         failure = DecisionRecord(
             decision=Decision.DENY,

@@ -1,0 +1,64 @@
+{
+  "disclaimer": "Self-assessment mapping, not a certification, attestation, or audit result. gove-zone is alpha / local-proof software. A mapping row means the receipt membrane produces evidence toward the requirement at the executor boundary; it does not mean adopting gove-zone makes a system compliant. Compliance is a property of an organization and its full control set. See docs/COMPLIANCE_CROSSWALK.md and docs/CLAIMS.md rows 27-33.",
+  "files": {
+    "README.md": {
+      "bytes": 4604,
+      "sha256": "8e038384a80bf9068b1e713a796ff6c11e207dd5d7a24a121bb93b397d168169"
+    },
+    "frameworks/eu-ai-act-article-12.md": {
+      "bytes": 6310,
+      "sha256": "937d123dc33c62c625d46c07c73a92327be445e1928562a293a1a9e08a89e3ac"
+    },
+    "frameworks/iso-42001.md": {
+      "bytes": 5488,
+      "sha256": "9f1797d4f59948fc68131cb5fd017c9e45cc0b6712f55015e9766418aae91249"
+    },
+    "frameworks/soc2.md": {
+      "bytes": 6637,
+      "sha256": "7ed1bfc7ba1b77c245041453c455755f0d323a5b9648875e56b3bd8b6b127a76"
+    },
+    "runtime-evidence/proofpack/audit-chain.json": {
+      "bytes": 1944,
+      "sha256": "177f1286efab2e6036f70e57c492fe8fbb6af9c0622b5f5a9eb246178d6f8191"
+    },
+    "runtime-evidence/proofpack/decision-receipt.json": {
+      "bytes": 1279,
+      "sha256": "f14e1d6077acbe97e5c2d69cb4e0bb1dcd3dbd69bb42a82233f6d12798a84c29"
+    },
+    "runtime-evidence/proofpack/evidence.json": {
+      "bytes": 1856,
+      "sha256": "28eda7bb3d6ac0ca0c98e28767c47da47b9a69bbb2184acd1aa1fedc2f00093a"
+    },
+    "runtime-evidence/proofpack/replay-report.json": {
+      "bytes": 502,
+      "sha256": "9720a70fa308d814701aa1428754eae4ba0d6dbd9220a4fd9059d064d64b6c3c"
+    },
+    "runtime-evidence/proofpack/verification-summary.md": {
+      "bytes": 4519,
+      "sha256": "45c64400a7fc26a97e228b302659359114d3df721a51d7c053feef9afd0a1af6"
+    }
+  },
+  "frameworks": [
+    "eu_ai_act",
+    "iso_42001",
+    "soc2"
+  ],
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "generated_with": "compliance/evidence_pack.py",
+  "how_to_verify": "python3 compliance/evidence_pack.py verify <pack-dir>",
+  "not_certified": "Not compliance-certified. Not regulator-approved. Not an audit result.",
+  "runtime_evidence": {
+    "actor": "compliance-officer",
+    "audit_event_count": 2,
+    "audit_last_hash": "f60fc833e4e04366f8f1532942add50682ec7da2b597a8f7d1c51e960d2c3959",
+    "decision": "allow",
+    "proofpack_rel": "runtime-evidence/proofpack",
+    "proposed_action": "runtime.file.write",
+    "receipt_id": "ev_91173c10c1094a6c",
+    "replay_status": "verified",
+    "signature_algorithm": "none",
+    "signed": false
+  },
+  "schema_version": "acgs/compliance-evidence-pack/v1",
+  "title": "ACGS Compliance Evidence Pack"
+}

@@ -45,9 +45,10 @@ packages = ["delve"]
 strict = true
 
 [[tool.mypy.overrides]]
-# Optional provider SDKs are imported lazily and only when their extra is
-# installed; treat them as untyped so --strict doesn't require their stubs.
-module = ["anthropic.*", "exa_py.*", "tavily.*"]
+# Optional provider SDKs and the optional gove-zone governance integration are
+# imported lazily and only when installed; treat them as untyped so --strict
+# doesn't require their stubs or a cross-package dependency.
+module = ["anthropic.*", "exa_py.*", "tavily.*", "gove_zone.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

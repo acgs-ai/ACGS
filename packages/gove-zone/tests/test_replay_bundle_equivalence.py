@@ -254,11 +254,12 @@ def test_replay_bundle_policy_error_returns_dict_not_raise(tmp_path: Path) -> No
     assert result["valid"] is False
     assert result["events_total"] == 1
     assert result["events_matched"] == 0
-    # At least one mismatch entry of type replay_policy_error (from the byte-equivalence
-    # step) or decision_mismatch (from the semantic step) must be present.
-    assert len(result["mismatches"]) >= 1
-    mismatch_types = {m["type"] for m in result["mismatches"]}
-    assert mismatch_types & {"replay_policy_error", "decision_mismatch", "argument_hash_mismatch"}
+    # The replay policy raised during the single re-derivation, so the mismatch
+    # must carry the distinct infrastructure-failure label — never the
+    # flipped-decision label. Pinned exactly so the label cannot silently drift.
+    assert len(result["mismatches"]) == 1
+    assert result["mismatches"][0]["type"] == "replay_policy_error"
+    assert "policy re-derivation raised" in result["mismatches"][0]["detail"]["reason"]
 
 
 def test_transform_decision_byte_equivalence(tmp_path: Path) -> None:
