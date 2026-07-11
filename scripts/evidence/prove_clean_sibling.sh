@@ -738,7 +738,8 @@ else
         --node "$NODE_ID" \
         --index "$index" \
         --transcript "$NODE_EVIDENCE/transcript.jsonl" \
-        --temp-root "$capture_tmp"
+        --temp-root "$capture_tmp" \
+        --trusted-root "$TMP_ROOT"
     )
   done
 fi

@@ -191,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--index", required=True, type=int)
     parser.add_argument("--transcript", required=True, type=Path)
     parser.add_argument("--temp-root", required=True, type=Path)
+    parser.add_argument("--trusted-root", type=Path)
     args = parser.parse_args(argv)
     target_fd: int | None = None
     sandbox_fd: int | None = None
@@ -200,6 +201,19 @@ def main(argv: list[str] | None = None) -> int:
         repo = git_root()
         if repo != script_repo:
             fail("reviewed capture must execute from REPO_ROOT", phase="B6")
+        trusted_root: Path | None = None
+        if args.trusted_root is not None:
+            trusted_root = args.trusted_root
+            if (
+                not trusted_root.is_absolute()
+                or trusted_root.is_symlink()
+                or trusted_root.resolve(strict=True) != trusted_root
+                or not trusted_root.is_dir()
+                or trusted_root.stat().st_uid != os.getuid()
+                or stat.S_IMODE(trusted_root.stat().st_mode) != 0o700
+                or not repo.is_relative_to(trusted_root)
+            ):
+                fail("trusted root must be canonical caller-owned mode 0700", phase="B6")
         transcript = canonical_node_evidence_path(
             args.transcript, repo, node_id=args.node, filename="transcript.jsonl", must_exist=False
         )
@@ -208,7 +222,12 @@ def main(argv: list[str] | None = None) -> int:
         executable = reviewed_executable(cwd, reviewed_argv[0])
         lexical = cwd / reviewed_argv[0] if "/" in reviewed_argv[0] else executable
         _require_safe_parent_chain(lexical, trusted_stop=repo)
-        _require_safe_parent_chain(executable)
+        executable_stop = (
+            trusted_root
+            if trusted_root is not None and executable.is_relative_to(trusted_root)
+            else None
+        )
+        _require_safe_parent_chain(executable, trusted_stop=executable_stop)
         target_fd = os.open(executable, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         before = os.fstat(target_fd)
         if not stat.S_ISREG(before.st_mode) or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
