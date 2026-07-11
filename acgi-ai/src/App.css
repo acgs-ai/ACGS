@@ -6596,9 +6596,6 @@
   margin-top: var(--space-sm);
 }
 
-.cft-cta-inner h2 em {
-}
-
 .cg-verdict-card {
   background: var(--paper-2);
   padding: 26px 24px;
