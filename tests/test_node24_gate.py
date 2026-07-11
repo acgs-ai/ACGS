@@ -121,6 +121,7 @@ def test_node24_gate_script_is_executable_and_fail_closed():
     assert SCRIPT.is_file()
     assert os.access(SCRIPT, os.X_OK)
     assert SCRIPT.stat().st_mode & 0o777 == 0o755
+    assert source.splitlines()[0] == "#!/bin/bash -p"
     assert "set -euo pipefail" in source
     assert 'REQUIRED_NODE_VERSION="24.18.0"' in source
     assert 'REQUIRED_COREPACK_VERSION="0.35.0"' in source
@@ -136,7 +137,11 @@ def test_node24_gate_script_is_executable_and_fail_closed():
     assert 'run_corepack enable --install-directory "$LAUNCHER_DIR" pnpm' in source
     assert 'CONTROLLED_PATH="${LAUNCHER_DIR}:${NODE_BIN_DIR}:/usr/bin:/bin"' in source
     assert "COREPACK_INTEGRITY_KEYS must stay unset" in source
+    assert "BASH_ENV ENV NODE_OPTIONS" in source
     assert "NODE_COMPILE_CACHE_PORTABLE" in source
+    assert "NODE_DISABLE_COMPILE_CACHE=1" in source
+    assert 'TMPDIR="$PRIVATE_TMPDIR"' in source
+    assert 'XDG_CACHE_HOME="$PRIVATE_CACHE_HOME"' in source
     assert "/usr/bin/python3 -I -" in source
     assert 'run_corepack prepare "pnpm@${EXPECTED_PNPM}" --activate' in source
     assert "validate_runtime" in source
@@ -182,6 +187,45 @@ def test_real_nested_pnpm_uses_private_pinned_corepack_not_host_ambient(
     launcher = _recorded_launcher(launcher_record)
     assert not launcher.exists()
     assert not launcher.parent.exists(), "ephemeral launcher directory must be removed"
+    launcher_parent = Path(env["TMPDIR"])
+    assert not (launcher_parent / "node-compile-cache").exists()
+    assert list(launcher_parent.iterdir()) == [], "private runtime left caller-TMPDIR residue"
+
+
+def test_child_uses_private_temp_cache_and_disables_node_compile_cache(tmp_path: Path):
+    env, caller, _, _ = _gate_env(tmp_path)
+    record = tmp_path / "isolated-child-env.json"
+    env["CHILD_ENV_RECORD"] = str(record)
+    program = """
+const fs = require('node:fs');
+const moduleApi = require('node:module');
+const compileCache = moduleApi.enableCompileCache();
+fs.writeFileSync(process.env.CHILD_ENV_RECORD, JSON.stringify({
+  tmpdir: process.env.TMPDIR,
+  cacheHome: process.env.XDG_CACHE_HOME,
+  disableCompileCache: process.env.NODE_DISABLE_COMPILE_CACHE,
+  compileCacheVariable: process.env.NODE_COMPILE_CACHE,
+  compileCacheDirectory: compileCache.directory,
+}));
+"""
+
+    result = _run_gate(env, caller, "node", "-e", program)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(record.read_text())
+    private_tmp = Path(payload["tmpdir"])
+    private_cache = Path(payload["cacheHome"])
+    assert payload["disableCompileCache"] == "1"
+    assert "compileCacheVariable" not in payload
+    assert "compileCacheDirectory" not in payload
+    assert private_tmp.name == "tmp"
+    assert private_cache.name == "cache"
+    assert private_tmp.parent == private_cache.parent
+    assert private_tmp.parent.name.startswith("acgs-node24-gate.")
+    assert not private_tmp.parent.exists(), "private runtime must be removed after success"
+    launcher_parent = Path(env["TMPDIR"])
+    assert not (launcher_parent / "node-compile-cache").exists()
+    assert list(launcher_parent.iterdir()) == []
 
 
 def test_absolute_pnpm_argv0_is_mapped_to_private_launcher(tmp_path: Path):
@@ -269,6 +313,9 @@ def test_term_kills_entire_child_group_and_cleans_launcher(tmp_path: Path):
     assert not launcher.parent.exists()
     time.sleep(1.0)
     assert not orphan_marker.exists(), "grandchild survived the wrapper's TERM forwarding"
+    launcher_parent = Path(env["TMPDIR"])
+    assert not (launcher_parent / "node-compile-cache").exists()
+    assert list(launcher_parent.iterdir()) == [], "signal cleanup left caller-TMPDIR residue"
 
 
 def test_tampered_corepack_library_fails_before_corepack_execution(tmp_path: Path):
@@ -318,6 +365,40 @@ def test_node_options_preload_is_rejected_before_node_execution(tmp_path: Path):
     assert result.returncode == 1
     assert "NODE_OPTIONS must stay unset" in result.stderr
     assert not preload_marker.exists()
+
+
+def test_direct_exec_rejects_shell_startup_env_without_running_it(tmp_path: Path):
+    for variable in ("BASH_ENV", "ENV"):
+        case = tmp_path / variable.lower()
+        case.mkdir()
+        env, caller, _, _ = _gate_env(case)
+        marker = case / "startup-env-executed"
+        startup_env = case / "startup-env-attack.sh"
+        startup_env.write_text(f"printf ran > {shlex.quote(str(marker))}\n")
+        env[variable] = str(startup_env)
+
+        result = _run_gate(env, caller, "pnpm", "-v")
+
+        assert result.returncode == 1
+        assert f"{variable} must stay unset" in result.stderr
+        assert not marker.exists(), f"{variable} ran before the wrapper's first line"
+
+
+def test_direct_exec_uses_absolute_privileged_bash_not_path_fake(tmp_path: Path):
+    env, caller, _, _ = _gate_env(tmp_path)
+    attack_bin = tmp_path / "fake-bash-bin"
+    attack_bin.mkdir()
+    marker = tmp_path / "fake-bash-executed"
+    fake_bash = attack_bin / "bash"
+    fake_bash.write_text(f"#!/bin/sh\nprintf ran > {shlex.quote(str(marker))}\nexit 99\n")
+    fake_bash.chmod(0o500)
+    env["PATH"] = f"{attack_bin}:{env['PATH']}"
+
+    result = _run_gate(env, caller, "pnpm", "-v")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == EXPECTED_PNPM
+    assert not marker.exists(), "PATH fake bash interpreted the wrapper"
 
 
 def test_fake_fnm_fails_digest_before_it_can_execute(tmp_path: Path):
@@ -382,4 +463,5 @@ def test_makefile_exposes_node24_verification_target():
     makefile = (ROOT / "Makefile").read_text()
 
     assert "verify-js-node24:" in makefile
-    assert "bash scripts/run_acgi_node24_gate.sh $(PNPM) -F acgi-ai run test:all" in makefile
+    assert "./scripts/run_acgi_node24_gate.sh $(PNPM) -F acgi-ai run test:all" in makefile
+    assert "bash scripts/run_acgi_node24_gate.sh" not in makefile

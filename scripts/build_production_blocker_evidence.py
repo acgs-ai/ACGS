@@ -77,7 +77,7 @@ def _command_entry(
 def _acgi_command(*args: str) -> list[str]:
     """Return an acgi-ai pnpm command guarded by the exact Node 24 wrapper."""
 
-    return ["bash", _rel_for_repo(NODE24_GATE), "pnpm", "-F", "acgi-ai", *args]
+    return [_rel_for_repo(NODE24_GATE), "pnpm", "-F", "acgi-ai", *args]
 
 
 def build_plan(args: argparse.Namespace) -> list[dict[str, Any]]:

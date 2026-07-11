@@ -91,7 +91,7 @@ typecheck-js:
 	$(PNPM) turbo run typecheck
 
 verify-js-node24:
-	bash scripts/run_acgi_node24_gate.sh $(PNPM) -F acgi-ai run test:all
+	./scripts/run_acgi_node24_gate.sh $(PNPM) -F acgi-ai run test:all
 
 # ---- Python surfaces (uv workspace) ----
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # Run an acgi-ai verification command with the repo's exact frontend toolchain.
 #
 # Default command:
@@ -36,10 +36,10 @@ fail() {
 # Reject code-injection controls before resolving or executing fnm/Node. The
 # final command also receives these variables unset as defense in depth.
 for injection_var in \
-  NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE \
+  BASH_ENV ENV NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE \
   NODE_COMPILE_CACHE NODE_COMPILE_CACHE_PORTABLE; do
   [[ ! -v "$injection_var" ]] ||
-    fail "${injection_var} must stay unset; Node injection controls are forbidden"
+    fail "${injection_var} must stay unset; startup and Node injection controls are forbidden"
 done
 
 if ! command -v fnm >/dev/null 2>&1; then
@@ -132,13 +132,6 @@ validate_sha256 \
   "$REQUIRED_PNPM_DISPATCHER_SHA256" \
   "Corepack pnpm dispatcher"
 
-NODE_VERSION="$(/usr/bin/env \
-  -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE \
-  -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE \
-  "$NODE_BIN" -p 'process.versions.node')"
-[[ "$NODE_VERSION" == "$REQUIRED_NODE_VERSION" ]] ||
-  fail "expected Node ${REQUIRED_NODE_VERSION}, got ${NODE_VERSION}"
-
 NODE_VERSION_FILE="$(/usr/bin/tr -d '[:space:]' < "$ACGI_DIR/.node-version")"
 [[ "$NODE_VERSION_FILE" == "$REQUIRED_NODE_VERSION" ]] ||
   fail "acgi-ai/.node-version must be exactly ${REQUIRED_NODE_VERSION}"
@@ -225,6 +218,32 @@ RUN_DIR="$(/usr/bin/mktemp -d "${LAUNCHER_PARENT_CANONICAL}/acgs-node24-gate.XXX
 [[ "$(/usr/bin/stat -c '%u:%a' -- "$RUN_DIR")" == "${CURRENT_UID}:700" ]] ||
   fail "private runtime must be caller-owned mode 0700"
 
+PRIVATE_TMPDIR="${RUN_DIR}/tmp"
+PRIVATE_CACHE_HOME="${RUN_DIR}/cache"
+PRIVATE_COREPACK_HOME="${RUN_DIR}/corepack-home"
+/usr/bin/mkdir -m 700 "$PRIVATE_TMPDIR" "$PRIVATE_CACHE_HOME" "$PRIVATE_COREPACK_HOME"
+
+# Every Node, Corepack, pnpm, and final child receives only private temporary
+# and cache paths. Node's compile cache is disabled explicitly because Corepack
+# may enable it through the module API even when NODE_COMPILE_CACHE is unset.
+ISOLATED_CHILD_ENV=(
+  /usr/bin/env
+  -u BASH_ENV -u ENV -u COREPACK_ROOT
+  -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE
+  -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE
+  -u NODE_DISABLE_COMPILE_CACHE
+  NODE_DISABLE_COMPILE_CACHE=1
+  TMPDIR="$PRIVATE_TMPDIR"
+  XDG_CACHE_HOME="$PRIVATE_CACHE_HOME"
+)
+
+NODE_VERSION="$(
+  "${ISOLATED_CHILD_ENV[@]}" PATH="${NODE_BIN_DIR}:/usr/bin:/bin" \
+    "$NODE_BIN" -p 'process.versions.node'
+)"
+[[ "$NODE_VERSION" == "$REQUIRED_NODE_VERSION" ]] ||
+  fail "expected Node ${REQUIRED_NODE_VERSION}, got ${NODE_VERSION}"
+
 PRIVATE_COREPACK_ROOT="${RUN_DIR}/corepack"
 /usr/bin/cp -a -- "$SOURCE_COREPACK_ROOT" "$PRIVATE_COREPACK_ROOT"
 validate_tree_sha256 \
@@ -238,18 +257,13 @@ validate_sha256 \
   "$REQUIRED_PNPM_DISPATCHER_SHA256" \
   "private Corepack pnpm dispatcher"
 
-PRIVATE_COREPACK_HOME="${RUN_DIR}/corepack-home"
-/usr/bin/mkdir -m 700 "$PRIVATE_COREPACK_HOME"
-
 validate_private_corepack() {
   validate_tree_sha256 \
     "$PRIVATE_COREPACK_ROOT" "$REQUIRED_COREPACK_TREE_SHA256" "private Corepack"
 }
 run_corepack() {
   validate_private_corepack
-  /usr/bin/env \
-    -u COREPACK_ROOT -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE \
-    -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE \
+  "${ISOLATED_CHILD_ENV[@]}" \
     COREPACK_HOME="$PRIVATE_COREPACK_HOME" \
     PATH="${NODE_BIN_DIR}:/usr/bin:/bin" \
     "$NODE_BIN" "$PRIVATE_COREPACK_ENTRY" "$@"
@@ -316,9 +330,7 @@ CONTROLLED_PATH="${LAUNCHER_DIR}:${NODE_BIN_DIR}:/usr/bin:/bin"
 # This is the hardened equivalent of `corepack pnpm -v`: both the full private
 # Corepack tree and the full private pnpm payload are revalidated first.
 validate_runtime
-PNPM_VERSION="$(/usr/bin/env \
-  -u COREPACK_ROOT -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE \
-  -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE \
+PNPM_VERSION="$("${ISOLATED_CHILD_ENV[@]}" \
   COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH" \
   "$PNPM_LAUNCHER" -v)"
 [[ "$PNPM_VERSION" == "$EXPECTED_PNPM" ]] ||
@@ -336,9 +348,7 @@ case "$ARGV0_BASENAME" in
   pnpm)
     shift
     FINAL_COMMAND=(
-      /usr/bin/env
-      -u COREPACK_ROOT -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE
-      -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE
+      "${ISOLATED_CHILD_ENV[@]}"
       COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH"
       "$PNPM_LAUNCHER" "$@"
     )
@@ -346,18 +356,14 @@ case "$ARGV0_BASENAME" in
   corepack)
     shift
     FINAL_COMMAND=(
-      /usr/bin/env
-      -u COREPACK_ROOT -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE
-      -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE
+      "${ISOLATED_CHILD_ENV[@]}"
       COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="${NODE_BIN_DIR}:/usr/bin:/bin"
       "$NODE_BIN" "$PRIVATE_COREPACK_ENTRY" "$@"
     )
     ;;
   *)
     FINAL_COMMAND=(
-      /usr/bin/env
-      -u COREPACK_ROOT -u NODE_OPTIONS -u NODE_PATH -u NODE_REPL_EXTERNAL_MODULE
-      -u NODE_COMPILE_CACHE -u NODE_COMPILE_CACHE_PORTABLE
+      "${ISOLATED_CHILD_ENV[@]}"
       COREPACK_HOME="$PRIVATE_COREPACK_HOME" PATH="$CONTROLLED_PATH"
       "$@"
     )

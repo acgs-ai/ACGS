@@ -89,9 +89,10 @@ def test_dry_run_plan_runs_acgi_commands_through_node24_gate():
         tokens = [str(token) for token in entry["cmd"]]
         if "pnpm" not in tokens:
             continue
-        assert tokens[:3] == ["bash", "scripts/run_acgi_node24_gate.sh", "pnpm"], (
+        assert tokens[:2] == ["scripts/run_acgi_node24_gate.sh", "pnpm"], (
             f"{entry['id']} must use the exact Node 24 wrapper before pnpm: {entry['cmd']}"
         )
+        assert tokens[0] not in {"bash", "env"}
 
 
 def test_dry_run_plan_excludes_deploy_dns_secret_and_infra_mutations():
