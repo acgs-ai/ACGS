@@ -2686,6 +2686,8 @@ def test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation(
         "3.11",
         "--expected-uv",
         "0.11.19",
+        "--expected-uv-executable",
+        "/home/martin/.local/bin/uv",
         "--require-module-root",
         product_repo / ".venv-evidence",
         "--require",
@@ -3873,3 +3875,16 @@ clean_sibling_remove_owned_root "$parent_fd" "$3" "$4" placeholder
     assert "root identity changed" in completed.stderr
     assert (victim / "valuable").read_bytes() == b"must-survive"
     assert (displaced / ".acgs-clean-sibling-owned").is_file()
+
+
+def test_uv_identity_does_not_depend_on_ambient_path() -> None:
+    verifier = (EVIDENCE_SCRIPTS / "verify_environment.py").read_text(encoding="utf-8")
+    validator = (EVIDENCE_SCRIPTS / "validate_environment_identities.py").read_text(
+        encoding="utf-8"
+    )
+    prover = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    assert 'shutil.which("uv")' not in verifier
+    assert 'shutil.which("uv")' not in validator
+    assert '--expected-uv-executable "$UV_BIN"' in prover
+    assert "TRUSTED_UV_SHA256" in verifier
+    assert "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b" in validator

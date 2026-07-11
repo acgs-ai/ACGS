@@ -8,7 +8,6 @@ import importlib.metadata
 import os
 import re
 import secrets
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +28,8 @@ from _common import (
 )
 
 REQUIREMENT_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:(==|>=)([^,]+))?(?:,<[^,]+)?$")
+TRUSTED_UV = Path("/home/martin/.local/bin/uv")
+TRUSTED_UV_SHA256 = "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b"
 
 
 def _check_requirement(requirement: str, locked: dict[str, dict[str, object]]) -> None:
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-interpreter", required=True, type=Path)
     parser.add_argument("--expected-python", required=True)
     parser.add_argument("--expected-uv", required=True)
+    parser.add_argument("--expected-uv-executable", required=True, type=Path)
     parser.add_argument("--require-module-root", required=True, type=Path)
     parser.add_argument("--require", action="append", default=[])
     parser.add_argument("--output", required=True, type=Path)
@@ -105,10 +107,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.expected_python != "3.11" or sys.version_info[:2] != (3, 11):
             fail("EVID Python identity must be exactly major.minor 3.11", phase="B2")
 
-        uv_path_raw = shutil.which("uv")
-        if uv_path_raw is None:
-            fail("uv executable unavailable", phase="B2")
-        uv_path = Path(uv_path_raw).resolve(strict=True)
+        if args.expected_uv_executable != TRUSTED_UV:
+            fail("uv executable argument is noncanonical", phase="B2")
+        uv_path = args.expected_uv_executable.resolve(strict=True)
+        if uv_path != TRUSTED_UV or sha256_file(uv_path) != TRUSTED_UV_SHA256:
+            fail("uv executable identity mismatch", phase="B2")
         completed = subprocess.run(
             [str(uv_path), "--version"],
             text=True,

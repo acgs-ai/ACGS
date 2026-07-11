@@ -355,6 +355,7 @@ EVIDENCE_PY="$WORKTREE/.venv-evidence/bin/python"
   --expected-interpreter "$EVIDENCE_PY" \
   --expected-python 3.11 \
   --expected-uv 0.11.19 \
+  --expected-uv-executable "$UV_BIN" \
   --require-module-root "$WORKTREE/.venv-evidence" \
   --require 'rfc8785==0.1.4' \
   --require 'cryptography>=42' \

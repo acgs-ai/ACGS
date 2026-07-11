@@ -340,7 +340,7 @@ def _validate_evid(
         ):
             fail(f"EVID installed distribution mismatch: {name}", phase="B5")
     uv = _exact_keys(identity.get("uv"), {"version", "executable"}, "EVID uv identity")
-    uv_executable = shutil.which("uv")
+    uv_executable = "/home/martin/.local/bin/uv"
     uv_completed = (
         subprocess.run(
             [uv_executable, "--version"],
@@ -349,17 +349,18 @@ def _validate_evid(
             check=False,
             env={**os.environ, "UV_OFFLINE": "1", "UV_NO_INDEX": "1", "UV_NO_CACHE": "1"},
         )
-        if uv_executable is not None
+        if Path(uv_executable).is_file()
         else None
     )
     if (
-        uv_executable is None
-        or uv_completed is None
+        uv_completed is None
         or uv_completed.returncode != 0
         or re.fullmatch(r"uv 0\.11\.19(?: \([^)]+\))?", uv_completed.stdout.strip()) is None
         or uv.get("version") != "0.11.19"
         or Path(str(uv.get("executable"))).resolve(strict=True)
         != Path(uv_executable).resolve(strict=True)
+        or sha256_file(Path(uv_executable))
+        != "a00d3a24514fc0403fc232c9c99bf5e542657c38f4ed941e0611731e4cff268b"
     ):
         fail("EVID uv identity mismatch", phase="B5")
     modules = identity.get("modules")
