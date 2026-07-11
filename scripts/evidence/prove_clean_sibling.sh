@@ -621,6 +621,7 @@ if [[ "$ASSIGNMENT" == *UI* ]]; then
   FNM_SHA256=2b8810b610654de6914a17e3235d3948fbd5c7d4712815ac45724c3f06e8966f
   NODE_SHA256=41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c
   COREPACK_SHA256=3655bc798f300951f2070fee411b337d626b0c3ae80c2d24c46ccac4595d4bf9
+  PNPM_DISPATCHER_SHA256=7c2a67995976b5b592b611d8b236e3b0633bd654fb49aedd96c6eb7ce04c9cbb
   COREPACK_PACKAGE_SHA256=1aff4cc6115c15ce4c51c5a3b8d20912c525e295cb09e1a70c4a27998db43fa2
   COREPACK_LIBRARY_SHA256=89cc83cf02dafbb768017901147933023eb43d6ce6373f9698b8b2f29210a9fd
   PNPM_PAYLOAD_SHA256=4c319da726786d5535aef95fa78ec5e24f1079382da878a35fa5dd044a7bab96
@@ -692,6 +693,18 @@ for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_p
 print(digest.hexdigest())
 PY
   }
+  ui_verify_pnpm_dispatcher() {
+    local shim="$1" dispatcher="$2" expected_target="$3" expected_sha256="$4"
+    [[ -L "$shim" ]] || return 1
+    [[ "$(/usr/bin/readlink -- "$shim")" == "$expected_target" ]] || return 1
+    [[ -f "$dispatcher" && ! -L "$dispatcher" ]] || return 1
+    [[ "$(/usr/bin/realpath -e "$dispatcher" 2>/dev/null || true)" == "$dispatcher" ]] ||
+      return 1
+    [[ "$(/usr/bin/realpath -e "$shim" 2>/dev/null || true)" == "$dispatcher" ]] ||
+      return 1
+    [[ "$(/usr/bin/sha256sum "$dispatcher" | /usr/bin/awk '{print $1}')" == \
+      "$expected_sha256" ]]
+  }
   ui_bwrap() {
     local network_mode="$1"
     shift
@@ -742,6 +755,7 @@ PY
   for pair in \
     "$HOST_NODE_ROOT/bin/node:$NODE_SHA256" \
     "$HOST_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js:$COREPACK_SHA256" \
+    "$HOST_NODE_ROOT/lib/node_modules/corepack/dist/pnpm.js:$PNPM_DISPATCHER_SHA256" \
     "$HOST_NODE_ROOT/lib/node_modules/corepack/package.json:$COREPACK_PACKAGE_SHA256" \
     "$HOST_NODE_ROOT/lib/node_modules/corepack/dist/lib/corepack.cjs:$COREPACK_LIBRARY_SHA256" \
     "$HOST_PNPM_ROOT/dist/pnpm.cjs:$PNPM_PAYLOAD_SHA256" \
@@ -778,7 +792,6 @@ PY
   done
   [[ "$(sha256sum "$WORKTREE/acgi-ai/pnpm-workspace.yaml" | awk '{print $1}')" == \
     "$UI_WORKSPACE_SHA256" ]] || die 'reviewed UI workspace lifecycle policy mismatch'
-  UI_COREPACK_JS="$OWNED_NODE_ROOT/lib/node_modules/corepack/dist/corepack.js"
   ui_bwrap offline "$FNM_BIN" install 24.18.0
   ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack enable
   ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- corepack prepare pnpm@9.15.4 \
@@ -788,7 +801,11 @@ PY
   [[ "$(ui_tree_sha256 "$OWNED_PNPM_ROOT")" == "$PNPM_TREE_SHA256" ]] ||
     die 'pnpm tree changed during activation'
   UI_PNPM="$OWNED_NODE_ROOT/bin/pnpm"
-  [[ -f "$UI_PNPM" && "$(realpath -e "$UI_PNPM")" == "$UI_COREPACK_JS" ]] || die 'pnpm shim does not resolve to pinned owned corepack dispatcher'
+  UI_PNPM_DISPATCHER="$OWNED_NODE_ROOT/lib/node_modules/corepack/dist/pnpm.js"
+  UI_PNPM_LEXICAL_TARGET='../lib/node_modules/corepack/dist/pnpm.js'
+  ui_verify_pnpm_dispatcher "$UI_PNPM" "$UI_PNPM_DISPATCHER" \
+    "$UI_PNPM_LEXICAL_TARGET" "$PNPM_DISPATCHER_SHA256" ||
+    die 'pnpm shim does not match pinned owned pnpm dispatcher'
   [[ "$(ui_bwrap offline "$FNM_BIN" exec --using 24.18.0 -- pnpm --version)" == \
     9.15.4 ]] || die 'pnpm version mismatch after activation'
   ui_bootstrap_failed() {

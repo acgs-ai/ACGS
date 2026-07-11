@@ -4542,6 +4542,72 @@ ui_bootstrap_failed "$2"
         assert all(not (node_evidence / artifact).exists() for artifact in accepted)
 
 
+def test_ui_pnpm_dispatcher_guard_is_exact_and_fail_closed(tmp_path: Path) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    expected_sha256 = "7c2a67995976b5b592b611d8b236e3b0633bd654fb49aedd96c6eb7ce04c9cbb"
+    expected_target = "../lib/node_modules/corepack/dist/pnpm.js"
+    assert f"PNPM_DISPATCHER_SHA256={expected_sha256}" in source
+    assert (
+        '"$HOST_NODE_ROOT/lib/node_modules/corepack/dist/pnpm.js:$PNPM_DISPATCHER_SHA256"' in source
+    )
+    assert f"UI_PNPM_LEXICAL_TARGET='{expected_target}'" in source
+
+    guard_body = source.split("  ui_verify_pnpm_dispatcher() {", 1)[1].split(
+        "\n  }\n  ui_bwrap() {", 1
+    )[0]
+    harness = f"""set -euo pipefail
+ui_verify_pnpm_dispatcher() {{{guard_body}
+}}
+ui_verify_pnpm_dispatcher "$@"
+"""
+    node_root = tmp_path / "installation"
+    bin_dir = node_root / "bin"
+    dist_dir = node_root / "lib" / "node_modules" / "corepack" / "dist"
+    bin_dir.mkdir(parents=True)
+    dist_dir.mkdir(parents=True)
+    shim = bin_dir / "pnpm"
+    dispatcher = dist_dir / "pnpm.js"
+    corepack_dispatcher = dist_dir / "corepack.js"
+    payload = b"pinned pnpm dispatcher\n"
+    dispatcher.write_bytes(payload)
+    corepack_dispatcher.write_bytes(payload)
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    shim.symlink_to(expected_target)
+
+    def verify() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                harness,
+                "ui-pnpm-dispatcher-test",
+                str(shim),
+                str(dispatcher),
+                expected_target,
+                payload_sha256,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    assert verify().returncode == 0
+
+    shim.unlink()
+    shim.symlink_to("../lib/node_modules/corepack/dist/corepack.js")
+    assert verify().returncode != 0
+
+    shim.unlink()
+    shim.symlink_to(expected_target)
+    dispatcher.unlink()
+    dispatcher.symlink_to("corepack.js")
+    assert verify().returncode != 0
+
+    dispatcher.unlink()
+    dispatcher.write_bytes(b"tampered dispatcher\n")
+    assert verify().returncode != 0
+
+
 def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> None:
     prover = EVIDENCE_SCRIPTS / "prove_clean_sibling.sh"
     launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"

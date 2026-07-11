@@ -57,7 +57,7 @@ OWNED_WORKFLOWS = (
 )
 
 GATE_COMMANDS = (
-    ".venv-evidence/bin/python -m pytest -q "
+    "env -u VIRTUAL_ENV -u PYTHONPATH .venv-evidence/bin/python -m pytest -q "
     "tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline",
     ".venv/bin/ruff check .",
     ".venv/bin/ruff format --check .",
@@ -286,6 +286,31 @@ def test_all_owned_scope_gates_are_required() -> None:
     gates = _extract_gate_contract(aggregate)
     assert tuple(command for command, _ in gates) == GATE_COMMANDS
     assert tuple(cwd for _, cwd in gates) == GATE_WORKING_DIRECTORIES
+    gate_blocks = list(
+        re.finditer(
+            r"^      - name: Gate (?P<number>\d{2}) - [^\n]+\n"
+            r"(?P<body>.*?)(?=^      - name: Gate |\Z)",
+            aggregate,
+            re.M | re.S,
+        )
+    )
+    gate_01 = gate_blocks[0].group("body")
+    assert re.search(
+        r"^        env:\n"
+        r"          UV_OFFLINE: '1'\n"
+        r"          UV_NO_INDEX: '1'\n"
+        r"          UV_NO_CACHE: '1'\n"
+        rf"        run: {re.escape(GATE_COMMANDS[0])}$",
+        gate_01,
+        re.M,
+    )
+    assert aggregate.count("UV_OFFLINE: '1'") == 1
+    assert aggregate.count("UV_NO_INDEX: '1'") == 1
+    assert aggregate.count("UV_NO_CACHE: '1'") == 1
+    for block in gate_blocks[1:]:
+        assert not any(
+            name in block.group("body") for name in ("UV_OFFLINE", "UV_NO_INDEX", "UV_NO_CACHE")
+        )
     assert aggregate.rstrip().endswith(f"run: {GATE_COMMANDS[-1]}")
     _assert_pinned_actions(AGGREGATE)
 
