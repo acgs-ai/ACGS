@@ -156,7 +156,7 @@ jobs:
       - name: Assert evidence-only CI repair
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
-          T=93719b8c1df3aae7eb31cf3087518d90efffe8ee
+          T=5e5ad2d8a0d6971f5bd2f96d001fc24aa18eee92
           git() {
             /usr/bin/git --no-optional-locks \
               -c core.hooksPath=/dev/null \
@@ -184,7 +184,7 @@ jobs:
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           P=26d11c2c7a8da37937a7c50c642f18edc75c9345
-          T=93719b8c1df3aae7eb31cf3087518d90efffe8ee
+          T=5e5ad2d8a0d6971f5bd2f96d001fc24aa18eee92
           caller_tmpdir="$(mktemp -d "${RUNNER_TEMP:?}/acgs-p0-proof.XXXXXXXX")"
           chmod 0700 "$caller_tmpdir"
           cleanup() {
