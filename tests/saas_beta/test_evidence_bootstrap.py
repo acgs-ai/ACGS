@@ -513,7 +513,7 @@ def test_canonical_regeneration_catches_extra_bogus_but_well_formed_hash(tmp_pat
     assert _common.parse_lock(path)  # uv may accept another valid artifact hash.
     assert path.read_bytes() != (LOCK_ROOT / "evidence-test.lock").read_bytes()
     prover = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
-    assert "uv pip compile" in prover and "cmp --silent" in prover
+    assert '"$UV_BIN" pip compile' in prover and "cmp --silent" in prover
 
 
 def test_wrong_toolchain_platform_cutoff_or_partial_lock_rewrite_rejected(tmp_path: Path) -> None:
@@ -3444,7 +3444,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     omitted_parent_env = _evidence_env(tmp_path / "unused-evidence")
     omitted_parent_env.pop("P", None)
     omitted_parent = subprocess.run(
-        ["bash", str(prover), head],
+        [str(launcher), head],
         cwd=ROOT,
         env=omitted_parent_env,
         text=True,
@@ -3456,7 +3456,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     altered_parent_env = dict(omitted_parent_env)
     altered_parent_env["P"] = "1" * 40
     altered_parent = subprocess.run(
-        ["bash", str(prover), head],
+        [str(launcher), head],
         cwd=ROOT,
         env=altered_parent_env,
         text=True,
@@ -3480,7 +3480,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
                 env = _evidence_env(tmp_path / "unused-evidence")
                 env.update({"P": reviewed_parent, "TMPDIR": supplied})
                 completed = subprocess.run(
-                    ["bash", str(prover), head],
+                    [str(launcher), head],
                     cwd=ROOT,
                     env=env,
                     text=True,
