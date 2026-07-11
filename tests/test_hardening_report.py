@@ -113,7 +113,8 @@ def test_workspace_member_item_tracks_current_registry():
     items = hr.build_checklist(ROOT, drills)
     workspace = next(i for i in items if i.number == 3)
     assert workspace.status == "pass"
-    assert "9 packages" in workspace.description
+    assert "10 packages" in workspace.description
+    assert "packages/acgs-proofpack-verifier" in workspace.evidence
     assert "packages/gove-zone" in workspace.evidence
     assert "packages/agent-bus-analyzer" in workspace.evidence
     assert "packages/acgs-control-plane" in workspace.evidence
