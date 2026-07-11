@@ -252,6 +252,19 @@ if errors:
 PY
 fi
 
+# Console deep-link fail-closed probe -- DEPLOY.md section 7 / Caddyfile @console_routes.
+# Production twin of the Docker `smoke:bus-proxy` console assertion: against a live
+# console origin, /console must sit behind the forward_auth wall and return a non-2xx
+# status (an IdP/login redirect, 401/403, or a 502 when the authorizer is unreachable),
+# never a 200 SPA shell served by the try_files fallback. curl does not follow redirects
+# here (no -L) so a 3xx login redirect is observed as the fail-closed wall, not a page.
+console_status="$(curl -sS -o /dev/null -w '%{http_code}' "${base_url}/console" || echo 000)"
+if [[ "${console_status}" == "000" ]]; then
+  fail "failed to probe console deep link: ${base_url}/console"
+elif [[ "${console_status}" -ge 200 && "${console_status}" -lt 300 ]]; then
+  fail "console fail-closed breach: ${base_url}/console returned ${console_status} (expected non-2xx auth wall, not a 200 SPA page)"
+fi
+
 if [[ ! -d "${dist_dir}/assets" ]]; then
   fail "missing production bundle assets directory: ${dist_dir}/assets"
 else
