@@ -37,6 +37,7 @@ from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import Base, make_engine, make_session_factory
 from acgs_control_plane.exports import build_export_bundle
 from acgs_control_plane.governance import (
+    AuditReadError,
     GovernanceMembrane,
     PolicyDeniedError,
     PolicyEscalatedError,
@@ -180,6 +181,13 @@ def create_app(
     @app.exception_handler(PolicyEscalatedError)
     def _escalated(_request: Request, exc: PolicyEscalatedError) -> JSONResponse:
         return _blocked_json(202, "pending_approval", exc)
+
+    @app.exception_handler(AuditReadError)
+    def _audit_read_refused(_request: Request, exc: AuditReadError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"code": exc.code, "status": "audit-read-refused", "reason": exc.reason},
+        )
 
     _register_routes(app)
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other

@@ -344,6 +344,8 @@ def _canonical_json_subset(value: Any) -> bytes:
         if type(item) is dict:
             if any(type(key) is not str for key in item):
                 raise ValueError("canonical JSON object keys must be strings")
+            for key in item:
+                string(key)
             keys = sorted(item, key=lambda key: key.encode("utf-16-be"))
             return "{" + ",".join(f"{string(key)}:{render(item[key])}" for key in keys) + "}"
         raise ValueError("canonical JSON subset rejects floats, subclasses, and non-JSON values")
@@ -471,30 +473,19 @@ def org_audit_store(audit_dir: Path, org_id: str) -> ChainHashAuditStore:
 
 @dataclass(frozen=True)
 class ReadOnlyAuditSnapshot:
-    """Immutable bytes captured from one no-follow file descriptor."""
+    """Bounded immutable events captured from one no-follow file descriptor."""
 
-    raw: bytes
+    events: tuple[Mapping[str, Any], ...]
 
-    def iter_events(self) -> Sequence[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        for number, line in enumerate(self.raw.splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ValueError(f"audit snapshot line {number} is invalid JSON") from exc
-            if type(event) is not dict:
-                raise ValueError(f"audit snapshot line {number} is not an object")
-            events.append(event)
-        return tuple(events)
+    def iter_events(self) -> Sequence[Mapping[str, Any]]:
+        return self.events
 
     def verify_chain(
         self, *, expected_count: int | None = None, expected_last_hash: str | None = None
     ) -> dict[str, Any]:
         previous = "0" * 64
         failures: list[dict[str, Any]] = []
-        events = self.iter_events()
+        events = self.events
         for event in events:
             if event.get("previous_hash") != previous:
                 failures.append(
@@ -532,39 +523,87 @@ class ReadOnlyAuditSnapshot:
         }
 
 
+AUDIT_READ_MAX_BYTES = 8 * 1024 * 1024
+AUDIT_READ_MAX_EVENTS = 10_000
+
+
+class AuditReadError(RuntimeError):
+    """Stable fail-closed refusal for unsupported or over-envelope audit reads."""
+
+    code = "AUDIT_READ_REFUSED"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(self.code)
+
+
+def _parse_audit_snapshot_line(line: bytes, number: int) -> dict[str, Any] | None:
+    if not line.strip():
+        return None
+    try:
+        event = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AuditReadError("invalid-json") from exc
+    if type(event) is not dict:
+        raise AuditReadError("non-object-event")
+    if number > AUDIT_READ_MAX_EVENTS:
+        raise AuditReadError("event-limit-exceeded")
+    return event
+
+
 def existing_org_audit_store(audit_dir: Path, org_id: str) -> ReadOnlyAuditSnapshot | None:
     """Capture a read-only chain through no-follow descriptors; never reopen a path."""
     if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
         raise ValueError("invalid audit organization identifier")
     if audit_dir.is_symlink():
         raise ValueError("audit root symlinks are forbidden")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_DIRECTORY", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    if (
+        os.open not in os.supports_dir_fd
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_CLOEXEC")
+    ):
+        raise AuditReadError("platform-no-follow-unsupported")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
     try:
         root_fd = os.open(audit_dir, flags)
     except FileNotFoundError:
         return None
     except OSError as exc:
-        raise ValueError("audit root must be a non-symlink directory") from exc
+        raise AuditReadError("unsafe-audit-root") from exc
     try:
-        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
         try:
             fd = os.open(f"{org_id}.audit.jsonl", file_flags, dir_fd=root_fd)
         except FileNotFoundError:
             return None
         except OSError as exc:
-            raise ValueError("audit file must be a contained non-symlink") from exc
+            raise AuditReadError("unsafe-audit-file") from exc
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError("audit path must be a regular file")
-            chunks: list[bytes] = []
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise AuditReadError("non-regular-audit-file")
+            if metadata.st_size > AUDIT_READ_MAX_BYTES:
+                raise AuditReadError("byte-limit-exceeded")
+            pending = bytearray()
+            events: list[Mapping[str, Any]] = []
+            total = 0
             while chunk := os.read(fd, 65536):
-                chunks.append(chunk)
-            return ReadOnlyAuditSnapshot(b"".join(chunks))
+                total += len(chunk)
+                if total > AUDIT_READ_MAX_BYTES:
+                    raise AuditReadError("byte-limit-exceeded")
+                pending.extend(chunk)
+                while (newline := pending.find(b"\n")) >= 0:
+                    line = bytes(pending[:newline])
+                    del pending[: newline + 1]
+                    event = _parse_audit_snapshot_line(line, len(events) + 1)
+                    if event is not None:
+                        events.append(MappingProxyType(event))
+            if pending:
+                event = _parse_audit_snapshot_line(bytes(pending), len(events) + 1)
+                if event is not None:
+                    events.append(MappingProxyType(event))
+            return ReadOnlyAuditSnapshot(tuple(events))
         finally:
             os.close(fd)
     finally:

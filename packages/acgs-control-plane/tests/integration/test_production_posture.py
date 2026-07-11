@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -24,7 +24,10 @@ from acgs_control_plane.config import (
 )
 from acgs_control_plane.db import Base
 from acgs_control_plane.governance import (
+    AUDIT_READ_MAX_BYTES,
+    AUDIT_READ_MAX_EVENTS,
     ROUTE_CONTRACTS,
+    AuditReadError,
     AuthenticatedRuntimeContext,
     ExecutionClass,
     ProductionPostureBlocked,
@@ -256,7 +259,8 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
         "receipt_id"
     ]
     before = _fs_snapshot(audit_dir)
-    with client.app.state.session_factory() as session:
+    app = cast(FastAPI, client.app)
+    with app.state.session_factory() as session:
         db_before = {
             table.name: session.execute(select(func.count()).select_from(table)).scalar_one()
             for table in Base.metadata.sorted_tables
@@ -294,7 +298,7 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
         == 200
     )
     assert _fs_snapshot(audit_dir) == before
-    with client.app.state.session_factory() as session:
+    with app.state.session_factory() as session:
         db_after = {
             table.name: session.execute(select(func.count()).select_from(table)).scalar_one()
             for table in Base.metadata.sorted_tables
@@ -331,8 +335,9 @@ def test_audit_symlinks_fail_closed(tmp_path: Path) -> None:
     outside_file = target / "outside.jsonl"
     outside_file.write_text("secret")
     file_link.symlink_to(outside_file)
-    with pytest.raises(ValueError, match="non-symlink"):
+    with pytest.raises(AuditReadError) as symlink_error:
         existing_org_audit_store(root_link, "org")
+    assert symlink_error.value.reason == "unsafe-audit-file"
     with pytest.raises(ValueError, match="organization identifier"):
         existing_org_audit_store(root_link, "../outside")
 
@@ -359,7 +364,7 @@ def test_raw_context_bundle_and_environment_posture_fail_closed(
     with pytest.raises(TypeError, match="capability"):
         AuthenticatedRuntimeContext(object(), **raw_context)
     context = _issue_authenticated_runtime_context(**raw_context)
-    valid = {
+    valid: dict[str, Any] = {
         "context": context,
         "authority": "authority",
         "validator": "validator",
@@ -477,5 +482,68 @@ def test_read_audit_snapshot_survives_path_replacement_without_reading_target(
     monkeypatch.setattr(governance_module.os, "read", replace_then_read)
     snapshot = existing_org_audit_store(root, "org")
     assert snapshot is not None
-    assert snapshot.raw == safe
-    assert b"outside_secret" not in snapshot.raw
+    assert snapshot.events == ({"safe": True},)
+    assert "outside_secret" not in repr(snapshot.events)
+
+
+def test_audit_snapshot_beta_envelope_and_platform_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "audit"
+    root.mkdir()
+    path = root / "org.audit.jsonl"
+    path.write_bytes(b"x" * (AUDIT_READ_MAX_BYTES + 1))
+    reads = {"count": 0}
+    original_read = governance_module.os.read
+
+    def counted_read(fd: int, size: int) -> bytes:
+        reads["count"] += 1
+        return original_read(fd, size)
+
+    monkeypatch.setattr(governance_module.os, "read", counted_read)
+    with pytest.raises(AuditReadError) as bytes_error:
+        existing_org_audit_store(root, "org")
+    assert bytes_error.value.code == "AUDIT_READ_REFUSED"
+    assert bytes_error.value.reason == "byte-limit-exceeded"
+    assert reads == {"count": 0}
+    assert path.stat().st_size == AUDIT_READ_MAX_BYTES + 1
+
+    path.write_bytes(b"{}\n" * (AUDIT_READ_MAX_EVENTS + 1))
+    with pytest.raises(AuditReadError) as events_error:
+        existing_org_audit_store(root, "org")
+    assert events_error.value.reason == "event-limit-exceeded"
+    assert path.read_bytes() == b"{}\n" * (AUDIT_READ_MAX_EVENTS + 1)
+
+    monkeypatch.setattr(governance_module.os, "supports_dir_fd", frozenset())
+    with pytest.raises(AuditReadError) as platform_error:
+        existing_org_audit_store(root, "org")
+    assert platform_error.value.reason == "platform-no-follow-unsupported"
+
+
+def test_dashboard_and_verify_map_audit_envelope_refusal(
+    client: TestClient,
+    org: dict[str, Any],
+    admin_headers: dict[str, str],
+    audit_dir: Path,
+) -> None:
+    org_id = org["org_id"]
+    receipt_id = client.get(f"/orgs/{org_id}/receipts", headers=admin_headers).json()["items"][0][
+        "receipt_id"
+    ]
+    (audit_dir / f"{org_id}.audit.jsonl").write_bytes(b"x" * (AUDIT_READ_MAX_BYTES + 1))
+    expected = {
+        "code": "AUDIT_READ_REFUSED",
+        "status": "audit-read-refused",
+        "reason": "byte-limit-exceeded",
+    }
+    dashboard = client.get(f"/orgs/{org_id}/dashboard", headers=admin_headers)
+    assert dashboard.status_code == 503
+    assert dashboard.json() == expected
+    verify = client.post(f"/orgs/{org_id}/receipts/{receipt_id}/verify", headers=admin_headers)
+    assert verify.status_code == 503
+    assert verify.json() == expected
+
+
+def test_lone_surrogate_key_is_stably_rejected() -> None:
+    with pytest.raises(ValueError, match="lone surrogates"):
+        _canonical_json_subset({"\ud800": "invalid"})
