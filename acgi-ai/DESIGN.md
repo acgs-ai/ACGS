@@ -167,7 +167,7 @@ The design contract is product-wide:
 - **Paper Alt (#F0EDE4):** cards, sidebars, code blocks, product atlas tiles, and console panels.
 - **Ink (#171310):** primary copy, strong rules, and high-emphasis actions — warmed drafting ink.
 - **Rust (#9E2B25):** the single brand accent for links, active states, asterisms, italic emphasis, and controlled approval actions — deepened to an oxide crimson in the drafting-print revision; normal-size accent text passes WCAG AA on paper (5.9:1).
-- **Gold (#A5843B / ink #6E5A25):** the seal. Decorative drafting marks only — section rules, ticks, plate corners — at #A5843B (2.8:1, never body text); any text-bearing gold uses #6E5A25 (AA, 5.3:1). Gold never replaces rust as the interaction accent.
+- **Gold (#A5843B / ink #6E5A25):** the seal. Decorative drafting marks only — section rules, ticks, plate corners — at #A5843B (2.8:1, never body text); any text-bearing gold uses #6E5A25 (AA, 5.3:1). Gold never replaces rust as the interaction accent. Under `[data-theme="control-plane"]` both gold tokens remap to one dark-safe gold #C9A75C (8.4:1 on the near-black ground), mirroring the rust→brightened-rust remap.
 - **Parchment (#F3EAD4):** privilege boundary surfaces, sign-in caveats, matter-bearing warnings, and no-advice disclaimers.
 - **Risk colors:** forest for confirmed, mustard for partial, signal red for blocked. They are semantic status colors, never decorative accents.
 
