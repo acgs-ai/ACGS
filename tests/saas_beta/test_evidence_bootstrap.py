@@ -13,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -4681,6 +4682,74 @@ def test_literal_ancestry_raw_reader_rejects_hash_type_size_and_parser_failures(
         )
 
 
+@pytest.mark.parametrize("blocked_read", ["header", "payload"])
+def test_literal_ancestry_deadline_kills_and_reaps_blocked_cat_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    blocked_read: str,
+) -> None:
+    blocker = tmp_path / "blocking-git"
+    blocker_source = "#!/usr/bin/python3\nimport sys\nimport time\nsys.stdin.buffer.readline()\n"
+    if blocked_read == "payload":
+        blocker_source += (
+            f"sys.stdout.buffer.write(b'{('b' * 40)} commit 100\\n')\nsys.stdout.buffer.flush()\n"
+        )
+    blocker.write_text(blocker_source + "time.sleep(60)\n", encoding="utf-8")
+    blocker.chmod(0o755)
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    real_popen = subprocess.Popen
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def recording_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(verify_literal_ancestry, "GIT", str(blocker))
+    monkeypatch.setattr(verify_literal_ancestry, "VERIFICATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(verify_literal_ancestry.subprocess, "Popen", recording_popen)
+    started = time.monotonic()
+    assert verify_literal_ancestry.main([str(repo), "a" * 40, "b" * 40]) == 2
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0
+    assert "verification deadline exceeded" in capsys.readouterr().err
+    assert len(processes) == 1 and processes[0].poll() is not None
+    assert verify_literal_ancestry.signal.getitimer(verify_literal_ancestry.signal.ITIMER_REAL) == (
+        0.0,
+        0.0,
+    )
+    assert (
+        verify_literal_ancestry.signal.getsignal(verify_literal_ancestry.signal.SIGALRM)
+        == verify_literal_ancestry.signal.SIG_DFL
+    )
+
+    ambient_handler = verify_literal_ancestry.signal.getsignal(
+        verify_literal_ancestry.signal.SIGALRM
+    )
+    ambient_timer = verify_literal_ancestry.signal.getitimer(
+        verify_literal_ancestry.signal.ITIMER_REAL
+    )
+    verify_literal_ancestry.signal.signal(
+        verify_literal_ancestry.signal.SIGALRM, lambda _signum, _frame: None
+    )
+    verify_literal_ancestry.signal.setitimer(verify_literal_ancestry.signal.ITIMER_REAL, 5.0)
+    try:
+        with pytest.raises(
+            verify_literal_ancestry.LiteralAncestryError, match="conflicting ambient"
+        ):
+            with verify_literal_ancestry._verification_deadline(0.05):
+                pass
+    finally:
+        verify_literal_ancestry.signal.setitimer(
+            verify_literal_ancestry.signal.ITIMER_REAL, *ambient_timer
+        )
+        verify_literal_ancestry.signal.signal(
+            verify_literal_ancestry.signal.SIGALRM, ambient_handler
+        )
+
+
 def test_literal_ancestry_accepts_real_graph_and_rejects_graft_and_replace_forgeries(
     tmp_path: Path,
 ) -> None:
@@ -4822,6 +4891,125 @@ def test_clean_sibling_uses_literal_ancestry_at_source_and_detached_boundaries()
     )
 
 
+def test_clean_sibling_no_replace_boundary_materializes_literal_t_tree(tmp_path: Path) -> None:
+    launcher_source = (EVIDENCE_SCRIPTS / "prove_clean_sibling").read_text(encoding="utf-8")
+    prover_source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    assert "GIT_NO_REPLACE_OBJECTS=1 \\" in launcher_source
+    assert '"${GIT_NO_REPLACE_OBJECTS:-}" == 1' in prover_source
+    assert "export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL GIT_NO_REPLACE_OBJECTS" in prover_source
+    assert "/usr/bin/git --no-replace-objects --no-optional-locks" in prover_source
+
+    repo = (tmp_path / "repo").resolve()
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"], cwd=repo, check=True
+    )
+    (repo / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "base.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "P"], cwd=repo, check=True)
+    parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "literal-t.txt").write_text("literal T tree\n", encoding="utf-8")
+    subprocess.run(["git", "add", "literal-t.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "literal T"], cwd=repo, check=True)
+    product = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    assert verify_literal_ancestry.main([str(repo), parent, product]) == 0
+
+    (repo / "literal-t.txt").write_text("attacker replacement tree\n", encoding="utf-8")
+    (repo / "attacker-only.txt").write_text("must never materialize\n", encoding="utf-8")
+    subprocess.run(["git", "add", "literal-t.txt", "attacker-only.txt"], cwd=repo, check=True)
+    attacker_tree = subprocess.check_output(["git", "write-tree"], cwd=repo, text=True).strip()
+    subprocess.run(["git", "reset", "-q", "--hard", product], cwd=repo, check=True)
+    attacker_commit = subprocess.check_output(
+        ["git", "commit-tree", attacker_tree, "-p", parent],
+        cwd=repo,
+        text=True,
+        input="attacker replacement\n",
+    ).strip()
+    subprocess.run(["git", "replace", product, attacker_commit], cwd=repo, check=True)
+    replace_ref = subprocess.check_output(
+        ["git", "rev-parse", f"refs/replace/{product}"], cwd=repo, text=True
+    ).strip()
+    assert replace_ref == attacker_commit
+    assert (
+        subprocess.check_output(["git", "show", f"{product}:literal-t.txt"], cwd=repo, text=True)
+        == "attacker replacement tree\n"
+    )
+    closed_git_env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"}
+    assert "attacker-only.txt" in subprocess.check_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=repo, text=True
+    )
+    assert (
+        subprocess.check_output(
+            [
+                "/usr/bin/git",
+                "--no-replace-objects",
+                "-C",
+                str(repo),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+            env=closed_git_env,
+            text=True,
+        )
+        == ""
+    )
+    assert "attacker-only.txt" in subprocess.check_output(
+        ["git", "diff", "--name-only", f"{parent}..{product}"], cwd=repo, text=True
+    )
+    assert (
+        subprocess.check_output(
+            [
+                "/usr/bin/git",
+                "--no-replace-objects",
+                "-C",
+                str(repo),
+                "diff",
+                "--name-only",
+                f"{parent}..{product}",
+            ],
+            env=closed_git_env,
+            text=True,
+        )
+        == "literal-t.txt\n"
+    )
+
+    caller = tmp_path / "caller"
+    caller.mkdir(mode=0o700)
+    (caller / "sentinel").write_text("unchanged\n", encoding="utf-8")
+    detached = (tmp_path / "detached").resolve()
+    subprocess.run(
+        [
+            "/usr/bin/git",
+            "--no-replace-objects",
+            "-C",
+            str(repo),
+            "worktree",
+            "add",
+            "--detach",
+            str(detached),
+            product,
+        ],
+        env=closed_git_env,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    assert (detached / "literal-t.txt").read_text(encoding="utf-8") == "literal T tree\n"
+    assert not (detached / "attacker-only.txt").exists()
+    assert (
+        subprocess.check_output(
+            ["/usr/bin/git", "--no-replace-objects", "-C", str(detached), "rev-parse", "HEAD"],
+            env=closed_git_env,
+            text=True,
+        ).strip()
+        == product
+    )
+    assert sorted(path.name for path in caller.iterdir()) == ["sentinel"]
+    assert not list(caller.glob("acgs-p0-evidence.*"))
+
+
 @pytest.mark.parametrize("forgery", ["graft", "replace"])
 def test_clean_sibling_rejects_forged_ancestry_without_proof_residue(
     tmp_path: Path, forgery: str
@@ -4835,14 +5023,18 @@ def test_clean_sibling_rejects_forged_ancestry_without_proof_residue(
         check=True,
     )
     subprocess.run(["git", "checkout", "-q", "HEAD"], cwd=forged_repo, check=True)
-    for name in ("prove_clean_sibling.sh", "verify_literal_ancestry.py"):
+    for name in ("prove_clean_sibling", "prove_clean_sibling.sh", "verify_literal_ancestry.py"):
         shutil.copy2(EVIDENCE_SCRIPTS / name, forged_repo / "scripts/evidence" / name)
+    fixture_change = forged_repo / "g031-forged-ancestry-fixture.txt"
+    fixture_change.write_text(f"deterministic {forgery} fixture\n", encoding="utf-8")
     subprocess.run(
         [
             "git",
             "add",
+            "scripts/evidence/prove_clean_sibling",
             "scripts/evidence/prove_clean_sibling.sh",
             "scripts/evidence/verify_literal_ancestry.py",
+            "g031-forged-ancestry-fixture.txt",
         ],
         cwd=forged_repo,
         check=True,

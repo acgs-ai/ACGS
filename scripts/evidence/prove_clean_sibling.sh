@@ -102,7 +102,9 @@ if [[ -z "${ACGS_CLEAN_SIBLING_TMP_FD:-}" && -z "${ACGS_STATIC_LAUNCHED:-}" ]]; 
     esac
   done
 else
-  [[ "${GIT_CONFIG_NOSYSTEM:-}" == 1 && "${GIT_CONFIG_GLOBAL:-}" == /dev/null ]] || {
+  [[ "${GIT_CONFIG_NOSYSTEM:-}" == 1 && \
+    "${GIT_CONFIG_GLOBAL:-}" == /dev/null && \
+    "${GIT_NO_REPLACE_OBJECTS:-}" == 1 ]] || {
     printf 'CLEAN_SIBLING=FAIL phase=B0 reason=internal Git boundary changed\n' >&2
     exit 2
   }
@@ -110,9 +112,10 @@ fi
 unset GIT_PAGER GIT_EDITOR GIT_SEQUENCE_EDITOR
 GIT_CONFIG_NOSYSTEM=1
 GIT_CONFIG_GLOBAL=/dev/null
+GIT_NO_REPLACE_OBJECTS=1
 HOME=/dev/null
 XDG_CONFIG_HOME=/dev/null
-export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL HOME XDG_CONFIG_HOME
+export GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL GIT_NO_REPLACE_OBJECTS HOME XDG_CONFIG_HOME
 unset -f command_not_found_handle 2>/dev/null || true
 PATH=/usr/bin:/bin
 export PATH
@@ -141,7 +144,7 @@ export UV_BIN
 # the same closed boundary.  Hooks and executable fsmonitor authority are
 # disabled explicitly rather than relying on ambient HOME or host policy.
 git() {
-  /usr/bin/git --no-optional-locks \
+  /usr/bin/git --no-replace-objects --no-optional-locks \
     -c core.hooksPath=/dev/null \
     -c core.fsmonitor=false \
     -c core.untrackedCache=false \

@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import signal
 import subprocess
 import sys
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
@@ -19,10 +22,34 @@ MAX_COMMIT_BYTES = 1024 * 1024
 MAX_PARENTS = 64
 MAX_VISITED_COMMITS = 100_000
 READ_CHUNK_BYTES = 1024 * 1024
+VERIFICATION_TIMEOUT_SECONDS = 30.0
 
 
 class LiteralAncestryError(RuntimeError):
     """The raw object graph could not be authenticated within fixed bounds."""
+
+
+@contextmanager
+def _verification_deadline(
+    seconds: float = VERIFICATION_TIMEOUT_SECONDS,
+) -> Iterator[None]:
+    if not hasattr(signal, "setitimer") or not hasattr(signal, "SIGALRM"):
+        raise LiteralAncestryError("wall-clock verification deadline is unavailable")
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    if previous_handler != signal.SIG_DFL or previous_timer != (0.0, 0.0):
+        raise LiteralAncestryError("conflicting ambient wall-clock timer state")
+
+    def deadline_expired(_signum: int, _frame: object) -> None:
+        raise LiteralAncestryError("literal ancestry verification deadline exceeded")
+
+    signal.signal(signal.SIGALRM, deadline_expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _require_oid(value: str, label: str) -> str:
@@ -142,7 +169,11 @@ class GitObjectBatch:
         if exc_type is not None:
             self._abort()
         else:
-            self.close()
+            try:
+                self.close()
+            except BaseException:
+                self._abort()
+                raise
 
     def read_commit(self, oid: str) -> tuple[str, ...]:
         requested = _require_oid(oid, "object")
@@ -200,11 +231,12 @@ def _walk_literal_ancestry(
 
 
 def verify_literal_ancestry(repo: Path, ancestor: str, descendant: str) -> None:
-    ancestor = _require_oid(ancestor, "ancestor")
-    descendant = _require_oid(descendant, "descendant")
-    with GitObjectBatch(repo) as batch:
-        if not _walk_literal_ancestry(batch, ancestor, descendant):
-            raise LiteralAncestryError("ancestor is not in the literal commit parent graph")
+    with _verification_deadline(VERIFICATION_TIMEOUT_SECONDS):
+        ancestor = _require_oid(ancestor, "ancestor")
+        descendant = _require_oid(descendant, "descendant")
+        with GitObjectBatch(repo) as batch:
+            if not _walk_literal_ancestry(batch, ancestor, descendant):
+                raise LiteralAncestryError("ancestor is not in the literal commit parent graph")
 
 
 def main(argv: list[str] | None = None) -> int:
