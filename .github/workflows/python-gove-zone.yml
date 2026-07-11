@@ -106,6 +106,32 @@ jobs:
           --cov-fail-under=100
           -q
 
+  wheel-smoke:
+    # Release-readiness gate (G1.1): build the wheel, install it ALONE into a
+    # throwaway venv (no extras, no --editable), and prove `gove-zone smoke`
+    # exits 0 with status=pass. This is the continuous form of the release
+    # verify step — it catches an accidental runtime import of an optional
+    # extra (which the editable `test` job above would mask) on every PR.
+    # Independent of `test`; it does NOT replace or weaken the 90% coverage gate.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    # Build + clean install must resolve from the workspace root, not the
+    # package dir, so override the workflow-level default here.
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/gove-zone/pyproject.toml'
+      - name: Clean-venv wheel smoke
+        # Mirrors the `test` job's uv toolchain preamble. The script itself runs
+        # `uv python install 3.12` and `uv build --package gove-zone`.
+        run: bash packages/gove-zone/scripts/release_smoke_check.sh
+
   dist-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
