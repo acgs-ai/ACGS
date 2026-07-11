@@ -58,7 +58,9 @@ def _hash_fd(fd: int) -> str:
     return digest.hexdigest()
 
 
-def _closed_environment(repo: Path, cwd: Path, temp_root: Path) -> tuple[dict[str, str], Path]:
+def _closed_environment(
+    repo: Path, cwd: Path, temp_root: Path, *, argv0: str | None = None
+) -> tuple[dict[str, str], Path]:
     if not temp_root.is_absolute() or temp_root.is_symlink() or temp_root.resolve() != temp_root:
         fail("temp root must be an absolute canonical non-symlink directory", phase="B6")
     if not temp_root.is_dir() or temp_root.is_relative_to(repo):
@@ -124,6 +126,20 @@ def _closed_environment(repo: Path, cwd: Path, temp_root: Path) -> tuple[dict[st
     }
     if env != expected:
         fail("constructed environment differs from canonical reviewed profile", phase="B6")
+    conditional = REVIEWED_ENVIRONMENT_PROFILE.get("conditional_environment")
+    if not isinstance(conditional, dict):
+        fail("reviewed conditional environment profile is malformed", phase="B6")
+    selected = conditional.get(argv0, {})
+    if not isinstance(selected, dict) or not all(
+        isinstance(name, str) and isinstance(value, str) for name, value in selected.items()
+    ):
+        fail("reviewed conditional environment entry is malformed", phase="B6")
+    env.update(
+        {
+            name: value.replace("{REPO_ROOT}", str(repo)).replace("{CWD}", str(cwd))
+            for name, value in selected.items()
+        }
+    )
     return env, isolated
 
 
@@ -186,8 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         selector, reviewed_argv, cwd_scope = reviewed_node_command(args.node, args.index)
         cwd = reviewed_cwd(repo, cwd_scope)
-        lexical = cwd / reviewed_argv[0]
         executable = reviewed_executable(cwd, reviewed_argv[0])
+        lexical = cwd / reviewed_argv[0] if "/" in reviewed_argv[0] else executable
         _require_safe_parent_chain(lexical)
         _require_safe_parent_chain(executable)
         target_fd = os.open(executable, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -208,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             fail("reviewed sandbox executable must be a non-writable regular file", phase="B6")
         sandbox_sha256 = _hash_fd(sandbox_fd)
         sandbox_identity = resolved_executable_identity(repo, sandbox, sandbox_before)
-        env, isolated = _closed_environment(repo, cwd, args.temp_root)
+        env, isolated = _closed_environment(repo, cwd, args.temp_root, argv0=reviewed_argv[0])
         started = utc_now()
         completed = subprocess.run(
             _sandbox_command(sandbox, isolated, cwd, env, [str(lexical), *reviewed_argv[1:]]),

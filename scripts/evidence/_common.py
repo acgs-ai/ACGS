@@ -52,6 +52,9 @@ EXTENDED_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {
 REVIEWED_ENVIRONMENT_PROFILE = {
     "name": "acgs-reviewed-command-environment/v1",
     "inherit_ambient": False,
+    "conditional_environment": {
+        "uv": {"VIRTUAL_ENV": "{REPO_ROOT}/packages/gove-zone/.venv-beta"},
+    },
     "environment": {
         "PATH": "{CWD}/.venv/bin:{REPO_ROOT}/.venv-evidence/bin:/usr/bin:/bin",
         "HOME": "{ISOLATED_ROOT}/home",
@@ -98,6 +101,10 @@ REVIEWED_SANDBOX_PROFILE_VERSION_SHA256 = hashlib.sha256(
     json.dumps(REVIEWED_SANDBOX_PROFILE, sort_keys=True, separators=(",", ":")).encode()
 ).hexdigest()
 BWRAP_EXECUTABLE = Path("/usr/bin/bwrap")
+REVIEWED_HOST_EXECUTABLES = {
+    "make": Path("/usr/bin/make"),
+    "uv": Path.home() / ".local" / "bin" / "uv",
+}
 REVIEWED_P0_TRANSCRIPT = (
     (
         "root:EVID-gate",
@@ -238,9 +245,88 @@ REVIEWED_P0_MEMBRANE_TRANSCRIPT = (
         ),
     ),
 )
+_GZ_LOCKED_PREFIX = (
+    "uv",
+    "run",
+    "--active",
+    "--no-sync",
+    "--python",
+    "3.11",
+    "--package",
+    "gove-zone",
+)
+REVIEWED_P0_CLAIMS_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P0-MEMBRANE-001-exact",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            "tests/integration/test_production_posture.py::"
+            "test_production_rejects_legacy_unsigned_routes",
+            "tests/integration/test_production_posture.py::"
+            "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+        ),
+    ),
+    *REVIEWED_P0_TRANSCRIPT[5:9],
+    (
+        "packages/gove-zone:P0-CLAIMS-002-exact",
+        (
+            *_GZ_LOCKED_PREFIX,
+            "python",
+            "-m",
+            "pytest",
+            "-q",
+            "packages/gove-zone/tests/test_receipt_signing.py::"
+            "test_production_default_no_verifier_fails_loud",
+            "packages/gove-zone/tests/test_receipt_signing.py::"
+            "test_unsigned_rejected_when_required",
+            "packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_no_receipt",
+            "packages/gove-zone/tests/test_executor_guard.py::test_executor_refuses_denied_receipt",
+            "packages/gove-zone/tests/test_executor_guard.py::"
+            "test_executor_refuses_escalated_receipt",
+            "packages/gove-zone/tests/test_receipt_consumption.py::"
+            "test_resume_replay_blocked_with_ledger",
+            "packages/gove-zone/tests/test_receipt_consumption.py::"
+            "test_replay_without_ledger_pins_stateless_gate",
+            "packages/gove-zone/tests/test_replay.py::test_replay_call_diverges_when_args_change",
+            "packages/gove-zone/tests/test_replay.py::test_side_store_tamper_cross_check",
+            "packages/gove-zone/tests/test_acgs_proofpack.py::"
+            "test_signed_pack_without_key_fails_closed",
+            "packages/gove-zone/tests/test_acgs_proofpack.py::"
+            "test_replay_report_status_never_upgrades_validity",
+            "packages/gove-zone/tests/test_acgs_proofpack.py::"
+            "test_cli_require_signature_rejects_unsigned_pack",
+        ),
+    ),
+    ("root:lint-docs", ("make", "lint-docs")),
+    (
+        "root:docs-full",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/docs",
+            "--import-mode=importlib",
+        ),
+    ),
+    (
+        "root:P0-CLAIMS-002",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/docs/test_saas_beta_claims.py::test_claim_boundaries_and_control_plane_readme",
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P0-MEMBRANE-001": REVIEWED_P0_MEMBRANE_TRANSCRIPT,
+    "P0-CLAIMS-002": REVIEWED_P0_CLAIMS_TRANSCRIPT,
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 REVIEWED_CWD_SCOPES_BY_NODE = {
@@ -252,7 +338,23 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "CP",
         "CP",
         "REPO_ROOT",
-    )
+    ),
+    "P0-CLAIMS-002": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+    ),
 }
 ALLOWED_ASSIGNMENTS = {
     "EVID",
@@ -547,9 +649,13 @@ def reviewed_cwd(repo: Path, cwd_scope: str) -> Path:
 def reviewed_executable(cwd: Path, argv0: str) -> Path:
     """Resolve a reviewed slash-qualified executable and require a regular target."""
 
-    if "/" not in argv0 or Path(argv0).is_absolute():
+    host_executable = REVIEWED_HOST_EXECUTABLES.get(argv0)
+    if host_executable is not None:
+        lexical = host_executable
+    elif "/" not in argv0 or Path(argv0).is_absolute():
         fail("reviewed executable must be cwd-relative and PATH-independent", phase="B6")
-    lexical = cwd / argv0
+    else:
+        lexical = cwd / argv0
     try:
         executable = lexical.resolve(strict=True)
     except OSError as exc:
@@ -623,11 +729,8 @@ def validate_safe_argv(argv: Any) -> list[str]:
 def validate_transcript_record(value: Any, *, expected_node: str | None = None) -> dict[str, Any]:
     """Validate the full immutable command record before any persistence or use."""
 
-    required_keys = (
-        EXTENDED_TRANSCRIPT_RECORD_KEYS
-        if expected_node == "P0-MEMBRANE-001"
-        else TRANSCRIPT_RECORD_KEYS
-    )
+    extended_node = expected_node in REVIEWED_CWD_SCOPES_BY_NODE
+    required_keys = EXTENDED_TRANSCRIPT_RECORD_KEYS if extended_node else TRANSCRIPT_RECORD_KEYS
     if not isinstance(value, dict) or set(value) != required_keys:
         fail("command record is outside the reviewed closed contract", phase="B6")
     argv, selector = _reviewed_gate(value.get("argv"), expected_node=expected_node)
@@ -649,7 +752,7 @@ def validate_transcript_record(value: Any, *, expected_node: str | None = None) 
             fail("command record is outside the reviewed closed contract", phase="B6")
     if timestamps[1] < timestamps[0] or value.get("selectors") != [selector]:
         fail("command record is outside the reviewed closed contract", phase="B6")
-    if expected_node == "P0-MEMBRANE-001":
+    if extended_node:
         if (
             value.get("cwd_scope") not in {"REPO_ROOT", "CP"}
             or not isinstance(value.get("executable_sha256"), str)
@@ -693,7 +796,7 @@ def validate_node_execution_identities(repo: Path, node_id: str, commands: Any) 
     """Bind extended records to the canonical cwd and current executable bytes."""
 
     validate_node_transcript_sequence(node_id, commands)
-    if node_id != "P0-MEMBRANE-001":
+    if node_id not in REVIEWED_CWD_SCOPES_BY_NODE:
         return
     for index, command in enumerate(commands):
         _, argv, cwd_scope = reviewed_node_command(node_id, index)

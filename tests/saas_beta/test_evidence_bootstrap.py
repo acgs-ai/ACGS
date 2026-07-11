@@ -2044,17 +2044,96 @@ def test_p0_membrane_corpus_is_node_bound_exact_and_ordered(tmp_path: Path) -> N
         assert not output.exists()
 
 
+def test_p0_claims_corpus_is_closed_exact_ordered_and_final_selector_is_last(
+    tmp_path: Path,
+) -> None:
+    node_id = "P0-CLAIMS-002"
+    reviewed = _common.REVIEWED_P0_CLAIMS_TRANSCRIPT
+    records = _reviewed_node_records(node_id)
+    transcript = tmp_path / node_id / "transcript.jsonl"
+    _write_raw_transcript(transcript, records)
+
+    assert len(reviewed) == 14
+    assert [selector for selector, _ in reviewed] == [
+        "root:EVID-gate",
+        *["packages/acgs-control-plane:local-gate"] * 4,
+        "packages/acgs-control-plane:P0-MEMBRANE-001-exact",
+        *["packages/gove-zone:local-gate"] * 4,
+        "packages/gove-zone:P0-CLAIMS-002-exact",
+        "root:lint-docs",
+        "root:docs-full",
+        "root:P0-CLAIMS-002",
+    ]
+    assert _common.REVIEWED_CWD_SCOPES_BY_NODE[node_id] == (
+        "REPO_ROOT",
+        *["CP"] * 5,
+        *["REPO_ROOT"] * 8,
+    )
+    assert reviewed[-1][1] == (
+        "packages/acgs-control-plane/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/docs/test_saas_beta_claims.py::test_claim_boundaries_and_control_plane_readme",
+    )
+    assert all(
+        "&&" not in argument and argument not in {"bash", "sh", "zsh", "-c"}
+        for _, argv in reviewed
+        for argument in argv
+    )
+    _common.validate_node_transcript_sequence(node_id, records)
+
+    broad_gz = copy.deepcopy(records[10])
+    broad_gz["argv"] = [
+        *_common._GZ_LOCKED_PREFIX,
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "packages/gove-zone/tests",
+    ]
+    alternate_interpreter = copy.deepcopy(records[-1])
+    alternate_interpreter["argv"][0] = ".venv-evidence/bin/python"
+    selector_mismatch = copy.deepcopy(records[10])
+    selector_mismatch["selectors"] = ["packages/gove-zone:local-gate"]
+    cwd_mismatch = copy.deepcopy(records[10])
+    cwd_mismatch["cwd_scope"] = "CP"
+    substituted = copy.deepcopy(records[-1])
+    substituted["argv"][-1] = "tests/docs/test_signing_default_doc_matches_code.py"
+    mutations = (
+        [],
+        records[:-1],
+        records[1:],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:10], broad_gz, *records[11:]],
+        [*records[:-1], alternate_interpreter],
+        [*records[:10], selector_mismatch, *records[11:]],
+        [*records[:10], cwd_mismatch, *records[11:]],
+        [*records[:-1], substituted],
+        _reviewed_node_records("P0-MEMBRANE-001"),
+        _reviewed_p0_records(),
+    )
+    for mutation in mutations:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_node_transcript_sequence(node_id, mutation)
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(
+                {"node_id": node_id, "commands": mutation}, expected_node=node_id
+            )
+
+
 def test_node_specific_commands_do_not_weaken_baseline_or_cross_node_contract() -> None:
     membrane_only = list(_common.REVIEWED_P0_MEMBRANE_TRANSCRIPT[-1][1])
     assert tuple(membrane_only) not in _common.REVIEWED_COMMAND_SELECTORS
     with pytest.raises(_common.EvidenceError, match="reviewed closed contract"):
         _common.validate_safe_argv(membrane_only)
-    with pytest.raises(_common.EvidenceError, match="lacks reviewed transcript corpus"):
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
         _common.validate_transcript_record(
-            _transcript_record(membrane_only, "root:P0-MEMBRANE-001"),
+            _reviewed_node_records("P0-MEMBRANE-001")[-1],
             expected_node="P0-CLAIMS-002",
         )
-    with pytest.raises(_common.EvidenceError, match="lacks reviewed transcript corpus"):
+    with pytest.raises(_common.EvidenceError, match=r"reviewed.*contract"):
         _common.validate_node_transcript_sequence("P0-CLAIMS-002", _reviewed_p0_records())
 
 
@@ -2118,9 +2197,32 @@ def test_generate_run_cli_rejects_membrane_mutations_and_claims_substitution_wit
             *_reviewed_node_records("P0-MEMBRANE-001")[1:],
         ],
         "claims-cross-node": _reviewed_node_records("P0-MEMBRANE-001"),
+        "claims-subset": _reviewed_node_records("P0-CLAIMS-002")[:-1],
+        "claims-duplicate": [
+            *_reviewed_node_records("P0-CLAIMS-002"),
+            _reviewed_node_records("P0-CLAIMS-002")[-1],
+        ],
+        "claims-reorder": [
+            _reviewed_node_records("P0-CLAIMS-002")[1],
+            _reviewed_node_records("P0-CLAIMS-002")[0],
+            *_reviewed_node_records("P0-CLAIMS-002")[2:],
+        ],
+        "claims-selector-substitution": [
+            *_reviewed_node_records("P0-CLAIMS-002")[:-1],
+            {
+                **_reviewed_node_records("P0-CLAIMS-002")[-1],
+                "argv": [
+                    "packages/acgs-control-plane/.venv/bin/python",
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "tests/docs",
+                ],
+            },
+        ],
     }
     for name, records in cases.items():
-        node_id = "P0-CLAIMS-002" if name == "claims-cross-node" else "P0-MEMBRANE-001"
+        node_id = "P0-CLAIMS-002" if name.startswith("claims-") else "P0-MEMBRANE-001"
         assignment = "EVID+CP+GZ" if node_id == "P0-CLAIMS-002" else "EVID+CP"
         node = evidence / node_id
         node.mkdir(parents=True, exist_ok=True)
@@ -2433,6 +2535,13 @@ def test_capture_launcher_sandbox_denies_ignored_repo_write_and_missing_binary(
 
 def test_environment_and_sandbox_profiles_are_complete_and_version_bound() -> None:
     environment = _common.REVIEWED_ENVIRONMENT_PROFILE["environment"]
+    assert _common.REVIEWED_ENVIRONMENT_PROFILE["conditional_environment"] == {
+        "uv": {"VIRTUAL_ENV": "{REPO_ROOT}/packages/gove-zone/.venv-beta"}
+    }
+    assert _common.REVIEWED_HOST_EXECUTABLES == {
+        "make": Path("/usr/bin/make"),
+        "uv": Path.home() / ".local" / "bin" / "uv",
+    }
     assert set(environment) == {
         "PATH",
         "HOME",
