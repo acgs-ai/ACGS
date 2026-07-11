@@ -7,6 +7,9 @@
 #
 # This job mirrors `tests-root.yml`'s environment-INDEPENDENT invariant guards
 # (82 tests) onto a GitHub-hosted runner (free for public repos). It is a
+# generic root gate, so the locked SaaS-beta proof is excluded here and runs in
+# the automatic hosted contract lane in `saas-beta-p0-evidence.yml`; its exact
+# proof remains authorized/manual on its authenticated self-hosted environment. It is a
 # faithful copy of that gate's run step — the ONLY difference is `runs-on` —
 # so the two never diverge in what they assert. The self-hosted `tests-root`
 # remains the authority; this is a redundant safety net for runner outages.
@@ -70,7 +73,9 @@ jobs:
         # Lockstep copy of tests-root.yml. `--no-project` skips the workspace
         # sync; `--with` supplies the only deps these tests need (pytest +
         # pyyaml). tests/conftest.py puts scripts/ on sys.path. EXCLUSIONS match
-        # tests-root.yml exactly — the five readiness/evidence tests are gated
+        # tests-root.yml exactly — tests/saas_beta uses the automatic hosted
+        # contract lane; its exact proof remains authorized/manual. The five
+        # readiness/evidence tests are gated
         # by readiness-evidence.yml (+ hosted twin); submodule-dependent tests
         # stay out of this gate.
         run: |
@@ -78,6 +83,7 @@ jobs:
           uv run --no-project --python 3.11 --with pytest --with pyyaml \
             python -m pytest tests/ \
             --ignore=tests/docs \
+            --ignore=tests/saas_beta \
             --ignore=tests/test_platform_readiness_report.py \
             --ignore=tests/test_readiness_evidence_boundaries.py \
             --ignore=tests/test_release_evidence_bundle.py \
