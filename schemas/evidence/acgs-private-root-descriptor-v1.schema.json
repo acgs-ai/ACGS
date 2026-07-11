@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.local/schemas/evidence/acgs-private-root-descriptor-v1.schema.json",
+  "title": "ACGS private-root public descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "role", "canonical_private_root"],
+  "properties": {
+    "schema_version": {"const": "acgs-private-root-descriptor/v1"},
+    "role": {"enum": ["reviewer", "verifier", "claims-reviewer"]},
+    "canonical_private_root": {"type": "string", "minLength": 2, "pattern": "^/"}
+  }
+}

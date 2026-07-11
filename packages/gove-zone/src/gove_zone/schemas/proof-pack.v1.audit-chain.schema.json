@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.ai/schema/proof-pack/v1/audit-chain.schema.json",
+  "title": "ACGS proof pack v1 — audit-chain.json artifact",
+  "description": "The hash-linked audit events of an acgs/proof-pack/v1 bundle, in chain order. Each event is a gove_zone.decision.DecisionRecord dict plus previous_hash and event_hash; event_hash is a SHA-256 over the canonical JSON of the event minus event_hash, and previous_hash links to the prior event back to the 64-zero genesis hash. Frozen format: unknown keys are rejected.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": "acgs/proof-pack/v1" },
+    "genesis_hash": {
+      "const": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "event_count": { "type": "integer", "minimum": 0 },
+    "last_hash": { "$ref": "#/$defs/sha256" },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/auditEvent" }
+    }
+  },
+  "required": ["schema_version", "genesis_hash", "event_count", "last_hash", "events"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "auditEvent": {
+      "type": "object",
+      "properties": {
+        "decision": { "enum": ["allow", "deny", "transform", "escalate"] },
+        "tool": { "type": "string" },
+        "argument_hash": { "$ref": "#/$defs/sha256" },
+        "policy_version": { "type": "string" },
+        "event_id": { "type": "string", "minLength": 1 },
+        "matched_rules": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" },
+        "timestamp_iso": { "type": "string", "minLength": 1 },
+        "transformed_args": { "type": ["object", "null"] },
+        "goal": { "type": "string" },
+        "actor": { "type": "string" },
+        "path": { "type": "array", "items": { "type": "string" } },
+        "state_hash": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "decision_request_hash": { "type": "string" },
+        "previous_hash": { "$ref": "#/$defs/sha256" },
+        "event_hash": { "$ref": "#/$defs/sha256" }
+      },
+      "required": [
+        "decision",
+        "tool",
+        "argument_hash",
+        "policy_version",
+        "event_id",
+        "matched_rules",
+        "reason",
+        "timestamp_iso",
+        "transformed_args",
+        "goal",
+        "actor",
+        "path",
+        "state_hash",
+        "decision_request_hash",
+        "previous_hash",
+        "event_hash"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
