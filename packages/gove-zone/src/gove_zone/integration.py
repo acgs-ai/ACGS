@@ -34,6 +34,7 @@ import dataclasses
 import json
 import logging
 import os
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
@@ -54,6 +55,7 @@ __all__ = [
     "tool_call_from_hook_payload",
     "tool_calls_from_hook_payload",
     "GateModeError",
+    "make_langgraph_tool_node",
 ]
 
 _DEFAULT_AUDIT_SUBPATH = Path(".gove-zone") / "audit.jsonl"
@@ -336,9 +338,12 @@ def _tool_name_and_input_from_payload(payload: dict[str, Any]) -> tuple[str, dic
     * OpenAI Responses-style output items:
       ``{output: [{type: "function_call", name, arguments}]}`` or
       ``{response: {output: [{type: "function_call", name, arguments}]}}``
-    * OpenAI Chat/LangChain-style single tool calls:
+    * OpenAI Chat/LangChain/LangGraph-style single tool calls:
       ``{tool_calls: [{function: {name, arguments}}]}`` or
-      ``{tool_calls: [{name, args}]}``
+      ``{tool_calls: [{name, args}]}``. LangGraph forwards
+      ``AIMessage.tool_calls`` items that additionally carry idiomatic
+      ``id`` + ``type: "tool_call"`` fields; those are runtime bookkeeping and
+      are ignored here so the call routes to the same ``(name, args)`` result.
     * Generic bridges: ``{name, arguments|args|input}`` or
       ``{tool: {name, arguments|args}}``
     """
@@ -751,3 +756,84 @@ def emit_receipt_for_hook(
         if receipt.record.decision in {Decision.DENY, Decision.ESCALATE}:
             return receipt
     return receipts[-1]
+
+
+def make_langgraph_tool_node(
+    tool_fn: Callable[..., Any],
+    *,
+    action_kind: str,
+    actor: str,
+    policy: Policy | None = None,
+    state_key: str = "tool_call",
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Return a LangGraph-style node fn that governs *tool_fn* before running it.
+
+    LangGraph models a workflow as a graph of nodes, each ``fn(state) -> state``.
+    A common governance integration point is a **pre-execution intercept** on a
+    tool node: gate the proposed tool call *before* the node performs its side
+    effect. This helper is the first-class, dependency-free form of that pattern
+    (the ``agent-framework-wrapper`` example demonstrates it; this is the
+    importable API) — no ``langgraph``/``langchain`` import is required, only the
+    payload SHAPE is modelled.
+
+    The returned node reads the proposed call from ``state[state_key]`` — a
+    LangGraph ``AIMessage.tool_calls`` item
+    ``{"name", "args", "id", "type": "tool_call"}`` — routes it through the SAME
+    passive adapter plumbing every other runtime family uses
+    (:func:`emit_receipt_for_hook`, which normalizes via
+    :func:`tool_call_from_hook_payload`), and only runs *tool_fn* on ALLOW.
+
+    Fail-closed by construction: a DENY/ESCALATE decision, a missing or
+    unparseable tool call, or a swallowed emission failure (``None`` receipt in
+    observe mode) all route to ``decision == "blocked"`` and *tool_fn* is never
+    called — so no side effect runs without a recorded ALLOW receipt. The gate
+    mode / signing posture is inherited from :func:`emit_receipt_for_hook`
+    (fail-closed ENFORCE by default); this wrapper never weakens it.
+
+    The outcome is written back under ``state["governed"]`` as
+    ``{"decision": "allowed"|"blocked", "receipt": Receipt|None, ...}``; the
+    original state is not mutated.
+    """
+
+    def tool_node(state: dict[str, Any]) -> dict[str, Any]:
+        new_state = dict(state)
+        call = state.get(state_key)
+        if not isinstance(call, dict) or not call.get("name"):
+            new_state["governed"] = {
+                "decision": "blocked",
+                "reason": f"no parseable LangGraph tool call at state[{state_key!r}]",
+                "receipt": None,
+            }
+            return new_state
+
+        payload: dict[str, Any] = {
+            "tool_calls": [call],
+            "goal": state.get("goal", ""),
+            "state": state.get("state", {}),
+        }
+        receipt = emit_receipt_for_hook(
+            payload,
+            action_kind=action_kind,
+            actor=actor,
+            policy=policy,
+        )
+        if receipt is None or receipt.record.decision is not Decision.ALLOW:
+            new_state["governed"] = {
+                "decision": "blocked",
+                "reason": (
+                    receipt.record.reason if receipt is not None else "receipt emission failed"
+                ),
+                "receipt": receipt,
+            }
+            return new_state
+
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        result = tool_fn(**cast(dict[str, Any], args))
+        new_state["governed"] = {
+            "decision": "allowed",
+            "result": result,
+            "receipt": receipt,
+        }
+        return new_state
+
+    return tool_node
