@@ -33,9 +33,15 @@ from typing import Any
 # Re-exported for backward compatibility: the lock implementation lives in
 # ``gove_zone._locking`` and ``from gove_zone.audit import _exclusive_file_lock``
 # must keep working.
+from gove_zone._fsprobe import (
+    filesystem_is_lock_safe as filesystem_is_lock_safe,
+)
+from gove_zone._fsprobe import (
+    unsafe_fs_override_enabled,
+)
 from gove_zone._locking import _exclusive_file_lock as _exclusive_file_lock
 from gove_zone.decision import DecisionRecord, sha256_json
-from gove_zone.errors import AuditError
+from gove_zone.errors import AuditError, UnsafeAuditFilesystemError
 
 GENESIS_HASH = "0" * 64
 
@@ -57,6 +63,19 @@ class ChainHashAuditStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        # Fail-closed startup probe (G1.6): refuse to back the audit chain with a
+        # filesystem whose cross-process locking is unreliable (NFS without a
+        # lock manager), unless the operator explicitly opts in. Runs BEFORE any
+        # directory/file is created so a refusal leaves no side effects.
+        if not unsafe_fs_override_enabled() and not filesystem_is_lock_safe(self.path):
+            raise UnsafeAuditFilesystemError(
+                f"audit path {str(self.path)!r} resolves to a network filesystem "
+                "whose fcntl.flock locking is not a reliable cross-process mutex "
+                "(NFS without a running lock manager), so the append-only chain "
+                "guarantee cannot be honored — refusing to start. If this export "
+                "runs lockd and locking is reliable, set "
+                "GOVE_ZONE_ALLOW_UNSAFE_FS=1 to override."
+            )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last_hash: str | None = None
         # File size observed immediately after this instance's own last
