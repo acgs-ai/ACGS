@@ -151,6 +151,38 @@ async function main() {
   if (payload.received_schema_version !== schemaVersion) {
     fail(`upstream did not receive schema header: ${JSON.stringify(payload)}`)
   }
+
+  // -- Console fail-closed probe -- DEPLOY.md section 7 / Caddyfile @console_routes.
+  //    The container above sets BUS_UPSTREAM but deliberately NOT AUTH_UPSTREAM,
+  //    so Caddy's forward_auth for /console* falls back to the closed localhost
+  //    port (127.0.0.1:65535). Because forward_auth runs BEFORE `try_files
+  //    {path} /index.html`, an unreachable auth upstream must yield a non-2xx
+  //    proxy error, never a 200 SPA shell. This is the runtime twin of the
+  //    static check-auth-boundary contract: it proves the deep-link auth wall
+  //    fails closed at the actual edge, not just in the Caddyfile text.
+  const consolePaths = ['/console', '/console/agents']
+  for (const p of consolePaths) {
+    let res
+    try {
+      res = await fetch(`${base}${p}`, { redirect: 'manual' })
+    } catch (error) {
+      fail(`console fail-closed probe could not reach ${p}: ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
+    // Load-bearing assertion: with no reachable AUTH_UPSTREAM the request must
+    // fail closed (expected 502 from the unreachable forward_auth upstream) and
+    // must NOT fall through to a 200 SPA page.
+    if (res.status === 200 || res.status < 400) {
+      fail(`console fail-closed breach: ${p} returned ${res.status} (expected non-2xx from closed forward_auth upstream)`)
+    }
+    // Defense in depth: prove no SPA try_files fallthrough served the shell.
+    // Kept lenient -- the status check above is authoritative -- because a
+    // fail-closed 502 carries no SPA body to inspect anyway.
+    const body = await res.text()
+    if (body.includes('<div id="root"')) {
+      fail(`console fail-closed breach: ${p} served the SPA shell (<div id="root">) despite unreachable auth upstream`)
+    }
+  }
 }
 
 try {
@@ -173,5 +205,6 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Bus proxy smoke passed: /api/* proxied to stub bus with X-ACGS-Schema-Version ${schemaVersion}.`,
+  `Bus proxy smoke passed: /api/* proxied to stub bus with X-ACGS-Schema-Version ${schemaVersion}; ` +
+    '/console* fails closed (non-2xx, no SPA fallthrough) when the forward_auth upstream is unreachable.',
 )

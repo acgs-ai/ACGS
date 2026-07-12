@@ -231,6 +231,8 @@ class ReceiptVerifier:
         expected_actor: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
+        expected_authority: str | None = None,
+        expected_validator_role: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
@@ -245,6 +247,8 @@ class ReceiptVerifier:
         self.expected_actor = expected_actor
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
+        self.expected_authority = expected_authority
+        self.expected_validator_role = expected_validator_role
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
@@ -287,6 +291,8 @@ class ReceiptVerifier:
             expected_execution_boundary=self.expected_execution_boundary,
             expected_policy_bundle_id=self.expected_policy_bundle_id,
             expected_policy_hash=self.expected_policy_hash,
+            expected_authority=self.expected_authority,
+            expected_validator_role=self.expected_validator_role,
             expected_action=expected_action,
             expected_args=expected_args,
             expected_audit_hash=expected_audit_hash,

@@ -1,0 +1,6 @@
+{
+  "note": "No replay material (policy bundle + side store) was supplied at generation time, so decisions were not re-derived. Receipt and audit-chain integrity are still fully verifiable offline.",
+  "result": null,
+  "schema_version": "acgs/proof-pack/v1",
+  "status": "not_available"
+}

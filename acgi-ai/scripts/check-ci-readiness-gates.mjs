@@ -331,7 +331,8 @@ before(
 )
 before(consoleWorkflow, 'pnpm test:all', 'Build & push image', 'console.yml')
 before(consoleWorkflow, 'pnpm test:all', 'Deploy to Cloud Run', 'console.yml')
-// Marketing production deploy is Cloudflare Pages (marketing-cloudflare.yml). Its deploy
+// Marketing production deploy is Cloudflare Workers Assets (marketing-cloudflare.yml),
+// the worker that actually serves acgs.ai (the Pages project is a shadow). Its deploy
 // job `needs: verify`, and the verify job runs the full `pnpm test:all` readiness gate, so
 // the gate precedes deploy. The Vercel path (marketing.yml) is retired to verify-only.
 check(
@@ -342,18 +343,18 @@ check(
 before(
   marketingCfWorkflow,
   'pnpm test:all',
-  'Deploy to Cloudflare Pages',
+  'Deploy to Cloudflare Workers Assets',
   'marketing-cloudflare.yml',
 )
 before(
   marketingCfWorkflow,
   'Check Cloudflare secrets present',
-  'Deploy to Cloudflare Pages',
+  'Deploy to Cloudflare Workers Assets',
   'marketing-cloudflare.yml',
 )
 
 check(
-  /::error::Cloudflare Pages deploy blocked/.test(marketingCfWorkflow) &&
+  /::error::Cloudflare Workers deploy blocked/.test(marketingCfWorkflow) &&
     /exit 1/.test(marketingCfWorkflow) &&
     !/::warning::/.test(marketingCfWorkflow) &&
     !/available=false/.test(marketingCfWorkflow),

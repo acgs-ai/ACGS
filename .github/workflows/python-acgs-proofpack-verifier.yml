@@ -1,0 +1,77 @@
+# Path-filtered CI for packages/acgs-proofpack-verifier/ — the dependency-minimal
+# offline proof-pack verifier. The load-bearing gate is the clean-room step: it
+# builds the wheel, installs ONLY that wheel into a fresh virtualenv (no
+# gove-zone, no third-party runtime deps), and proves a golden proof pack
+# verifies while `import gove_zone` fails. No submodule init needed: this is a
+# first-class in-tree package, not a gitlink.
+
+name: python-acgs-proofpack-verifier
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/acgs-proofpack-verifier/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-proofpack-verifier.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/acgs-proofpack-verifier/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-acgs-proofpack-verifier.yml'
+
+concurrency:
+  group: python-acgs-proofpack-verifier-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/acgs-proofpack-verifier
+
+jobs:
+  test:
+    # Block fork PRs: untrusted code must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'packages/acgs-proofpack-verifier/pyproject.toml'
+
+      - name: Install (dev extra)
+        # Standalone CI: no parent uv workspace context. The package declares
+        # ZERO runtime deps; the dev extra adds pytest + cryptography so the
+        # signed-pack fail-closed test exercises the real signature surface.
+        # uv's python-build-standalone toolchain is used because
+        # actions/setup-python has no prebuilds for the self-hosted runner OS.
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python --no-config --editable '.[dev]'
+
+      - name: Lint
+        run: |
+          .venv/bin/python -m ruff check src tests
+          .venv/bin/python -m ruff format --check src tests
+
+      - name: Test
+        run: .venv/bin/python -m pytest tests/ -v
+
+      - name: Clean-room verify (no gove-zone installed)
+        # The criterion's proof: build the wheel, install it alone, assert
+        # `import gove_zone` fails, then verify a golden pack (exit 0) and refuse
+        # a signed pack without a key (exit 1). Runs from the repo root so
+        # `uv build --package` resolves the workspace.
+        working-directory: ${{ github.workspace }}
+        run: bash packages/acgs-proofpack-verifier/scripts/cleanroom_verify.sh

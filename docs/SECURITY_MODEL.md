@@ -214,6 +214,18 @@ pilot:
 - **TRANSFORM out of scope.** Config load rejects transform-policy bundles so an
   unrouted TRANSFORM decision cannot silently hard-fail every call at the gate.
 
+**Out-of-band operator surface.** The above covers the MCP-reachable
+`tools/call` gate. `approve()` / `resume()` / `pending_descriptor()` are a
+second, separate boundary: they are not MCP-reachable at all (`build_server`
+registers only `tools/list` + `tools/call`), carry no caller-identity check of
+their own, and are actually gated by process/CLI possession of a validator
+identity distinct from every mapped principal plus the config signer key — the
+same insider/operator trust ADV2 names above, made explicit rather than
+implicit. See `docs/design/mcp-gateway-trust-boundaries.md` for the full
+treatment, including how bounded-capacity back-pressure (`max_pending` /
+`max_pending_per_principal`) turns the previously unbounded `_pending`/
+`_approvals` growth into a bounded, audited escalation-availability trade-off.
+
 ## Security-sensitive files
 
 - `packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py`

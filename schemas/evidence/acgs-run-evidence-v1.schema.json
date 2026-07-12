@@ -1,0 +1,980 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acgs.local/schemas/evidence/acgs-run-evidence-v1.schema.json",
+  "title": "ACGS SaaS beta run evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "node_version",
+    "node_id",
+    "parent_commit_sha",
+    "product_commit_sha",
+    "assignment",
+    "environment_identities",
+    "pep660_editable_build",
+    "ed25519_implementation",
+    "commands",
+    "selectors",
+    "determinism",
+    "clock",
+    "platform",
+    "artifacts",
+    "skipped",
+    "external",
+    "timestamps"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "acgs-run-evidence/v1"
+    },
+    "node_version": {
+      "const": 1
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^P[0-7]-[A-Z0-9-]+$"
+    },
+    "parent_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "product_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "git_tree_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "assignment": {
+      "enum": [
+        "EVID",
+        "EVID+CP",
+        "EVID+CP+GZ",
+        "EVID+CP+UI",
+        "EVID+UI",
+        "EVID+CP+GZ+UI"
+      ]
+    },
+    "environment_identities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "EVID"
+      ],
+      "properties": {
+        "EVID": {
+          "$ref": "#/$defs/evidIdentity"
+        },
+        "CP": {
+          "$ref": "#/$defs/pythonProductIdentity"
+        },
+        "GZ": {
+          "$ref": "#/$defs/pythonProductIdentity"
+        },
+        "UI": {
+          "$ref": "#/$defs/uiIdentity"
+        }
+      }
+    },
+    "pep660_editable_build": {
+      "$ref": "#/$defs/pep660Aggregate"
+    },
+    "ed25519_implementation": {
+      "$ref": "#/$defs/ed25519Implementation"
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "selectors": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "determinism": {
+      "$ref": "#/$defs/determinism"
+    },
+    "clock": {
+      "$ref": "#/$defs/clock"
+    },
+    "platform": {
+      "$ref": "#/$defs/platform"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "skipped": {
+      "const": []
+    },
+    "external": {
+      "const": []
+    },
+    "timestamps": {
+      "$ref": "#/$defs/timestamps"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "utc": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "artifactHashes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "lockEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "artifact_hashes"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_hashes": {
+          "$ref": "#/$defs/artifactHashes"
+        }
+      }
+    },
+    "lockDistributions": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9-]*$": {
+          "$ref": "#/$defs/lockEntry"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "installedDistribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "location"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "installedDistributions": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9-]*$": {
+          "$ref": "#/$defs/installedDistribution"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "bootstrapRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "node_id",
+        "code",
+        "captured_at_utc",
+        "runtime_root",
+        "interpreter",
+        "interpreter_realpath",
+        "python_version",
+        "python_implementation",
+        "runtime_ctime_ns",
+        "pyvenv_cfg_sha256",
+        "lock_sha256",
+        "nonce"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "acgs-bootstrap-record/v1"
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^P[0-7]-[A-Z0-9-]+$"
+        },
+        "code": {
+          "enum": [
+            "EVID",
+            "CP",
+            "GZ"
+          ]
+        },
+        "captured_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "runtime_root": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter_realpath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "python_version": {
+          "type": "string",
+          "pattern": "^3\\.11\\.[0-9]+$"
+        },
+        "python_implementation": {
+          "const": "cpython"
+        },
+        "runtime_ctime_ns": {
+          "$ref": "#/$defs/canonicalPositiveDecimal"
+        },
+        "pyvenv_cfg_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "uiBootstrapRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "node_id",
+        "code",
+        "captured_at_utc",
+        "runtime_root",
+        "interpreter",
+        "interpreter_realpath",
+        "node_version",
+        "pnpm_executable",
+        "pnpm_version",
+        "runtime_ctime_ns",
+        "lock_sha256",
+        "nonce"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "acgs-bootstrap-record/v1"
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^P[0-7]-[A-Z0-9-]+$"
+        },
+        "code": {
+          "const": "UI"
+        },
+        "captured_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "runtime_root": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter_realpath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "node_version": {
+          "const": "24.18.0"
+        },
+        "pnpm_executable": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "pnpm_version": {
+          "const": "9.15.4"
+        },
+        "runtime_ctime_ns": {
+          "$ref": "#/$defs/canonicalPositiveDecimal"
+        },
+        "lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "distributions"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "distributions": {
+          "$ref": "#/$defs/lockDistributions"
+        }
+      }
+    },
+    "moduleIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution",
+        "version",
+        "path"
+      ],
+      "properties": {
+        "distribution": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "evidModules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rfc8785",
+        "cryptography",
+        "jsonschema",
+        "pytest"
+      ],
+      "properties": {
+        "rfc8785": {
+          "$ref": "#/$defs/moduleIdentity"
+        },
+        "cryptography": {
+          "$ref": "#/$defs/moduleIdentity"
+        },
+        "jsonschema": {
+          "$ref": "#/$defs/moduleIdentity"
+        },
+        "pytest": {
+          "$ref": "#/$defs/moduleIdentity"
+        }
+      }
+    },
+    "uvIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "executable"
+      ],
+      "properties": {
+        "version": {
+          "const": "0.11.19"
+        },
+        "executable": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "evidIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "code",
+        "node_id",
+        "captured_at_utc",
+        "interpreter",
+        "interpreter_realpath",
+        "module_root",
+        "python_version",
+        "python_implementation",
+        "uv",
+        "lock",
+        "installed_distributions",
+        "modules",
+        "bootstrap_record",
+        "output_path"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "acgs-environment-identity/v1"
+        },
+        "code": {
+          "const": "EVID"
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^P[0-7]-[A-Z0-9-]+$"
+        },
+        "captured_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "interpreter": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter_realpath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "module_root": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "python_version": {
+          "type": "string",
+          "pattern": "^3\\.11\\.[0-9]+$"
+        },
+        "python_implementation": {
+          "const": "cpython"
+        },
+        "uv": {
+          "$ref": "#/$defs/uvIdentity"
+        },
+        "lock": {
+          "$ref": "#/$defs/lock"
+        },
+        "installed_distributions": {
+          "$ref": "#/$defs/installedDistributions"
+        },
+        "modules": {
+          "$ref": "#/$defs/evidModules"
+        },
+        "bootstrap_record": {
+          "$ref": "#/$defs/bootstrapRecord"
+        },
+        "output_path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "pep517Identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "distribution",
+        "version",
+        "module_path",
+        "artifact_hashes"
+      ],
+      "properties": {
+        "backend": {
+          "const": "hatchling.build"
+        },
+        "distribution": {
+          "const": "hatchling"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_hashes": {
+          "$ref": "#/$defs/artifactHashes"
+        }
+      }
+    },
+    "pep660Identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution",
+        "version",
+        "module",
+        "module_path",
+        "lock_sha256",
+        "artifact_hashes"
+      ],
+      "properties": {
+        "distribution": {
+          "const": "editables"
+        },
+        "version": {
+          "const": "0.6"
+        },
+        "module": {
+          "const": "editables"
+        },
+        "module_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "artifact_hashes": {
+          "$ref": "#/$defs/artifactHashes"
+        }
+      }
+    },
+    "pythonProductIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "code",
+        "node_id",
+        "captured_at_utc",
+        "interpreter",
+        "interpreter_realpath",
+        "module_root",
+        "python_version",
+        "python_implementation",
+        "lock",
+        "installed_distributions",
+        "pep517_backend",
+        "pep660_editable_build",
+        "bootstrap_record",
+        "output_path"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "acgs-environment-identity/v1"
+        },
+        "code": {
+          "enum": [
+            "CP",
+            "GZ"
+          ]
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^P[0-7]-[A-Z0-9-]+$"
+        },
+        "captured_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "interpreter": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "interpreter_realpath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "module_root": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "python_version": {
+          "type": "string",
+          "pattern": "^3\\.11\\.[0-9]+$"
+        },
+        "python_implementation": {
+          "const": "cpython"
+        },
+        "lock": {
+          "$ref": "#/$defs/lock"
+        },
+        "installed_distributions": {
+          "$ref": "#/$defs/installedDistributions"
+        },
+        "pep517_backend": {
+          "$ref": "#/$defs/pep517Identity"
+        },
+        "pep660_editable_build": {
+          "$ref": "#/$defs/pep660Identity"
+        },
+        "bootstrap_record": {
+          "$ref": "#/$defs/bootstrapRecord"
+        },
+        "output_path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "toolIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "executable"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executable": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "uiLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "acgi-ai/pnpm-lock.yaml"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "uiIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "code",
+        "node_id",
+        "captured_at_utc",
+        "node",
+        "pnpm",
+        "module_root",
+        "lock",
+        "bootstrap_record",
+        "output_path"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "acgs-environment-identity/v1"
+        },
+        "code": {
+          "const": "UI"
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^P[0-7]-[A-Z0-9-]+$"
+        },
+        "captured_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "node": {
+          "$ref": "#/$defs/toolIdentity"
+        },
+        "pnpm": {
+          "$ref": "#/$defs/toolIdentity"
+        },
+        "module_root": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "lock": {
+          "$ref": "#/$defs/uiLock"
+        },
+        "bootstrap_record": {
+          "$ref": "#/$defs/uiBootstrapRecord"
+        },
+        "output_path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      }
+    },
+    "pep660Environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_path",
+        "product_lock_sha256",
+        "artifact_hashes"
+      ],
+      "properties": {
+        "module_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "product_lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "artifact_hashes": {
+          "$ref": "#/$defs/artifactHashes"
+        }
+      }
+    },
+    "pep660Aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution",
+        "version",
+        "module",
+        "environments"
+      ],
+      "properties": {
+        "distribution": {
+          "const": "editables"
+        },
+        "version": {
+          "const": "0.6"
+        },
+        "module": {
+          "const": "editables"
+        },
+        "environments": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "CP": {
+              "$ref": "#/$defs/pep660Environment"
+            },
+            "GZ": {
+              "$ref": "#/$defs/pep660Environment"
+            }
+          }
+        }
+      }
+    },
+    "ed25519Implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "distribution",
+        "version",
+        "module",
+        "evidence_test_lock_sha256",
+        "artifact_hashes"
+      ],
+      "properties": {
+        "distribution": {
+          "const": "cryptography"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "module": {
+          "const": "cryptography.hazmat.primitives.asymmetric.ed25519"
+        },
+        "evidence_test_lock_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "artifact_hashes": {
+          "$ref": "#/$defs/artifactHashes"
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv",
+        "exit_code",
+        "stdout_sha256",
+        "stderr_sha256",
+        "started_at_utc",
+        "finished_at_utc",
+        "selectors"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+          },
+          "maxItems": 256
+        },
+        "exit_code": {
+          "const": 0
+        },
+        "stdout_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "stderr_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "started_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "finished_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "selectors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "determinism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seed",
+        "python_hash_seed",
+        "process_schedule"
+      ],
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "python_hash_seed": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "process_schedule": {
+          "const": [
+            "single-process"
+          ]
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "skew_ms"
+      ],
+      "properties": {
+        "source": {
+          "const": "system-utc"
+        },
+        "skew_ms": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "identity"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "identity": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture",
+        "container"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1
+        },
+        "container": {
+          "$ref": "#/$defs/container"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generated_at_utc",
+        "transcript_started_at_utc",
+        "transcript_finished_at_utc"
+      ],
+      "properties": {
+        "generated_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "transcript_started_at_utc": {
+          "$ref": "#/$defs/utc"
+        },
+        "transcript_finished_at_utc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    },
+    "canonicalPositiveDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 32
+    }
+  }
+}

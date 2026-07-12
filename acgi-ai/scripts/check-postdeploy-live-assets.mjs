@@ -37,7 +37,18 @@ function html() {
 function startServer({ deployedJs }) {
   const server = createServer((request, response) => {
     const url = request.url ?? '/'
-    if (url === '/' || url === '/console') {
+    if (url === '/console' || url.startsWith('/console/')) {
+      // Model the production forward_auth wall (DEPLOY.md section 7 / Caddyfile
+      // @console_routes): a correct deployment fails /console* closed with a
+      // non-2xx status, never a 200 SPA shell served by the try_files fallback.
+      // This is what the postdeploy /console fail-closed probe asserts, so the
+      // "clean deployed assets" fixture must model the wall rather than leak the
+      // SPA page (which would itself be the breach the probe is meant to catch).
+      response.writeHead(401, { ...requiredHeaders, 'Content-Type': 'text/plain; charset=utf-8' })
+      response.end('unauthorized')
+      return
+    }
+    if (url === '/') {
       response.writeHead(200, { ...requiredHeaders, 'Content-Type': 'text/html; charset=utf-8' })
       response.end(html())
       return

@@ -173,8 +173,10 @@ def admit_action(action: Any, args: Any) -> dict[str, Any]:
 
 
 def build_app() -> Any:
-    """Thin ASGI wrapper. Imported lazily so the module (and its tests) load
-    without FastAPI installed."""
+    """Thin ASGI wrapper. FastAPI is imported lazily, and the module-level
+    ``app`` is built lazily via module ``__getattr__`` (below), so a plain
+    ``import governance_bridge`` — and the module's pure tests — load without
+    FastAPI installed; the FastAPI route tests skip when it is absent."""
     from fastapi import FastAPI
 
     app = FastAPI(title="ACGS copilot governance bridge")
@@ -189,4 +191,17 @@ def build_app() -> Any:
     return app
 
 
-app = build_app()
+_app: Any = None
+
+
+def __getattr__(name: str) -> Any:
+    # PEP 562: build the served ASGI app on first access only — e.g. uvicorn's
+    # ``governance_bridge:app`` or ``from governance_bridge import app`` — so a
+    # plain ``import governance_bridge`` never imports FastAPI. Cached so the
+    # served object is a stable singleton (uvicorn and tests see the same app).
+    if name == "app":
+        global _app
+        if _app is None:
+            _app = build_app()
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -60,8 +60,10 @@ check(
   'package.json test:contract must include production deploy contract verification.',
 )
 
-// Marketing PRODUCTION deploy moved from Vercel (marketing.yml) to Cloudflare Pages
-// (marketing-cloudflare.yml). The fail-closed contract now lives in the Cloudflare
+// Marketing PRODUCTION deploy moved from Vercel (marketing.yml) to Cloudflare
+// (marketing-cloudflare.yml) — now Workers Static Assets (worker
+// `acgs-governance-proxy`), which is what actually serves acgs.ai; the Pages
+// project is a shadow. The fail-closed contract lives in the Cloudflare
 // workflow; marketing.yml is reduced to a PR/verify-only gate.
 check(
   existsSync(resolve(repoRoot, marketingCfWorkflowPath)),
@@ -80,7 +82,7 @@ for (const needle of [
   mustNotContain(marketingWorkflow, needle, marketingWorkflowPath)
 }
 
-// Cloudflare Pages production deploy must fail closed when secrets are absent.
+// Cloudflare Workers production deploy must fail closed when secrets are absent.
 for (const needle of [
   'name: marketing-cloudflare',
   "if: github.event_name == 'push'",
@@ -90,11 +92,11 @@ for (const needle of [
   'HAVE_TOKEN',
   'HAVE_ACCOUNT',
   'available=true',
-  '::error::Cloudflare Pages deploy blocked',
+  '::error::Cloudflare Workers deploy blocked',
   'exit 1',
   'environment: production',
   'cloudflare/wrangler-action@v3',
-  'pages deploy --branch=master',
+  'deploy --config infra/cloudflare/workers/wrangler.toml',
 ]) {
   mustContain(marketingCfWorkflow, needle, marketingCfWorkflowPath)
 }
@@ -106,7 +108,7 @@ for (const needle of ['::warning::', 'available=false']) {
 
 // The Cloudflare deploy step must be gated on secret availability.
 const cfDeployPattern = new RegExp(
-  `name:\\s+Deploy to Cloudflare Pages[\\s\\S]*if:\\s*steps\\.cf_auth\\.outputs\\.available\\s*==\\s*['"]true['"][\\s\\S]*pages\\s+deploy`,
+  `name:\\s+Deploy to Cloudflare Workers Assets[\\s\\S]*if:\\s*steps\\.cf_auth\\.outputs\\.available\\s*==\\s*['"]true['"][\\s\\S]*deploy\\s+--config\\s+infra/cloudflare/workers/wrangler\\.toml`,
 )
 check(
   cfDeployPattern.test(marketingCfWorkflow),

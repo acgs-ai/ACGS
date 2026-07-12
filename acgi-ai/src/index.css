@@ -20,27 +20,34 @@
 @import "./App.css";
 
 :root {
-  /* §2.1 Color — warm paper */
-  --paper: #fafaf7; /* primary background */
-  --paper-2: #f2f1ec; /* alternate surface */
-  --paper-3: #ebeae2; /* deep-warm surface */
-  --card: #ffffff; /* used sparingly */
+  /* §2.1 Color — drafting-print bone paper (2026-07-10 revision: warm-paper
+   * values deepened to the approved drafting-print register — bone ground,
+   * warm ink, crimson accent, gold seal. Token names unchanged.) */
+  --paper: #e9e5da; /* primary background — bone */
+  --paper-2: #f0ede4; /* alternate surface */
+  --paper-3: #e2ddd0; /* deep surface */
+  --card: #f6f4ec; /* used sparingly */
 
-  --ink: #1a1a1a;
-  --ink-2: #2b2b2b;
-  --ink-3: #424242;
-  --muted: #6b6b6b;
-  --muted-2: #999999;
+  --ink: #171310; /* warm drafting ink */
+  --ink-2: #26211b;
+  --ink-3: #3e3831;
+  --muted: #57503f;
+  --muted-2: #8a8170;
 
-  --line: #1a1a1a;
-  --line-soft: #cfcfcf;
-  --line-softer: #e5e5e5;
+  --line: #171310;
+  --line-soft: #c6bfaf;
+  --line-softer: #d8d2c2;
 
-  --accent: #b8422e; /* WCAG AA rust — single brand accent */
-  --accent-2: #8f361e;
-  --accent-soft: #f4e2d8;
-  --accent-on: #fafaf7; /* text/icon ON a rust fill — stays light in BOTH registers
+  --accent: #9e2b25; /* WCAG AA crimson — single brand accent (5.9:1 on paper) */
+  --accent-2: #7a1e1a;
+  --accent-soft: #e8d5cd;
+  --accent-on: #f3efe4; /* text/icon ON an accent fill — stays light in BOTH registers
                          * (intentionally NOT remapped under control-plane) */
+
+  /* gold seal — DECORATIVE marks only (rules, ticks, seals): 2.8:1 on paper.
+   * Use --gold-ink for any text-bearing gold (5.3:1 AA). */
+  --gold: #a5843b;
+  --gold-ink: #6e5a25;
 
   --boundary: #f3ead4; /* parchment — privilege */
   --boundary-ink: #5a4111; /* AAA contrast 7.96:1 on --boundary at 11.5px */
@@ -188,6 +195,12 @@
   --accent: var(--gz-brand);
   --accent-2: var(--gz-brand-2);
   --accent-soft: color-mix(in srgb, var(--gz-brand) 20%, transparent);
+
+  /* gold seal brightened for near-black (light-register values are 2.8:1 /
+   * 2.9:1 here). Both map to one dark-safe gold: decorative marks and
+   * text-bearing gold share it (8.4:1 on --gz-bg). */
+  --gold: #c9a75c;
+  --gold-ink: #c9a75c;
 
   /* Risk pills brightened for legibility on near-black (map to bright status). */
   --risk-lo: var(--allow);
