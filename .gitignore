@@ -175,3 +175,10 @@ entities.json
 
 # governed-loop-v2 runtime live workload (copy of an *.example.yaml)
 workload.yaml
+
+# design-sync (machine state; durable set stays tracked)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

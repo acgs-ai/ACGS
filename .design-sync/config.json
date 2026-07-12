@@ -1,0 +1,10 @@
+{
+  "projectId": "ab1ac3df-6d12-489b-a815-cf9a2baaf257",
+  "shape": "package",
+  "readmeHeader": ".design-sync/conventions.md",
+  "pkg": "acgi-ai",
+  "srcDir": "public",
+  "cssEntry": "dist/ds-compiled.css",
+  "extraFonts": ["../../../.design-sync/fonts-src.css"],
+  "buildCmd": "pnpm -C acgi-ai exec vite build --mode marketing && sed 's/@font-face{[^}]*}//g' acgi-ai/dist/assets/index-*.css > acgi-ai/dist/ds-compiled.css"
+}
