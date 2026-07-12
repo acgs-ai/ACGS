@@ -27,6 +27,17 @@ THRESHOLDS: dict[str, float] = {
 }
 
 
+def gate_verdict(measured: dict[str, float], thresholds: dict[str, float] = THRESHOLDS) -> str:
+    """PASS/FAIL verdict for a measurement against the gate thresholds.
+
+    Mirrors ``benchmarks.emit_gate_artifact.build_gate_record``'s rule: every
+    measured metric must stay within its threshold. Factored out so the
+    fail-closed negative control can prove the comparison actually GATES without a
+    timing-dependent benchmark run.
+    """
+    return "PASS" if all(measured[key] <= thresholds[key] for key in thresholds) else "FAIL"
+
+
 @dataclass(frozen=True)
 class GateMeasurement:
     mean_latency_overhead_pct: float
@@ -127,6 +138,22 @@ def test_propagation_gate_thresholds() -> None:
     assert data["token_consumption_overhead_pct"] <= THRESHOLDS["token_consumption_overhead_pct"]
     assert data["heap_growth_mb"] <= THRESHOLDS["heap_growth_mb"]
     assert data["timeout_fail_closed_ms"] <= THRESHOLDS["timeout_fail_closed_ms"]
+
+
+def test_gate_fails_closed_when_threshold_breached(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Deterministic fail-closed negative control (no wall-clock): a synthetic
+    # in-budget measurement must PASS, and tightening ONE threshold to an
+    # impossible value must flip the verdict to FAIL — proving the gate gates.
+    # monkeypatch.setitem restores THRESHOLDS after the test, so no mutation leaks.
+    within_budget = {key: value / 2 for key, value in THRESHOLDS.items()}
+    assert gate_verdict(within_budget) == "PASS"
+
+    monkeypatch.setitem(THRESHOLDS, "token_consumption_overhead_pct", -1.0)
+    assert (
+        within_budget["token_consumption_overhead_pct"]
+        > THRESHOLDS["token_consumption_overhead_pct"]
+    )
+    assert gate_verdict(within_budget) == "FAIL"
 
 
 def _run_arm(strategy: Any) -> tuple[list[float], int]:
