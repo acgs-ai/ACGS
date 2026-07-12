@@ -2,8 +2,12 @@
 
 This package is a **vendored snapshot** of the ``gove_zone`` verify surface
 (receipt / audit-chain / proof-pack verification), re-homed under the
-``acgs_proofpack_verifier`` namespace with the import namespace rewritten and NO
-logic changes. Its reason to exist is a single, testable property: a relying
+``acgs_proofpack_verifier`` namespace with the import namespace rewritten. The
+only intentional logic divergence from the upstream snapshot is the optional,
+fail-closed constitution-hash registry cross-check (G2.5): :func:`verify_pack`
+accepts a ``constitution_registry`` and, when supplied, cross-checks the
+bundle's stamped constitution hash against it (absent registry => carried, not
+checked). Its reason to exist is a single, testable property: a relying
 party can verify an ACGS proof pack **without gove-zone installed** and with
 zero third-party runtime dependencies (Ed25519 signature checks use the optional
 ``cryptography`` extra).
