@@ -347,3 +347,19 @@ class UnknownToolError(GoveZoneError):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"tool not registered: {name!r}")
+
+
+class UnsafeAuditFilesystemError(AuditError):
+    """Raised at :class:`~gove_zone.audit.ChainHashAuditStore` construction when
+    the audit path lives on a filesystem whose cross-process locking is unsafe.
+
+    The audit chain's append-only guarantee depends on ``fcntl.flock`` (POSIX)
+    serializing concurrent writers. On an NFS mount **without a running lock
+    manager (lockd/NLM)**, ``flock`` can silently no-op, so two processes could
+    append sibling events sharing a ``previous_hash`` and corrupt the chain.
+    Rather than proceed with a locking guarantee it cannot honor, the store
+    refuses to start (fail closed). Subclasses :class:`AuditError` so callers
+    catching audit faults treat an unsafe backing store as a fail-closed audit
+    outcome. An operator who knows their NFS export runs lockd can opt in with
+    the ``GOVE_ZONE_ALLOW_UNSAFE_FS=1`` environment variable.
+    """
