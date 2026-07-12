@@ -8,7 +8,8 @@
 - **playwright/chromium:** playwright@1.60.0 pins chromium-1223 = the build already in ~/.cache/ms-playwright. Do NOT bump playwright without checking browsers.json.
 - **Upstream app CSS quirks (pre-existing on master, not sync bugs):** `--risk-med` referenced but token is defined as `--risk-mid`; `--danger` and `--rust` referenced (workbench-* summaries) but never defined. Candidate app-side fixes.
 - **Render verification gap:** headless chromium fails in this agent harness (file:// → ERR_FAILED; http → ERR_INSUFFICIENT_RESOURCES, sandbox-independent). Bundle verified statically (imports resolve, fonts on disk, tokens diffed). Eyeball the DS pane after upload.
-- **Legacy project backup:** the pre-overwrite hand-authored DS ("ACGS GovernZone Design System", 15 components + ui_kits + foundations) is copied to `.design-sync/.cache/legacy-backup/` (gitignored, this worktree only). Re-create components from there if ever wanted back.
+- **Legacy project backup (PARTIAL):** before the 2026-07-12 overwrite, the 15 hand-authored component `.jsx` sources from the old "ACGS GovernZone Design System" project were saved to `.design-sync/.cache/legacy-backup/components/**` (gitignored, this worktree only). NOT backed up: `.d.ts`/`.prompt.md`/card html (derivable), `foundations/`, `ui_kits/` (compositions of the saved primitives), legacy `tokens/*.css` (superseded by drafting-print). The old components carry their CSS inline (`ensureStyles()` pattern), so each file is self-contained.
+- **DesignSync tool is main-session-only.** Subagents spawned via Agent cannot load it through ToolSearch (verified twice, two agents) — never delegate DesignSync fetch/write work; do it inline in the main session.
 
 ## Re-sync risks
 
