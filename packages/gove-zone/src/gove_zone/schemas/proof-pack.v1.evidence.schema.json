@@ -93,7 +93,16 @@
       ],
       "additionalProperties": false
     },
-    "how_to_verify": { "type": "string", "minLength": 1 }
+    "how_to_verify": { "type": "string", "minLength": 1 },
+    "constitution": {
+      "type": "object",
+      "properties": {
+        "hash": { "$ref": "#/$defs/sha256" },
+        "registry_id": { "type": "string" }
+      },
+      "required": ["hash"],
+      "additionalProperties": false
+    }
   },
   "required": [
     "schema_version",
