@@ -85,6 +85,17 @@ ARTIFACT_FILES = (RECEIPT_FILE, AUDIT_CHAIN_FILE, REPLAY_REPORT_FILE, SUMMARY_FI
 # and verify() raises on them by design — they are declared "reject".
 _ACCEPT_DECISIONS = frozenset({"allow", "transform"})
 
+# Fail-closed constitution-hash registry cross-check reason strings (G2.5). The
+# taxonomy is ported verbatim from the proven ``acgs_governance_eval_mvp``
+# reference so the behaviour matches; the cross-check runs ONLY when the caller
+# supplies a registry (additive / v1-safe — no registry => carried, not checked).
+CONSTITUTION_HASH_MISSING = "constitution_hash_missing"
+CONSTITUTION_HASH_NOT_IN_REGISTRY = "constitution_hash_not_in_registry"
+CONSTITUTION_REGISTRY_MALFORMED = "constitution_registry_malformed"
+CONSTITUTION_REGISTRY_UNREADABLE = "constitution_registry_unreadable"
+
+_HEX = frozenset("0123456789abcdef")
+
 
 class PackGenerationError(Exception):
     """Raised when the inputs cannot honestly be packaged as evidence."""
@@ -585,6 +596,7 @@ def verify_pack(
     revoked_keys: RevocationList | None = None,
     policy_bundle: str | Path | None = None,
     side_store: str | Path | None = None,
+    constitution_registry: str | Path | None = None,
 ) -> PackVerificationResult:
     """Verify an ACGS proof pack offline. Never raises; fail-closed.
 
@@ -601,9 +613,17 @@ def verify_pack(
     4. **Replay (optional)** — when ``policy_bundle`` and ``side_store`` are
        supplied out-of-band, every decision is re-derived now; a recorded
        generate-time replay report alone is never treated as re-verification.
+    5. **Constitution registry (optional)** — when ``constitution_registry`` is
+       supplied, the pack's stamped ``evidence.constitution.hash`` is looked up
+       in that trusted registry and the pack fails closed if it is missing,
+       absent, or the registry itself is malformed/unreadable (G2.5). With no
+       registry the optional ``constitution`` block is carried but not checked,
+       so pre-G2.5 packs remain valid (additive / v1-safe).
 
     Args mirror :func:`acgs_proofpack_verifier.verifier.verify_proof_pack` for the trust
     anchor (``verifier``, ``require_signature``, ``now_iso``, ``revoked_keys``).
+    ``constitution_registry`` is the optional path to a JSON array of trusted
+    64-hex constitution hashes for the tier-5 cross-check.
     """
     try:
         return _verify_pack_inner(
@@ -614,6 +634,7 @@ def verify_pack(
             revoked_keys=revoked_keys,
             policy_bundle=policy_bundle,
             side_store=side_store,
+            constitution_registry=constitution_registry,
         )
     except Exception:  # noqa: BLE001 — fail-closed: never let an exception become "accept".
         return _fail(PackRejectionReason.VERIFIER_ERROR)
@@ -628,6 +649,7 @@ def _verify_pack_inner(
     revoked_keys: RevocationList | None,
     policy_bundle: str | Path | None,
     side_store: str | Path | None,
+    constitution_registry: str | Path | None = None,
 ) -> PackVerificationResult:
     if not root.is_dir():
         return _fail(PackRejectionReason.PACK_NOT_FOUND)
@@ -775,6 +797,12 @@ def _verify_pack_inner(
     elif policy_bundle is not None and side_store is not None:
         replay_status = _reverify_replay(root, Path(policy_bundle), Path(side_store), reasons)
 
+    # --- tier 5 (optional): constitution-hash registry cross-check -----------
+    # Fail-closed, and ONLY when the caller supplies a registry; otherwise the
+    # optional constitution block is carried but never checked (v1-safe).
+    if constitution_registry is not None:
+        _crosscheck_constitution(evidence, Path(constitution_registry), reasons)
+
     valid = (
         integrity_status == "intact"
         and inner is not None
@@ -862,3 +890,37 @@ def _reverify_replay(root: Path, policy_bundle: Path, side_store: Path, reasons:
         reasons.append(PackRejectionReason.REPLAY_MISMATCH)
         return "failed"
     return "reverified"
+
+
+def _is_hex64(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in _HEX for c in value)
+
+
+def _crosscheck_constitution(
+    evidence: dict[str, Any], registry_path: Path, reasons: list[str]
+) -> None:
+    """Fail-closed constitution-hash registry cross-check (G2.5).
+
+    Appends exactly one reason string to ``reasons`` on failure (which flips the
+    pack's ``valid`` gate to False). Order of checks: the registry must first be
+    readable and well-formed (a non-empty JSON array of 64-hex strings); only
+    then is the bundle's stamped ``evidence.constitution.hash`` looked up in it.
+    """
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        reasons.append(CONSTITUTION_REGISTRY_UNREADABLE)
+        return
+
+    if not (isinstance(registry, list) and registry and all(_is_hex64(h) for h in registry)):
+        reasons.append(CONSTITUTION_REGISTRY_MALFORMED)
+        return
+
+    block = evidence.get("constitution")
+    bundle_hash = block.get("hash") if isinstance(block, dict) else None
+    if not bundle_hash:
+        reasons.append(CONSTITUTION_HASH_MISSING)
+        return
+
+    if bundle_hash not in registry:
+        reasons.append(CONSTITUTION_HASH_NOT_IN_REGISTRY)
