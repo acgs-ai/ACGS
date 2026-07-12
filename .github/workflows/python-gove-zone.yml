@@ -106,6 +106,21 @@ jobs:
           --cov-fail-under=100
           -q
 
+      - name: ADR-0005 propagation budget gate
+        # G1.5: the ADR-0005 propagation-overhead budget was a stale, uncollected
+        # artifact — `benchmarks/` sits outside the package `testpaths`, so nothing
+        # ran the budget test and a perf regression failed no gate. Wire it live
+        # here: the threshold gate proves propagation stays within the overhead
+        # budget, and the artifact-integrity guard proves the committed verdict
+        # artifact has not drifted from the in-code THRESHOLDS. Linux self-hosted
+        # only — perf noise makes the macOS/Windows matrix meaningless for this
+        # gate. Additive: does not touch the coverage floors or gating above.
+        run: >
+          .venv/bin/python -m pytest
+          benchmarks/test_propagation_overhead.py
+          benchmarks/test_artifact_integrity.py
+          -q
+
   cross-platform-lock:
     # Cross-platform proof for the stdlib audit-lock branch (POSIX ``fcntl`` /
     # Windows ``msvcrt``) and the OS-agnostic concurrent-writer test. The

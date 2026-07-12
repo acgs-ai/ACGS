@@ -46,7 +46,7 @@ UV ?= uv
 .PHONY: help all install build test lint typecheck verify clean openapi platform-readiness release-evidence verify-js-node24 production-blocker-evidence production-launch-preflight \
         build-js test-js lint-js typecheck-js \
         build-py test-py lint-py typecheck-py lint-docs \
-        submodule-status verify-fresh test-fail-closed
+        submodule-status verify-fresh test-fail-closed bench-gate
 
 help:
 	@echo "govern-zone monorepo"
@@ -159,6 +159,19 @@ test-fail-closed:
 	cd packages/gove-zone && $(UV) run --extra dev --extra schema --extra mcp --extra yaml python -m pytest \
 		--cov=gove_zone.kernel --cov-branch --cov-fail-under=100 -q
 
+# ---- ADR-0005 propagation budget gate (G1.5) ----
+# Live regression gate for the propagation-overhead budget. `benchmarks/` sits
+# outside the package's default `testpaths`, so the budget test never ran in any
+# gate — a perf regression failed nothing. This target runs the threshold gate
+# (propagation stays within the ADR-0005 overhead budget) plus the deterministic
+# artifact-integrity guard (the committed verdict artifact has not drifted from
+# the in-code THRESHOLDS). The benchmark files are named explicitly because they
+# are not collected by default. Uses the dev extra (benchmarks need it).
+bench-gate:
+	@echo "==> ADR-0005 propagation budget gate (benchmarks)"
+	cd packages/gove-zone && $(UV) run --extra dev python -m pytest \
+		benchmarks/test_propagation_overhead.py benchmarks/test_artifact_integrity.py -q
+
 # ---- Root governance docs ----
 
 lint-docs:
@@ -204,7 +217,7 @@ submodule-status:
 		fi; \
 	done
 
-verify: submodule-status lint typecheck test test-fail-closed
+verify: submodule-status lint typecheck test test-fail-closed bench-gate
 
 openapi:
 	$(UV) run --package agent-bus-analyzer agent-bus-analyzer export-openapi --output acgi-ai/contracts/bus.openapi.json
