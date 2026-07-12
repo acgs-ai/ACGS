@@ -125,6 +125,7 @@ injecagent_scenarios_from_fixture
 load_benchmark_suite
 load_evaluation_scenarios
 load_evaluation_suite
+make_langgraph_tool_node
 make_signer
 mcp_tools_call
 mcp_tools_list
