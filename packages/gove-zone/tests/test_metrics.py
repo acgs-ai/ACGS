@@ -221,9 +221,7 @@ def test_emitted_jsonl_contains_no_raw_argument_values(
         return "ok"
 
     # goal can echo argument content too — assert it never leaks either.
-    metrics.metered_dispatch(
-        k, "login", {"password": secret}, goal=f"log in with {secret}"
-    )
+    metrics.metered_dispatch(k, "login", {"password": secret}, goal=f"log in with {secret}")
 
     assert sink.exists()
     raw = sink.read_text(encoding="utf-8")
