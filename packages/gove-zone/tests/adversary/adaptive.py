@@ -1,32 +1,15 @@
-"""Deterministic adaptive-attack layer over the gove-zone adversary suite.
+"""Deterministic adaptive evaluation over the gove-zone adversary suite.
 
-Motivation (see ``docs/research/adaptive-eval-adversary-analysis.md``): the static
-manifest calls a class DEFENDED because ONE hand-written template fails against the
-gate. arXiv:2606.26479 warns that exact methodology made in-band defenses look strong
-until *defense-aware, adaptive* attacks broke them. This module ports that idea to a
-DETERMINISTIC reference monitor: for each manifest class it enumerates a bounded,
-fixed, defense-aware *variant family* around the class's canonical exploit and runs
-every variant against the REAL surface (``execute_with_receipt`` / ``Kernel.dispatch`` /
-``verify_chain`` / the PQL compiler / a framework adapter — never a mock).
+The static manifest calls a class DEFENDED when dedicated covering tests exist.
+This module adds a bounded, fixed variant family for each of the eight current
+manifest classes and executes each variant against the real
+``execute_with_receipt``, ``Kernel.dispatch``, or ``verify_chain`` surface.
 
-A "bypass" means the surface WRONGLY ADMITS: the side effect ran, the receipt was
-accepted, or ``verify_chain()`` returned valid when it should not. For a deterministic
-gate the verdict is binary per class:
-
-* **stable** — no variant in the bounded family bypassed the surface (a stronger,
-  machine-checked statement than "survives one template"), or
-* **bypassable** — the first admitted variant is a concrete, minimal exploit.
-
-``adaptive_attack(class_name, budget)`` is a pure function of its arguments (ephemeral
-Ed25519 key material for signed-variant families is incidental — the ADMIT/DENY verdict
-and the variant ids are invariant, so the returned :class:`AdaptiveResult` is
-reproducible and CI-checkable).
-
-HONEST SCOPE (verbatim in README): this is a deterministic config/input-space variant
-search over gove-zone's own gate — NOT a model-in-the-loop adaptive evaluation. No
-model, no AgentDojo, no GCG. "Adaptively stable" != "secure"; it means only "no bounded
-variant in family F bypassed surface S." It touches no ``src/gove_zone/**`` code — this
-is a test-suite layer over the existing gate.
+A "bypass" means a side effect ran, a receipt was accepted, or
+``verify_chain()`` returned valid when the family expected rejection. The
+result is deliberately narrow: it is deterministic config/input-space coverage,
+not model-in-the-loop evaluation, and "STABLE" means only that no member of the
+explicit bounded family bypassed the tested surface.
 """
 
 from __future__ import annotations
@@ -200,7 +183,14 @@ _ARGS_VARIANTS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("whitespace", {"path": "safe.txt "}),
     ("case-fold", {"path": "SAFE.TXT"}),
 )
-_WRONG_TENANTS = ("tenant-B", "tenant-C", "", "tenant-a", "TENANT-A", "tenant-A​")
+_WRONG_TENANTS = (
+    "tenant-B",
+    "tenant-C",
+    "",
+    "tenant-a",
+    "TENANT-A",
+    "tenant-A\u200b",  # zero-width space, represented explicitly
+)
 _WRONG_BOUNDARIES = ("prod-cluster", "", "local-sandbox ", "LOCAL-SANDBOX")
 
 
@@ -402,9 +392,10 @@ def _gen_forged_authorization(budget: int) -> Iterator[Variant]:
 
 
 def _gen_replayed_authorization(budget: int) -> Iterator[Variant]:
-    """The standalone gate is stateless (no ReceiptConsumptionLedger on this branch):
-    the SAME receipt authorizes unbounded re-execution. The replay (2nd admit) is the
-    bypass."""
+    """A call without an explicit ReceiptConsumptionLedger is stateless: the same
+    receipt can authorize re-execution. The replay (second admission) records that
+    unconfigured precondition; ledger-backed calls are covered separately by the
+    static manifest."""
 
     def _replay(args: dict[str, Any]) -> bool:
         receipt = _mint(args=args)

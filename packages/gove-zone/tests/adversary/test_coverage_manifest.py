@@ -14,12 +14,20 @@ tests below assert every one exists, so the taxonomy cannot silently rot.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, TypedDict
+
+
+class ManifestEntry(TypedDict):
+    status: Literal["DEFENDED"]
+    adaptive: Literal["STABLE", "BYPASSABLE", "UNTESTED"]
+    covering: list[str]
+
 
 TESTS_DIR = Path(__file__).resolve().parents[1]  # packages/gove-zone/tests
 
 # ``status`` is the current master static taxonomy. ``adaptive`` is an observed
 # result from the deterministic real-surface harness, not a security proof.
-MANIFEST: dict[str, dict[str, object]] = {
+MANIFEST: dict[str, ManifestEntry] = {
     "forged-authorization": {
         "status": "DEFENDED",
         "adaptive": "BYPASSABLE",
@@ -128,7 +136,7 @@ def test_every_class_has_at_least_one_covering_test() -> None:
 def test_every_covering_test_actually_exists() -> None:
     missing: list[str] = []
     for cls, entry in MANIFEST.items():
-        for node in entry["covering"]:  # type: ignore[union-attr]
+        for node in entry["covering"]:
             if not _node_exists(node):
                 missing.append(f"{cls}: {node}")
     assert not missing, "covering tests referenced but not found:\n" + "\n".join(missing)
