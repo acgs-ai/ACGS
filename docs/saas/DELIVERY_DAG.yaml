@@ -569,29 +569,41 @@
         "G103"
       ],
       "likely_interfaces_files": [
-        "packages/acgs-control-plane",
-        "Alembic migrations"
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/alembic.ini",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/tests/test_migrations.py",
+        "packages/acgs-control-plane/tests/test_project_environment_scope.py"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Clean install, current-schema upgrade, rollback, and backup-before-destructive tests pass."
+        "Separate local verification passes the SQLite empty and exact legacy-v0 upgrade, guarded exact partial-resume, malformed-schema rejection before unintended schema mutation, project/environment constraint, legacy create_all containment, and wheel-shipped Alembic-resource tests."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Failed or partial migration cannot lose or cross-scope tenant data."
+        "On SQLite, raw Alembic operations, malformed or partial schemas, and legacy create_all on non-legacy states or tables= subsets are rejected before unintended schema mutation."
       ],
       "validation_commands": [
-        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "Migration compatibility report",
-      "branch": null,
-      "worktree": null,
+      "evidence_artifact": "Independently reviewed, local SQLite/Alembic migration-core verification record: 64 package tests, lint, format, typecheck, lock check, and a direct empty-database upgrade. It is deliberately insufficient for accepted Phase-1 migration evidence.",
+      "branch": "beta/p1-migrations-scope-101",
+      "worktree": "saas-beta/p1-migrations-scope-101",
       "pr": null,
-      "status": "ready",
-      "implementation_state": "missing",
+      "status": "in_progress",
+      "implementation_state": "partial",
       "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the alembic migrations and project/environment scope contract before implementation.",
+      "blocker": "Deliberately partial: #308 startup integration remains unresolved; PostgreSQL RLS, advisory-lock, and multi-instance migration safety; backup/restore and a forward-only rollback runbook; and API, policy, and backfill adoption remain unimplemented or unverified.",
+      "next_safe_action": "Carry the isolated partial core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and implement and verify PostgreSQL/RLS/advisory-lock/multi-instance safety, the backup/restore and forward-only rollback runbook, and API/policy/backfill adoption before accepted Phase-1 completion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

@@ -220,4 +220,56 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) in matrix
 
     g101 = next(node for node in dag["nodes"] if node["id"] == "G101")
-    assert g101["status"] == "ready"
+    assert (
+        g101["status"],
+        g101["implementation_state"],
+        g101["evidence_state"],
+    ) == ("in_progress", "partial", "unverified")
+    assert g101["branch"] == "beta/p1-migrations-scope-101"
+    assert g101["worktree"] == "saas-beta/p1-migrations-scope-101"
+    assert g101["pr"] is None
+    assert {
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/tests/test_migrations.py",
+        "packages/acgs-control-plane/tests/test_project_environment_scope.py",
+    } <= set(g101["likely_interfaces_files"])
+    assert "SQLite" in " ".join(g101["positive_tests"])
+    assert "64 package tests" in g101["evidence_artifact"]
+    for gap in (
+        "#308 startup integration",
+        "PostgreSQL RLS",
+        "advisory-lock",
+        "multi-instance",
+        "backup/restore",
+        "forward-only rollback",
+        "API, policy, and backfill",
+    ):
+        assert gap in g101["blocker"]
+    assert "draft PR" in g101["next_safe_action"]
+    assert "before accepted Phase-1 completion" in g101["next_safe_action"]
+
+    assert (
+        "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
+        "current_local | G101, G102, G103, G104, G105, G106 |"
+    ) in matrix
+    for gap in (
+        "#308 startup integration",
+        "PostgreSQL/RLS/advisory-lock/multi-instance",
+        "backup/restore",
+        "forward-only rollback",
+        "API/policy/backfill",
+    ):
+        assert gap in matrix
+    assert "this is not completed Phase-1 acceptance" in matrix
+
+    for downstream_node_id in ("G102", "G103"):
+        downstream_node = next(
+            node for node in dag["nodes"] if node["id"] == downstream_node_id
+        )
+        assert (
+            downstream_node["status"],
+            downstream_node["implementation_state"],
+            downstream_node["evidence_state"],
+        ) == ("planned", "missing", "unverified")
