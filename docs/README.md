@@ -30,6 +30,11 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [Assurance classes and provenance](saas/ASSURANCE_CLASSES.md) — native, federated, and observed evidence remain distinct
 - [Open-core and local-safety boundary](saas/OPEN_CORE_BOUNDARY.md) — target entitlement boundary; not a license change
 - [Proposed entitlement and metering matrix](saas/ENTITLEMENT_AND_METERING_MATRIX.md) — future contract; no current pricing or billing claim
+- [SaaS beta target architecture](saas/ARCHITECTURE.md) — future three-plane and trust-boundary contract; not managed-service evidence
+- [SaaS beta threat model](saas/THREAT_MODEL.md) — target STRIDE and agent-specific adversarial test contract
+- [SaaS beta API and data contract](saas/API_AND_DATA_CONTRACT.md) — future /v1, BFF, scope, and provenance contract
+- [SaaS beta migration and compatibility policy](saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md) — future Alembic, recovery, and artifact-compatibility requirements
+- [Proposed SaaS build-vs-buy ADR packet](adr/saas-identity-oidc-saml-scim-build-vs-buy.md) — owner/counsel-gated identity, key, retention, witness, billing, and licensing decisions
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)

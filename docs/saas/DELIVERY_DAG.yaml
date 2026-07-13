@@ -399,7 +399,8 @@
         "docs/adr/saas-independent-witness-build-vs-buy.md",
         "docs/adr/saas-billing-build-vs-buy.md",
         "docs/adr/saas-commercial-module-boundary.md",
-        "docs/SECURITY_MODEL.md"
+        "docs/SECURITY_MODEL.md",
+        "tests/docs/test_saas_architecture_contract.py"
       ],
       "risk_class": "red",
       "positive_tests": [
@@ -409,19 +410,20 @@
         "Legal, licensing, spend, or provider decisions cannot be silently assumed."
       ],
       "validation_commands": [
+        "uv run python -m pytest tests/docs/test_saas_architecture_contract.py --import-mode=importlib -q",
         "uv run python -m pytest tests/docs --import-mode=importlib -q",
         "make lint-docs",
         "git diff --check"
       ],
-      "evidence_artifact": "Reviewed Phase-0 architecture, threat, API/data, compatibility policy, and focused build-vs-buy ADR packet",
-      "branch": null,
-      "worktree": null,
+      "evidence_artifact": "Independently reviewed Phase-0 architecture, threat, API/data, compatibility policy, focused build-vs-buy ADR packet, and target-documentation verification record",
+      "branch": "beta/p0-architecture-008",
+      "worktree": "saas-beta/p0-architecture-008",
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
       "blocker": null,
-      "next_safe_action": "Author and independently review the named architecture artifacts and focused ADRs; leave owner-only decisions explicitly open.",
+      "next_safe_action": "Begin G101 with an Alembic-backed, tenant-scoped foundation; retain all provider, legal, licensing, spend, and deployment choices as owner-gated.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -585,7 +587,7 @@
       "branch": null,
       "worktree": null,
       "pr": null,
-      "status": "planned",
+      "status": "ready",
       "implementation_state": "missing",
       "evidence_state": "unverified",
       "blocker": null,
