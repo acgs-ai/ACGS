@@ -91,3 +91,25 @@ def test_adaptive_results_are_deterministic() -> None:
             second.first_bypass,
             second.variants_tried,
         ), class_name
+
+
+def test_gate_counts_side_effect_before_validation_error_as_admitted(monkeypatch) -> None:
+    def late_failure(*, tool_fn, args, **_kwargs):
+        tool_fn(**args)
+        raise adaptive.ReceiptValidationError("late validation failure")
+
+    monkeypatch.setattr(adaptive, "execute_with_receipt", late_failure)
+    assert adaptive._gate_admits(adaptive._mint()) is True
+
+
+def test_adaptive_harness_cleans_its_temporary_artifacts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(adaptive.tempfile, "tempdir", str(tmp_path))
+    for class_name in ("evidence-omission", "ledger-tampering"):
+        adaptive.adaptive_attack(class_name)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_validator_family_has_a_pinned_negative_control() -> None:
+    variants = list(adaptive.VARIANT_GENERATORS["validator-bypass"](adaptive.DEFAULT_BUDGET))
+    assert variants[0].variant_id == "authority:pinned-escalated-scope-rejected"
+    assert variants[0].admits() is False

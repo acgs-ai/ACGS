@@ -46,19 +46,15 @@ from gove_zone import (
     DeniedError,
     Ed25519Signer,
     Kernel,
-    ManagedAgent,
     ProductionProfileError,
     ReceiptValidationError,
     RuleSetPolicy,
     Validator,
     execute_with_receipt,
 )
-from gove_zone.adapters.autogen import govern_autogen_tool
 from gove_zone.audit import GENESIS_HASH
 from gove_zone.decision import sha256_json
-from gove_zone.errors import AuditError, EscalateError, UnknownToolError
-from gove_zone.pql_compiler import compile_pql_to_ruleset
-from gove_zone.tool import ToolCall
+from gove_zone.errors import AuditError
 
 # Must match tests/adversary/conftest.py (the canonical governed-run idiom).
 TENANT = "tenant-A"
@@ -163,6 +159,8 @@ def _gate_admits(
     expected_actor: str = "agent-1",
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
+    expected_authority: str | None = None,
+    expected_validator_role: str | None = None,
 ) -> bool:
     """Run a receipt through the REAL gate; True iff the side effect ran (admitted)."""
     side_effect = _SideEffect()
@@ -175,6 +173,8 @@ def _gate_admits(
         expected_action=expected_action,
         expected_actor=expected_actor,
         expected_policy_hash=expected_policy_hash,
+        expected_authority=expected_authority,
+        expected_validator_role=expected_validator_role,
         verifier=verifier,
         require_signature=require_signature,
     )
@@ -183,7 +183,9 @@ def _gate_admits(
     try:
         execute_with_receipt(**kwargs)
     except _DENY_EXCEPTIONS:
-        return False
+        # A late validation failure after a side effect is still an admission.
+        # Never turn side-effect-before-error into a false stable result.
+        return side_effect.ran
     return side_effect.ran
 
 
@@ -294,59 +296,56 @@ _ANCHOR_PROBE_POLICY = {
 
 
 def _dispatch_kernel_deny(exc: type[BaseException]) -> bool:
-    """True iff *exc* is one of the kernel's deny signals (a DENY, not an admit). Any
-    OTHER exception is a broken harness and must propagate — never faked into a DENY."""
-    return issubclass(exc, (DeniedError, EscalateError, AuditError, UnknownToolError))
+    """Only expected policy denial or the explicit audit-failure probe are
+    classified as a denied execution. Other errors must remain visible."""
+    return issubclass(exc, (DeniedError, AuditError))
 
 
 def _dispatch_anchor_before_execute_admits(tool_name: str) -> bool:
-    """Kernel.dispatch anchors every decision in the audit chain BEFORE the tool runs
-    (kernel._evaluate_and_record appends, then dispatch executes). Bypass iff the side
-    effect ran while its evidence was NOT yet present in the chain (a reordered anchor)."""
-    tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-    store = ChainHashAuditStore(tmp)
-    policy = RuleSetPolicy.from_dict(_ANCHOR_PROBE_POLICY)
-    kernel = Kernel(policy=policy, audit=store, actor="agent")
-    observed = {"ran": False, "anchored_first": False}
+    """Return true only if the tool runs before its audit anchor exists."""
+    with tempfile.TemporaryDirectory() as directory:
+        audit_path = Path(directory) / "audit.jsonl"
+        store = ChainHashAuditStore(audit_path)
+        policy = RuleSetPolicy.from_dict(_ANCHOR_PROBE_POLICY)
+        kernel = Kernel(policy=policy, audit=store, actor="agent")
+        observed = {"ran": False, "anchored_first": False}
 
-    @kernel.tool(tool_name)
-    def _tool(path: str = "x") -> str:
-        observed["ran"] = True
-        observed["anchored_first"] = len(list(store.iter_events())) >= 1
-        return "wrote"
+        @kernel.tool(tool_name)
+        def _tool(path: str = "x") -> str:
+            observed["ran"] = True
+            observed["anchored_first"] = len(list(store.iter_events())) >= 1
+            return "wrote"
 
-    try:
-        kernel.dispatch(tool_name, {"path": "/x"})
-    except Exception as exc:  # noqa: BLE001 — narrowed immediately below
-        if _dispatch_kernel_deny(type(exc)):
-            return False
-        raise
-    # admit == side effect ran WITHOUT its evidence anchored first.
-    return observed["ran"] and not observed["anchored_first"]
+        try:
+            kernel.dispatch(tool_name, {"path": "/x"})
+        except Exception as exc:  # noqa: BLE001 — narrowed immediately below
+            if _dispatch_kernel_deny(type(exc)):
+                return False
+            raise
+        return observed["ran"] and not observed["anchored_first"]
 
 
 def _dispatch_stripped_audit_admits(tool_name: str) -> bool:
-    """With the audit sink failing, the anchor-before-execute invariant must fail closed:
-    the append raises, the kernel raises AuditError, and the tool never runs. Bypass iff
-    the side effect ran despite the evidence never being recorded."""
-    tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-    store = _BrokenAuditStore(tmp)
-    policy = RuleSetPolicy.from_dict(_ANCHOR_PROBE_POLICY)
-    kernel = Kernel(policy=policy, audit=store, actor="agent")
-    ran = {"v": False}
+    """Return true only if a failed audit append still allows execution."""
+    with tempfile.TemporaryDirectory() as directory:
+        audit_path = Path(directory) / "audit.jsonl"
+        store = _BrokenAuditStore(audit_path)
+        policy = RuleSetPolicy.from_dict(_ANCHOR_PROBE_POLICY)
+        kernel = Kernel(policy=policy, audit=store, actor="agent")
+        ran = {"v": False}
 
-    @kernel.tool(tool_name)
-    def _tool(path: str = "x") -> str:
-        ran["v"] = True
-        return "wrote"
+        @kernel.tool(tool_name)
+        def _tool(path: str = "x") -> str:
+            ran["v"] = True
+            return "wrote"
 
-    try:
-        kernel.dispatch(tool_name, {"path": "/x"})
-    except Exception as exc:  # noqa: BLE001 — narrowed immediately below
-        if _dispatch_kernel_deny(type(exc)):
-            return False
-        raise
-    return ran["v"]
+        try:
+            kernel.dispatch(tool_name, {"path": "/x"})
+        except Exception as exc:  # noqa: BLE001 — narrowed immediately below
+            if _dispatch_kernel_deny(type(exc)):
+                return ran["v"]
+            raise
+        return ran["v"]
 
 
 def _gen_evidence_omission(budget: int) -> Iterator[Variant]:
@@ -424,36 +423,36 @@ def _gen_ledger_tampering(budget: int) -> Iterator[Variant]:
     chain from which an event was silently removed."""
 
     def _rewrite_admits(drop_index: int, seed_n: int) -> bool:
-        tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-        store = ChainHashAuditStore(tmp)
-        for i in range(seed_n):
-            store.append(
-                DecisionRecord(
-                    decision=Decision.ALLOW,
-                    tool=f"tool-{i}",
-                    argument_hash="h",
-                    policy_version="v1",
-                    event_id=f"ev{i}",
+        with tempfile.TemporaryDirectory() as directory:
+            audit_path = Path(directory) / "audit.jsonl"
+            store = ChainHashAuditStore(audit_path)
+            for i in range(seed_n):
+                store.append(
+                    DecisionRecord(
+                        decision=Decision.ALLOW,
+                        tool=f"tool-{i}",
+                        argument_hash="h",
+                        policy_version="v1",
+                        event_id=f"ev{i}",
+                    )
                 )
+            events = list(store.iter_events())
+            kept = [event for i, event in enumerate(events) if i != drop_index]
+            previous = GENESIS_HASH
+            rewritten: list[dict[str, Any]] = []
+            for event in kept:
+                payload = dict(event)
+                payload["previous_hash"] = previous
+                payload.pop("event_hash", None)
+                payload["event_hash"] = sha256_json(payload)
+                rewritten.append(payload)
+                previous = payload["event_hash"]
+            audit_path.write_text(
+                "\n".join(json.dumps(payload, sort_keys=True) for payload in rewritten) + "\n",
+                encoding="utf-8",
             )
-        events = list(store.iter_events())
-        kept = [ev for i, ev in enumerate(events) if i != drop_index]
-        previous = GENESIS_HASH
-        rewritten: list[dict[str, Any]] = []
-        for ev in kept:
-            payload = dict(ev)
-            payload["previous_hash"] = previous
-            payload.pop("event_hash", None)
-            payload["event_hash"] = sha256_json(payload)
-            rewritten.append(payload)
-            previous = payload["event_hash"]
-        tmp.write_text(
-            "\n".join(json.dumps(p, sort_keys=True) for p in rewritten) + "\n",
-            encoding="utf-8",
-        )
-        result = ChainHashAuditStore(tmp).verify_chain()
-        # Bypass: the deleted event left no trace yet the chain verifies as valid.
-        return result["valid"] is True and result["checked"] == len(kept)
+            result = ChainHashAuditStore(audit_path).verify_chain()
+            return result["valid"] is True and result["checked"] == len(kept)
 
     yield Variant("ledger:drop-middle+rewrite", lambda: _rewrite_admits(1, 3))
     yield Variant("ledger:drop-tail+rewrite", lambda: _rewrite_admits(2, 3))
@@ -481,106 +480,31 @@ def _gen_policy_downgrade(budget: int) -> Iterator[Variant]:
 
 
 def _gen_validator_bypass(budget: int) -> Iterator[Variant]:
-    """No gate surface plumbs expected_authority / expected_validator_role: a receipt
-    executes regardless of the authority scope the caller intended to require. The
-    escalated-authority receipt admits because the gate cannot check it."""
+    """An authority binding only protects the call when the caller supplies it.
+
+    The first variant is the pinned negative control: the existing executor
+    rejects a receipt whose authority differs from the required authority. The
+    remaining variants deliberately omit that expectation and demonstrate the
+    configuration precondition without claiming the gate lacks the capability.
+    """
     yield Variant(
-        "authority:gate-ignores-escalated-scope",
+        "authority:pinned-escalated-scope-rejected",
+        lambda: _gate_admits(
+            _mint(authority="tenant-A/ADMIN-grant"),
+            expected_authority="tenant-A/write-grant",
+        ),
+    )
+    yield Variant(
+        "authority:unpinned-escalated-scope",
         lambda: _gate_admits(_mint(authority="tenant-A/ADMIN-grant")),
     )
     for scope in ("tenant-A/root-grant", "*/superuser", "tenant-A/"):
         yield Variant(
-            f"authority:gate-ignores-scope={scope}",
-            lambda s=scope: _gate_admits(_mint(authority=s)),
+            f"authority:unpinned-scope={scope}",
+            lambda value=scope: _gate_admits(_mint(authority=value)),
         )
 
 
-def _gen_policy_default_allow(budget: int) -> Iterator[Variant]:
-    """RuleSetPolicy is a deny/escalate-only overlay: an unmatched action falls through
-    to ALLOW. Also: an empty PQL feed compiles to a functional allow-all. Both admit an
-    un-modeled action."""
-
-    def _dispatch_admits(tool_name: str, args: dict[str, Any]) -> bool:
-        tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-        policy = RuleSetPolicy.from_dict(
-            {
-                "id": "deny-delete/v1",
-                "rules": [{"id": "BLOCK_DELETE", "effect": "deny", "tools": ["fs.delete"]}],
-            }
-        )
-        kernel = Kernel(policy=policy, audit=ChainHashAuditStore(tmp), actor="agent")
-        ran: list[str] = []
-
-        @kernel.tool(tool_name)
-        def _tool(path: str = "x") -> str:
-            ran.append(path)
-            return "wrote"
-
-        try:
-            kernel.dispatch(tool_name, args)
-        except DeniedError:
-            return False
-        return bool(ran)
-
-    def _pql_empty_feed_admits() -> bool:
-        policy = compile_pql_to_ruleset("prod-governance", [])
-        record = policy.evaluate(
-            ToolCall(name="sap.payment.send", args={"amount": 1_000_000}, actor="agent")
-        )
-        return record.decision is Decision.ALLOW
-
-    yield Variant(
-        "default-allow:unmatched-action=fs.write",
-        lambda: _dispatch_admits("fs.write", {"path": "/etc/shadow"}),
-    )
-    yield Variant(
-        "default-allow:pql-empty-feed=allow-all",
-        _pql_empty_feed_admits,
-    )
-    for tool_name in ("net.exfil", "proc.spawn"):
-        yield Variant(
-            f"default-allow:unmatched-action={tool_name}",
-            lambda t=tool_name: _dispatch_admits(t, {"path": "/x"}),
-        )
-
-
-def _gen_adapter_bypass(budget: int) -> Iterator[Variant]:
-    """govern_autogen_tool routes through ManagedAgent.dispatch -> Kernel.dispatch with a
-    self-asserted actor and NO receipt verification, and ManagedAgent defaults to
-    AllowAllPolicy: a default 'governed' agent executes every wrapped tool
-    unconditionally."""
-
-    def _adapter_admits(tool_label: str, path: str) -> bool:
-        tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-        agent = ManagedAgent("vulnclaw", audit_path=tmp)
-        ran: dict[str, int] = {"count": 0}
-
-        def danger(path: str = "/etc/shadow") -> str:
-            ran["count"] += 1
-            return "SIDE EFFECT EXECUTED"
-
-        wrapped = govern_autogen_tool(agent, tool_label, danger)
-        try:
-            wrapped(path=path)
-        except DeniedError:
-            return False
-        return ran["count"] >= 1
-
-    yield Variant(
-        "adapter:default-allowall:tool=shell",
-        lambda: _adapter_admits("shell", "/etc/shadow"),
-    )
-    for tool_label in ("exec", "http"):
-        yield Variant(
-            f"adapter:default-allowall:tool={tool_label}",
-            lambda t=tool_label: _adapter_admits(t, "/etc/shadow"),
-        )
-
-
-# Keep this in lock-step with the current master taxonomy. The stale-branch
-# adapter/default-allow generators deliberately remain outside this registry:
-# master requires an explicit ManagedAgent policy and its taxonomy covers eight
-# receipt/audit classes, not the stale branch's ten-class gap inventory.
 VARIANT_GENERATORS: dict[str, Callable[..., Iterable[Variant]]] = {
     "signature-stripping": _gen_signature_stripping,
     "tenant-crossover": _gen_tenant_crossover,

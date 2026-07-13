@@ -55,6 +55,8 @@ family.
 
 An earlier draft of this suite (on the stale `feat/governed-vulnclaw-pentest`
 fork, 196 commits behind master) reported standalone-receipt replay and unpinned
-policy-downgrade as open gaps. Those "gaps" were artifacts of the stale branch —
-master closed both (consumption ledger; `policy_hash` made load-bearing at the
-gate). This manifest reflects master's real, hardened state.
+policy downgrade as open gaps. Current master provides the relevant mitigations
+as explicit consumption-ledger and policy-binding configuration. This adaptive
+layer intentionally records the corresponding unconfigured calls as BYPASSABLE,
+while its static taxonomy records the covered mitigation paths; it does not claim
+those safeguards are enabled for every caller by default.
