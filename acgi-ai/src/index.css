@@ -43,6 +43,11 @@
   --accent-soft: #e8d5cd;
   --accent-on: #f3efe4; /* text/icon ON an accent fill — stays light in BOTH registers
                          * (intentionally NOT remapped under control-plane) */
+  --rust: var(--accent); /* legacy alias for the brand accent (DESIGN.md §2.2 "rust").
+                          * Redeclared under [data-theme="control-plane"] below: var()
+                          * resolves per register at computed-value time, so a single
+                          * :root definition would freeze the editorial value on dark
+                          * (same reason --verified/--partial are declared in both). */
 
   /* gold seal — DECORATIVE marks only (rules, ticks, seals): 2.8:1 on paper.
    * Use --gold-ink for any text-bearing gold (5.3:1 AA). */
@@ -124,6 +129,10 @@
   --deprecated: #8a6a66; /* DEPRECATED — muted red-gray */
   --verified: var(--allow);
   --partial: var(--review);
+  --danger: var(--deny); /* error/danger semantic (login/workbench error surfaces).
+                          * Redeclared under [data-theme="control-plane"] below so it
+                          * resolves against that register's brighter --deny — var()
+                          * resolves per register, so one definition would freeze it. */
 
   /* =======================================================================
    * --gz-* semantic surface aliases (editorial / light default).
@@ -173,6 +182,7 @@
   --deprecated: #b08c87;
   --verified: var(--allow);
   --partial: var(--review);
+  --danger: var(--deny); /* re-resolve against this register's brighter --deny (see --rust below) */
 
   /* Base-token remap (DESIGN.md §2.6). The console/product rules use only the
    * warm-paper aliases (--paper/--ink/--line/--accent) and carry NO hardcoded
@@ -195,6 +205,9 @@
   --accent: var(--gz-brand);
   --accent-2: var(--gz-brand-2);
   --accent-soft: color-mix(in srgb, var(--gz-brand) 20%, transparent);
+  --rust: var(--accent); /* re-resolve against the control-plane accent: var() computes
+                          * per register, so the :root alias alone would freeze the
+                          * editorial value here (mirrors --verified/--partial above). */
 
   /* gold seal brightened for near-black (light-register values are 2.8:1 /
    * 2.9:1 here). Both map to one dark-safe gold: decorative marks and
