@@ -252,7 +252,7 @@ def test_state_invariants_and_mutation_regressions() -> None:
         raise AssertionError("completed node with unverified evidence was accepted")
 
     ready = copy.deepcopy(dag)
-    next(node for node in ready["nodes"] if node["id"] == "G007")["status"] = "ready"
+    next(node for node in ready["nodes"] if node["id"] == "G008")["status"] = "ready"
     try:
         _validate_state_invariants(ready)
     except AssertionError:
