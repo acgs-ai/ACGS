@@ -1,45 +1,105 @@
-# gove-zone adversary suite (Pack II · B2)
+# gove-zone adversary suite
 
 Honest, non-redundant adversary coverage over the **real** gove-zone gate
-(`execute_with_receipt`). This suite does **not** re-prove defenses that existing
-package tests already cover with real exploits — it makes the taxonomy explicit
-and machine-checked, and adds live reproducing tests for the two open gaps.
+(`execute_with_receipt`) and the surrounding surfaces (adapters, kernel dispatch, policy
+compilation, audit chain). This suite makes the threat taxonomy explicit and
+machine-checked, and adds live reproducing tests for every open gap. It does **not**
+re-prove defenses that existing package tests already cover with real exploits.
+
+Prose companion: [`docs/security/threat-model-v2.md`](../../../../docs/security/threat-model-v2.md).
 
 Run:
 
 ```bash
-uv run --package gove-zone python -m pytest packages/gove-zone/tests/adversary --import-mode=importlib -q
+uv run --package gove-zone --extra crypto --extra dev \
+  python -m pytest packages/gove-zone/tests/adversary --import-mode=importlib -q
 ```
 
-## Coverage at a glance (8 classes)
+## Coverage at a glance (10 classes)
 
-| Adversary class | Status | Where it's proven |
+| Adversary class | Status | Where it's proven / reproduced |
 |---|---|---|
-| forged-authorization | **DEFENDED** | `test_receipt_signing.py`, `test_maci_role_separation.py`, `test_executor_guard.py` |
-| ledger-tampering | **DEFENDED** | `test_audit_chain.py`, `test_audit_chain_corruption.py` |
-| tenant-crossover | **DEFENDED** | `test_tenant_safety.py`, `test_executor_guard.py` |
-| signature-stripping | **DEFENDED** | `test_receipt_signing.py`, `test_executor_guard.py` |
-| validator-bypass | **DEFENDED** | `test_maci_role_separation.py`, `test_kernel_dispatch.py` |
+| forged-authorization | **PARTIAL** | signed forgery blocked (`test_receipt_signing.py`); unsigned recompute residual → `test_unsigned_forgery.py` |
+| replayed-authorization | **PARTIAL** | intra-workflow replay blocked; standalone reuse → `test_standalone_receipt_replay.py` |
+| ledger-tampering | **PARTIAL** | single-field edit detected (`test_audit_chain.py`); full self-consistent rewrite → `test_audit_full_chain_rewrite.py` |
+| policy-downgrade | **PARTIAL** | pinned path blocked; unpinned hash → `test_policy_version_downgrade.py`, unpinned bundle-id → `test_policy_bundle_id_downgrade.py` |
+| policy-default-allow | **NOT-DEFENDED** | RuleSetPolicy allow-by-default → `test_ruleset_default_allow.py`; PQL empty-feed fail-open → `test_pql_silent_fail_open.py` |
+| tenant-crossover | **DEFENDED** | `test_tenant_safety.py`, `test_executor_guard.py` (+ adversary tripwire `test_tenant_boundary_isolation.py`) |
+| signature-stripping | **DEFENDED** | `test_receipt_signing.py` |
+| validator-bypass | **PARTIAL** | self-validation / cross-actor blocked; authority scope not gate-enforced → `test_authority_scope_unenforced.py` |
 | evidence-omission | **DEFENDED** | `test_kernel_dispatch.py`, `test_executor_guard.py` |
-| replayed-authorization | **PARTIAL** | intra-workflow replay blocked; standalone reuse **NOT-DEFENDED** → `test_standalone_receipt_replay.py` |
-| policy-downgrade | **PARTIAL** | pinned path blocked; unpinned default is a gap → `test_policy_version_downgrade.py` |
+| adapter-bypass | **NOT-DEFENDED** | autogen/langgraph adapters route through `Kernel.dispatch` + `AllowAllPolicy` default → `test_adapter_bypass.py` |
 
-The map itself is enforced by `test_coverage_manifest.py`: if a "covering" test
-is renamed/deleted, or a gap loses its tripwire, the manifest test fails.
+The map itself is enforced by `test_coverage_manifest.py`: if a "covering" test is
+renamed/deleted, or a PARTIAL/NOT-DEFENDED gap loses its tripwire, the manifest test fails.
+Posture is pinned at **3 DEFENDED / 5 PARTIAL / 2 NOT-DEFENDED** — changing it must be a
+deliberate edit to the manifest.
 
-## NOT-DEFENDED (open gaps, tracked as live tests)
+## Adaptive stability layer (NEW in cycle 7)
 
-1. **Standalone-receipt replay.** `execute_with_receipt` is stateless (verify →
-   run, nothing consumes the receipt), so one ALLOW receipt authorizes unbounded
-   re-execution across separate gate calls. No `ReceiptConsumptionLedger` is
-   wired on this branch. Roadmap: single-use / nonce enforcement at the gate.
-   The xfail `test_standalone_receipt_replay_should_be_rejected` flips to xpass
-   when that lands.
-2. **Unpinned policy-version downgrade.** `expected_policy_hash` defaults to
-   `None`; a caller that doesn't pin it accepts a receipt minted under an older,
-   more permissive policy. Mitigation exists (pin `expected_policy_hash`) and is
-   proven; the gap is that binding is opt-in, not default.
+The adversary suite now evaluates a deterministic adaptive family per class via real
+gates/surfaces (`execute_with_receipt`, `Kernel.dispatch`, `ChainHashAuditStore.verify_chain`,
+policy adapters).
 
-Overclaiming a defense is a BLOCKER: a class is "DEFENDED" here only because a
-real exploit test proves it, and the two gaps are stated plainly rather than
-hidden.
+For each class, `adaptive_attack(class_name, budget=DEFAULT_BUDGET)` enumerates up to
+`DEFAULT_BUDGET` (40) defense-aware variants (argument mutation, actor/tenant substitution,
+signature handling, policy hash/bundle permutation, receipt-field perturbation,
+decode/normalization edges, and — for evidence-omission — the `Kernel.dispatch` audit anchor:
+stripped-audit and anchor-before-execute) and returns:
+
+- `variants_tried` (how many variants were evaluated),
+- `first_bypass` (first variant ID that passed),
+- `stable` (`stable is True` only when no variant was admitted).
+
+`test_adaptive_stability.py` compares `stable` to the manifest `"adaptive"` pin:
+`STABLE` (must remain denied) versus `BYPASSABLE` (one or more variant bypasses). The
+adaptive posture is pinned at **3 STABLE / 7 BYPASSABLE / 0 UNTESTED** in
+`test_adaptive_posture_is_pinned`, mirroring the static `test_taxonomy_posture_is_pinned`.
+The 3 STABLE classes are stable **by construction** — each rests on a total,
+bound-and-checked invariant: signature-stripping (reference-monitor totality),
+tenant-crossover (least-privilege binding), evidence-omission (Biba integrity /
+anchor-before-execute — probed on both the `execute_with_receipt` no-receipt axis and the
+`Kernel.dispatch` audit anchor: a failed/stripped audit append fails closed, and the anchor
+is recorded before the tool runs). The STABLE families are held strictly under
+`DEFAULT_BUDGET` (`test_stable_class_families_fit_within_budget`) so a future variant that
+reaches the budget fails loudly instead of truncating a full-family enumeration.
+
+Honest-scope limits (must be stated verbatim):
+
+- **No model, no AgentDojo, no GCG.** This is a deterministic config/input-space variant search
+  over gove-zone's own gate — NOT the paper's model-in-the-loop adaptive evaluation. It cannot and
+  does not claim robustness against an optimizing LLM attacker.
+- **"Adaptively stable" ≠ "secure".** It means "no variant in a bounded, hand-enumerated family
+  bypassed the gate," which is a stronger statement than single-template but far weaker than a
+  proof. Wording stays at "no bounded variant in family F bypassed surface S."
+- **Bypassable classes are already known gaps.** The adaptive layer does not discover new
+  vulnerabilities so much as *quantify the decision boundary* of known ones (minimal bypass) and
+  *pin* the stability of the defended ones. That framing must not be inflated into new CVEs.
+- The paper's empirical result is one weak-model data point; we cite it as motivation for the
+  methodology, never as evidence about gove-zone.
+
+## NOT-DEFENDED / open gaps (tracked as live tests)
+
+Highest-severity first (see threat-model-v2.md §11 for the full remediation order):
+
+1. **Adapter bypass (Critical).** `govern_autogen_tool` / `govern_langgraph_tools` route
+   execution through `ManagedAgent.dispatch` → `Kernel.dispatch` (self-asserted actor, no
+   receipt verification, no signature), and `ManagedAgent` defaults to `AllowAllPolicy` — so
+   a default "governed" agent executes every tool unconditionally.
+2. **PQL/GPA silent fail-open (High).** An empty/malformed vendor feed compiles to a
+   functional allow-all with no error.
+3. **Audit full-chain rewrite (High).** The keyless chain has no external head anchor, so a
+   self-consistent rewrite / truncation passes `verify_chain()`.
+4. **Standalone-receipt replay (High on this branch; closed on `master`).** The gate is
+   stateless; no `ReceiptConsumptionLedger` is wired here.
+5. **Authority scope not gate-enforced (Medium).** `expected_authority` /
+   `expected_validator_role` are not plumbed into any gate surface.
+6. **Gate default-posture inconsistency (Medium).** `ReceiptVerifier` defaults
+   `require_signature=False` while `execute_with_receipt` defaults `True`.
+7. **Unpinned policy-bundle-id & RuleSetPolicy-as-sole-policy (Medium).**
+
+Overclaiming a defense is a BLOCKER: a class is "DEFENDED" here only because a real exploit
+test proves it, and every gap is stated plainly with a live reproducing test rather than
+hidden. The gap tests assert current (weaker) reality, so the day a defense lands the
+relevant test flips (xfail→xpass, or a KNOWN_GAP assertion starts failing) — a built-in
+"defense arrived" signal.
