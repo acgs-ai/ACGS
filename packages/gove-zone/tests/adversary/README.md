@@ -1,11 +1,12 @@
 # gove-zone adversary coverage manifest (Pack II · B2)
 
-An explicit, machine-checked map of the 8 adversary classes to the tests that
-prove gove-zone defends each. Reconciled against **master** — where all 8 are
-already **DEFENDED** (including standalone-receipt replay, closed by the opt-in
-`ReceiptConsumptionLedger`). This directory therefore adds **no new exploit
-tests** (that would duplicate the existing suite); it adds one authoritative
-taxonomy that fails if a covering test is renamed or removed.
+An explicit, machine-checked map of the 8 adversary classes to the existing
+tests that cover them. Reconciled against **master**, whose static taxonomy marks
+all 8 **DEFENDED** (including standalone-receipt replay when its opt-in
+`ReceiptConsumptionLedger` is configured). The companion adaptive dimension
+makes those conditions explicit: it exercises bounded families against the real
+gate and distinguishes an invariant that holds across its family from a defense
+that depends on an opt-in binding or a caller-supplied expectation.
 
 Run:
 
@@ -29,10 +30,33 @@ uv run --package gove-zone python -m pytest packages/gove-zone/tests/adversary -
 `test_coverage_manifest.py` enforces this map: every referenced `file::test`
 must resolve to a real function, and all 8 classes must carry ≥1 covering test.
 
+## Bounded adaptive dimension
+
+`adaptive.py` adds a deterministic, real-surface variant family for each static
+class. `adaptive_attack(class_name)` runs each family member through the actual
+receipt/executor, kernel, or audit API and returns the first admitted variant,
+if any. `test_adaptive_stability.py` pins the resulting current-master posture:
+**3 STABLE / 5 BYPASSABLE / 0 UNTESTED**.
+
+The result is intentionally narrower than a security proof. **No model, no
+AgentDojo, no GCG:** this is deterministic config/input-space coverage, not an
+optimizing model-in-the-loop evaluation. “Adaptively stable” means only “no
+variant in this bounded, hand-enumerated family bypassed this surface”; it does
+not mean secure. A BYPASSABLE result names a concrete precondition that needs
+binding (for example a consumption ledger or expected policy value), rather
+than silently converting static test coverage into an unconditional claim.
+
+The stable families check distinct variants (not a repeated single case):
+signature verification, tenant/boundary binding, and receipt/audit anchoring.
+The family-size test fails before the fixed budget could truncate a stable
+family.
+
 ## Note on provenance
 
 An earlier draft of this suite (on the stale `feat/governed-vulnclaw-pentest`
 fork, 196 commits behind master) reported standalone-receipt replay and unpinned
-policy-downgrade as open gaps. Those "gaps" were artifacts of the stale branch —
-master closed both (consumption ledger; `policy_hash` made load-bearing at the
-gate). This manifest reflects master's real, hardened state.
+policy downgrade as open gaps. Current master provides the relevant mitigations
+as explicit consumption-ledger and policy-binding configuration. This adaptive
+layer intentionally records the corresponding unconfigured calls as BYPASSABLE,
+while its static taxonomy records the covered mitigation paths; it does not claim
+those safeguards are enabled for every caller by default.
