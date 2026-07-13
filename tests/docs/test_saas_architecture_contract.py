@@ -238,27 +238,31 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     } <= set(g101["likely_interfaces_files"])
     assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
     assert "four disposable PostgreSQL 17.10-bookworm tests" in g101["evidence_artifact"]
+    assert "G103 tenant database isolation" in g101["evidence_artifact"]
     for gap in (
         "#308 startup integration",
-        "PostgreSQL RLS",
-        "schema/search-path",
-        "role hardening",
-        "CI-backed PostgreSQL",
-        "multi-instance",
-        "backup/restore",
+        "CI-backed PostgreSQL migration",
+        "multi-instance migration",
+        "migration backup/restore",
         "forward-only rollback",
-        "API, policy, and backfill",
     ):
         assert gap in g101["blocker"]
+    for tenant_isolation_gap in ("RLS", "schema/search-path", "role hardening"):
+        assert tenant_isolation_gap not in g101["blocker"]
+    assert "G103 after G101 and G102 complete" in g101["blocker"]
     assert "draft PR" in g101["next_safe_action"]
-    assert "before accepted Phase-1 completion" in g101["next_safe_action"]
+    assert "G103 owns tenant database isolation after G101 and G102 complete" in g101["next_safe_action"]
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
         "current_local | G101, G102, G103, G104, G105, G106 |"
     ) in matrix
+    am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
     for gap in (
         "#308 startup integration",
+        "G103-owned",
+        "tenant context",
+        "composite constraints",
         "RLS",
         "schema/search-path",
         "CI-backed PostgreSQL",
@@ -267,7 +271,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "forward-only rollback",
         "API/policy/backfill",
     ):
-        assert gap in matrix
+        assert gap in am_005
     assert "this is not completed Phase-1 acceptance" in matrix
 
     for downstream_node_id in ("G102", "G103"):
@@ -279,3 +283,23 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
             downstream_node["implementation_state"],
             downstream_node["evidence_state"],
         ) == ("planned", "missing", "unverified")
+
+    g103 = next(node for node in dag["nodes"] if node["id"] == "G103")
+    assert g103["dependencies"] == ["G101", "G102"]
+    g103_isolation_contract = " ".join(
+        [
+            *g103["likely_interfaces_files"],
+            *g103["positive_tests"],
+            g103["next_safe_action"],
+        ]
+    )
+    for requirement in (
+        "tenant context",
+        "composite constraints",
+        "RLS",
+        "schema/search_path",
+        "role hardening",
+        "After G101 and G102 are completed",
+        "before implementation",
+    ):
+        assert requirement in g103_isolation_contract
