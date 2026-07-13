@@ -5,6 +5,7 @@
 #   - packages/acgs-control-plane/pyproject.toml:[build-system].requires
 #   - requirements/saas-beta/locks.toml:CP.pep660_editable_build
 
+alembic>=1.14,<2
 fastapi>=0.110
 pydantic[email]>=2.8
 sqlalchemy>=2.0
