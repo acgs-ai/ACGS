@@ -1,0 +1,678 @@
+"""Fail-closed helpers for adopting the pre-Alembic control-plane schema.
+
+The original v0 control plane used ``Base.metadata.create_all`` and therefore
+has no migration version table.  This module recognizes only the frozen v0
+schema reconstructed in revision ``0001``.  It refuses partial, unknown, or
+mixed schemas *before* it creates an Alembic version table or runs a revision.
+
+These helpers are deliberate operator actions.  They do not change app startup
+behaviour and they do not make any claim about PostgreSQL rollout locking,
+backups, or rollback safety.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
+from typing import Final
+
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.exc import SQLAlchemyError
+
+from acgs_control_plane import models as _models  # noqa: F401  # load Base metadata
+from acgs_control_plane.db import make_engine
+
+LEGACY_V0_REVISION: Final = "0001"
+HEAD_REVISION: Final = "0002"
+_VERSION_TABLE = "alembic_version"
+_SQLITE_INTERNAL_TABLES: Final = frozenset({"sqlite_sequence"})
+_LEGACY_ADOPTION_TOKEN: Final = object()
+_SCOPE_RESUME_TOKEN: Final = object()
+
+
+class DatabaseSchemaState(StrEnum):
+    """Database states recognized by the migration adoption guard."""
+
+    EMPTY = "empty"
+    LEGACY_V0 = "exact_legacy_v0"
+    VERSION_0001 = "version_0001"
+    VERSION_0001_PARTIAL_PROJECTS = "version_0001_partial_projects"
+    VERSION_0001_PARTIAL_SCOPE = "version_0001_partial_scope"
+    VERSION_0002 = "version_0002"
+    UNKNOWN = "unknown"
+
+
+class ScopeMigrationResumeState(StrEnum):
+    """Exact, empty states from which revision 0002 may resume."""
+
+    FRESH = "fresh"
+    PROJECTS_CREATED = "projects_created"
+    SCOPE_TABLES_CREATED = "scope_tables_created"
+
+
+class MigrationPreflightError(RuntimeError):
+    """Raised before mutation when a database is not a known schema state."""
+
+
+@dataclass(frozen=True)
+class SchemaPreflight:
+    """A narrow report suitable for operator logs without leaking row data."""
+
+    state: DatabaseSchemaState
+    detail: str
+
+
+@dataclass(frozen=True)
+class MigrationResult:
+    """The pre- and post-migration schema states for one deliberate run."""
+
+    before: SchemaPreflight
+    after: SchemaPreflight
+
+
+@dataclass(frozen=True)
+class _ColumnSpec:
+    name: str
+    type_name: str
+    nullable: bool
+    length: int | None = None
+
+
+_LEGACY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    "organizations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("audit_anchor_count", "integer", False),
+        _ColumnSpec("audit_anchor_hash", "string", False, 128),
+    ),
+    "users": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("email", "string", False, 320),
+        _ColumnSpec("role", "string", False, 32),
+        _ColumnSpec("api_key_hash", "string", False, 64),
+        _ColumnSpec("active", "boolean", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "agents": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("description", "text", False),
+        _ColumnSpec("trust_tier", "string", False, 32),
+        _ColumnSpec("allowed_tools", "json", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "policy_bundles": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("policy_id", "string", False, 200),
+        _ColumnSpec("version", "string", False, 200),
+        _ColumnSpec("bundle", "json", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("activated_at", "datetime", True),
+    ),
+    "receipts": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("tool", "string", False, 200),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("goal", "text", False),
+        _ColumnSpec("argument_hash", "string", False, 128),
+        _ColumnSpec("audit_hash", "string", False, 128),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("result_hash", "string", True, 128),
+        _ColumnSpec("error_class", "string", True, 200),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "compliance_exports": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("created_by", "string", False, 200),
+        _ColumnSpec("receipt_count", "integer", False),
+        _ColumnSpec("bundle_hash", "string", False, 128),
+        _ColumnSpec("bundle", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
+
+_SCOPED_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_LEGACY_COLUMNS,
+    "projects": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("slug", "string", False, 128),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "environments": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("slug", "string", False, 128),
+        _ColumnSpec("name", "string", False, 200),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
+_PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_LEGACY_COLUMNS,
+    "projects": _SCOPED_COLUMNS["projects"],
+}
+
+_LEGACY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    table_name: ("id",) for table_name in _LEGACY_COLUMNS
+}
+_SCOPED_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    table_name: ("id",) for table_name in _SCOPED_COLUMNS
+}
+_PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
+}
+
+_LEGACY_FOREIGN_KEYS: Final[dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]] = {
+    "organizations": frozenset(),
+    "users": frozenset({(("org_id",), "organizations", ("id",))}),
+    "agents": frozenset({(("org_id",), "organizations", ("id",))}),
+    "policy_bundles": frozenset({(("org_id",), "organizations", ("id",))}),
+    "receipts": frozenset({(("org_id",), "organizations", ("id",))}),
+    "compliance_exports": frozenset({(("org_id",), "organizations", ("id",))}),
+}
+_SCOPED_FOREIGN_KEYS: Final[dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]] = {
+    **_LEGACY_FOREIGN_KEYS,
+    "projects": frozenset({(("org_id",), "organizations", ("id",))}),
+    "environments": frozenset(
+        {
+            (("org_id",), "organizations", ("id",)),
+            (("org_id", "project_id"), "projects", ("org_id", "id")),
+        }
+    ),
+}
+_PROJECTS_ONLY_FOREIGN_KEYS: Final[
+    dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]
+] = {
+    **_LEGACY_FOREIGN_KEYS,
+    "projects": _SCOPED_FOREIGN_KEYS["projects"],
+}
+
+_LEGACY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    "organizations": frozenset({("name",)}),
+    "users": frozenset({("org_id", "email"), ("api_key_hash",)}),
+    "agents": frozenset({("org_id", "name")}),
+    "policy_bundles": frozenset(),
+    "receipts": frozenset(),
+    "compliance_exports": frozenset(),
+}
+_SCOPED_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_UNIQUES,
+    "projects": frozenset({("org_id", "slug"), ("org_id", "id")}),
+    "environments": frozenset({("org_id", "project_id", "slug")}),
+}
+_PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_UNIQUES,
+    "projects": _SCOPED_UNIQUES["projects"],
+}
+
+_LEGACY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    "organizations": frozenset(),
+    "users": frozenset({("org_id",)}),
+    "agents": frozenset({("org_id",)}),
+    "policy_bundles": frozenset({("org_id",)}),
+    "receipts": frozenset({("org_id",), ("tool",), ("decision",), ("actor",), ("created_at",)}),
+    "compliance_exports": frozenset({("org_id",)}),
+}
+_SCOPED_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_NON_UNIQUE_INDEXES,
+    # The unique scope keys have the same left prefixes, so standalone scope
+    # indexes would be redundant and would create extra non-transactional DDL
+    # interruption boundaries on SQLite.
+    "projects": frozenset(),
+    "environments": frozenset(),
+}
+_PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_NON_UNIQUE_INDEXES,
+    "projects": _SCOPED_NON_UNIQUE_INDEXES["projects"],
+}
+
+
+def migration_config(database_url: str) -> Config:
+    """Return the wheel-shipped Alembic configuration for one explicit URL."""
+    package_root = Path(__file__).resolve().parent
+    config_path = package_root / "alembic.ini"
+    script_path = package_root / "migrations"
+    if not config_path.is_file() or not script_path.is_dir():
+        msg = (
+            "The installed acgs-control-plane package is missing its Alembic resources. "
+            "Reinstall a complete wheel; do not fall back to an unrelated source checkout."
+        )
+        raise RuntimeError(msg)
+
+    config = Config(str(config_path))
+    # Set absolute paths from the imported package, not the process CWD.  This
+    # keeps source, editable, and installed-wheel execution on one canonical
+    # migration history without a source-tree fallback.
+    config.set_main_option("script_location", str(script_path))
+    config.set_main_option("prepend_sys_path", str(package_root.parent))
+    config.set_main_option("sqlalchemy.url", database_url)
+    return config
+
+
+def inspect_schema(database_url: str) -> SchemaPreflight:
+    """Classify a database without changing its tables or migration version."""
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return inspect_connection(connection)
+    finally:
+        engine.dispose()
+
+
+def inspect_connection(connection: Connection) -> SchemaPreflight:
+    """Classify a live connection before an Alembic operation mutates it."""
+    non_table_detail = _non_table_object_detail(connection)
+    if non_table_detail is not None:
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, non_table_detail)
+
+    inspector = sa.inspect(connection)
+    table_names = set(inspector.get_table_names()) - _SQLITE_INTERNAL_TABLES
+    if not table_names:
+        return SchemaPreflight(DatabaseSchemaState.EMPTY, "database has no user tables")
+
+    if _VERSION_TABLE not in table_names:
+        legacy_detail = _schema_detail(
+            inspector,
+            table_names,
+            _LEGACY_COLUMNS,
+            _LEGACY_PRIMARY_KEYS,
+            _LEGACY_FOREIGN_KEYS,
+            _LEGACY_UNIQUES,
+            _LEGACY_NON_UNIQUE_INDEXES,
+        )
+        if legacy_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.LEGACY_V0,
+                "exact pre-Alembic v0 schema; safe to stamp revision 0001",
+            )
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, legacy_detail)
+
+    versions = _migration_versions(connection)
+    user_tables = table_names - {_VERSION_TABLE}
+    if versions == [LEGACY_V0_REVISION]:
+        return _classify_revision_0001(connection, inspector, user_tables)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _SCOPED_COLUMNS,
+            _SCOPED_PRIMARY_KEYS,
+            _SCOPED_FOREIGN_KEYS,
+            _SCOPED_UNIQUES,
+            _SCOPED_NON_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0002, "known Alembic revision 0002")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+
+    return SchemaPreflight(
+        DatabaseSchemaState.UNKNOWN,
+        f"unrecognized Alembic version state: {versions!r}",
+    )
+
+
+def assert_online_migration_operation(connection: Connection, config: Config) -> SchemaPreflight:
+    """Reject raw online Alembic operations; permit only a helper-bound path.
+
+    The internal helper records the exact preflight state in ``Config``
+    attributes.  This is process-local and cannot be supplied through Alembic
+    ``-x`` arguments, so an operator cannot bypass the live schema check from
+    the CLI.  Rejecting raw operations even on an empty database prevents
+    ``stamp`` or ``ensure_version`` from creating a bare version table with no
+    schema.  Any state change between helper preflight and the live migration
+    connection is rejected.
+    """
+    preflight = inspect_connection(connection)
+    operation = config.attributes.get("acgs_control_plane_internal_operation")
+    if operation == (_SCOPE_RESUME_TOKEN, preflight.state) or operation == (
+        _LEGACY_ADOPTION_TOKEN,
+        preflight.state,
+    ):
+        return preflight
+
+    msg = (
+        "Refusing a raw Alembic operation on a control-plane database "
+        f"in state {preflight.state}: {preflight.detail}. Use upgrade_database(), "
+        "which rechecks and records a controlled operation state."
+    )
+    raise MigrationPreflightError(msg)
+
+
+def scope_migration_resume_state(connection: Connection) -> ScopeMigrationResumeState:
+    """Return the only exact states in which revision 0002 may continue."""
+    preflight = inspect_connection(connection)
+    if preflight.state is DatabaseSchemaState.VERSION_0001:
+        return ScopeMigrationResumeState.FRESH
+    if preflight.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS:
+        return ScopeMigrationResumeState.PROJECTS_CREATED
+    if preflight.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE:
+        return ScopeMigrationResumeState.SCOPE_TABLES_CREATED
+    msg = f"Revision 0002 cannot resume from {preflight.state}: {preflight.detail}"
+    raise MigrationPreflightError(msg)
+
+
+def upgrade_database(database_url: str) -> MigrationResult:
+    """Run the official Alembic path only after a fail-closed schema check.
+
+    Exact legacy-v0 databases are stamped at revision ``0001`` *only after*
+    their tables, columns, constraints, and indexes match the frozen schema.
+    A partial or unknown database raises before Alembic can create its version
+    table.  Existing receipt/export rows are not read, rewritten, or scoped.
+    """
+    before = inspect_schema(database_url)
+    if before.state is DatabaseSchemaState.UNKNOWN:
+        raise MigrationPreflightError(before.detail)
+
+    config = migration_config(database_url)
+    if before.state is DatabaseSchemaState.LEGACY_V0:
+        _run_controlled_operation(
+            config,
+            _LEGACY_ADOPTION_TOKEN,
+            DatabaseSchemaState.LEGACY_V0,
+            lambda: command.stamp(config, LEGACY_V0_REVISION),
+        )
+        stamped = inspect_schema(database_url)
+        if stamped.state is not DatabaseSchemaState.VERSION_0001:
+            msg = f"Legacy adoption stamp did not produce revision 0001: {stamped.detail}"
+            raise MigrationPreflightError(msg)
+        _run_controlled_operation(
+            config,
+            _SCOPE_RESUME_TOKEN,
+            DatabaseSchemaState.VERSION_0001,
+            lambda: command.upgrade(config, "head"),
+        )
+    else:
+        _run_controlled_operation(
+            config,
+            _SCOPE_RESUME_TOKEN,
+            before.state,
+            lambda: command.upgrade(config, "head"),
+        )
+    after = inspect_schema(database_url)
+    if after.state is not DatabaseSchemaState.VERSION_0002:
+        msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
+        raise MigrationPreflightError(msg)
+    return MigrationResult(before=before, after=after)
+
+
+def _run_controlled_operation(
+    config: Config,
+    token: object,
+    expected_state: DatabaseSchemaState,
+    operation: Callable[[], None],
+) -> None:
+    config.attributes["acgs_control_plane_internal_operation"] = (token, expected_state)
+    try:
+        operation()
+    finally:
+        config.attributes.pop("acgs_control_plane_internal_operation", None)
+
+
+def _classify_revision_0001(
+    connection: Connection, inspector: Inspector, user_tables: set[str]
+) -> SchemaPreflight:
+    legacy_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _LEGACY_COLUMNS,
+        _LEGACY_PRIMARY_KEYS,
+        _LEGACY_FOREIGN_KEYS,
+        _LEGACY_UNIQUES,
+        _LEGACY_NON_UNIQUE_INDEXES,
+    )
+    if legacy_detail is None:
+        return SchemaPreflight(DatabaseSchemaState.VERSION_0001, "known Alembic revision 0001")
+
+    projects_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _PROJECTS_ONLY_COLUMNS,
+        _PROJECTS_ONLY_PRIMARY_KEYS,
+        _PROJECTS_ONLY_FOREIGN_KEYS,
+        _PROJECTS_ONLY_UNIQUES,
+        _PROJECTS_ONLY_NON_UNIQUE_INDEXES,
+    )
+    if projects_detail is None:
+        empty_detail = _scope_tables_empty(connection, ("projects",))
+        if empty_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS,
+                "exact, empty projects table exists before revision 0002 was recorded",
+            )
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, empty_detail)
+
+    scoped_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _SCOPED_COLUMNS,
+        _SCOPED_PRIMARY_KEYS,
+        _SCOPED_FOREIGN_KEYS,
+        _SCOPED_UNIQUES,
+        _SCOPED_NON_UNIQUE_INDEXES,
+    )
+    if scoped_detail is None:
+        empty_detail = _scope_tables_empty(connection, ("projects", "environments"))
+        if empty_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE,
+                "exact, empty scope tables exist before revision 0002 was recorded",
+            )
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, empty_detail)
+
+    if user_tables == set(_PROJECTS_ONLY_COLUMNS):
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, projects_detail)
+    if user_tables == set(_SCOPED_COLUMNS):
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, scoped_detail)
+    return SchemaPreflight(DatabaseSchemaState.UNKNOWN, legacy_detail)
+
+
+def _migration_versions(connection: Connection) -> list[str]:
+    rows = connection.execute(sa.text(f"SELECT version_num FROM {_VERSION_TABLE}"))
+    return list(rows.scalars())
+
+
+def _scope_tables_empty(connection: Connection, table_names: Sequence[str]) -> str | None:
+    try:
+        for table_name in table_names:
+            row = connection.execute(sa.text(f"SELECT 1 FROM {table_name} LIMIT 1")).first()
+            if row is not None:
+                return f"partial scope table {table_name} contains data and cannot be resumed"
+    except SQLAlchemyError as exc:
+        return f"unable to inspect partial scope tables: {type(exc).__name__}"
+    return None
+
+
+def _non_table_object_detail(connection: Connection) -> str | None:
+    """Reject schema objects that migration revisions do not own or model."""
+    try:
+        dialect_name = connection.dialect.name
+        if dialect_name == "sqlite":
+            rows = connection.execute(
+                sa.text(
+                    """
+                    SELECT type, name FROM sqlite_master
+                    WHERE type IN ('view', 'trigger') AND name NOT LIKE 'sqlite_%'
+                    UNION ALL
+                    SELECT type, name FROM sqlite_temp_master
+                    WHERE type IN ('view', 'trigger') AND name NOT LIKE 'sqlite_%'
+                    ORDER BY type, name
+                    """
+                )
+            ).all()
+        elif dialect_name == "postgresql":
+            rows = connection.execute(
+                sa.text(
+                    """
+                    WITH non_table_objects AS (
+                        SELECT 'view' AS kind, schemaname || '.' || viewname AS object_name
+                        FROM pg_catalog.pg_views
+                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                        UNION ALL
+                        SELECT 'materialized_view', schemaname || '.' || matviewname
+                        FROM pg_catalog.pg_matviews
+                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                        UNION ALL
+                        SELECT 'trigger', n.nspname || '.' || c.relname || '.' || t.tgname
+                        FROM pg_catalog.pg_trigger AS t
+                        JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE NOT t.tgisinternal
+                          AND n.nspname <> 'information_schema'
+                          AND n.nspname NOT LIKE 'pg_%'
+                        UNION ALL
+                        SELECT 'row_level_security', n.nspname || '.' || c.relname
+                        FROM pg_catalog.pg_class AS c
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE (c.relrowsecurity OR c.relforcerowsecurity)
+                          AND n.nspname <> 'information_schema'
+                          AND n.nspname NOT LIKE 'pg_%'
+                        UNION ALL
+                        SELECT 'policy', schemaname || '.' || tablename || '.' || policyname
+                        FROM pg_catalog.pg_policies
+                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                    )
+                    SELECT kind, object_name FROM non_table_objects ORDER BY kind, object_name
+                    """
+                )
+            ).all()
+        else:
+            return f"unsupported migration schema-inspection dialect: {dialect_name}"
+    except SQLAlchemyError as exc:
+        return f"unable to inspect non-table schema objects: {type(exc).__name__}"
+
+    if rows:
+        objects = ", ".join(f"{row[0]}:{row[1]}" for row in rows)
+        return f"unexpected non-table schema objects: {objects}"
+    return None
+
+
+def _schema_detail(
+    inspector: Inspector,
+    actual_tables: set[str],
+    expected_columns: dict[str, tuple[_ColumnSpec, ...]],
+    expected_primary_keys: dict[str, tuple[str, ...]],
+    expected_foreign_keys: dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]],
+    expected_uniques: dict[str, frozenset[tuple[str, ...]]],
+    expected_non_unique_indexes: dict[str, frozenset[tuple[str, ...]]],
+) -> str | None:
+    expected_tables = set(expected_columns)
+    if actual_tables != expected_tables:
+        return (
+            f"unexpected table set: expected {sorted(expected_tables)}, got {sorted(actual_tables)}"
+        )
+
+    for table_name, columns in expected_columns.items():
+        actual_columns = inspector.get_columns(table_name)
+        if [column["name"] for column in actual_columns] != [column.name for column in columns]:
+            return f"{table_name} has an unexpected column layout"
+        for actual, expected in zip(actual_columns, columns, strict=True):
+            if actual["nullable"] is not expected.nullable:
+                return f"{table_name}.{expected.name} has an unexpected nullability"
+            if actual.get("default") is not None:
+                return f"{table_name}.{expected.name} has an unexpected server default"
+            if not _matches_type(actual["type"], expected, inspector.bind.dialect.name):
+                return f"{table_name}.{expected.name} has an unexpected type"
+
+        actual_primary_key = tuple(
+            inspector.get_pk_constraint(table_name)["constrained_columns"] or ()
+        )
+        if actual_primary_key != expected_primary_keys[table_name]:
+            return f"{table_name} has an unexpected primary key"
+
+        foreign_keys = inspector.get_foreign_keys(table_name)
+        if any(foreign_key.get("options") for foreign_key in foreign_keys):
+            return f"{table_name} has foreign-key options outside the frozen schema"
+        actual_foreign_keys = frozenset(
+            (
+                tuple(foreign_key["constrained_columns"]),
+                foreign_key["referred_table"],
+                tuple(foreign_key["referred_columns"]),
+            )
+            for foreign_key in foreign_keys
+        )
+        if actual_foreign_keys != expected_foreign_keys[table_name]:
+            return f"{table_name} has unexpected foreign keys"
+
+        actual_uniques: set[tuple[str, ...]] = set()
+        for constraint in inspector.get_unique_constraints(table_name):
+            column_names = _reflected_column_tuple(constraint["column_names"])
+            if column_names is None:
+                return f"{table_name} has an unnamed unique constraint"
+            actual_uniques.add(column_names)
+        actual_indexes: set[tuple[str, ...]] = set()
+        for index in inspector.get_indexes(table_name):
+            column_names = _reflected_column_tuple(index["column_names"])
+            if column_names is None:
+                return f"{table_name} has an unnamed index"
+            if index.get("unique"):
+                actual_uniques.add(column_names)
+            else:
+                actual_indexes.add(column_names)
+        if frozenset(actual_uniques) != expected_uniques[table_name]:
+            return f"{table_name} has unexpected unique constraints or indexes"
+
+        if frozenset(actual_indexes) != expected_non_unique_indexes[table_name]:
+            return f"{table_name} has unexpected non-unique indexes"
+
+        if inspector.get_check_constraints(table_name):
+            return f"{table_name} has check constraints outside the frozen schema"
+
+    return None
+
+
+def _reflected_column_tuple(column_names: Sequence[str | None] | None) -> tuple[str, ...] | None:
+    if not column_names or any(column is None for column in column_names):
+        return None
+    return tuple(column for column in column_names if column is not None)
+
+
+def _matches_type(
+    actual_type: sa.types.TypeEngine[object], expected: _ColumnSpec, dialect_name: str
+) -> bool:
+    if expected.type_name == "string":
+        return (
+            isinstance(actual_type, sa.String)
+            and not isinstance(actual_type, sa.Text)
+            and actual_type.length == expected.length
+        )
+    if expected.type_name == "text":
+        return isinstance(actual_type, sa.Text)
+    if expected.type_name == "datetime":
+        if not isinstance(actual_type, sa.DateTime):
+            return False
+        # SQLite reflection does not preserve ``timezone=True``.  PostgreSQL,
+        # the supported production dialect, must preserve it so a naive
+        # timestamp schema is never stamped as the known v0 contract.
+        return dialect_name == "sqlite" or (
+            dialect_name == "postgresql" and actual_type.timezone is True
+        )
+    if expected.type_name == "integer":
+        return isinstance(actual_type, sa.Integer) and not isinstance(actual_type, sa.Boolean)
+    if expected.type_name == "boolean":
+        return isinstance(actual_type, sa.Boolean)
+    if expected.type_name == "json":
+        if dialect_name == "postgresql":
+            return isinstance(actual_type, postgresql.JSONB)
+        return dialect_name == "sqlite" and isinstance(actual_type, sa.JSON)
+    msg = f"unknown frozen schema type {expected.type_name!r}"
+    raise AssertionError(msg)

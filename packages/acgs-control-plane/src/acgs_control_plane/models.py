@@ -13,11 +13,22 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    and_,
+)
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
 
-from acgs_control_plane.db import Base
+from acgs_control_plane.db import ALEMBIC_MANAGED_TABLE_INFO_KEY, Base
 
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
 
@@ -41,6 +52,71 @@ class Organization(Base):
     # uses these to detect file-store truncation.
     audit_anchor_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     audit_anchor_hash: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+
+    projects: Mapped[list[Project]] = relationship(back_populates="organization")
+
+
+class Project(Base):
+    """A named scope beneath an organization.
+
+    The composite ``(org_id, id)`` key exists so an environment can enforce
+    its parent project's organization at the database boundary, not merely in
+    an API route or ORM query.
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("org_id", "slug", name="uq_projects_org_slug"),
+        UniqueConstraint("org_id", "id", name="uq_projects_org_id_id"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"))
+    slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    organization: Mapped[Organization] = relationship(back_populates="projects")
+    environments: Mapped[list[Environment]] = relationship(
+        back_populates="project",
+        primaryjoin=lambda: and_(
+            Project.org_id == foreign(Environment.org_id),
+            Project.id == foreign(Environment.project_id),
+        ),
+        foreign_keys=lambda: [Environment.org_id, Environment.project_id],
+    )
+
+
+class Environment(Base):
+    """A deployable scope whose project must belong to the same organization."""
+
+    __tablename__ = "environments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id"],
+            ["projects.org_id", "projects.id"],
+            name="fk_environments_org_project",
+        ),
+        UniqueConstraint("org_id", "project_id", "slug", name="uq_environments_org_project_slug"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"))
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    slug: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    project: Mapped[Project] = relationship(
+        back_populates="environments",
+        primaryjoin=lambda: and_(
+            foreign(Environment.org_id) == Project.org_id,
+            foreign(Environment.project_id) == Project.id,
+        ),
+        foreign_keys=lambda: [Environment.org_id, Environment.project_id],
+    )
 
 
 class User(Base):
@@ -90,6 +166,9 @@ class ReceiptRow(Base):
     __tablename__ = "receipts"
 
     # receipt_id == the kernel DecisionRecord.event_id.
+    # Legacy evidence intentionally remains organization-scoped.  Adding
+    # project/environment provenance requires a separately authenticated
+    # evidence path; this migration never guesses or backfills it.
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
     tool: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
