@@ -10,6 +10,13 @@ The resumable SaaS beta dependency program and its claim-safe capability view li
 [`docs/saas/DELIVERY_DAG.yaml`](saas/DELIVERY_DAG.yaml) and
 [`docs/saas/ACCEPTANCE_MATRIX.md`](saas/ACCEPTANCE_MATRIX.md). Those records refine
 delivery dependencies and evidence state; this file remains the only roadmap of record.
+The Phase-0 target product contract is specified in
+[`saas/PRODUCT_REQUIREMENTS.md`](saas/PRODUCT_REQUIREMENTS.md),
+[`saas/ASSURANCE_CLASSES.md`](saas/ASSURANCE_CLASSES.md),
+[`saas/OPEN_CORE_BOUNDARY.md`](saas/OPEN_CORE_BOUNDARY.md), and
+[`saas/ENTITLEMENT_AND_METERING_MATRIX.md`](saas/ENTITLEMENT_AND_METERING_MATRIX.md).
+They are future acceptance contracts, not evidence that the managed service,
+entitlements, pricing, or billing implementation exists.
 
 Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. Marks verified against `origin/master` @ `9dd118c` (see Status evidence).
 

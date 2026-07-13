@@ -344,8 +344,12 @@
         "docs/saas/ASSURANCE_CLASSES.md",
         "docs/saas/OPEN_CORE_BOUNDARY.md",
         "docs/saas/ENTITLEMENT_AND_METERING_MATRIX.md",
+        "docs/COMPARISON.md",
+        "docs/PRODUCT_STRATEGY.md",
+        "docs/README.md",
         "docs/ROADMAP.md",
-        "docs/CLAIMS.md"
+        "docs/CLAIMS.md",
+        "tests/docs/test_saas_product_contract.py"
       ],
       "risk_class": "yellow",
       "positive_tests": [
@@ -360,14 +364,14 @@
         "git diff --check"
       ],
       "evidence_artifact": "Reviewed Phase-0 product requirements, assurance classes, open-core boundary, and entitlement/metering matrix",
-      "branch": null,
-      "worktree": null,
+      "branch": "beta/p0-product-contract-007",
+      "worktree": "saas-beta/p0-product-contract-007",
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
       "blocker": null,
-      "next_safe_action": "Author the four named canonical artifacts from G006 evidence without adding duplicate planning systems or commercial commitments.",
+      "next_safe_action": "Execute G008 architecture, threat, API/data, compatibility, and owner-gated ADR work; keep AM-002 partial until G008 and owner decisions are independently reviewed.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

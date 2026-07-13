@@ -26,6 +26,10 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [CLAIMS](CLAIMS.md)
 - [POSITIONING](POSITIONING.md) — why a neutral governance layer is a category, not a feature
 - [ROADMAP](ROADMAP.md) — the roadmap of record; superseded roadmaps/plans are frozen in [archive/](archive/README.md)
+- [SaaS beta product requirements](saas/PRODUCT_REQUIREMENTS.md) — target contract, not an implementation claim
+- [Assurance classes and provenance](saas/ASSURANCE_CLASSES.md) — native, federated, and observed evidence remain distinct
+- [Open-core and local-safety boundary](saas/OPEN_CORE_BOUNDARY.md) — target entitlement boundary; not a license change
+- [Proposed entitlement and metering matrix](saas/ENTITLEMENT_AND_METERING_MATRIX.md) — future contract; no current pricing or billing claim
 - [GLOSSARY](GLOSSARY.md)
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)
