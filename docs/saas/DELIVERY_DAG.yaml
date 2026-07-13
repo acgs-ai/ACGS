@@ -1,0 +1,2202 @@
+{
+  "schema": {
+    "name": "acgs-saas-delivery-dag",
+    "version": 3,
+    "updated": "2026-07-13",
+    "source_of_truth": "docs/ROADMAP.md",
+    "serialization": "JSON, a strict YAML 1.2 subset"
+  },
+  "program": {
+    "id": "ACGS-SAAS-BETA",
+    "title": "Evidence-backed SaaS beta program",
+    "objective": "Build the strongest defensible beta around the open local execution plane, managed control plane, and asynchronous evidence and assurance plane without claiming deployment, customers, certification, or production readiness.",
+    "canonical_journey": "Create organization, project, and environment; enroll a real local gate; activate and sync a signed policy; prove ALLOW once, DENY zero, separated ESCALATE approval once; ingest signed evidence; display assurance provenance; export and verify a proof pack offline.",
+    "safety_invariant": "No valid Decision Receipt, no side effect.",
+    "termination_rule": "Beta code-complete requires every mandatory non-external node and the clean-environment journey to pass its evidence gate; production launch and external validation remain separate.",
+    "worktree_locator": "git worktree list --porcelain",
+    "survey_snapshot": {
+      "baseline_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96",
+      "github_observed_at": "2026-07-13T09:59:25Z",
+      "repository": "dislovelhl/ACGS",
+      "pull_requests": [
+        {
+          "number": 308,
+          "state": "OPEN",
+          "merged": false,
+          "disposition": "active_baseline_candidate",
+          "url": "https://github.com/dislovelhl/ACGS/pull/308"
+        },
+        {
+          "number": 267,
+          "state": "CLOSED",
+          "merged": false,
+          "disposition": "superseded_closed_unmerged",
+          "url": "https://github.com/dislovelhl/ACGS/pull/267"
+        }
+      ]
+    },
+    "completion_policy": {
+      "beta_code_complete": {
+        "required_selector": "mandatory == true and completion_scope == non_external",
+        "satisfied_selector": "status == completed and implementation_state == built and evidence_state in verified evidence states",
+        "external_only_excluded": true
+      },
+      "production_launch": "Not mechanically implied by beta code completion; requires the external-only nodes and explicit owner authorization."
+    }
+  },
+  "vocabularies": {
+    "phases": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "risk_classes": [
+      "green",
+      "yellow",
+      "red"
+    ],
+    "statuses": [
+      "planned",
+      "ready",
+      "in_progress",
+      "blocked",
+      "completed",
+      "superseded"
+    ],
+    "implementation_states": [
+      "built",
+      "partial",
+      "missing",
+      "conflicting"
+    ],
+    "evidence_states": [
+      "unverified",
+      "local_verified",
+      "independently_reviewed",
+      "external_verified",
+      "historical_only"
+    ],
+    "acceptance_states": [
+      "built",
+      "partial",
+      "missing",
+      "conflicting"
+    ],
+    "matrix_evidence_states": [
+      "none",
+      "current_local",
+      "independently_reviewed",
+      "external",
+      "historical_only"
+    ],
+    "blocker_states": [
+      "open",
+      "resolved"
+    ],
+    "completion_scopes": [
+      "non_external",
+      "external_only"
+    ]
+  },
+  "external_blocker_packets": [
+    {
+      "id": "EXT-CREDENTIALS",
+      "title": "Hosted identity, cloud, and provider credentials",
+      "owner": "repository owner or delegated infrastructure administrator",
+      "state": "open",
+      "exact_need": "Short-lived staging credentials, provider tenant access, and approved secret material.",
+      "why_not_assumed": "Agents cannot create, disclose, or arm production or paid-provider credentials.",
+      "validation_after_unblock": "Run the approved staging preflight and credential-bound integration gates.",
+      "downstream_nodes": [
+        "G601"
+      ]
+    },
+    {
+      "id": "EXT-SPEND",
+      "title": "Paid infrastructure and service spend",
+      "owner": "budget owner",
+      "state": "open",
+      "exact_need": "Written approval for paid cloud, KMS, object-retention, witness, billing, or assessment resources.",
+      "why_not_assumed": "Paid resources and assessors create financial commitments outside engineering authority.",
+      "validation_after_unblock": "Run approved capacity, retention, witness, billing, and assessment checks.",
+      "downstream_nodes": [
+        "G601",
+        "G704"
+      ]
+    },
+    {
+      "id": "EXT-LEGAL",
+      "title": "Licensing and commercial or privacy decisions",
+      "owner": "repository owner with legal counsel",
+      "state": "open",
+      "exact_need": "Owner-reviewed open-core, licensing, privacy, terms, and commercial decisions.",
+      "why_not_assumed": "Apache-2.0 boundaries and legal promises cannot be changed by engineering agents.",
+      "validation_after_unblock": "Reconcile module boundaries and public wording to the signed legal decision.",
+      "downstream_nodes": [
+        "G503",
+        "G606",
+        "G704"
+      ]
+    },
+    {
+      "id": "EXT-AUDITOR",
+      "title": "Independent assessor participation",
+      "owner": "independent assessor selected by the repository owner",
+      "state": "open",
+      "exact_need": "Independent proof-pack and security assessment with findings and retests.",
+      "why_not_assumed": "Internal tests and agent review are not independent assessment.",
+      "validation_after_unblock": "Record scope, findings, remediation, retest, and residual risk.",
+      "downstream_nodes": [
+        "G701",
+        "G703"
+      ]
+    },
+    {
+      "id": "EXT-CUSTOMERS",
+      "title": "Design-partner participation",
+      "owner": "product owner and participating customers",
+      "state": "open",
+      "exact_need": "Three paid partners with real fail-closed dispatcher paths and authorized outcome evidence.",
+      "why_not_assumed": "Customer use, payment, production wiring, and ROI cannot be fabricated.",
+      "validation_after_unblock": "Capture authorized wiring evidence, measurements, and limitations.",
+      "downstream_nodes": [
+        "G702",
+        "G704"
+      ]
+    },
+    {
+      "id": "EXT-DEPLOY-APPROVAL",
+      "title": "Deployment authority",
+      "owner": "repository owner and environment operator",
+      "state": "open",
+      "exact_need": "Explicit target, change window, rollback owner, on-call owner, and deployment approval.",
+      "why_not_assumed": "Applying infrastructure or deploying code is a privileged irreversible action.",
+      "validation_after_unblock": "Execute approved deploy, smoke, rollback, observability, and recovery runbooks.",
+      "downstream_nodes": [
+        "G601",
+        "G606",
+        "G704"
+      ]
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC-SECURITY",
+      "outcome": "Invalid, stale, replayed, mismatched, revoked, or self-approved artifacts execute zero side effects.",
+      "node_refs": [
+        "G105",
+        "G203",
+        "G301",
+        "G305",
+        "G605"
+      ]
+    },
+    {
+      "id": "AC-JOURNEY",
+      "outcome": "The canonical journey passes across local gate, API, worker, stores, witness, verifier, and console.",
+      "node_refs": [
+        "G204",
+        "G304",
+        "G305",
+        "G407"
+      ]
+    },
+    {
+      "id": "AC-RELIABILITY",
+      "outcome": "Migration, concurrency, retry, outage, restore, and capacity gates meet frozen targets.",
+      "node_refs": [
+        "G101",
+        "G106",
+        "G203",
+        "G603",
+        "G604"
+      ]
+    },
+    {
+      "id": "AC-COMMERCIAL",
+      "outcome": "Entitlements and usage reconcile without weakening or charging for local enforcement.",
+      "node_refs": [
+        "G502",
+        "G503"
+      ]
+    },
+    {
+      "id": "AC-CLAIMS",
+      "outcome": "Claims distinguish implementation, current evidence, deployment, customers, and external validation.",
+      "node_refs": [
+        "G004",
+        "G006",
+        "G701",
+        "G702",
+        "G703",
+        "G704"
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": "G005",
+      "phase": 0,
+      "title": "Canonical resumable program record",
+      "buyer_user_outcome": "Maintainers can resume work from one validated DAG and acceptance matrix.",
+      "repo_owner": "root program governance",
+      "dependencies": [],
+      "consumers": [
+        "G006",
+        "G030B",
+        "G004"
+      ],
+      "likely_interfaces_files": [
+        "docs/saas/DELIVERY_DAG.yaml",
+        "docs/saas/ACCEPTANCE_MATRIX.md",
+        "tests/docs/test_saas_delivery_dag.py"
+      ],
+      "risk_class": "green",
+      "positive_tests": [
+        "Schema, dependency, snapshot, matrix, and mutation regressions pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unsupported or historical evidence cannot promote a node or matrix row."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs/test_saas_delivery_dag.py --import-mode=importlib -q",
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Independently reviewed docs/saas/DELIVERY_DAG.yaml, docs/saas/ACCEPTANCE_MATRIX.md, and tests/docs/test_saas_delivery_dag.py with targeted and full documentation validation",
+      "branch": "beta/p0-program-record-005",
+      "worktree": null,
+      "pr": null,
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
+      "blocker": null,
+      "next_safe_action": "Preserve the reviewed program-record contract while executing G006 from the frozen baseline.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G006",
+      "phase": 0,
+      "title": "Frozen current-state survey",
+      "buyer_user_outcome": "Maintainers have a timestamped built, partial, missing, and conflicting baseline tied to current GitHub state.",
+      "repo_owner": "root architecture and claims",
+      "dependencies": [
+        "G005"
+      ],
+      "consumers": [
+        "G007",
+        "G008"
+      ],
+      "likely_interfaces_files": [
+        "docs/CLAIMS.md",
+        "docs/SECURITY_MODEL.md",
+        "docs/ROADMAP.md",
+        "GitHub PRs, issues, checks, and releases"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "Every accepted capability cites current code plus executable evidence."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Hypotheses, stale branches, and closed-unmerged PRs cannot count as current implementation."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Timestamped current-state evidence matrix",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey code, tests, GitHub, CI, releases, deployment evidence, and overlapping work from the frozen baseline.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G007",
+      "phase": 0,
+      "title": "Product contract, positioning, and assurance classes",
+      "buyer_user_outcome": "Buyers can distinguish the three product planes, native, federated, and observed evidence, and claim-safe differentiation.",
+      "repo_owner": "root product and claims",
+      "dependencies": [
+        "G006"
+      ],
+      "consumers": [
+        "G008"
+      ],
+      "likely_interfaces_files": [
+        "docs/saas/PRODUCT_REQUIREMENTS.md",
+        "docs/saas/ASSURANCE_CLASSES.md",
+        "docs/saas/OPEN_CORE_BOUNDARY.md",
+        "docs/saas/ENTITLEMENT_AND_METERING_MATRIX.md",
+        "docs/ROADMAP.md",
+        "docs/CLAIMS.md"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "PRODUCT_REQUIREMENTS.md, ASSURANCE_CLASSES.md, OPEN_CORE_BOUNDARY.md, and ENTITLEMENT_AND_METERING_MATRIX.md reconcile to the frozen survey and claim vocabulary."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Competitors, observed evidence, or proposed managed features cannot be misrepresented."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Reviewed Phase-0 product requirements, assurance classes, open-core boundary, and entitlement/metering matrix",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Author the four named canonical artifacts from G006 evidence without adding duplicate planning systems or commercial commitments.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G008",
+      "phase": 0,
+      "title": "Architecture, threat model, targets, and owner ADRs",
+      "buyer_user_outcome": "Implementers have frozen trust boundaries, data classes, beta envelope, SLO/RPO/RTO assumptions, and build-vs-buy decisions.",
+      "repo_owner": "root architecture and security",
+      "dependencies": [
+        "G006",
+        "G007"
+      ],
+      "consumers": [
+        "G101"
+      ],
+      "likely_interfaces_files": [
+        "docs/saas/ARCHITECTURE.md",
+        "docs/saas/THREAT_MODEL.md",
+        "docs/saas/API_AND_DATA_CONTRACT.md",
+        "docs/saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md",
+        "docs/adr/saas-identity-oidc-saml-scim-build-vs-buy.md",
+        "docs/adr/saas-kms-build-vs-buy.md",
+        "docs/adr/saas-object-retention-build-vs-buy.md",
+        "docs/adr/saas-independent-witness-build-vs-buy.md",
+        "docs/adr/saas-billing-build-vs-buy.md",
+        "docs/adr/saas-commercial-module-boundary.md",
+        "docs/SECURITY_MODEL.md"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "ARCHITECTURE.md, THREAT_MODEL.md, API_AND_DATA_CONTRACT.md, migration/versioning/compatibility policy, and all six focused build-vs-buy ADRs cover the frozen trust, data, outage, and ownership decisions."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Legal, licensing, spend, or provider decisions cannot be silently assumed."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Reviewed Phase-0 architecture, threat, API/data, compatibility policy, and focused build-vs-buy ADR packet",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Author and independently review the named architecture artifacts and focused ADRs; leave owner-only decisions explicitly open.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G030B",
+      "phase": 0,
+      "title": "PR 308 baseline reconciliation",
+      "buyer_user_outcome": "G004 proof work uses a current accepted membrane baseline rather than overlapping or stale changes.",
+      "repo_owner": "root integration evidence",
+      "dependencies": [
+        "G005"
+      ],
+      "consumers": [
+        "G004"
+      ],
+      "likely_interfaces_files": [
+        "GitHub PR 308",
+        "GitHub PR 267",
+        "worktree and branch inventory"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "PR 308 disposition and exact accepted source identity are recorded."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Closed-unmerged PR 267 or an overlapping dirty worktree cannot become authoritative evidence."
+      ],
+      "validation_commands": [
+        "gh pr view 308 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
+        "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
+        "git diff --check"
+      ],
+      "evidence_artifact": "PR 308 baseline reconciliation packet",
+      "branch": null,
+      "worktree": null,
+      "pr": "#308",
+      "status": "blocked",
+      "implementation_state": "conflicting",
+      "evidence_state": "unverified",
+      "blocker": "PR #308 is open; PR #267 is closed unmerged and superseded.",
+      "next_safe_action": "Resolve PR #308 through normal review and record the exact accepted commit; never reuse PR #267 as current evidence.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G031",
+      "phase": 0,
+      "title": "Claims and conformance corpus rebuild",
+      "buyer_user_outcome": "Reviewers have a current provenance-labelled corpus input for rebuilding G004.",
+      "repo_owner": "root claims and evidence corpus",
+      "dependencies": [],
+      "consumers": [
+        "G004"
+      ],
+      "likely_interfaces_files": [
+        "docs/CLAIMS.md",
+        "conformance corpus",
+        "proof manifests"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Reviewed corpus records reconcile to their recorded code and test identities."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unverifiable or stale records cannot count as current G004 proof."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Reviewed local corpus from PR #261",
+      "branch": "beta/p0-evidence-corpus-003d",
+      "worktree": null,
+      "pr": "#261",
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": null,
+      "next_safe_action": "Preserve the reviewed corpus identity as a dependency input; do not broaden its claim.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G004",
+      "phase": 0,
+      "title": "Authoritative fail-closed gate proof rebuild",
+      "buyer_user_outcome": "Evaluators receive a current proof bound to the accepted membrane baseline and current corpus.",
+      "repo_owner": "root release evidence and gove-zone",
+      "dependencies": [
+        "G005",
+        "G030B",
+        "G031"
+      ],
+      "consumers": [
+        "G105"
+      ],
+      "likely_interfaces_files": [
+        "packages/gove-zone",
+        "evidence/g004",
+        "proof attempt ledger"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Current signed ALLOW executes once and the accepted corpus verifies."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "DENY, ESCALATE, invalid receipt, stale baseline, and failed setup execute zero side effects."
+      ],
+      "validation_commands": [
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "test -f evidence/g004/manifest.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "New accepted-baseline G004 proof; prior material remains historical only",
+      "branch": "beta/p0-gates-003",
+      "worktree": null,
+      "pr": null,
+      "status": "blocked",
+      "implementation_state": "conflicting",
+      "evidence_state": "historical_only",
+      "blocker": "PR #308 remains open, so no accepted current membrane baseline is available for rebuilding G004 against the reviewed G031 claims and conformance corpus.",
+      "next_safe_action": "After PR #308 resolves and the accepted current baseline is recorded, rebuild G004 using the reviewed G031 corpus rather than reuse historical output.",
+      "historical_evidence": {
+        "disposition": "superseded",
+        "usable_as_current_verification": false,
+        "source_pr": "#267",
+        "reason": "PR #267 closed unmerged; retained material is forensic history, not current verification."
+      },
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G101",
+      "phase": 1,
+      "title": "Alembic migrations and project/environment scope",
+      "buyer_user_outcome": "Existing organization data upgrades safely into organization, project, and environment scope.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G008"
+      ],
+      "consumers": [
+        "G102",
+        "G103"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "Alembic migrations"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Clean install, current-schema upgrade, rollback, and backup-before-destructive tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Failed or partial migration cannot lose or cross-scope tenant data."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Migration compatibility report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the alembic migrations and project/environment scope contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102",
+      "phase": 1,
+      "title": "Versioned API and error contract",
+      "buyer_user_outcome": "API consumers receive stable /v1 errors, pagination, IDs, idempotency, limits, and asynchronous export contracts.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G103",
+        "G104",
+        "G401"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "OpenAPI contract"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "OpenAPI drift, pagination, idempotency, payload-limit, and export-job tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Duplicate, oversized, or malformed requests cannot create duplicate mutations."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Versioned OpenAPI and contract-test artifact",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the versioned api and error contract contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G103",
+      "phase": 1,
+      "title": "Tenant-scoped repositories and database isolation",
+      "buyer_user_outcome": "Every API and worker data path enforces tenant, project, and environment boundaries.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101",
+        "G102"
+      ],
+      "consumers": [
+        "G104",
+        "G105",
+        "G302"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "PostgreSQL constraints and RLS"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Cross-tenant API, repository, worker, export, and PostgreSQL tests fail closed."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Tenant context omission or spoofing cannot read, infer, or mutate another tenant."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Tenant-boundary adversarial test report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the tenant-scoped repositories and database isolation contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G104",
+      "phase": 1,
+      "title": "Service credentials and browser BFF boundary",
+      "buyer_user_outcome": "Workloads use scoped rotatable credentials and browsers use server-side sessions without embedded service keys.",
+      "repo_owner": "packages/acgs-control-plane and acgi-ai",
+      "dependencies": [
+        "G102",
+        "G103"
+      ],
+      "consumers": [
+        "G105",
+        "G401",
+        "G501"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "acgi-ai",
+        "session and credential contracts"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Credential rotation, expiry, revocation, scope, environment, rate-limit, CSRF, and session tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Raw keys, revoked credentials, agent-controlled identity, or browser-held service keys cannot authorize mutations."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Credential and browser-auth boundary report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the service credentials and browser bff boundary contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G105",
+      "phase": 1,
+      "title": "Signed canonical governance path and trust registry",
+      "buyer_user_outcome": "Production control-plane mutations use signed Decision Receipts, bound expectations, expiry, and single-use consumption.",
+      "repo_owner": "packages/acgs-control-plane and packages/gove-zone",
+      "dependencies": [
+        "G103",
+        "G104",
+        "G004"
+      ],
+      "consumers": [
+        "G106",
+        "G202",
+        "G305"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "packages/gove-zone",
+        "trust registry"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Signed mutation, validator separation, rotation, revocation, expiry, and single-use integration tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Missing trust or any wrong binding executes and commits zero controlled mutations."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Canonical mutation membrane proof",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the signed canonical governance path and trust registry contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G106",
+      "phase": 1,
+      "title": "Transactional outbox and dependency readiness",
+      "buyer_user_outcome": "SQL, evidence, and worker state reconcile atomically and readiness reports required dependencies.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G105"
+      ],
+      "consumers": [
+        "G201",
+        "G601",
+        "G602"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane",
+        "outbox worker",
+        "health endpoints"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Commit failure, retry, worker restart, reconciliation, liveness, and readiness tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Audit append, outbox delivery, or side effect cannot survive an incorrect rolled-back state."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Failure-atomicity and readiness report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the transactional outbox and dependency readiness contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G201",
+      "phase": 2,
+      "title": "Environment-bound gate enrollment",
+      "buyer_user_outcome": "Operators enroll, rotate, revoke, and monitor a real gate with one-time bootstrap identity.",
+      "repo_owner": "gove-zone and control plane",
+      "dependencies": [
+        "G106"
+      ],
+      "consumers": [
+        "G202",
+        "G205",
+        "G301",
+        "G401"
+      ],
+      "likely_interfaces_files": [
+        "packages/gove-zone",
+        "packages/acgs-control-plane",
+        "gate enrollment API"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Bootstrap single-use, environment binding, rotation, revocation, heartbeat, and capability tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Reused bootstrap, revoked gate, or wrong-environment identity cannot sync or ingest."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Gate enrollment conformance artifact",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the environment-bound gate enrollment contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G202",
+      "phase": 2,
+      "title": "Signed policy lifecycle and exactly-one-active invariant",
+      "buyer_user_outcome": "Operators review, activate, stage, roll back, stale, supersede, and revoke signed environment-bound policies.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G105",
+        "G201"
+      ],
+      "consumers": [
+        "G203",
+        "G305",
+        "G403"
+      ],
+      "likely_interfaces_files": [
+        "policy registry",
+        "signed bundle contract",
+        "database constraints"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Signature, lifecycle, locked concurrent activation, diff, simulation, rollout, and rollback tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unsigned, stale, revoked, wrong-tenant, incompatible, or concurrent second-active policy cannot activate."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Signed policy lifecycle test report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the signed policy lifecycle and exactly-one-active invariant contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G203",
+      "phase": 2,
+      "title": "Policy sync and bounded degraded mode",
+      "buyer_user_outcome": "Local gates use signed last-known-good policy only inside explicit time and spool limits without remote allow dependency.",
+      "repo_owner": "gove-zone and control plane",
+      "dependencies": [
+        "G202"
+      ],
+      "consumers": [
+        "G204",
+        "G205",
+        "G301",
+        "G602"
+      ],
+      "likely_interfaces_files": [
+        "policy sync API",
+        "local policy cache",
+        "degraded-mode contract"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "ETag/cursor sync, cache verification, expiry, outage window, and spool-capacity tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Expired or revoked cache, trust change, new approval, or exhausted bounds cannot allow."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Hosted-outage and policy-sync proof",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the policy sync and bounded degraded mode contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G204",
+      "phase": 2,
+      "title": "Dispatcher wiring and conformance kit",
+      "buyer_user_outcome": "Integrators can prove each claimed gateway surface reaches the real execution membrane.",
+      "repo_owner": "packages/gove-zone",
+      "dependencies": [
+        "G203"
+      ],
+      "consumers": [
+        "G205",
+        "G206",
+        "G702"
+      ],
+      "likely_interfaces_files": [
+        "UniversalGateway",
+        "dispatcher integrations",
+        "generated conformance kit"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Positive and negative dispatcher-level tests plus signed wiring attestation pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Direct-handler-only, raw-tool bypass, or unwired registration cannot be marked proven-wired."
+      ],
+      "validation_commands": [
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Dispatcher wiring attestation and conformance output",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the dispatcher wiring and conformance kit contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G205",
+      "phase": 2,
+      "title": "Fleet status with proof semantics",
+      "buyer_user_outcome": "Operators distinguish registered, online, policy-current, proven-wired, and evidence-current gates.",
+      "repo_owner": "control plane and acgi-ai",
+      "dependencies": [
+        "G201",
+        "G203",
+        "G204"
+      ],
+      "consumers": [
+        "G402"
+      ],
+      "likely_interfaces_files": [
+        "fleet API",
+        "fleet status model",
+        "acgi-ai fleet contract"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "State transition, stale heartbeat, policy currency, wiring, and evidence-lag contract tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Registration or heartbeat alone cannot display enforcement proof."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Fleet-state contract artifact",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the fleet status with proof semantics contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G206",
+      "phase": 2,
+      "title": "DecisionSourceAdapter and assurance provenance",
+      "buyer_user_outcome": "Upstream decisions can be federated without being silently upgraded to native authorization.",
+      "repo_owner": "gove-zone adapters and assurance plane",
+      "dependencies": [
+        "G204"
+      ],
+      "consumers": [
+        "G301"
+      ],
+      "likely_interfaces_files": [
+        "DecisionSourceAdapter",
+        "ACS/AGT",
+        "AgentCore",
+        "OPA/Cedar",
+        "Galileo",
+        "MCP/OpenTelemetry"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Adapter authentication, countersignature, provenance retention, and class separation tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Federated or observed inputs cannot become native or execute without the documented local gate."
+      ],
+      "validation_commands": [
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Cross-platform provenance conformance corpus",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the decisionsourceadapter and assurance provenance contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G301",
+      "phase": 3,
+      "title": "Authenticated evidence ingestion and durable spool",
+      "buyer_user_outcome": "Gates upload signed evidence asynchronously with idempotency, ordering, replay defense, and bounded local durability.",
+      "repo_owner": "managed assurance plane and gove-zone",
+      "dependencies": [
+        "G201",
+        "G203",
+        "G206"
+      ],
+      "consumers": [
+        "G302",
+        "G305",
+        "G306",
+        "G502",
+        "G604"
+      ],
+      "likely_interfaces_files": [
+        "evidence ingestion API",
+        "local spool",
+        "ingestion worker"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Signature, sequence, duplicate, batch, skew, retry, restart, and capacity tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Tamper, replay, wrong tenant/environment, overflow, or unauthenticated input cannot be accepted."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Ingestion and spool reliability report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the authenticated evidence ingestion and durable spool contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G302",
+      "phase": 3,
+      "title": "Tenant-isolated retained evidence store",
+      "buyer_user_outcome": "Verified metadata and sealed artifacts survive multi-instance operation with retention, hold, deletion, and recovery policy.",
+      "repo_owner": "managed assurance plane",
+      "dependencies": [
+        "G103",
+        "G301"
+      ],
+      "consumers": [
+        "G303",
+        "G304",
+        "G306",
+        "G603"
+      ],
+      "likely_interfaces_files": [
+        "PostgreSQL evidence metadata",
+        "object storage provider",
+        "retention and legal hold"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Storage isolation, encryption metadata, retention, legal hold, deletion, and recovery tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Local disk, cross-tenant object keys, or failed sealing cannot become system-of-record evidence."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Retained-evidence storage and isolation report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the tenant-isolated retained evidence store contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G303",
+      "phase": 3,
+      "title": "Independent checkpoints and witness",
+      "buyer_user_outcome": "A single managed writer cannot silently rewrite evidence and its only trust anchor.",
+      "repo_owner": "managed assurance plane",
+      "dependencies": [
+        "G302"
+      ],
+      "consumers": [
+        "G304",
+        "G306",
+        "G603"
+      ],
+      "likely_interfaces_files": [
+        "checkpoint log",
+        "witness provider",
+        "reconciliation worker"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Monotonic checkpoint, witness retry, equivocation, outage, and recovery tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Regressed, missing, conflicting, or self-only anchors cannot verify independently."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Independent witness verification artifact",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the independent checkpoints and witness contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G304",
+      "phase": 3,
+      "title": "Signed proof packs and offline verification",
+      "buyer_user_outcome": "Auditors verify provenance, signatures, chains, equivalence, manifest, and checkpoint without trusting the service.",
+      "repo_owner": "assurance plane and proofpack verifier",
+      "dependencies": [
+        "G302",
+        "G303"
+      ],
+      "consumers": [
+        "G404",
+        "G701"
+      ],
+      "likely_interfaces_files": [
+        "proof-pack exporter",
+        "offline verifier",
+        "export jobs"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Valid pack verifies offline and each signature, chain, equivalence, manifest, and checkpoint tamper fails."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unkeyed internal hashes alone cannot be represented as signed or independently witnessed proof."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest packages/acgs-proofpack-verifier/tests --import-mode=importlib -q",
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Offline-verifiable signed proof pack",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the signed proof packs and offline verification contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G305",
+      "phase": 3,
+      "title": "Separated approval and exactly-once resume",
+      "buyer_user_outcome": "ESCALATE parks until distinct authorized approvers satisfy policy and resume exactly once.",
+      "repo_owner": "control plane and gove-zone",
+      "dependencies": [
+        "G105",
+        "G202",
+        "G301"
+      ],
+      "consumers": [
+        "G306",
+        "G405",
+        "G604"
+      ],
+      "likely_interfaces_files": [
+        "PendingApproval",
+        "approval API",
+        "resume executor"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Approve, reject, expire, cancel, quorum, race, retry, and one-time resume tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Self-approval, wrong role, insufficient quorum, expiry, conflict, or duplicate resume executes zero extra side effects."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Approval race and forbidden-side-effect proof",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the separated approval and exactly-once resume contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G306",
+      "phase": 3,
+      "title": "Integrity alerts and signed outbound delivery",
+      "buyer_user_outcome": "Operators receive tenant-safe alerts and signed idempotent webhook/SIEM delivery evidence.",
+      "repo_owner": "assurance plane",
+      "dependencies": [
+        "G301",
+        "G302",
+        "G303",
+        "G305"
+      ],
+      "consumers": [
+        "G406",
+        "G602"
+      ],
+      "likely_interfaces_files": [
+        "alert rules",
+        "webhook worker",
+        "SIEM adapters",
+        "dead-letter queue"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Alert thresholds, signature, rotation, retry, replay, dead-letter, and tenant-routing tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Secret leakage, replay, wrong tenant, or delivery failure cannot be recorded as successful delivery."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Alert and webhook delivery evidence",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the integrity alerts and signed outbound delivery contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G401",
+      "phase": 4,
+      "title": "Console contract, session, and onboarding",
+      "buyer_user_outcome": "A role-aware browser user signs in and creates organization, project, and environment through real APIs.",
+      "repo_owner": "acgi-ai and control plane",
+      "dependencies": [
+        "G102",
+        "G104",
+        "G201"
+      ],
+      "consumers": [
+        "G402",
+        "G403",
+        "G404",
+        "G405",
+        "G406",
+        "G501"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai",
+        "generated TypeScript client",
+        "browser session API"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "OpenAPI/client drift and onboarding browser tests pass without production fixture fallback."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Forbidden, expired-session, duplicate, or offline mutations cannot display success."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:contract",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Browser onboarding trace",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console contract, session, and onboarding contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G402",
+      "phase": 4,
+      "title": "Console gate and fleet operations",
+      "buyer_user_outcome": "Operators enroll gates and inspect registered, online, policy-current, proven-wired, and evidence-current states.",
+      "repo_owner": "acgi-ai",
+      "dependencies": [
+        "G205",
+        "G401"
+      ],
+      "consumers": [
+        "G407"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai gate and fleet routes"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "Fleet loading, empty, partial, stale, forbidden, and responsive browser states pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Registration cannot be rendered as enforcement proof."
+      ],
+      "validation_commands": [
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Fleet browser and accessibility evidence",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console gate and fleet operations contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G403",
+      "phase": 4,
+      "title": "Console policy operations",
+      "buyer_user_outcome": "Authorized users edit, simulate, review, activate, stage, roll back, stale, and revoke policies with canonical diff.",
+      "repo_owner": "acgi-ai",
+      "dependencies": [
+        "G202",
+        "G401"
+      ],
+      "consumers": [
+        "G407"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai policy routes"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Role, diff, conflict, lifecycle, rollout, and rollback browser tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unsigned, stale, conflicting, forbidden, or wrong-environment activation cannot display success."
+      ],
+      "validation_commands": [
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Policy lifecycle browser trace",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console policy operations contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G404",
+      "phase": 4,
+      "title": "Console evidence and assurance explorer",
+      "buyer_user_outcome": "Users distinguish native, federated, and observed provenance and verify retained evidence details and exports.",
+      "repo_owner": "acgi-ai",
+      "dependencies": [
+        "G304",
+        "G401"
+      ],
+      "consumers": [
+        "G407"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai evidence routes",
+        "proof export UI"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "Assurance badges, verification failures, pagination, export, and offline-instruction tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Observed or federated evidence cannot render as native trust."
+      ],
+      "validation_commands": [
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Evidence explorer browser trace",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console evidence and assurance explorer contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G405",
+      "phase": 4,
+      "title": "Console approval inbox",
+      "buyer_user_outcome": "Separated approvers inspect, approve, reject, and observe exactly-once resume outcomes.",
+      "repo_owner": "acgi-ai",
+      "dependencies": [
+        "G305",
+        "G401"
+      ],
+      "consumers": [
+        "G407"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai approval routes"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Role, quorum, race, expiry, conflict, keyboard, and resume-result browser tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Requester self-approval or stale approval cannot become executable success."
+      ],
+      "validation_commands": [
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Approval browser and race trace",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console approval inbox contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G406",
+      "phase": 4,
+      "title": "Console administration and immutable activity",
+      "buyer_user_outcome": "Authorized administrators manage members, roles, credentials, providers, webhooks, retention, usage, and activity without secret redisplay.",
+      "repo_owner": "acgi-ai and control plane",
+      "dependencies": [
+        "G306",
+        "G401"
+      ],
+      "consumers": [
+        "G407",
+        "G501",
+        "G502"
+      ],
+      "likely_interfaces_files": [
+        "acgi-ai admin routes",
+        "administrative activity API"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Role, secret-once, activity, forbidden, and tenant-bound admin tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Secrets, cross-tenant records, or unauthorized mutation cannot enter browser state or logs."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Administrative activity and secret-handling trace",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the console administration and immutable activity contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G407",
+      "phase": 4,
+      "title": "One-command stack, E2E journey, and operator DX",
+      "buyer_user_outcome": "A clean evaluator reaches verified ALLOW and DENY within fifteen minutes and can follow tested runbooks.",
+      "repo_owner": "root DX and acgi-ai",
+      "dependencies": [
+        "G402",
+        "G403",
+        "G404",
+        "G405",
+        "G406"
+      ],
+      "consumers": [
+        "G601",
+        "G606",
+        "G702"
+      ],
+      "likely_interfaces_files": [
+        "local stack",
+        "browser E2E",
+        "quickstart",
+        "upgrade and incident runbooks"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "Clean-stack canonical and negative journeys, accessibility, snippets, and time-to-proof measurement pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Demo mode cannot be mistaken for production and a failed step cannot be hidden by fixtures."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "make verify",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Timed clean-environment end-to-end evidence",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the one-command stack, e2e journey, and operator dx contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G501",
+      "phase": 5,
+      "title": "Human and workload identity lifecycle",
+      "buyer_user_outcome": "Organizations use real OIDC and tested invite, session, role mapping, review, and deprovisioning controls distinct from workload identity.",
+      "repo_owner": "control plane identity",
+      "dependencies": [
+        "G104",
+        "G401",
+        "G406"
+      ],
+      "consumers": [
+        "G502",
+        "G605"
+      ],
+      "likely_interfaces_files": [
+        "OIDC provider",
+        "identity lifecycle",
+        "service accounts"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "OIDC, invite, domain, session, posture, mapping, access-review, and deprovisioning tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Deprovisioned, spoofed, cross-org, or workload-as-human identity cannot authorize."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Identity-provider integration report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the human and workload identity lifecycle contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G502",
+      "phase": 5,
+      "title": "Server-side entitlements and evidence-derived usage",
+      "buyer_user_outcome": "Hosted plans and immutable usage apply server-side without disabling open local safety or incentivizing omitted evidence.",
+      "repo_owner": "control plane commercial operations",
+      "dependencies": [
+        "G301",
+        "G406",
+        "G501"
+      ],
+      "consumers": [
+        "G503",
+        "G704"
+      ],
+      "likely_interfaces_files": [
+        "entitlement catalog",
+        "usage ledger",
+        "reconciliation worker"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Entitlement, workload, evidence-byte, retention, operation, reconciliation, and UI provenance tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "UI-only limits, local-gate disabling, dropped required evidence, or untraceable usage cannot occur."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Accepted-evidence to usage reconciliation ledger",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the server-side entitlements and evidence-derived usage contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G503",
+      "phase": 5,
+      "title": "Billing adapter in test mode",
+      "buyer_user_outcome": "Billing webhook and subscription state reconcile idempotently while plan failure never weakens local enforcement.",
+      "repo_owner": "control plane billing",
+      "dependencies": [
+        "G502"
+      ],
+      "consumers": [
+        "G601",
+        "G604",
+        "G605",
+        "G704"
+      ],
+      "likely_interfaces_files": [
+        "billing provider adapter",
+        "billing webhook",
+        "test checkout and portal"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Signature, replay, idempotency, invoice, grace, limit, suspension, and reconciliation tests pass in test mode."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Tampered webhook, duplicate charge state, live charge, or suspension cannot weaken the gate or corrupt evidence."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Governed billing test-mode reconciliation report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-LEGAL must resolve before commercial commitments; real charges remain unauthorized.",
+      "next_safe_action": "Survey and freeze the billing adapter in test mode contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G601",
+      "phase": 6,
+      "title": "Supply chain and approved deployment profile",
+      "buyer_user_outcome": "Artifacts are pinned, non-root, scanned, and deployable through existing approved workflows with short-lived identity.",
+      "repo_owner": "platform security and CI",
+      "dependencies": [
+        "G106",
+        "G407",
+        "G503"
+      ],
+      "consumers": [
+        "G603",
+        "G606"
+      ],
+      "likely_interfaces_files": [
+        "containers",
+        "CI workflows",
+        "IaC",
+        "SBOM and provenance"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Container, dependency, secret, SBOM, provenance, config, and deployment-contract gates pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Unpinned artifacts, long-lived CI keys, invalid production config, or unauthorized apply cannot proceed."
+      ],
+      "validation_commands": [
+        "make verify",
+        "cd acgi-ai && pnpm run test:container-pins",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Local supply-chain packet; deployment evidence only after approval",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-CREDENTIALS, EXT-SPEND, and EXT-DEPLOY-APPROVAL gate credentialed deployment.",
+      "next_safe_action": "Survey and freeze the supply chain and approved deployment profile contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G602",
+      "phase": 6,
+      "title": "Redacted observability and SLO operations",
+      "buyer_user_outcome": "Operators monitor API, sync, ingestion, approval, export, and verification without leaking arguments or secrets.",
+      "repo_owner": "platform operations",
+      "dependencies": [
+        "G106",
+        "G203",
+        "G306"
+      ],
+      "consumers": [
+        "G604",
+        "G606"
+      ],
+      "likely_interfaces_files": [
+        "logs",
+        "metrics",
+        "traces",
+        "dashboards",
+        "SLO and on-call runbooks"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Redaction, cardinality, trace correlation, alert, SLO, and error-budget tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Secrets, raw arguments, tenant data, or silent dependency failure cannot enter telemetry or readiness success."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Observability and SLO test report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the redacted observability and slo operations contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G603",
+      "phase": 6,
+      "title": "Backup, restore, and disaster recovery",
+      "buyer_user_outcome": "Database, evidence objects, and witness state recover within frozen RPO/RTO assumptions with rollback evidence.",
+      "repo_owner": "platform operations",
+      "dependencies": [
+        "G302",
+        "G303",
+        "G601"
+      ],
+      "consumers": [
+        "G604",
+        "G606"
+      ],
+      "likely_interfaces_files": [
+        "backup",
+        "PITR",
+        "object recovery",
+        "witness recovery",
+        "rollback runbooks"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Backup, PITR, restore, object, witness, and migration rollback drills pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Incomplete or cross-tenant restore, anchor regression, or unverified backup cannot count as recovery."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests -k 'backup or restore or pitr or object_recovery or witness_recovery or migration_rollback' --import-mode=importlib -q",
+        "uv run python scripts/verify_dr_report.py evidence/dr/timestamped-dr-report.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "evidence/dr/timestamped-dr-report.json verified by scripts/verify_dr_report.py, including backup, PITR, object, witness, and migration rollback results",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the backup, restore, and disaster recovery contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G604",
+      "phase": 6,
+      "title": "Multi-instance concurrency, load, and chaos",
+      "buyer_user_outcome": "Beta workload and latency targets hold through duplicates, retries, partitions, backlogs, failover, and dependency outages.",
+      "repo_owner": "platform reliability",
+      "dependencies": [
+        "G301",
+        "G305",
+        "G503",
+        "G602",
+        "G603"
+      ],
+      "consumers": [
+        "G605"
+      ],
+      "likely_interfaces_files": [
+        "PostgreSQL integration",
+        "load suite",
+        "chaos suite",
+        "capacity report"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Concurrent activation, approval, ingestion, webhook, worker restart, partition, failover, and clock-skew tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Failure injection cannot duplicate execution, consumption, billing, or anchors or cross tenants."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+        "git diff --check"
+      ],
+      "evidence_artifact": "p50/p95/p99 capacity and chaos report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the multi-instance concurrency, load, and chaos contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G605",
+      "phase": 6,
+      "title": "Application and tenant-boundary security",
+      "buyer_user_outcome": "Browser, API, workers, storage, telemetry, exports, webhooks, billing, and support tools resist abuse and cross-tenant inference.",
+      "repo_owner": "product security",
+      "dependencies": [
+        "G501",
+        "G503",
+        "G604"
+      ],
+      "consumers": [
+        "G606",
+        "G703"
+      ],
+      "likely_interfaces_files": [
+        "security headers",
+        "CSP",
+        "CSRF",
+        "CORS",
+        "rate limits",
+        "tenant penetration suite"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Header, CSP, CSRF, CORS, abuse, rate-limit, and tenant-boundary penetration tests pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Bypass, injection, confused deputy, secret exposure, or cross-tenant inference cannot succeed."
+      ],
+      "validation_commands": [
+        "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd acgi-ai && pnpm run test:security",
+        "cd acgi-ai && pnpm run test:all",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Independent internal adversarial security report",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": null,
+      "next_safe_action": "Survey and freeze the application and tenant-boundary security contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G606",
+      "phase": 6,
+      "title": "Beta onboarding, incident, privacy, and support readiness",
+      "buyer_user_outcome": "Operators and design partners have tested onboarding, incident, retention, support, and status procedures with legal gaps explicit.",
+      "repo_owner": "product operations",
+      "dependencies": [
+        "G407",
+        "G601",
+        "G602",
+        "G603",
+        "G605"
+      ],
+      "consumers": [
+        "G701",
+        "G702",
+        "G703"
+      ],
+      "likely_interfaces_files": [
+        "beta runbooks",
+        "incident response",
+        "retention and privacy packet",
+        "status preparation"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "Onboarding rehearsal, incident tabletop, retention, support, and blocker-packet checks pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Planned legal text, external review, customer use, or production operation cannot be claimed complete."
+      ],
+      "validation_commands": [
+        "uv run python -m pytest tests/docs --import-mode=importlib -q",
+        "make lint-docs",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Beta operations readiness packet",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "planned",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-LEGAL and EXT-DEPLOY-APPROVAL gate legal and live operational claims.",
+      "next_safe_action": "Survey and freeze the beta onboarding, incident, privacy, and support readiness contract before implementation.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G701",
+      "phase": 7,
+      "title": "Independent proof-pack assessor review",
+      "buyer_user_outcome": "An independent assessor reviews the proof pack, verifier, scope, findings, remediation, and residual risk.",
+      "repo_owner": "independent assessor",
+      "dependencies": [
+        "G304",
+        "G606"
+      ],
+      "consumers": [
+        "G704"
+      ],
+      "likely_interfaces_files": [
+        "external assessment packet",
+        "docs/CLAIMS.md"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Owner records assessor identity, scope, findings, remediation, and residual-risk disposition."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Internal or agent review cannot be labelled independent assessment."
+      ],
+      "validation_commands": [
+        "test -f evidence/external/proofpack-assessment.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Independent proof-pack assessment",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "blocked",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-AUDITOR requires an independent assessor.",
+      "next_safe_action": "Prepare the assessor packet and await owner-selected independent review.",
+      "mandatory": true,
+      "completion_scope": "external_only"
+    },
+    {
+      "id": "G702",
+      "phase": 7,
+      "title": "Three paid design-partner validations",
+      "buyer_user_outcome": "Three partners prove real fail-closed dispatcher wiring and authorize measured outcome evidence.",
+      "repo_owner": "product owner and design partners",
+      "dependencies": [
+        "G204",
+        "G407",
+        "G606"
+      ],
+      "consumers": [
+        "G704"
+      ],
+      "likely_interfaces_files": [
+        "design-partner blocker packets",
+        "claim-safe outcome evidence"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Three owner-approved records include real wiring, environment class, outcomes, and limitations."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Mock, local-only, unpaid, unapproved, or fabricated evidence cannot count as a design partner."
+      ],
+      "validation_commands": [
+        "test -f evidence/external/design-partners.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Three customer-authorized design-partner records",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "blocked",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-CUSTOMERS requires paid participating customers.",
+      "next_safe_action": "Run the next three bounded experiments only with customer and owner authorization.",
+      "mandatory": true,
+      "completion_scope": "external_only"
+    },
+    {
+      "id": "G703",
+      "phase": 7,
+      "title": "Independent security assessment and remediation",
+      "buyer_user_outcome": "An independent security review closes or explicitly accepts all beta P0/P1 findings.",
+      "repo_owner": "independent security assessor and owner",
+      "dependencies": [
+        "G605",
+        "G606"
+      ],
+      "consumers": [
+        "G704"
+      ],
+      "likely_interfaces_files": [
+        "external security scope",
+        "findings",
+        "remediation evidence"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Assessment scope, findings, fixes, retests, and owner residual-risk decisions are recorded."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Internal testing cannot be labelled independent security assessment or certification."
+      ],
+      "validation_commands": [
+        "test -f evidence/external/security-assessment.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Independent security assessment and remediation record",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "blocked",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-AUDITOR requires an independent security assessor.",
+      "next_safe_action": "Freeze the review scope and await owner-selected assessor participation.",
+      "mandatory": true,
+      "completion_scope": "external_only"
+    },
+    {
+      "id": "G704",
+      "phase": 7,
+      "title": "Packaging, retention, pricing, and launch validation",
+      "buyer_user_outcome": "Owners validate buyer workflow and commercial assumptions without publishing prices, charging, or making legal promises prematurely.",
+      "repo_owner": "repository owner, product owner, and counsel",
+      "dependencies": [
+        "G502",
+        "G503",
+        "G701",
+        "G702",
+        "G703"
+      ],
+      "consumers": [],
+      "likely_interfaces_files": [
+        "owner decision packet",
+        "pricing and packaging experiments",
+        "launch checklist"
+      ],
+      "risk_class": "red",
+      "positive_tests": [
+        "Owner-approved packaging, retention, buyer workflow, legal, billing, deployment, and launch decisions are recorded."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "Engineering output cannot authorize licenses, prices, charges, customer claims, certification, or production launch."
+      ],
+      "validation_commands": [
+        "test -f evidence/external/launch-decision.json",
+        "git diff --check"
+      ],
+      "evidence_artifact": "Human-authorized launch decision packet",
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "blocked",
+      "implementation_state": "missing",
+      "evidence_state": "unverified",
+      "blocker": "EXT-LEGAL, EXT-CUSTOMERS, EXT-SPEND, and EXT-DEPLOY-APPROVAL require human authority.",
+      "next_safe_action": "Keep launch blocked while completing every non-external dependency and owner decision packet.",
+      "mandatory": true,
+      "completion_scope": "external_only"
+    }
+  ]
+}
