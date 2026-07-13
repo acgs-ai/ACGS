@@ -77,7 +77,7 @@ def _validate_state_invariants(dag: dict[str, Any]) -> None:
             assert node["evidence_state"] in VERIFIED_EVIDENCE
             assert node["blocker"] is None
             assert all(by_id[dependency]["status"] == "completed" for dependency in node["dependencies"])
-        if node["evidence_state"] in VERIFIED_EVIDENCE:
+        if node["evidence_state"] in {"independently_reviewed", "external_verified"}:
             assert node["status"] == "completed"
             assert node["implementation_state"] == "built"
             assert all(by_id[dependency]["status"] == "completed" for dependency in node["dependencies"])

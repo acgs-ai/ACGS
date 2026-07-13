@@ -224,23 +224,26 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         g101["status"],
         g101["implementation_state"],
         g101["evidence_state"],
-    ) == ("in_progress", "partial", "unverified")
-    assert g101["branch"] == "beta/p1-migrations-scope-101"
-    assert g101["worktree"] == "saas-beta/p1-migrations-scope-101"
-    assert g101["pr"] == 323
+    ) == ("in_progress", "partial", "local_verified")
+    assert g101["branch"] == "beta/p1-g101-postgres-advisory-lock"
+    assert g101["worktree"] == "saas-beta/p1-g101-postgres-advisory-lock"
+    assert g101["pr"] is None
     assert {
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
     } <= set(g101["likely_interfaces_files"])
-    assert "SQLite" in " ".join(g101["positive_tests"])
-    assert "64 package tests" in g101["evidence_artifact"]
+    assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
+    assert "four disposable PostgreSQL 17.10-bookworm tests" in g101["evidence_artifact"]
     for gap in (
         "#308 startup integration",
         "PostgreSQL RLS",
-        "advisory-lock",
+        "schema/search-path",
+        "role hardening",
+        "CI-backed PostgreSQL",
         "multi-instance",
         "backup/restore",
         "forward-only rollback",
@@ -256,7 +259,10 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) in matrix
     for gap in (
         "#308 startup integration",
-        "PostgreSQL/RLS/advisory-lock/multi-instance",
+        "RLS",
+        "schema/search-path",
+        "CI-backed PostgreSQL",
+        "multi-instance",
         "backup/restore",
         "forward-only rollback",
         "API/policy/backfill",
