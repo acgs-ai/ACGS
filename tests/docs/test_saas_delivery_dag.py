@@ -143,7 +143,9 @@ def test_schema_types_vocabularies_and_portability() -> None:
         for field in ("positive_tests", "forbidden_side_effect_negative_tests", "validation_commands"):
             assert all(isinstance(item, str) and item.strip() for item in _nonempty_list(node[field]))
         for command in node["validation_commands"]:
-            assert shlex.split(command)[0] in {"uv", "make", "git", "gh", "test", "cd"}
+            parts = shlex.split(command)
+            assert parts, f"Node {node['id']} has an empty validation command"
+            assert parts[0] in {"uv", "make", "git", "gh", "test", "cd"}
 
 
 def test_beta_completion_scope_is_mechanical_and_excludes_external_only() -> None:
@@ -294,7 +296,8 @@ def test_acceptance_criteria_and_exact_matrix_rows_are_consistent() -> None:
     _validate_matrix_state(rows, dag)
 
     mutated = copy.deepcopy(rows)
-    mutated[2]["state"] = "built"
+    am_003_row = next(row for row in mutated if row["id"] == "AM-003")
+    am_003_row["state"] = "built"
     try:
         _validate_matrix_state(mutated, dag)
     except AssertionError:
