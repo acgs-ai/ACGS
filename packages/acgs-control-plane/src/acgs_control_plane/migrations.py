@@ -16,6 +16,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
 import sqlalchemy as sa
@@ -32,6 +33,13 @@ from acgs_control_plane.db import make_engine
 LEGACY_V0_REVISION: Final = "0001"
 HEAD_REVISION: Final = "0002"
 _VERSION_TABLE = "alembic_version"
+_ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
+_SCOPE_TABLES: Final = MappingProxyType(
+    {
+        "projects": sa.table("projects"),
+        "environments": sa.table("environments"),
+    }
+)
 _SQLITE_INTERNAL_TABLES: Final = frozenset({"sqlite_sequence"})
 _LEGACY_ADOPTION_TOKEN: Final = object()
 _SCOPE_RESUME_TOKEN: Final = object()
@@ -487,14 +495,22 @@ def _classify_revision_0001(
 
 
 def _migration_versions(connection: Connection) -> list[str]:
-    rows = connection.execute(sa.text(f"SELECT version_num FROM {_VERSION_TABLE}"))
+    rows = connection.execute(sa.select(_ALEMBIC_VERSION_TABLE.c.version_num))
     return list(rows.scalars())
 
 
 def _scope_tables_empty(connection: Connection, table_names: Sequence[str]) -> str | None:
+    unexpected_table_names = sorted(set(table_names) - set(_SCOPE_TABLES))
+    if unexpected_table_names:
+        return (
+            "unsupported scope table names for the bounded migration probe: "
+            f"{unexpected_table_names!r}"
+        )
+
     try:
         for table_name in table_names:
-            row = connection.execute(sa.text(f"SELECT 1 FROM {table_name} LIMIT 1")).first()
+            statement = sa.select(sa.literal(1)).select_from(_SCOPE_TABLES[table_name]).limit(1)
+            row = connection.execute(statement).first()
             if row is not None:
                 return f"partial scope table {table_name} contains data and cannot be resumed"
     except SQLAlchemyError as exc:
