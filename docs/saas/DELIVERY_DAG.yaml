@@ -295,6 +295,9 @@
         "G008"
       ],
       "likely_interfaces_files": [
+        "docs/saas/CURRENT_STATE_SURVEY.md",
+        "evidence/saas/g006/current-state-survey.json",
+        "tests/docs/test_saas_current_state_survey.py",
         "docs/CLAIMS.md",
         "docs/SECURITY_MODEL.md",
         "docs/ROADMAP.md",
@@ -302,25 +305,25 @@
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "Every accepted capability cites current code plus executable evidence."
+        "The portable G006 snapshot records the frozen baseline, required hypothesis dispositions, capability matrix, forge state, validation boundary, and next safe validations."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Hypotheses, stale branches, and closed-unmerged PRs cannot count as current implementation."
+        "Hypotheses, stale branches, closed-unmerged PRs, deployment metadata, or local-only observations cannot count as accepted implementation or production evidence."
       ],
       "validation_commands": [
         "uv run python -m pytest tests/docs --import-mode=importlib -q",
         "make lint-docs",
         "git diff --check"
       ],
-      "evidence_artifact": "Timestamped current-state evidence matrix",
-      "branch": null,
-      "worktree": null,
+      "evidence_artifact": "docs/saas/CURRENT_STATE_SURVEY.md and evidence/saas/g006/current-state-survey.json with regression coverage in tests/docs/test_saas_current_state_survey.py",
+      "branch": "beta/p0-current-state-006",
+      "worktree": "saas-beta/p0-current-state-006",
       "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "independently_reviewed",
       "blocker": null,
-      "next_safe_action": "Survey code, tests, GitHub, CI, releases, deployment evidence, and overlapping work from the frozen baseline.",
+      "next_safe_action": "Use the reviewed frozen survey to author G007/G008, then execute the named atomicity, concurrency, canonical-enforcement, browser-boundary, and clean-environment validations as their own nodes.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

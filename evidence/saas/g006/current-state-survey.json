@@ -1,0 +1,339 @@
+{
+  "schema_version": "1.0",
+  "survey_id": "G006-current-state-survey",
+  "baseline": {
+    "source_ref": "origin/master",
+    "commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96",
+    "program_record_parent_commit": "b2aa0c928b6ba21baa8e4a123452eebeeda3e050",
+    "program_record_parent_ref": "beta/p0-program-record-005",
+    "program_record_parent_observed_head": "e4af0731aece89c1b7bcc050b609260571497145",
+    "program_record_parent_drift": "Survey work started from the parent commit; the parent ref advanced with a test-only hardening commit. Rebase onto the observed parent head before publication.",
+    "observed_at": "2026-07-13T09:59:25Z",
+    "scope": "Source, tests, tracked documentation, and forge metadata observed at the frozen baseline."
+  },
+  "capture_boundary": {
+    "mode": "summaries only",
+    "not_proof_of": [
+      "deployment",
+      "customer use",
+      "independent assessment",
+      "certification",
+      "production readiness"
+    ],
+    "excluded_content": [
+      "credential material",
+      "request payloads",
+      "machine-local paths",
+      "raw command output"
+    ]
+  },
+  "source_paths": [
+    "packages/gove-zone/src/gove_zone/receipt.py",
+    "packages/gove-zone/src/gove_zone/executor.py",
+    "packages/gove-zone/src/gove_zone/audit.py",
+    "packages/acgs-control-plane",
+    "acgi-ai",
+    "docs/CLAIMS.md",
+    "docs/SECURITY_MODEL.md",
+    "docs/ROADMAP.md"
+  ],
+  "source_ref_provenance": {
+    "packages/gove-zone/src/gove_zone/receipt.py": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/src/gove_zone/executor.py": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/src/gove_zone/audit.py": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/src/gove_zone/escalation.py": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/README.md": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone/tests": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/acgs-control-plane": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/acgs-control-plane/README.md": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "packages/gove-zone": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "acgi-ai": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "docs/saas/DELIVERY_DAG.yaml": {"source_ref_commit": "b2aa0c928b6ba21baa8e4a123452eebeeda3e050", "context": "program_record_parent"},
+    "docs/CLAIMS.md": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "docs/SECURITY_MODEL.md": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"},
+    "docs/ROADMAP.md": {"source_ref_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96", "context": "frozen_source_baseline"}
+  },
+  "hypotheses": [
+    {
+      "id": "H-RUNTIME-CANONICAL-001",
+      "status": "confirmed",
+      "finding": "The runtime exposes canonical DecisionReceipt issuance and execute_with_receipt enforcement with signature, expected-actor, and expiry checks; single-use is enforced when a consumption ledger is configured.",
+      "evidence_class": "local source and executable-test summary",
+      "source_refs": [
+        "packages/gove-zone/src/gove_zone/receipt.py",
+        "packages/gove-zone/src/gove_zone/executor.py",
+        "packages/gove-zone/tests"
+      ],
+      "next_validation": "Bind this runtime behavior into the managed canonical journey before promoting any managed-plane claim."
+    },
+    {
+      "id": "H-CP-LEGACY-002",
+      "status": "confirmed",
+      "finding": "The control-plane governance path imports Kernel and Receipt and dispatches the legacy receipt flow rather than the signed canonical DecisionReceipt executor flow.",
+      "evidence_class": "local source summary",
+      "source_refs": [
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Add a dispatcher-level migration proof that exercises the canonical receipt and executor path."
+    },
+    {
+      "id": "H-CP-AUDIT-SCALING-003",
+      "status": "confirmed",
+      "finding": "Control-plane audit storage is a per-organization JSONL chain and verification uses linear chain scans; this is not evidence of a horizontally scalable managed evidence system of record.",
+      "evidence_class": "local source summary",
+      "source_refs": [
+        "packages/acgs-control-plane",
+        "packages/gove-zone/src/gove_zone/audit.py"
+      ],
+      "next_validation": "Define a tenant-isolated metadata and retained-artifact design with measured replay behavior."
+    },
+    {
+      "id": "H-CP-AUDIT-ATOMICITY-004",
+      "status": "unverified",
+      "finding": "The survey did not find an injected SQL-commit failure proof that determines whether an audit append can remain after the related SQL mutation rolls back.",
+      "evidence_class": "gap identified by source and test inventory",
+      "source_refs": [
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Add a transaction-failure integration test before asserting event and mutation atomicity."
+    },
+    {
+      "id": "H-CP-EXPORT-PROVENANCE-005",
+      "status": "confirmed",
+      "finding": "Control-plane exports provide hash manifests but no verified signed-provenance or independent-witness proof.",
+      "evidence_class": "local source summary",
+      "source_refs": [
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Specify and test a proof-pack verifier that checks signature, provenance, receipt-event equivalence, and a separate checkpoint."
+    },
+    {
+      "id": "H-POLICY-ACTIVATION-RACE-006",
+      "status": "unverified",
+      "finding": "The survey did not find a database uniqueness constraint, locked activation path, or concurrency test proving exactly one active policy under concurrent activation.",
+      "evidence_class": "gap identified by source and test inventory",
+      "source_refs": [
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Add a database invariant and concurrent activation integration test."
+    },
+    {
+      "id": "H-CP-FOUNDATION-007",
+      "status": "confirmed",
+      "finding": "The control plane initializes schema with create_all, has no Alembic migration surface, uses organization-scoped service-credential routes, and has no observed v1, idempotency, or transactional-outbox foundation.",
+      "evidence_class": "local source summary",
+      "source_refs": [
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Build the migration, versioned API, idempotency, and outbox foundations before hosted-plane feature work."
+    },
+    {
+      "id": "H-EVIDENCE-INGESTION-008",
+      "status": "contradicted",
+      "finding": "The surveyed source has local and MCP approval-resume capability, but the inventory did not find a managed control-plane approval/resume API or durable managed approval operation, nor the surveyed receipt-ingestion, signed-policy-sync, durable-spool, or independent-witness surfaces.",
+      "evidence_class": "local source inventory",
+      "source_refs": [
+        "packages/acgs-control-plane",
+        "packages/acgs-control-plane/README.md",
+        "packages/gove-zone/src/gove_zone/escalation.py",
+        "packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py",
+        "packages/gove-zone",
+        "acgi-ai"
+      ],
+      "next_validation": "Design the canonical native transaction spine before adding provider adapters."
+    },
+    {
+      "id": "H-CONSOLE-CONTRACT-009",
+      "status": "confirmed",
+      "finding": "The console uses relative api-v1 and api-bus routes with a browser session and non-production fixture model; its observed contract does not match the control-plane organization-scoped service-credential surface.",
+      "evidence_class": "local source and browser-boundary test summary",
+      "source_refs": [
+        "acgi-ai",
+        "packages/acgs-control-plane"
+      ],
+      "next_validation": "Define and test one server-side browser-to-upstream boundary and generated or bidirectionally tested contracts."
+    },
+    {
+      "id": "H-FORGE-STATE-010",
+      "status": "confirmed",
+      "finding": "At the frozen observation, pull request 317 was open and draft, pull request 308 was open and unmerged, pull request 267 was closed and unmerged, and issues 167 and 168 were open.",
+      "evidence_class": "forge metadata summary",
+      "source_refs": [
+        "docs/saas/DELIVERY_DAG.yaml"
+      ],
+      "next_validation": "Re-survey forge state before accepting any branch, review, CI, release, or deployment conclusion."
+    },
+    {
+      "id": "H-VALIDATION-011",
+      "status": "confirmed",
+      "finding": "The control-plane package test snapshot passed 25 tests with a warning; the console authentication-boundary check passed under host Node 22 while its requested runtime is Node 24; the first gove-zone broad-gate cause was absent optional cryptography and PyYAML dependencies, and it was not rerun.",
+      "evidence_class": "local validation summary",
+      "source_refs": [
+        "packages/acgs-control-plane",
+        "acgi-ai",
+        "packages/gove-zone"
+      ],
+      "next_validation": "Provision the declared optional dependencies and exact Node runtime in a clean environment, then rerun the authoritative package gates once."
+    }
+  ],
+  "capability_matrix": [
+    {
+      "id": "CM-RUNTIME",
+      "plane": "open local execution and data",
+      "state": "partial",
+      "finding": "Canonical local receipt and executor controls are present, but no accepted end-to-end managed journey connects them to enrollment, signed policy distribution, evidence ingestion, approvals, and proof export.",
+      "evidence_hypotheses": [
+        "H-RUNTIME-CANONICAL-001",
+        "H-EVIDENCE-INGESTION-008"
+      ]
+    },
+    {
+      "id": "CM-CONTROL-PLANE",
+      "plane": "managed control",
+      "state": "partial",
+      "finding": "A local alpha control-plane surface exists, but it retains legacy receipt dispatch and lacks the surveyed migration, versioning, atomicity, and canonical enforcement evidence.",
+      "evidence_hypotheses": [
+        "H-CP-LEGACY-002",
+        "H-CP-FOUNDATION-007",
+        "H-POLICY-ACTIVATION-RACE-006"
+      ]
+    },
+    {
+      "id": "CM-EVIDENCE",
+      "plane": "managed evidence and assurance",
+      "state": "missing",
+      "finding": "No surveyed external ingestion, durable spool, retained evidence system of record, independent witness, or signed managed proof-pack verifier exists.",
+      "evidence_hypotheses": [
+        "H-CP-AUDIT-SCALING-003",
+        "H-CP-EXPORT-PROVENANCE-005",
+        "H-EVIDENCE-INGESTION-008"
+      ]
+    },
+    {
+      "id": "CM-CONSOLE",
+      "plane": "single console",
+      "state": "conflicting",
+      "finding": "The console contains tested browser boundaries and fixtures, while its observed API and session contract conflicts with the current control-plane service surface.",
+      "evidence_hypotheses": [
+        "H-CONSOLE-CONTRACT-009",
+        "H-VALIDATION-011"
+      ]
+    },
+    {
+      "id": "CM-OPERATIONS",
+      "plane": "delivery and operations",
+      "state": "missing",
+      "finding": "Release label and deployment metadata do not prove a deployed, monitored, recoverable, or customer-operated beta service.",
+      "evidence_hypotheses": [
+        "H-FORGE-STATE-010"
+      ]
+    }
+  ],
+  "forge_snapshot": {
+    "pull_requests": [
+      {
+        "number": 317,
+        "state": "open",
+        "draft": true,
+        "merged": false,
+        "disposition": "overlapping draft; not accepted baseline evidence"
+      },
+      {
+        "number": 308,
+        "state": "open",
+        "draft": false,
+        "merged": false,
+        "disposition": "active baseline candidate; unmerged"
+      },
+      {
+        "number": 267,
+        "state": "closed",
+        "draft": false,
+        "merged": false,
+        "disposition": "closed unmerged; historical only"
+      }
+    ],
+    "issues": [
+      {
+        "number": 167,
+        "state": "open"
+      },
+      {
+        "number": 168,
+        "state": "open"
+      }
+    ],
+    "release": {
+      "version_label": "v0.1.0a1",
+      "published_release_observed": false
+    },
+    "deployment_evidence": "Metadata observed; not proof of deployment."
+  },
+  "validation_snapshot": [
+    {
+      "id": "V-CP-TESTS",
+      "state": "pass_with_warning",
+      "command": "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+      "exit_code": 0,
+      "tool_or_environment": "uv package environment",
+      "summary": "Control-plane package tests: 25 passed with one warning.",
+      "warning_classification": "non-fatal package-test warning",
+      "raw_output_published": false,
+      "raw_output_retained": false,
+      "summary_sha256": "0a228ddcff0ee20237f5920026d521b296c5befe130b7d1b9035a95ed0a4e04d"
+    },
+    {
+      "id": "V-CONSOLE-AUTH-BOUNDARY",
+      "state": "partial",
+      "command": "pnpm -F acgi-ai run test:contract",
+      "exit_code": 0,
+      "tool_or_environment": "host Node 22; package requests Node 24",
+      "summary": "Console authentication-boundary check passed under host Node 22; requested Node 24 was not the observed runtime.",
+      "warning_classification": "runtime-version mismatch",
+      "raw_output_published": false,
+      "raw_output_retained": false,
+      "summary_sha256": "58e240e086c29f143d24cf57a573b34defc06ae20216fccfe724734a4eb6060d"
+    },
+    {
+      "id": "V-GOVE-ZONE-BROAD",
+      "state": "environment_blocked",
+      "command": "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
+      "exit_code": 1,
+      "tool_or_environment": "uv package environment without optional crypto or YAML dependencies",
+      "summary": "First observed broad-gate cause: optional cryptography and PyYAML dependencies absent. No rerun was performed.",
+      "warning_classification": "environmental optional-dependency failure",
+      "raw_output_published": false,
+      "raw_output_retained": false,
+      "summary_sha256": "a48a3773a00ffdfbe76214a511cc058fcc5505c7310b5c3a34569217f7be9a02"
+    }
+  ],
+  "next_validations": [
+    {
+      "id": "NV-001",
+      "outcome": "Control-plane mutation atomicity",
+      "safe_action": "Add an injected SQL failure integration test proving the correct receipt, event, outbox, and mutation behavior."
+    },
+    {
+      "id": "NV-002",
+      "outcome": "Exactly one active policy",
+      "safe_action": "Add a database invariant and concurrent activation test."
+    },
+    {
+      "id": "NV-003",
+      "outcome": "Canonical managed enforcement",
+      "safe_action": "Migrate management mutations to signed DecisionReceipt plus executor verification and prove dispatcher wiring."
+    },
+    {
+      "id": "NV-004",
+      "outcome": "Browser-to-upstream boundary",
+      "safe_action": "Define one server-side session boundary and contract tests before replacing fixtures."
+    },
+    {
+      "id": "NV-005",
+      "outcome": "Clean environment gate evidence",
+      "safe_action": "Use declared optional dependencies and Node 24 for one authoritative rerun; retain the first environment cause if it remains blocked."
+    }
+  ],
+  "conclusion": "This is a local, frozen reconciliation record. It supports prioritization and does not promote deployment, production readiness, customer use, certification, or independent assurance."
+}
