@@ -30,6 +30,7 @@ Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as `Decisio
 | `policy_version` | yes | Policy version string. |
 | `policy_hash` | yes | Policy content/version hash binding. |
 | `decision` | yes | `allow`, `deny`, `transform`, or `escalate`. Only `allow` and approved `transform` can execute. |
+| `action_tier` | no | Policy-routing tier: `explore` or `commit`. `commit` is the strict default; unknown/missing coerces to `commit`. Bound into `receipt_hash`. Legacy receipts without it default to `commit`. |
 | `matched_rules` | yes | Rule ids or policy reasons that fired. |
 | `constraints` | yes | Free-form decision constraints. |
 | `transformations` | yes | Approved transformed args as `{field, value}` entries. Empty for non-transform. |
@@ -70,6 +71,16 @@ Evidence: `tests/test_argument_binding.py`, `tests/test_executor_guard.py`.
 `policy_bundle_id`, `policy_version`, and `policy_hash` bind a receipt to a policy context. The gate can require expected policy id/hash and reject substitutions.
 
 Evidence: `tests/test_policy_bundle_io.py`, `tests/test_tenant_safety.py`.
+
+## Action tier
+
+`action_tier` separates information-gathering (`explore`) actions from goal-executing (`commit`) actions. It is a *policy-routing* dimension — it changes which rules match, never whether the receipt gate applies. Every tier still requires a valid receipt, `expected_actor`, and an audit append; `DENY`/`ESCALATE` stay non-executable for all tiers.
+
+The declared tier travels as untrusted input on the call (`state["action_tier"]`). A tool-tier registry is authoritative: the effective tier is `min(declared, registered)` with `commit` as the strict top value, so a tool the registry marks commit-only can never be evaluated under `explore` regardless of what the caller declares. No registry, or an unregistered tool, means `commit`. The registry is content-addressed and folds into the policy version/hash.
+
+`action_tier` is bound into `receipt_hash`, so a post-issuance tier swap fails verification. `from_dict` defaults a missing field to `commit` (legacy compatibility). The verifier rejects unknown tier strings, and — when a registry is supplied at the gate — refuses an `explore` receipt for a commit-only tool as a belt-and-suspenders check against the policy-side evaluation. The registry is manual/declarative in v1: it is not semantic detection of whether a tool has side effects; operators must register side-effecting tools as `commit` (which is already the default).
+
+Evidence: `decision.py` (`ActionTier`), `tier.py` (`ToolTierRegistry`), `policy.py` (rule `tiers` criterion), `receipt.py`, `tests/test_action_tiering.py`.
 
 ## Expiry
 

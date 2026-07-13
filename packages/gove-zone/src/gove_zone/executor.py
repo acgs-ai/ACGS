@@ -20,6 +20,7 @@ from gove_zone.errors import (
 )
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
+from gove_zone.tier import ToolTierRegistry
 
 
 def execute_with_receipt(
@@ -36,6 +37,7 @@ def execute_with_receipt(
     expected_policy_bundle_id: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool = True,
+    tool_tier_registry: ToolTierRegistry | None = None,
 ) -> Any:
     """Execute *tool_fn* with *args* iff *receipt* is valid and matches constraints.
 
@@ -80,6 +82,7 @@ def execute_with_receipt(
         expected_actor=expected_actor,
         verifier=verifier,
         require_signature=require_signature,
+        tool_tier_registry=tool_tier_registry,
     )
 
     return tool_fn(**args)
@@ -109,6 +112,7 @@ class GovernedExecutor:
         expected_actor: str,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -119,6 +123,7 @@ class GovernedExecutor:
         self.expected_actor = expected_actor
         self.verifier = verifier
         self.require_signature = require_signature
+        self.tool_tier_registry = tool_tier_registry
         self.registry: dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
@@ -136,6 +141,7 @@ class GovernedExecutor:
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool | None = None,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> Any:
         if action not in self.registry:
             raise KeyError(f"Tool {action!r} not registered with executor")
@@ -152,6 +158,9 @@ class GovernedExecutor:
         effective_require = (
             require_signature if require_signature is not None else self.require_signature
         )
+        effective_tier_registry = (
+            tool_tier_registry if tool_tier_registry is not None else self.tool_tier_registry
+        )
         return execute_with_receipt(
             tool_fn=tool_fn,
             args=args,
@@ -165,6 +174,7 @@ class GovernedExecutor:
             expected_actor=effective_actor,
             verifier=effective_verifier,
             require_signature=effective_require,
+            tool_tier_registry=effective_tier_registry,
         )
 
 

@@ -12,10 +12,13 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from gove_zone.decision import DecisionRecord, sha256_json
+from gove_zone.decision import ActionTier, DecisionRecord, sha256_json
 from gove_zone.signing import ReceiptSigner
+
+if TYPE_CHECKING:
+    from gove_zone.tier import ToolTierRegistry
 
 
 def _now_iso() -> str:
@@ -145,6 +148,7 @@ class DecisionReceipt:
     validator_id: str = ""
     validator_role: str = ""
     argument_hash: str = ""
+    action_tier: str = "commit"
     receipt_hash: str = ""
     signature_algorithm: str = "none"
     signing_key_id: str = ""
@@ -190,6 +194,7 @@ class DecisionReceipt:
             "validator_id": self.validator_id,
             "validator_role": self.validator_role,
             "argument_hash": self.argument_hash,
+            "action_tier": self.action_tier,
             "previous_audit_hash": self.previous_audit_hash,
             "audit_event_hash": self.audit_event_hash,
             "signature_algorithm": self.signature_algorithm,
@@ -226,6 +231,7 @@ class DecisionReceipt:
             validator_id=d.get("validator_id", ""),
             validator_role=d.get("validator_role", ""),
             argument_hash=d.get("argument_hash", ""),
+            action_tier=d.get("action_tier", "commit"),
             previous_audit_hash=d["previous_audit_hash"],
             audit_event_hash=d["audit_event_hash"],
             receipt_hash=d.get("receipt_hash", ""),
@@ -326,6 +332,7 @@ class DecisionReceipt:
             validator_id=validator.validator_id,
             validator_role=validator.role,
             argument_hash=record.argument_hash,
+            action_tier=ActionTier.coerce(record.action_tier).value,
             previous_audit_hash=previous_audit_hash,
             audit_event_hash=audit_hash,
             signature_algorithm=signer.algorithm if signer is not None else "none",
@@ -353,6 +360,7 @@ class DecisionReceipt:
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
         now_iso: str | None = None,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> None:
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptValidationError
@@ -487,6 +495,28 @@ class DecisionReceipt:
             Decision(self.decision)
         except ValueError as err:
             raise ReceiptValidationError(f"Unknown decision: {self.decision}") from err
+
+        # 3a. Action tier must be a known value. action_tier is bound into
+        # receipt_hash (check 2), so a tampered tier is already caught above; this
+        # rejects a receipt that was minted with a garbage tier string. Fail-closed.
+        try:
+            ActionTier(self.action_tier)
+        except ValueError as err:
+            raise ReceiptValidationError(f"Unknown action tier: {self.action_tier}") from err
+
+        # 3b. Executor-side tier enforcement (belt-and-suspenders vs. the
+        # policy-side check). When a tool-tier registry is supplied at the gate, a
+        # receipt claiming the explore tier for a tool the registry marks
+        # commit-only is refused — the declared tier can never downgrade a
+        # side-effecting tool (C5). The registry is authoritative; the receipt is
+        # untrusted about its own tier leniency.
+        if tool_tier_registry is not None and self.action_tier == ActionTier.EXPLORE.value:
+            resolved_tier = tool_tier_registry.resolve(self.proposed_action, ActionTier.EXPLORE)
+            if resolved_tier is not ActionTier.EXPLORE:
+                raise ReceiptValidationError(
+                    f"action tier downgrade refused: {self.proposed_action!r} is "
+                    f"commit-only but the receipt claims the explore tier"
+                )
 
         # 4. Denied and escalated receipts
         if self.decision == Decision.DENY:

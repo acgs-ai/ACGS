@@ -21,6 +21,7 @@ from gove_zone.contracts import (
     TenantPolicyBinding,
 )
 from gove_zone.decision import (
+    ActionTier,
     Decision,
     DecisionRecord,
     canonical_json,
@@ -104,6 +105,7 @@ from gove_zone.tenant import (
     TransformPolicy,
     evaluate_tenant_action,
 )
+from gove_zone.tier import ToolTierRegistry, effective_action_tier
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 from gove_zone.workflow import (
     WorkflowDAG,
@@ -125,8 +127,11 @@ __all__ = [
     "BoundaryPolicy",
     "ChainHashAuditStore",
     "CompositePolicy",
+    "ActionTier",
     "Decision",
     "DecisionRecord",
+    "ToolTierRegistry",
+    "effective_action_tier",
     "DecisionReceipt",
     "DeniedError",
     "E2BSandbox",
