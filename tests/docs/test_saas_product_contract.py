@@ -108,6 +108,7 @@ def test_g007_progress_record_links_the_actual_contract_surface() -> None:
     )
     assert g007["branch"] == "beta/p0-product-contract-007"
     assert g007["worktree"] == "saas-beta/p0-product-contract-007"
+    assert g007["pr"] == 320
     assert {
         "docs/saas/PRODUCT_REQUIREMENTS.md",
         "docs/saas/ASSURANCE_CLASSES.md",

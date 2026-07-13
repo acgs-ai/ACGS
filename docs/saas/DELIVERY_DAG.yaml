@@ -366,7 +366,7 @@
       "evidence_artifact": "Reviewed Phase-0 product requirements, assurance classes, open-core boundary, and entitlement/metering matrix",
       "branch": "beta/p0-product-contract-007",
       "worktree": "saas-beta/p0-product-contract-007",
-      "pr": null,
+      "pr": 320,
       "status": "completed",
       "implementation_state": "built",
       "evidence_state": "independently_reviewed",
