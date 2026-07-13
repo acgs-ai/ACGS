@@ -600,7 +600,7 @@
       "evidence_artifact": "Independently reviewed, current-local migration-core record: SQLite coverage plus four disposable PostgreSQL 17.10-bookworm tests for a nonblocking transaction-level advisory lock, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It is not CI-backed PostgreSQL, tenant-isolation, recovery, or accepted Phase-1 evidence.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
-      "pr": null,
+      "pr": 324,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
