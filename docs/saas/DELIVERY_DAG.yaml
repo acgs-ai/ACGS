@@ -578,32 +578,34 @@
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
-        "packages/acgs-control-plane/tests/test_project_environment_scope.py"
+        "packages/acgs-control-plane/tests/test_project_environment_scope.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Separate local verification passes the SQLite empty and exact legacy-v0 upgrade, guarded exact partial-resume, malformed-schema rejection before unintended schema mutation, project/environment constraint, legacy create_all containment, and wheel-shipped Alembic-resource tests."
+        "Current-local verification retains the SQLite migration-core suite and adds disposable PostgreSQL 17.10-bookworm evidence for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, injected atomic rollback and retry, and the cross-organization parent constraint."
       ],
       "forbidden_side_effect_negative_tests": [
-        "On SQLite, raw Alembic operations, malformed or partial schemas, and legacy create_all on non-legacy states or tables= subsets are rejected before unintended schema mutation."
+        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py --import-mode=importlib -q",
         "cd packages/acgs-control-plane && uv run ruff check .",
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "Independently reviewed, local SQLite/Alembic migration-core verification record: 64 package tests, lint, format, typecheck, lock check, and a direct empty-database upgrade. It is deliberately insufficient for accepted Phase-1 migration evidence.",
-      "branch": "beta/p1-migrations-scope-101",
-      "worktree": "saas-beta/p1-migrations-scope-101",
-      "pr": 323,
+      "evidence_artifact": "Independently reviewed, current-local migration-core record: SQLite coverage plus four disposable PostgreSQL 17.10-bookworm tests for a nonblocking transaction-level advisory lock, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It is not CI-backed PostgreSQL, tenant-isolation, recovery, or accepted Phase-1 evidence.",
+      "branch": "beta/p1-g101-postgres-advisory-lock",
+      "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
+      "pr": null,
       "status": "in_progress",
       "implementation_state": "partial",
-      "evidence_state": "unverified",
-      "blocker": "Deliberately partial: #308 startup integration remains unresolved; PostgreSQL RLS, advisory-lock, and multi-instance migration safety; backup/restore and a forward-only rollback runbook; and API, policy, and backfill adoption remain unimplemented or unverified.",
-      "next_safe_action": "Carry the isolated partial core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and implement and verify PostgreSQL/RLS/advisory-lock/multi-instance safety, the backup/restore and forward-only rollback runbook, and API/policy/backfill adoption before accepted Phase-1 completion.",
+      "evidence_state": "local_verified",
+      "blocker": "Deliberately partial: #308 startup integration remains unresolved; PostgreSQL RLS, tenant-bound schema/search-path and role hardening, CI-backed PostgreSQL coverage, and full multi-instance rollout safety remain unimplemented or unverified; backup/restore and a forward-only rollback runbook; and API, policy, and backfill adoption remain incomplete.",
+      "next_safe_action": "Carry the isolated current-local core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and implement and verify PostgreSQL RLS/schema/search-path/role hardening, CI-backed PostgreSQL and multi-instance coverage, the backup/restore and forward-only rollback runbook, and API/policy/backfill adoption before accepted Phase-1 completion.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

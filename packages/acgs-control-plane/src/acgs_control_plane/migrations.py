@@ -6,8 +6,10 @@ schema reconstructed in revision ``0001``.  It refuses partial, unknown, or
 mixed schemas *before* it creates an Alembic version table or runs a revision.
 
 These helpers are deliberate operator actions.  They do not change app startup
-behaviour and they do not make any claim about PostgreSQL rollout locking,
-backups, or rollback safety.
+behaviour or make any claim about backups, restore drills, or rollback safety.
+PostgreSQL uses one caller-owned transaction and a nonblocking transaction-level
+advisory lock for the controlled migration operation; that is not a replacement
+for deployment orchestration or recovery procedures.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, make_url
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -43,6 +45,18 @@ _SCOPE_TABLES: Final = MappingProxyType(
 _SQLITE_INTERNAL_TABLES: Final = frozenset({"sqlite_sequence"})
 _LEGACY_ADOPTION_TOKEN: Final = object()
 _SCOPE_RESUME_TOKEN: Final = object()
+# Fixed PostgreSQL two-int advisory-lock identifiers for the entire
+# control-plane migration history.  They are deliberately not derived from a
+# tenant, URL, schema, or caller-provided value: every operator of one target
+# database must contend on the same migration lock.
+_POSTGRES_MIGRATION_LOCK_CLASS_ID: Final = 1_010_100_101
+_POSTGRES_MIGRATION_LOCK_OBJECT_ID: Final = 1_010_100_102
+_POSTGRES_MIGRATION_LOCK_STATEMENT: Final = sa.select(
+    sa.func.pg_try_advisory_xact_lock(
+        sa.bindparam("class_id", type_=sa.Integer()),
+        sa.bindparam("object_id", type_=sa.Integer()),
+    )
+)
 
 
 class DatabaseSchemaState(StrEnum):
@@ -67,6 +81,10 @@ class ScopeMigrationResumeState(StrEnum):
 
 class MigrationPreflightError(RuntimeError):
     """Raised before mutation when a database is not a known schema state."""
+
+
+class MigrationLockUnavailable(MigrationPreflightError):
+    """The official PostgreSQL migration lock is held by another operator."""
 
 
 @dataclass(frozen=True)
@@ -387,6 +405,17 @@ def upgrade_database(database_url: str) -> MigrationResult:
     A partial or unknown database raises before Alembic can create its version
     table.  Existing receipt/export rows are not read, rewritten, or scoped.
     """
+    if make_url(database_url).get_backend_name() == "postgresql":
+        return _upgrade_postgresql_database(database_url)
+
+    # Keep the independently tested SQLite path intact.  SQLite's DDL
+    # interruption/resume contract is intentionally different from the
+    # transactional PostgreSQL operation below.
+    return _upgrade_database_with_independent_connections(database_url)
+
+
+def _upgrade_database_with_independent_connections(database_url: str) -> MigrationResult:
+    """Run the existing non-PostgreSQL controlled migration path unchanged."""
     before = inspect_schema(database_url)
     if before.state is DatabaseSchemaState.UNKNOWN:
         raise MigrationPreflightError(before.detail)
@@ -421,6 +450,89 @@ def upgrade_database(database_url: str) -> MigrationResult:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
+
+
+def _upgrade_postgresql_database(database_url: str) -> MigrationResult:
+    """Migrate PostgreSQL under one shared, caller-owned transaction.
+
+    The transaction-level advisory lock is taken before the authoritative
+    preflight.  The preflight, any legacy stamp, revision upgrade, and
+    postflight therefore see one locked, atomic migration attempt.  Alembic is
+    given this exact connection through ``Config.attributes`` so it must not
+    create or commit a separate connection/transaction.
+    """
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            with connection.begin():
+                _acquire_postgresql_migration_lock(connection)
+                before = inspect_connection(connection)
+                if before.state is DatabaseSchemaState.UNKNOWN:
+                    raise MigrationPreflightError(before.detail)
+
+                config = migration_config(database_url)
+                config.attributes["connection"] = connection
+                try:
+                    if before.state is DatabaseSchemaState.LEGACY_V0:
+                        _run_controlled_operation(
+                            config,
+                            _LEGACY_ADOPTION_TOKEN,
+                            DatabaseSchemaState.LEGACY_V0,
+                            lambda: command.stamp(config, LEGACY_V0_REVISION),
+                        )
+                        stamped = inspect_connection(connection)
+                        if stamped.state is not DatabaseSchemaState.VERSION_0001:
+                            msg = (
+                                "Legacy adoption stamp did not produce revision 0001: "
+                                f"{stamped.detail}"
+                            )
+                            raise MigrationPreflightError(msg)
+                        _run_controlled_operation(
+                            config,
+                            _SCOPE_RESUME_TOKEN,
+                            DatabaseSchemaState.VERSION_0001,
+                            lambda: command.upgrade(config, "head"),
+                        )
+                    else:
+                        _run_controlled_operation(
+                            config,
+                            _SCOPE_RESUME_TOKEN,
+                            before.state,
+                            lambda: command.upgrade(config, "head"),
+                        )
+
+                    after = inspect_connection(connection)
+                    if after.state is not DatabaseSchemaState.VERSION_0002:
+                        msg = (
+                            "Migration ended in unexpected schema state: "
+                            f"{after.state} ({after.detail})"
+                        )
+                        raise MigrationPreflightError(msg)
+                    result = MigrationResult(before=before, after=after)
+                finally:
+                    config.attributes.pop("connection", None)
+
+        return result
+    finally:
+        engine.dispose()
+
+
+def _acquire_postgresql_migration_lock(connection: Connection) -> None:
+    """Take the fixed nonblocking xact lock or refuse before schema mutation."""
+    acquired = connection.scalar(
+        _POSTGRES_MIGRATION_LOCK_STATEMENT,
+        {
+            "class_id": _POSTGRES_MIGRATION_LOCK_CLASS_ID,
+            "object_id": _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
+        },
+    )
+    if acquired:
+        return
+    msg = (
+        "PostgreSQL control-plane migration lock is held by another operator; "
+        "no schema or version mutation was attempted. Retry after that migration finishes."
+    )
+    raise MigrationLockUnavailable(msg)
 
 
 def _run_controlled_operation(
