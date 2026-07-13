@@ -227,7 +227,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) == ("in_progress", "partial", "local_verified")
     assert g101["branch"] == "beta/p1-g101-postgres-advisory-lock"
     assert g101["worktree"] == "saas-beta/p1-g101-postgres-advisory-lock"
-    assert g101["pr"] is None
+    assert g101["pr"] == 324
     assert {
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
