@@ -6,6 +6,11 @@
 
 This roadmap is claim-safe: planned work is not described as implemented.
 
+The resumable SaaS beta dependency program and its claim-safe capability view live in
+[`docs/saas/DELIVERY_DAG.yaml`](saas/DELIVERY_DAG.yaml) and
+[`docs/saas/ACCEPTANCE_MATRIX.md`](saas/ACCEPTANCE_MATRIX.md). Those records refine
+delivery dependencies and evidence state; this file remains the only roadmap of record.
+
 Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. Marks verified against `origin/master` @ `9dd118c` (see Status evidence).
 
 | Stage | Status | Why it matters | Acceptance test | User impact | Risk if skipped |
