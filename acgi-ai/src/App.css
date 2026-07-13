@@ -1763,7 +1763,7 @@
 }
 
 .c-state-card.warning {
-  border-left-color: var(--risk-med);
+  border-left-color: var(--risk-mid);
 }
 
 .c-state-card.danger {
