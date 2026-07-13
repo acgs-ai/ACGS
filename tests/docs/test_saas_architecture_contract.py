@@ -200,6 +200,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) == ("completed", "built", "independently_reviewed")
     assert g008["branch"] == "beta/p0-architecture-008"
     assert g008["worktree"] == "saas-beta/p0-architecture-008"
+    assert g008["pr"] == 321
     assert {
         "docs/saas/ARCHITECTURE.md",
         "docs/saas/THREAT_MODEL.md",

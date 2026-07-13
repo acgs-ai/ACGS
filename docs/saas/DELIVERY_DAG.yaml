@@ -418,7 +418,7 @@
       "evidence_artifact": "Independently reviewed Phase-0 architecture, threat, API/data, compatibility policy, focused build-vs-buy ADR packet, and target-documentation verification record",
       "branch": "beta/p0-architecture-008",
       "worktree": "saas-beta/p0-architecture-008",
-      "pr": null,
+      "pr": 321,
       "status": "completed",
       "implementation_state": "built",
       "evidence_state": "independently_reviewed",
