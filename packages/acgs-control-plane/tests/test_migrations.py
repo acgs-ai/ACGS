@@ -151,6 +151,39 @@ def _interrupt_0002_after_table(
             upgrade_database(database_url)
 
 
+def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> None:
+    """A schema name never becomes executable SQL in the bounded resume probe."""
+
+    class _Result:
+        def first(self) -> None:
+            return None
+
+    class _RecordingConnection:
+        def __init__(self) -> None:
+            self.statements: list[object] = []
+
+        def execute(self, statement: object) -> _Result:
+            self.statements.append(statement)
+            return _Result()
+
+    malicious = _RecordingConnection()
+    detail = migration_module._scope_tables_empty(  # type: ignore[arg-type]
+        malicious,
+        ("projects", "projects; DROP TABLE receipts; --"),
+    )
+
+    assert detail == (
+        "unsupported scope table names for the bounded migration probe: "
+        "['projects; DROP TABLE receipts; --']"
+    )
+    assert malicious.statements == []
+
+    valid = _RecordingConnection()
+    assert migration_module._scope_tables_empty(valid, ("projects",)) is None  # type: ignore[arg-type]
+    assert len(valid.statements) == 1
+    assert isinstance(valid.statements[0], sa.sql.Select)
+
+
 def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path) -> None:
     """Exercise the built artifact, not an editable/source-tree fallback."""
     package_root = Path(__file__).resolve().parents[1]
