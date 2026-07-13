@@ -17,6 +17,20 @@ The Phase-0 target product contract is specified in
 [`saas/ENTITLEMENT_AND_METERING_MATRIX.md`](saas/ENTITLEMENT_AND_METERING_MATRIX.md).
 They are future acceptance contracts, not evidence that the managed service,
 entitlements, pricing, or billing implementation exists.
+The companion Phase-0 architecture packet is
+[`saas/ARCHITECTURE.md`](saas/ARCHITECTURE.md),
+[`saas/THREAT_MODEL.md`](saas/THREAT_MODEL.md),
+[`saas/API_AND_DATA_CONTRACT.md`](saas/API_AND_DATA_CONTRACT.md), and
+[`saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md`](saas/MIGRATION_VERSIONING_COMPATIBILITY_POLICY.md),
+with proposed owner-gated [identity](adr/saas-identity-oidc-saml-scim-build-vs-buy.md),
+[KMS](adr/saas-kms-build-vs-buy.md),
+[object-retention](adr/saas-object-retention-build-vs-buy.md),
+[independent-witness](adr/saas-independent-witness-build-vs-buy.md),
+[billing](adr/saas-billing-build-vs-buy.md), and
+[commercial-boundary](adr/saas-commercial-module-boundary.md) ADRs. It records
+future trust, migration, and decision requirements; it is not evidence that a
+managed plane, provider, retention policy, witness, identity federation, or
+commercial program exists.
 
 Status legend: **✅ SHIPPED** — every acceptance sub-clause has a source file *and* a cited test; **🟡 PARTIAL** — some sub-clauses met (the missing one is named in Status evidence below); **⬜ PLANNED** — forward-looking, not implemented yet. Marks verified against `origin/master` @ `9dd118c` (see Status evidence).
 

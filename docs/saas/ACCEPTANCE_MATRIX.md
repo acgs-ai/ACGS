@@ -10,7 +10,7 @@ independent review, certification, or production readiness.
 | Matrix ID | Acceptance criterion | State | Evidence state | DAG IDs | Accepted artifact |
 |---|---|---|---|---|---|
 | AM-001 | Canonical resumable program record | built | independently_reviewed | G005 | Independently reviewed DELIVERY_DAG.yaml, ACCEPTANCE_MATRIX.md, and test_saas_delivery_dag.py with passing documentation gates. |
-| AM-002 | Frozen current-state and product-contract reconciliation | partial | current_local | G006, G007, G008 | G006 `CURRENT_STATE_SURVEY.md` and G007 product-contract artifacts are independently reviewed; G008 architecture and owner-gated decisions remain open, so this is not an accepted product-contract decision. |
+| AM-002 | Frozen current-state and product-contract reconciliation | partial | current_local | G006, G007, G008 | G006 `CURRENT_STATE_SURVEY.md` plus G007/G008 target contracts are independently reviewed; owner-only provider, legal, licensing, spend, and deployment decisions remain proposed, so this is not an accepted product-contract decision or managed implementation evidence. |
 | AM-003 | Authoritative current-baseline gate proof | conflicting | historical_only | G004, G030B, G031 | Prior G004 material is superseded forensic history; PR #267 closed unmerged and PR #308 remains open. |
 | AM-004 | Open local fail-closed execution plane in the canonical SaaS journey | missing | none | G004, G204 | No accepted journey evidence until G006 survey and G004 rebuild complete. |
 | AM-005 | Tenant-scoped managed control-plane foundation | missing | none | G101, G102, G103, G104, G105, G106 | No accepted Phase-1 evidence; current implementation is unsurveyed. |
