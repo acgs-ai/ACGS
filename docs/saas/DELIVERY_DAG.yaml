@@ -598,7 +598,7 @@
       "evidence_artifact": "Independently reviewed, local SQLite/Alembic migration-core verification record: 64 package tests, lint, format, typecheck, lock check, and a direct empty-database upgrade. It is deliberately insufficient for accepted Phase-1 migration evidence.",
       "branch": "beta/p1-migrations-scope-101",
       "worktree": "saas-beta/p1-migrations-scope-101",
-      "pr": null,
+      "pr": 323,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "unverified",
