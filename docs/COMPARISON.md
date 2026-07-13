@@ -20,19 +20,24 @@ ACGS / gove-zone is not trying to replace the surrounding ecosystem. It fills a 
 
 Most agent tooling focuses on making actions possible. ACGS focuses on proving whether actions are legitimate.
 
-## Governance posture: none vs audit-centric vs receipt-centric
+## Governance postures and evidence boundaries
 
-Three postures a system can take at the agent action boundary:
+Products at the agent action boundary can observe events, enforce a policy
+before an action, or aim to provide a portable authorization artifact. These
+are overlapping capabilities rather than a ranking of products:
 
-| Posture | Acts… | You get | Example |
-|---|---|---|---|
-| **Ungoverned** (most of the stack today) | agent → tool directly | speed, zero accountability | raw MCP server, vanilla LangGraph |
-| **Audit-centric** | logs *after* the action | a trail you read after harm | Microsoft Agent Governance Toolkit ([detail below](#microsoft-agent-governance)) |
-| **Receipt-centric (ACGS)** | gates *before* the action | every action carries a verifiable, single-use Decision Receipt; fail-closed | gove-zone |
+| Posture | Boundary | Examples / claim boundary |
+|---|---|---|
+| **Observed evidence** | Records or reconstructs events after they occur. | Logs, traces, and audit systems; useful for investigation, but not pre-execution authorization proof. |
+| **Enforcement-capable** | Evaluates or blocks a proposed action at a configured pre-execution boundary. | AWS AgentCore Policy in `ENFORCE` mode, Microsoft ACS/AGT, Galileo Agent Control, and configured NeMo Guardrails surfaces each publish enforcement capabilities within their respective scopes. |
+| **Portable receipt target (ACGS beta)** | Target contract: an executor-verifiable authorization artifact binds the specific decision before the side effect. | ACGS's target is exact action/argument/actor/policy/scope binding, bounded expiry, single-use semantics, provenance preservation, and independently anchored evidence where the named evidence gates are met. |
 
-ACGS's distinctive choice is **receipt-centric**: the gate runs before the
-side effect, and the receipt is the artifact that proves it. This is a
-technical membrane, not a compliance certification. See
+ACGS does not claim to be the only option that enforces before an action. Its
+target distinction is portable executor-verifiable Decision Receipt semantics
+and provenance-preserving assurance, not a claim that other enforcement systems
+only observe harm. Current local capability and configuration limits remain in
+[CLAIMS.md](CLAIMS.md) and [SECURITY_MODEL.md](SECURITY_MODEL.md). This is a
+technical membrane discussion, not a compliance certification. See
 [AGENT_STACK_GOVERNANCE.md](AGENT_STACK_GOVERNANCE.md) for where each adapter
 plugs into the agent stack.
 
@@ -58,47 +63,48 @@ Microsoft ships several agent-governance products. They are largely
 question — so this is a layer comparison, not a head-to-head. Product details
 move quickly; entries are dated to when they were verified.
 
-| Microsoft offering | Layer | Governs | First-class portable per-decision receipt? |
-|---|---|---|---|
-| Entra Agent ID | Identity / lifecycle | Agent authentication, authorization, conditional access, lifecycle | No — identity/activity logs |
-| Purview for AI (DSPM for AI) | Data governance / compliance | Sensitivity labels, DLP, eDiscovery, retention, audit of AI interactions | No — unified audit log, not portable per-decision |
-| Copilot Control System | Admin deployment control plane | Tenant approve/publish/deploy/block of agents (pre-deployment) | No — admin audit events |
-| Azure AI Foundry Guardrails | Content-safety execution gate | Content-safety categories at input / tool-call / tool-response / output (tool-call & response are Preview; Foundry Agent Service only) | No — Azure Monitor events |
-| Agent Governance Toolkit (AGT) | Runtime policy-enforcement middleware | Pre/post tool-call policy (Cedar/OPA), fail-closed, Merkle-chained audit, 15+ frameworks | Partial — see below |
+| Microsoft offering | Layer | Published boundary relevant to this comparison |
+|---|---|---|
+| Entra Agent ID | Identity / lifecycle | Agent identity, authorization, conditional access, and lifecycle controls. |
+| Purview for AI (DSPM for AI) | Data governance / compliance | Sensitivity, DLP, eDiscovery, retention, and audit controls for AI interactions. |
+| Copilot Control System | Admin deployment control plane | Tenant approval, publishing, deployment, and blocking controls for agents. |
+| Azure AI Foundry Guardrails | Content-safety and tool-call controls | Guardrails at input, tool-call, tool-response, and output boundaries, subject to the product's documented scope. |
+| Agent Governance Toolkit (AGT) / Agent Control Specification (ACS) | Runtime policy-enforcement middleware | Published deterministic, fail-closed policy intervention around tool calls, escalation semantics, and audit/evidence capabilities. |
 
-The first four operate at the identity, data-governance, deployment, and
-content-safety layers respectively. None decides whether one specific tool-call
-side effect may execute against an arbitrary business policy, and none emits a
-portable per-decision artifact; they sit alongside a receipt gate rather than in
-place of it. (Foundry Guardrails is the closest of the four to a runtime gate,
-but it covers content-safety categories and applies only to agents built in
-Azure Foundry Agent Service.)
+The offerings operate at different layers and may be composed. This comparison
+does not assert a feature-completeness verdict or infer the absence of an
+unlisted capability from any provider. In particular, it does not treat
+runtime enforcement as merely post-hoc logging.
 
-**Agent Governance Toolkit (AGT)** is the structurally nearest comparison, and
-deserves a fair one. It is open-source (MIT), framework-agnostic across 15+
-runtimes, explicitly fail-closed, and keeps a SHA-256 Merkle-chained audit log
-with external inclusion proofs (`get_proof()`) — genuinely strong engineering,
-and broader in framework coverage than this alpha project is today. The
-evidenced difference is *receipt-centric vs audit-centric*: per AGT's own
-audit-and-compliance documentation, its chain is built for forensics and
-compliance reporting after the fact, and it has no first-class **decision
-receipt** — no pre-execution, sealed, self-contained artifact, signed before the
-side effect fires, that a relying party *outside* the enforcement runtime can
-independently verify before accepting the action, and no receipt lifecycle
-(expiry / revocation / delegation). ACGS / gove-zone's narrower bet is exactly
-that artifact: a Decision Receipt issued before execution and verifiable on its
-own (hash-bound, optionally Ed25519-signed), vendor-neutral by format — with
-cross-host reference validators still on the roadmap (see
-[`CLAIMS.md`](CLAIMS.md) and [`ROADMAP.md`](ROADMAP.md)). This is a contrast by
-evidence, not a knock: AGT and a receipt gate could even compose.
+**Agent Governance Toolkit (AGT)** and its Agent Control Specification (ACS)
+are the structurally nearest governance comparison. Their published materials
+describe pre-tool-call intervention, deterministic fail-closed behavior,
+escalation, and evidence/audit integrity capabilities. ACGS does not describe
+AGT as audit-only, does not claim it cannot issue or verify an artifact, and
+does not claim exclusive ownership of fail-closed enforcement. The ACGS beta
+target is a separately testable portable executor-verifiable Decision Receipt
+contract with exact action/argument/actor/policy/scope binding, bounded expiry,
+single-use semantics, provenance-preserving adapter evidence, and independent
+evidence anchoring. That distinction remains a target until the named
+conformance and evidence gates pass; AGT and an ACGS receipt gate may compose.
 
-Sources, verified as of June 2026:
+Other published enforcement-capable systems are also complementary: AWS
+AgentCore Policy documents gateway interception and `ENFORCE` default-deny/
+forbid-wins semantics; Galileo Agent Control documents an open-source runtime
+control plane; and NVIDIA NeMo Guardrails documents configured tool/action
+validation boundaries. Adapter profiles for those systems are roadmap work, not
+shipped interoperability claims.
+
+Sources, verified as of 2026-07-13:
 
 - Entra Agent ID — <https://learn.microsoft.com/en-us/entra/agent-id/identity-professional/microsoft-entra-agent-identities-for-ai-agents>
 - Purview for AI — <https://learn.microsoft.com/en-us/purview/ai-microsoft-purview>
 - Copilot Control System — <https://learn.microsoft.com/en-us/microsoft-365/copilot/copilot-control-system/security-governance>
 - Azure AI Foundry Guardrails — <https://learn.microsoft.com/en-us/azure/foundry/guardrails/guardrails-overview>
-- Agent Governance Toolkit — <https://github.com/microsoft/agent-governance-toolkit> and <https://microsoft.github.io/agent-governance-toolkit/tutorials/04-audit-and-compliance/>
+- Agent Governance Toolkit / Agent Control Specification — <https://github.com/microsoft/agent-governance-toolkit>, <https://microsoft.github.io/agent-governance-toolkit/packages/agent-control-specification/>, and <https://microsoft.github.io/agent-governance-toolkit/tutorials/04-audit-and-compliance/>
+- AWS AgentCore Policy — <https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-getting-started.html>
+- Galileo Agent Control — <https://docs.galileo.ai/release-notes>
+- NVIDIA NeMo Guardrails tool calling — <https://docs.nvidia.com/nemo/guardrails/configure-guardrails/guardrail-catalog/tool-calling>
 
 ## Collaboration platforms with built-in compliance (e.g. Mattermost)
 
@@ -206,12 +212,13 @@ Sources, verified as of June 2026:
 The two structurally-closest projects above sit near gove-zone on *different
 axes* — they are not interchangeable "same competitor" rivals:
 
-- **Microsoft AGT** is the nearest *governance-paradigm* analogue. It does
-  authorize tool-calls and keeps a fail-closed, Merkle-chained audit, so it
-  shares gove-zone's **authorization** axis; the evidenced difference is the
-  *resolution of the artifact* — audit-centric (forensics after the fact) versus
-  receipt-centric (a pre-execution artifact a relying party can verify outside
-  the runtime).
+- **Microsoft AGT / ACS** is the nearest *governance-paradigm* analogue. Its
+  published pre-tool-call, fail-closed, escalation, and integrity-evidence
+  capabilities share the authorization axis. This repository does not frame it
+  as audit-only. The comparison is a target evidence-boundary distinction:
+  portable executor-verifiable receipt semantics and assurance provenance must
+  be demonstrated by ACGS conformance/evidence gates rather than presumed from
+  a product label.
 - **flue** is a *containment-paradigm* tool. It bounds **where** an agent runs,
   not **which action-plus-arguments** may execute; even its strongest egress
   mediation (`outboundByHost`) keys on hostname and protects the secret, not the
