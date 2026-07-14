@@ -1748,7 +1748,7 @@
 }
 
 .c-state-card.warning {
-  border-left-color: var(--risk-med);
+  border-left-color: var(--risk-mid);
 }
 
 .c-state-card.danger {
@@ -2539,7 +2539,7 @@
 .workbench-live-summary,
 .workbench-blocker-summary,
 .workbench-command-summary {
-  border-left-color: var(--rust);
+  border-left-color: var(--accent);
 }
 
 .workbench-assurance-summary {
@@ -4366,11 +4366,11 @@
 }
 .login-error {
   margin: 0;
-  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--risk-hi) 40%, transparent);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger) 8%, var(--paper));
+  background: color-mix(in srgb, var(--risk-hi) 8%, var(--paper));
   padding: 10px 12px;
-  color: var(--danger);
+  color: var(--risk-hi);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;

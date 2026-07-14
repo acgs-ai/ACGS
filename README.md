@@ -89,6 +89,14 @@ See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public word
 | `examples/` | Root runnable governance examples for integrators. |
 | `tests/docs/` | Documentation/example smoke tests and link checks. |
 
+## Frontend buyer-evidence gallery
+
+The `acgi-ai/` console ships a dependency-free local buyer-evidence gallery. From
+`acgi-ai/`, `pnpm run evidence:build` writes the gallery and `pnpm run test:buyer-evidence`
+verifies it covers the receipt proof journey, bus-owned proof source, claim-safe trust
+surface, and visual governance workbench without unsupported production claims. This is a
+local buyer-evidence artifact — not hosted Storybook, and not production deployment proof.
+
 ## Read next
 
 1. [`docs/START_HERE.md`](docs/START_HERE.md) — 10-minute path for humans and agents.

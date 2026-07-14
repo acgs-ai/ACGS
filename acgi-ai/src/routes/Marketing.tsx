@@ -64,40 +64,39 @@ const coverage = [
     framework: 'EU AI Act',
     sections: ['Art. 9 risk', 'Art. 14 oversight', 'Art. 15(4) accuracy'],
     version: 'v1.0',
-    type: 'Regulatory'
+    type: 'Regulatory',
   },
   {
     framework: 'SR 11-7',
     sections: ['§V model risk', '§VII validation', '§VIII development'],
     version: 'v2011',
-    type: 'Federal'
+    type: 'Federal',
   },
   {
     framework: 'HIPAA',
     sections: ['§164.502 minimum necessary', '§164.514 de-identification'],
     version: 'v2024',
-    type: 'Regulatory'
+    type: 'Regulatory',
   },
   {
     framework: 'GDPR',
     sections: ['Art. 22 automated decisions', 'Art. 25 by-design'],
     version: 'v2018',
-    type: 'Regulatory'
+    type: 'Regulatory',
   },
   {
     framework: 'SOC 2',
     sections: ['CC6 logical access', 'CC7 system operations'],
     version: 'v2017',
-    type: 'Standard'
+    type: 'Standard',
   },
   {
     framework: 'ISO/IEC 42001',
     sections: ['Cl. 8 operations', 'Cl. 9 evaluation'],
     version: 'v2023',
-    type: 'Standard'
+    type: 'Standard',
   },
 ]
-
 
 const tiers = [
   {
@@ -627,13 +626,17 @@ export function Marketing() {
                       <td className="m-framework-cell">
                         <div className="m-framework-info">
                           <span className="m-framework-name">{row.framework}</span>
-                          <span className={`m-framework-type type-${row.type.toLowerCase()}`}>{row.type}</span>
+                          <span className={`m-framework-type type-${row.type.toLowerCase()}`}>
+                            {row.type}
+                          </span>
                         </div>
                       </td>
                       <td className="m-sections-cell">
                         <div className="m-sections-list">
-                          {row.sections.map((section, idx) => (
-                            <span key={idx} className="m-section-badge">{section}</span>
+                          {row.sections.map((section) => (
+                            <span key={section} className="m-section-badge">
+                              {section}
+                            </span>
                           ))}
                         </div>
                       </td>
