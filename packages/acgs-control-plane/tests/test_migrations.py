@@ -151,6 +151,27 @@ def _interrupt_0002_after_table(
             upgrade_database(database_url)
 
 
+def _wheel_build_command(dist_dir: Path) -> list[str]:
+    """Build through the prover-pinned uv when its closed runtime exports one."""
+    uv_bin = os.environ.get("UV_BIN")
+    if uv_bin:
+        return [
+            uv_bin,
+            "build",
+            "--no-build-isolation",
+            "--python",
+            sys.executable,
+            "--offline",
+            "--no-index",
+            "--no-cache",
+            "--wheel",
+            "--out-dir",
+            str(dist_dir),
+            ".",
+        ]
+    return ["uv", "build", "--wheel", "--out-dir", str(dist_dir), "."]
+
+
 def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> None:
     """A schema name never becomes executable SQL in the bounded resume probe."""
 
@@ -184,12 +205,54 @@ def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> Non
     assert isinstance(valid.statements[0], sa.sql.Select)
 
 
+def test_wheel_build_command_uses_prover_pinned_uv_without_network_or_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dist_dir = tmp_path / "dist"
+    monkeypatch.setenv("UV_BIN", "/trusted/bin/uv")
+
+    assert _wheel_build_command(dist_dir) == [
+        "/trusted/bin/uv",
+        "build",
+        "--no-build-isolation",
+        "--python",
+        sys.executable,
+        "--offline",
+        "--no-index",
+        "--no-cache",
+        "--wheel",
+        "--out-dir",
+        str(dist_dir),
+        ".",
+    ]
+
+
+@pytest.mark.parametrize("uv_bin", [None, ""])
+def test_wheel_build_command_preserves_local_isolated_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uv_bin: str | None
+) -> None:
+    dist_dir = tmp_path / "dist"
+    if uv_bin is None:
+        monkeypatch.delenv("UV_BIN", raising=False)
+    else:
+        monkeypatch.setenv("UV_BIN", uv_bin)
+
+    assert _wheel_build_command(dist_dir) == [
+        "uv",
+        "build",
+        "--wheel",
+        "--out-dir",
+        str(dist_dir),
+        ".",
+    ]
+
+
 def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path) -> None:
     """Exercise the built artifact, not an editable/source-tree fallback."""
     package_root = Path(__file__).resolve().parents[1]
     dist_dir = tmp_path / "dist"
     build = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(dist_dir), "."],
+        _wheel_build_command(dist_dir),
         cwd=package_root,
         capture_output=True,
         text=True,
