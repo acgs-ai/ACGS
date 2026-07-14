@@ -60,4 +60,3 @@ python3 compliance/engine.py report --run   # executes every row's tests
 - **operator-owned** — Requirement is an organizational/operator responsibility; ACGS only supplies supporting evidence.
 - **gap** — Requirement is in scope for ACGS but not yet covered.
 - **not-applicable** — Requirement targets system types or obligations outside ACGS scope.
-

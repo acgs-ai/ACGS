@@ -219,7 +219,6 @@ def _status_vocab_block(mapping: dict[str, Any]) -> list[str]:
     lines = ["## Status vocabulary", ""]
     for status, meaning in mapping["status_vocabulary"].items():
         lines.append(f"- **{status}** — {meaning}")
-    lines.append("")
     return lines
 
 
@@ -473,7 +472,6 @@ def render_readme(mapping: dict[str, Any], runtime: dict[str, Any], now_iso: str
         "`compliance/COMPLIANCE_READINESS_REPORT.md`, `docs/COMPLIANCE_CROSSWALK.md`, "
         "and `docs/CLAIMS.md` rows 27-33 for the full standing limitations."
     )
-    lines.append("")
     return "\n".join(lines) + "\n"
 
 
