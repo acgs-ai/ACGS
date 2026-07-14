@@ -158,7 +158,11 @@ def _sha256_file(path: Path) -> str:
 
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 # --- runtime evidence ---------------------------------------------------------
@@ -503,9 +507,13 @@ def build_evidence_pack(
 
     for fw_key, filename in PACK_FRAMEWORKS:
         (out / "frameworks" / filename).write_text(
-            render_framework_sheet(fw_key, mapping, runtime), encoding="utf-8"
+            render_framework_sheet(fw_key, mapping, runtime),
+            encoding="utf-8",
+            newline="\n",
         )
-    (out / "README.md").write_text(render_readme(mapping, runtime, now_iso), encoding="utf-8")
+    (out / "README.md").write_text(
+        render_readme(mapping, runtime, now_iso), encoding="utf-8", newline="\n"
+    )
 
     manifest = _build_manifest(out, mapping, runtime, now_iso)
     _dump_json(out / "manifest.json", manifest)

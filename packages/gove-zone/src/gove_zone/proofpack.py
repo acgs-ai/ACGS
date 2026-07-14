@@ -161,7 +161,11 @@ def _sha256_file(path: Path) -> str:
 
 
 def _dump_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def _declared_verdict(receipt: DecisionReceipt) -> str:
@@ -361,7 +365,7 @@ def generate_proof_pack(
                 f"--now-iso is not a valid ISO-8601 timestamp: {exc}"
             ) from exc
 
-    (out / RECEIPT_FILE).write_text(receipt.to_json() + "\n", encoding="utf-8")
+    (out / RECEIPT_FILE).write_text(receipt.to_json() + "\n", encoding="utf-8", newline="\n")
 
     _dump_json(
         out / AUDIT_CHAIN_FILE,
@@ -385,6 +389,7 @@ def generate_proof_pack(
             now_iso=now_iso,
         ),
         encoding="utf-8",
+        newline="\n",
     )
 
     artifacts = {
@@ -833,8 +838,9 @@ def _run_inner_verifier(
             for e in events
         ),
         encoding="utf-8",
+        newline="\n",
     )
-    (tmp / "receipt.json").write_text(receipt.to_json() + "\n", encoding="utf-8")
+    (tmp / "receipt.json").write_text(receipt.to_json() + "\n", encoding="utf-8", newline="\n")
     manifest = {
         "schema_version": INNER_SCHEMA_VERSION,
         "audit_chain": "audit.jsonl",
@@ -849,7 +855,9 @@ def _run_inner_verifier(
         "replay": None,
         "consumption_ledger": None,
     }
-    (tmp / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (tmp / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8", newline="\n"
+    )
     return verify_proof_pack(
         tmp,
         verifier=verifier,
@@ -872,6 +880,7 @@ def _reverify_replay(root: Path, policy_bundle: Path, side_store: Path, reasons:
                     for e in events
                 ),
                 encoding="utf-8",
+                newline="\n",
             )
             result = _run_replay(audit_path, policy_bundle, side_store)
     except Exception:  # noqa: BLE001 — malformed replay material is fail-closed.
