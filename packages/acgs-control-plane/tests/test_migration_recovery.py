@@ -1,0 +1,703 @@
+"""Unit evidence for the fail-closed local migration recovery drill."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+import pytest
+from gove_zone.audit import ChainHashAuditStore
+from gove_zone.decision import Decision, DecisionRecord
+from sqlalchemy.engine import make_url
+
+import acgs_control_plane.migration_recovery as recovery
+from acgs_control_plane.migration_recovery import (
+    ARCHIVE_NAME,
+    DRILL_LABEL,
+    EXPECTED_TABLES,
+    MANIFEST_NAME,
+    DatabaseState,
+    RecoveryRefused,
+    create_recovery_bundle,
+    restore_recovery_bundle,
+    verify_recovery_bundle,
+)
+
+ZERO_HASH = "0" * 64
+SOURCE_URL = "postgresql+psycopg://operator:super-secret@db.invalid/source_drill"
+TARGET_URL = "postgresql+psycopg://operator:target-secret@db.invalid/target_drill"
+
+
+def _tables() -> dict[str, dict[str, Any]]:
+    return {name: {"row_count": 0, "rows_sha256": ZERO_HASH} for name in EXPECTED_TABLES}
+
+
+def _state(*, schema: str = ZERO_HASH) -> DatabaseState:
+    return DatabaseState(schema_fingerprint=schema, tables=_tables(), audit_anchors={})
+
+
+def _write_bundle(root: Path, *, archive: bytes = b"PGDMP-test") -> dict[str, Any]:
+    root.mkdir(mode=0o700)
+    archive_path = root / ARCHIVE_NAME
+    archive_path.write_bytes(archive)
+    os.chmod(archive_path, 0o600)
+    manifest: dict[str, Any] = {
+        "manifest_version": 1,
+        "assurance_class": DRILL_LABEL,
+        "integrity": "unkeyed_sha256",
+        "source_database_name": "source_drill",
+        "schema_fingerprint": ZERO_HASH,
+        "table_fingerprints": _tables(),
+        "artifacts": [
+            {
+                "path": ARCHIVE_NAME,
+                "size": len(archive),
+                "sha256": recovery._sha256_bytes(archive),
+            }
+        ],
+        "audit_chains": [],
+        "limitations": [
+            "not_atomic_across_database_and_filesystem",
+            "not_authenticated",
+            "not_encrypted",
+            "not_pitr",
+            "not_production_dr_evidence",
+        ],
+    }
+    (root / MANIFEST_NAME).write_bytes(recovery._canonical_bytes(manifest))
+    os.chmod(root / MANIFEST_NAME, 0o600)
+    return manifest
+
+
+class _FakeTransaction:
+    def __enter__(self) -> _FakeTransaction:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+class _FakeConnection:
+    def __enter__(self) -> _FakeConnection:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def execution_options(self, **_kwargs: object) -> _FakeConnection:
+        return self
+
+    def begin(self) -> _FakeTransaction:
+        return _FakeTransaction()
+
+    def execute(self, _statement: object) -> None:
+        return None
+
+    def scalar(self, _statement: object) -> str:
+        return "00000003-0000001B-1"
+
+
+class _FakeEngine:
+    def connect(self) -> _FakeConnection:
+        return _FakeConnection()
+
+    def dispose(self) -> None:
+        return None
+
+
+def _patch_restore_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    state: DatabaseState | None = None,
+) -> dict[str, Any]:
+    boundary: dict[str, Any] = {"locked": False, "checks": 0}
+    connection = object()
+
+    @contextmanager
+    def lock(_url: str, _database: str) -> Iterator[object]:
+        assert not boundary["locked"]
+        boundary["locked"] = True
+        try:
+            yield connection
+        finally:
+            boundary["locked"] = False
+
+    def assert_empty(candidate: object, _database: str) -> None:
+        assert candidate is connection
+        assert boundary["locked"]
+        boundary["checks"] += 1
+
+    def capture(candidate: object, **_kwargs: object) -> DatabaseState:
+        assert candidate is connection
+        assert boundary["locked"]
+        return state or _state()
+
+    monkeypatch.setattr(recovery, "_target_migration_session_lock", lock)
+    monkeypatch.setattr(recovery, "_assert_empty_target_connection", assert_empty)
+    monkeypatch.setattr(recovery, "_capture_database_state", capture)
+    return boundary
+
+
+def test_create_publishes_canonical_private_bundle_without_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    commands: list[list[str]] = []
+
+    def runner(command: list[str], environment: dict[str, str]) -> None:
+        commands.append(list(command))
+        assert SOURCE_URL not in " ".join(command)
+        assert "super-secret" not in " ".join(command)
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+            assert "PGPASSWORD" not in environment
+            passfile = Path(environment["PGPASSFILE"])
+            assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
+            assert "super-secret" in passfile.read_text(encoding="utf-8")
+
+    manifest = create_recovery_bundle(
+        source_url_env="RECOVERY_SOURCE_URL",
+        audit_dir=audit_dir,
+        output=output,
+        runner=runner,
+    )
+
+    assert output.is_dir()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+    assert stat.S_IMODE((output / MANIFEST_NAME).stat().st_mode) == 0o600
+    assert stat.S_IMODE((output / ARCHIVE_NAME).stat().st_mode) == 0o600
+    assert (output / MANIFEST_NAME).read_bytes() == recovery._canonical_bytes(manifest)
+    manifest_text = json.dumps(manifest)
+    assert "super-secret" not in manifest_text
+    assert SOURCE_URL not in manifest_text
+    assert "raw_rows" not in manifest_text
+    assert manifest["assurance_class"] == DRILL_LABEL
+    assert [command[0] for command in commands] == ["pg_dump", "pg_restore"]
+    dump = commands[0]
+    assert "--format=custom" in dump
+    assert "--no-owner" in dump
+    assert "--no-acl" in dump
+    assert any(item.startswith("--snapshot=") for item in dump)
+
+
+def test_create_rejects_source_drift_and_publishes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    states = iter([_state(), _state(schema="1" * 64)])
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: next(states))
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    with pytest.raises(RecoveryRefused, match="before/snapshot/after"):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=output,
+            runner=runner,
+        )
+
+    assert not output.exists()
+    assert list(tmp_path.glob(".bundle.staging-*")) == []
+
+
+def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setenv("PGHOST", "attacker.invalid")
+    monkeypatch.setenv("PGSERVICE", "attacker-service")
+    monkeypatch.setenv("PGPASSFILE", "/tmp/attacker-passfile")
+    monkeypatch.setenv("PGOPTIONS", "-c search_path=attacker")
+    monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-boundary")
+
+    with recovery._pg_environment(make_url(SOURCE_URL), tmp_path) as environment:
+        assert environment["PGHOST"] == "db.invalid"
+        assert environment["PGPORT"] == "5432"
+        assert environment["PGDATABASE"] == "source_drill"
+        assert environment["PGUSER"] == "operator"
+        assert "PGSERVICE" not in environment
+        assert "PGOPTIONS" not in environment
+        assert "UNRELATED_SECRET" not in environment
+        assert "RECOVERY_SOURCE_URL" not in environment
+        passfile = Path(environment["PGPASSFILE"])
+        assert passfile.parent == tmp_path
+        assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
+    assert not passfile.exists()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+psycopg://operator@/source_drill",
+        "postgresql+psycopg://db.invalid/source_drill",
+    ],
+)
+def test_database_url_requires_explicit_endpoint_identity(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("RECOVERY_URL", url)
+    with pytest.raises(RecoveryRefused, match="explicitly identify"):
+        recovery._url_from_named_environment("RECOVERY_URL")
+
+
+def test_connection_database_identity_is_bound_before_state_use() -> None:
+    class WrongDatabaseConnection:
+        def scalar(self, _statement: object) -> str:
+            return "wrong_database"
+
+    with pytest.raises(RecoveryRefused, match="identity does not match"):
+        recovery._assert_connection_database(  # type: ignore[arg-type]
+            WrongDatabaseConnection(), "expected_database"
+        )
+
+
+def test_create_fsyncs_artifacts_and_parent_in_durable_publish_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    original_file = recovery._fsync_file
+    original_directory = recovery._fsync_directory
+    events: list[tuple[str, str, bool]] = []
+
+    def fsync_file(path: Path) -> None:
+        events.append(("file", path.name, output.exists()))
+        original_file(path)
+
+    def fsync_directory(path: Path) -> None:
+        events.append(("directory", path.name, output.exists()))
+        original_directory(path)
+
+    monkeypatch.setattr(recovery, "_fsync_file", fsync_file)
+    monkeypatch.setattr(recovery, "_fsync_directory", fsync_directory)
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    create_recovery_bundle(
+        source_url_env="RECOVERY_SOURCE_URL",
+        audit_dir=audit_dir,
+        output=output,
+        runner=runner,
+    )
+
+    audit_fsync = events.index(("directory", "audit", False))
+    archive_fsync = events.index(("file", ARCHIVE_NAME, False))
+    manifest_fsync = events.index(("file", MANIFEST_NAME, False))
+    staging_fsync = next(
+        index
+        for index, event in enumerate(events)
+        if event[0] == "directory" and event[1].startswith(".bundle.staging-")
+    )
+    parent_after_rename = next(
+        index for index, event in enumerate(events) if event == ("directory", tmp_path.name, True)
+    )
+    assert audit_fsync < archive_fsync < manifest_fsync < staging_fsync < parent_after_rename
+
+
+def test_create_fsync_failure_reports_refusal_and_never_publishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    original_directory = recovery._fsync_directory
+
+    def fail_staging_fsync(path: Path) -> None:
+        if path.name.startswith(".bundle.staging-") and (path / MANIFEST_NAME).exists():
+            raise OSError("injected fsync failure")
+        original_directory(path)
+
+    monkeypatch.setattr(recovery, "_fsync_directory", fail_staging_fsync)
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    with pytest.raises(RecoveryRefused, match="creation failed"):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=output,
+            runner=runner,
+        )
+    assert not output.exists()
+    assert list(tmp_path.glob(".bundle.staging-*")) == []
+
+
+def test_publication_never_replaces_an_existing_destination(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    output = tmp_path / "bundle"
+    output.mkdir()
+    marker = output / "owner-data"
+    marker.write_text("preserve", encoding="utf-8")
+
+    with pytest.raises(RecoveryRefused, match="appeared"):
+        recovery._publish_directory_no_replace(staging, output)
+    assert marker.read_text(encoding="utf-8") == "preserve"
+    assert staging.is_dir()
+    assert not (tmp_path / ".bundle.publish.lock").exists()
+
+
+@pytest.mark.parametrize("unsafe_name", ["nested/escape.audit.jsonl", "bad.org.audit.jsonl"])
+def test_audit_snapshot_rejects_unsafe_or_unexpected_artifacts(
+    tmp_path: Path, unsafe_name: str
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    candidate = audit_dir / unsafe_name
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text("not trusted", encoding="utf-8")
+    destination = tmp_path / "snapshot"
+
+    with pytest.raises(RecoveryRefused):
+        with recovery._locked_audit_snapshot(audit_dir, destination, {}):
+            pass
+
+
+def test_audit_snapshot_rejects_symlink_without_copying(
+    tmp_path: Path,
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("payload", encoding="utf-8")
+    (audit_dir / "org.audit.jsonl").symlink_to(outside)
+
+    with pytest.raises(RecoveryRefused, match="symlink"):
+        with recovery._locked_audit_snapshot(audit_dir, tmp_path / "snapshot", {}):
+            pass
+
+
+def _append_audit_event(audit_dir: Path, org_id: str = "org-audit") -> tuple[Path, str]:
+    chain = audit_dir / f"{org_id}.audit.jsonl"
+    event = ChainHashAuditStore(chain).append(
+        DecisionRecord(
+            decision=Decision.ALLOW,
+            tool="recovery.test",
+            argument_hash="a" * 64,
+            policy_version="policy-v1",
+            event_id="event-recovery-1",
+            actor="operator",
+        )
+    )
+    return chain, str(event["event_hash"])
+
+
+def test_nonempty_audit_snapshot_matches_anchor_and_holds_lock_during_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    chain, anchor = _append_audit_event(audit_dir)
+    lock_state = {"held": False}
+    original_verify = ChainHashAuditStore.verify_chain
+
+    @contextmanager
+    def observed_lock(_stream: object) -> Iterator[None]:
+        assert not lock_state["held"]
+        lock_state["held"] = True
+        try:
+            yield
+        finally:
+            lock_state["held"] = False
+
+    def observed_verify(store: ChainHashAuditStore, **kwargs: object) -> dict[str, Any]:
+        assert lock_state["held"]
+        return original_verify(store, **kwargs)
+
+    monkeypatch.setattr(recovery, "_exclusive_file_lock", observed_lock)
+    monkeypatch.setattr(ChainHashAuditStore, "verify_chain", observed_verify)
+    destination = tmp_path / "snapshot"
+    with recovery._locked_audit_snapshot(
+        audit_dir, destination, {"org-audit": (1, anchor)}
+    ) as descriptors:
+        assert descriptors[0]["event_count"] == 1
+        assert descriptors[0]["last_hash"] == anchor
+        assert (destination / chain.name).read_bytes() == chain.read_bytes()
+        assert lock_state["held"]
+    assert not lock_state["held"]
+
+
+def test_audit_snapshot_rejects_corruption_and_anchor_mismatch(tmp_path: Path) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    chain, anchor = _append_audit_event(audit_dir)
+
+    with pytest.raises(RecoveryRefused, match="does not match"):
+        with recovery._locked_audit_snapshot(
+            audit_dir, tmp_path / "wrong-anchor", {"org-audit": (1, "b" * 64)}
+        ):
+            pass
+
+    payload = json.loads(chain.read_text(encoding="utf-8"))
+    payload["actor"] = "tampered"
+    chain.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(RecoveryRefused, match="does not match"):
+        with recovery._locked_audit_snapshot(
+            audit_dir, tmp_path / "corrupt", {"org-audit": (1, anchor)}
+        ):
+            pass
+
+
+@pytest.mark.parametrize("zero_anchor", ["", ZERO_HASH])
+def test_zero_event_audit_uses_genesis_consistently(tmp_path: Path, zero_anchor: str) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    with recovery._locked_audit_snapshot(
+        audit_dir, tmp_path / "snapshot", {"org-empty": (0, zero_anchor)}
+    ) as descriptors:
+        assert descriptors == [
+            {
+                "org_id": "org-empty",
+                "path": "audit/org-empty.audit.jsonl",
+                "event_count": 0,
+                "last_hash": ZERO_HASH,
+                "size": 0,
+                "sha256": recovery._sha256_bytes(b""),
+            }
+        ]
+
+
+def test_verify_rejects_corruption_before_archive_tool_runs(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    (bundle / ARCHIVE_NAME).write_bytes(b"tampered")
+    commands: list[list[str]] = []
+
+    with pytest.raises(RecoveryRefused, match="integrity"):
+        verify_recovery_bundle(
+            bundle=bundle,
+            runner=lambda command, _environment: commands.append(list(command)),
+        )
+
+    assert commands == []
+
+
+def test_verify_rejects_symlink_and_unexpected_artifact(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    outside = tmp_path / "outside"
+    outside.write_text("outside", encoding="utf-8")
+    (bundle / "extra").symlink_to(outside)
+
+    with pytest.raises(RecoveryRefused, match="symlink"):
+        verify_recovery_bundle(bundle=bundle, runner=lambda *_args: None)
+
+
+def test_restore_prohibits_unacknowledged_untrusted_bundle_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    monkeypatch.setenv("RECOVERY_TARGET_URL", TARGET_URL)
+    destructive: list[list[str]] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if "--list" not in command:
+            destructive.append(command)
+
+    with pytest.raises(RecoveryRefused, match="untrusted bundles are prohibited"):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env="RECOVERY_TARGET_URL",
+            target_database_name="target_drill",
+            target_audit_dir=tmp_path / "target-audit",
+            runner=runner,
+        )
+    assert destructive == []
+
+
+@pytest.mark.parametrize(
+    ("target_name", "target_url", "audit_entry", "expected"),
+    [
+        ("not_the_url_name", TARGET_URL, None, "does not match"),
+        ("source_drill", TARGET_URL.replace("target_drill", "source_drill"), None, "distinct"),
+        ("target_drill", TARGET_URL, "existing.jsonl", "must be empty"),
+    ],
+)
+def test_restore_negative_preflights_invoke_no_destructive_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_name: str,
+    target_url: str,
+    audit_entry: str | None,
+    expected: str,
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    audit_target = tmp_path / "target-audit"
+    audit_target.mkdir()
+    if audit_entry:
+        (audit_target / audit_entry).write_text("occupied", encoding="utf-8")
+    monkeypatch.setenv("RECOVERY_TARGET_URL", target_url)
+    destructive: list[list[str]] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if "--list" not in command:
+            destructive.append(list(command))
+
+    with pytest.raises(RecoveryRefused, match=expected):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env="RECOVERY_TARGET_URL",
+            target_database_name=target_name,
+            target_audit_dir=audit_target,
+            acknowledge_operator_controlled_bundle=True,
+            runner=runner,
+        )
+
+    assert destructive == []
+
+
+def test_restore_rejects_nonempty_database_before_destructive_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    monkeypatch.setenv("RECOVERY_TARGET_URL", TARGET_URL)
+    _patch_restore_boundary(monkeypatch)
+
+    def reject_nonempty(_connection: object, _database: str) -> None:
+        raise RecoveryRefused("target database must be empty")
+
+    monkeypatch.setattr(recovery, "_assert_empty_target_connection", reject_nonempty)
+    destructive: list[list[str]] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if "--list" not in command:
+            destructive.append(list(command))
+
+    with pytest.raises(RecoveryRefused, match="must be empty"):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env="RECOVERY_TARGET_URL",
+            target_database_name="target_drill",
+            target_audit_dir=tmp_path / "target-audit",
+            acknowledge_operator_controlled_bundle=True,
+            runner=runner,
+        )
+    assert destructive == []
+    assert not (tmp_path / "target-audit").exists()
+
+
+def test_restore_uses_fail_closed_flags_and_publishes_audits_only_after_equivalence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    manifest = _write_bundle(bundle)
+    monkeypatch.setenv("RECOVERY_TARGET_URL", TARGET_URL)
+    boundary = _patch_restore_boundary(monkeypatch)
+    commands: list[list[str]] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if "--list" not in command:
+            assert boundary["locked"]
+            assert boundary["checks"] == 2
+        commands.append(list(command))
+
+    restore_recovery_bundle(
+        bundle=bundle,
+        target_url_env="RECOVERY_TARGET_URL",
+        target_database_name="target_drill",
+        target_audit_dir=tmp_path / "target-audit",
+        acknowledge_operator_controlled_bundle=True,
+        runner=runner,
+    )
+
+    destructive = [command for command in commands if "--list" not in command]
+    assert len(destructive) == 1
+    command = destructive[0]
+    assert command[0] == "pg_restore"
+    assert "--single-transaction" in command
+    assert "--exit-on-error" in command
+    assert "--no-owner" in command
+    assert "--no-acl" in command
+    assert "--dbname=target_drill" in command
+    assert (tmp_path / "target-audit").is_dir()
+    assert manifest["assurance_class"] == DRILL_LABEL
+    assert boundary == {"locked": False, "checks": 2}
+
+
+def test_restore_failure_leaves_audit_target_unpublished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    monkeypatch.setenv("RECOVERY_TARGET_URL", TARGET_URL)
+    _patch_restore_boundary(monkeypatch)
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        if "--list" not in command:
+            raise RecoveryRefused("pg_restore failed")
+
+    with pytest.raises(RecoveryRefused, match="failed"):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env="RECOVERY_TARGET_URL",
+            target_database_name="target_drill",
+            target_audit_dir=tmp_path / "target-audit",
+            acknowledge_operator_controlled_bundle=True,
+            runner=runner,
+        )
+
+    assert not (tmp_path / "target-audit").exists()
+    assert list(tmp_path.glob(".target-audit.restore-*")) == []
+
+
+def test_cli_redacts_unexpected_secret_bearing_exception(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        recovery,
+        "verify_recovery_bundle",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(SOURCE_URL)),
+    )
+
+    assert recovery.main(["verify", "--bundle", "unused"]) == 2
+    captured = capsys.readouterr()
+    assert "super-secret" not in captured.err
+    assert SOURCE_URL not in captured.err
+    assert "without exposing sensitive details" in captured.err
