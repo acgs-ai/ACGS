@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 
@@ -350,3 +351,19 @@ def test_environment_posture_is_required_and_unknown_values_are_stable(
     settings = Settings.from_env()
     assert settings.runtime_posture is RuntimePosture.PRODUCTION
     assert settings.create_tables is False
+
+
+def test_unknown_environment_posture_never_leaks_raw_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "posture-secret-sentinel-7f8c"
+    monkeypatch.setenv("ACP_RUNTIME_POSTURE", sentinel)
+
+    with pytest.raises(RuntimePostureConfigurationError) as stopped:
+        Settings.from_env()
+
+    assert stopped.value.blocker == "RUNTIME_POSTURE_UNKNOWN"
+    assert stopped.value.__cause__ is None
+    assert stopped.value.__context__ is None
+    formatted = "".join(traceback.format_exception(stopped.value))
+    assert sentinel not in formatted

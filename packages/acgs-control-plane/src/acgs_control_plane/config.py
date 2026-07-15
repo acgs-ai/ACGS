@@ -98,10 +98,14 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         raw_posture = os.environ.get("ACP_RUNTIME_POSTURE")
-        try:
-            runtime_posture = RuntimePosture(raw_posture) if raw_posture is not None else None
-        except ValueError as exc:
-            raise RuntimePostureConfigurationError("RUNTIME_POSTURE_UNKNOWN") from exc
+        if raw_posture is None:
+            runtime_posture = None
+        elif raw_posture == RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED.value:
+            runtime_posture = RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED
+        elif raw_posture == RuntimePosture.PRODUCTION.value:
+            runtime_posture = RuntimePosture.PRODUCTION
+        else:
+            raise RuntimePostureConfigurationError("RUNTIME_POSTURE_UNKNOWN")
         return cls(
             database_url=os.environ.get("ACP_DATABASE_URL", DEFAULT_DATABASE_URL),
             audit_dir=Path(os.environ.get("ACP_AUDIT_DIR", "./acp-audit")),
