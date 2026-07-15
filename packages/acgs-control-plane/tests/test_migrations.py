@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 import acgs_control_plane.migrations as migration_module
 from acgs_control_plane.app import create_app
-from acgs_control_plane.config import Settings
+from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import Base, make_engine
 from acgs_control_plane.migrations import (
     HEAD_REVISION,
@@ -570,6 +570,7 @@ def test_app_create_tables_bootstraps_only_an_empty_database_as_legacy_v0(tmp_pa
             database_url=database_url,
             audit_dir=tmp_path / "audit",
             create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         )
     )
     try:
@@ -596,6 +597,7 @@ def test_legacy_create_tables_cannot_create_unversioned_scope_tables(tmp_path: P
             database_url=database_url,
             audit_dir=tmp_path / "audit",
             create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         )
     )
     try:
@@ -622,6 +624,7 @@ def test_app_create_tables_rejects_a_projects_only_database_before_mutation(tmp_
                 database_url=database_url,
                 audit_dir=tmp_path / "audit",
                 create_tables=True,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             )
         )
 
@@ -649,6 +652,7 @@ def test_legacy_create_tables_does_not_mutate_an_unversioned_mixed_scope_schema(
                 database_url=database_url,
                 audit_dir=tmp_path / "audit",
                 create_tables=True,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             )
         )
 
@@ -671,6 +675,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
                 database_url=database_url,
                 audit_dir=tmp_path / "audit",
                 create_tables=True,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             )
         )
 
@@ -692,6 +697,7 @@ def test_app_create_tables_rejects_a_partial_scope_schema_before_mutation(
                 database_url=database_url,
                 audit_dir=tmp_path / "audit",
                 create_tables=True,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             )
         )
 

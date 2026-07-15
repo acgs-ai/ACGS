@@ -21,6 +21,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from gove_zone.policy import RuleSetPolicy
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,7 +33,13 @@ from acgs_control_plane.auth import (
     generate_api_key,
     resolve_principal,
 )
-from acgs_control_plane.config import Settings
+from acgs_control_plane.config import (
+    PostureBlocker,
+    ProductionPostureBlocked,
+    RuntimePosture,
+    RuntimePostureConfigurationError,
+    Settings,
+)
 from acgs_control_plane.db import Base, make_engine, make_session_factory
 from acgs_control_plane.exports import build_export_bundle
 from acgs_control_plane.governance import (
@@ -40,6 +47,12 @@ from acgs_control_plane.governance import (
     PolicyDeniedError,
     PolicyEscalatedError,
     org_audit_store,
+)
+from acgs_control_plane.migrations import (
+    DatabaseSchemaState,
+    SchemaPreflight,
+    assert_current_startup_schema,
+    inspect_connection,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -155,11 +168,49 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
 # ---------------------------------------------------------------------------
 
 
+_READ_ONLY_POST_ROUTES = frozenset(
+    {
+        "/orgs/{org_id}/policies/simulate",
+        "/orgs/{org_id}/receipts/{receipt_id}/verify",
+    }
+)
+_MUTATING_HTTP_METHODS = frozenset({"DELETE", "PATCH", "POST", "PUT"})
+
+
+def _legacy_unsigned_route_blockers(app: FastAPI) -> tuple[PostureBlocker, ...]:
+    """Classify every current or future mutating route as production-blocking."""
+    surfaces = {
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods or ()
+        if method in _MUTATING_HTTP_METHODS
+        and not (method == "POST" and route.path in _READ_ONLY_POST_ROUTES)
+    }
+    blockers = tuple(
+        PostureBlocker("LEGACY_UNSIGNED_WRITE", "route-registry", f"{method} {path}")
+        for method, path in sorted(surfaces)
+    )
+    if blockers:
+        return blockers
+    # Absence of a legacy route is not positive proof that canonical signed,
+    # single-use production execution has been wired.
+    return (
+        PostureBlocker(
+            "CANONICAL_PRODUCTION_MEMBRANE_NOT_ENABLED",
+            "governance-membrane",
+        ),
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    engine = make_engine(settings.database_url)
-    if settings.create_tables:
-        Base.metadata.create_all(engine)
+    if settings.runtime_posture is None:
+        raise RuntimePostureConfigurationError("RUNTIME_POSTURE_REQUIRED")
+    if not isinstance(settings.runtime_posture, RuntimePosture):
+        raise RuntimePostureConfigurationError("RUNTIME_POSTURE_UNKNOWN")
+    if settings.runtime_posture is RuntimePosture.PRODUCTION and settings.create_tables:
+        raise RuntimePostureConfigurationError("PRODUCTION_SCHEMA_BOOTSTRAP_FORBIDDEN")
 
     app = FastAPI(
         title="ACGS Enterprise Governance Control Plane",
@@ -167,9 +218,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="Multi-tenant, receipt-gated governance management API. "
         "No valid Decision Receipt, no side effect.",
     )
-    app.state.settings = settings
-    app.state.engine = engine
-    app.state.session_factory = make_session_factory(engine)
 
     @app.exception_handler(PolicyDeniedError)
     def _denied(_request: Request, exc: PolicyDeniedError) -> JSONResponse:
@@ -180,6 +228,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _blocked_json(202, "pending_approval", exc)
 
     _register_routes(app)
+    route_blockers = _legacy_unsigned_route_blockers(app)
+    if settings.runtime_posture is RuntimePosture.PRODUCTION:
+        # Schema currency alone cannot upgrade legacy unsigned mutation routes
+        # into a production-safe governance membrane. Refuse before engine,
+        # session factory, worker, or provider construction.
+        raise ProductionPostureBlocked(route_blockers)
+
+    engine = make_engine(settings.database_url)
+    try:
+        if settings.create_tables:
+            # Deliberately retained only for disposable legacy development
+            # fixtures. Production is rejected above before engine creation.
+            Base.metadata.create_all(engine)
+        with engine.connect() as connection:
+            if settings.create_tables:
+                schema_preflight = inspect_connection(connection)
+            else:
+                schema_preflight = assert_current_startup_schema(connection)
+    except BaseException:
+        engine.dispose()
+        raise
+
+    app.state.settings = settings
+    app.state.engine = engine
+    app.state.schema_preflight = schema_preflight
+    app.state.readiness_blockers = route_blockers
+    app.state.session_factory = make_session_factory(engine)
     return app
 
 
@@ -189,6 +264,21 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/healthz", tags=["meta"])
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz", tags=["meta"])
+    def readyz(request: Request) -> JSONResponse:
+        preflight: SchemaPreflight = request.app.state.schema_preflight
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0002
+        blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
+        return JSONResponse(
+            status_code=503,
+            content={
+                "blockers": [blocker.to_dict() for blocker in blockers],
+                "schema_current": schema_current,
+                "schema_state": preflight.state.value,
+                "status": "not-production-ready",
+            },
+        )
 
     # -- organizations (bootstrap) ------------------------------------------
 

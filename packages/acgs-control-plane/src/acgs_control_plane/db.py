@@ -1,9 +1,10 @@
 """SQLAlchemy engine/session plumbing.
 
 PostgreSQL is the production backend (JSONB columns via dialect variant);
-the same ORM runs on SQLite for tests. Legacy v0 tables may still be created
-through ``create_all`` during the transition, while post-v0 scope tables are
-created only by their Alembic revisions.
+the same ORM runs on SQLite for tests. Legacy v0 tables may be created only by
+the explicit local-development bootstrap. Schema-managed startup is read-only
+and requires the exact Alembic head; production remains separately blocked
+until the canonical signed governance membrane replaces legacy writes.
 """
 
 from __future__ import annotations
@@ -34,9 +35,9 @@ _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(
 class LegacyCreateAllMetaData(MetaData):
     """Preserve v0 ``create_all`` only for the explicit legacy table set.
 
-    The app factory still owns its legacy ``create_all`` call until the #308
-    integration lane replaces it.  Project and environment tables are instead
-    created only by Alembic revision 0002.  A future migration-managed table
+    The app factory exposes this only behind its explicit local-development
+    posture. Project and environment tables are created only by Alembic
+    revision 0002. A future migration-managed table
     must be both explicitly marked and added to the finite allowlist; an
     unknown marker or an unmarked allowlisted table raises rather than silently
     changing startup schema behaviour.

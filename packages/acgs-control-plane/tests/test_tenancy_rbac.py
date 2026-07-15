@@ -7,7 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from acgs_control_plane.app import create_app
-from acgs_control_plane.config import Settings
+from acgs_control_plane.config import RuntimePosture, Settings
 
 
 def test_bootstrap_requires_token(client: TestClient) -> None:
@@ -23,6 +23,8 @@ def test_bootstrap_disabled_when_no_token_configured(tmp_path: Any) -> None:
         database_url=f"sqlite:///{tmp_path / 'x.sqlite3'}",
         audit_dir=tmp_path / "audit",
         bootstrap_token=None,
+        create_tables=True,
+        runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
     client = TestClient(create_app(settings))
     resp = client.post(
