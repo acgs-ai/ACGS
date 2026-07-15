@@ -4,10 +4,14 @@ name: python-acgs-control-plane
 
 on:
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - 'beta/**'
     paths:
       - 'packages/acgs-control-plane/**'
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/cp-test.in'
+      - 'requirements/saas-beta/cp-test.lock'
       - 'pyproject.toml'
       - '.github/workflows/python-acgs-control-plane.yml'
   push:
@@ -15,6 +19,8 @@ on:
     paths:
       - 'packages/acgs-control-plane/**'
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/cp-test.in'
+      - 'requirements/saas-beta/cp-test.lock'
       - 'pyproject.toml'
       - '.github/workflows/python-acgs-control-plane.yml'
 
@@ -39,10 +45,13 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: 0.11.19
           enable-cache: true
           cache-dependency-glob: 'packages/acgs-control-plane/pyproject.toml'
 
@@ -66,3 +75,52 @@ jobs:
 
       - name: Test
         run: .venv/bin/pytest -q
+
+  postgresql-migrations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394
+        env:
+          POSTGRES_DB: acgs_control_plane_test
+          POSTGRES_USER: acgs_control_plane_test
+          POSTGRES_PASSWORD: acgs_control_plane_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: 0.11.19
+          enable-cache: true
+          cache-dependency-glob: 'requirements/saas-beta/cp-test.lock'
+
+      - name: Install locked migration test environment
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11 --clear .venv
+          uv pip sync \
+            --python .venv/bin/python \
+            --require-hashes \
+            ../../requirements/saas-beta/cp-test.lock
+          uv pip install \
+            --python .venv/bin/python \
+            --no-deps \
+            --no-build-isolation \
+            --editable ../gove-zone \
+            --editable .
+
+      - name: Test PostgreSQL migrations
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_POSTGRES_URL: postgresql+psycopg://acgs_control_plane_test:acgs_control_plane_test@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_test
+        run: .venv/bin/pytest -q tests/test_postgresql_migrations.py
