@@ -45,6 +45,11 @@ MANIFEST_VERSION: Final = 1
 MANIFEST_NAME: Final = "manifest.json"
 ARCHIVE_NAME: Final = "database.dump"
 AUDIT_DIRECTORY_NAME: Final = "audit"
+FINGERPRINT_MAX_ROWS_PER_TABLE: Final = 100_000
+FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW: Final = 1 * 1024 * 1024
+FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE: Final = 64 * 1024 * 1024
+FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE: Final = 128 * 1024 * 1024
+FINGERPRINT_FETCH_BATCH_SIZE: Final = 128
 EXPECTED_TABLES: Final = (
     "agents",
     "alembic_version",
@@ -61,6 +66,9 @@ _DATABASE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_$-]{0,62}\Z")
 _HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _AUDIT_SUFFIX = ".audit.jsonl"
 _AUDIT_LOCK_SUFFIX = ".audit.jsonl.lock"
+_FINGERPRINT_ENVELOPE_REFUSAL: Final = (
+    "database fingerprint exceeds the fixed beta capture envelope"
+)
 _MANIFEST_KEYS: Final = frozenset(
     {
         "manifest_version",
@@ -111,6 +119,11 @@ class DatabaseState:
     schema_fingerprint: str
     tables: dict[str, dict[str, Any]]
     audit_anchors: dict[str, tuple[int, str]]
+
+
+@dataclass
+class _FingerprintCaptureBudget:
+    canonical_bytes: int = 0
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -388,6 +401,45 @@ def _assert_connection_database(connection: Connection, expected_database: str) 
         raise RecoveryRefused("database connection identity does not match the named URL")
 
 
+def _stream_table_rows(connection: Connection, table: sa.Table) -> Iterator[Mapping[Any, Any]]:
+    statement = sa.select(table).execution_options(
+        stream_results=True,
+        yield_per=FINGERPRINT_FETCH_BATCH_SIZE,
+        max_row_buffer=FINGERPRINT_FETCH_BATCH_SIZE,
+    )
+    return iter(connection.execute(statement).mappings())
+
+
+def _fingerprint_canonical_rows(
+    rows: Iterator[Mapping[Any, Any]], capture_budget: _FingerprintCaptureBudget
+) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    canonical_rows: list[bytes] = []
+    row_count = 0
+    table_bytes = 0
+    for row in rows:
+        row_count += 1
+        if row_count > FINGERPRINT_MAX_ROWS_PER_TABLE:
+            raise RecoveryRefused(_FINGERPRINT_ENVELOPE_REFUSAL)
+        canonical_row = _canonical_bytes(_normalize(dict(row)))
+        row_bytes = len(canonical_row)
+        if row_bytes > FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW:
+            raise RecoveryRefused(_FINGERPRINT_ENVELOPE_REFUSAL)
+        table_bytes += row_bytes
+        if table_bytes > FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE:
+            raise RecoveryRefused(_FINGERPRINT_ENVELOPE_REFUSAL)
+        capture_budget.canonical_bytes += row_bytes
+        if capture_budget.canonical_bytes > FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE:
+            raise RecoveryRefused(_FINGERPRINT_ENVELOPE_REFUSAL)
+        canonical_rows.append(canonical_row)
+
+    canonical_rows.sort()
+    for canonical_row in canonical_rows:
+        digest.update(canonical_row)
+    canonical_rows.clear()
+    return {"row_count": row_count, "rows_sha256": digest.hexdigest()}
+
+
 def _capture_database_state(
     connection: Connection, *, expected_database: str | None = None
 ) -> DatabaseState:
@@ -402,19 +454,12 @@ def _capture_database_state(
         raise RecoveryRefused("database contains an unknown or incomplete table set")
 
     table_fingerprints: dict[str, dict[str, Any]] = {}
+    capture_budget = _FingerprintCaptureBudget()
     for table_name in EXPECTED_TABLES:
         table = sa.Table(table_name, sa.MetaData(), autoload_with=connection, schema="public")
-        statement = sa.select(table)
-        digest = hashlib.sha256()
-        canonical_rows: list[bytes] = []
-        for row in connection.execute(statement).mappings():
-            canonical_rows.append(_canonical_bytes(_normalize(dict(row))))
-        for canonical_row in sorted(canonical_rows):
-            digest.update(canonical_row)
-        table_fingerprints[table_name] = {
-            "row_count": len(canonical_rows),
-            "rows_sha256": digest.hexdigest(),
-        }
+        table_fingerprints[table_name] = _fingerprint_canonical_rows(
+            _stream_table_rows(connection, table), capture_budget
+        )
 
     anchors: dict[str, tuple[int, str]] = {}
     rows = connection.execute(
