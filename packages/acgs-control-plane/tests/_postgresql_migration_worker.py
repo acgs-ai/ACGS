@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import os
-import selectors
 import sys
 from collections.abc import Mapping
-from typing import Final
+from dataclasses import dataclass
+from queue import Empty, Queue
+from threading import Thread
+from typing import Final, Literal, Protocol
 
 import sqlalchemy as sa
 from alembic.config import Config
@@ -28,6 +30,17 @@ _DATABASE_URL_ENV: Final = "ACP_TEST_POSTGRES_URL"
 _DISPOSABLE_DATABASE: Final = "acgs_control_plane_test"
 _RELEASE_TIMEOUT_SECONDS: Final = 30.0
 _MODES: Final = frozenset({"ordinary", "pause-before-upgrade", "pause-after-upgrade"})
+
+
+@dataclass(frozen=True)
+class _ReaderMessage:
+    kind: Literal["line", "error", "eof"]
+    line: str = ""
+    error: BaseException | None = None
+
+
+class _ReadableTextStream(Protocol):
+    def readline(self, size: int = -1, /) -> str: ...
 
 
 class _ReleasedBeforeUpgrade(RuntimeError):
@@ -48,16 +61,42 @@ def _connection_identity(connection: Connection) -> tuple[str, int]:
     return database, backend_pid
 
 
-def _wait_for_release() -> None:
-    selector = selectors.DefaultSelector()
+def _read_release_control(stream: _ReadableTextStream, messages: Queue[_ReaderMessage]) -> None:
     try:
-        selector.register(sys.stdin, selectors.EVENT_READ)
-        if not selector.select(_RELEASE_TIMEOUT_SECONDS):
-            raise TimeoutError("timed out waiting for bounded worker release")
-    finally:
-        selector.close()
+        line = stream.readline(64)
+    except Exception as exc:
+        messages.put(_ReaderMessage(kind="error", error=exc))
+        return
+    if line:
+        messages.put(_ReaderMessage(kind="line", line=line))
+    else:
+        messages.put(_ReaderMessage(kind="eof"))
 
-    if sys.stdin.readline(64).rstrip("\r\n") != "release":
+
+def _wait_for_release() -> None:
+    messages: Queue[_ReaderMessage] = Queue(maxsize=1)
+    reader = Thread(
+        target=_read_release_control,
+        args=(sys.stdin, messages),
+        name="acgs-migration-release-reader",
+        daemon=True,
+    )
+    reader.start()
+    try:
+        message = messages.get(timeout=_RELEASE_TIMEOUT_SECONDS)
+    except Empty:
+        raise TimeoutError("timed out waiting for bounded worker release") from None
+
+    reader.join(timeout=1.0)
+    if reader.is_alive():
+        raise RuntimeError("worker release reader did not finish after producing a message")
+    if message.kind == "error":
+        error = message.error
+        raise RuntimeError(f"worker release reader failed with {type(error).__name__}") from error
+    if message.kind == "eof":
+        raise RuntimeError("worker release control stream reached EOF")
+
+    if message.line.rstrip("\r\n") != "release":
         raise RuntimeError("worker release control word was not received")
 
 
