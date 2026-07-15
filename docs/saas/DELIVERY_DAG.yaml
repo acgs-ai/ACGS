@@ -632,7 +632,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 credential-gated PostgreSQL skips, plus a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. The 4 recovery tests remain harness-blocked and live bytea preflight remains unverified. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. Live bytea remains unit-only. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -672,13 +672,13 @@
             "Before/after URL captures use one explicit read-only REPEATABLE READ transaction, preventing aggregate preflight and raw selection from observing different committed versions in the focused regression model.",
             "A wrapper-free disposable PostgreSQL 17 direct run upgraded an empty database to version_0002 and accepted seeded data through the real capture path.",
             "The real URL capture reported REPEATABLE READ, read-only, and in-transaction state; a real greater-than-1-MiB JSONB aggregate preflight raised the stable envelope refusal before the receipts raw stream.",
-            "The separate disposable PostgreSQL migration suite passed 4 of 4 tests."
+            "The separate disposable PostgreSQL migration suite passed 4 of 4 tests.",
+            "On a unique disposable PostgreSQL 17 instance with a private same-path :Z archive mount, pg_dump/pg_restore smoke passed and test_postgresql_migration_recovery.py passed 4 of 4 tests in 4.38 seconds: round-trip, nonempty-target no mutation, restore-lock contention no mutation, and injected late restore failure rollback."
           ],
           "does_not_prove": [
-            "Live bytea logical-row preflight behavior; the real oversized JSONB path is verified but bytea remains unverified.",
-            "End-to-end pg_dump/pg_restore recovery: 0 of 4 recovery tests completed because host clients were absent and the SELinux bind wrapper failed.",
-            "A mathematical bound on total process, driver, SQLAlchemy, sorting, or PostgreSQL server memory.",
-            "Production backup, PITR, object retention, managed-database recovery, atomic database/filesystem snapshots, or multi-host disaster recovery."
+            "Live bytea logical-row preflight behavior; bytea remains unit-only while the real oversized JSONB path is verified.",
+            "Production backup, PITR, object retention, managed-database recovery objectives, atomic database/filesystem snapshots, or multi-host disaster recovery.",
+            "A mathematical bound on total process, driver, SQLAlchemy, sorting, or PostgreSQL server memory."
           ],
           "head": "31badd9",
           "current_local_approval": "approved",
@@ -712,7 +712,12 @@
               "passed": 116,
               "skipped": 2
             },
-            "skipped_scope": "credential-gated disposable PostgreSQL runtime suites"
+            "skipped_scope": "credential-gated disposable PostgreSQL runtime suites",
+            "postgresql_recovery": {
+              "passed": 4,
+              "total": 4,
+              "duration_seconds": 4.38
+            }
           },
           "live_postgresql_evidence": {
             "environment": "wrapper-free disposable PostgreSQL 17",
@@ -726,15 +731,29 @@
               "total": 4
             },
             "recovery_suite": {
-              "completed": 0,
+              "test_file": "test_postgresql_migration_recovery.py",
+              "passed": 4,
               "total": 4,
-              "state": "harness_blocked",
-              "blockers": [
-                "host pg_dump/pg_restore clients absent",
-                "SELinux bind-wrapper failure"
-              ]
+              "duration_seconds": 4.38,
+              "state": "local_verified",
+              "environment": "unique disposable PostgreSQL 17",
+              "archive_mount": "private same-path :Z mount",
+              "pg_dump_pg_restore_smoke": "passed",
+              "coverage": [
+                "round-trip create, verify, restore, and equivalence",
+                "nonempty target refused with zero mutation",
+                "restore-lock contention refused with zero mutation",
+                "injected late restore failure rolled back"
+              ],
+              "cleanup": {
+                "container_absent": true,
+                "temporary_artifacts_absent": true
+              }
             },
-            "bytea_preflight": "unverified"
+            "bytea_preflight": "unit_only",
+            "diagnostic_history": [
+              "An earlier bind-wrapper attempt could not start the recovery suite because host pg_dump/pg_restore clients were absent and the SELinux bind wrapper failed; the later private same-path :Z rerun supersedes this as the current result."
+            ]
           }
         },
         {
@@ -786,8 +805,8 @@
         },
         "impact": "PR #330 head 31badd9 remains current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including wrapper-free disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB preflight refusal before raw streaming, and 4-of-4 PostgreSQL migration tests. CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock. End-to-end recovery remains unverified because 0 of 4 pg_dump/pg_restore tests completed while host clients were absent and the SELinux bind wrapper failed; live bytea preflight is also unverified. Local evidence does not establish production backup/PITR, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
-      "next_safe_action": "Install or expose compatible host pg_dump/pg_restore clients or repair the SELinux-safe disposable PostgreSQL harness, then run the 4 recovery tests and live bytea preflight; run the exact CI lane after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, and CI claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock, and live bytea preflight remains unit-only. Local evidence does not establish production backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
+      "next_safe_action": "Run a live bytea preflight probe, execute the exact CI lane after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, CI, and production-operation claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
