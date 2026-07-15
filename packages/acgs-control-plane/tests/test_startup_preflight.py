@@ -14,12 +14,12 @@ from fastapi.testclient import TestClient
 import acgs_control_plane.app as app_module
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import (
-    ProductionPostureBlocked,
     RuntimePosture,
     RuntimePostureConfigurationError,
     Settings,
 )
 from acgs_control_plane.db import Base, make_engine
+from acgs_control_plane.governance import ProductionPostureBlocked
 from acgs_control_plane.migrations import (
     DatabaseSchemaState,
     StartupSchemaPreflightError,
@@ -220,10 +220,12 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
         ready = client.get("/readyz")
         assert ready.status_code == 503
         assert ready.json() == {
+            "code": ProductionPostureBlocked.code,
+            "stage": ProductionPostureBlocked.stage,
+            "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
             "schema_state": DatabaseSchemaState.VERSION_0002.value,
-            "status": "not-production-ready",
         }
         assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0002
         assert not (tmp_path / "audit").exists()
@@ -256,7 +258,7 @@ def test_unclassified_future_write_route_keeps_production_blocked_before_engine(
 
     assert calls == {"engine": 0}
     assert any(
-        blocker.code == "LEGACY_UNSIGNED_WRITE" and blocker.route == "PUT /future-write"
+        blocker.code == "UNCLASSIFIED_ROUTE" and blocker.route == "PUT /future-write"
         for blocker in stopped.value.blockers
     )
 
@@ -275,10 +277,12 @@ def test_local_dev_bootstrap_is_explicit_and_never_reports_production_ready(tmp_
         ready = TestClient(app).get("/readyz")
         assert ready.status_code == 503
         assert ready.json() == {
+            "code": ProductionPostureBlocked.code,
+            "stage": ProductionPostureBlocked.stage,
+            "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": False,
             "schema_state": DatabaseSchemaState.LEGACY_V0.value,
-            "status": "not-production-ready",
         }
     finally:
         app.state.engine.dispose()
@@ -306,9 +310,9 @@ def test_missing_or_unknown_posture_refuses_before_engine(
     monkeypatch.setattr(app_module, "make_engine", forbidden_engine)
     settings = Settings(database_url="sqlite://", runtime_posture=None)
     object.__setattr__(settings, "runtime_posture", posture)
-    with pytest.raises(RuntimePostureConfigurationError) as stopped:
+    with pytest.raises(ProductionPostureBlocked) as stopped:
         create_app(settings)
-    assert stopped.value.blocker == blocker
+    assert {reason.code for reason in stopped.value.blockers} == {blocker}
     assert calls == {"engine": 0}
 
 
@@ -322,7 +326,7 @@ def test_production_cannot_enable_local_schema_bootstrap_before_engine(
         raise AssertionError("engine constructed for forbidden production bootstrap")
 
     monkeypatch.setattr(app_module, "make_engine", forbidden_engine)
-    with pytest.raises(RuntimePostureConfigurationError) as stopped:
+    with pytest.raises(ProductionPostureBlocked) as stopped:
         create_app(
             Settings(
                 database_url="sqlite://",
@@ -330,7 +334,9 @@ def test_production_cannot_enable_local_schema_bootstrap_before_engine(
                 runtime_posture=RuntimePosture.PRODUCTION,
             )
         )
-    assert stopped.value.blocker == "PRODUCTION_SCHEMA_BOOTSTRAP_FORBIDDEN"
+    assert {reason.code for reason in stopped.value.blockers} == {
+        "PRODUCTION_SCHEMA_BOOTSTRAP_FORBIDDEN"
+    }
     assert calls == {"engine": 0}
 
 
@@ -343,7 +349,10 @@ def test_environment_posture_is_required_and_unknown_values_are_stable(
     monkeypatch.setenv("ACP_RUNTIME_POSTURE", "prod-ish")
     with pytest.raises(RuntimePostureConfigurationError) as stopped:
         Settings.from_env()
-    assert stopped.value.blocker == "RUNTIME_POSTURE_UNKNOWN"
+    assert "RUNTIME_POSTURE_UNKNOWN" in str(stopped.value)
+    assert "prod-ish" not in str(stopped.value)
+    assert stopped.value.__cause__ is None
+    assert stopped.value.__context__ is None
 
     monkeypatch.setenv("ACP_RUNTIME_POSTURE", RuntimePosture.PRODUCTION.value)
     monkeypatch.delenv("ACP_CREATE_TABLES", raising=False)

@@ -242,6 +242,15 @@ def create_app(
         raise ProductionPostureBlocked(
             (PostureBlocker("RUNTIME_POSTURE_UNKNOWN", "runtime-posture"),)
         )
+    if settings.runtime_posture is RuntimePosture.PRODUCTION and settings.create_tables:
+        raise ProductionPostureBlocked(
+            (
+                PostureBlocker(
+                    "PRODUCTION_SCHEMA_BOOTSTRAP_FORBIDDEN",
+                    "schema-bootstrap",
+                ),
+            )
+        )
     blockers = production_blockers(drift, production_providers)
     app.state.readiness_blockers = blockers
     if settings.runtime_posture is RuntimePosture.PRODUCTION:

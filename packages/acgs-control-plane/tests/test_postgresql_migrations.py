@@ -34,8 +34,9 @@ from sqlalchemy.exc import IntegrityError
 import acgs_control_plane.app as app_module
 import acgs_control_plane.migrations as migration_module
 from acgs_control_plane.app import create_app
-from acgs_control_plane.config import ProductionPostureBlocked, RuntimePosture, Settings
+from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import Base, make_engine
+from acgs_control_plane.governance import ProductionPostureBlocked
 from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_CLASS_ID,
     _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
@@ -125,6 +126,46 @@ def _table_names() -> set[str]:
 
 def _try_advisory_xact_lock(connection: Connection) -> bool:
     return bool(connection.scalar(_POSTGRES_MIGRATION_LOCK_STATEMENT, _LOCK_PARAMETERS))
+
+
+def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
+    """Capture the disposable public schema and every controlled test row."""
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.connect() as connection:
+            catalog = connection.execute(
+                sa.text(
+                    """
+                    SELECT c.relkind, c.relname, a.attnum, a.attname,
+                           pg_catalog.format_type(a.atttypid, a.atttypmod),
+                           a.attnotnull, pg_catalog.pg_get_expr(d.adbin, d.adrelid),
+                           con.conname, pg_catalog.pg_get_constraintdef(con.oid, true),
+                           idx.relname, pg_catalog.pg_get_indexdef(idx.oid)
+                    FROM pg_catalog.pg_class AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                    LEFT JOIN pg_catalog.pg_attribute AS a
+                      ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                    LEFT JOIN pg_catalog.pg_attrdef AS d
+                      ON d.adrelid = c.oid AND d.adnum = a.attnum
+                    LEFT JOIN pg_catalog.pg_constraint AS con ON con.conrelid = c.oid
+                    LEFT JOIN pg_catalog.pg_index AS ix ON ix.indrelid = c.oid
+                    LEFT JOIN pg_catalog.pg_class AS idx ON idx.oid = ix.indexrelid
+                    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm')
+                    ORDER BY c.relkind, c.relname, a.attnum, con.conname, idx.relname
+                    """
+                )
+            ).all()
+            table_names = sa.inspect(connection).get_table_names(schema="public")
+            data: list[tuple[object, ...]] = []
+            metadata = sa.MetaData()
+            for table_name in sorted(table_names):
+                table = sa.Table(table_name, metadata, autoload_with=connection)
+                rows = connection.execute(sa.select(table)).all()
+                serialized_rows = tuple(tuple(repr(value) for value in row) for row in rows)
+                data.append(("data", table_name, serialized_rows))
+            return tuple(tuple(row) for row in catalog) + tuple(data)
+    finally:
+        engine.dispose()
 
 
 def _seed_exact_legacy_v0_schema() -> None:

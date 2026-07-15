@@ -6,9 +6,9 @@ SHA-256.  Missing or mismatched artifacts are explicit blockers, never a
 fallback to the source tree, a network package, or a mutable Git reference.
 
 The currently supported candidate is the locally built wheel for the exact,
-repository-unaccepted PR #308 head below.  Passing these tests is therefore
-local compatibility evidence, not accepted-artifact or production rolling-
-upgrade evidence.
+repository-unaccepted draft PR #337 head below: the pinned pre-G101 repair
+candidate. Passing these tests is therefore local compatibility evidence, not
+accepted-artifact or production rolling-upgrade evidence.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ from acgs_control_plane.migrations import (
     upgrade_database,
 )
 
-_OLD_CANDIDATE_COMMIT = "53ca32d116398057c882bfaa852fb305a9fd0fca"
-_OLD_CANDIDATE_SHA256 = "f04bbe2ddc0ff672eaa508643892461df09c2b63ad73a0355ecec1717fec24d8"
+_OLD_CANDIDATE_COMMIT = "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"
+_OLD_CANDIDATE_SHA256 = "40ff7b40f27a2b698d3b607c710f1866f11850a9a2c42a7c0eb51a6fe8be3d93"
 _ARTIFACT_ENV = "ACP_TEST_OLD_APP_ARTIFACT"
 _ARTIFACT_SHA_ENV = "ACP_TEST_OLD_APP_ARTIFACT_SHA256"
 _POSTGRES_ENV = "ACP_TEST_POSTGRES_URL"
@@ -109,7 +109,7 @@ def _validate_old_artifact(path_value: str | None, digest_value: str | None) -> 
     if _sha256_file(path, maximum_bytes=_MAX_ARTIFACT_BYTES) != digest_value:
         raise ArtifactRefusal("old app artifact SHA-256 mismatch")
     if digest_value != _OLD_CANDIDATE_SHA256:
-        raise ArtifactRefusal("old app artifact is not the pinned PR 308 candidate build")
+        raise ArtifactRefusal("old app artifact is not the pinned pre-G101 repair candidate build")
     return OldArtifact(
         path=path.resolve(),
         sha256=digest_value,
@@ -128,7 +128,7 @@ def test_old_artifact_gate_refuses_absent_invalid_or_mismatched_inputs(tmp_path:
         _validate_old_artifact(str(wheel), "not-a-digest")
     with pytest.raises(ArtifactRefusal, match="mismatch"):
         _validate_old_artifact(str(wheel), "0" * 64)
-    with pytest.raises(ArtifactRefusal, match="not the pinned PR 308"):
+    with pytest.raises(ArtifactRefusal, match="not the pinned pre-G101 repair candidate"):
         _validate_old_artifact(str(wheel), digest)
 
 
@@ -1027,4 +1027,4 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
 
     _assert_no_connections(pg_engine)
     assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
-    assert _OLD_CANDIDATE_COMMIT == "53ca32d116398057c882bfaa852fb305a9fd0fca"
+    assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

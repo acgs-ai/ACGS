@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from gove_zone.decision import sha256_json
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 from starlette.responses import PlainTextResponse
 from starlette.routing import Host, Route
 
@@ -41,13 +41,19 @@ from acgs_control_plane.governance import (
     managed_contract_stub,
     org_audit_store,
 )
+from acgs_control_plane.migrations import DatabaseSchemaState
 
 
-def _settings(tmp_path: Path, posture: RuntimePosture | None) -> Settings:
+def _settings(
+    tmp_path: Path,
+    posture: RuntimePosture | None,
+    *,
+    create_tables: bool = True,
+) -> Settings:
     return Settings(
         database_url=f"sqlite:///{tmp_path / 'must-not-exist.sqlite3'}",
         audit_dir=tmp_path / "audit",
-        create_tables=True,
+        create_tables=create_tables,
         runtime_posture=posture,
     )
 
@@ -77,6 +83,8 @@ def test_production_rejects_legacy_unsigned_routes(
         "stage": "pre-persistence",
         "status": "not-production-ready",
         "blockers": [blocker.to_dict() for blocker in local.state.readiness_blockers],
+        "schema_current": False,
+        "schema_state": DatabaseSchemaState.LEGACY_V0.value,
     }
     local.state.engine.dispose()
     (tmp_path / "must-not-exist.sqlite3").unlink()
@@ -100,7 +108,10 @@ def test_production_rejects_legacy_unsigned_routes(
 
     providers: tuple[Any, ...] = ()
     with pytest.raises(ProductionPostureBlocked) as blocked:
-        create_app(_settings(tmp_path, RuntimePosture.PRODUCTION), production_providers=providers)
+        create_app(
+            _settings(tmp_path, RuntimePosture.PRODUCTION, create_tables=False),
+            production_providers=providers,
+        )
     assert calls == {"engine": 0}
     assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 7
     assert not (tmp_path / "must-not-exist.sqlite3").exists()
@@ -147,6 +158,14 @@ def test_production_rejects_legacy_unsigned_routes(
     assert any(route and route.startswith("Mount ") for route in routes)
     assert any(route and "WebSocketRoute " in route for route in routes)
     assert any(route and route.startswith("Host ") for route in routes)
+    codes_by_route = {
+        route: {blocker.code for blocker in drifted.value.blockers if blocker.route == route}
+        for route in ("GET /synthetic-later-route", "POST /synthetic-later-write")
+    }
+    assert codes_by_route == {
+        "GET /synthetic-later-route": {"UNCLASSIFIED_ROUTE"},
+        "POST /synthetic-later-write": {"UNCLASSIFIED_ROUTE"},
+    }
     assert calls == {"engine": 0}
 
 
@@ -264,9 +283,11 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
     before = _fs_snapshot(audit_dir)
     app = cast(FastAPI, client.app)
     with app.state.session_factory() as session:
+        existing_tables = set(inspect(session.connection()).get_table_names())
         db_before = {
             table.name: session.execute(select(func.count()).select_from(table)).scalar_one()
             for table in Base.metadata.sorted_tables
+            if table.name in existing_tables
         }
 
     def forbidden_membrane(*_args: Any, **_kwargs: Any) -> Any:
@@ -302,9 +323,11 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
     )
     assert _fs_snapshot(audit_dir) == before
     with app.state.session_factory() as session:
+        existing_tables = set(inspect(session.connection()).get_table_names())
         db_after = {
             table.name: session.execute(select(func.count()).select_from(table)).scalar_one()
             for table in Base.metadata.sorted_tables
+            if table.name in existing_tables
         }
     assert db_after == db_before
 
@@ -527,6 +550,15 @@ def test_audit_snapshot_beta_envelope_and_platform_fail_closed(
         existing_org_audit_store(root, "org")
     assert events_error.value.reason == "event-limit-exceeded"
     assert path.read_bytes() == b"{}\n" * (AUDIT_READ_MAX_EVENTS + 1)
+
+    # The over-limit record is never decoded. Its bytes therefore cannot
+    # supersede the stable envelope refusal with an invalid-JSON diagnostic.
+    over_limit = b"{}\n" * AUDIT_READ_MAX_EVENTS + b"not-json\n"
+    path.write_bytes(over_limit)
+    with pytest.raises(AuditReadError) as invalid_over_limit:
+        existing_org_audit_store(root, "org")
+    assert invalid_over_limit.value.reason == "event-limit-exceeded"
+    assert path.read_bytes() == over_limit
 
     monkeypatch.setattr(governance_module.os, "supports_dir_fd", frozenset())
     with pytest.raises(AuditReadError) as platform_error:
