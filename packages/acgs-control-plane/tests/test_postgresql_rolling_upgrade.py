@@ -33,6 +33,8 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection, Engine
 
+# isort: split
+
 from acgs_control_plane.db import Base, make_engine
 from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_CLASS_ID,

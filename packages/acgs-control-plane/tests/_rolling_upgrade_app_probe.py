@@ -18,6 +18,8 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
+# isort: split
+
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 
