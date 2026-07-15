@@ -28,8 +28,9 @@ The drill:
   fingerprints;
 - writes staging directories as `0700` and bundle files as `0600`;
 - publishes a completed bundle by a same-parent atomic rename;
-- fsyncs the dump, manifest, copied audit files, audit/staging directories, and
-  output parent before reporting publication success;
+- fsyncs the dump, manifest, and copied audit files before success, and also
+  fsyncs audit/staging directories and the output parent on platforms exposing
+  POSIX directory-fsync support;
 - verifies canonical manifest shape, path containment, artifact hashes, audit
   chains, and `pg_restore --list` readability before inspecting or mutating a
   restore target;
@@ -117,6 +118,9 @@ disposable target only through the operator-approved database lifecycle.
   A writer able to replace both artifacts and manifest can recompute it.
 - The bundle is not encrypted. File modes reduce local exposure but are not an
   encryption or key-management system.
+- Directory fsync is required on supported POSIX platforms. Platforms without
+  `os.O_DIRECTORY` skip directory fsync because Python exposes no equivalent
+  primitive there; this drill remains local evidence, not a durability claim.
 - This is not PITR, continuous backup, object retention, independent witnessing,
   a backup scheduler, production restore automation, or production DR proof.
 - Table fingerprints are computed by reading and sorting canonicalized rows in

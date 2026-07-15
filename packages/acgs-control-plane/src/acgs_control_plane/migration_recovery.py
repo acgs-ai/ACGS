@@ -137,7 +137,10 @@ def _fsync_file(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        return
+    descriptor = os.open(path, os.O_RDONLY | directory_flag)
     try:
         os.fsync(descriptor)
     finally:
@@ -263,9 +266,7 @@ def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, 
     passfile: Path | None = None
     try:
         if url.password is not None:
-            passfile = credential_directory / ".pgpass"
-            if passfile.exists() or passfile.is_symlink():
-                raise RecoveryRefused("private PostgreSQL credential file already exists")
+            candidate = credential_directory / ".pgpass"
 
             def escape(value: str) -> str:
                 return value.replace("\\", "\\\\").replace(":", "\\:")
@@ -280,11 +281,24 @@ def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, 
                     url.password,
                 )
             )
-            with passfile.open("x", encoding="utf-8") as stream:
+            try:
+                descriptor = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+            except FileExistsError as exc:
+                raise RecoveryRefused("private PostgreSQL credential file already exists") from exc
+            passfile = candidate
+            try:
+                stream = os.fdopen(descriptor, "w", encoding="utf-8")
+            except Exception:
+                os.close(descriptor)
+                raise
+            with stream:
                 stream.write(line + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.chmod(passfile, 0o600)
             env["PGPASSFILE"] = str(passfile)
         yield env
     finally:
