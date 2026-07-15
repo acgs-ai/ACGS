@@ -752,7 +752,7 @@
             },
             "bytea_preflight": "unit_only",
             "diagnostic_history": [
-              "An earlier bind-wrapper attempt could not start the recovery suite because host pg_dump/pg_restore clients were absent and the SELinux bind wrapper failed; the later private same-path :Z rerun supersedes this as the current result."
+              "An earlier wrapper-mediated run started all four recovery cases, and each failed at its first wrapped pg_dump. Host pg_dump/pg_restore clients were absent; the unrelabelled SELinux bind was only the leading unproven cause. The later private same-path :Z rerun supersedes this as the current result."
             ]
           }
         },
