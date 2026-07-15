@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394
+        image: 'postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
         env:
           POSTGRES_DB: acgs_control_plane_test
           POSTGRES_USER: acgs_control_plane_test
