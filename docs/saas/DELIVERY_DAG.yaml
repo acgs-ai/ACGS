@@ -446,41 +446,84 @@
       ],
       "risk_class": "red",
       "positive_tests": [
-        "PR 308 disposition and exact accepted source identity are recorded."
+        "PR #337 disposition and exact repaired source identity are recorded; superseded PR #308 retains its resolved-thread and rejected-disclosure history."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Closed-unmerged PR 267 or an overlapping dirty worktree cannot become authoritative evidence."
+        "Open/unaccepted PR #308, closed-unmerged PR #267, zero-step billing failures, or an overlapping dirty worktree cannot become authoritative evidence."
       ],
       "validation_commands": [
+        "gh pr view 337 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,closedAt,url,headRefOid,headRefName,baseRefName,statusCheckRollup",
         "gh pr view 308 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
         "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #308 head 53ca32d was independently reviewed and locally verified with 40 package tests passing; the previously suspected minimum-version HEAD behavior was disproved. All seven current head checks completed SUCCESS. The code is acceptance-ready locally, but no repository-accepted baseline exists while the PR remains open and unaccepted. PR #267 remains closed-unmerged superseded history and is never current evidence.",
-      "branch": null,
-      "worktree": null,
-      "pr": "#308",
+      "evidence_artifact": "PR #308 head 53ca32d116398057c882bfaa852fb305a9fd0fca has its sole review thread resolved, but independent review then found that a raw ACP_RUNTIME_POSTURE value could survive through chained exception traceback disclosure. PR #308 therefore remains open, repository-unaccepted, and superseded as current baseline evidence. Rebased repair successor draft PR #337 exact head 4f0c685b5d2ffac0e6a71810b77c6357b8d56a94 is independently APPROVED/PASS locally. Its self-hosted constitutional-hash verify passes, and its self-hosted Python 3.11 and 3.12 jobs each report 40 package tests passing. The Codex review, GitHub-hosted advisory hash, GitGuardian, and Socket jobs each failed before any step because of the GitHub billing lock. PR #337 remains open, draft, and unmerged, so no repository-accepted baseline exists. PR #267 remains closed-unmerged superseded history and is never current evidence.",
+      "branch": "beta/p0-g030b-pr308-rebased-repair",
+      "worktree": "saas-beta/p0-g030b-pr308-rebased-repair",
+      "pr": 337,
       "status": "blocked",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
-      "blocker": "PR #308 head 53ca32d remains open and unaccepted with an unresolved review thread and no repository acceptance, so its independently reviewed, locally verified code cannot become the authoritative repository baseline. All seven current head checks completed SUCCESS. PR #267 is closed unmerged and superseded.",
-      "next_safe_action": "Resolve the remaining PR #308 review thread and accept or merge exact head 53ca32d through normal repository review before recording it as the baseline; all seven current head checks already completed SUCCESS. Never reuse PR #267 as current evidence.",
+      "blocker": "PR #337 exact head 4f0c685b5d2ffac0e6a71810b77c6357b8d56a94 remains open, draft, and unmerged, so its independently approved local code and passing self-hosted constitutional-hash/Python checks cannot become the authoritative repository baseline. Codex review, GitHub-hosted advisory hash, GitGuardian, and Socket each failed with zero steps because of the GitHub billing lock. PR #308's sole thread is resolved, but independent review found raw posture traceback disclosure; #308 remains open, unaccepted, and superseded. PR #267 is closed unmerged and superseded.",
+      "next_safe_action": "Clear the GitHub billing lock, let every required PR #337 check actually execute, resolve any current-head review findings, then mark ready and accept or merge exact head 4f0c685b5d2ffac0e6a71810b77c6357b8d56a94 through normal repository review. Do not promote PR #308 or PR #267 as current evidence.",
       "mandatory": true,
       "completion_scope": "non_external",
       "local_evidence": {
-        "source_pr": 308,
-        "head": "53ca32d",
-        "review_state": "independently_reviewed",
-        "verification_state": "local_verified",
+        "source_pr": 337,
+        "head": "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94",
+        "review_state": "independently_approved",
+        "verification_state": "local_pass",
         "code_disposition": "acceptance_ready_locally",
-        "package_tests": {
-          "passed": 40
-        },
-        "minimum_version_head_hypothesis": "disproved",
         "repository_accepted": false,
-        "head_checks": {
-          "completed": 7,
-          "successful": 7
+        "superseded_pr": {
+          "pr": 308,
+          "head": "53ca32d116398057c882bfaa852fb305a9fd0fca",
+          "review_threads_total": 1,
+          "review_threads_resolved": 1,
+          "independent_finding": "raw_runtime_posture_traceback_disclosure",
+          "repository_accepted": false,
+          "disposition": "superseded_unaccepted"
+        },
+        "minimum_version_head_hypothesis": "disproved_on_superseded_pr_308",
+        "local_quality_gate": "APPROVED/PASS",
+        "remote_checks": {
+          "constitutional_hash_verify": {
+            "run_id": 29431058365,
+            "job_id": 87405854141,
+            "conclusion": "success"
+          },
+          "python_control_plane": {
+            "run_id": 29431058606,
+            "python_3_11_job_id": 87405854616,
+            "python_3_12_job_id": 87405854589,
+            "conclusion": "success",
+            "test_results": {
+              "python_3_11_passed": 40,
+              "python_3_12_passed": 40
+            }
+          },
+          "billing_blocked_zero_step": [
+            {
+              "name": "codex-review",
+              "run_id": 29431060506,
+              "job_id": 87405860624
+            },
+            {
+              "name": "constitutional-hash-hosted",
+              "run_id": 29431058036,
+              "job_id": 87405852964
+            },
+            {
+              "name": "gitguardian",
+              "run_id": 29431058215,
+              "job_id": 87405853429
+            },
+            {
+              "name": "socket-security",
+              "run_id": 29431060595,
+              "job_id": 87405861033
+            }
+          ]
         }
       }
     },
@@ -560,8 +603,8 @@
       "status": "blocked",
       "implementation_state": "conflicting",
       "evidence_state": "historical_only",
-      "blocker": "PR #308 remains open, so no accepted current membrane baseline is available for rebuilding G004 against the reviewed G031 claims and conformance corpus.",
-      "next_safe_action": "After PR #308 resolves and the accepted current baseline is recorded, rebuild G004 using the reviewed G031 corpus rather than reuse historical output.",
+      "blocker": "PR #337 remains open, draft, and unmerged, so no repository-accepted current membrane baseline is available for rebuilding G004 against the reviewed G031 claims and conformance corpus. PR #308 is superseded after independent review found raw posture traceback disclosure.",
+      "next_safe_action": "After PR #337 exact head 4f0c685b5d2ffac0e6a71810b77c6357b8d56a94 passes every required check and is accepted through normal repository review, record that baseline and rebuild G004 using the reviewed G031 corpus rather than reuse historical output.",
       "historical_evidence": {
         "disposition": "superseded",
         "usable_as_current_verification": false,
@@ -638,7 +681,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and current-local only after a two-commit diagnostic repair sequence culminating at 0fff759 in one secret-safe diagnostic JSON path with metaclass-safe exact-type literal classification and no metadata evaluation, plus sys.maxsize logging suppression with exact restoration. The earlier 6a17d18 classifier attempt is superseded and rejected as current evidence because its class-metadata and logging boundary was unsafe. Its targeted suite passed 27, full suite passed 95 with 2 PostgreSQL skips, and disposable PostgreSQL 17 CLI suite passed 12; cleanup found zero residual tables, connections, or processes. Configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, stacked on PR #332, is independently re-reviewed and approved as current-local only. It keeps production startup blocked before engine, session, or audit persistence while seven LEGACY_UNSIGNED_WRITE routes remain, makes /readyz always return 503, and limits schema preflight to explicit local nonproduction evidence. Head 28b137b was rejected for a raw runtime-posture leak through a chained exception; a1bc1df repairs parsing with a literal allowlist. Evidence includes 56 targeted passes, 110 full-suite passes with 2 PostgreSQL-environment skips, configured Ruff/format/mypy/diff gates, and 10 startup/migration passes on pinned PostgreSQL 17.10 digest sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394 with zero residual tables, connections, processes, or containers. The final config-only repair did not rerun PostgreSQL. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778, stacked on PR #334, is independently approved after five adversarial review passes and an AST-neutral import-compatibility commit. It provides candidate-local mixed-version evidence using a byte-identical independent rebuild of repository-unaccepted PR #308 head 53ca32d116398057c882bfaa852fb305a9fd0fca at wheel SHA256 f04bbe2ddc0ff672eaa508643892461df09c2b63ad73a0355ecec1717fec24d8. Evidence includes 4 helper passes with 3 deselected, 114 package passes with 5 skips, and 7 pinned PostgreSQL 17.10 rolling-module passes with one pre-existing warning and zero residual tables, sessions, probe or migration processes, containers, or temporary artifacts. Authoritative package-local Ruff was already green at functional commit 8f03aba. The verifier initially reported Ruff I001 in both new files only after forcing package configuration from the repository root, which changed project_root/src classification; it later diagnosed and retracted that result as a non-authoritative false positive. Import-only 2236453 adds AST-neutral # isort: split compatibility comments so both invocation modes pass, but it was not required by the authoritative package gate; targeted re-verification passed. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42, stacked on PR #330, is independently reviewed and verified current-local evidence for the real psycopg bytes return shape and adjacent live bytea aggregate preflight boundary. Its one new test file has 3 pinned PostgreSQL 17.10 passes with one pre-existing warning, 116 package passes with 3 skips, green configured static gates, fixed refusal before any raw stream attempt, unchanged transaction/database/schema/evidence state, and zero residual resources. This retires only the live-bytea-unit-only limitation; arbitrary bytea recovery, dump/restore, total memory, Windows, multi-host, failover, partition, PITR, and production evidence remain unproven. PRs #329, #331, #332, #334, #335, and #336 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and current-local only after a two-commit diagnostic repair sequence culminating at 0fff759 in one secret-safe diagnostic JSON path with metaclass-safe exact-type literal classification and no metadata evaluation, plus sys.maxsize logging suppression with exact restoration. The earlier 6a17d18 classifier attempt is superseded and rejected as current evidence because its class-metadata and logging boundary was unsafe. Its targeted suite passed 27, full suite passed 95 with 2 PostgreSQL skips, and disposable PostgreSQL 17 CLI suite passed 12; cleanup found zero residual tables, connections, or processes. Configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, stacked on PR #332, is independently re-reviewed and approved as current-local only. It keeps production startup blocked before engine, session, or audit persistence while seven LEGACY_UNSIGNED_WRITE routes remain, makes /readyz always return 503, and limits schema preflight to explicit local nonproduction evidence. Head 28b137b was rejected for a raw runtime-posture leak through a chained exception; a1bc1df repairs parsing with a literal allowlist. Evidence includes 56 targeted passes, 110 full-suite passes with 2 PostgreSQL-environment skips, configured Ruff/format/mypy/diff gates, and 10 startup/migration passes on pinned PostgreSQL 17.10 digest sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394 with zero residual tables, connections, processes, or containers. The final config-only repair did not rerun PostgreSQL. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778, stacked on PR #334, is independently approved after five adversarial review passes and an AST-neutral import-compatibility commit. It provides candidate-local mixed-version evidence using a byte-identical independent rebuild of repository-unaccepted PR #308 head 53ca32d116398057c882bfaa852fb305a9fd0fca at wheel SHA256 f04bbe2ddc0ff672eaa508643892461df09c2b63ad73a0355ecec1717fec24d8. Evidence includes 4 helper passes with 3 deselected, 114 package passes with 5 skips, and 7 pinned PostgreSQL 17.10 rolling-module passes with one pre-existing warning and zero residual tables, sessions, probe or migration processes, containers, or temporary artifacts. Authoritative package-local Ruff was already green at functional commit 8f03aba. The verifier initially reported Ruff I001 in both new files only after forcing package configuration from the repository root, which changed project_root/src classification; it later diagnosed and retracted that result as a non-authoritative false positive. Import-only 2236453 adds AST-neutral # isort: split compatibility comments so both invocation modes pass, but it was not required by the authoritative package gate; targeted re-verification passed. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42, stacked on PR #330, is independently reviewed and verified current-local evidence for the real psycopg bytes return shape and adjacent live bytea aggregate preflight boundary. Its one new test file has 3 pinned PostgreSQL 17.10 passes with one pre-existing warning, 116 package passes with 3 skips, green configured static gates, fixed refusal before any raw stream attempt, unchanged transaction/database/schema/evidence state, and zero residual resources. This retires only the live-bytea-unit-only limitation; arbitrary bytea recovery, dump/restore, total memory, Windows, multi-host, failover, partition, PITR, and production evidence remain unproven. PRs #329, #331, #332, #334, #335, and #336 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101. CI topology remains incomplete: PR #329 is the only increment that adds pull_request beta/** triggering, but PRs #330-#332 branch from beta/p0-clean-sibling-cp-wheel instead of #329, while #334-#336 stack from those branches, so #330-#336 do not inherit that workflow trigger. PR #329's pinned PostgreSQL job runs only tests/test_postgresql_migrations.py and does not cover the recovery, operator CLI, startup, rolling-upgrade, or bytea evidence modules. Clearing billing alone therefore cannot make the G101 stack CI-backed.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -1118,7 +1161,7 @@
       "remote_ci": {
         "state": "externally_blocked",
         "ci_backed": false,
-        "annotation": "The job failed before any steps because the GitHub account is locked due to a billing issue.",
+        "annotation": "Observed jobs failed before any steps because the GitHub account is locked due to a billing issue; separately, the G101 branch topology does not carry PR #329's beta trigger into PRs #330-#336.",
         "observed_run": {
           "source_pr": 330,
           "id": 29414888896,
@@ -1169,10 +1212,34 @@
             "failure_class": "billing_before_steps"
           }
         ],
-        "impact": "PR #330 head 31badd9, PR #331 head 4116778995d17755e9f3328698f6519145404336, PR #332 head 0fff75951470652be279a8cd5acc6a46e16bff49, PR #334 head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, PR #335 head 223645375d6590ef66b8bab4e22019537f541778, and PR #336 head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 remain current-local evidence only; no observed remote result makes PRs #329-#332 or #334-#336 CI-backed or accepted."
+        "impact": "PR #330 head 31badd9, PR #331 head 4116778995d17755e9f3328698f6519145404336, PR #332 head 0fff75951470652be279a8cd5acc6a46e16bff49, PR #334 head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, PR #335 head 223645375d6590ef66b8bab4e22019537f541778, and PR #336 head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 remain current-local evidence only. The observed zero-step failures do not make any increment CI-backed, and even after billing recovery the current branch topology would not run PR #329's beta-triggered PostgreSQL lane on PRs #330-#336; that lane also covers only the migration module.",
+        "workflow_topology_gap": {
+          "trigger_owner_pr": 329,
+          "trigger_change": "pull_request branches include beta/**",
+          "not_inherited_by_prs": [
+            330,
+            331,
+            332,
+            334,
+            335,
+            336
+          ],
+          "reason": "PRs 330-332 branch from beta/p0-clean-sibling-cp-wheel rather than PR 329; PRs 334-336 descend from those branches, so none contains PR 329 workflow changes.",
+          "postgresql_job_scope": [
+            "tests/test_postgresql_migrations.py"
+          ],
+          "missing_exact_modules": [
+            "tests/test_postgresql_migration_recovery.py",
+            "tests/test_postgresql_migration_cli.py",
+            "tests/test_startup_preflight.py",
+            "tests/test_postgresql_rolling_upgrade.py",
+            "tests/test_postgresql_migration_recovery_bytea.py"
+          ],
+          "consequence": "Clearing the GitHub billing lock alone is insufficient to produce CI-backed G101 evidence."
+        }
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 and #334-#336 remain open draft and unmerged, and PR #308 baseline startup integration remains open and repository-unaccepted. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and locally verified with 27 targeted passes, 95 full-suite passes and 2 PostgreSQL skips, and 12 disposable PostgreSQL 17 CLI passes; configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b is independently re-reviewed and locally verified with 56 targeted passes, 110 full-suite passes and 2 PostgreSQL-environment skips, and 10 pinned PostgreSQL 17.10 startup/migration passes before its final config-only repair. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778 is independently approved candidate-local evidence after five adversarial passes: 4 helper passes, 114 package passes, 7 pinned PostgreSQL 17.10 rolling-module passes, bounded cleanup, and green configured static gates. Its old wheel is a byte-identical independent rebuild of repository-unaccepted PR #308, not an accepted release artifact. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 independently verifies only the live bytea normalization and adjacent aggregate-preflight boundary with 3 pinned PostgreSQL 17.10 passes and zero residual resources. Production deliberately remains blocked before persistence while seven legacy unsigned routes exist, and /readyz always returns 503. CI runs 29414888896, 29418915375, 29420444887, 29423228140, 29427219402, and 29428954788, jobs 87350442086, 87364038830, 87369234233, 87378812982, 87392631296, and 87398643380, each failed before any step because of the GitHub billing lock. Local evidence does not establish arbitrary bytea recovery/dump-restore, production startup/readiness, backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, production rolling-upgrade or zero-downtime safety, Windows execution, or G103 tenant database isolation.",
-      "next_safe_action": "Keep production startup blocked while seven legacy unsigned mutation routes remain; replacing them with the canonical signed single-use governance membrane is deferred G105 work after G103, G104, and G004 and must not start from G101. Current G101 safe actions are to execute the exact CI lanes after the billing block is cleared, run the Windows execution lane, review/accept/merge/rebase the stacked increments in dependency order, and obtain PR #308 baseline acceptance. Keep startup, recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102 or G105; G103 remains downstream of completed G101 and G102.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 and #334-#336 remain open draft and unmerged. Repaired baseline successor PR #337 remains open, draft, unmerged, and repository-unaccepted; PR #308 is superseded after independent review found raw posture traceback disclosure. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and locally verified with 27 targeted passes, 95 full-suite passes and 2 PostgreSQL skips, and 12 disposable PostgreSQL 17 CLI passes; configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b is independently re-reviewed and locally verified with 56 targeted passes, 110 full-suite passes and 2 PostgreSQL-environment skips, and 10 pinned PostgreSQL 17.10 startup/migration passes before its final config-only repair. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778 is independently approved candidate-local evidence after five adversarial passes: 4 helper passes, 114 package passes, 7 pinned PostgreSQL 17.10 rolling-module passes, bounded cleanup, and green configured static gates. Its old wheel is a byte-identical independent rebuild of repository-unaccepted PR #308, not an accepted release artifact. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 independently verifies only the live bytea normalization and adjacent aggregate-preflight boundary with 3 pinned PostgreSQL 17.10 passes and zero residual resources. Production deliberately remains blocked before persistence while seven legacy unsigned routes exist, and /readyz always returns 503. CI runs 29414888896, 29418915375, 29420444887, 29423228140, 29427219402, and 29428954788, jobs 87350442086, 87364038830, 87369234233, 87378812982, 87392631296, and 87398643380, each failed before any step because of the GitHub billing lock. Local evidence does not establish arbitrary bytea recovery/dump-restore, production startup/readiness, backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, production rolling-upgrade or zero-downtime safety, Windows execution, or G103 tenant database isolation. CI topology remains incomplete: PR #329 is the only increment that adds pull_request beta/** triggering, but PRs #330-#332 branch from beta/p0-clean-sibling-cp-wheel instead of #329, while #334-#336 stack from those branches, so #330-#336 do not inherit that workflow trigger. PR #329's pinned PostgreSQL job runs only tests/test_postgresql_migrations.py and does not cover the recovery, operator CLI, startup, rolling-upgrade, or bytea evidence modules. Clearing billing alone therefore cannot make the G101 stack CI-backed.",
+      "next_safe_action": "Keep production startup blocked while seven legacy unsigned mutation routes remain; replacing them with the canonical signed single-use governance membrane is deferred G105 work after G103, G104, and G004 and must not start from G101. First repair the CI topology: integrate PR #329's beta/** trigger into the actual G101 stack or a dedicated integration branch, and expand the pinned PostgreSQL lane beyond test_postgresql_migrations.py to the applicable recovery, operator, startup, rolling, and bytea modules. After that topology is reviewed and the billing lock clears, execute and observe the exact CI lanes. Also run the Windows execution lane, obtain PR #337 baseline acceptance, and review/accept/merge/rebase the stacked G101 increments in dependency order. Keep startup, recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102 or G105; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
