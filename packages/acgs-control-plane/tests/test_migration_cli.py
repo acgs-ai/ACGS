@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 import acgs_control_plane.migration_cli as migration_cli
 import acgs_control_plane.migrations as migrations
@@ -60,6 +62,12 @@ def _invoke(
     captured = capsys.readouterr()
     _assert_secret_free(captured.out)
     _assert_secret_free(captured.err)
+    if captured.out:
+        assert captured.out.endswith("\n")
+        assert captured.out.count("\n") == 1
+    if captured.err:
+        assert captured.err.endswith("\n")
+        assert captured.err.count("\n") == 1
     stdout = json.loads(captured.out) if captured.out else None
     stderr = json.loads(captured.err) if captured.err else None
     return exit_code, stdout, stderr
@@ -276,6 +284,12 @@ def test_bound_library_url_mismatch_fails_before_engine_creation(
             False,
         ),
         (
+            lambda: SQLAlchemyError(_SECRET_URL),
+            "database_operation_failed",
+            70,
+            False,
+        ),
+        (
             lambda: RuntimeError(_SECRET_URL),
             "internal_error",
             70,
@@ -309,6 +323,96 @@ def test_upgrade_errors_are_typed_stable_and_secret_safe(
     assert isinstance(error, dict)
     assert error["code"] == expected_code
     assert error["retryable"] is retryable
+    if expected_code == "internal_error":
+        assert stderr["diagnostic"] == {
+            "category": "unexpected_exception",
+            "exception_type": "RuntimeError",
+        }
+        assert error["message"] == "The migration operator failed."
+    else:
+        assert "diagnostic" not in stderr
+
+
+@pytest.mark.parametrize("class_name", ["invalid-name", "X" * 65])
+def test_unexpected_exception_type_falls_back_for_invalid_or_oversized_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    class_name: str,
+) -> None:
+    monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
+    dynamic_error = type(class_name, (Exception,), {})
+
+    def fail(*args: object, **kwargs: object) -> MigrationResult:
+        del args, kwargs
+        raise dynamic_error(_SECRET_URL)
+
+    monkeypatch.setattr(migration_cli, "upgrade_database", fail)
+    arguments = [*_target_arguments("upgrade"), "--acknowledge-forward-only"]
+
+    exit_code, stdout, stderr = _invoke(arguments, capsys)
+
+    assert exit_code == 70
+    assert stdout is None
+    assert stderr == {
+        "command": "upgrade",
+        "diagnostic": {
+            "category": "unexpected_exception",
+            "exception_type": "Exception",
+        },
+        "error": {
+            "code": "internal_error",
+            "message": "The migration operator failed.",
+            "retryable": False,
+        },
+        "ok": False,
+    }
+
+
+def test_unexpected_exception_diagnostic_never_renders_exception_or_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
+    rendering_side_effects: list[str] = []
+
+    class ExplosiveStringError(Exception):
+        def __str__(self) -> str:
+            rendering_side_effects.append("str")
+            raise AssertionError("exception stringification must not run")
+
+    def fail(*args: object, **kwargs: object) -> MigrationResult:
+        del args, kwargs
+        raise ExplosiveStringError(_SECRET_URL)
+
+    monkeypatch.setattr(migration_cli, "upgrade_database", fail)
+    arguments = [*_target_arguments("upgrade"), "--acknowledge-forward-only"]
+    previous_logging_disable = logging.getLogger().manager.disable
+    logging.disable(logging.WARNING)
+    caplog.clear()
+    try:
+        exit_code, stdout, stderr = _invoke(arguments, capsys)
+        assert logging.getLogger().manager.disable == logging.WARNING
+    finally:
+        logging.disable(previous_logging_disable)
+
+    assert exit_code == 70
+    assert stdout is None
+    assert stderr == {
+        "command": "upgrade",
+        "diagnostic": {
+            "category": "unexpected_exception",
+            "exception_type": "ExplosiveStringError",
+        },
+        "error": {
+            "code": "internal_error",
+            "message": "The migration operator failed.",
+            "retryable": False,
+        },
+        "ok": False,
+    }
+    assert rendering_side_effects == []
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize(
