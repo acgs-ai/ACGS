@@ -91,6 +91,10 @@ class DatabaseIdentityMismatch(MigrationPreflightError):
     """The connected PostgreSQL database does not match the operator expectation."""
 
 
+class DatabaseSchemaBindingMismatch(MigrationPreflightError):
+    """The PostgreSQL connection is not bound to the canonical public schema."""
+
+
 class UnsupportedMigrationDialect(MigrationPreflightError):
     """An identity-bound operator action targeted a non-PostgreSQL database."""
 
@@ -311,14 +315,15 @@ def inspect_schema(database_url: str, *, expected_database: str | None = None) -
     PostgreSQL verifies ``current_database()`` on the same live connection and
     transaction used for schema inspection.
     """
+    if expected_database is not None:
+        _assert_expected_postgresql_url(database_url, expected_database)
     engine = make_engine(database_url)
     try:
         with engine.connect() as connection:
             if expected_database is None:
                 return inspect_connection(connection)
-            _require_postgresql_dialect(connection)
             with connection.begin():
-                _assert_expected_postgresql_database(connection, expected_database)
+                _bind_postgresql_operator_target(connection, expected_database)
                 return inspect_connection(connection)
     finally:
         engine.dispose()
@@ -428,6 +433,8 @@ def upgrade_database(database_url: str, *, expected_database: str | None = None)
     provide it to bind PostgreSQL ``current_database()`` inside the same
     transaction that owns the advisory lock, preflight, and migration.
     """
+    if expected_database is not None:
+        _assert_expected_postgresql_url(database_url, expected_database)
     backend_name = make_url(database_url).get_backend_name()
     if backend_name == "postgresql":
         return _upgrade_postgresql_database(database_url, expected_database=expected_database)
@@ -494,7 +501,7 @@ def _upgrade_postgresql_database(
         with engine.connect() as connection:
             with connection.begin():
                 if expected_database is not None:
-                    _assert_expected_postgresql_database(connection, expected_database)
+                    _bind_postgresql_operator_target(connection, expected_database)
                 _acquire_postgresql_migration_lock(connection)
                 before = inspect_connection(connection)
                 if before.state is DatabaseSchemaState.UNKNOWN:
@@ -552,13 +559,45 @@ def _require_postgresql_dialect(connection: Connection) -> None:
         raise UnsupportedMigrationDialect("Identity-bound migration operations require PostgreSQL.")
 
 
-def _assert_expected_postgresql_database(connection: Connection, expected_database: str) -> None:
-    """Bind an operator action to the live PostgreSQL database identity."""
+def _assert_expected_postgresql_url(database_url: str, expected_database: str) -> None:
+    """Reject a mismatched URL target before an engine or connection exists."""
+    parsed_url = make_url(database_url)
+    if parsed_url.get_backend_name() != "postgresql":
+        raise UnsupportedMigrationDialect("Identity-bound migration operations require PostgreSQL.")
+    if parsed_url.database != expected_database:
+        raise DatabaseIdentityMismatch(
+            "PostgreSQL URL database does not match the operator expectation."
+        )
+
+
+def _bind_postgresql_operator_target(connection: Connection, expected_database: str) -> None:
+    """Bind database and canonical schema inside the operator transaction.
+
+    SQLAlchemy determines ``default_schema_name`` when the DBAPI connection is
+    initialized. A connection that began in a non-public schema is rejected
+    even after ``SET LOCAL`` so cached dialect state cannot redirect reflection
+    or Alembic. Canonical connections are pinned to ``public, pg_catalog`` for
+    the remainder of the transaction and then verified before inspection.
+    """
     _require_postgresql_dialect(connection)
     current_database = connection.scalar(sa.text("SELECT current_database()"))
     if current_database != expected_database:
         raise DatabaseIdentityMismatch(
             "Connected PostgreSQL database does not match the operator expectation."
+        )
+
+    initial_schema = connection.scalar(sa.text("SELECT current_schema()"))
+    connection.exec_driver_sql("SET LOCAL search_path TO public, pg_catalog")
+    pinned_schema = connection.scalar(sa.text("SELECT current_schema()"))
+    pinned_search_path = connection.scalar(sa.text("SELECT current_setting('search_path')"))
+    if (
+        initial_schema != "public"
+        or connection.dialect.default_schema_name != "public"
+        or pinned_schema != "public"
+        or pinned_search_path != "public, pg_catalog"
+    ):
+        raise DatabaseSchemaBindingMismatch(
+            "PostgreSQL operator target is not bound to the canonical public schema."
         )
 
 

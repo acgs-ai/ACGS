@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 import acgs_control_plane.migration_cli as migration_cli
+import acgs_control_plane.migrations as migrations
 from acgs_control_plane.migrations import (
     DatabaseIdentityMismatch,
     DatabaseSchemaState,
@@ -157,6 +158,106 @@ def test_upgrade_forwards_expected_database_and_emits_no_secret(
         "target_revision": "0002",
     }
     assert observed == {"url": _SECRET_URL, "expected": _EXPECTED_DATABASE}
+
+
+@pytest.mark.parametrize(
+    "duplicate_arguments",
+    [
+        ["--database-url-env", _DATABASE_URL_ENV],
+        ["--expected-database", _EXPECTED_DATABASE],
+        [
+            "--database-url-env",
+            _DATABASE_URL_ENV,
+            "--expected-database",
+            _EXPECTED_DATABASE,
+        ],
+    ],
+)
+def test_duplicate_target_options_fail_before_environment_or_database_access(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    duplicate_arguments: list[str],
+) -> None:
+    called = False
+
+    def fail_if_called(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        nonlocal called
+        called = True
+        raise AssertionError("target loading must not run")
+
+    monkeypatch.setattr(migration_cli, "_load_database_url", fail_if_called)
+    monkeypatch.setattr(migration_cli, "inspect_schema", fail_if_called)
+
+    exit_code, stdout, stderr = _invoke(
+        [*_target_arguments("status"), *duplicate_arguments], capsys
+    )
+
+    assert exit_code == 2
+    assert stdout is None
+    assert stderr == {
+        "command": "status",
+        "error": {
+            "code": "usage_error",
+            "message": "The migration operator arguments are invalid.",
+            "retryable": False,
+        },
+        "ok": False,
+    }
+    assert called is False
+
+
+def test_url_database_mismatch_fails_before_operator_database_call(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
+    called = False
+
+    def fail_if_called(*args: object, **kwargs: object) -> SchemaPreflight:
+        del args, kwargs
+        nonlocal called
+        called = True
+        raise AssertionError("database inspection must not run")
+
+    monkeypatch.setattr(migration_cli, "inspect_schema", fail_if_called)
+    arguments = [
+        "status",
+        "--database-url-env",
+        _DATABASE_URL_ENV,
+        "--expected-database",
+        "a_different_database",
+    ]
+
+    exit_code, stdout, stderr = _invoke(arguments, capsys)
+
+    assert exit_code == 65
+    assert stdout is None
+    assert stderr is not None
+    assert isinstance(stderr["error"], dict)
+    assert stderr["error"]["code"] == "database_identity_mismatch"
+    assert called is False
+
+
+@pytest.mark.parametrize("operation", ["inspect", "upgrade"])
+def test_bound_library_url_mismatch_fails_before_engine_creation(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    called = False
+
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        nonlocal called
+        called = True
+        raise AssertionError("engine creation must not run")
+
+    monkeypatch.setattr(migrations, "make_engine", fail_if_called)
+
+    with pytest.raises(DatabaseIdentityMismatch):
+        if operation == "inspect":
+            migrations.inspect_schema(_SECRET_URL, expected_database="a_different_database")
+        else:
+            migrations.upgrade_database(_SECRET_URL, expected_database="a_different_database")
+    assert called is False
 
 
 @pytest.mark.parametrize(
