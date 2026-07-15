@@ -56,7 +56,7 @@ class Settings:
     database_url: str = DEFAULT_DATABASE_URL
     audit_dir: Path = Path("./acp-audit")
     bootstrap_token: str | None = None
-    create_tables: bool = True
+    create_tables: bool = False
     runtime_posture: RuntimePosture | None = None
 
     @classmethod
@@ -77,6 +77,6 @@ class Settings:
             database_url=os.environ.get("ACP_DATABASE_URL", DEFAULT_DATABASE_URL),
             audit_dir=Path(os.environ.get("ACP_AUDIT_DIR", "./acp-audit")),
             bootstrap_token=os.environ.get("ACP_BOOTSTRAP_TOKEN") or None,
-            create_tables=os.environ.get("ACP_CREATE_TABLES", "1") == "1",
+            create_tables=os.environ.get("ACP_CREATE_TABLES", "0") == "1",
             runtime_posture=posture,
         )

@@ -48,6 +48,12 @@ from acgs_control_plane.governance import (
     production_blockers,
     reconcile_http_routes,
 )
+from acgs_control_plane.migrations import (
+    DatabaseSchemaState,
+    SchemaPreflight,
+    assert_current_startup_schema,
+    inspect_connection,
+)
 from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
@@ -241,9 +247,21 @@ def create_app(
     if settings.runtime_posture is RuntimePosture.PRODUCTION:
         raise ProductionPostureBlocked(blockers)
     engine = make_engine(settings.database_url)
-    if settings.create_tables:
-        Base.metadata.create_all(engine)
+    try:
+        if settings.create_tables:
+            # Deliberately retained only for disposable legacy development
+            # fixtures. Production is rejected above before engine creation.
+            Base.metadata.create_all(engine)
+        with engine.connect() as connection:
+            if settings.create_tables:
+                schema_preflight = inspect_connection(connection)
+            else:
+                schema_preflight = assert_current_startup_schema(connection)
+    except BaseException:
+        engine.dispose()
+        raise
     app.state.engine = engine
+    app.state.schema_preflight = schema_preflight
     app.state.session_factory = make_session_factory(engine)
     return app
 
@@ -257,7 +275,9 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
-        blockers = request.app.state.readiness_blockers
+        preflight: SchemaPreflight = request.app.state.schema_preflight
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0002
+        blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
             content={
@@ -265,6 +285,8 @@ def _register_routes(app: FastAPI) -> None:
                 "stage": ProductionPostureBlocked.stage,
                 "status": "not-production-ready",
                 "blockers": [b.to_dict() for b in blockers],
+                "schema_current": schema_current,
+                "schema_state": preflight.state.value,
             },
         )
 

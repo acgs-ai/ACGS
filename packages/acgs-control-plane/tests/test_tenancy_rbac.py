@@ -23,6 +23,7 @@ def test_bootstrap_disabled_when_no_token_configured(tmp_path: Any) -> None:
         database_url=f"sqlite:///{tmp_path / 'x.sqlite3'}",
         audit_dir=tmp_path / "audit",
         bootstrap_token=None,
+        create_tables=True,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
     client = TestClient(create_app(settings))

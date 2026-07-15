@@ -5,8 +5,9 @@ has no migration version table.  This module recognizes only the frozen v0
 schema reconstructed in revision ``0001``.  It refuses partial, unknown, or
 mixed schemas *before* it creates an Alembic version table or runs a revision.
 
-These helpers are deliberate operator actions.  They do not change app startup
-behaviour or make any claim about backups, restore drills, or rollback safety.
+The mutation helpers are deliberate operator actions.  Schema-managed startup
+reuses only the read-only classifier and never invokes Alembic or advances a
+revision. No claim is made about backups, restore drills, or rollback safety.
 PostgreSQL uses one caller-owned transaction and a nonblocking transaction-level
 advisory lock for the controlled migration operation; that is not a replacement
 for deployment orchestration or recovery procedures.
@@ -82,6 +83,20 @@ class ScopeMigrationResumeState(StrEnum):
 
 class MigrationPreflightError(RuntimeError):
     """Raised before mutation when a database is not a known schema state."""
+
+
+class StartupSchemaPreflightError(RuntimeError):
+    """The application database is not the exact packaged schema revision."""
+
+    code = "STARTUP_SCHEMA_NOT_CURRENT"
+    stage = "pre-serving"
+
+    def __init__(self, preflight: SchemaPreflight) -> None:
+        self.schema_state = preflight.state
+        super().__init__(
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0002.value}; "
+            f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
+        )
 
 
 class MigrationLockUnavailable(MigrationPreflightError):
@@ -382,6 +397,18 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         DatabaseSchemaState.UNKNOWN,
         f"unrecognized Alembic version state: {versions!r}",
     )
+
+
+def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
+    """Require the exact packaged head using inspection only.
+
+    The caller owns connection and transaction cleanup.  This function never
+    stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
+    """
+    preflight = inspect_connection(connection)
+    if preflight.state is not DatabaseSchemaState.VERSION_0002:
+        raise StartupSchemaPreflightError(preflight)
+    return preflight
 
 
 def assert_online_migration_operation(connection: Connection, config: Config) -> SchemaPreflight:
