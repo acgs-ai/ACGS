@@ -234,6 +234,25 @@ def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
     monkeypatch.setenv("PGPASSFILE", "/tmp/attacker-passfile")
     monkeypatch.setenv("PGOPTIONS", "-c search_path=attacker")
     monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-boundary")
+    real_open = os.open
+    initial_modes: list[tuple[int, int, int]] = []
+
+    def observed_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if dir_fd is None:
+            descriptor = real_open(path, flags, mode)
+        else:
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+        if Path(path).name == ".pgpass":
+            initial_modes.append((flags, mode, stat.S_IMODE(os.fstat(descriptor).st_mode)))
+        return descriptor
+
+    monkeypatch.setattr(recovery.os, "open", observed_open)
 
     with recovery._pg_environment(make_url(SOURCE_URL), tmp_path) as environment:
         assert environment["PGHOST"] == "db.invalid"
@@ -248,6 +267,71 @@ def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
         assert passfile.parent == tmp_path
         assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
     assert not passfile.exists()
+    assert initial_modes == [
+        (
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            0o600,
+        )
+    ]
+
+
+def test_pg_environment_never_removes_a_passfile_it_did_not_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    passfile = tmp_path / ".pgpass"
+    passfile.write_text("preserve", encoding="utf-8")
+
+    with pytest.raises(RecoveryRefused, match="already exists"):
+        with recovery._pg_environment(make_url(SOURCE_URL), tmp_path):
+            pass
+
+    assert passfile.read_text(encoding="utf-8") == "preserve"
+
+
+def test_fsync_directory_is_a_noop_without_directory_open_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delattr(recovery.os, "O_DIRECTORY", raising=False)
+    monkeypatch.setattr(
+        recovery.os,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("directory open must not be attempted")
+        ),
+    )
+
+    recovery._fsync_directory(tmp_path)
+
+
+def test_fsync_directory_preserves_supported_posix_durability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory_flag = getattr(recovery.os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        pytest.skip("platform has no POSIX directory-open capability")
+    events: list[tuple[str, int]] = []
+
+    def opened(path: Path, flags: int) -> int:
+        assert path == tmp_path
+        events.append(("open", flags))
+        return 41
+
+    monkeypatch.setattr(recovery.os, "open", opened)
+    monkeypatch.setattr(
+        recovery.os, "fsync", lambda descriptor: events.append(("fsync", descriptor))
+    )
+    monkeypatch.setattr(
+        recovery.os, "close", lambda descriptor: events.append(("close", descriptor))
+    )
+
+    recovery._fsync_directory(tmp_path)
+
+    assert events == [
+        ("open", os.O_RDONLY | directory_flag),
+        ("fsync", 41),
+        ("close", 41),
+    ]
 
 
 @pytest.mark.parametrize(
