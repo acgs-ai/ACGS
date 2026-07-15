@@ -431,6 +431,139 @@ def test_connection_database_identity_is_bound_before_state_use() -> None:
         )
 
 
+class _RepeatableReadTransaction:
+    def __init__(self, connection: _RepeatableReadConnection) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _RepeatableReadTransaction:
+        self._connection.events.append("transaction_enter")
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self._connection.events.append("transaction_exit")
+        self._connection.in_transaction = False
+
+
+class _RepeatableReadConnection:
+    def __init__(self, events: list[str], committed: dict[str, int]) -> None:
+        self.events = events
+        self._committed = committed
+        self._snapshot_version: int | None = None
+        self.isolation_level: str | None = None
+        self.in_transaction = False
+        self.read_only = False
+
+    def execution_options(self, *, isolation_level: str) -> _RepeatableReadConnection:
+        self.events.append("set_isolation")
+        self.isolation_level = isolation_level
+        return self
+
+    def __enter__(self) -> _RepeatableReadConnection:
+        self.events.append("connection_enter")
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.events.append("connection_exit")
+
+    def begin(self) -> _RepeatableReadTransaction:
+        assert self.isolation_level == "REPEATABLE READ"
+        self.events.append("begin")
+        self._snapshot_version = self._committed["version"]
+        self.in_transaction = True
+        return _RepeatableReadTransaction(self)
+
+    def execute(self, statement: object) -> None:
+        assert self.in_transaction
+        assert str(statement) == "SET TRANSACTION READ ONLY"
+        self.events.append("set_read_only")
+        self.read_only = True
+
+    def observed_version(self) -> int:
+        assert self.in_transaction and self.read_only
+        assert self._snapshot_version is not None
+        return self._snapshot_version
+
+
+class _RepeatableReadEngine:
+    def __init__(self, events: list[str], committed: dict[str, int]) -> None:
+        self.connection = _RepeatableReadConnection(events, committed)
+        self.events = events
+
+    def connect(self) -> _RepeatableReadConnection:
+        self.events.append("connect")
+        return self.connection
+
+    def dispose(self) -> None:
+        self.events.append("dispose")
+
+
+def test_url_capture_uses_one_read_only_repeatable_read_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    committed = {"version": 1}
+    engine = _RepeatableReadEngine(events, committed)
+    observed: list[int] = []
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: engine)
+
+    def capture(connection: _RepeatableReadConnection, *, expected_database: str) -> DatabaseState:
+        assert expected_database == "source_drill"
+        events.append("preflight")
+        observed.append(connection.observed_version())
+        committed["version"] = 2
+        events.append("concurrent_commit")
+        events.append("raw_select")
+        observed.append(connection.observed_version())
+        return _state()
+
+    monkeypatch.setattr(recovery, "_capture_database_state", capture)
+
+    assert recovery._capture_database_state_url(SOURCE_URL) == _state()
+    assert observed == [1, 1]
+    assert events == [
+        "connect",
+        "set_isolation",
+        "connection_enter",
+        "begin",
+        "transaction_enter",
+        "set_read_only",
+        "preflight",
+        "concurrent_commit",
+        "raw_select",
+        "transaction_exit",
+        "connection_exit",
+        "dispose",
+    ]
+
+
+def test_url_capture_failure_closes_transaction_connection_and_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    engine = _RepeatableReadEngine(events, {"version": 1})
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: engine)
+
+    def fail_capture(
+        _connection: _RepeatableReadConnection, *, expected_database: str
+    ) -> DatabaseState:
+        assert expected_database == "source_drill"
+        events.append("capture_failure")
+        raise OSError("injected capture failure")
+
+    monkeypatch.setattr(recovery, "_capture_database_state", fail_capture)
+
+    with pytest.raises(RecoveryRefused, match="database state inspection failed"):
+        recovery._capture_database_state_url(SOURCE_URL)
+
+    assert events[-4:] == [
+        "capture_failure",
+        "transaction_exit",
+        "connection_exit",
+        "dispose",
+    ]
+    assert not engine.connection.in_transaction
+
+
 def test_fingerprint_beta_envelope_constants_are_fixed() -> None:
     assert recovery.FINGERPRINT_MAX_ROWS_PER_TABLE == 100_000
     assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW == 1 * 1024 * 1024
