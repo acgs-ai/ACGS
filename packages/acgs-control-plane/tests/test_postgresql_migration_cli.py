@@ -86,11 +86,15 @@ def _isolated_postgresql_schema() -> Iterator[None]:
 
 
 def _table_names() -> set[str]:
+    return _schema_table_names("public")
+
+
+def _schema_table_names(schema: str) -> set[str]:
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.connect() as connection:
             _assert_disposable_database(connection)
-            return set(sa.inspect(connection).get_table_names(schema="public"))
+            return set(sa.inspect(connection).get_table_names(schema=schema))
     finally:
         engine.dispose()
 
@@ -126,6 +130,8 @@ def _invoke_cli(
     *,
     expected_database: str = _DISPOSABLE_DATABASE_NAME,
     acknowledge_forward_only: bool = False,
+    database_url: str = _TEST_POSTGRES_URL,
+    extra_arguments: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     package_root = Path(__file__).resolve().parents[1]
     arguments = [
@@ -140,12 +146,14 @@ def _invoke_cli(
     ]
     if acknowledge_forward_only:
         arguments.append("--acknowledge-forward-only")
+    arguments.extend(extra_arguments)
 
     for argument in arguments:
         _assert_secret_free(argument)
 
     environment = os.environ.copy()
-    environment[_CHILD_DATABASE_URL_ENV] = _TEST_POSTGRES_URL
+    environment.pop("ACP_TEST_POSTGRES_URL", None)
+    environment[_CHILD_DATABASE_URL_ENV] = database_url
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     source_root = str(package_root / "src")
     existing_pythonpath = environment.get("PYTHONPATH")
@@ -198,6 +206,34 @@ def test_upgrade_requires_forward_only_acknowledgement_without_mutation() -> Non
     assert _version_rows() == []
 
 
+@pytest.mark.parametrize(
+    "duplicate_arguments",
+    [
+        ("--database-url-env", _CHILD_DATABASE_URL_ENV),
+        ("--expected-database", _DISPOSABLE_DATABASE_NAME),
+        (
+            "--database-url-env",
+            _CHILD_DATABASE_URL_ENV,
+            "--expected-database",
+            _DISPOSABLE_DATABASE_NAME,
+        ),
+    ],
+)
+def test_duplicate_target_options_fail_before_database_access_without_mutation(
+    duplicate_arguments: tuple[str, ...],
+) -> None:
+    result, payload = _invoke_cli("status", extra_arguments=duplicate_arguments)
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert payload["ok"] is False
+    error = payload["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "usage_error"
+    assert _table_names() == set()
+    assert _version_rows() == []
+
+
 def test_status_wrong_expected_database_fails_without_mutation() -> None:
     result, payload = _invoke_cli("status", expected_database="not_the_disposable_database")
 
@@ -234,6 +270,74 @@ def test_wrong_expected_database_fails_before_schema_mutation() -> None:
     }
     assert _table_names() == set()
     assert _version_rows() == []
+
+
+def test_rogue_public_schema_fails_without_version_or_table_mutation() -> None:
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            _assert_disposable_database(connection)
+            connection.execute(sa.text("CREATE TABLE rogue_marker (id INTEGER PRIMARY KEY)"))
+            connection.execute(sa.text("INSERT INTO rogue_marker (id) VALUES (7)"))
+    finally:
+        engine.dispose()
+
+    result, payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
+
+    assert result.returncode == 65
+    assert result.stdout == ""
+    assert payload["ok"] is False
+    error = payload["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "unsafe_schema_state"
+    assert _table_names() == {"rogue_marker"}
+    assert _version_rows() == []
+
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.connect() as connection:
+            _assert_disposable_database(connection)
+            assert connection.scalar(sa.text("SELECT id FROM rogue_marker")) == 7
+    finally:
+        engine.dispose()
+
+
+def test_noncanonical_search_path_is_refused_without_public_or_shadow_mutation() -> None:
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            _assert_disposable_database(connection)
+            connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
+            connection.execute(sa.text("CREATE SCHEMA shadow"))
+            connection.execute(sa.text("CREATE TABLE shadow.sentinel (id INTEGER PRIMARY KEY)"))
+            connection.execute(sa.text("INSERT INTO shadow.sentinel (id) VALUES (11)"))
+
+        shadow_url = _TEST_URL.update_query_dict(
+            {"options": "-csearch_path=shadow"}
+        ).render_as_string(hide_password=False)
+        result, payload = _invoke_cli(
+            "upgrade",
+            acknowledge_forward_only=True,
+            database_url=shadow_url,
+        )
+
+        assert result.returncode == 65
+        assert result.stdout == ""
+        assert payload["ok"] is False
+        error = payload["error"]
+        assert isinstance(error, dict)
+        assert error["code"] == "unsafe_schema_state"
+        assert _table_names() == set()
+        assert _schema_table_names("shadow") == {"sentinel"}
+
+        with engine.connect() as connection:
+            _assert_disposable_database(connection)
+            assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
+    finally:
+        with engine.begin() as connection:
+            _assert_disposable_database(connection)
+            connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
+        engine.dispose()
 
 
 def test_lock_contention_is_retryable_and_retry_upgrades_once() -> None:

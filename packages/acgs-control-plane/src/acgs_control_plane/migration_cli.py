@@ -57,16 +57,36 @@ class _MachineParser(argparse.ArgumentParser):
         raise _UsageError
 
 
+class _SingleUse(argparse.Action):
+    """Reject security-sensitive target options when supplied more than once."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[str] | None,
+        option_string: str | None = None,
+    ) -> None:
+        del option_string
+        marker = f"_acgs_seen_{self.dest}"
+        if getattr(namespace, marker, False) or not isinstance(values, str):
+            parser.error("target option must be supplied exactly once")
+        setattr(namespace, marker, True)
+        setattr(namespace, self.dest, values)
+
+
 def _add_target_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--database-url-env",
         required=True,
+        action=_SingleUse,
         metavar="ENV_VAR",
         help="name of the environment variable containing the PostgreSQL URL",
     )
     parser.add_argument(
         "--expected-database",
         required=True,
+        action=_SingleUse,
         metavar="NAME",
         help="exact PostgreSQL current_database() value expected by the operator",
     )
@@ -117,7 +137,7 @@ def _error_payload(
     }
 
 
-def _load_database_url(environment_name: str) -> str:
+def _load_database_url(environment_name: str, expected_database: str) -> str:
     if _ENVIRONMENT_NAME.fullmatch(environment_name) is None:
         raise _OperatorError(
             "invalid_environment_name",
@@ -132,7 +152,8 @@ def _load_database_url(environment_name: str) -> str:
             _EXIT_CONFIGURATION,
         )
     try:
-        backend_name = make_url(database_url).get_backend_name()
+        parsed_url = make_url(database_url)
+        backend_name = parsed_url.get_backend_name()
     except (ArgumentError, ValueError) as exc:
         raise _OperatorError(
             "database_url_invalid",
@@ -144,6 +165,12 @@ def _load_database_url(environment_name: str) -> str:
             "unsupported_database_dialect",
             "The migration operator CLI requires PostgreSQL.",
             _EXIT_CONFIGURATION,
+        )
+    if parsed_url.database != expected_database:
+        raise _OperatorError(
+            "database_identity_mismatch",
+            "The connected PostgreSQL database did not match the operator expectation.",
+            _EXIT_DATABASE_STATE,
         )
     return database_url
 
@@ -161,7 +188,7 @@ def _run_command(arguments: argparse.Namespace) -> dict[str, object]:
     environment_name = str(arguments.database_url_env)
     expected_database = str(arguments.expected_database)
     _validate_expected_database(expected_database)
-    database_url = _load_database_url(environment_name)
+    database_url = _load_database_url(environment_name, expected_database)
 
     if arguments.command == "status":
         preflight = inspect_schema(database_url, expected_database=expected_database)
