@@ -2,7 +2,7 @@
   "schema": {
     "name": "acgs-saas-delivery-dag",
     "version": 3,
-    "updated": "2026-07-13",
+    "updated": "2026-07-15",
     "source_of_truth": "docs/ROADMAP.md",
     "serialization": "JSON, a strict YAML 1.2 subset"
   },
@@ -456,17 +456,29 @@
         "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
         "git diff --check"
       ],
-      "evidence_artifact": "PR 308 baseline reconciliation packet",
+      "evidence_artifact": "PR #308 head 53ca32d was independently reviewed and locally verified with 40 package tests passing; the previously suspected minimum-version HEAD behavior was disproved. The code is acceptance-ready locally, but no repository-accepted baseline exists while the PR remains open and unaccepted. PR #267 remains closed-unmerged superseded history and is never current evidence.",
       "branch": null,
       "worktree": null,
       "pr": "#308",
       "status": "blocked",
-      "implementation_state": "conflicting",
+      "implementation_state": "partial",
       "evidence_state": "unverified",
-      "blocker": "PR #308 is open; PR #267 is closed unmerged and superseded.",
-      "next_safe_action": "Resolve PR #308 through normal review and record the exact accepted commit; never reuse PR #267 as current evidence.",
+      "blocker": "PR #308 head 53ca32d remains open and unaccepted with an unresolved review thread and stale or queued checks, so its independently reviewed, locally verified code cannot become the authoritative repository baseline. PR #267 is closed unmerged and superseded.",
+      "next_safe_action": "Resolve the remaining PR #308 review thread, obtain current checks, and accept or merge exact head 53ca32d through normal repository review before recording it as the baseline; never reuse PR #267 as current evidence.",
       "mandatory": true,
-      "completion_scope": "non_external"
+      "completion_scope": "non_external",
+      "local_evidence": {
+        "source_pr": 308,
+        "head": "53ca32d",
+        "review_state": "independently_reviewed",
+        "verification_state": "local_verified",
+        "code_disposition": "acceptance_ready_locally",
+        "package_tests": {
+          "passed": 40
+        },
+        "minimum_version_head_hypothesis": "disproved",
+        "repository_accepted": false
+      }
     },
     {
       "id": "G031",
@@ -616,7 +628,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the G101 anchor. Independently reviewed, current-local, unmerged increments #329-#332 add a statically validated CI lane, a disposable recovery drill, independent-process coordination/SIGKILL rollback evidence, and a fail-closed operator CLI. None is CI-backed or accepted/merged evidence, and none establishes #308 startup integration, production recovery, multi-host failover, G103 tenant database isolation, or completed Phase-1 acceptance.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Its final local evidence is 48 targeted tests and 116 package tests passing with 2 credential-gated PostgreSQL skips. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -650,13 +662,50 @@
           "evidence_state": "local_verified",
           "ci_backed": false,
           "proves": [
-            "A manifest-bound local recovery artifact can be created, verified, and restored into an explicitly empty disposable PostgreSQL target.",
-            "Injected late restore failure rolls back database changes and publishes no recovered audit artifact."
+            "Atomic private .pgpass creation and exact descriptor-level mode enforcement fail closed without a path-based chmod race; supported POSIX directory fsync is retained with a documented portability fallback.",
+            "Retained canonical fingerprint buffers have fixed non-configurable row/row-byte/table-byte/capture-byte limits; PostgreSQL aggregate preflight and batch-one streaming reject oversized logical rows before raw-row selection.",
+            "Manifest-v1 SHA256(concat(sorted(canonical_row_bytes))) compatibility is preserved by a fixed golden where primary-key order differs from canonical-byte order.",
+            "Before/after URL captures use one explicit read-only REPEATABLE READ transaction, preventing aggregate preflight and raw selection from observing different committed versions in the focused regression model."
           ],
           "does_not_prove": [
-            "Production backup, PITR, object-retention, managed-database, or multi-host disaster recovery.",
-            "Atomic database/filesystem snapshots or production recovery objectives."
-          ]
+            "Live PostgreSQL execution of the new logical-row preflight or REPEATABLE READ correction; 2 credential-gated PostgreSQL tests remain skipped locally.",
+            "A mathematical bound on total process, driver, SQLAlchemy, sorting, or PostgreSQL server memory.",
+            "Production backup, PITR, object retention, managed-database recovery, atomic database/filesystem snapshots, or multi-host disaster recovery."
+          ],
+          "head": "31badd9",
+          "current_local_approval": "approved",
+          "repair_commits": [
+            {
+              "commit": "866b5e3",
+              "outcome": "Atomically creates the private .pgpass with O_EXCL and owner-only mode and makes directory fsync portable without removing supported POSIX durability."
+            },
+            {
+              "commit": "5c05195",
+              "outcome": "Enforces exact .pgpass mode through descriptor-level fchmod when supported and fails closed with descriptor/file cleanup on enforcement failure."
+            },
+            {
+              "commit": "9613396",
+              "outcome": "Adds fixed retained canonical fingerprint limits, in-place canonical-byte sorting, per-table buffer release, and a manifest-v1 golden proving digest compatibility."
+            },
+            {
+              "commit": "5945202",
+              "outcome": "Adds an aggregate-only PostgreSQL count/logical-row preflight and batch-one streaming before raw rows, without weakening exact canonical post-normalization limits."
+            },
+            {
+              "commit": "31badd9",
+              "outcome": "Runs before/after URL captures in explicit read-only REPEATABLE READ transactions so aggregate preflight and raw selection share one snapshot."
+            }
+          ],
+          "test_results": {
+            "targeted": {
+              "passed": 48
+            },
+            "package": {
+              "passed": 116,
+              "skipped": 2
+            },
+            "skipped_scope": "credential-gated disposable PostgreSQL runtime suites"
+          }
         },
         {
           "pr": 331,
@@ -696,18 +745,19 @@
       "remote_ci": {
         "state": "externally_blocked",
         "ci_backed": false,
-        "annotation": "The job was not started because your account is locked due to a billing issue.",
+        "annotation": "The job failed before any steps because the GitHub account is locked due to a billing issue.",
         "observed_run": {
-          "source_pr": 332,
-          "id": 29393469672,
-          "workflow": "Codex Code Review",
-          "job": "codex-review",
-          "steps_started": 0
+          "source_pr": 330,
+          "id": 29414888896,
+          "job_id": 87350442086,
+          "steps_started": 0,
+          "conclusion": "failure",
+          "failure_class": "billing_before_steps"
         },
-        "impact": "No observed remote result promotes draft PRs #329-#332 beyond current-local evidence."
+        "impact": "PR #330 head 31badd9 remains current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 are open draft and unmerged; #308 startup integration remains open and unresolved. PRs #329-#331 recorded zero-job BuildFailed startup failures; only PR #332 Codex Code Review run 29393469672 observed zero steps and the exact annotation 'The job was not started because your account is locked due to a billing issue.' No observed remote result makes any increment CI-backed. Recovery and multiprocess evidence remain local/disposable and do not establish production backup/PITR, multi-host coordination, network partition, database failover, or rolling-upgrade safety. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
-      "next_safe_action": "Resolve the external GitHub account billing lock, run the exact PostgreSQL CI evidence, and review/merge the G101 increments in dependency order without restoring create_all; then integrate and verify #308 startup behavior and close the remaining production recovery and multi-host/failover evidence gaps before completing G101. Do not start G102. G103 owns tenant database isolation after G101 and G102 complete.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, but CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock. Its 2 credential-gated PostgreSQL tests remain skipped, so live runtime execution of the logical-row preflight and read-only REPEATABLE READ correction is unverified. Local recovery evidence does not establish production backup/PITR, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
+      "next_safe_action": "Run the credential-gated disposable PostgreSQL recovery suites and the exact CI lane after the billing block is cleared, then review and merge G101 increments in dependency order and resolve PR #308 startup integration. Keep recovery, memory, and CI claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
