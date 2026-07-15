@@ -145,6 +145,15 @@ def _patch_restore_boundary(
     return boundary
 
 
+def _patch_fake_connection_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recovery, "_install_recovery_connection_guard", lambda _engine: None)
+    monkeypatch.setattr(
+        recovery,
+        "_bind_recovery_connection",
+        lambda _connection, _database: None,
+    )
+
+
 def test_create_publishes_canonical_private_bundle_without_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -153,6 +162,7 @@ def test_create_publishes_canonical_private_bundle_without_secrets(
     output = tmp_path / "bundle"
     monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
     monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
     monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
     monkeypatch.setattr(
         recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
@@ -204,6 +214,7 @@ def test_create_rejects_source_drift_and_publishes_nothing(
     output = tmp_path / "bundle"
     monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
     monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
     states = iter([_state(), _state(schema="1" * 64)])
     monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: next(states))
     monkeypatch.setattr(
@@ -262,7 +273,7 @@ def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
         assert environment["PGDATABASE"] == "source_drill"
         assert environment["PGUSER"] == "operator"
         assert "PGSERVICE" not in environment
-        assert "PGOPTIONS" not in environment
+        assert environment["PGOPTIONS"] == "-csearch_path=public"
         assert "UNRELATED_SECRET" not in environment
         assert "RECOVERY_SOURCE_URL" not in environment
         passfile = Path(environment["PGPASSFILE"])
@@ -505,6 +516,7 @@ def test_url_capture_uses_one_read_only_repeatable_read_snapshot(
     engine = _RepeatableReadEngine(events, committed)
     observed: list[int] = []
     monkeypatch.setattr(recovery, "make_engine", lambda _url: engine)
+    _patch_fake_connection_binding(monkeypatch)
 
     def capture(connection: _RepeatableReadConnection, *, expected_database: str) -> DatabaseState:
         assert expected_database == "source_drill"
@@ -542,6 +554,7 @@ def test_url_capture_failure_closes_transaction_connection_and_engine(
     events: list[str] = []
     engine = _RepeatableReadEngine(events, {"version": 1})
     monkeypatch.setattr(recovery, "make_engine", lambda _url: engine)
+    _patch_fake_connection_binding(monkeypatch)
 
     def fail_capture(
         _connection: _RepeatableReadConnection, *, expected_database: str
@@ -804,6 +817,7 @@ def test_fingerprint_envelope_refusal_never_publishes_and_cleans_staging(
     output = tmp_path / "bundle"
     monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
     monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
     monkeypatch.setattr(recovery, "FINGERPRINT_MAX_ROWS_PER_TABLE", 0)
     url_captures = 0
 
@@ -856,6 +870,7 @@ def test_create_fsyncs_artifacts_and_parent_in_durable_publish_order(
     output = tmp_path / "bundle"
     monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
     monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
     monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
     monkeypatch.setattr(
         recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
@@ -909,6 +924,7 @@ def test_create_fsync_failure_reports_refusal_and_never_publishes(
     output = tmp_path / "bundle"
     monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
     monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
     monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
     monkeypatch.setattr(
         recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()

@@ -120,21 +120,79 @@ jobs:
             --editable ../gove-zone \
             --editable .
 
-      - name: Install exact PostgreSQL 17.10 client
+      - name: Provision digest-pinned PostgreSQL 17.10 client wrappers
         shell: bash
         run: |
           set -euo pipefail
-          client_version='17.10-1.pgdg24.04+1'
-          curl --fail --location --silent --show-error \
-            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/postgresql-archive-keyring.gpg >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.gpg] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            "postgresql-client-17=${client_version}"
-          test "$(dpkg-query -W -f='${Version}' postgresql-client-17)" = "${client_version}"
+          client_image='postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          client_dir="$RUNNER_TEMP/postgresql-client-17.10"
+          mkdir -p "$client_dir"
+          docker pull "$client_image"
+          docker image inspect --format '{{json .RepoDigests}}' "$client_image" \
+            | grep --fixed-strings 'sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          cat >"$client_dir/postgresql-client" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          image='postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          tool="$(basename "$0")"
+          case "$tool" in
+            psql|pg_dump|pg_restore) ;;
+            *) echo 'unsupported PostgreSQL client wrapper' >&2; exit 64 ;;
+          esac
+
+          declare -A mount_directories=()
+          add_path_parent() {
+            local candidate="$1"
+            local directory
+            if [[ -d "$candidate" ]]; then
+              directory="$(realpath "$candidate")"
+            else
+              directory="$(realpath -m "$(dirname "$candidate")")"
+            fi
+            mount_directories["$directory"]=1
+          }
+
+          for variable in PGPASSFILE PGSSLROOTCERT PGSSLCERT PGSSLKEY; do
+            if [[ -n "${!variable:-}" ]]; then
+              add_path_parent "${!variable}"
+            fi
+          done
+          for argument in "$@"; do
+            case "$argument" in
+              --file=*) add_path_parent "${argument#--file=}" ;;
+              /*) add_path_parent "$argument" ;;
+            esac
+          done
+
+          docker_arguments=(
+            run --rm --network host
+          )
+          if ! docker info --format '{{json .SecurityOptions}}' | grep --quiet rootless; then
+            docker_arguments+=(--user "$(id -u):$(id -g)")
+          fi
+          for variable in \
+            PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE PGPASSFILE \
+            PGCONNECT_TIMEOUT PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY \
+            PGAPPNAME LANG LC_ALL LC_CTYPE
+          do
+            if [[ -v "$variable" ]]; then
+              docker_arguments+=(--env "$variable")
+            fi
+          done
+          for directory in "${!mount_directories[@]}"; do
+            docker_arguments+=(
+              --volume "$directory:$directory:rw,Z"
+            )
+          done
+          exec docker "${docker_arguments[@]}" "$image" "$tool" "$@"
+          BASH
+          chmod 0755 "$client_dir/postgresql-client"
+          ln -s postgresql-client "$client_dir/psql"
+          ln -s postgresql-client "$client_dir/pg_dump"
+          ln -s postgresql-client "$client_dir/pg_restore"
+          echo "$client_dir" >> "$GITHUB_PATH"
+          export PATH="$client_dir:$PATH"
+          test "$(psql --version | awk '{print $3}')" = '17.10'
           test "$(pg_dump --version | awk '{print $3}')" = '17.10'
           test "$(pg_restore --version | awk '{print $3}')" = '17.10'
 

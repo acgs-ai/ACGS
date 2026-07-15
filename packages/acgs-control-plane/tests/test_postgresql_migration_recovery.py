@@ -66,13 +66,34 @@ SOURCE_URL = _validated_url(SOURCE_URL, SOURCE_DATABASE, SOURCE_ENV)
 TARGET_URL = _validated_url(TARGET_URL, TARGET_DATABASE, TARGET_ENV)
 
 
+def _safe_admin_url(url: str) -> str:
+    return (
+        sa.engine.make_url(url)
+        .update_query_dict({"options": "-csearch_path=pg_catalog,public"})
+        .render_as_string(hide_password=False)
+    )
+
+
+def _alter_role_search_path(
+    connection: sa.Connection, url: str, expected_database: str, clause: str
+) -> None:
+    username = sa.engine.make_url(url).username
+    assert username is not None
+    quote = connection.dialect.identifier_preparer.quote_identifier
+    connection.exec_driver_sql(
+        f"ALTER ROLE {quote(username)} IN DATABASE {quote(expected_database)} {clause}"
+    )
+
+
 def _reset(url: str, expected_database: str) -> None:
-    engine = make_engine(url)
+    engine = make_engine(_safe_admin_url(url))
     try:
         with engine.begin() as connection:
-            current = connection.scalar(sa.text("SELECT current_database()"))
+            current = connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
             if current != expected_database:
                 raise RuntimeError("refusing to reset a database whose runtime name changed")
+            _alter_role_search_path(connection, url, expected_database, "RESET search_path")
+            connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
             connection.execute(sa.text("DROP SCHEMA public CASCADE"))
             connection.execute(sa.text("CREATE SCHEMA public"))
     finally:
@@ -128,6 +149,269 @@ def _seed_source() -> None:
         engine.dispose()
 
 
+def _install_shadow_hijacks(
+    url: str,
+    expected_database: str,
+    *,
+    create_public_marker: bool = False,
+    public_first: bool = False,
+) -> None:
+    function_schema = "public" if public_first else "shadow"
+    role_search_path = "public, pg_catalog" if public_first else "shadow, pg_catalog"
+    engine = make_engine(_safe_admin_url(url))
+    try:
+        with engine.begin() as connection:
+            assert (
+                connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
+                == expected_database
+            )
+            connection.execute(sa.text("CREATE SCHEMA shadow"))
+            connection.execute(sa.text("CREATE TABLE shadow.sentinel (id INTEGER PRIMARY KEY)"))
+            connection.execute(sa.text("INSERT INTO shadow.sentinel (id) VALUES (11)"))
+            if create_public_marker:
+                connection.execute(
+                    sa.text("CREATE TABLE public.nonempty_marker (id INTEGER PRIMARY KEY)")
+                )
+                connection.execute(sa.text("INSERT INTO public.nonempty_marker (id) VALUES (17)"))
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.current_database()
+                    RETURNS name LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 12 WHERE id = 11;
+                        RETURN 'hijacked';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.current_schema()
+                    RETURNS name LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 13 WHERE id = 11;
+                        RETURN 'shadow';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.current_setting(setting_name text)
+                    RETURNS text LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 14 WHERE id = 11;
+                        RETURN setting_name;
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.pg_export_snapshot()
+                    RETURNS text LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 15 WHERE id = 11;
+                        RETURN 'hijacked-snapshot';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.pg_try_advisory_lock(integer, integer)
+                    RETURNS boolean LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 16 WHERE id = 11;
+                        RETURN true;
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    f"""
+                    CREATE FUNCTION {function_schema}.pg_advisory_unlock(integer, integer)
+                    RETURNS boolean LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 18 WHERE id = 11;
+                        RETURN true;
+                    END
+                    $function$
+                    """
+                )
+            )
+            _alter_role_search_path(
+                connection,
+                url,
+                expected_database,
+                f"SET search_path TO {role_search_path}",
+            )
+    finally:
+        engine.dispose()
+
+
+def _assert_shadow_and_public_unchanged(
+    url: str, expected_database: str, *, public_marker: bool
+) -> None:
+    engine = make_engine(_safe_admin_url(url))
+    try:
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
+                == expected_database
+            )
+            assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
+            public_tables = set(sa.inspect(connection).get_table_names(schema="public"))
+            if public_marker:
+                assert public_tables == {"nonempty_marker"}
+                assert connection.scalar(sa.text("SELECT id FROM public.nonempty_marker")) == 17
+            else:
+                assert public_tables == set()
+    finally:
+        engine.dispose()
+
+
+def _create_valid_bundle(tmp_path: Path) -> Path:
+    _seed_source()
+    audit_source = tmp_path / "source-audit"
+    audit_source.mkdir()
+    bundle = tmp_path / "bundle"
+    create_recovery_bundle(source_url_env=SOURCE_ENV, audit_dir=audit_source, output=bundle)
+    return bundle
+
+
+def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_source()
+    _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE)
+    audit_source = tmp_path / "source-audit"
+    audit_source.mkdir()
+    calls: list[list[str]] = []
+
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
+
+    with pytest.raises(RecoveryRefused, match="canonical public schema"):
+        create_recovery_bundle(
+            source_url_env=SOURCE_ENV,
+            audit_dir=audit_source,
+            output=tmp_path / "bundle",
+            runner=forbidden_runner,
+        )
+
+    assert calls == []
+    engine = make_engine(_safe_admin_url(SOURCE_URL))
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
+            assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
+    finally:
+        engine.dispose()
+    assert not (tmp_path / "bundle").exists()
+
+
+def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
+    tmp_path: Path,
+) -> None:
+    _seed_source()
+    _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE, public_first=True)
+    audit_source = tmp_path / "source-audit"
+    audit_source.mkdir()
+    bundle = tmp_path / "bundle"
+    observed_dump = False
+
+    def probing_runner(command: list[str], environment: dict[str, str]) -> None:
+        nonlocal observed_dump
+        assert environment["PGOPTIONS"] == "-csearch_path=public"
+        if command[0] == "pg_dump":
+            observed_dump = True
+            probe = subprocess.run(
+                [
+                    "psql",
+                    "--no-psqlrc",
+                    "--tuples-only",
+                    "--no-align",
+                    "--set",
+                    "ON_ERROR_STOP=1",
+                    "--command",
+                    "SELECT current_database()",
+                ],
+                check=True,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+            assert probe.stdout.strip() == SOURCE_DATABASE
+        _run_command(command, environment)
+
+    create_recovery_bundle(
+        source_url_env=SOURCE_ENV,
+        audit_dir=audit_source,
+        output=bundle,
+        runner=probing_runner,
+    )
+
+    assert observed_dump
+    assert bundle.is_dir()
+    engine = make_engine(_safe_admin_url(SOURCE_URL))
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
+            assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "public_marker",
+    [False, True],
+    ids=["shadow-empty", "public-behind-shadow"],
+)
+def test_target_shadow_default_refuses_before_any_pg_restore_or_mutation(
+    public_marker: bool, tmp_path: Path
+) -> None:
+    bundle = _create_valid_bundle(tmp_path)
+    _install_shadow_hijacks(
+        TARGET_URL,
+        TARGET_DATABASE,
+        create_public_marker=public_marker,
+    )
+    calls: list[list[str]] = []
+
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
+
+    with pytest.raises(RecoveryRefused, match="canonical public schema"):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env=TARGET_ENV,
+            target_database_name=TARGET_DATABASE,
+            target_audit_dir=tmp_path / "target-audit",
+            acknowledge_operator_controlled_bundle=True,
+            runner=forbidden_runner,
+        )
+
+    assert calls == []
+    _assert_shadow_and_public_unchanged(
+        TARGET_URL,
+        TARGET_DATABASE,
+        public_marker=public_marker,
+    )
+    assert not (tmp_path / "target-audit").exists()
+
+
 def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> None:
     _seed_source()
     audit_source = tmp_path / "source-audit"
@@ -172,12 +456,11 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         output=bundle,
     )
     upgrade_database(TARGET_URL)
-    mutating_commands: list[list[str]] = []
+    calls: list[list[str]] = []
 
-    def recording_runner(command: list[str], environment: dict[str, str]) -> None:
-        if "--list" not in command:
-            mutating_commands.append(list(command))
-        _run_command(command, environment)
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
+        raise AssertionError("nonempty public target must refuse before pg_restore --list")
 
     with pytest.raises(RecoveryRefused, match="must have an exact empty"):
         restore_recovery_bundle(
@@ -186,10 +469,10 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
             target_database_name=TARGET_DATABASE,
             target_audit_dir=tmp_path / "target-audit",
             acknowledge_operator_controlled_bundle=True,
-            runner=recording_runner,
+            runner=forbidden_runner,
         )
 
-    assert mutating_commands == []
+    assert calls == []
     assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0002
 
 

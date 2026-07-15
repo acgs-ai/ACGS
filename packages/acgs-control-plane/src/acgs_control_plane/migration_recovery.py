@@ -37,6 +37,9 @@ from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_CLASS_ID,
     _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
     DatabaseSchemaState,
+    MigrationPreflightError,
+    _bind_postgresql_operator_target,
+    _install_postgresql_operator_connection_guard,
     inspect_connection,
 )
 
@@ -104,6 +107,7 @@ _CHILD_ENV_ALLOWLIST: Final = (
     "SYSTEMROOT",
     "WINDIR",
 )
+_CANONICAL_PGOPTIONS: Final = "-csearch_path=public"
 
 CommandRunner = Callable[[Sequence[str], Mapping[str, str]], None]
 
@@ -326,7 +330,12 @@ def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, 
 
 
 def _minimal_child_environment() -> dict[str, str]:
-    return {key: os.environ[key] for key in _CHILD_ENV_ALLOWLIST if key in os.environ}
+    environment = {key: os.environ[key] for key in _CHILD_ENV_ALLOWLIST if key in os.environ}
+    # libpq clients establish independent connections outside SQLAlchemy's
+    # guarded session. Override, rather than inherit, ambient or role defaults
+    # so pg_catalog remains implicitly ahead of the sole explicit public schema.
+    environment["PGOPTIONS"] = _CANONICAL_PGOPTIONS
+    return environment
 
 
 def _run_command(command: Sequence[str], environment: Mapping[str, str]) -> None:
@@ -342,6 +351,10 @@ def _run_command(command: Sequence[str], environment: Mapping[str, str]) -> None
     except (OSError, subprocess.CalledProcessError) as exc:
         tool = Path(command[0]).name if command else "database tool"
         raise RecoveryRefused(f"{tool} failed; sensitive subprocess output was suppressed") from exc
+
+
+def _defer_command_validation(_command: Sequence[str], _environment: Mapping[str, str]) -> None:
+    """Defer archive-tool validation until the target connection is bound."""
 
 
 def _schema_description(connection: Connection) -> dict[str, Any]:
@@ -396,9 +409,24 @@ def _schema_description(connection: Connection) -> dict[str, Any]:
 
 
 def _assert_connection_database(connection: Connection, expected_database: str) -> None:
-    actual = connection.scalar(sa.text("SELECT current_database()"))
+    actual = connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
     if actual != expected_database:
         raise RecoveryRefused("database connection identity does not match the named URL")
+
+
+def _install_recovery_connection_guard(engine: Engine) -> None:
+    """Install the canonical migration operator's pre-dialect search-path guard."""
+    _install_postgresql_operator_connection_guard(engine)
+
+
+def _bind_recovery_connection(connection: Connection, expected_database: str) -> None:
+    """Bind one recovery transaction to its exact database and public schema."""
+    try:
+        _bind_postgresql_operator_target(connection, expected_database)
+    except MigrationPreflightError as exc:
+        raise RecoveryRefused(
+            "database connection is not bound to the named canonical public schema"
+        ) from exc
 
 
 def _stream_table_rows(connection: Connection, table: sa.Table) -> Iterator[Mapping[Any, Any]]:
@@ -520,9 +548,11 @@ def _capture_database_state_url(database_url: str) -> DatabaseState:
     if not expected_database:
         raise RecoveryRefused("database state inspection URL has no database name")
     engine = make_engine(database_url)
+    _install_recovery_connection_guard(engine)
     try:
         with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
             with connection.begin():
+                _bind_recovery_connection(connection, str(expected_database))
                 connection.execute(sa.text("SET TRANSACTION READ ONLY"))
                 return _capture_database_state(connection, expected_database=str(expected_database))
     except RecoveryRefused:
@@ -678,10 +708,14 @@ def create_recovery_bundle(
         archive = staging / ARCHIVE_NAME
         audit_destination = staging / AUDIT_DIRECTORY_NAME
         engine = make_engine(source_url)
+        _install_recovery_connection_guard(engine)
         with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
             with connection.begin():
+                _bind_recovery_connection(connection, str(parsed_url.database))
                 connection.execute(sa.text("SET TRANSACTION READ ONLY"))
-                snapshot_id = str(connection.scalar(sa.text("SELECT pg_export_snapshot()")))
+                snapshot_id = str(
+                    connection.scalar(sa.text("SELECT pg_catalog.pg_export_snapshot()"))
+                )
                 snapshot = _capture_database_state(
                     connection, expected_database=str(parsed_url.database)
                 )
@@ -881,20 +915,20 @@ def _target_migration_session_lock(
 ) -> Iterator[Connection]:
     """Hold the canonical migration advisory lock for the restore boundary."""
     engine = make_engine(database_url)
+    _install_recovery_connection_guard(engine)
     try:
         with engine.connect() as connection:
-            _assert_connection_database(connection, expected_database)
-            connection.rollback()
-            locked = bool(
-                connection.scalar(
-                    sa.text("SELECT pg_try_advisory_lock(:class_id, :object_id)"),
-                    {
-                        "class_id": _POSTGRES_MIGRATION_LOCK_CLASS_ID,
-                        "object_id": _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
-                    },
+            with connection.begin():
+                _bind_recovery_connection(connection, expected_database)
+                locked = bool(
+                    connection.scalar(
+                        sa.text("SELECT pg_catalog.pg_try_advisory_lock(:class_id, :object_id)"),
+                        {
+                            "class_id": _POSTGRES_MIGRATION_LOCK_CLASS_ID,
+                            "object_id": _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
+                        },
+                    )
                 )
-            )
-            connection.commit()
             if not locked:
                 raise RecoveryRefused("canonical migration lock is held by another operator")
             try:
@@ -903,7 +937,7 @@ def _target_migration_session_lock(
                 if connection.in_transaction():
                     connection.rollback()
                 connection.execute(
-                    sa.text("SELECT pg_advisory_unlock(:class_id, :object_id)"),
+                    sa.text("SELECT pg_catalog.pg_advisory_unlock(:class_id, :object_id)"),
                     {
                         "class_id": _POSTGRES_MIGRATION_LOCK_CLASS_ID,
                         "object_id": _POSTGRES_MIGRATION_LOCK_OBJECT_ID,
@@ -921,14 +955,14 @@ def _target_migration_session_lock(
 def _assert_empty_target_connection(connection: Connection, expected_database: str) -> None:
     if connection.in_transaction():
         raise RecoveryRefused("target preflight requires a clean lock connection")
-    try:
-        _assert_connection_database(connection, expected_database)
+    with connection.begin():
+        _bind_recovery_connection(connection, expected_database)
+        public_tables = tuple(sorted(sa.inspect(connection).get_table_names(schema="public")))
+        if public_tables:
+            raise RecoveryRefused("target database must have an exact empty isolated schema")
         preflight = inspect_connection(connection)
         if preflight.state is not DatabaseSchemaState.EMPTY:
             raise RecoveryRefused("target database must have an exact empty isolated schema")
-    finally:
-        if connection.in_transaction():
-            connection.rollback()
 
 
 def _assert_empty_audit_target(path: Path) -> None:
@@ -1007,7 +1041,6 @@ def restore_recovery_bundle(
     runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
     """Restore only into an explicitly named empty disposable target."""
-    manifest = _load_and_verify_manifest(bundle, runner=runner)
     if not acknowledge_operator_controlled_bundle:
         raise RecoveryRefused(
             "untrusted bundles are prohibited; explicitly acknowledge an operator-controlled bundle"
@@ -1017,13 +1050,15 @@ def restore_recovery_bundle(
         raise RecoveryRefused("explicit target database name is invalid")
     if parsed_url.database != target_database_name:
         raise RecoveryRefused("target URL database does not match the explicit target name")
-    if target_database_name == manifest["source_database_name"]:
+    preflight_manifest = _load_and_verify_manifest(bundle, runner=_defer_command_validation)
+    if target_database_name == preflight_manifest["source_database_name"]:
         raise RecoveryRefused("target database must be distinct from the source database")
     _assert_empty_audit_target(target_audit_dir)
 
     bundle_root = bundle.resolve(strict=True)
     with _target_migration_session_lock(target_url, target_database_name) as target_connection:
         _assert_empty_target_connection(target_connection, target_database_name)
+        manifest = _load_and_verify_manifest(bundle_root, runner=runner)
         restore_work, staged_archive, staged_audits = _stage_restore_inputs(
             bundle_root, target_audit_dir, manifest
         )
