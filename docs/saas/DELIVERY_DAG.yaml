@@ -587,6 +587,8 @@
       "likely_interfaces_files": [
         "packages/acgs-control-plane/pyproject.toml",
         "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
         "packages/acgs-control-plane/src/acgs_control_plane/models.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
         "packages/acgs-control-plane/src/acgs_control_plane/alembic.ini",
@@ -604,6 +606,7 @@
         "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
         "packages/acgs-control-plane/tests/test_migration_cli.py",
         "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
         ".github/workflows/python-acgs-control-plane.yml",
         "requirements/saas-beta/cp-test.lock"
       ],
@@ -632,7 +635,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. Live bytea remains unit-only. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and current-local only after a two-commit diagnostic repair sequence culminating at 0fff759 in one secret-safe diagnostic JSON path with metaclass-safe exact-type literal classification and no metadata evaluation, plus sys.maxsize logging suppression with exact restoration. The earlier 6a17d18 classifier attempt is superseded and rejected as current evidence because its class-metadata and logging boundary was unsafe. Its targeted suite passed 27, full suite passed 95 with 2 PostgreSQL skips, and disposable PostgreSQL 17 CLI suite passed 12; cleanup found zero residual tables, connections, or processes. Configured mypy and static gates passed. Windows execution remains unverified. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. Live bytea remains unit-only. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and current-local only after a two-commit diagnostic repair sequence culminating at 0fff759 in one secret-safe diagnostic JSON path with metaclass-safe exact-type literal classification and no metadata evaluation, plus sys.maxsize logging suppression with exact restoration. The earlier 6a17d18 classifier attempt is superseded and rejected as current evidence because its class-metadata and logging boundary was unsafe. Its targeted suite passed 27, full suite passed 95 with 2 PostgreSQL skips, and disposable PostgreSQL 17 CLI suite passed 12; cleanup found zero residual tables, connections, or processes. Configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, stacked on PR #332, is independently re-reviewed and approved as current-local only. It keeps production startup blocked before engine, session, or audit persistence while seven LEGACY_UNSIGNED_WRITE routes remain, makes /readyz always return 503, and limits schema preflight to explicit local nonproduction evidence. Head 28b137b was rejected for a raw runtime-posture leak through a chained exception; a1bc1df repairs parsing with a literal allowlist. Evidence includes 56 targeted passes, 110 full-suite passes with 2 PostgreSQL-environment skips, configured Ruff/format/mypy/diff gates, and 10 startup/migration passes on pinned PostgreSQL 17.10 digest sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394 with zero residual tables, connections, processes, or containers. The final config-only repair did not rerun PostgreSQL. Windows execution remains unverified. PRs #329, #331, #332, and #334 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -875,6 +878,78 @@
             "configured_mypy": "passed",
             "configured_static_gates": "passed"
           }
+        },
+        {
+          "pr": 334,
+          "branch": "beta/p1-g101-startup-integration",
+          "worktree": "saas-beta/p1-g101-startup-integration",
+          "base_pr": 332,
+          "state": "open_draft",
+          "merged": false,
+          "review_state": "independently_reviewed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "head": "a1bc1dfc7fec676d062739d5d4f166e26a20d05b",
+          "current_local_approval": "approved",
+          "proves": [
+            "Production posture refuses before engine, session, or audit persistence while seven LEGACY_UNSIGNED_WRITE routes remain, including at exact schema version 0002.",
+            "Local schema-managed startup performs an exact read-only Alembic-head preflight and never auto-migrates; local legacy bootstrap remains explicit.",
+            "/readyz always returns 503 and therefore does not imply production readiness.",
+            "Malformed ACP_RUNTIME_POSTURE values are classified through a fixed literal allowlist without exposing the raw value through string, representation, traceback, cause, or context."
+          ],
+          "does_not_prove": [
+            "Production startup, production readiness, deployment, or replacement of the seven legacy unsigned mutation routes with the canonical signed single-use governance membrane.",
+            "Remote CI execution, Windows execution, rolling-upgrade safety, backup/PITR, or disaster recovery.",
+            "PostgreSQL execution after the final config-only repair; the pinned PostgreSQL run occurred at the implementation parent and was not redundantly rerun."
+          ],
+          "review_history": [
+            {
+              "head": "28b137b",
+              "disposition": "rejected",
+              "reason": "Raw runtime-posture data leaked through a chained exception boundary."
+            },
+            {
+              "head": "a1bc1dfc7fec676d062739d5d4f166e26a20d05b",
+              "disposition": "approved",
+              "repair_commit": "a1bc1df",
+              "outcome": "Uses a fixed literal allowlist so malformed posture values remain absent from diagnostic exception chains."
+            }
+          ],
+          "test_results": {
+            "targeted": {
+              "passed": 56
+            },
+            "full": {
+              "passed": 110,
+              "skipped": 2,
+              "skipped_scope": "PostgreSQL-environment tests"
+            },
+            "postgresql_17_10_startup_migration": {
+              "image_digest": "sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394",
+              "passed": 10,
+              "evidence_point": "implementation parent before final config-only repair",
+              "final_repair_rerun": false,
+              "final_repair_rerun_reason": "config-only literal posture parsing repair"
+            },
+            "cleanup": {
+              "public_tables": 0,
+              "non_observer_connections": 0,
+              "pytest_processes": 0,
+              "containers": 0
+            }
+          },
+          "static_analysis": {
+            "ruff": "passed",
+            "ruff_format": "passed_27_files_already_formatted",
+            "mypy": "passed_14_source_files",
+            "git_diff_check": "passed"
+          },
+          "production_posture": {
+            "legacy_unsigned_routes": 7,
+            "startup": "blocked_before_persistence",
+            "readyz_status": 503,
+            "schema_preflight_scope": "local_nonproduction_only"
+          }
         }
       ],
       "remote_ci": {
@@ -905,12 +980,20 @@
             "steps_started": 0,
             "conclusion": "failure",
             "failure_class": "billing_before_steps"
+          },
+          {
+            "source_pr": 334,
+            "id": 29423228140,
+            "job_id": 87378812982,
+            "steps_started": 0,
+            "conclusion": "failure",
+            "failure_class": "billing_before_steps"
           }
         ],
-        "impact": "PR #330 head 31badd9, PR #331 head 4116778995d17755e9f3328698f6519145404336, and PR #332 head 0fff75951470652be279a8cd5acc6a46e16bff49 remain current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
+        "impact": "PR #330 head 31badd9, PR #331 head 4116778995d17755e9f3328698f6519145404336, PR #332 head 0fff75951470652be279a8cd5acc6a46e16bff49, and PR #334 head a1bc1dfc7fec676d062739d5d4f166e26a20d05b remain current-local evidence only; no observed remote result makes PRs #329-#332 or #334 CI-backed or accepted."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and locally verified with 27 targeted passes, 95 full-suite passes and 2 PostgreSQL skips, and 12 disposable PostgreSQL 17 CLI passes; configured mypy and static gates passed. CI runs 29414888896, 29418915375, and 29420444887, jobs 87350442086, 87364038830, and 87369234233, each failed before any step because of the GitHub billing lock, and live bytea preflight remains unit-only. Local evidence does not establish production backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, Windows execution, or G103 tenant database isolation.",
-      "next_safe_action": "Run a live bytea preflight probe and Windows execution lane, execute the exact CI lanes after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 and #334 remain open draft and unmerged, and PR #308 baseline startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and locally verified with 27 targeted passes, 95 full-suite passes and 2 PostgreSQL skips, and 12 disposable PostgreSQL 17 CLI passes; configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b is independently re-reviewed and locally verified with 56 targeted passes, 110 full-suite passes and 2 PostgreSQL-environment skips, and 10 pinned PostgreSQL 17.10 startup/migration passes before its final config-only repair. Production deliberately remains blocked before persistence while seven legacy unsigned routes exist, and /readyz always returns 503. CI runs 29414888896, 29418915375, 29420444887, and 29423228140, jobs 87350442086, 87364038830, 87369234233, and 87378812982, each failed before any step because of the GitHub billing lock, and live bytea preflight remains unit-only. Local evidence does not establish production startup/readiness, backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, Windows execution, or G103 tenant database isolation.",
+      "next_safe_action": "Replace all seven legacy unsigned mutation routes with the canonical signed single-use governance membrane before allowing production startup; run a live bytea preflight probe and Windows execution lane; execute the exact CI lanes after the billing block is cleared; review and merge the stacked G101 increments in dependency order; and resolve PR #308 baseline startup integration. Keep startup, recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
