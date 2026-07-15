@@ -521,8 +521,10 @@ def _capture_database_state_url(database_url: str) -> DatabaseState:
         raise RecoveryRefused("database state inspection URL has no database name")
     engine = make_engine(database_url)
     try:
-        with engine.connect() as connection:
-            return _capture_database_state(connection, expected_database=str(expected_database))
+        with engine.connect().execution_options(isolation_level="REPEATABLE READ") as connection:
+            with connection.begin():
+                connection.execute(sa.text("SET TRANSACTION READ ONLY"))
+                return _capture_database_state(connection, expected_database=str(expected_database))
     except RecoveryRefused:
         raise
     except Exception as exc:
