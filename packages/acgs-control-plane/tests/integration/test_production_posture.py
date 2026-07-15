@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import traceback
 from pathlib import Path
 from typing import Any, cast
 
@@ -347,12 +348,23 @@ def test_audit_symlinks_fail_closed(tmp_path: Path) -> None:
 def test_raw_context_bundle_and_environment_posture_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ACP_RUNTIME_POSTURE", "typo-production")
+    sentinel = "ACGS_SECRET_RUNTIME_POSTURE_7f970890"
+    monkeypatch.setenv("ACP_RUNTIME_POSTURE", sentinel)
     with pytest.raises(RuntimePostureConfigurationError) as posture:
         Settings.from_env()
     payload = posture.value.args[0]
     assert '"code": "PRODUCTION_POSTURE_BLOCKED"' in payload
     assert '"stage": "pre-persistence"' in payload
+    exception_surfaces = (
+        str(posture.value),
+        repr(posture.value),
+        repr(posture.value.__cause__),
+        repr(posture.value.__context__),
+        "".join(traceback.format_exception(posture.value)),
+    )
+    assert all(sentinel not in surface for surface in exception_surfaces)
+    assert posture.value.__cause__ is None
+    assert posture.value.__context__ is None
 
     raw_context = {
         "actor": "a",

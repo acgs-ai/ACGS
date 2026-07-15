@@ -62,10 +62,17 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         raw_posture = os.environ.get("ACP_RUNTIME_POSTURE")
-        try:
-            posture = RuntimePosture(raw_posture) if raw_posture is not None else None
-        except ValueError as exc:
-            raise RuntimePostureConfigurationError() from exc
+        if raw_posture is None:
+            posture = None
+        elif raw_posture == "local-dev-legacy-unsigned":
+            posture = RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED
+        elif raw_posture == "production":
+            posture = RuntimePosture.PRODUCTION
+        else:
+            # Parse with fixed literals rather than constructing the enum from
+            # untrusted environment text.  Enum conversion includes the raw
+            # value in ValueError, which can escape through exception chaining.
+            raise RuntimePostureConfigurationError()
         return cls(
             database_url=os.environ.get("ACP_DATABASE_URL", DEFAULT_DATABASE_URL),
             audit_dir=Path(os.environ.get("ACP_AUDIT_DIR", "./acp-audit")),
