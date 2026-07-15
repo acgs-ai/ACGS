@@ -49,7 +49,7 @@ FINGERPRINT_MAX_ROWS_PER_TABLE: Final = 100_000
 FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW: Final = 1 * 1024 * 1024
 FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE: Final = 64 * 1024 * 1024
 FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE: Final = 128 * 1024 * 1024
-FINGERPRINT_FETCH_BATCH_SIZE: Final = 128
+FINGERPRINT_FETCH_BATCH_SIZE: Final = 1
 EXPECTED_TABLES: Final = (
     "agents",
     "alembic_version",
@@ -410,6 +410,27 @@ def _stream_table_rows(connection: Connection, table: sa.Table) -> Iterator[Mapp
     return iter(connection.execute(statement).mappings())
 
 
+def _fingerprint_preflight_statement(table: sa.Table) -> sa.Select[Any]:
+    logical_row_bytes = sa.func.octet_length(
+        sa.cast(sa.func.row_to_json(table.table_valued()), sa.Text)
+    )
+    return sa.select(
+        sa.func.count().label("row_count"),
+        sa.func.coalesce(sa.func.max(logical_row_bytes), 0).label("max_logical_row_bytes"),
+    ).select_from(table)
+
+
+def _preflight_table_fingerprint(connection: Connection, table: sa.Table) -> None:
+    aggregate = connection.execute(_fingerprint_preflight_statement(table)).mappings().one()
+    row_count = int(aggregate["row_count"])
+    max_logical_row_bytes = int(aggregate["max_logical_row_bytes"])
+    if (
+        row_count > FINGERPRINT_MAX_ROWS_PER_TABLE
+        or max_logical_row_bytes > FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW
+    ):
+        raise RecoveryRefused(_FINGERPRINT_ENVELOPE_REFUSAL)
+
+
 def _fingerprint_canonical_rows(
     rows: Iterator[Mapping[Any, Any]], capture_budget: _FingerprintCaptureBudget
 ) -> dict[str, Any]:
@@ -440,6 +461,15 @@ def _fingerprint_canonical_rows(
     return {"row_count": row_count, "rows_sha256": digest.hexdigest()}
 
 
+def _fingerprint_table(
+    connection: Connection,
+    table: sa.Table,
+    capture_budget: _FingerprintCaptureBudget,
+) -> dict[str, Any]:
+    _preflight_table_fingerprint(connection, table)
+    return _fingerprint_canonical_rows(_stream_table_rows(connection, table), capture_budget)
+
+
 def _capture_database_state(
     connection: Connection, *, expected_database: str | None = None
 ) -> DatabaseState:
@@ -457,9 +487,7 @@ def _capture_database_state(
     capture_budget = _FingerprintCaptureBudget()
     for table_name in EXPECTED_TABLES:
         table = sa.Table(table_name, sa.MetaData(), autoload_with=connection, schema="public")
-        table_fingerprints[table_name] = _fingerprint_canonical_rows(
-            _stream_table_rows(connection, table), capture_budget
-        )
+        table_fingerprints[table_name] = _fingerprint_table(connection, table, capture_budget)
 
     anchors: dict[str, tuple[int, str]] = {}
     rows = connection.execute(

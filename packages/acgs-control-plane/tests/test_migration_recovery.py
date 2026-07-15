@@ -14,6 +14,7 @@ import pytest
 import sqlalchemy as sa
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.decision import Decision, DecisionRecord
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import make_url
 
 import acgs_control_plane.migration_recovery as recovery
@@ -435,7 +436,7 @@ def test_fingerprint_beta_envelope_constants_are_fixed() -> None:
     assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW == 1 * 1024 * 1024
     assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE == 64 * 1024 * 1024
     assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE == 128 * 1024 * 1024
-    assert recovery.FINGERPRINT_FETCH_BATCH_SIZE == 128
+    assert recovery.FINGERPRINT_FETCH_BATCH_SIZE == 1
 
 
 def test_manifest_v1_fingerprint_golden_preserves_canonical_byte_sort(
@@ -552,9 +553,113 @@ def test_table_rows_use_statement_scoped_fixed_streaming_options() -> None:
     assert list(recovery._stream_table_rows(connection, table)) == [{"id": "one"}]  # type: ignore[arg-type]
     assert connection.statement.get_execution_options() == {
         "stream_results": True,
-        "yield_per": 128,
-        "max_row_buffer": 128,
+        "yield_per": 1,
+        "max_row_buffer": 1,
     }
+
+
+class _AggregateMappings:
+    def __init__(self, row_count: int, max_logical_row_bytes: int) -> None:
+        self._aggregate = {
+            "row_count": row_count,
+            "max_logical_row_bytes": max_logical_row_bytes,
+        }
+
+    def one(self) -> dict[str, int]:
+        return self._aggregate
+
+
+class _AggregateResult:
+    def __init__(self, row_count: int, max_logical_row_bytes: int) -> None:
+        self._mappings = _AggregateMappings(row_count, max_logical_row_bytes)
+
+    def mappings(self) -> _AggregateMappings:
+        return self._mappings
+
+
+class _AggregateConnection:
+    def __init__(self, row_count: int, max_logical_row_bytes: int) -> None:
+        self._result = _AggregateResult(row_count, max_logical_row_bytes)
+        self.statements: list[Any] = []
+
+    def execute(self, statement: object) -> _AggregateResult:
+        self.statements.append(statement)
+        return self._result
+
+
+def test_postgresql_preflight_is_aggregate_only_and_quotes_table_identity() -> None:
+    table = sa.Table(
+        'table"; DROP TABLE evidence; --',
+        sa.MetaData(),
+        sa.Column("payload", sa.LargeBinary),
+        schema="public",
+    )
+    statement = recovery._fingerprint_preflight_statement(table)
+    compiled = str(
+        statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+
+    assert tuple(statement.selected_columns.keys()) == (
+        "row_count",
+        "max_logical_row_bytes",
+    )
+    assert "SELECT count(*) AS row_count" in compiled
+    assert "max(octet_length(CAST(row_to_json(" in compiled
+    assert 'FROM public."table""; DROP TABLE evidence; --"' in compiled
+    assert "payload" not in compiled
+
+
+@pytest.mark.parametrize("column_type", [sa.JSON(), sa.LargeBinary()])
+def test_postgresql_preflight_refuses_oversized_json_or_bytea_before_raw_stream(
+    column_type: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    table = sa.Table(
+        "typed_evidence",
+        sa.MetaData(),
+        sa.Column("payload", column_type),
+        schema="public",
+    )
+    connection = _AggregateConnection(
+        row_count=1,
+        max_logical_row_bytes=recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW + 1,
+    )
+    stream_attempted = False
+
+    def raw_stream(_connection: object, _table: object) -> Iterator[dict[str, Any]]:
+        nonlocal stream_attempted
+        stream_attempted = True
+        return iter([{"payload": "must not be returned"}])
+
+    monkeypatch.setattr(recovery, "_stream_table_rows", raw_stream)
+
+    with pytest.raises(RecoveryRefused) as refused:
+        recovery._fingerprint_table(  # type: ignore[arg-type]
+            connection, table, recovery._FingerprintCaptureBudget()
+        )
+
+    assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
+    assert not stream_attempted
+    assert len(connection.statements) == 1
+    compiled = str(connection.statements[0].compile(dialect=postgresql.dialect()))
+    assert "row_to_json(typed_evidence)" in compiled
+
+
+def test_postgresql_preflight_accepts_exact_limits_and_refuses_one_over() -> None:
+    table = sa.table("evidence", sa.column("payload"), schema="public")
+    exact = _AggregateConnection(
+        recovery.FINGERPRINT_MAX_ROWS_PER_TABLE,
+        recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW,
+    )
+    recovery._preflight_table_fingerprint(exact, table)  # type: ignore[arg-type]
+
+    for row_count, max_logical_row_bytes in (
+        (recovery.FINGERPRINT_MAX_ROWS_PER_TABLE + 1, 0),
+        (0, recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW + 1),
+    ):
+        over = _AggregateConnection(row_count, max_logical_row_bytes)
+        with pytest.raises(RecoveryRefused) as refused:
+            recovery._preflight_table_fingerprint(over, table)  # type: ignore[arg-type]
+        assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
 
 
 @pytest.mark.parametrize("phase", ["before", "snapshot", "after"])

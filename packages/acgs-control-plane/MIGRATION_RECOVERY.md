@@ -36,10 +36,12 @@ The drill:
 - verifies canonical manifest shape, path containment, artifact hashes, audit
   chains, and `pg_restore --list` readability before inspecting or mutating a
   restore target;
-- bounds each database fingerprint capture to 100,000 rows per table, 1 MiB of
+- enforces retained canonical-buffer limits of 100,000 rows per table, 1 MiB of
   canonical bytes per row, 64 MiB of canonical bytes per table, and 128 MiB of
-  canonical bytes across the capture; rows are requested from SQLAlchemy in
-  fixed batches of 128 and the limits cannot be raised by CLI or configuration;
+  canonical bytes processed across the capture; before returning raw rows, a
+  PostgreSQL aggregate preflight rejects an excessive row count or maximum
+  `row_to_json` text size, and SQLAlchemy then requests rows one at a time; the
+  limits cannot be raised by CLI or configuration;
 - restores only to a separately and explicitly named empty PostgreSQL database
   and an absent or empty audit directory;
 - holds the same PostgreSQL advisory-lock identity used by canonical migrations,
@@ -133,11 +135,13 @@ disposable target only through the operator-approved database lifecycle.
 - This is not PITR, continuous backup, object retention, independent witnessing,
   a backup scheduler, production restore automation, or production DR proof.
 - Table fingerprints are computed by reading and sorting canonicalized rows in
-  memory inside the fixed envelope above. A database driver must materialize
-  one raw row before its canonical 1 MiB limit can be checked; no raw rows are
-  spilled to disk, but a single oversized source value can temporarily exceed
-  that canonical bound. This is a bounded beta-scale drill, not an
-  unbounded-memory production backup path.
+  memory inside the retained-buffer envelope above. The PostgreSQL aggregate
+  preflight is intentionally conservative and can refuse a row whose JSON text
+  exceeds the canonical limit even if later normalization would be smaller.
+  It does not mathematically bound total process memory: PostgreSQL, the driver,
+  SQLAlchemy, normalization, and sorting may allocate beyond retained canonical
+  bytes. No raw rows are spilled to disk. This remains a beta-scale drill, not
+  an unbounded-memory production backup path.
 - PostgreSQL archive portability still depends on supported `pg_dump` and
   `pg_restore` versions and extensions outside this package's scope.
 - Database restoration is transactional, but database restore and audit
