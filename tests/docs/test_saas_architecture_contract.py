@@ -223,6 +223,9 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert g101["branch"] == "beta/p1-g101-postgres-advisory-lock"
     assert g101["worktree"] == "saas-beta/p1-g101-postgres-advisory-lock"
     assert g101["pr"] == 324
+    assert g101["status"] != "completed"
+    assert g101["implementation_state"] != "built"
+    assert g101["evidence_state"] not in {"accepted", "ci_verified"}
     assert {
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
@@ -242,107 +245,107 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "requirements/saas-beta/cp-test.lock",
     } <= set(g101["likely_interfaces_files"])
     assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
-    assert "PR #324 remains the G101 anchor" in g101["evidence_artifact"]
-    assert "G103 tenant database isolation" in g101["evidence_artifact"]
-    expected_increments = {
-        329: "beta/p1-g101-postgres-ci",
-        330: "beta/p1-g101-migration-recovery",
-        331: "beta/p1-g101-multiprocess-migration-coordination",
-        332: "beta/p1-g101-migration-operator-cli",
-    }
-    expected_proof_and_limits = {
-        329: ("workflow definition parses locally", "CI-backed"),
-        330: ("manifest-bound local recovery artifact", "Production backup"),
-        331: ("Independent local processes", "Cross-host coordination"),
-        332: ("status/upgrade CLI fails closed", "Application startup"),
-    }
-    increments = {item["pr"]: item for item in g101["local_evidence_increments"]}
-    assert set(increments) == set(expected_increments)
-    for pr, branch in expected_increments.items():
-        increment = increments[pr]
-        assert increment["branch"] == branch
+
+    increment_rows = g101["local_evidence_increments"]
+    increment_prs = [item["pr"] for item in increment_rows]
+    assert len(increment_prs) == len(set(increment_prs))
+    assert {329, 330, 331, 332, 334, 335, 336, 338} <= set(increment_prs)
+    increments = {item["pr"]: item for item in increment_rows}
+    for increment in increment_rows:
         assert increment["state"] == "open_draft"
         assert increment["merged"] is False
-        assert increment["review_state"] == "independently_reviewed"
         assert increment["evidence_state"] == "local_verified"
         assert increment["ci_backed"] is False
+        assert increment["review_state"] in {
+            "independently_reviewed",
+            "independently_approved",
+        }
         assert increment["proves"]
         assert increment["does_not_prove"]
-        proof, limit = expected_proof_and_limits[pr]
-        assert proof in " ".join(increment["proves"])
-        assert limit in " ".join(increment["does_not_prove"])
 
-    remote_ci = g101["remote_ci"]
-    assert remote_ci == {
-        "state": "externally_blocked",
-        "ci_backed": False,
-        "annotation": (
-            "The job was not started because your account is locked due to a billing issue."
-        ),
-        "observed_run": {
-            "source_pr": 332,
-            "id": 29393469672,
-            "workflow": "Codex Code Review",
-            "job": "codex-review",
-            "steps_started": 0,
-        },
-        "impact": (
-            "No observed remote result promotes draft PRs #329-#332 beyond current-local evidence."
+    integrated = increments[338]
+    repaired_head = "1e7aa033bb5a2b8ee0984e98b148e0c14b94622d"
+    rejected_predecessor = "952186c5039504c7be4d086c5d2eb806beecb3b8"
+    assert integrated["branch"] == "beta/p1-g101-integrated-candidate"
+    assert integrated["base_pr"] == 337
+    assert integrated["head"] == repaired_head
+    assert integrated["review_state"] == "independently_approved"
+    assert integrated["verification_state"] == "passed"
+    assert integrated["state"] == "open_draft"
+    assert integrated["merged"] is False
+    assert integrated["ci_backed"] is False
+    predecessor = integrated["security_rejected_predecessor"]
+    assert predecessor == {
+        "head": rejected_predecessor,
+        "disposition": "security_rejected_predecessor_in_draft_pr_338_history",
+        "relationship": f"immediate_ancestor_of_{repaired_head}",
+        "standalone_publication": ("never_published_as_a_standalone_accepted_pr_or_head"),
+        "remote_history": "present_only_as_an_ancestor_in_draft_pr_338",
+        "superseded_and_repaired_by": repaired_head,
+        "accepted_evidence": False,
+        "reason": (
+            "Recovery preflight was not bound to canonical PostgreSQL public and the "
+            "workflow acquired an unpinned PostgreSQL client trust root."
         ),
     }
-    for gap in (
-        "#308 startup integration",
-        "open draft and unmerged",
-        "No observed remote result makes any increment CI-backed",
-        "production backup/PITR",
-        "multi-host coordination",
-        "database failover",
-    ):
-        assert gap in g101["blocker"]
-    for tenant_isolation_gap in ("RLS", "schema/search-path", "role hardening"):
-        assert tenant_isolation_gap not in g101["blocker"]
-    assert "G103 after G101 and G102 complete" in g101["blocker"]
-    assert "Do not start G102" in g101["next_safe_action"]
-    assert (
-        "G103 owns tenant database isolation after G101 and G102 complete"
-        in g101["next_safe_action"]
-    )
 
-    assert (
-        "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G103, G104, G105, G106 |"
-    ) in matrix
-    am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
-    assert (
-        "#329-#331 recorded zero-job `BuildFailed` startup failures, while #332 Codex "
-        "Code Review run 29393469672 started zero steps with `The job was not started "
-        "because your account is locked due to a billing issue.`"
-    ) in am_005
-    for gap in (
-        "#308 startup integration",
-        "G103-owned",
-        "tenant context",
-        "composite constraints",
-        "RLS",
-        "schema/search-path",
-        "not CI-backed",
-        "production backup/PITR",
-        "multi-host/failover/rolling-upgrade",
-        "API/policy/backfill",
+    g101_truth = " ".join((g101["evidence_artifact"], g101["blocker"], g101["next_safe_action"]))
+    for required_truth in (
+        "PR #338",
+        repaired_head,
+        "PR #337",
+        "open drafts",
+        "unmerged",
+        "repository-unaccepted",
+        "failed before any step",
+        "billing lock",
+        "Windows",
+        "not accepted evidence",
         "Do not start G102",
+        "Keep G105 planned and deferred",
     ):
-        assert gap in am_005
-    assert "this is not completed Phase-1 acceptance" in matrix
+        assert required_truth in g101_truth
+    assert rejected_predecessor in g101_truth
+    assert "production startup remains deliberately blocked" in g101_truth.lower()
 
-    for downstream_node_id in ("G102", "G103"):
-        downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
-        assert (
-            downstream_node["status"],
-            downstream_node["implementation_state"],
-            downstream_node["evidence_state"],
-        ) == ("planned", "missing", "unverified")
+    remote_ci = g101["remote_ci"]
+    assert remote_ci["state"] == "externally_blocked"
+    assert remote_ci["ci_backed"] is False
+    assert "failed before any step" in remote_ci["annotation"]
+    assert "billing" in remote_ci["annotation"].lower()
+    remote_candidate = remote_ci["integrated_candidate"]
+    assert remote_candidate["source_pr"] == 338
+    assert remote_candidate["head"] == repaired_head
+    assert remote_candidate["base_pr"] == 337
+    assert remote_candidate["state"] == "open_draft"
+    assert set(remote_candidate["self_hosted_passes"]) == {
+        "test (3.11)",
+        "test (3.12)",
+    }
+    zero_step = remote_candidate["billing_blocked_zero_step"]
+    assert {item["name"] for item in zero_step} == {
+        "postgresql-migrations",
+        "codex-review",
+    }
+    assert all(item["run_id"] > 0 and item["job_id"] > 0 for item in zero_step)
+    assert remote_candidate["windows"] == "unavailable"
+    assert "do not make the migration evidence fully CI-backed" in remote_ci["impact"]
+
+    g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
+    assert (
+        g102["status"],
+        g102["implementation_state"],
+        g102["evidence_state"],
+    ) == ("blocked", "missing", "unverified")
+    assert g102["dependencies"] == ["G101"]
+    assert "must not start" in g102["blocker"]
 
     g103 = next(node for node in dag["nodes"] if node["id"] == "G103")
+    assert (
+        g103["status"],
+        g103["implementation_state"],
+        g103["evidence_state"],
+    ) == ("planned", "missing", "unverified")
     assert g103["dependencies"] == ["G101", "G102"]
     g103_isolation_contract = " ".join(
         [
@@ -361,3 +364,51 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "before implementation",
     ):
         assert requirement in g103_isolation_contract
+
+    g105 = next(node for node in dag["nodes"] if node["id"] == "G105")
+    assert (
+        g105["status"],
+        g105["implementation_state"],
+        g105["evidence_state"],
+    ) == ("planned", "missing", "unverified")
+    assert set(g105["dependencies"]) == {"G103", "G104", "G004"}
+    assert "Deferred" in g105["blocker"]
+    assert "must not start" in g105["blocker"]
+    assert "Keep G105 planned and deferred" in g105["next_safe_action"]
+
+    assert (
+        "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
+        "current_local | G101, G102, G103, G104, G105, G106 |"
+    ) in matrix
+    am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
+    for current_fact in (
+        "PR #338",
+        repaired_head,
+        "PR #337",
+        "191 package passes with 19 skips",
+        "53 main PostgreSQL passes with one Windows-only skip",
+        "8 recovery passes",
+        "3 bytea passes",
+        "7 rolling-upgrade passes",
+        "self-hosted remote Python 3.11 and 3.12 checks pass",
+        "failed with zero steps",
+        "GitHub billing lock",
+        "Windows remains unavailable",
+        rejected_predecessor,
+        "present in remote history only as the immediate ancestor",
+        "not accepted evidence",
+        "open drafts and unmerged",
+        "G101 therefore remains `in_progress`/`partial`/`local_verified`",
+        "G102 remains blocked",
+        "G105 remains planned and deferred",
+    ):
+        assert current_fact in am_005
+    for unsupported_upgrade in (
+        "| built |",
+        "production-ready",
+        "repository-accepted",
+        "G101 is complete",
+        "G102 may start",
+        "CI-backed evidence",
+    ):
+        assert unsupported_upgrade not in am_005

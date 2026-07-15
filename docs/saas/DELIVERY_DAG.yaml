@@ -662,13 +662,15 @@
         "PR #329 statically validates a pinned PostgreSQL 17.10 CI service lane and its exact hash-locked G101 migration command; the same targeted tests pass locally against disposable PostgreSQL.",
         "PR #330 locally creates, verifies, restores, and republishes a manifest-bound migration recovery artifact into an explicitly empty disposable PostgreSQL target.",
         "PR #331 locally proves independent-process advisory-lock contention, zero observer-visible mutation before commit, real SIGKILL rollback, lock release, and fresh-process retry on disposable PostgreSQL 17.10.",
-        "PR #332 locally proves a fail-closed status/upgrade operator CLI with exact database/schema binding, explicit forward-only acknowledgement, secret-safe output, and PostgreSQL search-path/function-hijack resistance."
+        "PR #332 locally proves a fail-closed status/upgrade operator CLI with exact database/schema binding, explicit forward-only acknowledgement, secret-safe output, and PostgreSQL search-path/function-hijack resistance.",
+        "Integrated draft PR #338 exact head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d unifies the G101 migration evidence on repaired draft baseline PR #337, is independently APPROVED/PASS, passes the full package and documentation suites locally, exercises the complete pinned PostgreSQL module set locally, and passes the self-hosted Python 3.11 and 3.12 checks remotely."
       ],
       "forbidden_side_effect_negative_tests": [
         "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry.",
         "PR #330 corrupt, symlinked, traversal-bearing, wrong-target, nonempty-target, and failed-restore inputs do not publish a recovered audit artifact or leave a partial restored database.",
         "PR #331 lock contenders mutate zero schema/version state, and a SIGKILL after real Alembic DDL leaves zero committed objects before a clean retry.",
-        "PR #332 rejects missing acknowledgement, argument overrides, wrong database/schema bindings, and PostgreSQL function/search-path hijacks before migration mutation."
+        "PR #332 rejects missing acknowledgement, argument overrides, wrong database/schema bindings, and PostgreSQL function/search-path hijacks before migration mutation.",
+        "PR #338 binds recovery preflight and subprocess clients to the authenticated database and canonical public schema; shadow search paths, public-schema nonemptiness, and function hijacks fail before dump or restore subprocesses and preserve zero mutation."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
@@ -681,7 +683,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and current-local only after a two-commit diagnostic repair sequence culminating at 0fff759 in one secret-safe diagnostic JSON path with metaclass-safe exact-type literal classification and no metadata evaluation, plus sys.maxsize logging suppression with exact restoration. The earlier 6a17d18 classifier attempt is superseded and rejected as current evidence because its class-metadata and logging boundary was unsafe. Its targeted suite passed 27, full suite passed 95 with 2 PostgreSQL skips, and disposable PostgreSQL 17 CLI suite passed 12; cleanup found zero residual tables, connections, or processes. Configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, stacked on PR #332, is independently re-reviewed and approved as current-local only. It keeps production startup blocked before engine, session, or audit persistence while seven LEGACY_UNSIGNED_WRITE routes remain, makes /readyz always return 503, and limits schema preflight to explicit local nonproduction evidence. Head 28b137b was rejected for a raw runtime-posture leak through a chained exception; a1bc1df repairs parsing with a literal allowlist. Evidence includes 56 targeted passes, 110 full-suite passes with 2 PostgreSQL-environment skips, configured Ruff/format/mypy/diff gates, and 10 startup/migration passes on pinned PostgreSQL 17.10 digest sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394 with zero residual tables, connections, processes, or containers. The final config-only repair did not rerun PostgreSQL. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778, stacked on PR #334, is independently approved after five adversarial review passes and an AST-neutral import-compatibility commit. It provides candidate-local mixed-version evidence using a byte-identical independent rebuild of repository-unaccepted PR #308 head 53ca32d116398057c882bfaa852fb305a9fd0fca at wheel SHA256 f04bbe2ddc0ff672eaa508643892461df09c2b63ad73a0355ecec1717fec24d8. Evidence includes 4 helper passes with 3 deselected, 114 package passes with 5 skips, and 7 pinned PostgreSQL 17.10 rolling-module passes with one pre-existing warning and zero residual tables, sessions, probe or migration processes, containers, or temporary artifacts. Authoritative package-local Ruff was already green at functional commit 8f03aba. The verifier initially reported Ruff I001 in both new files only after forcing package configuration from the repository root, which changed project_root/src classification; it later diagnosed and retracted that result as a non-authoritative false positive. Import-only 2236453 adds AST-neutral # isort: split compatibility comments so both invocation modes pass, but it was not required by the authoritative package gate; targeted re-verification passed. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42, stacked on PR #330, is independently reviewed and verified current-local evidence for the real psycopg bytes return shape and adjacent live bytea aggregate preflight boundary. Its one new test file has 3 pinned PostgreSQL 17.10 passes with one pre-existing warning, 116 package passes with 3 skips, green configured static gates, fixed refusal before any raw stream attempt, unchanged transaction/database/schema/evidence state, and zero residual resources. This retires only the live-bytea-unit-only limitation; arbitrary bytea recovery, dump/restore, total memory, Windows, multi-host, failover, partition, PITR, and production evidence remain unproven. PRs #329, #331, #332, #334, #335, and #336 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101. CI topology remains incomplete: PR #329 is the only increment that adds pull_request beta/** triggering, but PRs #330-#332 branch from beta/p0-clean-sibling-cp-wheel instead of #329, while #334-#336 stack from those branches, so #330-#336 do not inherit that workflow trigger. PR #329's pinned PostgreSQL job runs only tests/test_postgresql_migrations.py and does not cover the recovery, operator CLI, startup, rolling-upgrade, or bytea evidence modules. Clearing billing alone therefore cannot make the G101 stack CI-backed.",
+      "evidence_artifact": "Draft PR #338 exact head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d, stacked on repaired draft baseline PR #337, is the first integrated G101 candidate and supersedes the separate-stack CI-topology gap. Independent review and verification report APPROVE/PASS for this exact head. Local evidence reports 191 package tests passing with 19 skips, 31 documentation tests passing, 53 main PostgreSQL tests passing with one Windows-only skip, 8 recovery tests passing, 3 live-bytea tests passing, and 7 rolling-upgrade tests passing. A transient cleanup symptom in the aggregate bytea run was diagnosed rather than hidden; the isolated exact bytea module then passed 3 of 3. The self-hosted remote Python 3.11 and 3.12 jobs pass. The required postgresql-migrations and codex-review jobs each failed before any step because of the GitHub billing lock, and no Windows runner evidence exists. Security review rejected predecessor commit 952186c5039504c7be4d086c5d2eb806beecb3b8 because recovery preflight was not canonically bound to PostgreSQL public and the workflow acquired an unpinned client trust root. It was never published as a standalone accepted PR/head; it is present in remote history only as the immediate ancestor of repair 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d in draft PR #338, is superseded/repaired by that head, and is not accepted evidence. Repair head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d binds source and target to the authenticated database and canonical public schema, qualifies pg_catalog functions, adds live shadow-search-path/function-hijack/nonempty-public zero-subprocess and zero-mutation tests, and uses digest-pinned PostgreSQL 17.10 client wrappers. PR #338 remains open, draft, unmerged, and dependent on open draft PR #337; therefore G101 remains partial, local_verified, and not repository-accepted or fully CI-backed. G102 remains blocked and G105 remains deferred.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -1156,12 +1158,91 @@
             "configured_mypy": "passed_14_source_files",
             "git_diff_check": "passed"
           }
+        },
+        {
+          "pr": 338,
+          "branch": "beta/p1-g101-integrated-candidate",
+          "worktree": "saas-beta/p1-g101-integrated-candidate",
+          "base_pr": 337,
+          "state": "open_draft",
+          "merged": false,
+          "head": "1e7aa033bb5a2b8ee0984e98b148e0c14b94622d",
+          "review_state": "independently_approved",
+          "verification_state": "passed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "security_rejected_predecessor": {
+            "head": "952186c5039504c7be4d086c5d2eb806beecb3b8",
+            "disposition": "security_rejected_predecessor_in_draft_pr_338_history",
+            "relationship": "immediate_ancestor_of_1e7aa033bb5a2b8ee0984e98b148e0c14b94622d",
+            "standalone_publication": "never_published_as_a_standalone_accepted_pr_or_head",
+            "remote_history": "present_only_as_an_ancestor_in_draft_pr_338",
+            "superseded_and_repaired_by": "1e7aa033bb5a2b8ee0984e98b148e0c14b94622d",
+            "accepted_evidence": false,
+            "reason": "Recovery preflight was not bound to canonical PostgreSQL public and the workflow acquired an unpinned PostgreSQL client trust root."
+          },
+          "proves": [
+            "The formerly separate G101 increments and repaired baseline are integrated into one exact candidate without promoting any unmerged increment to accepted evidence.",
+            "Recovery preflight and subprocess clients bind the authenticated database and canonical public schema, use pg_catalog-qualified builtins, and fail before dump or restore on shadow-search-path, public-nonempty, or function-hijack inputs.",
+            "The pinned PostgreSQL workflow definition now covers the migration, recovery, operator CLI, startup, bytea, and rolling-upgrade modules; the exact wrappers pass locally.",
+            "Self-hosted remote Python 3.11 and 3.12 checks pass on the exact PR head."
+          ],
+          "does_not_prove": [
+            "Repository acceptance or merge of PR #337 or PR #338.",
+            "Execution of the required postgresql-migrations or codex-review jobs, which failed with zero steps because of the billing lock.",
+            "Windows execution, production startup/readiness, production recovery objectives, multi-host/failover/partition behavior, backup/PITR/object retention, or a total-process memory bound.",
+            "Completion of G101, readiness to start G102, or readiness to start G105."
+          ],
+          "test_results": {
+            "full_package": {
+              "passed": 191,
+              "skipped": 19
+            },
+            "documentation": {
+              "passed": 31
+            },
+            "postgresql_main": {
+              "passed": 53,
+              "skipped": 1,
+              "skip_scope": "Windows-only"
+            },
+            "postgresql_recovery": {
+              "passed": 8
+            },
+            "postgresql_bytea": {
+              "passed": 3,
+              "diagnostic": "A transient aggregate-run cleanup symptom was diagnosed; the isolated exact module passed 3 of 3."
+            },
+            "postgresql_rolling_upgrade": {
+              "passed": 7
+            }
+          },
+          "remote_checks": {
+            "self_hosted_python_3_11": {
+              "conclusion": "success"
+            },
+            "self_hosted_python_3_12": {
+              "conclusion": "success"
+            },
+            "billing_blocked_zero_step": [
+              {
+                "name": "postgresql-migrations",
+                "run_id": 29436216843,
+                "job_id": 87423421056
+              },
+              {
+                "name": "codex-review",
+                "run_id": 29436216882,
+                "job_id": 87423421658
+              }
+            ]
+          }
         }
       ],
       "remote_ci": {
         "state": "externally_blocked",
         "ci_backed": false,
-        "annotation": "Observed jobs failed before any steps because the GitHub account is locked due to a billing issue; separately, the G101 branch topology does not carry PR #329's beta trigger into PRs #330-#336.",
+        "annotation": "PR #338 repairs the prior G101 branch/workflow topology gap and its self-hosted Python 3.11 and 3.12 jobs pass, but the required postgresql-migrations and codex-review jobs failed before any step because the GitHub account is locked due to a billing issue; Windows remains unavailable.",
         "observed_run": {
           "source_pr": 330,
           "id": 29414888896,
@@ -1212,7 +1293,7 @@
             "failure_class": "billing_before_steps"
           }
         ],
-        "impact": "PR #330 head 31badd9, PR #331 head 4116778995d17755e9f3328698f6519145404336, PR #332 head 0fff75951470652be279a8cd5acc6a46e16bff49, PR #334 head a1bc1dfc7fec676d062739d5d4f166e26a20d05b, PR #335 head 223645375d6590ef66b8bab4e22019537f541778, and PR #336 head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 remain current-local evidence only. The observed zero-step failures do not make any increment CI-backed, and even after billing recovery the current branch topology would not run PR #329's beta-triggered PostgreSQL lane on PRs #330-#336; that lane also covers only the migration module.",
+        "impact": "PR #338 exact head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d is independently approved and locally verified, and it repairs the prior integration/workflow topology gap. Passing self-hosted Python checks do not make the migration evidence fully CI-backed: the required PostgreSQL and Codex jobs executed zero steps because of billing, the PR is draft and unmerged, its base PR #337 is draft and unmerged, and Windows is unverified.",
         "workflow_topology_gap": {
           "trigger_owner_pr": 329,
           "trigger_change": "pull_request branches include beta/**",
@@ -1235,11 +1316,37 @@
             "tests/test_postgresql_rolling_upgrade.py",
             "tests/test_postgresql_migration_recovery_bytea.py"
           ],
-          "consequence": "Clearing the GitHub billing lock alone is insufficient to produce CI-backed G101 evidence."
+          "consequence": "The topology gap is repaired in draft PR #338, but repository acceptance and required PostgreSQL CI execution remain blocked; billing recovery and normal review are still required.",
+          "state": "repaired_in_draft_pr_338",
+          "repair_pr": 338,
+          "repair_head": "1e7aa033bb5a2b8ee0984e98b148e0c14b94622d"
+        },
+        "integrated_candidate": {
+          "source_pr": 338,
+          "head": "1e7aa033bb5a2b8ee0984e98b148e0c14b94622d",
+          "base_pr": 337,
+          "state": "open_draft",
+          "self_hosted_passes": [
+            "test (3.11)",
+            "test (3.12)"
+          ],
+          "billing_blocked_zero_step": [
+            {
+              "name": "postgresql-migrations",
+              "run_id": 29436216843,
+              "job_id": 87423421056
+            },
+            {
+              "name": "codex-review",
+              "run_id": 29436216882,
+              "job_id": 87423421658
+            }
+          ],
+          "windows": "unavailable"
         }
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 and #334-#336 remain open draft and unmerged. Repaired baseline successor PR #337 remains open, draft, unmerged, and repository-unaccepted; PR #308 is superseded after independent review found raw posture traceback disclosure. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed. PR #332 exact head 0fff75951470652be279a8cd5acc6a46e16bff49 is independently approved and locally verified with 27 targeted passes, 95 full-suite passes and 2 PostgreSQL skips, and 12 disposable PostgreSQL 17 CLI passes; configured mypy and static gates passed. PR #334 exact head a1bc1dfc7fec676d062739d5d4f166e26a20d05b is independently re-reviewed and locally verified with 56 targeted passes, 110 full-suite passes and 2 PostgreSQL-environment skips, and 10 pinned PostgreSQL 17.10 startup/migration passes before its final config-only repair. PR #335 exact head 223645375d6590ef66b8bab4e22019537f541778 is independently approved candidate-local evidence after five adversarial passes: 4 helper passes, 114 package passes, 7 pinned PostgreSQL 17.10 rolling-module passes, bounded cleanup, and green configured static gates. Its old wheel is a byte-identical independent rebuild of repository-unaccepted PR #308, not an accepted release artifact. PR #336 exact head 131f06fc8f2bcec230f9e1b33592b6e232b22c42 independently verifies only the live bytea normalization and adjacent aggregate-preflight boundary with 3 pinned PostgreSQL 17.10 passes and zero residual resources. Production deliberately remains blocked before persistence while seven legacy unsigned routes exist, and /readyz always returns 503. CI runs 29414888896, 29418915375, 29420444887, 29423228140, 29427219402, and 29428954788, jobs 87350442086, 87364038830, 87369234233, 87378812982, 87392631296, and 87398643380, each failed before any step because of the GitHub billing lock. Local evidence does not establish arbitrary bytea recovery/dump-restore, production startup/readiness, backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, production rolling-upgrade or zero-downtime safety, Windows execution, or G103 tenant database isolation. CI topology remains incomplete: PR #329 is the only increment that adds pull_request beta/** triggering, but PRs #330-#332 branch from beta/p0-clean-sibling-cp-wheel instead of #329, while #334-#336 stack from those branches, so #330-#336 do not inherit that workflow trigger. PR #329's pinned PostgreSQL job runs only tests/test_postgresql_migrations.py and does not cover the recovery, operator CLI, startup, rolling-upgrade, or bytea evidence modules. Clearing billing alone therefore cannot make the G101 stack CI-backed.",
-      "next_safe_action": "Keep production startup blocked while seven legacy unsigned mutation routes remain; replacing them with the canonical signed single-use governance membrane is deferred G105 work after G103, G104, and G004 and must not start from G101. First repair the CI topology: integrate PR #329's beta/** trigger into the actual G101 stack or a dedicated integration branch, and expand the pinned PostgreSQL lane beyond test_postgresql_migrations.py to the applicable recovery, operator, startup, rolling, and bytea modules. After that topology is reviewed and the billing lock clears, execute and observe the exact CI lanes. Also run the Windows execution lane, obtain PR #337 baseline acceptance, and review/accept/merge/rebase the stacked G101 increments in dependency order. Keep startup, recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102 or G105; G103 remains downstream of completed G101 and G102.",
+      "blocker": "G101 remains deliberately partial: integrated candidate PR #338 exact head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d and its repaired baseline PR #337 are open drafts, unmerged, and repository-unaccepted. Independent review/verification and local package, docs, PostgreSQL migration, recovery, bytea, and rolling suites pass, while the self-hosted remote Python 3.11/3.12 jobs pass. Required postgresql-migrations and codex-review jobs failed before any step because of the GitHub billing lock; Windows evidence is unavailable. Security-rejected predecessor commit 952186c5039504c7be4d086c5d2eb806beecb3b8 was never published as a standalone accepted PR/head; it is present in remote history only as the immediate ancestor of repair 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d in draft PR #338, is superseded/repaired by that head, is not accepted evidence, and must never be promoted independently. The transient aggregate bytea cleanup symptom was diagnosed and the isolated exact bytea module passed 3 of 3, but this does not replace the blocked remote required lane. Production startup remains deliberately blocked while seven legacy unsigned mutation routes exist; production recovery, backup/PITR/object retention, total-memory, multi-host, network-partition, failover, zero-downtime, and G103 tenant-isolation evidence remain unproven.",
+      "next_safe_action": "Clear the GitHub billing lock, let the required postgresql-migrations and codex-review jobs execute on PR #338 exact head 1e7aa033bb5a2b8ee0984e98b148e0c14b94622d, run the Windows lane, resolve any current-head finding, and accept PR #337 then PR #338 through normal review in dependency order. Keep G101 in_progress/partial/local_verified until that evidence is accepted. Do not start G102. Keep G105 planned and deferred behind G103, G104, and G004; production startup must remain blocked while the legacy unsigned mutation routes exist.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -1410,8 +1517,8 @@
       "status": "planned",
       "implementation_state": "missing",
       "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the signed canonical governance path and trust registry contract before implementation.",
+      "blocker": "Deferred: G103, G104, and G004 remain incomplete or unaccepted, so the signed canonical governance path must not start.",
+      "next_safe_action": "Keep G105 planned and deferred. After G103, G104, and G004 complete with accepted evidence, survey and freeze the signed canonical governance path and trust registry contract before implementation.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
