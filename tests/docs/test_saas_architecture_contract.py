@@ -285,20 +285,21 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
             "The job was not started because your account is locked due to a billing issue."
         ),
         "observed_run": {
+            "source_pr": 332,
             "id": 29393469672,
             "workflow": "Codex Code Review",
             "job": "codex-review",
             "steps_started": 0,
         },
         "impact": (
-            "Draft PRs #329-#332 remain current-local evidence only; no remote run can "
-            "promote them to CI-backed or accepted evidence."
+            "No observed remote result promotes draft PRs #329-#332 beyond current-local "
+            "evidence."
         ),
     }
     for gap in (
         "#308 startup integration",
         "open draft and unmerged",
-        "no increment is CI-backed",
+        "No observed remote result makes any increment CI-backed",
         "production backup/PITR",
         "multi-host coordination",
         "database failover",
@@ -318,6 +319,11 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "current_local | G101, G102, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
+    assert (
+        "#329-#331 recorded zero-job `BuildFailed` startup failures, while #332 Codex "
+        "Code Review run 29393469672 started zero steps with `The job was not started "
+        "because your account is locked due to a billing issue.`"
+    ) in am_005
     for gap in (
         "#308 startup integration",
         "G103-owned",

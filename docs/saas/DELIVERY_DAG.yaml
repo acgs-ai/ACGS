@@ -698,14 +698,15 @@
         "ci_backed": false,
         "annotation": "The job was not started because your account is locked due to a billing issue.",
         "observed_run": {
+          "source_pr": 332,
           "id": 29393469672,
           "workflow": "Codex Code Review",
           "job": "codex-review",
           "steps_started": 0
         },
-        "impact": "Draft PRs #329-#332 remain current-local evidence only; no remote run can promote them to CI-backed or accepted evidence."
+        "impact": "No observed remote result promotes draft PRs #329-#332 beyond current-local evidence."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 are open draft and unmerged; #308 startup integration remains open and unresolved. Remote CI is externally blocked before any step by the exact annotation 'The job was not started because your account is locked due to a billing issue.', so no increment is CI-backed. Recovery and multiprocess evidence remain local/disposable and do not establish production backup/PITR, multi-host coordination, network partition, database failover, or rolling-upgrade safety. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 are open draft and unmerged; #308 startup integration remains open and unresolved. PRs #329-#331 recorded zero-job BuildFailed startup failures; only PR #332 Codex Code Review run 29393469672 observed zero steps and the exact annotation 'The job was not started because your account is locked due to a billing issue.' No observed remote result makes any increment CI-backed. Recovery and multiprocess evidence remain local/disposable and do not establish production backup/PITR, multi-host coordination, network partition, database failover, or rolling-upgrade safety. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
       "next_safe_action": "Resolve the external GitHub account billing lock, run the exact PostgreSQL CI evidence, and review/merge the G101 increments in dependency order without restoring create_all; then integrate and verify #308 startup behavior and close the remaining production recovery and multi-host/failover evidence gaps before completing G101. Do not start G102. G103 owns tenant database isolation after G101 and G102 complete.",
       "mandatory": true,
       "completion_scope": "non_external"
