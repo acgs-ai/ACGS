@@ -632,7 +632,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. Live bytea remains unit-only. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 skips in that invocation, a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. A later unique disposable PostgreSQL 17 private same-path :Z archive rerun passed pg_dump/pg_restore smoke and all 4 recovery tests in 4.38 seconds, including negative-path no-mutation and rollback coverage, with the container and temporary artifacts confirmed absent afterward. Live bytea remains unit-only. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and current-local only after four portability and bounded-streaming repairs. Its default no-PostgreSQL suite passed 83 with 7 skipped, focused suite passed 15 with 7 deselected, and exact disposable PostgreSQL 17 suite passed 21 with one Windows-only skip; cleanup found zero residual tables, connections, workers, or containers. Configured source mypy passed; changed-test-file mypy debt is not an authoritative configured gate. Windows execution remains unverified. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -766,12 +766,60 @@
           "ci_backed": false,
           "proves": [
             "Independent local processes contend on the canonical PostgreSQL advisory lock without schema/version mutation by the loser.",
-            "A real SIGKILL after Alembic DDL rolls back the transaction, releases the lock, and permits a fresh-process retry."
+            "A real SIGKILL after Alembic DDL rolls back the transaction, releases the lock, and permits a fresh-process retry.",
+            "The portable pipe reader uses an explicit queue protocol and continuously drains bounded stdout and stderr while workers run.",
+            "Overlong output lines are drained incrementally under a true bound, forced cleanup joins reader threads, and the rolling secret scan detects secrets after overflow and across chunk boundaries."
           ],
           "does_not_prove": [
             "Cross-host coordination, network-partition behavior, database failover, or rolling-upgrade safety.",
-            "Remote CI execution of the multiprocess evidence."
-          ]
+            "Remote CI execution of the multiprocess evidence.",
+            "Windows execution of the portable reader and cleanup paths."
+          ],
+          "head": "4116778995d17755e9f3328698f6519145404336",
+          "current_local_approval": "approved",
+          "repair_commits": [
+            {
+              "commit": "994a185",
+              "outcome": "Introduces the portable pipe reader and explicit queue protocol for independent-process output collection."
+            },
+            {
+              "commit": "ee29a1d",
+              "outcome": "Continuously collects bounded stdout and stderr while workers run instead of waiting for process completion."
+            },
+            {
+              "commit": "9290cb3",
+              "outcome": "Drains overlong lines incrementally under a true bound and forces reader-thread cleanup."
+            },
+            {
+              "commit": "4116778",
+              "outcome": "Adds rolling secret scanning after output overflow and across chunk boundaries."
+            }
+          ],
+          "test_results": {
+            "default_without_postgresql": {
+              "passed": 83,
+              "skipped": 7
+            },
+            "focused": {
+              "passed": 15,
+              "deselected": 7
+            },
+            "postgresql_17_exact": {
+              "passed": 21,
+              "skipped": 1,
+              "skipped_scope": "Windows-only execution"
+            },
+            "cleanup": {
+              "tables": 0,
+              "connections": 0,
+              "workers": 0,
+              "containers": 0
+            }
+          },
+          "static_analysis": {
+            "configured_source_mypy": "passed",
+            "changed_test_file_mypy": "non_authoritative_debt_not_configured_gate"
+          }
         },
         {
           "pr": 332,
@@ -803,10 +851,20 @@
           "conclusion": "failure",
           "failure_class": "billing_before_steps"
         },
-        "impact": "PR #330 head 31badd9 remains current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
+        "additional_observed_runs": [
+          {
+            "source_pr": 331,
+            "id": 29418915375,
+            "job_id": 87364038830,
+            "steps_started": 0,
+            "conclusion": "failure",
+            "failure_class": "billing_before_steps"
+          }
+        ],
+        "impact": "PR #330 head 31badd9 and PR #331 head 4116778995d17755e9f3328698f6519145404336 remain current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock, and live bytea preflight remains unit-only. Local evidence does not establish production backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
-      "next_safe_action": "Run a live bytea preflight probe, execute the exact CI lane after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, CI, and production-operation claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB refusal before raw streaming, 4-of-4 migration tests, and a private same-path :Z archive rerun with pg_dump/pg_restore smoke plus 4-of-4 recovery tests in 4.38 seconds. PR #331 exact head 4116778995d17755e9f3328698f6519145404336 is independently approved and locally verified with 83 default passes and 7 skips, 15 focused passes and 7 deselections, and 21 exact PostgreSQL 17 passes with one Windows-only skip; configured source mypy passed, but Windows execution remains unverified. CI runs 29414888896 and 29418915375, jobs 87350442086 and 87364038830, each failed before any step because of the GitHub billing lock, and live bytea preflight remains unit-only. Local evidence does not establish production backup/PITR/object retention, production recovery objectives, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, Windows execution, or G103 tenant database isolation.",
+      "next_safe_action": "Run a live bytea preflight probe and Windows execution lane, execute the exact CI lanes after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, CI, Windows, and production-operation claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
