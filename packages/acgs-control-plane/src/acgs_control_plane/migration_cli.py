@@ -35,6 +35,8 @@ _EXIT_DATABASE_STATE: Final = 65
 _EXIT_SOFTWARE: Final = 70
 _EXIT_RETRYABLE: Final = 75
 _ENVIRONMENT_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_EXCEPTION_TYPE_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_EXCEPTION_TYPE_MAX_LENGTH: Final = 64
 _COMMANDS: Final = frozenset({"status", "upgrade"})
 
 
@@ -128,13 +130,36 @@ def _command_hint(arguments: Sequence[str]) -> str | None:
 
 
 def _error_payload(
-    command: str | None, *, code: str, message: str, retryable: bool
+    command: str | None,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    diagnostic: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "command": command,
         "error": {"code": code, "message": message, "retryable": retryable},
         "ok": False,
     }
+    if diagnostic is not None:
+        payload["diagnostic"] = dict(diagnostic)
+    return payload
+
+
+def _safe_exception_type(exc: Exception) -> str:
+    """Return only a bounded ASCII class identifier without invoking exception code."""
+    try:
+        name = type.__getattribute__(type(exc), "__name__")
+    except Exception:
+        return "Exception"
+    if type(name) is not str:
+        return "Exception"
+    if not 1 <= len(name) <= _EXCEPTION_TYPE_MAX_LENGTH:
+        return "Exception"
+    if _EXCEPTION_TYPE_NAME.fullmatch(name) is None:
+        return "Exception"
+    return name
 
 
 def _load_database_url(environment_name: str, expected_database: str) -> str:
@@ -283,6 +308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return exc.exit_code
     except Exception as exc:
         operator_error = _mapped_operator_error(exc)
+        diagnostic = None
+        if operator_error.code == "internal_error":
+            diagnostic = {
+                "category": "unexpected_exception",
+                "exception_type": _safe_exception_type(exc),
+            }
         _write_json(
             sys.stderr,
             _error_payload(
@@ -290,6 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 code=operator_error.code,
                 message=operator_error.message,
                 retryable=operator_error.retryable,
+                diagnostic=diagnostic,
             ),
         )
         return operator_error.exit_code
