@@ -26,7 +26,9 @@ The drill:
   against the database anchor, and copies it while locked;
 - rejects any difference between before, exported-snapshot, and after database
   fingerprints;
-- writes staging directories as `0700` and bundle files as `0600`;
+- writes staging directories as `0700` and bundle files as `0600`; PostgreSQL
+  passfiles are created atomically with owner-only permissions and, where
+  descriptor chmod is available, normalized to exact `0600` before use;
 - publishes a completed bundle by a same-parent atomic rename;
 - fsyncs the dump, manifest, and copied audit files before success, and also
   fsyncs audit/staging directories and the output parent on platforms exposing
@@ -118,6 +120,9 @@ disposable target only through the operator-approved database lifecycle.
   A writer able to replace both artifacts and manifest can recompute it.
 - The bundle is not encrypted. File modes reduce local exposure but are not an
   encryption or key-management system.
+- Platforms without descriptor-level chmod retain the atomic owner-only
+  passfile creation request, but platform umask and permission semantics may
+  further restrict the resulting mode.
 - Directory fsync is required on supported POSIX platforms. Platforms without
   `os.O_DIRECTORY` skip directory fsync because Python exposes no equivalent
   primitive there; this drill remains local evidence, not a durability claim.

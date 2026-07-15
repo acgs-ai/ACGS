@@ -291,6 +291,9 @@ def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, 
                 raise RecoveryRefused("private PostgreSQL credential file already exists") from exc
             passfile = candidate
             try:
+                descriptor_chmod = getattr(os, "fchmod", None)
+                if descriptor_chmod is not None:
+                    descriptor_chmod(descriptor, 0o600)
                 stream = os.fdopen(descriptor, "w", encoding="utf-8")
             except Exception:
                 os.close(descriptor)

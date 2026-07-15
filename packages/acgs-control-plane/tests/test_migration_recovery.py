@@ -289,6 +289,75 @@ def test_pg_environment_never_removes_a_passfile_it_did_not_create(
     assert passfile.read_text(encoding="utf-8") == "preserve"
 
 
+def test_pg_environment_enforces_exact_mode_under_restrictive_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if getattr(recovery.os, "fchmod", None) is None:
+        pytest.skip("platform has no descriptor chmod capability")
+    real_open = os.open
+
+    def restrictive_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        previous_umask = os.umask(0o777)
+        try:
+            if dir_fd is None:
+                return real_open(path, flags, mode)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+        finally:
+            os.umask(previous_umask)
+
+    monkeypatch.setattr(recovery.os, "open", restrictive_open)
+
+    with recovery._pg_environment(make_url(SOURCE_URL), tmp_path) as environment:
+        passfile = Path(environment["PGPASSFILE"])
+        assert stat.S_IMODE(passfile.stat().st_mode) == 0o600
+
+    assert not passfile.exists()
+
+
+def test_pg_environment_fails_closed_when_descriptor_chmod_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_close = os.close
+    closed_descriptors: list[int] = []
+
+    def close_descriptor(descriptor: int) -> None:
+        closed_descriptors.append(descriptor)
+        real_close(descriptor)
+
+    monkeypatch.setattr(
+        recovery.os,
+        "fchmod",
+        lambda _descriptor, _mode: (_ for _ in ()).throw(OSError("chmod failed")),
+        raising=False,
+    )
+    monkeypatch.setattr(recovery.os, "close", close_descriptor)
+
+    with pytest.raises(OSError, match="chmod failed"):
+        with recovery._pg_environment(make_url(SOURCE_URL), tmp_path):
+            pass
+
+    assert len(closed_descriptors) == 1
+    assert not (tmp_path / ".pgpass").exists()
+
+
+def test_pg_environment_remains_available_without_descriptor_chmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delattr(recovery.os, "fchmod", raising=False)
+
+    with recovery._pg_environment(make_url(SOURCE_URL), tmp_path) as environment:
+        passfile = Path(environment["PGPASSFILE"])
+        assert passfile.read_text(encoding="utf-8").endswith(":super-secret\n")
+
+    assert not passfile.exists()
+
+
 def test_fsync_directory_is_a_noop_without_directory_open_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
