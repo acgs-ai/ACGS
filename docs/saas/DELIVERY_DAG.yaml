@@ -2,7 +2,7 @@
   "schema": {
     "name": "acgs-saas-delivery-dag",
     "version": 3,
-    "updated": "2026-07-15",
+    "updated": "2026-07-13",
     "source_of_truth": "docs/ROADMAP.md",
     "serialization": "JSON, a strict YAML 1.2 subset"
   },
@@ -456,15 +456,15 @@
         "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #308 head 53ca32d was independently reviewed and locally verified with 40 package tests passing; the previously suspected minimum-version HEAD behavior was disproved. The code is acceptance-ready locally, but no repository-accepted baseline exists while the PR remains open and unaccepted. PR #267 remains closed-unmerged superseded history and is never current evidence.",
+      "evidence_artifact": "PR #308 head 53ca32d was independently reviewed and locally verified with 40 package tests passing; the previously suspected minimum-version HEAD behavior was disproved. All seven current head checks completed SUCCESS. The code is acceptance-ready locally, but no repository-accepted baseline exists while the PR remains open and unaccepted. PR #267 remains closed-unmerged superseded history and is never current evidence.",
       "branch": null,
       "worktree": null,
       "pr": "#308",
       "status": "blocked",
       "implementation_state": "partial",
-      "evidence_state": "unverified",
-      "blocker": "PR #308 head 53ca32d remains open and unaccepted with an unresolved review thread and stale or queued checks, so its independently reviewed, locally verified code cannot become the authoritative repository baseline. PR #267 is closed unmerged and superseded.",
-      "next_safe_action": "Resolve the remaining PR #308 review thread, obtain current checks, and accept or merge exact head 53ca32d through normal repository review before recording it as the baseline; never reuse PR #267 as current evidence.",
+      "evidence_state": "local_verified",
+      "blocker": "PR #308 head 53ca32d remains open and unaccepted with an unresolved review thread and no repository acceptance, so its independently reviewed, locally verified code cannot become the authoritative repository baseline. All seven current head checks completed SUCCESS. PR #267 is closed unmerged and superseded.",
+      "next_safe_action": "Resolve the remaining PR #308 review thread and accept or merge exact head 53ca32d through normal repository review before recording it as the baseline; all seven current head checks already completed SUCCESS. Never reuse PR #267 as current evidence.",
       "mandatory": true,
       "completion_scope": "non_external",
       "local_evidence": {
@@ -477,7 +477,11 @@
           "passed": 40
         },
         "minimum_version_head_hypothesis": "disproved",
-        "repository_accepted": false
+        "repository_accepted": false,
+        "head_checks": {
+          "completed": 7,
+          "successful": 7
+        }
       }
     },
     {
@@ -628,7 +632,7 @@
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Its final local evidence is 48 targeted tests and 116 package tests passing with 2 credential-gated PostgreSQL skips. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
+      "evidence_artifact": "PR #324 remains the unmerged G101 anchor. PR #330 exact head 31badd9 is independently approved and current-local only: five focused repair commits harden private passfile creation/mode handling and portable directory fsync, bound retained canonical fingerprint buffers, add an aggregate-only PostgreSQL logical-row preflight with batch-one streaming while preserving manifest-v1 digests, and pin before/after captures to read-only REPEATABLE READ transactions. Local evidence includes 48 targeted tests and 116 package tests passing with 2 credential-gated PostgreSQL skips, plus a wrapper-free disposable PostgreSQL 17 direct run proving empty-to-version_0002 upgrade, real read-only REPEATABLE READ capture, seeded-data capture, oversized JSONB preflight refusal before raw receipts streaming, and a separate 4-of-4 PostgreSQL migration suite. The 4 recovery tests remain harness-blocked and live bytea preflight remains unverified. PRs #329, #331, and #332 remain separate current-local, unmerged increments. None is CI-backed or accepted evidence, and none completes G101.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
@@ -665,10 +669,14 @@
             "Atomic private .pgpass creation and exact descriptor-level mode enforcement fail closed without a path-based chmod race; supported POSIX directory fsync is retained with a documented portability fallback.",
             "Retained canonical fingerprint buffers have fixed non-configurable row/row-byte/table-byte/capture-byte limits; PostgreSQL aggregate preflight and batch-one streaming reject oversized logical rows before raw-row selection.",
             "Manifest-v1 SHA256(concat(sorted(canonical_row_bytes))) compatibility is preserved by a fixed golden where primary-key order differs from canonical-byte order.",
-            "Before/after URL captures use one explicit read-only REPEATABLE READ transaction, preventing aggregate preflight and raw selection from observing different committed versions in the focused regression model."
+            "Before/after URL captures use one explicit read-only REPEATABLE READ transaction, preventing aggregate preflight and raw selection from observing different committed versions in the focused regression model.",
+            "A wrapper-free disposable PostgreSQL 17 direct run upgraded an empty database to version_0002 and accepted seeded data through the real capture path.",
+            "The real URL capture reported REPEATABLE READ, read-only, and in-transaction state; a real greater-than-1-MiB JSONB aggregate preflight raised the stable envelope refusal before the receipts raw stream.",
+            "The separate disposable PostgreSQL migration suite passed 4 of 4 tests."
           ],
           "does_not_prove": [
-            "Live PostgreSQL execution of the new logical-row preflight or REPEATABLE READ correction; 2 credential-gated PostgreSQL tests remain skipped locally.",
+            "Live bytea logical-row preflight behavior; the real oversized JSONB path is verified but bytea remains unverified.",
+            "End-to-end pg_dump/pg_restore recovery: 0 of 4 recovery tests completed because host clients were absent and the SELinux bind wrapper failed.",
             "A mathematical bound on total process, driver, SQLAlchemy, sorting, or PostgreSQL server memory.",
             "Production backup, PITR, object retention, managed-database recovery, atomic database/filesystem snapshots, or multi-host disaster recovery."
           ],
@@ -705,6 +713,28 @@
               "skipped": 2
             },
             "skipped_scope": "credential-gated disposable PostgreSQL runtime suites"
+          },
+          "live_postgresql_evidence": {
+            "environment": "wrapper-free disposable PostgreSQL 17",
+            "head": "31badd9",
+            "canonical_upgrade": "empty to version_0002 passed",
+            "capture_transaction": "real _capture_database_state_url reported REPEATABLE READ, read only, and in transaction",
+            "seeded_data_capture": "accepted",
+            "jsonb_preflight": "real greater-than-1-MiB JSONB aggregate preflight raised the stable envelope refusal before the receipts raw stream",
+            "postgresql_migration_suite": {
+              "passed": 4,
+              "total": 4
+            },
+            "recovery_suite": {
+              "completed": 0,
+              "total": 4,
+              "state": "harness_blocked",
+              "blockers": [
+                "host pg_dump/pg_restore clients absent",
+                "SELinux bind-wrapper failure"
+              ]
+            },
+            "bytea_preflight": "unverified"
           }
         },
         {
@@ -756,8 +786,8 @@
         },
         "impact": "PR #330 head 31badd9 remains current-local evidence only; no observed remote result makes PRs #329-#332 CI-backed or accepted."
       },
-      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, but CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock. Its 2 credential-gated PostgreSQL tests remain skipped, so live runtime execution of the logical-row preflight and read-only REPEATABLE READ correction is unverified. Local recovery evidence does not establish production backup/PITR, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
-      "next_safe_action": "Run the credential-gated disposable PostgreSQL recovery suites and the exact CI lane after the billing block is cleared, then review and merge G101 increments in dependency order and resolve PR #308 startup integration. Keep recovery, memory, and CI claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 remain open draft and unmerged, and PR #308 startup integration remains open and unresolved. PR #330 exact head 31badd9 is independently approved and locally verified, including wrapper-free disposable PostgreSQL 17 evidence for canonical upgrade, read-only REPEATABLE READ capture, oversized JSONB preflight refusal before raw streaming, and 4-of-4 PostgreSQL migration tests. CI run 29414888896 job 87350442086 failed before any step because of the GitHub billing lock. End-to-end recovery remains unverified because 0 of 4 pg_dump/pg_restore tests completed while host clients were absent and the SELinux bind wrapper failed; live bytea preflight is also unverified. Local evidence does not establish production backup/PITR, a total-process memory bound, multi-host coordination, network partition, database failover, rolling-upgrade safety, or G103 tenant database isolation.",
+      "next_safe_action": "Install or expose compatible host pg_dump/pg_restore clients or repair the SELinux-safe disposable PostgreSQL harness, then run the 4 recovery tests and live bytea preflight; run the exact CI lane after the billing block is cleared, review and merge G101 increments in dependency order, and resolve PR #308 startup integration. Keep recovery, memory, and CI claims limited to observed evidence. Do not start G102; G103 remains downstream of completed G101 and G102.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
