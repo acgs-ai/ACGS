@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Final
+from typing import Any, Final
 
 import sqlalchemy as sa
 from alembic import command
@@ -52,11 +52,12 @@ _SCOPE_RESUME_TOKEN: Final = object()
 _POSTGRES_MIGRATION_LOCK_CLASS_ID: Final = 1_010_100_101
 _POSTGRES_MIGRATION_LOCK_OBJECT_ID: Final = 1_010_100_102
 _POSTGRES_MIGRATION_LOCK_STATEMENT: Final = sa.select(
-    sa.func.pg_try_advisory_xact_lock(
+    sa.func.pg_catalog.pg_try_advisory_xact_lock(
         sa.bindparam("class_id", type_=sa.Integer()),
         sa.bindparam("object_id", type_=sa.Integer()),
     )
 )
+_POSTGRES_INITIAL_SCHEMA_INFO_KEY: Final = "acgs_control_plane_initial_schema"
 
 
 class DatabaseSchemaState(StrEnum):
@@ -318,6 +319,8 @@ def inspect_schema(database_url: str, *, expected_database: str | None = None) -
     if expected_database is not None:
         _assert_expected_postgresql_url(database_url, expected_database)
     engine = make_engine(database_url)
+    if expected_database is not None:
+        _install_postgresql_operator_connection_guard(engine)
     try:
         with engine.connect() as connection:
             if expected_database is None:
@@ -497,6 +500,8 @@ def _upgrade_postgresql_database(
     create or commit a separate connection/transaction.
     """
     engine = make_engine(database_url)
+    if expected_database is not None:
+        _install_postgresql_operator_connection_guard(engine)
     try:
         with engine.connect() as connection:
             with connection.begin():
@@ -570,31 +575,67 @@ def _assert_expected_postgresql_url(database_url: str, expected_database: str) -
         )
 
 
+def _install_postgresql_operator_connection_guard(engine: sa.Engine) -> None:
+    """Sanitize search-path resolution before SQLAlchemy initializes a connection.
+
+    PostgreSQL's SQLAlchemy dialect discovers its default schema during the
+    pool ``connect`` event with an unqualified function call. This guard is
+    inserted ahead of dialect initialization, records the original schema with
+    a schema-qualified probe, then pins the short-lived engine session to
+    ``public``. Bound operations additionally use ``SET LOCAL`` below.
+    """
+    sa.event.listen(
+        engine.pool,
+        "connect",
+        _guard_postgresql_dbapi_connection,
+        insert=True,
+    )
+
+
+def _guard_postgresql_dbapi_connection(dbapi_connection: Any, connection_record: Any) -> None:
+    previous_autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True
+    try:
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SELECT pg_catalog.current_schema()")
+            row = cursor.fetchone()
+            connection_record.info[_POSTGRES_INITIAL_SCHEMA_INFO_KEY] = row[0] if row else None
+            cursor.execute("SET SESSION search_path TO public")
+    finally:
+        dbapi_connection.autocommit = previous_autocommit
+
+
 def _bind_postgresql_operator_target(connection: Connection, expected_database: str) -> None:
     """Bind database and canonical schema inside the operator transaction.
 
     SQLAlchemy determines ``default_schema_name`` when the DBAPI connection is
-    initialized. A connection that began in a non-public schema is rejected
-    even after ``SET LOCAL`` so cached dialect state cannot redirect reflection
-    or Alembic. Canonical connections are pinned to ``public, pg_catalog`` for
-    the remainder of the transaction and then verified before inspection.
+    initialized. The connection guard records the original schema before that
+    initialization and pins the engine session without invoking a shadowable
+    function. A connection that began in a non-public schema is rejected even
+    after ``SET LOCAL`` so cached dialect state cannot redirect reflection or
+    Alembic. Leaving ``pg_catalog`` implicit makes PostgreSQL resolve it before
+    ``public``; every explicit identity probe remains schema-qualified.
     """
     _require_postgresql_dialect(connection)
-    current_database = connection.scalar(sa.text("SELECT current_database()"))
+    current_database = connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
     if current_database != expected_database:
         raise DatabaseIdentityMismatch(
             "Connected PostgreSQL database does not match the operator expectation."
         )
 
-    initial_schema = connection.scalar(sa.text("SELECT current_schema()"))
-    connection.exec_driver_sql("SET LOCAL search_path TO public, pg_catalog")
-    pinned_schema = connection.scalar(sa.text("SELECT current_schema()"))
-    pinned_search_path = connection.scalar(sa.text("SELECT current_setting('search_path')"))
+    original_schema = connection.info.get(_POSTGRES_INITIAL_SCHEMA_INFO_KEY)
+    transaction_schema = connection.scalar(sa.text("SELECT pg_catalog.current_schema()"))
+    connection.exec_driver_sql("SET LOCAL search_path TO public")
+    pinned_schema = connection.scalar(sa.text("SELECT pg_catalog.current_schema()"))
+    pinned_search_path = connection.scalar(
+        sa.text("SELECT pg_catalog.current_setting('search_path')")
+    )
     if (
-        initial_schema != "public"
+        original_schema != "public"
+        or transaction_schema != "public"
         or connection.dialect.default_schema_name != "public"
         or pinned_schema != "public"
-        or pinned_search_path != "public, pg_catalog"
+        or pinned_search_path != "public"
     ):
         raise DatabaseSchemaBindingMismatch(
             "PostgreSQL operator target is not bound to the canonical public schema."

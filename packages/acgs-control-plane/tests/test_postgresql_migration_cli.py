@@ -58,7 +58,7 @@ _LOCK_PARAMETERS = {
 
 
 def _assert_disposable_database(connection: Connection) -> None:
-    database_name = connection.scalar(sa.text("SELECT current_database()"))
+    database_name = connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
     if database_name != _DISPOSABLE_DATABASE_NAME:
         raise RuntimeError(
             "Refusing to reset PostgreSQL public schema outside the exact dedicated test database."
@@ -302,6 +302,64 @@ def test_rogue_public_schema_fails_without_version_or_table_mutation() -> None:
         engine.dispose()
 
 
+def test_public_function_hijack_cannot_mutate_during_status() -> None:
+    upgraded, payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
+    assert upgraded.returncode == 0
+    assert payload["after"] == "version_0002"
+
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            _assert_disposable_database(connection)
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, created_at, audit_anchor_count, audit_anchor_hash
+                    ) VALUES (
+                        'function-hijack-sentinel', 'unchanged', CURRENT_TIMESTAMP, 0, 'GENESIS'
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION public.current_setting(setting_name text)
+                    RETURNS text
+                    LANGUAGE plpgsql
+                    AS $function$
+                    BEGIN
+                        UPDATE organizations
+                        SET name = 'malicious-function-executed'
+                        WHERE id = 'function-hijack-sentinel';
+                        RETURN setting_name;
+                    END
+                    $function$
+                    """
+                )
+            )
+
+        status, payload = _invoke_cli("status")
+
+        assert status.returncode == 0
+        assert status.stderr == ""
+        assert payload == {
+            "command": "status",
+            "ok": True,
+            "schema_state": "version_0002",
+            "target_revision": HEAD_REVISION,
+        }
+        with engine.connect() as connection:
+            _assert_disposable_database(connection)
+            sentinel_name = connection.scalar(
+                sa.text("SELECT name FROM organizations WHERE id = 'function-hijack-sentinel'")
+            )
+            assert sentinel_name == "unchanged"
+    finally:
+        engine.dispose()
+
+
 def test_noncanonical_search_path_is_refused_without_public_or_shadow_mutation() -> None:
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -311,9 +369,54 @@ def test_noncanonical_search_path_is_refused_without_public_or_shadow_mutation()
             connection.execute(sa.text("CREATE SCHEMA shadow"))
             connection.execute(sa.text("CREATE TABLE shadow.sentinel (id INTEGER PRIMARY KEY)"))
             connection.execute(sa.text("INSERT INTO shadow.sentinel (id) VALUES (11)"))
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION shadow.current_database()
+                    RETURNS name
+                    LANGUAGE plpgsql
+                    AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 12 WHERE id = 11;
+                        RETURN 'acgs_control_plane_test';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION shadow.current_schema()
+                    RETURNS name
+                    LANGUAGE plpgsql
+                    AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 13 WHERE id = 11;
+                        RETURN 'shadow';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION shadow.current_setting(setting_name text)
+                    RETURNS text
+                    LANGUAGE plpgsql
+                    AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 14 WHERE id = 11;
+                        RETURN setting_name;
+                    END
+                    $function$
+                    """
+                )
+            )
 
         shadow_url = _TEST_URL.update_query_dict(
-            {"options": "-csearch_path=shadow"}
+            {"options": "-csearch_path=shadow,pg_catalog"}
         ).render_as_string(hide_password=False)
         result, payload = _invoke_cli(
             "upgrade",
