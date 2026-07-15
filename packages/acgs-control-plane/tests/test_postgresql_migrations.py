@@ -335,7 +335,7 @@ _SENSITIVE_WORKER_VALUES = tuple(
 
 @dataclass(frozen=True)
 class _ReaderMessage:
-    kind: Literal["line", "overflow", "error", "eof"]
+    kind: Literal["line", "violation", "overflow", "error", "eof"]
     line: str = ""
     error: BaseException | None = None
 
@@ -348,6 +348,10 @@ class _ReadableTextStream(Protocol):
 
 class _WorkerOutputOverflow(RuntimeError):
     """A worker stream exceeded its bounded diagnostic storage."""
+
+
+class _WorkerSecretExposure(AssertionError):
+    """A configured sensitive value appeared in a worker stream."""
 
 
 @dataclass
@@ -382,7 +386,9 @@ class _MigrationWorker:
 def _assert_secret_free(value: str) -> None:
     for sensitive_value in _SENSITIVE_WORKER_VALUES:
         if sensitive_value in value:
-            raise AssertionError("worker argv or output contained a configured sensitive value")
+            raise _WorkerSecretExposure(
+                "worker argv or output contained a configured sensitive value"
+            )
 
 
 def _assert_worker_secret_safe(worker: _MigrationWorker) -> None:
@@ -400,6 +406,9 @@ def _read_stream(stream: _ReadableTextStream, messages: Queue[_ReaderMessage]) -
     retained_parts: list[str] = []
     retained_bytes = 0
     discarding_overlong_line = False
+    overlap_limit = max((len(value) for value in _SENSITIVE_WORKER_VALUES), default=1) - 1
+    scan_overlap = ""
+    secret_failure_reported = False
     try:
         while True:
             chunk = stream.readline(_WORKER_READ_CHUNK_CHARS)
@@ -408,6 +417,15 @@ def _read_stream(stream: _ReadableTextStream, messages: Queue[_ReaderMessage]) -
                     messages.put(_ReaderMessage(kind="line", line="".join(retained_parts)))
                 messages.put(_ReaderMessage(kind="eof"))
                 return
+            scan_window = scan_overlap + chunk
+            try:
+                _assert_secret_free(scan_window)
+            except _WorkerSecretExposure as exc:
+                if not secret_failure_reported:
+                    messages.put(_ReaderMessage(kind="violation", error=exc))
+                    secret_failure_reported = True
+            scan_overlap = scan_window[-overlap_limit:] if overlap_limit else ""
+
             ends_line = chunk.endswith("\n")
             if discarding_overlong_line:
                 if ends_line:
@@ -446,7 +464,12 @@ def _set_stream_failure(
     error: BaseException,
 ) -> None:
     attribute = f"{stream_name}_failure"
-    if getattr(worker, attribute) is None:
+    current_error = getattr(worker, attribute)
+    should_replace = current_error is None or (
+        isinstance(current_error, _WorkerOutputOverflow)
+        and isinstance(error, _WorkerSecretExposure)
+    )
+    if should_replace:
         setattr(worker, attribute, error)
         if stream_name == "stdout":
             with worker.stdout_condition:
@@ -493,6 +516,11 @@ def _collect_stream(
 
         if message.kind == "overflow":
             error = message.error or _WorkerOutputOverflow("worker stream overflowed")
+            _set_stream_failure(worker, stream_name=stream_name, error=error)
+            continue
+
+        if message.kind == "violation":
+            error = message.error or _WorkerSecretExposure("worker stream exposed a secret")
             _set_stream_failure(worker, stream_name=stream_name, error=error)
             continue
 
@@ -1046,6 +1074,75 @@ def test_worker_multimegabyte_newline_free_output_is_bounded_refused_and_leak_fr
     assert worker.stdout_failure is not None
     assert "worker line exceeded" in str(worker.stdout_failure)
     _assert_worker_threads_stopped(worker)
+
+
+def _assert_secret_exposure_refused_and_drained(
+    worker: _MigrationWorker,
+    *,
+    stream_name: str,
+    secret: str,
+) -> None:
+    with pytest.raises(
+        AssertionError,
+        match=f"worker {stream_name} collection failed with _WorkerSecretExposure",
+    ) as caught:
+        _wait_worker(worker, timeout=5.0)
+    assert isinstance(caught.value.__cause__, _WorkerSecretExposure)
+    assert secret not in worker.stdout_text
+    assert secret not in worker.stderr_text
+    assert worker.process.poll() is not None
+    _assert_worker_threads_stopped(worker)
+
+
+@pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+def test_worker_secret_after_line_overflow_in_multimegabyte_stream_is_detected(
+    worker_protocol_only: None,
+    monkeypatch: pytest.MonkeyPatch,
+    stream_name: str,
+) -> None:
+    secret = "late-secret-after-overflow"
+    monkeypatch.setattr(sys.modules[__name__], "_SENSITIVE_WORKER_VALUES", (secret,))
+    prefix_size = _WORKER_LINE_MAX_BYTES + (2 * _WORKER_READ_CHUNK_CHARS)
+    suffix_size = (4 * 1024 * 1024) - prefix_size - len(secret)
+    destination = "sys.stdout" if stream_name == "stdout" else "sys.stderr"
+    worker = _protocol_worker(
+        "import sys; "
+        f"stream={destination}; "
+        f"stream.write(('x' * {prefix_size}) + ('late-' + 'secret-after-overflow') + "
+        f"('x' * {suffix_size})); stream.flush()"
+    )
+
+    _assert_secret_exposure_refused_and_drained(
+        worker,
+        stream_name=stream_name,
+        secret=secret,
+    )
+
+
+@pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+def test_worker_secret_split_at_read_chunk_boundary_is_detected(
+    worker_protocol_only: None,
+    monkeypatch: pytest.MonkeyPatch,
+    stream_name: str,
+) -> None:
+    secret = "split-boundary-secret"
+    split_at = len("split-")
+    monkeypatch.setattr(sys.modules[__name__], "_SENSITIVE_WORKER_VALUES", (secret,))
+    prefix_size = _WORKER_READ_CHUNK_CHARS - split_at
+    suffix_size = (4 * 1024 * 1024) - prefix_size - len(secret)
+    destination = "sys.stdout" if stream_name == "stdout" else "sys.stderr"
+    worker = _protocol_worker(
+        "import sys; "
+        f"stream={destination}; "
+        f"stream.write(('x' * {prefix_size}) + ('split-' + 'boundary-secret') + "
+        f"('x' * {suffix_size})); stream.flush()"
+    )
+
+    _assert_secret_exposure_refused_and_drained(
+        worker,
+        stream_name=stream_name,
+        secret=secret,
+    )
 
 
 def test_worker_total_output_overflow_is_explicit_bounded_and_leak_free(
