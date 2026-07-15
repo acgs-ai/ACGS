@@ -32,6 +32,7 @@ _EXPECTED_DATABASE = "acgs_control_plane_test"
 _SECRET_URL = (
     f"postgresql+psycopg://migration_operator:operator-secret@db.invalid/{_EXPECTED_DATABASE}"
 )
+_SECRET_CLASS_NAME = "operator_secret_exception"
 
 
 def _source_environment(package_root: Path) -> dict[str, str]:
@@ -50,7 +51,7 @@ def _source_environment(package_root: Path) -> dict[str, str]:
 
 
 def _assert_secret_free(value: str) -> None:
-    for sensitive_value in (_SECRET_URL, "operator-secret"):
+    for sensitive_value in (_SECRET_URL, "operator-secret", _SECRET_CLASS_NAME):
         if sensitive_value in value:
             raise AssertionError("migration CLI output contained a configured sensitive value")
 
@@ -333,14 +334,21 @@ def test_upgrade_errors_are_typed_stable_and_secret_safe(
         assert "diagnostic" not in stderr
 
 
-@pytest.mark.parametrize("class_name", ["invalid-name", "X" * 65])
-def test_unexpected_exception_type_falls_back_for_invalid_or_oversized_name(
+@pytest.mark.parametrize(
+    ("class_name", "base_type"),
+    [
+        ("RuntimeError", RuntimeError),
+        (_SECRET_CLASS_NAME, Exception),
+    ],
+)
+def test_unexpected_exception_type_falls_back_for_every_custom_class(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     class_name: str,
+    base_type: type[Exception],
 ) -> None:
     monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
-    dynamic_error = type(class_name, (Exception,), {})
+    dynamic_error = type(class_name, (base_type,), {})
 
     def fail(*args: object, **kwargs: object) -> MigrationResult:
         del args, kwargs
@@ -366,6 +374,46 @@ def test_unexpected_exception_type_falls_back_for_invalid_or_oversized_name(
         },
         "ok": False,
     }
+
+
+def test_unexpected_exception_classifier_never_invokes_hostile_metaclass_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
+    metadata_side_effects: list[str] = []
+
+    class HostileMetadata(type):
+        @property
+        def __name__(cls) -> str:
+            del cls
+            metadata_side_effects.append("name_property")
+            return _SECRET_CLASS_NAME
+
+        def __getattribute__(cls, name: str) -> object:
+            metadata_side_effects.append(f"getattribute:{name}")
+            return super().__getattribute__(name)
+
+    hostile_error = HostileMetadata("HostileError", (Exception,), {})
+    metadata_side_effects.clear()
+
+    def fail(*args: object, **kwargs: object) -> MigrationResult:
+        del args, kwargs
+        raise hostile_error(_SECRET_URL)
+
+    monkeypatch.setattr(migration_cli, "upgrade_database", fail)
+    arguments = [*_target_arguments("upgrade"), "--acknowledge-forward-only"]
+
+    exit_code, stdout, stderr = _invoke(arguments, capsys)
+
+    assert exit_code == 70
+    assert stdout is None
+    assert stderr is not None
+    assert stderr["diagnostic"] == {
+        "category": "unexpected_exception",
+        "exception_type": "Exception",
+    }
+    assert metadata_side_effects == []
 
 
 def test_unexpected_exception_diagnostic_never_renders_exception_or_logs(
@@ -402,7 +450,7 @@ def test_unexpected_exception_diagnostic_never_renders_exception_or_logs(
         "command": "upgrade",
         "diagnostic": {
             "category": "unexpected_exception",
-            "exception_type": "ExplosiveStringError",
+            "exception_type": "Exception",
         },
         "error": {
             "code": "internal_error",
@@ -413,6 +461,77 @@ def test_unexpected_exception_diagnostic_never_renders_exception_or_logs(
     }
     assert rendering_side_effects == []
     assert caplog.records == []
+
+
+@pytest.mark.parametrize("outcome", ["success", "mapped", "unexpected"])
+def test_all_logging_levels_are_suppressed_and_exact_state_is_restored(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    outcome: str,
+) -> None:
+    monkeypatch.setenv(_DATABASE_URL_ENV, _SECRET_URL)
+    emitted_records: list[logging.LogRecord] = []
+
+    class SecretEmittingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            emitted_records.append(record)
+            sys.stderr.write(_SECRET_URL)
+
+    logger = logging.getLogger("acgs_control_plane.migration_cli.security_test")
+    previous_handlers = list(logger.handlers)
+    previous_level = logger.level
+    previous_disabled = logger.disabled
+    previous_propagate = logger.propagate
+    previous_logging_disable = logging.getLogger().manager.disable
+    logger.handlers = [SecretEmittingHandler()]
+    logger.setLevel(1)
+    logger.disabled = False
+    logger.propagate = False
+    logging.disable(17)
+
+    def upgrade(*args: object, **kwargs: object) -> MigrationResult:
+        del args, kwargs
+        logger.log(logging.CRITICAL + 1, _SECRET_URL)
+        if outcome == "mapped":
+            raise MigrationLockUnavailable(_SECRET_URL)
+        if outcome == "unexpected":
+            raise RuntimeError(_SECRET_URL)
+        return MigrationResult(
+            before=SchemaPreflight(DatabaseSchemaState.EMPTY, "not emitted"),
+            after=SchemaPreflight(DatabaseSchemaState.VERSION_0002, "not emitted"),
+        )
+
+    monkeypatch.setattr(migration_cli, "upgrade_database", upgrade)
+    arguments = [*_target_arguments("upgrade"), "--acknowledge-forward-only"]
+    try:
+        exit_code, stdout, stderr = _invoke(arguments, capsys)
+        assert logging.getLogger().manager.disable == 17
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
+        logger.disabled = previous_disabled
+        logger.propagate = previous_propagate
+        logging.disable(previous_logging_disable)
+
+    assert emitted_records == []
+    if outcome == "success":
+        assert exit_code == 0
+        assert stderr is None
+        assert stdout is not None and stdout["ok"] is True
+    elif outcome == "mapped":
+        assert exit_code == 75
+        assert stdout is None
+        assert stderr is not None and "diagnostic" not in stderr
+        assert isinstance(stderr["error"], dict)
+        assert stderr["error"]["code"] == "migration_lock_unavailable"
+    else:
+        assert exit_code == 70
+        assert stdout is None
+        assert stderr is not None
+        assert stderr["diagnostic"] == {
+            "category": "unexpected_exception",
+            "exception_type": "RuntimeError",
+        }
 
 
 @pytest.mark.parametrize(

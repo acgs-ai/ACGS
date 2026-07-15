@@ -35,9 +35,10 @@ _EXIT_DATABASE_STATE: Final = 65
 _EXIT_SOFTWARE: Final = 70
 _EXIT_RETRYABLE: Final = 75
 _ENVIRONMENT_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
-_EXCEPTION_TYPE_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
-_EXCEPTION_TYPE_MAX_LENGTH: Final = 64
 _COMMANDS: Final = frozenset({"status", "upgrade"})
+_SAFE_EXCEPTION_TYPE_LITERALS: Final[tuple[tuple[type[Exception], str], ...]] = (
+    (RuntimeError, "RuntimeError"),
+)
 
 
 class _UsageError(RuntimeError):
@@ -148,18 +149,12 @@ def _error_payload(
 
 
 def _safe_exception_type(exc: Exception) -> str:
-    """Return only a bounded ASCII class identifier without invoking exception code."""
-    try:
-        name = type.__getattribute__(type(exc), "__name__")
-    except Exception:
-        return "Exception"
-    if type(name) is not str:
-        return "Exception"
-    if not 1 <= len(name) <= _EXCEPTION_TYPE_MAX_LENGTH:
-        return "Exception"
-    if _EXCEPTION_TYPE_NAME.fullmatch(name) is None:
-        return "Exception"
-    return name
+    """Map exact safe built-in identities to literals without class introspection."""
+    exception_type = type(exc)
+    for safe_type, literal in _SAFE_EXCEPTION_TYPE_LITERALS:
+        if exception_type is safe_type:
+            return literal
+    return "Exception"
 
 
 def _load_database_url(environment_name: str, expected_database: str) -> str:
@@ -292,7 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     command = str(arguments.command)
     previous_logging_disable = logging.getLogger().manager.disable
-    logging.disable(logging.CRITICAL)
+    logging.disable(sys.maxsize)
     try:
         payload = _run_command(arguments)
     except _OperatorError as exc:
