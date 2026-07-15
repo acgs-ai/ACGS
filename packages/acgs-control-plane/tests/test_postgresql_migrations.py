@@ -318,8 +318,11 @@ _WORKER_SCRIPT = Path(__file__).with_name("_postgresql_migration_worker.py")
 _WORKER_EVENT_TIMEOUT_SECONDS = 15.0
 _WORKER_EXIT_TIMEOUT_SECONDS = 15.0
 _WORKER_TERMINATE_TIMEOUT_SECONDS = 3.0
+_WORKER_THREAD_CLEANUP_GRACE_SECONDS = 1.0
 _WORKER_READER_QUEUE_CAPACITY = 64
 _WORKER_OUTPUT_MAX_BYTES = 256 * 1024
+_WORKER_LINE_MAX_BYTES = 64 * 1024
+_WORKER_READ_CHUNK_CHARS = 4096
 _SENSITIVE_WORKER_VALUES = tuple(
     value
     for value in (
@@ -332,13 +335,15 @@ _SENSITIVE_WORKER_VALUES = tuple(
 
 @dataclass(frozen=True)
 class _ReaderMessage:
-    kind: Literal["line", "error", "eof"]
+    kind: Literal["line", "overflow", "error", "eof"]
     line: str = ""
     error: BaseException | None = None
 
 
 class _ReadableTextStream(Protocol):
     def readline(self, size: int = -1, /) -> str: ...
+
+    def close(self) -> None: ...
 
 
 class _WorkerOutputOverflow(RuntimeError):
@@ -362,6 +367,8 @@ class _MigrationWorker:
     stderr_reader: Thread | None = None
     stdout_collector: Thread | None = None
     stderr_collector: Thread | None = None
+    stdout_stream: _ReadableTextStream | None = None
+    stderr_stream: _ReadableTextStream | None = None
     stdout_condition: Condition = field(default_factory=Condition)
     stdout_pending: deque[_ReaderMessage] = field(default_factory=deque)
     stdout_bytes: int = 0
@@ -390,13 +397,44 @@ def _assert_worker_secret_safe(worker: _MigrationWorker) -> None:
 
 
 def _read_stream(stream: _ReadableTextStream, messages: Queue[_ReaderMessage]) -> None:
+    retained_parts: list[str] = []
+    retained_bytes = 0
+    discarding_overlong_line = False
     try:
         while True:
-            line = stream.readline()
-            if not line:
+            chunk = stream.readline(_WORKER_READ_CHUNK_CHARS)
+            if not chunk:
+                if retained_parts and not discarding_overlong_line:
+                    messages.put(_ReaderMessage(kind="line", line="".join(retained_parts)))
                 messages.put(_ReaderMessage(kind="eof"))
                 return
-            messages.put(_ReaderMessage(kind="line", line=line))
+            ends_line = chunk.endswith("\n")
+            if discarding_overlong_line:
+                if ends_line:
+                    discarding_overlong_line = False
+                continue
+
+            chunk_bytes = len(chunk.encode("utf-8"))
+            if retained_bytes + chunk_bytes > _WORKER_LINE_MAX_BYTES:
+                retained_parts.clear()
+                retained_bytes = 0
+                messages.put(
+                    _ReaderMessage(
+                        kind="overflow",
+                        error=_WorkerOutputOverflow(
+                            f"worker line exceeded {_WORKER_LINE_MAX_BYTES} byte limit"
+                        ),
+                    )
+                )
+                discarding_overlong_line = not ends_line
+                continue
+
+            retained_parts.append(chunk)
+            retained_bytes += chunk_bytes
+            if ends_line:
+                messages.put(_ReaderMessage(kind="line", line="".join(retained_parts)))
+                retained_parts.clear()
+                retained_bytes = 0
     except Exception as exc:
         messages.put(_ReaderMessage(kind="error", error=exc))
 
@@ -453,6 +491,11 @@ def _collect_stream(
                         worker.stdout_condition.notify_all()
             continue
 
+        if message.kind == "overflow":
+            error = message.error or _WorkerOutputOverflow("worker stream overflowed")
+            _set_stream_failure(worker, stream_name=stream_name, error=error)
+            continue
+
         if message.kind == "error":
             error = message.error or RuntimeError(f"worker {stream_name} reader failed")
             _set_stream_failure(worker, stream_name=stream_name, error=error)
@@ -491,10 +534,21 @@ def _start_stream_collector(
     return collector
 
 
-def _start_worker_streams(worker: _MigrationWorker) -> None:
+def _start_worker_streams(
+    worker: _MigrationWorker,
+    *,
+    stdout_stream: _ReadableTextStream | None = None,
+    stderr_stream: _ReadableTextStream | None = None,
+) -> None:
     process = worker.process
-    assert process.stdout is not None
-    assert process.stderr is not None
+    if stdout_stream is None:
+        assert process.stdout is not None
+        stdout_stream = process.stdout
+    if stderr_stream is None:
+        assert process.stderr is not None
+        stderr_stream = process.stderr
+    worker.stdout_stream = stdout_stream
+    worker.stderr_stream = stderr_stream
     worker.stdout_collector = _start_stream_collector(
         worker,
         worker.stdout_messages,
@@ -506,12 +560,12 @@ def _start_worker_streams(worker: _MigrationWorker) -> None:
         stream_name="stderr",
     )
     worker.stdout_reader = _start_stream_reader(
-        process.stdout,
+        stdout_stream,
         worker.stdout_messages,
         name=f"acgs-migration-stdout-{process.pid}",
     )
     worker.stderr_reader = _start_stream_reader(
-        process.stderr,
+        stderr_stream,
         worker.stderr_messages,
         name=f"acgs-migration-stderr-{process.pid}",
     )
@@ -583,26 +637,49 @@ def _join_stream_threads(
     assert collector is not None
 
     collector.join(timeout=max(0.0, deadline - time.monotonic()))
+    stream_failure = getattr(worker, f"{stream_name}_failure")
+    needs_forced_unblock = (
+        collector.is_alive()
+        or stream_failure is not None
+        or not bool(getattr(worker, f"{stream_name}_terminal"))
+    )
     if collector.is_alive():
         _set_stream_failure(
             worker,
             stream_name=stream_name,
             error=TimeoutError(f"worker {stream_name} collector did not reach EOF before deadline"),
         )
-        return
-    if not bool(getattr(worker, f"{stream_name}_terminal")):
+    elif not bool(getattr(worker, f"{stream_name}_terminal")):
         _set_stream_failure(
             worker,
             stream_name=stream_name,
             error=RuntimeError(f"worker {stream_name} collector exited without EOF/error"),
         )
 
-    reader.join(timeout=max(0.0, deadline - time.monotonic()))
+    if needs_forced_unblock:
+        stream = worker.stdout_stream if stream_name == "stdout" else worker.stderr_stream
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception as exc:
+                _set_stream_failure(worker, stream_name=stream_name, error=exc)
+        cleanup_deadline = time.monotonic() + _WORKER_THREAD_CLEANUP_GRACE_SECONDS
+    else:
+        cleanup_deadline = deadline
+
+    reader.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+    collector.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
     if reader.is_alive():
         _set_stream_failure(
             worker,
             stream_name=stream_name,
             error=TimeoutError(f"worker {stream_name} reader did not terminate before deadline"),
+        )
+    if collector.is_alive():
+        _set_stream_failure(
+            worker,
+            stream_name=stream_name,
+            error=TimeoutError(f"worker {stream_name} collector did not terminate after unblock"),
         )
 
 
@@ -618,6 +695,20 @@ def _raise_stream_failures(worker: _MigrationWorker) -> None:
             ) from error
 
 
+def _close_owned_streams(worker: _MigrationWorker) -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = worker.stdout_stream if stream_name == "stdout" else worker.stderr_stream
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except Exception as exc:
+            if stream_name == "stdout":
+                _set_stream_failure(worker, stream_name="stdout", error=exc)
+            else:
+                _set_stream_failure(worker, stream_name="stderr", error=exc)
+
+
 def _drain_worker(worker: _MigrationWorker, *, deadline: float | None = None) -> None:
     if worker.drained:
         return
@@ -626,6 +717,24 @@ def _drain_worker(worker: _MigrationWorker, *, deadline: float | None = None) ->
         deadline = time.monotonic() + _WORKER_TERMINATE_TIMEOUT_SECONDS
     _join_stream_threads(worker, stream_name="stdout", deadline=deadline)
     _join_stream_threads(worker, stream_name="stderr", deadline=deadline)
+    threads = (
+        worker.stdout_reader,
+        worker.stderr_reader,
+        worker.stdout_collector,
+        worker.stderr_collector,
+    )
+    if (
+        worker.stdout_failure is not None
+        or worker.stderr_failure is not None
+        or any(thread is None or thread.is_alive() for thread in threads)
+    ):
+        _close_owned_streams(worker)
+        cleanup_deadline = time.monotonic() + _WORKER_THREAD_CLEANUP_GRACE_SECONDS
+        for thread in threads:
+            if thread is not None:
+                thread.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+    if any(thread is None or thread.is_alive() for thread in threads):
+        raise AssertionError("worker stream cleanup left a reader or collector thread alive")
     worker.drained = True
     _assert_worker_secret_safe(worker)
     _raise_stream_failures(worker)
@@ -765,14 +874,22 @@ class _FailingStream:
     def readline(self, _limit: int = -1) -> str:
         raise OSError("synthetic reader failure")
 
+    def close(self) -> None:
+        pass
+
 
 class _BlockingStream:
     def __init__(self) -> None:
         self.release = Event()
+        self.closed = False
 
     def readline(self, _limit: int = -1) -> str:
         self.release.wait()
         return ""
+
+    def close(self) -> None:
+        self.closed = True
+        self.release.set()
 
 
 def _assert_forced_termination_return_code(return_code: int, *, platform: str) -> None:
@@ -916,17 +1033,88 @@ def test_worker_collectors_scan_secret_after_queue_capacity_and_leave_no_threads
     _assert_worker_threads_stopped(worker)
 
 
-def test_worker_output_overflow_is_bounded_explicit_and_leak_free(
+def test_worker_multimegabyte_newline_free_output_is_bounded_refused_and_leak_free(
     worker_protocol_only: None,
 ) -> None:
-    output_size = _WORKER_OUTPUT_MAX_BYTES + 1
+    output_size = 4 * 1024 * 1024
     worker = _protocol_worker(
         f"import sys; sys.stdout.write('x' * {output_size}); sys.stdout.flush()"
     )
     with pytest.raises(AssertionError, match="stdout collection failed with _WorkerOutputOverflow"):
         _wait_worker(worker, timeout=5.0)
-    assert worker.stdout_bytes == output_size
     assert worker.stdout_text == ""
+    assert worker.stdout_failure is not None
+    assert "worker line exceeded" in str(worker.stdout_failure)
+    _assert_worker_threads_stopped(worker)
+
+
+def test_worker_total_output_overflow_is_explicit_bounded_and_leak_free(
+    worker_protocol_only: None,
+) -> None:
+    line_count = 4096
+    line = "x" * 100
+    expected_bytes = line_count * (len(line) + 1)
+    worker = _protocol_worker(
+        f"[(print('x' * {len(line)}, flush=True)) for _ in range({line_count})]"
+    )
+    with pytest.raises(AssertionError, match="stdout collection failed with _WorkerOutputOverflow"):
+        _wait_worker(worker, timeout=5.0)
+    assert worker.stdout_bytes == expected_bytes
+    assert len(worker.stdout_text.encode("utf-8")) <= _WORKER_OUTPUT_MAX_BYTES
+    _assert_worker_threads_stopped(worker)
+
+
+def _exited_worker_with_streams(
+    stdout_stream: _ReadableTextStream,
+    stderr_stream: _ReadableTextStream,
+) -> _MigrationWorker:
+    process = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    assert process.wait(timeout=3.0) == 0
+    worker = _MigrationWorker(process=process)
+    _start_worker_streams(
+        worker,
+        stdout_stream=stdout_stream,
+        stderr_stream=stderr_stream,
+    )
+    return worker
+
+
+def test_worker_cleanup_timeout_closes_blocking_streams_and_stops_all_threads(
+    worker_protocol_only: None,
+) -> None:
+    stdout_stream = _BlockingStream()
+    stderr_stream = _BlockingStream()
+    worker = _exited_worker_with_streams(stdout_stream, stderr_stream)
+
+    with pytest.raises(
+        AssertionError, match="stdout collection failed with TimeoutError"
+    ) as caught:
+        _drain_worker(worker, deadline=time.monotonic() + 0.01)
+
+    assert caught.value.__cause__ is not None
+    assert "collector did not reach EOF before deadline" in str(caught.value.__cause__)
+    assert stdout_stream.closed
+    assert stderr_stream.closed
+    _assert_worker_threads_stopped(worker)
+
+
+def test_worker_cleanup_error_closes_other_blocking_stream_and_stops_all_threads(
+    worker_protocol_only: None,
+) -> None:
+    stdout_stream = _FailingStream()
+    stderr_stream = _BlockingStream()
+    worker = _exited_worker_with_streams(stdout_stream, stderr_stream)
+
+    with pytest.raises(AssertionError, match="stdout collection failed with OSError"):
+        _drain_worker(worker, deadline=time.monotonic() + 0.01)
+
+    assert stderr_stream.closed
     _assert_worker_threads_stopped(worker)
 
 
