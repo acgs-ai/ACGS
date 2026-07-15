@@ -36,6 +36,10 @@ The drill:
 - verifies canonical manifest shape, path containment, artifact hashes, audit
   chains, and `pg_restore --list` readability before inspecting or mutating a
   restore target;
+- bounds each database fingerprint capture to 100,000 rows per table, 1 MiB of
+  canonical bytes per row, 64 MiB of canonical bytes per table, and 128 MiB of
+  canonical bytes across the capture; rows are requested from SQLAlchemy in
+  fixed batches of 128 and the limits cannot be raised by CLI or configuration;
 - restores only to a separately and explicitly named empty PostgreSQL database
   and an absent or empty audit directory;
 - holds the same PostgreSQL advisory-lock identity used by canonical migrations,
@@ -129,8 +133,11 @@ disposable target only through the operator-approved database lifecycle.
 - This is not PITR, continuous backup, object retention, independent witnessing,
   a backup scheduler, production restore automation, or production DR proof.
 - Table fingerprints are computed by reading and sorting canonicalized rows in
-  memory. This is intentionally bounded to a local disposable beta drill, not a
-  large-production-database backup strategy.
+  memory inside the fixed envelope above. A database driver must materialize
+  one raw row before its canonical 1 MiB limit can be checked; no raw rows are
+  spilled to disk, but a single oversized source value can temporarily exceed
+  that canonical bound. This is a bounded beta-scale drill, not an
+  unbounded-memory production backup path.
 - PostgreSQL archive portability still depends on supported `pg_dump` and
   `pg_restore` versions and extensions outside this package's scope.
 - Database restoration is transactional, but database restore and audit

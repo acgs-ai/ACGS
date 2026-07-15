@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.decision import Decision, DecisionRecord
 from sqlalchemy.engine import make_url
@@ -427,6 +428,186 @@ def test_connection_database_identity_is_bound_before_state_use() -> None:
         recovery._assert_connection_database(  # type: ignore[arg-type]
             WrongDatabaseConnection(), "expected_database"
         )
+
+
+def test_fingerprint_beta_envelope_constants_are_fixed() -> None:
+    assert recovery.FINGERPRINT_MAX_ROWS_PER_TABLE == 100_000
+    assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW == 1 * 1024 * 1024
+    assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE == 64 * 1024 * 1024
+    assert recovery.FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE == 128 * 1024 * 1024
+    assert recovery.FINGERPRINT_FETCH_BATCH_SIZE == 128
+
+
+def test_manifest_v1_fingerprint_golden_preserves_canonical_byte_sort(
+    tmp_path: Path,
+) -> None:
+    budget = recovery._FingerprintCaptureBudget()
+    fingerprint = recovery._fingerprint_canonical_rows(
+        iter(
+            [
+                {"id": "1", "aaa": "z"},
+                {"id": "2", "aaa": "a"},
+            ]
+        ),
+        budget,
+    )
+
+    assert fingerprint == {
+        "row_count": 2,
+        "rows_sha256": "3c351d0d3de75ed523dc95b1903011306281aeca202cd7b7d792cbba042eab3c",
+    }
+    assert budget.canonical_bytes == 42
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fingerprint_row_count_accepts_exact_limit_and_refuses_one_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(recovery, "FINGERPRINT_MAX_ROWS_PER_TABLE", 2)
+    budget = recovery._FingerprintCaptureBudget()
+    assert (
+        recovery._fingerprint_canonical_rows(iter([{"value": "x"}, {"value": "x"}]), budget)[
+            "row_count"
+        ]
+        == 2
+    )
+
+    with pytest.raises(RecoveryRefused) as refused:
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "x"}, {"value": "x"}, {"value": "x"}]),
+            recovery._FingerprintCaptureBudget(),
+        )
+    assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
+
+
+def test_fingerprint_row_bytes_accept_exact_limit_and_refuse_one_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(recovery, "FINGERPRINT_MAX_CANONICAL_BYTES_PER_ROW", 14)
+    assert (
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "x"}]), recovery._FingerprintCaptureBudget()
+        )["row_count"]
+        == 1
+    )
+
+    with pytest.raises(RecoveryRefused) as refused:
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "xx"}]), recovery._FingerprintCaptureBudget()
+        )
+    assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
+
+
+def test_fingerprint_table_bytes_accept_exact_limit_and_refuse_one_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(recovery, "FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE", 28)
+    assert (
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "x"}, {"value": "x"}]),
+            recovery._FingerprintCaptureBudget(),
+        )["row_count"]
+        == 2
+    )
+
+    with pytest.raises(RecoveryRefused) as refused:
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "x"}, {"value": "xx"}]),
+            recovery._FingerprintCaptureBudget(),
+        )
+    assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
+
+
+def test_fingerprint_capture_bytes_accept_exact_limit_and_refuse_one_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(recovery, "FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE", 28)
+    exact_budget = recovery._FingerprintCaptureBudget()
+    recovery._fingerprint_canonical_rows(iter([{"value": "x"}]), exact_budget)
+    recovery._fingerprint_canonical_rows(iter([{"value": "x"}]), exact_budget)
+    assert exact_budget.canonical_bytes == 28
+
+    over_budget = recovery._FingerprintCaptureBudget()
+    recovery._fingerprint_canonical_rows(iter([{"value": "x"}]), over_budget)
+    with pytest.raises(RecoveryRefused) as refused:
+        recovery._fingerprint_canonical_rows(iter([{"value": "xx"}]), over_budget)
+    assert str(refused.value) == recovery._FINGERPRINT_ENVELOPE_REFUSAL
+
+
+def test_table_rows_use_statement_scoped_fixed_streaming_options() -> None:
+    class Result:
+        def mappings(self) -> Iterator[dict[str, str]]:
+            return iter([{"id": "one"}])
+
+    class StreamingConnection:
+        statement: Any = None
+
+        def execute(self, statement: object) -> Result:
+            self.statement = statement
+            return Result()
+
+    connection = StreamingConnection()
+    table = sa.table("example", sa.column("id"))
+
+    assert list(recovery._stream_table_rows(connection, table)) == [{"id": "one"}]  # type: ignore[arg-type]
+    assert connection.statement.get_execution_options() == {
+        "stream_results": True,
+        "yield_per": 128,
+        "max_row_buffer": 128,
+    }
+
+
+@pytest.mark.parametrize("phase", ["before", "snapshot", "after"])
+def test_fingerprint_envelope_refusal_never_publishes_and_cleans_staging(
+    phase: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    monkeypatch.setattr(recovery, "FINGERPRINT_MAX_ROWS_PER_TABLE", 0)
+    url_captures = 0
+
+    def refuse_from_envelope() -> None:
+        recovery._fingerprint_canonical_rows(
+            iter([{"value": "never serialized"}]),
+            recovery._FingerprintCaptureBudget(),
+        )
+
+    def capture_url(_url: str) -> DatabaseState:
+        nonlocal url_captures
+        url_captures += 1
+        if phase == "before" or (phase == "after" and url_captures == 2):
+            refuse_from_envelope()
+        return _state()
+
+    def capture_snapshot(_connection: object, **_kwargs: object) -> DatabaseState:
+        if phase == "snapshot":
+            refuse_from_envelope()
+        return _state()
+
+    monkeypatch.setattr(recovery, "_capture_database_state_url", capture_url)
+    monkeypatch.setattr(recovery, "_capture_database_state", capture_snapshot)
+    commands: list[str] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        commands.append(command[0])
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    with pytest.raises(RecoveryRefused, match=recovery._FINGERPRINT_ENVELOPE_REFUSAL):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=output,
+            runner=runner,
+        )
+
+    assert not output.exists()
+    assert list(tmp_path.glob(".bundle.staging-*")) == []
+    assert commands == ([] if phase in {"before", "snapshot"} else ["pg_dump", "pg_restore"])
 
 
 def test_create_fsyncs_artifacts_and_parent_in_durable_publish_order(
