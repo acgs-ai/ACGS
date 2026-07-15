@@ -232,26 +232,86 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/MIGRATION_RECOVERY.md",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
         "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/_postgresql_migration_worker.py",
+        "packages/acgs-control-plane/tests/test_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        ".github/workflows/python-acgs-control-plane.yml",
+        "requirements/saas-beta/cp-test.lock",
     } <= set(g101["likely_interfaces_files"])
     assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
-    assert "four disposable PostgreSQL 17.10-bookworm tests" in g101["evidence_artifact"]
+    assert "PR #324 remains the G101 anchor" in g101["evidence_artifact"]
     assert "G103 tenant database isolation" in g101["evidence_artifact"]
+    expected_increments = {
+        329: "beta/p1-g101-postgres-ci",
+        330: "beta/p1-g101-migration-recovery",
+        331: "beta/p1-g101-multiprocess-migration-coordination",
+        332: "beta/p1-g101-migration-operator-cli",
+    }
+    expected_proof_and_limits = {
+        329: ("workflow definition parses locally", "CI-backed"),
+        330: ("manifest-bound local recovery artifact", "Production backup"),
+        331: ("Independent local processes", "Cross-host coordination"),
+        332: ("status/upgrade CLI fails closed", "Application startup"),
+    }
+    increments = {item["pr"]: item for item in g101["local_evidence_increments"]}
+    assert set(increments) == set(expected_increments)
+    for pr, branch in expected_increments.items():
+        increment = increments[pr]
+        assert increment["branch"] == branch
+        assert increment["state"] == "open_draft"
+        assert increment["merged"] is False
+        assert increment["review_state"] == "independently_reviewed"
+        assert increment["evidence_state"] == "local_verified"
+        assert increment["ci_backed"] is False
+        assert increment["proves"]
+        assert increment["does_not_prove"]
+        proof, limit = expected_proof_and_limits[pr]
+        assert proof in " ".join(increment["proves"])
+        assert limit in " ".join(increment["does_not_prove"])
+
+    remote_ci = g101["remote_ci"]
+    assert remote_ci == {
+        "state": "externally_blocked",
+        "ci_backed": False,
+        "annotation": (
+            "The job was not started because your account is locked due to a billing issue."
+        ),
+        "observed_run": {
+            "id": 29393469672,
+            "workflow": "Codex Code Review",
+            "job": "codex-review",
+            "steps_started": 0,
+        },
+        "impact": (
+            "Draft PRs #329-#332 remain current-local evidence only; no remote run can "
+            "promote them to CI-backed or accepted evidence."
+        ),
+    }
     for gap in (
         "#308 startup integration",
-        "CI-backed PostgreSQL migration",
-        "multi-instance migration",
-        "migration backup/restore",
-        "forward-only rollback",
+        "open draft and unmerged",
+        "no increment is CI-backed",
+        "production backup/PITR",
+        "multi-host coordination",
+        "database failover",
     ):
         assert gap in g101["blocker"]
     for tenant_isolation_gap in ("RLS", "schema/search-path", "role hardening"):
         assert tenant_isolation_gap not in g101["blocker"]
     assert "G103 after G101 and G102 complete" in g101["blocker"]
-    assert "draft PR" in g101["next_safe_action"]
-    assert "G103 owns tenant database isolation after G101 and G102 complete" in g101["next_safe_action"]
+    assert "Do not start G102" in g101["next_safe_action"]
+    assert (
+        "G103 owns tenant database isolation after G101 and G102 complete"
+        in g101["next_safe_action"]
+    )
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
@@ -265,11 +325,11 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "composite constraints",
         "RLS",
         "schema/search-path",
-        "CI-backed PostgreSQL",
-        "multi-instance",
-        "backup/restore",
-        "forward-only rollback",
+        "not CI-backed",
+        "production backup/PITR",
+        "multi-host/failover/rolling-upgrade",
         "API/policy/backfill",
+        "Do not start G102",
     ):
         assert gap in am_005
     assert "this is not completed Phase-1 acceptance" in matrix

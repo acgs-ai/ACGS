@@ -577,35 +577,136 @@
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/MIGRATION_RECOVERY.md",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
-        "packages/acgs-control-plane/tests/test_postgresql_migrations.py"
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/_postgresql_migration_worker.py",
+        "packages/acgs-control-plane/tests/test_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        ".github/workflows/python-acgs-control-plane.yml",
+        "requirements/saas-beta/cp-test.lock"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Current-local verification retains the SQLite migration-core suite and adds disposable PostgreSQL 17.10-bookworm evidence for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, injected atomic rollback and retry, and the cross-organization parent constraint."
+        "Current-local verification retains the SQLite migration-core suite and adds disposable PostgreSQL 17.10-bookworm evidence for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, injected atomic rollback and retry, and the cross-organization parent constraint.",
+        "PR #329 statically validates a pinned PostgreSQL 17.10 CI service lane and its exact hash-locked G101 migration command; the same targeted tests pass locally against disposable PostgreSQL.",
+        "PR #330 locally creates, verifies, restores, and republishes a manifest-bound migration recovery artifact into an explicitly empty disposable PostgreSQL target.",
+        "PR #331 locally proves independent-process advisory-lock contention, zero observer-visible mutation before commit, real SIGKILL rollback, lock release, and fresh-process retry on disposable PostgreSQL 17.10.",
+        "PR #332 locally proves a fail-closed status/upgrade operator CLI with exact database/schema binding, explicit forward-only acknowledgement, secret-safe output, and PostgreSQL search-path/function-hijack resistance."
       ],
       "forbidden_side_effect_negative_tests": [
-        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry."
+        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry.",
+        "PR #330 corrupt, symlinked, traversal-bearing, wrong-target, nonempty-target, and failed-restore inputs do not publish a recovered audit artifact or leave a partial restored database.",
+        "PR #331 lock contenders mutate zero schema/version state, and a SIGKILL after real Alembic DDL leaves zero committed objects before a clean retry.",
+        "PR #332 rejects missing acknowledgement, argument overrides, wrong database/schema bindings, and PostgreSQL function/search-path hijacks before migration mutation."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
-        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run python -m pytest tests/test_migration_recovery.py tests/test_migration_cli.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py tests/test_postgresql_migration_recovery.py tests/test_postgresql_migration_cli.py --import-mode=importlib -q",
+        "cd .github/workflows && actionlint python-acgs-control-plane.yml",
         "cd packages/acgs-control-plane && uv run ruff check .",
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "Independently reviewed, current-local migration-core record: SQLite coverage plus four disposable PostgreSQL 17.10-bookworm tests for a nonblocking transaction-level advisory lock, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It is not CI-backed PostgreSQL migration, recovery, G103 tenant database isolation, or accepted Phase-1 evidence.",
+      "evidence_artifact": "PR #324 remains the G101 anchor. Independently reviewed, current-local, unmerged increments #329-#332 add a statically validated CI lane, a disposable recovery drill, independent-process coordination/SIGKILL rollback evidence, and a fail-closed operator CLI. None is CI-backed or accepted/merged evidence, and none establishes #308 startup integration, production recovery, multi-host failover, G103 tenant database isolation, or completed Phase-1 acceptance.",
       "branch": "beta/p1-g101-postgres-advisory-lock",
       "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
       "pr": 324,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
-      "blocker": "Deliberately partial migration/core record: #308 startup integration remains unresolved; CI-backed PostgreSQL migration coverage and full multi-instance migration coordination remain unimplemented or unverified; migration backup/restore and a forward-only rollback runbook remain incomplete. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
-      "next_safe_action": "Carry the isolated current-local migration core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and add CI-backed PostgreSQL migration and multi-instance coordination coverage plus migration backup/restore and forward-only rollback operations evidence. G103 owns tenant database isolation after G101 and G102 complete.",
+      "local_evidence_increments": [
+        {
+          "pr": 329,
+          "branch": "beta/p1-g101-postgres-ci",
+          "state": "open_draft",
+          "merged": false,
+          "review_state": "independently_reviewed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "proves": [
+            "The pinned PostgreSQL 17.10 workflow definition parses locally and encodes the hash-locked G101 migration test lane.",
+            "The targeted migration suite passes locally against disposable PostgreSQL 17.10."
+          ],
+          "does_not_prove": [
+            "GitHub Actions started or completed the PostgreSQL migration job.",
+            "The G101 migration evidence is CI-backed."
+          ]
+        },
+        {
+          "pr": 330,
+          "branch": "beta/p1-g101-migration-recovery",
+          "state": "open_draft",
+          "merged": false,
+          "review_state": "independently_reviewed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "proves": [
+            "A manifest-bound local recovery artifact can be created, verified, and restored into an explicitly empty disposable PostgreSQL target.",
+            "Injected late restore failure rolls back database changes and publishes no recovered audit artifact."
+          ],
+          "does_not_prove": [
+            "Production backup, PITR, object-retention, managed-database, or multi-host disaster recovery.",
+            "Atomic database/filesystem snapshots or production recovery objectives."
+          ]
+        },
+        {
+          "pr": 331,
+          "branch": "beta/p1-g101-multiprocess-migration-coordination",
+          "state": "open_draft",
+          "merged": false,
+          "review_state": "independently_reviewed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "proves": [
+            "Independent local processes contend on the canonical PostgreSQL advisory lock without schema/version mutation by the loser.",
+            "A real SIGKILL after Alembic DDL rolls back the transaction, releases the lock, and permits a fresh-process retry."
+          ],
+          "does_not_prove": [
+            "Cross-host coordination, network-partition behavior, database failover, or rolling-upgrade safety.",
+            "Remote CI execution of the multiprocess evidence."
+          ]
+        },
+        {
+          "pr": 332,
+          "branch": "beta/p1-g101-migration-operator-cli",
+          "state": "open_draft",
+          "merged": false,
+          "review_state": "independently_reviewed",
+          "evidence_state": "local_verified",
+          "ci_backed": false,
+          "proves": [
+            "The local status/upgrade CLI fails closed on wrong database/schema binding and requires explicit forward-only acknowledgement.",
+            "Local tests cover secret-safe output, argument-override denial, and PostgreSQL search-path/function-hijack resistance."
+          ],
+          "does_not_prove": [
+            "Application startup invokes the canonical migration path without create_all.",
+            "A production rolling upgrade, rollback, or disaster-recovery procedure has executed."
+          ]
+        }
+      ],
+      "remote_ci": {
+        "state": "externally_blocked",
+        "ci_backed": false,
+        "annotation": "The job was not started because your account is locked due to a billing issue.",
+        "observed_run": {
+          "id": 29393469672,
+          "workflow": "Codex Code Review",
+          "job": "codex-review",
+          "steps_started": 0
+        },
+        "impact": "Draft PRs #329-#332 remain current-local evidence only; no remote run can promote them to CI-backed or accepted evidence."
+      },
+      "blocker": "Deliberately partial G101 record: anchor PR #324 and increments #329-#332 are open draft and unmerged; #308 startup integration remains open and unresolved. Remote CI is externally blocked before any step by the exact annotation 'The job was not started because your account is locked due to a billing issue.', so no increment is CI-backed. Recovery and multiprocess evidence remain local/disposable and do not establish production backup/PITR, multi-host coordination, network partition, database failover, or rolling-upgrade safety. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
+      "next_safe_action": "Resolve the external GitHub account billing lock, run the exact PostgreSQL CI evidence, and review/merge the G101 increments in dependency order without restoring create_all; then integrate and verify #308 startup behavior and close the remaining production recovery and multi-host/failover evidence gaps before completing G101. Do not start G102. G103 owns tenant database isolation after G101 and G102 complete.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
