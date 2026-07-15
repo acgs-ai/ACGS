@@ -87,6 +87,14 @@ class MigrationLockUnavailable(MigrationPreflightError):
     """The official PostgreSQL migration lock is held by another operator."""
 
 
+class DatabaseIdentityMismatch(MigrationPreflightError):
+    """The connected PostgreSQL database does not match the operator expectation."""
+
+
+class UnsupportedMigrationDialect(MigrationPreflightError):
+    """An identity-bound operator action targeted a non-PostgreSQL database."""
+
+
 @dataclass(frozen=True)
 class SchemaPreflight:
     """A narrow report suitable for operator logs without leaking row data."""
@@ -295,12 +303,23 @@ def migration_config(database_url: str) -> Config:
     return config
 
 
-def inspect_schema(database_url: str) -> SchemaPreflight:
-    """Classify a database without changing its tables or migration version."""
+def inspect_schema(database_url: str, *, expected_database: str | None = None) -> SchemaPreflight:
+    """Classify a database without mutation, optionally binding PostgreSQL identity.
+
+    Existing callers may omit ``expected_database`` and retain the original
+    dialect-neutral inspection behavior. Operator-facing callers provide it so
+    PostgreSQL verifies ``current_database()`` on the same live connection and
+    transaction used for schema inspection.
+    """
     engine = make_engine(database_url)
     try:
         with engine.connect() as connection:
-            return inspect_connection(connection)
+            if expected_database is None:
+                return inspect_connection(connection)
+            _require_postgresql_dialect(connection)
+            with connection.begin():
+                _assert_expected_postgresql_database(connection, expected_database)
+                return inspect_connection(connection)
     finally:
         engine.dispose()
 
@@ -397,16 +416,23 @@ def scope_migration_resume_state(connection: Connection) -> ScopeMigrationResume
     raise MigrationPreflightError(msg)
 
 
-def upgrade_database(database_url: str) -> MigrationResult:
+def upgrade_database(database_url: str, *, expected_database: str | None = None) -> MigrationResult:
     """Run the official Alembic path only after a fail-closed schema check.
 
     Exact legacy-v0 databases are stamped at revision ``0001`` *only after*
     their tables, columns, constraints, and indexes match the frozen schema.
     A partial or unknown database raises before Alembic can create its version
-    table.  Existing receipt/export rows are not read, rewritten, or scoped.
+    table. Existing receipt/export rows are not read, rewritten, or scoped.
+
+    Existing callers may omit ``expected_database``. Operator-facing callers
+    provide it to bind PostgreSQL ``current_database()`` inside the same
+    transaction that owns the advisory lock, preflight, and migration.
     """
-    if make_url(database_url).get_backend_name() == "postgresql":
-        return _upgrade_postgresql_database(database_url)
+    backend_name = make_url(database_url).get_backend_name()
+    if backend_name == "postgresql":
+        return _upgrade_postgresql_database(database_url, expected_database=expected_database)
+    if expected_database is not None:
+        raise UnsupportedMigrationDialect("Identity-bound migration operations require PostgreSQL.")
 
     # Keep the independently tested SQLite path intact.  SQLite's DDL
     # interruption/resume contract is intentionally different from the
@@ -452,7 +478,9 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
     return MigrationResult(before=before, after=after)
 
 
-def _upgrade_postgresql_database(database_url: str) -> MigrationResult:
+def _upgrade_postgresql_database(
+    database_url: str, *, expected_database: str | None = None
+) -> MigrationResult:
     """Migrate PostgreSQL under one shared, caller-owned transaction.
 
     The transaction-level advisory lock is taken before the authoritative
@@ -465,6 +493,8 @@ def _upgrade_postgresql_database(database_url: str) -> MigrationResult:
     try:
         with engine.connect() as connection:
             with connection.begin():
+                if expected_database is not None:
+                    _assert_expected_postgresql_database(connection, expected_database)
                 _acquire_postgresql_migration_lock(connection)
                 before = inspect_connection(connection)
                 if before.state is DatabaseSchemaState.UNKNOWN:
@@ -515,6 +545,21 @@ def _upgrade_postgresql_database(database_url: str) -> MigrationResult:
         return result
     finally:
         engine.dispose()
+
+
+def _require_postgresql_dialect(connection: Connection) -> None:
+    if connection.dialect.name != "postgresql":
+        raise UnsupportedMigrationDialect("Identity-bound migration operations require PostgreSQL.")
+
+
+def _assert_expected_postgresql_database(connection: Connection, expected_database: str) -> None:
+    """Bind an operator action to the live PostgreSQL database identity."""
+    _require_postgresql_dialect(connection)
+    current_database = connection.scalar(sa.text("SELECT current_database()"))
+    if current_database != expected_database:
+        raise DatabaseIdentityMismatch(
+            "Connected PostgreSQL database does not match the operator expectation."
+        )
 
 
 def _acquire_postgresql_migration_lock(connection: Connection) -> None:
