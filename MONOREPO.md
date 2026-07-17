@@ -15,13 +15,13 @@ Parent-tracked packages (declared in `pyproject.toml` `[tool.uv.workspace]` or
 | Package | Tracking | Toolchain | Parent CI | Maintainer / notes |
 |---|---|---|---|---|
 | `acgi-ai/` | parent files | Node 20, pnpm 9.15.4, Vite 5, Tailwind 4, Biome | `.github/workflows/console.yml`, `marketing.yml` | Frontend — deploys to GCP Cloud Run via WIF; CSP rules in `acgi-ai/DEPLOY.md` §4–§7 |
-| `docs/archive/acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5 (archived) | none (archived) | Enterprise manager frontend — archived 2026-07-05, removed from pnpm workspace; rationale in `docs/archive/acgs-enterprise-ai-manager/ARCHIVED.md` |
-| `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**`; also hosts the Hermes/Phoenix host adapter (`governance/adapters/hermes/`, folded in from the retired `hermes_acgs_bundle/`) |
+| `acgs-enterprise-ai-manager/frontend/` | parent files | Vue 3, Vite 5, npm package metadata | TBD | Enterprise manager frontend — included in pnpm workspace so dependency installs and Turbo package discovery see it |
+| `acgs_governance_eval_mvp/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-eval-mvp.yml` | Eval MVP — path-filtered on `acgs_governance_eval_mvp/**` |
 | `acgs-cft-governance-pack/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-cft-pack.yml` | CFT governance pack — path-filtered |
-| `packages/acgs-control-plane/` | parent files | Python ≥3.11, FastAPI, SQLAlchemy 2 (PostgreSQL), pytest, ruff, mypy | `.github/workflows/python-acgs-control-plane.yml` (path-filtered) | Enterprise Governance Control Plane — multi-tenant receipt-gated management API over gove-zone (org model, agent/policy registries, receipt explorer, audit dashboard, compliance export, RBAC) |
-| `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Enhanced Agent Bus observability layer |
+| `hermes_acgs_bundle/` | parent files | Python ≥3.11, pytest | `.github/workflows/python-hermes-bundle.yml` | Hermes bundle integration — path-filtered |
+| `packages/agent-bus-analyzer/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-agent-bus-analyzer.yml` (path-filtered); also in root Makefile fan-out | Enhanced Agent Bus observability layer |
 | `packages/research-engine/` | parent files | Python ≥3.11, pytest, ruff, mypy `--strict` | `.github/workflows/python-research-engine.yml` (path-filtered); also in root Makefile fan-out (`lint-py`/`test-py`/`typecheck-py`) | `delve` — self-deepening research engine (fan-out research, citation-backed knowledge graph, adversarial verification); core has zero runtime deps, real backends are optional extras |
-| `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
+| `packages/gove-zone/` | parent files | Python ≥3.11, pytest, ruff | `.github/workflows/python-gove-zone.yml` (path-filtered); also in root Makefile fan-out | Governed runtime kernel — main receipt-gated execution membrane |
 | `automation/` | parent files | YAML + Python helpers | (covered by `python-other` umbrella when added) | Policies, proposals, workflows |
 
 `packages/ai-governance-research/` is parent-tracked but **not** a uv/pnpm
@@ -48,12 +48,11 @@ Registered as submodules — parent pins each at a specific SHA in
 submodule must be made from inside the package, then the parent bumps the
 pinned SHA in a follow-up parent commit.
 
-| Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Planned parent CI |
+| Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Parent CI |
 |---|---|---|---|---|
 | `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
-| `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
 ## Third-party `external/` submodules
 
@@ -83,7 +82,7 @@ into first-party packages, confirm the upstream license permits redistribution.
 |---|---|---|---|
 | Constitutional-hash drift | `.github/workflows/constitutional-hash.yml` | PR + push to `master` | Recomputes every `# Constitutional Hash:` marker against `docs/constitutional-hashes.lock`. Lock holds 201 markers post-Phase 2 — drilled from the now-visible submodules; 2 fixture-bearing files (`scripts/hardening_report.py`, `tests/test_verify_constitutional_hashes.py`) are in `SKIP_FILES` so synthetic markers don't pollute the inventory. |
 | Cloud Run console | `.github/workflows/console.yml` | path-filtered on `acgi-ai/**` | Lint + build + deploy of privileged console origin |
-| Vercel marketing | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build of public marketing origin |
+| Marketing verify | `.github/workflows/marketing.yml` | path-filtered on `acgi-ai/**` | Lint + build + readiness of public marketing origin (verify-only; deploy is in `marketing-cloudflare.yml`) |
 | iii governance lab static | `.github/workflows/iii-governance-lab-static.yml` | path-filtered on `experiments/iii-governance-lab/**`, its invariant test, and static workflow changes | Static contract checks only: Python compile, shell syntax, TypeScript typecheck, and pytest invariants; no live iii engine |
 
 ## Required Actions secrets
@@ -108,7 +107,7 @@ python3 scripts/hardening_report.py
 
 | File | Scope |
 |---|---|
-| `acgi-ai/PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
+| `PLAN.md` | Frontend completion plan for `acgi-ai/` only — does **not** cover monorepo unification |
 | `docs/PLAN-MONOREPO.md` | Multi-phase plan for unifying the workspace; 6 phases, 5 of 6 landed for parent-tracked surfaces |
 | `MONOREPO.md` (this file) | Read-only registry — the truthful map of what exists and what is gated where |
 
