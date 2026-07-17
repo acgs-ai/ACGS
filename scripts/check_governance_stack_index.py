@@ -21,12 +21,12 @@ REQUIRED_PATHS = (
     "acgs_governance_eval_mvp/",
     "acgi-ai/",
     "acgs-cft-governance-pack/",
-    "acgs_governance_eval_mvp/governance/adapters/hermes/",
+    "hermes_acgs_bundle/",
     "ca-legal-agent-skills/",
     "clinicalguard-privacy-hardening/",
     "packages/clinicalguard/",
     "ACGS/packages/legalguard/",
-    "docs/archive/acgs-enterprise-ai-manager/frontend/",
+    "acgs-enterprise-ai-manager/frontend/",
 )
 
 REQUIRED_CONCEPTS = (
@@ -108,7 +108,7 @@ def main() -> int:
 
     lowered = text.lower()
     for claim in FORBIDDEN_CLAIMS:
-        if claim in lowered:
+        if claim.lower() in lowered:
             failures.append(f"forbidden overclaim present: {claim}")
 
     if MAIN_TABLE_HEADER not in text:
