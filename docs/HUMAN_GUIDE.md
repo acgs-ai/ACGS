@@ -66,23 +66,28 @@ That receipt can be checked before execution and reviewed after incidents.
 
 ## Current maturity
 
-`gove-zone` is alpha (`0.1.0a1`). Implemented local capabilities include:
+`gove-zone` source metadata is `1.0.0rc1` / Beta, with candidate release
+reconciliation still required. Implemented local capabilities include:
 
 - policy-before-execution kernel;
 - Decision Receipt schema and validation;
 - receipt-gated executor;
 - actor/action/argument/policy/tenant/boundary/expiry binding;
 - tamper-evident JSONL audit chain;
-- replay helpers and optional raw-argument side store;
-- opt-in Ed25519 signing mode;
+- audit-only replay helpers and optional raw-argument side-store re-derivation;
+- explicit Ed25519 receipt issuance plus signature-required default gates;
 - local proof pack and demos;
 - adapter parsing for hook/MCP/function-call payload shapes.
 
 ## Current limitations
 
 - Local JSONL audit storage is not WORM/off-host durability.
-- Signing is opt-in; unsigned local mode is not a production signing claim.
-- No PKI, certificate chain, revocation, or managed key custody.
+- Issuance signs only with an explicit signer. Governed gates require a trusted
+  signature by default and fail before the side effect when the verifier is
+  missing; unsigned local mode requires an explicit development opt-out.
+- No managed PKI, certificate chain, key custody, automatic key distribution or
+  rotation, or global receipt/nonce revocation. An operator-supplied static list
+  can revoke configured receipt-signing key IDs; it is off by default.
 - No complete IAM/RBAC system.
 - No compliance certification or regulator approval.
 - Integration examples are local reference patterns, not certified framework adapters.
@@ -90,7 +95,8 @@ That receipt can be checked before execution and reviewed after incidents.
 
 ## How to evaluate the repo quickly
 
-Run:
+From the repository root, run these commands in Bash on Linux/macOS; on
+Windows, use WSL or Git Bash:
 
 ```bash
 tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
