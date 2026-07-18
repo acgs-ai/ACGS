@@ -2,8 +2,9 @@
 
 Short, citable answers about ACGS / gove-zone. Every answer traces to
 [`CLAIMS.md`](CLAIMS.md) (claim-to-evidence ledger and safe wording) and
-[`COMPARISON.md`](COMPARISON.md). Project status: alpha — `gove-zone` reports
-`0.1.0a1`.
+[`COMPARISON.md`](COMPARISON.md). Current `gove-zone` source metadata is
+`1.0.0rc1` with a Beta classifier; tag, PyPI publication, production, and
+certification status are separate claims.
 
 ## What is a Decision Receipt?
 
@@ -38,14 +39,16 @@ COMPARISON.md §"Audit logs"; CLAIMS.md — "Audit evidence is tamper-evident".)
 AGT is the structurally nearest comparison and a fair one: open-source (MIT),
 framework-agnostic across 15+ runtimes, explicitly fail-closed, with a SHA-256
 Merkle-chained audit log and external inclusion proofs — strong engineering and
-broader framework coverage than this alpha project today. The evidenced difference
+broader named-framework coverage than this project today. The evidenced difference
 is **receipt-centric vs audit-centric**: per AGT's own audit-and-compliance docs,
 its chain is built for forensics and compliance reporting after the fact, and it
 has no first-class **decision receipt** — no pre-execution, sealed, self-contained
 artifact, signed before the side effect fires, that a relying party outside the
-enforcement runtime can independently verify, and no receipt lifecycle (expiry /
-revocation / delegation). gove-zone's narrower bet is exactly that artifact. This
-is a contrast by evidence, not a knock — AGT and a receipt gate could even compose.
+enforcement runtime can independently verify, and no lifecycle for that artifact
+such as hash-bound expiry or static receipt-signing-key-ID revocation. gove-zone's
+current revocation control is operator-supplied, static, off by default, and
+key-scoped—not per-receipt revocation. This is a contrast by evidence, not a knock
+— AGT and a receipt gate could even compose.
 *(Source: COMPARISON.md:61–77.)*
 
 ## Does gove-zone replace my agent framework, sandbox, or IAM?
@@ -60,8 +63,9 @@ sandboxing/content moderation" rows: "not claimed".)*
 
 ## Is gove-zone production-ready?
 
-No — gove-zone is **alpha** (it reports `0.1.0a1`) and is **not** certified.
-It is explicitly **not** production-certified, **not** compliance-certified, and
+No. The checked-in `1.0.0rc1` / Beta metadata is not production evidence, and
+the candidate history still requires release reconciliation. gove-zone is
+explicitly **not** production-certified, **not** compliance-certified, and
 **not** regulator-approved. The local proofs (proof pack, tamper-evident audit
 chain, test suite) are real engineering evidence, but they are not production
 deployment proof. For the authoritative non-claims and safe public wording, see
@@ -70,16 +74,21 @@ compliance-certified / regulator-approved" rows: all "not claimed".)*
 
 ## Is signing on by default?
 
-No. Verification is **unsigned by default**: only the local SHA-256 receipt hash is
-checked, which is recomputable under host compromise. Opt-in Ed25519 signing is
-implemented for local trusted-key verification — set `require_signature=True` with
-a trusted verifier for production-shaped use. There is no PKI, key custody, or
-revocation. *(Source: CLAIMS.md — "Verification is signed by default": not claimed;
-"Ed25519 signing mode exists".)*
+Signing is not automatic: receipt issuance is unsigned unless the caller
+supplies a signer. Separately, trusted signature verification is required by
+default at the governed executor boundary; it does not auto-generate or trust a
+key, and missing configuration fails closed. Unsigned development mode requires
+an explicit opt-out through `require_signature=False` or
+`GovernanceProfile.dev`. Ed25519 signing/verification and an operator-supplied
+static signing-key `RevocationList` are implemented, but the project does not
+provide PKI, key custody, automatic distribution/rotation, or global
+receipt/nonce revocation. *(Source: package `SECURITY.md`; receipt signing,
+revocation, and profile tests.)*
 
 ## How do I reproduce the proof?
 
-From the repository root:
+From the repository root, using Bash on Linux/macOS (or WSL/Git Bash on
+Windows):
 
 ```bash
 tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"

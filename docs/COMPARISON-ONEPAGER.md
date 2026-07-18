@@ -41,23 +41,26 @@ legitimacy** layer, not the whole safety stack. *(COMPARISON.md §"What to combi
 AGT is the structurally nearest comparison and deserves a fair one: open-source
 (MIT), framework-agnostic across 15+ runtimes, explicitly fail-closed, with a
 SHA-256 Merkle-chained audit log and external inclusion proofs — strong
-engineering, broader framework coverage than this alpha project today.
+engineering, and broader named-framework coverage than this project today.
 
 The evidenced difference is **receipt-centric vs audit-centric**. Per AGT's own
 audit-and-compliance docs, its chain is built for forensics and compliance
 reporting **after the fact**, and it has **no first-class decision receipt** — no
 pre-execution, sealed, self-contained artifact, signed before the side effect
 fires, that a relying party outside the enforcement runtime can independently
-verify before accepting the action, and no receipt lifecycle (expiry / revocation
-/ delegation). gove-zone's narrower bet is exactly that artifact: a Decision
-Receipt issued before execution and verifiable on its own (hash-bound, optionally
-Ed25519-signed), vendor-neutral by format — with cross-host reference validators
-still on the roadmap. **This is a contrast by evidence, not a knock: AGT and a
-receipt gate could even compose.** *(COMPARISON.md:61–77.)*
+verify before accepting the action, and no lifecycle for that artifact such as
+hash-bound expiry or static receipt-signing-key-ID revocation. gove-zone's
+narrower bet is exactly that artifact: a Decision Receipt issued before execution
+and verifiable on its own (hash-bound, optionally Ed25519-signed), vendor-neutral
+by format — with cross-host reference validators still on the roadmap. Its
+current revocation control is operator-supplied, static, off by default, and
+key-scoped—not per-receipt revocation. **This is a contrast by evidence, not a
+knock: AGT and a receipt gate could even compose.** *(COMPARISON.md:61–77.)*
 
 ## What we do not claim
 
-Alpha (`gove-zone` reports `0.1.0a1`). **Not** production-certified, **not**
+Current source metadata is `1.0.0rc1` / Beta; candidate release reconciliation
+is still required. **Not** production-certified, **not**
 compliance-certified, **not** regulator-approved; not a replacement for
 sandboxing, content moderation, or a complete IAM/PKI system. See
 [`CLAIMS.md`](CLAIMS.md) for the full claim-to-evidence ledger and safe wording.

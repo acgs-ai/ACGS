@@ -1,108 +1,125 @@
 # Decision Receipts
 
-> Status: foundational / Alpha (`0.1.0a1`). This document describes what is
-> implemented in code today and what is roadmap. gove-zone is **not**
-> production-, compliance-, or regulator-certified.
+> Status: `1.0.0rc1` / Beta source metadata, with candidate release
+> reconciliation still required. This document describes implemented behavior;
+> it is not release, deployment, or certification evidence.
 
-A **Decision Receipt** is the verifiable proof-of-decision artifact that gates
-every governed side effect. The core invariant is:
+A `DecisionReceipt` is the public proof-of-decision artifact used by the
+governed executor. It records every completed governance result, including
+`DENY` and `ESCALATE`; only a receipt carrying an executable verdict and
+passing the full governed gate may authorize a side effect.
 
 > **No valid Decision Receipt, no side effect.**
 
-A receipt is issued by the governance check *before* execution and verified by
-the executor *before* the side effect runs. If verification fails for any
-reason, execution is refused (fail-closed).
+## Lifecycle and ordering
 
-## Schema
+For an execution path integrated through the governed kernel:
 
-Implemented as the frozen dataclass `gove_zone.receipt.DecisionReceipt`
-(`src/gove_zone/receipt.py`). Serialization is canonical JSON (sorted keys),
-and the receipt is self-hashing.
+1. the caller proposes an action and externally authenticated actor context;
+2. policy produces `ALLOW`, `DENY`, `TRANSFORM`, or `ESCALATE`, with
+   policy failures converted to a fail-closed decision;
+3. the audit event is appended before execution;
+4. the receipt is issued and bound to that event;
+5. the governed executor validates the receipt against caller-supplied expected
+   context; and
+6. only a valid `ALLOW` or `TRANSFORM` reaches the side effect.
 
-| Field | Type | Meaning |
+If policy evaluation, audit append, issuance, or gate validation cannot
+complete, no side effect runs. Denied and escalated receipts remain audit
+evidence; they never authorize execution.
+
+## Implemented schema
+
+The frozen dataclass is implemented in
+`src/gove_zone/receipt.py::DecisionReceipt`. Canonical hashing covers every
+security-relevant field except the signature value itself; the signature, when
+present, signs `receipt_hash`.
+
+| Field group | Fields | Purpose |
 |---|---|---|
-| `receipt_id` | str | Unique id of this receipt (derived from the decision event id). |
-| `request_id` | str | Caller-supplied correlation id for the originating request. |
-| `tenant_id` | str | Tenant the receipt was issued for. Bound; cross-tenant use is refused. |
-| `actor` | str | Identity that proposed the action. |
-| `subject` | str | Optional subject/resource label. |
-| `proposed_action` | str | The tool/action name the decision authorizes. |
-| `declared_goal` | str | The high-level intent recorded for replay/debug. |
-| `execution_boundary` | str | Where the approved action may run (e.g. `local-sandbox`). Bound. |
-| `policy_bundle_id` | str | Id of the policy bundle that produced the decision. |
-| `policy_version` | str | Version label of the policy bundle. |
-| `policy_hash` | str | Content hash of the policy bundle (tamper-evidence for the policy). |
-| `decision` | str | One of `allow`, `deny`, `transform`, `escalate`. |
-| `matched_rules` | list[str] | Rule ids that fired. |
-| `constraints` | dict | Decision-scoped constraints (free-form). |
-| `transformations` | list[{field,value}] | For `transform`: the approved argument overrides. |
-| `approval_chain_summary` | dict | Summary of any approval chain (for `escalate`/manual approval). |
-| `timestamp` | str | ISO-8601 issuance time. |
-| `expires_at` | str | Optional ISO-8601 expiry. Empty = no expiry. Bound into the hash. |
-| `previous_audit_hash` | str | The audit chain head the decision linked from. |
-| `audit_event_hash` | str | The audit event hash the decision anchored to. |
-| `receipt_hash` | str | SHA-256 over all fields except `receipt_hash`/`signature`. |
-| `signature` | str | Signature placeholder (`unsigned_local` today — see Roadmap). |
+| Identity and correlation | `receipt_id`, `request_id`, `tenant_id` | Identify the receipt, originating request, and tenant. |
+| Proposed context | `actor`, `subject`, `proposed_action`, `declared_goal`, `execution_boundary` | Bind the proposer, action, intent, subject, and allowed execution boundary. |
+| Policy evidence | `policy_bundle_id`, `policy_version`, `policy_hash`, `matched_rules`, `constraints` | Identify the policy and evidence that produced the result. |
+| Decision | `decision`, `transformations`, `approval_chain_summary` | Record the four-way verdict and any approved transformation or approval summary. |
+| Authority separation | `authority`, `validator_id`, `validator_role` | Bind the distinct validator and authority grant; self-validation is rejected. |
+| Argument and time binding | `argument_hash`, `timestamp`, `expires_at` | Bind exact proposed arguments and optional expiry. |
+| Audit anchors | `previous_audit_hash`, `audit_event_hash` | Tie the receipt to the pre-execution audit chain. |
+| Integrity and signing | `receipt_hash`, `signature_algorithm`, `signing_key_id`, `signature` | Detect field changes and optionally authenticate the issuer with Ed25519. |
 
-`receipt_hash` is computed by `compute_hash()` over the canonical JSON of every
-field except `receipt_hash` and `signature`. Because `expires_at` and the
-policy/tenant/boundary fields are inside the hash, altering any of them without
-re-issuing is detected as tampering.
+An unsigned receipt uses `signature_algorithm="none"`, an empty
+`signing_key_id`, and `signature="unsigned_local"`. This is implemented
+development behavior, not the secure gate default.
 
-## Verification (fail-closed)
+## Issuance and signature defaults
 
-`DecisionReceipt.verify(...)` performs all of the following and raises
-`ReceiptValidationError` on the first failure (see `test_decision_receipt.py`):
+Issuance and verification have different defaults:
 
-1. Required fields present and non-empty.
-2. `receipt_hash` present and matches a recomputation (catches any tampering).
-3. `decision` is a known value.
-4. `decision` is not `deny` and not `escalate` (those never authorize execution).
-5. `tenant_id` matches the executor's expected tenant.
-6. `execution_boundary` matches the executor's expected boundary.
-7. `proposed_action` matches the expected action.
-8. `audit_event_hash` matches the expected anchor (when supplied).
-9. `transformations` are well-formed (`{field, value}` dicts, string fields).
-10. For `transform`: each transformed field matches the execution arguments.
-11. `policy_hash` matches the expected policy hash (when supplied).
-12. `policy_bundle_id` matches the expected bundle id (when supplied).
-13. `expires_at` (when set) is not in the past. The clock is injectable
-    (`now_iso=`) for deterministic testing; defaults to UTC wall time.
+- `DecisionReceipt.from_record(..., signer=None)` issues an unsigned receipt
+  unless the caller explicitly supplies a private-key signer.
+- The governed execution surfaces—`execute_with_receipt`,
+  `GovernedExecutor`, and `contracts.ReceiptVerifier`—require trusted
+  signature verification by default. They do not generate a key, sign a receipt,
+  or trust a verifier automatically; missing secure configuration fails closed.
+- Bare `DecisionReceipt.verify()` is a low-level primitive. Its
+  `require_signature` and expected-context parameters are optional, so it is
+  not a complete authorization boundary and should not be used by itself to
+  release a side effect.
 
-A `None` receipt is refused before verification by both the functional gate
-(`execute_with_receipt`) and the OO gate (`ReceiptVerifier`).
+A receipt that advertises a signature is always verified when presented to the
+gate. Missing verifiers, unknown keys, algorithm mismatches, revoked signing
+keys, and invalid signatures are hard failures.
 
-## Named contract vocabulary
+## Governed verification
 
-The typed contract layer (`gove_zone.contracts`) names the concepts the receipt
-flow uses:
+The governed wrappers supply and enforce the expected execution context. The
+gate rejects, among other cases:
 
-| Contract | Role |
-|---|---|
-| `ProposedAction` | The action proposed for governance (tool + args + goal), pre-decision. |
-| `ExecutionBoundary` | Typed alias for the boundary label string. |
-| `GovernanceRequest` | The full pre-execution check input (identity + action + boundary). Fails closed on missing tenant/request id. |
-| `PolicyBundleRef` | Stable reference to the bundle that governed a decision. |
-| `TenantPolicyBinding` | Tenant ↔ bundle pairing. |
-| `ReceiptVerifier` | Reusable typed wrapper over `DecisionReceipt.verify` (same gate). |
-| `AuditEvent` | Typed projection of one persisted audit event joined to its receipt. |
+- missing required fields or a changed `receipt_hash`;
+- `DENY`, `ESCALATE`, or an unknown decision;
+- actor/self-validation, tenant, boundary, action, argument, policy, validator,
+  authority, or audit-anchor mismatch;
+- malformed or incorrectly applied transformations;
+- an expired receipt, or a missing expiry when the strict profile requires one;
+- an unsigned receipt when a signature is required; and
+- a signed receipt whose key is unknown, revoked, or fails verification.
 
-These are additive: they do not replace the existing string-based fields or
-introduce a second enforcement path. The single fail-closed gate remains
-`DecisionReceipt.verify`.
+These guarantees apply only to paths wired through the governed executor with
+trusted expected context. The library cannot intercept a direct call to a raw
+tool that an integrator exposes outside the gate.
 
-## Roadmap (not implemented today)
+## Revocation scope
 
-- **Cryptographic signatures.** `signature` is a placeholder (`unsigned_local`).
-  Integrity rests on `receipt_hash` + the tamper-evident audit chain, not on a
-  public-key signature. Signed receipts are roadmap.
-- **Bundle lifecycle state.** Receipts reference a bundle id + hash; active /
-  stale / revoked lifecycle is not modeled (see `policy-bundles.md`).
-- **Distributed receipt storage / revocation lists.** Out of scope for the
-  local kernel.
+`gove_zone.revocation.RevocationList` is an implemented, operator-supplied
+static set of revoked receipt-signing key IDs. When passed to supported live
+gates and offline verifiers, a matching signed receipt is rejected before its
+signature is trusted, even if the verifier map still contains the key.
 
-## See also
+The list is off by default and intentionally narrow. The package does not
+provide PKI, key custody, automatic distribution or rotation, CRL fetching,
+global receipt/nonce revocation, or revocation for every workflow/plan key
+population.
 
-- `governed-execution.md` — how receipts gate execution end to end.
-- `audit-evidence.md` — the audit chain receipts anchor to.
-- `examples/receipt-gated-execution/demo.py` — runnable proof of every rule above.
+## Replay scope
+
+Receipt and replay evidence support two different levels:
+
+- **Audit-only verification** checks chain/event integrity and policy-version
+  consistency. Because the audit deliberately stores `argument_hash` rather
+  than raw arguments, it cannot re-run policy or claim that the original
+  decision was reproduced.
+- **Decision re-derivation** requires the opt-in raw-call
+  `ReplaySideStore` and the matching original policy bundle.
+  `replay_from_side_store` and `replay_bundle` cross-check retained arguments
+  against the audit hash before re-running policy. Missing or redacted side
+  records degrade honestly to the audit-only level.
+
+External expected event counts or final hashes are also required when detecting
+a consistently truncated audit suffix matters.
+
+## Related source documentation
+
+- `governed-execution.md` — end-to-end gate placement.
+- `audit-evidence.md` — audit ordering and chain limitations.
+- `../SECURITY.md` — threat model, signing, revocation, and deployment duties.
+- `../../../docs/DECISION_RECEIPT_SPEC.md` — repository-level public contract.
+- `../examples/receipt-gated-execution/demo.py` — runnable signed proof.
