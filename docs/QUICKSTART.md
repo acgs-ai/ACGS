@@ -13,9 +13,10 @@ steps:
 
 ## Prerequisites
 
-- Python 3.11+ (the workspace floor; `gove-zone`'s published floor is 3.10).
+- Python 3.11+ (the workspace and `gove-zone` package-metadata floor).
 - [`uv`](https://docs.astral.sh/uv/) installed.
 - A clone of this repository; run every command from the repository root.
+- Bash on Linux/macOS; on Windows, use WSL or Git Bash for the commands shown.
 
 ## Install (single block)
 
