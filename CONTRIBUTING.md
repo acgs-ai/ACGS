@@ -6,9 +6,10 @@ agent, MCP tool, workflow engine, or CI runner calls *before* it acts.
 
 > **Core invariant: No valid Decision Receipt, no side effect.**
 
-This is an alpha project (`gove-zone` reports `0.1.0.dev0`). The most useful
-contributions right now are the ones that make the core promise easier to
-*prove*, easier to *adopt*, and harder to *overclaim*.
+The current `gove-zone` source metadata is `1.0.0rc1` with a Beta classifier;
+that is not proof of a tag, PyPI publication, or production readiness. The most
+useful contributions make the core promise easier to *prove*, easier to
+*adopt*, and harder to *overclaim*.
 
 ---
 
@@ -74,7 +75,7 @@ unit test does not prove handler wiring.
 
 ## Commit & branch conventions
 
-- Work on a feature branch; never commit directly to `main`.
+- Work on a feature branch; never commit directly to `master`.
 - Keep parent-repo changes and nested-repo (submodule) changes in separate
   commits. Do not stage submodule pointer drift unless that *is* the task.
 
@@ -151,4 +152,5 @@ with a working bypass; contact the maintainer privately first.
 
 Open a GitHub Discussion or issue. For "where do I look first", the map is in
 [`README.md`](README.md) → "Where to look first" and [`AGENTS.md`](AGENTS.md).
-Hosted documentation: <https://acgs.ai/docs>.
+Project website: <https://acgs.ai/>. Repository documentation starts at
+[`docs/README.md`](docs/README.md).
