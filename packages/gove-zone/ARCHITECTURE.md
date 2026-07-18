@@ -1,7 +1,8 @@
 # gove-zone — Architecture
 
-> Status: foundational / Alpha (`0.1.0a1`). This describes the implemented
-> design. gove-zone is **not** production-, compliance-, or regulator-certified.
+> Status: `1.0.0rc1` / Beta source metadata, with candidate release
+> reconciliation still required. This describes the implemented design;
+> gove-zone is **not** production-, compliance-, or regulator-certified.
 
 ## What it is
 
@@ -22,21 +23,22 @@ the action only if the receipt verifies.
 | `decision.py` | `Decision` enum (`ALLOW/DENY/TRANSFORM/ESCALATE`), `DecisionRecord`, canonical-JSON + SHA-256 helpers. |
 | `policy.py` | `Policy` ABC + concrete policies (`RuleSetPolicy`, `BoundaryPolicy`, `CompositePolicy`, …). |
 | `kernel.py` | The dispatch loop: evaluate → record → execute/deny. Fail-closed on policy error, timeout, and audit failure. |
-| `audit.py` | `ChainHashAuditStore` — append-only, hash-chained, `fcntl`-locked JSONL audit log. |
+| `audit.py` | `ChainHashAuditStore` — append-oriented, hash-chained local JSONL with POSIX `fcntl` and Windows `msvcrt` locking paths. |
 | `receipt.py` | `DecisionReceipt` (public schema + `verify()`), `Receipt` (kernel proof-of-decision), and `Validator` (the MACI validating principal, distinct from the proposing `actor`). |
 | `executor.py` | `execute_with_receipt` / `GovernedExecutor` — the receipt-gated runner. |
+| `signing.py` / `revocation.py` | Optional Ed25519 issuance/verification and operator-supplied static receipt-signing-key revocation. |
 | `plan.py` | `WorkflowAuthorization` — the plan layer: a distinct plan validator's MACI authorization of a `WorkflowDAG` (`from_plan` fail-closes on plan self-validation; `compute_authorization_hash` binds `dag_hash`/proposer/validator/alg/key_id; optional Ed25519 signing). |
 | `workflow.py` | `WorkflowDAG` / `WorkflowStep` / `WorkflowStepReceipt` / `WorkflowExecutor` / `verify_workflow_replay` — the workflow layer: per-step governance + ledger-enforced ordering over a declared DAG, executed only under a required `WorkflowAuthorization`, composed on top of the single-action gate (core untouched). |
 | `tenant.py` | `TenantPolicyStore` + `evaluate_tenant_action` — tenant-isolated issuance. |
 | `contracts.py` | Typed named-contract vocabulary (additive): `GovernanceRequest`, `ProposedAction`, `ExecutionBoundary`, `PolicyBundleRef`, `TenantPolicyBinding`, `ReceiptVerifier`, `AuditEvent`. |
-| `replay.py` | Reconstruct + re-check decisions from the audit log. |
+| `replay.py` / `replay_store.py` | Audit-only chain/event verification; full decision re-derivation only when the opt-in raw-call side store and matching policy are supplied. |
 | `integration.py` | Runtime-hook adapters (Claude Code / MCP / OpenAI / LangChain payload shapes). |
 | `cli.py` / `api.py` | CLI (`replay/setup/doctor/gate/enable/policy/eval/smoke/proofpack`, `--version`) and HTTP surface. |
 | `errors.py` | Typed errors (`DeniedError`, `EscalateError`, `PolicyError`, `AuditError`, `ReceiptValidationError`). |
 
 ## Data flow
 
-```
+```text
 caller ── GovernanceRequest ──▶ evaluate_tenant_action ──▶ Kernel
                                       │                       │ policy.evaluate
                                       │                       ▼
@@ -95,16 +97,18 @@ section of `SECURITY.md` for the honest scope.
 ## Design boundaries
 
 **In the kernel:** tool-call interception, the four-verdict decision model,
-fail-closed execution, hash-chained audit, replayable receipts, tenant
+fail-closed execution, hash-chained audit, offline receipt/event verification,
+opt-in side-store decision re-derivation, optional Ed25519 issuance, a
+signature-required default gate, static signing-key revocation, tenant
 isolation, MACI role separation (validator ≠ proposer, enforced at issuance and
-at the gate — see `SECURITY.md`), a typed contract surface.
+at the gate — see `SECURITY.md`), and a typed contract surface.
 
 **Explicitly out (roadmap or separate packages):** YAML constitution loading,
-LangGraph/Phoenix/CrewAI integrations, circuit breakers, compliance frameworks,
-swarm/debate coordination, signed/authenticated receipts (today role separation
-is enforced-by-verifier and audited, not cryptographically unforgeable), bundle
-lifecycle state. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the monorepo for roadmap
-context.
+installed-framework conformance beyond the documented integration tiers,
+Phoenix/CrewAI adapters, circuit breakers, compliance frameworks, swarm/debate
+coordination, managed PKI/key custody/distribution/automatic rotation, global
+receipt/nonce revocation, and policy-bundle lifecycle state. See
+`docs/PLAN-GOVE-ZONE-KERNEL.md` in the monorepo for roadmap context.
 
 ## Verification
 

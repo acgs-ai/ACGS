@@ -2,20 +2,20 @@
   "disclaimer": "Self-assessment mapping, not a certification, attestation, or audit result. gove-zone is alpha / local-proof software. A mapping row means the receipt membrane produces evidence toward the requirement at the executor boundary; it does not mean adopting gove-zone makes a system compliant. Compliance is a property of an organization and its full control set. See docs/COMPLIANCE_CROSSWALK.md and docs/CLAIMS.md rows 27-33.",
   "files": {
     "README.md": {
-      "bytes": 4604,
-      "sha256": "8e038384a80bf9068b1e713a796ff6c11e207dd5d7a24a121bb93b397d168169"
+      "bytes": 4603,
+      "sha256": "fe2554520eb603ac65c16a0f058643e12e964fbd1b634391f4d91ef9f9da2d8c"
     },
     "frameworks/eu-ai-act-article-12.md": {
-      "bytes": 6310,
-      "sha256": "937d123dc33c62c625d46c07c73a92327be445e1928562a293a1a9e08a89e3ac"
+      "bytes": 6309,
+      "sha256": "ec308987da81808f23118f7def21d098d45b3f8608f811acafb827a11d1f0cfe"
     },
     "frameworks/iso-42001.md": {
-      "bytes": 5488,
-      "sha256": "9f1797d4f59948fc68131cb5fd017c9e45cc0b6712f55015e9766418aae91249"
+      "bytes": 5487,
+      "sha256": "57db3ce68443e1166a6d2c6b690aac7e32b9d99f278c85910bddcbeaa4ce9337"
     },
     "frameworks/soc2.md": {
-      "bytes": 6637,
-      "sha256": "7ed1bfc7ba1b77c245041453c455755f0d323a5b9648875e56b3bd8b6b127a76"
+      "bytes": 6636,
+      "sha256": "dedd4d654032f7832aa803adc49711a6e6fc85fd174f4abdfce2e4d511531a52"
     },
     "runtime-evidence/proofpack/audit-chain.json": {
       "bytes": 1944,

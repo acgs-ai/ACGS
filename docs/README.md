@@ -39,6 +39,20 @@ Core invariant: **No valid Decision Receipt, no side effect.**
 - [REVIEW_CHECKLIST](REVIEW_CHECKLIST.md)
 - [ADOPTION_GUIDE](ADOPTION_GUIDE.md)
 
+## Release and packaging
+
+- [gove-zone release readiness](gove-zone-pypi-readiness.md) — current
+  evidence, blockers, and external checks for the Python distribution.
+- [gove-zone release runbook](../packages/gove-zone/docs/RELEASING.md) —
+  human-gated preparation, tagging, publication, verification, and recovery.
+- [gove-zone changelog](../packages/gove-zone/CHANGELOG.md) — notable package
+  changes by version.
+- [gove-zone API stability](../packages/gove-zone/docs/API_STABILITY.md) —
+  SemVer surface and compatibility contract.
+
+The checked-in source version, a GitHub Release, a PyPI publication, and
+production deployment evidence are separate states. Verify each independently.
+
 ## Existing reference areas
 
 - `concepts/` — authority, decision receipts, evidence bundles, fail-closed enforcement, audit replay, tool boundaries.

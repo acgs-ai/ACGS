@@ -1,8 +1,9 @@
 # Security
 
-> Status: foundational / Alpha (`0.1.0a1`). gove-zone is **not** production-,
-> compliance-, or regulator-certified. This document states the security
-> boundary honestly — what is enforced and what is explicitly out of scope.
+> Status: `1.0.0rc1` / Beta source metadata, with candidate release
+> reconciliation still required. gove-zone is **not** production-, compliance-,
+> or regulator-certified. This document states what is enforced and what is
+> explicitly out of scope.
 
 ## The security property
 
@@ -10,9 +11,13 @@ gove-zone enforces one invariant:
 
 > **No valid Decision Receipt, no side effect.**
 
-Everything below is in service of that. The single enforcement gate is
-`DecisionReceipt.verify` (wrapped by `execute_with_receipt`, `GovernedExecutor`,
-and `ReceiptVerifier`). There is no second, weaker path.
+Everything below is in service of that. Governed execution converges on
+`DecisionReceipt.verify` through `execute_with_receipt`, `GovernedExecutor`, or
+`ReceiptVerifier`. This is a library boundary, not an unavoidable system
+interceptor: a direct raw-tool call bypasses it, and bare
+`DecisionReceipt.verify()` permits callers to omit expected-context checks.
+Side effects must therefore stay behind a governed wrapper with externally
+trusted expected context.
 
 ## Fail-closed by construction
 
@@ -20,8 +25,8 @@ Execution is refused — never silently allowed — on every one of:
 
 - no receipt, malformed receipt, or tampered receipt (`receipt_hash` mismatch);
 - a `DENY` or `ESCALATE` decision;
-- tenant mismatch, execution-boundary mismatch, action mismatch;
-- policy bundle id / policy hash mismatch;
+- a mismatch against any expected tenant, execution boundary, action, policy
+  bundle id, or policy hash supplied by the governed caller;
 - an expired receipt (`expires_at` in the past);
 - an `ALLOW` whose executed arguments do not hash-match the arguments the
   receipt was issued for, or a `TRANSFORM` whose executed arguments are not
@@ -37,13 +42,21 @@ In the issuing kernel: a policy that raises or times out becomes a `DENY`; an
 audit-append failure raises `AuditError`. No exception path resolves to "allow"
 (`kernel.py`, `test_fail_closed.py`, `test_fail_closed_gaps.py`).
 
+These statements describe the governed wrappers and the expectations they
+supply. The low-level `verify()` primitive does not infer omitted actor,
+argument, policy, tenant, or boundary expectations from a trusted external
+source.
+
 ## Tamper-evidence
 
 - Receipts are self-hashing; tenant, boundary, policy hash, and `expires_at` are
   bound into `receipt_hash`, so altering them without re-issuing is detected.
-- The audit log is an append-only hash chain; any edit, reorder, or truncation
-  fails `verify_chain()` (`test_audit_chain*`, `test_audit_chain_corruption.py`).
-- Concurrent audit appends are serialized with `fcntl.flock` + `fsync`.
+- The audit log is an append-oriented hash chain. In-place edits and reordering
+  fail `verify_chain()`; detecting suffix truncation requires an externally
+  retained event count or final hash (`test_audit_chain*`,
+  `test_audit_chain_corruption.py`).
+- Concurrent audit appends are serialized with platform locking (`fcntl` on
+  POSIX, `msvcrt` on Windows) plus `fsync`.
 
 ## Role separation (MACI)
 
@@ -79,13 +92,13 @@ no `expected_actor`; against that path, a forger who recomputes `receipt_hash`
 and sets `actor` to a phantom value while keeping the real proposer as
 `validator_id` is still not caught. Requiring the anchor relocates trust to the
 integrator: it does **not** manufacture an authenticated proposer identity the
-architecture lacks. Unsigned (dev-mode) proposer-binding is therefore only as strong
-as the integrator's external authentication of the caller; the actual
-cryptographic closure is **signed issuance** (`require_signature=True` + a
-trusted public-key verifier — see *Ed25519 receipt signing* below), which
-is the default production posture. The separation is enforced-by-verifier and
-audited; it is **not** cryptographically unforgeable under host compromise on the
-unsigned path.
+architecture lacks. Unsigned (dev-mode) proposer-binding is therefore only as
+strong as the integrator's external authentication of the caller; the actual
+cryptographic closure is **signed issuance with an explicit signer**, followed
+by a gate using `require_signature=True` and the corresponding trusted public-key
+verifier (see *Ed25519 receipt signing* below). The separation is
+enforced-by-verifier and audited; it is **not** cryptographically unforgeable
+under host compromise on the unsigned path.
 
 ## Argument binding
 
@@ -109,14 +122,18 @@ A receipt or policy bundle issued for one tenant cannot be used by another;
 missing tenant identity fails closed (`test_tenant_safety.py`). See
 `docs/policy-bundles.md`.
 
-## Ed25519 receipt signing (default in the production profile)
+## Ed25519 issuance and the default signature-required gate
 
-gove-zone signs Decision Receipts with asymmetric keys **by default**: the
-production profile — the secure default posture — requires a verified signature
-at the gate (``require_signature=True``). Signing closes the recomputed-receipt
-residual: anyone can verify a receipt with the public key; only the private-key
-holder can produce a valid signature, so a recomputed-hash forgery is
-cryptographically infeasible.
+Receipt issuance signs only when the caller explicitly supplies a private-key
+signer; `signer=None` produces an unsigned receipt. Separately, the production
+profile—the default governed-gate posture—requires a trusted signature at the
+gate (`require_signature=True`). It does not auto-generate a key, sign a
+receipt, or trust a verifier. Secure operation requires both configured signed
+issuance and the matching trusted verifier; missing configuration fails closed.
+
+When engaged end to end, signing closes the recomputed-receipt residual: anyone
+can verify a receipt with the public key, while only the private-key holder can
+produce a valid signature over `receipt_hash`.
 
 Select the posture explicitly with ``GovernanceProfile.production()`` (the
 default) or ``GovernanceProfile.dev()``, or via the ``GOVE_ZONE_PROFILE``
@@ -142,15 +159,15 @@ A receipt that advertises a signature (``signature_algorithm != "none"``) is
 **always** verified cryptographically — presenting it without a verifier is a
 hard rejection, regardless of ``require_signature``.
 
-**Dev mode is explicitly unsigned.** The dev profile
+**Dev mode permits unsigned receipts.** The dev profile
 (``GovernanceProfile.dev()`` / ``require_signature=False``) is the deliberate
 opt-out: without a ``signer`` at issuance and a ``verifier`` at the gate,
 receipts remain unsigned (``signature = "unsigned_local"``) and integrity rests
-on ``receipt_hash`` and the audit chain alone. Dev mode is a conscious choice,
-not a silent default — the secure production posture is what you get unless you
-ask for less.
+on ``receipt_hash`` and the audit chain alone. The default gate refuses that
+receipt; it does not silently upgrade or sign it.
 
 **Residuals not addressed by signing:**
+
 - **Private-key custody.** A compromised signing key lets an attacker issue
   valid-looking receipts. Key custody is the operator's responsibility.
 - **Key distribution / trust establishment.** There is no PKI, certificate chain,
@@ -195,6 +212,7 @@ under a valid per-step receipt bound to the approved plan. The per-run `ledger`
 predecessor-substitution.
 
 **Honest scope (residuals).**
+
 - Workflow chaining adds **no** cryptographic guarantee beyond the per-step
   receipts and their envelopes.
 - **Plan-level governance is the next layer up** (see "Plan-level governance"
@@ -256,6 +274,7 @@ minted under authorization A replayed under B) is rejected by (D); cross-plan
 authorization reuse by (B).
 
 **Honest scope (residuals).**
+
 - This adds **no** cryptographic guarantee beyond the authorization receipt and
   its signature. Unsigned authorizations are tamper-evident (hash) but forgeable
   by a party who can recompute the hash; **signing** (`ReceiptSigner`) is the
@@ -277,13 +296,15 @@ authorization reuse by (B).
 
 ## What gove-zone does NOT do (security non-goals today)
 
-- **No PKI or key lifecycle management.** Ed25519 signing is point-to-point
-  (issuer ↔ gate); there is no certificate authority, trust chain, or revocation
-  infrastructure. Key distribution and custody are the operator's responsibility.
+- **No managed PKI or key lifecycle management.** Ed25519 signing is
+  point-to-point (issuer ↔ gate). The operator-supplied static `RevocationList`
+  can reject receipt-signing keys, but there is no certificate authority, trust
+  chain, CRL fetch, automatic distribution, custody, or rotation service.
 - **No durable external audit sink.** The chain is local JSONL. WORM storage,
   SIEM shipping, and off-host append-only durability are roadmap.
-- **No bundle lifecycle / revocation.** No active/stale/revoked state, no
-  revocation lists.
+- **No policy-bundle lifecycle registry.** Bundles have no managed
+  active/stale/revoked state. The signing-key `RevocationList` is a distinct,
+  narrower control and does not provide bundle or global receipt revocation.
 - **No approval workflow.** `ESCALATE` blocks; it does not yet resolve into an
   authorization.
 - **No sandboxing of the side effect itself.** gove-zone decides *whether* and
@@ -296,6 +317,7 @@ authorization reuse by (B).
 
 ## Reporting
 
-This is alpha research software in a monorepo. Report suspected security issues
-through the repository's normal issue/security channel. Do not assume any
-deployment of gove-zone is production-hardened without independent review.
+This is candidate-stage research software in a monorepo. Report suspected
+security issues through the repository's normal issue/security channel. Do not
+assume any deployment of gove-zone is production-hardened without independent
+review.

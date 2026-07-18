@@ -69,7 +69,10 @@ def load_yaml(path: Path) -> Any:
 
 def dangerous_patterns(policy: dict[str, Any]) -> list[re.Pattern[str]]:
     patterns = []
-    for command in policy.get("dangerous_commands", DEFAULT_DANGEROUS_COMMANDS):
+    dangerous_cmds = policy.get("dangerous_commands")
+    if dangerous_cmds is None:
+        dangerous_cmds = DEFAULT_DANGEROUS_COMMANDS
+    for command in dangerous_cmds:
         command_text = str(command)
         if command_text == "curl | bash":
             patterns.append(re.compile(r"\bcurl\b.*\|\s*bash\b", re.IGNORECASE))
@@ -130,7 +133,12 @@ def validate_policy(policy: dict[str, Any]) -> list[str]:
     for key in ("hard_rules", "dangerous_commands", "defaults"):
         if key not in policy:
             errors.append(f"policy missing {key}")
-    defaults = policy.get("defaults", {})
+    defaults = policy.get("defaults")
+    if defaults is not None and not isinstance(defaults, dict):
+        errors.append("policy defaults must be a dictionary")
+        defaults = {}
+    elif defaults is None:
+        defaults = {}
     for key in ("network_calls", "background_daemon", "secret_access", "auto_merge", "auto_deploy"):
         if defaults.get(key) != "disabled":
             errors.append(f"policy default {key} must be disabled")

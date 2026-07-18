@@ -87,7 +87,7 @@ jobs:
           echo "${{ github.workspace }}/packages/acgs-lite/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install (dev extras)
-        run: uv pip install --python .venv/bin/python --no-config --editable '.[dev,mcp]'
+        run: uv pip install --python .venv/bin/python --no-config --no-sources --editable '.[dev,mcp]'
 
       - name: Lint
         run: make lint

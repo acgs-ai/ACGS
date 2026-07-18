@@ -12,7 +12,9 @@ Core invariant:
 
 ## Status
 
-Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as `DecisionReceipt`. This is alpha (`0.1.0a1`) and not a compliance certification.
+Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as
+`DecisionReceipt`. Current source metadata is `1.0.0rc1` / Beta, with release
+reconciliation still required; this is not a compliance certification.
 
 ## Schema
 
@@ -85,17 +87,29 @@ Evidence: `receipt.py`, `tests/test_maci_role_separation.py`.
 
 ## Signature behavior
 
-Default local mode is unsigned: `signature_algorithm="none"`, `signature="unsigned_local"`. This is for development/local proof. It is not a production signing claim.
+Low-level issuance is unsigned unless the caller supplies a signer:
+`signature_algorithm="none"`, `signature="unsigned_local"`. Governed execution
+gates separately require trusted signature verification by default. They do not
+create a key or trust a verifier automatically; without a configured trusted
+verifier, the governed path fails before the side effect. Unsigned operation is
+an explicit development opt-out, not a production signing claim.
 
-Opt-in signing uses Ed25519:
+Configured signed issuance uses Ed25519:
 
 - signer signs `receipt_hash` with a private key;
 - executor verifies with the trusted public key;
 - `require_signature=True` rejects unsigned receipts;
 - signed receipts presented without a verifier fail closed;
+- receipts signed by a key ID in an operator-supplied `RevocationList` fail
+  closed on supported live and offline verification paths; and
 - key id and algorithm are bound into `receipt_hash` to prevent downgrade.
 
-Evidence: `signing.py`, `tests/test_receipt_signing.py`.
+The static signing-key revocation list is off by default and deliberately
+narrow. It is not PKI, automatic distribution/rotation, per-receipt or nonce
+revocation, or coverage for every workflow/plan key population.
+
+Evidence: `signing.py`, `revocation.py`, `tests/test_receipt_signing.py`,
+`tests/test_revocation.py`.
 
 ## Hash behavior
 
@@ -111,22 +125,23 @@ Verifier rejects on the first failure:
 2. missing or mismatched `receipt_hash`;
 3. signed receipt without a configured verifier;
 4. invalid signature;
-5. unsigned receipt when signature is required;
-6. actor mismatch or self-validation;
-7. approval-chain summary disagreement;
-8. unknown decision;
-9. `deny` or `escalate` decision;
-10. tenant mismatch;
-11. execution-boundary mismatch;
-12. action mismatch;
-13. audit hash mismatch;
-14. malformed transformations;
-15. transform mismatch or extra/missing transformed args;
-16. allow argument mismatch;
-17. policy hash mismatch;
-18. policy bundle id mismatch;
-19. validator role or authority mismatch when required;
-20. expired or unparseable expiry.
+5. receipt-signing key ID present in a supplied static revocation list;
+6. unsigned receipt when signature is required;
+7. actor mismatch or self-validation;
+8. approval-chain summary disagreement;
+9. unknown decision;
+10. `deny` or `escalate` decision;
+11. tenant mismatch;
+12. execution-boundary mismatch;
+13. action mismatch;
+14. audit hash mismatch;
+15. malformed transformations;
+16. transform mismatch or extra/missing transformed args;
+17. allow argument mismatch;
+18. policy hash mismatch;
+19. policy bundle id mismatch;
+20. validator role or authority mismatch when required;
+21. expired or unparseable expiry.
 
 ## Invalid receipt cases
 
@@ -135,7 +150,8 @@ Verifier rejects on the first failure:
 - `DENY`/`ESCALATE`: no side effect.
 - Valid receipt for another tenant/action/actor/args/policy: no side effect.
 - Expired receipt: no side effect.
-- Signed receipt with unknown key or bad signature: no side effect.
+- Signed receipt with an unknown, revoked, or invalid key/signature: no side
+  effect.
 - Unsigned receipt when `require_signature=True`: no side effect.
 
 ## Minimal valid receipt example
@@ -197,5 +213,7 @@ must not authorize:
 - Store receipts with audit anchors; do not store only model text.
 - Always verify at the executor boundary, not only in a planner or prompt.
 - Pass `expected_actor`, `expected_action`, `expected_args`, tenant, boundary, and policy expectations from runtime context.
-- Use signing mode for production-adjacent pilots; do not promote unsigned local mode as production security.
+- Configure explicit signed issuance plus the matching trusted verifier for
+  production-adjacent pilots; do not promote unsigned local mode as production
+  security.
 - Keep direct tool implementations private behind the gate.

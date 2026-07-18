@@ -55,4 +55,3 @@ python3 compliance/engine.py validate
 - The `manifest.json` is an **unsigned** integrity index: it detects accidental corruption and casual edits, but a motivated forger who edits a framework sheet and recomputes its manifest entry is not stopped by the manifest alone. The cryptographic anchor is the receipt-hash binding + audit hash-chain inside the proof pack; signing the manifest is a follow-up.
 - Audit is local, append-only JSONL: tamper-evident, not tamper-proof. Retention, off-host/WORM durability, and custody (EU AI Act Art. 19 / 26(6)) are operator responsibilities.
 - This pack is regenerated, never hand-edited. See `compliance/COMPLIANCE_READINESS_REPORT.md`, `docs/COMPLIANCE_CROSSWALK.md`, and `docs/CLAIMS.md` rows 27-33 for the full standing limitations.
-
