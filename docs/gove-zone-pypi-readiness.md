@@ -3,8 +3,15 @@
 **Scope:** only the Python distribution in `packages/gove-zone/`.
 This is not a release report for the ACGS monorepo or `acgs-lite`.
 
-**Last reviewed:** 2026-07-17 against the then-current `master`.
-Refresh this document on the exact commit proposed for release.
+**Review baseline:** `master` at
+`941e398cb266b29b88325a58605a16008d2af63c` on 2026-07-17. The initial docs
+proposal was reviewed at `329b0d4dd5ec9a3ce7ccf46542e49cbd6b6345d8`;
+follow-up corrections are tracked in PR #344. Refresh every check on the exact
+commit proposed for release.
+
+Repository settings, PyPI project state, publisher ownership, and deployment
+protections were not independently verified during this repository-content
+review.
 
 This is an evidence-oriented checklist, not proof that PyPI publication,
 GitHub environment protection, a Trusted Publisher, or a production deployment
@@ -39,7 +46,7 @@ link posture are not yet evidenced as complete.
 | Field | Value | Source |
 |---|---|---|
 | Distribution | `gove-zone` | `pyproject.toml` |
-| Import package | `gove_zone` | wheel target / source tree |
+| Primary import package | `gove_zone` | wheel target / source tree |
 | Current source version | `1.0.0rc1` | `src/gove_zone/__init__.py` |
 | Version extraction | Dynamic Hatch version | `[tool.hatch.version]` |
 | Python | `>=3.11` | `project.requires-python` |
@@ -72,10 +79,18 @@ changes, including public API additions. Before tagging:
 
 The source and metadata say `1.0.0rc1` / Beta. Before this review, the root
 and package READMEs and multiple current docs still said `0.1.0a1` / Alpha.
-This documentation change aligns the two READMEs; complete the remaining
-current-doc inventory without rewriting historical evidence. Add a consistency
-test that derives the version, Python floor, classifier, and entry points from
-canonical metadata and rejects stale current-document values.
+This documentation change aligns the two READMEs and the directly linked
+contributor, quickstart, FAQ, roadmap, integration, API-stability, and release
+surfaces. Complete a repository-wide current-doc inventory without rewriting
+historical evidence. Add a consistency test that derives the version, Python
+floor, classifier, and entry points from canonical metadata and rejects stale
+current-document values.
+
+Known follow-up inventory includes `COMPARISON.md`, current strategy and
+design-partner material, and package examples that still embed older status
+wording. Classify each occurrence as current guidance or point-in-time evidence
+before changing it; do not bulk-rewrite archives, transcripts, or historical
+outputs.
 
 ### 3. Prove the external publication controls
 
@@ -125,7 +140,8 @@ tracker are inaccessible to the public.
 
 ## Preflight commands
 
-Run on a clean checkout of the exact approved candidate commit:
+Run on a clean checkout of the exact approved candidate commit. The block
+assumes Bash on Linux/macOS; on Windows, use WSL:
 
 ```bash
 cd packages/gove-zone
@@ -137,7 +153,7 @@ uv run --package gove-zone python -m pytest \
   packages/gove-zone/tests --import-mode=importlib -q
 uv run python -m pytest tests/docs --import-mode=importlib -q
 make lint-docs
-git diff --check
+git diff --check origin/master...HEAD
 ```
 
 Also inspect the built artifacts rather than trusting command exit codes alone:
@@ -153,6 +169,7 @@ Also inspect the built artifacts rather than trusting command exit codes alone:
 
 - Confirm the PyPI project exists or that the pending publisher is still valid
   and the name remains available; a pending publisher does not reserve a name.
+  If the project now exists, verify the intended owner controls it.
 - Confirm the intended version is not already present on PyPI.
 - Confirm the protected environment and tag rules through current GitHub
   settings or API evidence.
@@ -167,8 +184,13 @@ Also inspect the built artifacts rather than trusting command exit codes alone:
 A release is complete only after the steps in
 [`packages/gove-zone/docs/RELEASING.md`](../packages/gove-zone/docs/RELEASING.md)
 pass against PyPI: clean install from the public index, exact version assertion,
-smoke proof, artifact digest comparison, publish/build-attestation review,
+smoke proof, artifact digest comparison, per-file PyPI publish-attestation
+verification through the Integrity API, supported GitHub build-provenance review,
 Project-URL checks, and a GitHub Release tied to the same immutable tag.
+
+Use PyPI's [Integrity API](https://docs.pypi.org/api/integrity/) to retrieve the
+provenance object for each wheel and sdist; do not treat one file's attestation
+as covering the other.
 
 If a published version is defective, do not overwrite it. Preserve evidence,
 yank when appropriate, and publish a higher corrected version.
