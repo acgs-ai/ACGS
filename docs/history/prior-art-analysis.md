@@ -13,7 +13,7 @@ This document records the public, timestamped disclosures underlying ACGS and st
 
 It is a **defensive-publication record**, *not* an assertion of patentable priority. Its function is to (a) establish a public prior-art date so the disclosed mechanisms remain freely usable and cannot be enclosed by others, and (b) separate the defensible original synthesis from techniques that are already well known. Where a mechanism is standard practice, this document says so explicitly — disclaiming novelty where none exists is what makes the remaining claims credible.
 
-> If patent protection is ever a goal, note that a public enabling disclosure starts the clock: in the US the inventor’s grace period is 12 months from first disclosure; in absolute-novelty jurisdictions (EPO, CN, and most others) the disclosure is an immediate bar. The July 2025 disclosure below should therefore be treated as **prior art you have deliberately placed in the public domain**, not as a patent asset.
+> **Patent posture (time-sensitive; not legal advice).** A public enabling disclosure starts the clock: in the US the inventor’s grace period is 12 months from first disclosure — for the 2025-07-29 deposit that window runs until **~2026-07-29**, i.e. **still open as of this record’s 2026-07-18 update date, but only briefly**; in absolute-novelty jurisdictions (EPO, CN, and most others) the July 2025 disclosure was an immediate bar. This record adopts a **defensive-publication** posture (§0): it treats the disclosure as **published prior art**, which prevents others from enclosing the disclosed mechanisms. Note two things precisely: publishing as prior art is **not** the same as a public-domain dedication (it does not by itself waive the author’s rights), and whether to *also* preserve the still-open US filing option is a **time-sensitive decision for patent counsel**, not one settled by this document.
 
 -----
 
@@ -30,7 +30,7 @@ Two repositories, in sequence:
 
 First appearance of the narrow-claim elements in the canonical repository (re-verified from the live commit graph, 2026-07-18):
 
-- **MACI roles** — a MACI console page ships in the root commit `35ebf7d` (2026-05-04); the commit message enumerates it among the console pages, i.e. carried in as pre-existing design, not added later.
+- **MACI role separation — three lanes at the root.** A MACI console ships in the root commit `35ebf7d` (2026-05-04), but the root implementation (`acgi-ai/src/routes/console/Maci.tsx`) renders **three** lanes only — **Proposer, Validator, Executor** — and states verbatim “Three lanes, no overlap.” So the root commit establishes the decision/enforcement **role separation**, *not* the full four-role decomposition of §2: the **Observer** role is **not** present at the root, and its first appearance in the canonical history is **not pinned in this pass** (see §6). Do not read the root commit as evidence of the four-role claim.
 - **`docs/DECISION_RECEIPT_SPEC.md`** — created in `6399a0a` (2026-06-06, “docs: add receipt-gated governance proof path”; the file is added in that commit, 197 lines — confirmed via the GitHub API on 2026-07-18).
 
 **Continuity note (stated plainly):** there is a ~9-month interval between the July 2025 Zenodo disclosure and the start of the canonical repository’s history. The bridge for that interval is the `ACGSpgp/acgs2` repository; anyone auditing this chain should examine that repository’s history directly. This record does not claim the canonical repo’s history reaches back to the disclosure date.
@@ -50,7 +50,7 @@ The defensible, narrow contribution disclosed in July 2025 is a specific **synth
 > (ii) gates every externally-effecting tool call behind an **out-of-band, signed governance-decision receipt**; and
 > (iii) enforces **fail-closed** semantics — *no valid receipt, no side effect* — with the receipt retained as audit evidence.
 
-Every underlying mechanism has prior art (see §3). The claimed originality is their **integration and application to LLM-agent tool execution**, publicly disclosed July 2025.
+Every underlying mechanism has prior art (see §3). The claimed originality is their **integration and application to LLM-agent tool execution**, publicly disclosed July 2025. (The four-role form of this claim is anchored to the July 2025 Zenodo disclosure, not to the canonical repo’s May-2026 root commit — see the first-appearance note in §1.)
 
 -----
 
@@ -106,9 +106,10 @@ Explicit credit here is not a weakness of the claim — it is what makes a prior
 To be confirmed by the maintainer before this record is relied on in diligence, grant, or freedom-to-operate contexts. Checked boxes were re-verified in the 2026-07-18 landing pass by the method named; unchecked boxes remain open.
 
 - [ ] **Deposit verification** — DOI `10.5281/zenodo.16417581` is the anchor of record. Title, dates (created 2025-07-28, published 2025-07-29), and creator (Lyu, Honglin) are **maintainer-attested**; automated re-fetch from the landing environment **failed on 2026-07-18** (`doi.org` / `zenodo.org` / Zenodo records API → HTTP 403; a web search did not surface the record). Maintainer to confirm directly against the Zenodo records API from an unblocked network and record the result here.
-- [x] **First-appearance dates (canonical repo)** — MACI console page present from root commit `35ebf7d` (2026-05-04); `docs/DECISION_RECEIPT_SPEC.md` added in `6399a0a` (2026-06-06, 197 lines). Independently re-verified against the live GitHub commit graph on 2026-07-18.
+- [x] **First-appearance dates (canonical repo)** — a MACI console with **three** lanes (Proposer / Validator / Executor; **no Observer**) is present from root commit `35ebf7d` (2026-05-04); `docs/DECISION_RECEIPT_SPEC.md` added in `6399a0a` (2026-06-06, 197 lines). Both independently re-verified against the live GitHub commit graph on 2026-07-18.
+- [ ] **Four-role (Observer-inclusive) first appearance** — **not pinned.** The root commit contains three lanes only; the first canonical-repo artifact that adds the **Observer** role must be located and dated before §2’s four-role decomposition is cited to repository history (it remains anchored to the July 2025 Zenodo disclosure).
 - [x] **Legacy-commit location** — `32816c04…` confirmed **absent** from `dislovelhl/ACGS` (GitHub API returned 422 “No commit found” on 2026-07-18). Its attribution to `ACGSpgp/acgs2` is asserted, **not** verified in this pass — that org is outside the verifying environment’s scope; see the audit item below.
-- [ ] **Commit integrity** — signing is reported mixed (maintainer count: 292 of 763 commits signed, 471 unsigned; root commit `35ebf7d` unsigned). These figures were **not re-verified in the landing pass**, and an earlier draft of this record carried an inconsistent “393+” total — before external use, run `git rev-list --count HEAD` (true total) and a `git log --show-signature` tally (signed count) and record both here. Recommendation: enforce signed commits going forward (branch protection) and record this cut-over date.
+- [ ] **Commit integrity** — signing is reported mixed (maintainer count: 292 of 763 commits signed, 471 unsigned; root commit `35ebf7d` unsigned). These figures were **not re-verified in the landing pass**, and an earlier draft of this record carried an inconsistent “393+” total — before external use, run `git rev-list --count HEAD` (true total) and a `git log --show-signature` tally (signed count) and record both here. Recommendation: enforce signed commits going forward (branch protection) and record this cut-over date. **The commits that landed this very record are unsigned (see §7) — signing them is the first instance of this item.**
 - [ ] **`ACGSpgp/acgs2` audit** — confirm ownership/control of the `ACGSpgp` org, that the July-2025 history is intact (no rewrites), and archive a bundle (`git bundle`) of it alongside this record — it is the sole bridge for the disclosure→canonical-repo interval.
 - [ ] **Maturity wording** — ensure every external summary uses §4 language (not the deposit title) as the maturity claim.
 - [ ] **Deposit archival** — archive a copy of the deposit PDF alongside this record.
@@ -121,7 +122,7 @@ This file was committed to the repository by an automated assistant acting for t
 
 **Independently re-verified — GitHub commit-graph API (`dislovelhl/ACGS`):**
 
-- `35ebf7d78f59ea92f1e66d2b807b8701d8b9da2e` is the **parentless root commit**, authored `2026-05-04T07:03:08Z`, “initial: acgi-ai marketing + console + deployment scaffold” — the commit message enumerates a MACI console page among the nine console pages.
+- `35ebf7d78f59ea92f1e66d2b807b8701d8b9da2e` is the **parentless root commit**, authored `2026-05-04T07:03:08Z`, “initial: acgi-ai marketing + console + deployment scaffold”. Its `acgi-ai/src/routes/console/Maci.tsx` renders a MACI console with **three** lanes — Proposer, Validator, Executor (“Three lanes, no overlap”); it does **not** contain the Observer role.
 - `6399a0a9416cd24e71ec3649d67ecc1715a082e4`, authored `2026-06-06T19:09:51Z`, **adds** `docs/DECISION_RECEIPT_SPEC.md` (197 lines, status “added”).
 - `32816c04…` **does not resolve** in `dislovelhl/ACGS` (API `422 No commit found`), corroborating its exclusion from the canonical history.
 
@@ -131,7 +132,7 @@ This file was committed to the repository by an automated assistant acting for t
 - Presence of `32816c04…` in `ACGSpgp/acgs2` — that repository is outside the verifying environment’s scope.
 - Commit signing counts and total commit count (§6) — not tallied in this pass; the reported figures are unreconciled.
 
-The commit that lands this file is itself part of the provenance: it is a GitHub web-flow commit and therefore carries GitHub’s signature.
+**Signature status of this record’s own commits.** They were created via the GitHub contents API and are **unsigned** (committer `MartinLyu <mt@acgs.ai>`; no GPG `gpgsig` header, no web-flow signing key — `git log --format=%G?` reports `N`). Stated plainly so the record does not fail its own integrity test: the provenance of *this* file currently rests on GitHub’s push/audit trail, **not** on a commit signature. Signing these commits is the first concrete instance of the §6 commit-integrity recommendation.
 
 -----
 
