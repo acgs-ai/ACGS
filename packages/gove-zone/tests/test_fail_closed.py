@@ -10,7 +10,9 @@ Cases covered:
 2. Audit.append raises → kernel raises ``AuditError``; the tool never runs.
 3. Tool execution raises after ALLOW → kernel propagates the exception AND
    appends a failure record to the chain (best-effort, non-blocking).
-4. TRANSFORM decision without ``transformed_args`` → kernel treats as DENY.
+4. Double failure: the failure-record append itself raises → the original
+   tool exception still propagates unmasked; the chain stays valid.
+5. TRANSFORM decision without ``transformed_args`` → kernel treats as DENY.
 """
 
 from __future__ import annotations
@@ -124,6 +126,46 @@ def test_execution_failure_propagates_and_records_failure(tmp_path: Path) -> Non
     assert events[0]["decision"] == "allow"
     assert events[1]["decision"] == "deny"
     assert any("EXEC_FAILURE:ValueError" in r for r in events[1]["matched_rules"])
+    assert audit.verify_chain()["valid"] is True
+
+
+def test_execution_failure_record_append_failure_does_not_mask_original(
+    tmp_path: Path,
+) -> None:
+    """Double failure: tool raises AND the failure-record append raises.
+
+    The failure-record append is best-effort (``contextlib.suppress`` in
+    ``Kernel._record_execution_failure``); when it also fails, the original
+    tool exception must still propagate unmasked and the chain must stay
+    valid — holding only the committed ALLOW decision.
+    """
+
+    class _FailsOnSecondAppend(ChainHashAuditStore):
+        def __init__(self, path: Path) -> None:
+            super().__init__(path)
+            self.appends = 0
+
+        def append(self, decision: DecisionRecord) -> dict[str, Any]:
+            self.appends += 1
+            if self.appends > 1:
+                raise OSError("disk full")
+            return super().append(decision)
+
+    audit = _FailsOnSecondAppend(tmp_path / "audit.jsonl")
+    k = Kernel(policy=AllowAllPolicy(), audit=audit)
+
+    @k.tool("explode")
+    def explode() -> None:
+        raise ValueError("boom")
+
+    # The ORIGINAL exception surfaces — not OSError, not AuditError.
+    with pytest.raises(ValueError, match="boom"):
+        k.dispatch("explode")
+
+    assert audit.appends == 2  # failure-record append was attempted
+    events = list(audit.iter_events())
+    assert len(events) == 1  # failure record dropped, ALLOW decision remains
+    assert events[0]["decision"] == "allow"
     assert audit.verify_chain()["valid"] is True
 
 

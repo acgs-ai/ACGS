@@ -41,7 +41,7 @@ from gove_zone.replay import (
 )
 from gove_zone.tool import ToolCall, ToolRegistry
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = [
     "GENESIS_HASH",

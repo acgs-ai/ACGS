@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        python-version: ['3.11', '3.12']
+        python-version: ['3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +66,17 @@ jobs:
         run: |
           .venv/bin/python -m ruff check src tests examples
           .venv/bin/python -m ruff format --check src tests examples
+
+      - name: Typecheck
+        run: .venv/bin/python -m mypy
+
+      - name: LOC ceiling
+        # Hard gate from docs/PLAN-GOVE-ZONE-KERNEL.md §7: the kernel source
+        # must stay ≤ 2,500 LOC. A PR that breaches must justify or refactor.
+        run: |
+          loc=$(wc -l src/gove_zone/*.py | tail -1 | awk '{print $1}')
+          echo "kernel LOC: ${loc} (ceiling 2500)"
+          test "${loc}" -le 2500
 
       - name: Test
         # `--import-mode=importlib` matches the package's pytest config and
