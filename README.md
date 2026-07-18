@@ -1,3 +1,5 @@
+ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects.
+
 # ACGS
 
 **Receipt-gated runtime governance for AI-agent side effects.**
@@ -8,8 +10,7 @@
 [![docs](https://img.shields.io/badge/docs-repository-blue.svg)](docs/README.md)
 [![website](https://img.shields.io/badge/website-acgs.ai-blue.svg)](https://acgs.ai/)
 
-> For every execution path wired through ACGS: **no valid Decision Receipt,
-> no side effect.**
+> For every execution path wired through ACGS: **No valid Decision Receipt, no side effect.**
 
 ACGS sits immediately before an AI agent can change files, infrastructure,
 data, communications, or money. It evaluates policy, issues a project-defined
@@ -119,13 +120,16 @@ documented receipt-verification boundary. Do not treat a direct
 
 ## Scope and claim boundary
 
-This repository provides local engineering evidence. It does not claim:
+This repository provides local engineering evidence. It is:
 
-- production, compliance, or regulatory certification or approval;
-- that any live agent host is already wired through the governed executor;
-- a complete IAM, PKI, key-custody, rotation, or revocation system;
-- replacement of sandboxing, content moderation, IAM/RBAC, SIEM, WORM audit
-  storage, or formal verification; or
+- not production-certified, not compliance-certified, and not regulator-approved;
+- not a replacement for content moderation and not a replacement for sandboxing;
+- not a complete IAM/PKI system; and
+- not a full formal-verification system.
+
+It does not claim:
+
+- that any live agent host is already wired through the governed executor; or
 - safety against a fully compromised issuer or execution host.
 
 See the [`CLAIMS`](docs/CLAIMS.md) ledger and
