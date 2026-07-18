@@ -1,136 +1,173 @@
-ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects. It sits at the executor boundary below any agent framework, enforces policy before execution, emits a verifiable Decision Receipt, and makes executors fail closed without a valid receipt.
+# ACGS
 
-# ACGS / gove-zone
+**Receipt-gated runtime governance for AI-agent side effects.**
 
-![status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
+[![gove-zone: 1.0.0rc1](https://img.shields.io/badge/gove--zone-1.0.0rc1-blueviolet.svg)](packages/gove-zone/CHANGELOG.md)
 ![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![docs: acgs.ai](https://img.shields.io/badge/docs-acgs.ai-blue.svg)](https://acgs.ai/docs)
-[![GitHub stars](https://img.shields.io/github/stars/dislovelhl/ACGS?style=social)](https://github.com/dislovelhl/ACGS)
+[![docs](https://img.shields.io/badge/docs-repository-blue.svg)](docs/README.md)
+[![website](https://img.shields.io/badge/website-acgs.ai-blue.svg)](https://acgs.ai/)
 
-> **Core invariant: No valid Decision Receipt, no side effect.**
+> For every execution path wired through ACGS: **no valid Decision Receipt,
+> no side effect.**
 
-> Alpha (`gove-zone` reports `0.1.0a1`). Badges reflect declared metadata, not a
-> production, compliance, or certification claim — see
-> [What this repository is not claiming](#what-this-repository-is-not-claiming).
+ACGS sits immediately before an AI agent can change files, infrastructure,
+data, communications, or money. It evaluates policy, issues a project-defined
+Decision Receipt that binds the actor, action, exact arguments, tenant, and
+policy evidence, and lets a governed executor proceed only when that receipt
+verifies.
 
-ACGS is not another agent framework, and it is not owned by one. It is the vendor-neutral execution membrane between AI-agent reasoning and real-world change: file writes, API calls, database updates, emails, payments, deployments, MCP tools, shell commands, and any other side effect that should require explicit authority. Because the gate sits *below* whatever framework issued the call, the same policy decision and the same vendor-neutral Decision Receipt format describe a governed action regardless of which framework issued it — across the runtimes ACGS supports, at the proof tiers in [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — and ACGS privileges none of them.
+ACGS complements agent frameworks, MCP, IAM, sandboxes, content guardrails,
+and SIEM. It does not replace them. The ACGS monorepo contains several
+governance components; [`packages/gove-zone`](packages/gove-zone/) is the core
+Python enforcement kernel.
 
-The `gove-zone` package (`packages/gove-zone`, Python module `gove_zone`) is the local governed-runtime kernel inside this ACGS / govern-zone monorepo. Agent frameworks, MCP servers, hook hosts, function-call/tool-call bridges, CI jobs, and custom executors can keep doing orchestration; ACGS answers the narrower question: **is this exact actor allowed to run this exact action with these exact arguments under this exact policy evidence?** See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) for which runtimes are supported, at what proof depth.
+**Current source status:** `gove-zone 1.0.0rc1` — release candidate, with a
+Beta package classifier. This describes the checked-in source and does not by
+itself prove a PyPI publication, production deployment, certification,
+regulatory approval, or independent assurance. Other monorepo components have
+independent versions and maturity levels.
 
-## First screen: what to do
+## How it works
 
-| Question | Short answer |
-|---|---|
-| What is it? | A vendor-neutral, receipt-gated governance layer for AI-agent side effects. |
-| What problem does it solve? | Agents can request powerful tools faster than teams can prove authority, policy, auditability, and replay. ACGS moves that proof before execution. |
-| Why neutral? | The gate sits at the executor boundary, below whatever framework issued the call, so one policy decision and one common receipt format apply to every caller wired through it — runtime support is tiered, not uniform (see the integration matrix). When a platform both ships and governs its agents, the governor and the governed are the same party — a structural position, not a knock on its engineering; a plane outside the platforms avoids that, and ACGS privileges no runtime. See [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md). |
-| Core invariant | **No valid Decision Receipt, no side effect.** |
-| Why it matters | Tool calls can mutate files, systems, money, data, or infrastructure. A natural-language model may request an action; the executor must enforce the receipt gate. |
-| Proof path | Run the smoke proof, run the receipt-gated execution demo, inspect the proof pack, then tamper with receipts/audit evidence and observe failure. |
-| Implemented now | Local kernel, policies, Decision Receipts, executor gate, audit hash chain, replay helpers, signing mode, proof pack, runtime-hook/MCP/function-call adapter shapes, tests. |
-| Not claimed yet | Not production-certified, not compliance-certified, not regulator-approved, not a sandbox replacement, not a complete IAM/PKI system, not a full formal-verification system. |
-
-## Run the proof path
-
-From the repository root:
-
-```bash
-tmp=$(mktemp -d) && uv run --package gove-zone gove-zone smoke --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
-uv run --package gove-zone python packages/gove-zone/examples/receipt-gated-execution/demo.py
-uv run --package gove-zone python examples/tamper_demo/demo.py
-uv run python -m pytest tests/docs --import-mode=importlib -q
+```mermaid
+flowchart TD
+    A[Agent or workflow] --> B[Proposed action]
+    B --> C{ACGS policy gate}
+    C -->|Valid ALLOW or TRANSFORM receipt| D[Governed executor]
+    C -->|DENY, ESCALATE, or invalid receipt| E[No side effect]
+    C --> F[Audit and replay evidence]
 ```
 
-Expected result: the allowed side effect executes, denied/missing/tampered/mismatched receipts fail closed, audit evidence verifies, and tampered evidence fails replay/integrity checks.
+The agent proposes an action; it does not authorize itself. The gate binds the
+decision to the exact execution context. A mismatched, missing, expired,
+consumed, or otherwise invalid receipt fails closed at the governed executor.
 
-A recorded run of this sequence (allow → id_rsa deny → tampered-audit verification failure) is captured as an [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast) (play with `asciinema play docs/launch/evidence/demo-proof-sequence.cast`) with a plain-text [transcript](docs/launch/evidence/demo-proof-sequence.txt) for readers who can't play the cast. Both come from [`docs/launch/evidence/record-proof-sequence.sh`](docs/launch/evidence/record-proof-sequence.sh); re-run it to reproduce the evidence.
+## Verify the invariant locally
 
-For the fastest guided path, start at [`docs/START_HERE.md`](docs/START_HERE.md). For the canonical proof narrative, read [`docs/PROOF_PATH.md`](docs/PROOF_PATH.md). The full documentation index is [`docs/README.md`](docs/README.md).
+Prerequisites: Python 3.11+ and [`uv`](https://docs.astral.sh/uv/). Run from the
+repository root:
 
-## Integrator posture: signing and single-use are how the invariant holds
+```bash
+tmp="$(mktemp -d)"
+uv run --package gove-zone gove-zone smoke \
+  --audit "$tmp/acgs-gove-zone-smoke-audit.jsonl"
+uv run --extra crypto --package gove-zone python \
+  packages/gove-zone/examples/receipt-gated-execution/demo.py
+uv run --package gove-zone python examples/tamper_demo/demo.py
+```
 
-Two defaults decide whether "no valid receipt, no side effect" actually binds in *your* deployment. Wire executors through the gate surfaces — `gove_zone.executor.execute_with_receipt`, `GovernedExecutor`, or `gove_zone.contracts.ReceiptVerifier` — never by calling `DecisionReceipt.verify()` directly:
+Expected result: the allowed action executes; denied, missing, tampered, and
+mismatched receipts do not; the audit chain verifies; and tampered evidence
+fails replay or integrity verification.
 
-- **Signing.** The gate surfaces default to `require_signature=True` (production profile) and fail closed loud if no verifier is configured. The bare `DecisionReceipt.verify()` primitive defaults to `require_signature=False` — a direct caller silently opts into the unsigned posture. A `receipt_hash` is recomputable; only an Ed25519 signature checked against a trusted public-key verifier closes that residual. Run the dev/unsigned mode only by explicit opt-out (`require_signature=False` or `GovernanceProfile.dev`).
-- **Single-use.** `verify` is stateless, so one valid receipt authorizes *N* executions unless you pass a `ReceiptConsumptionLedger`. With a ledger the receipt's audit anchor is burned after verification and before the side effect, so a replay fails closed with no side effect. Pass the **same** logical ledger on every call that must share single-use state.
-- **Audit rollback.** `ChainHashAuditStore.verify_chain()` proves internal consistency, but a truncated *prefix* is itself consistent. Record the event count and/or last `event_hash` out-of-band and pass them as `verify_chain(expected_count=..., expected_last_hash=...)` to detect silent truncation.
+Start with the guided [`START_HERE`](docs/START_HERE.md) path or read the
+canonical [`PROOF_PATH`](docs/PROOF_PATH.md) narrative. Recorded evidence is
+available as an [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast)
+and [plain-text transcript](docs/launch/evidence/demo-proof-sequence.txt); treat
+recordings as point-in-time evidence and reproduce them against the commit you
+intend to evaluate.
 
-## What is implemented now
+## Implemented surfaces and evidence
 
 | Capability | Evidence |
 |---|---|
 | Policy-before-execution dispatch | `packages/gove-zone/src/gove_zone/kernel.py`; `packages/gove-zone/tests/test_fail_closed.py` |
 | Decision Receipt schema and validation | `packages/gove-zone/src/gove_zone/receipt.py`; `packages/gove-zone/tests/test_decision_receipt.py` |
 | Receipt-gated executor | `packages/gove-zone/src/gove_zone/executor.py`; `packages/gove-zone/tests/test_executor_guard.py` |
-| Actor/action/argument/policy binding | `packages/gove-zone/tests/test_argument_binding.py`, `test_tenant_safety.py`, `test_receipt_expiry.py` |
-| Tamper-evident audit chain | `packages/gove-zone/src/gove_zone/audit.py`; `packages/gove-zone/tests/test_audit_chain.py`, `test_audit_chain_corruption.py` |
+| Actor, action, argument, tenant, and policy binding | `packages/gove-zone/tests/test_argument_binding.py`; `test_tenant_safety.py`; `test_receipt_expiry.py` |
+| Tamper-evident audit chain | `packages/gove-zone/src/gove_zone/audit.py`; `packages/gove-zone/tests/test_audit_chain.py`; `test_audit_chain_corruption.py` |
 | Replay and side-store re-derivation | `packages/gove-zone/src/gove_zone/replay.py`; `packages/gove-zone/tests/test_replay.py` |
-| Opt-in Ed25519 signing | `packages/gove-zone/src/gove_zone/signing.py`; `packages/gove-zone/tests/test_receipt_signing.py` |
-| Runtime/MCP/function-call adapter shapes | `packages/gove-zone/src/gove_zone/integration.py`; `packages/gove-zone/tests/test_integration_hook.py`, `test_integration_gaps.py` |
-| Local proof pack | `gove-zone proofpack`; `packages/gove-zone/tests/test_cli.py` |
+| Ed25519 receipt-signing support | `packages/gove-zone/src/gove_zone/signing.py`; `packages/gove-zone/tests/test_receipt_signing.py` |
+| Runtime, MCP, and function-call adapter surfaces | `packages/gove-zone/src/gove_zone/integration.py`; [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) |
+| Local proof pack and offline verifier | `gove-zone proofpack`; `packages/gove-zone/tests/test_cli.py` |
 
-## What this repository is not claiming
+Runtime support is tiered. “Shipped,” “pattern,” and “roadmap” do not mean the
+same thing; consult the [integration matrix](docs/INTEGRATION_MATRIX.md) before
+making compatibility claims.
 
-ACGS / gove-zone is alpha (`gove-zone` currently reports `0.1.0a1`). The local proofs are valuable engineering evidence, but they are not production deployment proof. Do not claim this repository is:
+## Deployment contract
 
-- production-certified;
-- compliance-certified;
-- regulator-approved;
-- not a replacement for content moderation;
-- not a replacement for sandboxing;
-- not a replacement for IAM/RBAC, SIEM, WORM audit storage, or formal verification;
-- not a complete IAM/PKI system or complete key custody, revocation, or access-management system;
-- a guarantee that a live agent host is already configured to enforce the gate.
+The invariant holds only on execution paths that are wired through a governed
+gate. Three deployment choices are load-bearing:
 
-See [`docs/CLAIMS.md`](docs/CLAIMS.md) for the claim ledger and safe public wording.
+- **Trusted signatures.** Governed executor gates require trusted signature
+  verification by default. They do not auto-generate or auto-trust a signing
+  key. Unsigned development mode requires an explicit opt-out through
+  `require_signature=False` or `GovernanceProfile.dev`.
+- **Single use.** Stateless verification does not prevent a valid receipt from
+  being reused. Share a `ReceiptConsumptionLedger` across every executor call
+  that must enforce one-time consumption.
+- **External audit anchoring.** A hash chain detects internal modification, but
+  a truncated prefix can remain internally consistent. Persist the expected
+  event count and/or final event hash outside the local audit store and verify
+  those anchors during replay.
 
-## Repository map
+Use `gove_zone.executor.execute_with_receipt`, `GovernedExecutor`, or the
+documented receipt-verification boundary. Do not treat a direct
+`DecisionReceipt.verify()` call as a complete execution gate.
+
+## Scope and claim boundary
+
+This repository provides local engineering evidence. It does not claim:
+
+- production, compliance, or regulatory certification or approval;
+- that any live agent host is already wired through the governed executor;
+- a complete IAM, PKI, key-custody, rotation, or revocation system;
+- replacement of sandboxing, content moderation, IAM/RBAC, SIEM, WORM audit
+  storage, or formal verification; or
+- safety against a fully compromised issuer or execution host.
+
+See the [`CLAIMS`](docs/CLAIMS.md) ledger and
+[`SECURITY_MODEL`](docs/SECURITY_MODEL.md) for the evidence boundary and safe
+public wording.
+
+## Main repository surfaces
 
 | Path | Purpose |
 |---|---|
-| `packages/gove-zone/` | Governed runtime kernel: policy, Decision Receipts, executor gate, audit chain, replay, signing, adapters, CLI. |
-| `packages/acgs-lite/` | Published ACGS legitimacy API package; independent nested repo. |
-| `packages/Acgs-Swarm/` | Constitutional swarm research; independent nested repo. |
-| `acgs_governance_eval_mvp/` | Evaluation/governance MVP surface. |
+| `packages/gove-zone/` | Receipt-gated Python kernel, policies, executor, audit, replay, signing, adapters, and CLI. |
+| `packages/acgs-lite/` | Separate nested governance package; follow its package-local release state. |
+| `packages/Acgs-Swarm/` | Constitutional swarm research; separate nested repository. |
+| `acgs_governance_eval_mvp/` | Evaluation and governance MVP surfaces. |
 | `acgs-cft-governance-pack/` | Infrastructure governance pack. |
-| `acgi-ai/` | Frontend/console; privileged origin rules apply. |
-| `docs/` | Human and agent documentation, claim ledger, architecture, proof path, integration guide. |
-| `examples/` | Root runnable governance examples for integrators. |
-| `tests/docs/` | Documentation/example smoke tests and link checks. |
-| [`MONOREPO.md`](MONOREPO.md) | Workspace registry: what exists and where each package is gated. |
-| [`docs/governance-stack-index.md`](docs/governance-stack-index.md) | Governance stack index mapping the layered components and proofs. |
+| `acgi-ai/` | Frontend and control-plane console. |
+| `docs/` | Architecture, security, integration, claim, adoption, and proof documentation. |
+| `examples/` | Runnable root integration examples. |
+| `tests/docs/` | Documentation, example, and link regression checks. |
 
-## Read next
+The complete workspace registry and package boundaries are documented in
+[`MONOREPO.md`](MONOREPO.md).
 
-1. [`docs/START_HERE.md`](docs/START_HERE.md) — 10-minute path for humans and agents.
-2. [`docs/PROOF_PATH.md`](docs/PROOF_PATH.md) — denied action → receipt → evidence → replay → tamper failure.
-3. [`docs/DECISION_RECEIPT_SPEC.md`](docs/DECISION_RECEIPT_SPEC.md) — public contract for integrators.
-4. [`docs/SECURITY_MODEL.md`](docs/SECURITY_MODEL.md) — threat model and current protections.
-5. [`docs/INTEGRATION_GUIDE.md`](docs/INTEGRATION_GUIDE.md) — where to put the gate in your stack.
-6. [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) — supported runtimes by proof tier (shipped / pattern / roadmap).
-7. [`docs/FAQ.md`](docs/FAQ.md) — question-headed Q&A (Decision Receipt, vs audit log / Microsoft AGT, production-readiness) with claim-safe answers.
-8. [`AGENTS.md`](AGENTS.md) and [`llms.txt`](llms.txt) — agent-readable operating instructions and navigation index.
+## Documentation paths
 
-## Development status
+| Goal | Start here |
+|---|---|
+| Prove the core invariant | [`START_HERE`](docs/START_HERE.md) → [`PROOF_PATH`](docs/PROOF_PATH.md) |
+| Integrate an execution gate | [`INTEGRATION_GUIDE`](docs/INTEGRATION_GUIDE.md) → [`INTEGRATION_MATRIX`](docs/INTEGRATION_MATRIX.md) |
+| Review the receipt contract | [`DECISION_RECEIPT_SPEC`](docs/DECISION_RECEIPT_SPEC.md) |
+| Review security and limitations | [`SECURITY_MODEL`](docs/SECURITY_MODEL.md) → [`CLAIMS`](docs/CLAIMS.md) |
+| Understand package stability | [`API_STABILITY`](packages/gove-zone/docs/API_STABILITY.md) → [`CHANGELOG`](packages/gove-zone/CHANGELOG.md) |
+| Prepare a release | [`RELEASING`](packages/gove-zone/docs/RELEASING.md) → [`PyPI readiness`](docs/gove-zone-pypi-readiness.md) |
+| Browse all documentation | [`docs/README.md`](docs/README.md) |
 
-This checkout is a multi-package monorepo with existing dirty worktree state in multiple packages. Treat package-local instructions and validation commands as authoritative. For documentation-only work, the safe local checks are:
+## Development checks
+
+For documentation-only changes:
 
 ```bash
 uv run python -m pytest tests/docs --import-mode=importlib -q
-uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q
 make lint-docs
 ```
 
-Use `make verify` for broad root validation when the full mixed workspace is intended to be gated.
-
-## Local buyer-evidence gallery
-
-For acgi-ai buyer-review packets, use the local buyer-evidence gallery commands from `acgi-ai/`:
+For `gove-zone` package changes:
 
 ```bash
-pnpm run evidence:build
-pnpm run test:buyer-evidence
+uv run --package gove-zone python -m pytest \
+  packages/gove-zone/tests --import-mode=importlib -q
+cd packages/gove-zone && bash scripts/release_check.sh
 ```
 
-The `evidence:build` script produces a dependency-free local buyer-evidence artifact, and `test:buyer-evidence` validates the artifact contract. This is local review evidence only; it is not hosted Storybook, production deployment proof, or a compliance certification.
+Use `make verify` only when intentionally validating the full multi-package
+workspace. Read [`AGENTS.md`](AGENTS.md) before editing across package or nested
+repository boundaries.
