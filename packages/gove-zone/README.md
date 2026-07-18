@@ -9,12 +9,11 @@ sit immediately before high-risk side effects.
 gove-zone is **not an agent framework**. It is the enforcement layer an agent,
 MCP tool, workflow engine, CI runner, or custom executor calls *before* it acts.
 
-> **Naming.** `gove-zone` is the governed-runtime **kernel**. It lives inside
-> the **govern-zone** workspace (the ACGS monorepo) at `packages/gove-zone/`.
-> `govern-zone` is the whole platform; `gove-zone` is this enforcement core —
-> the two names are deliberate (workspace vs. package), not a typo.
+> **Naming.** ACGS is the project and monorepo; `gove-zone` is its core Python
+> enforcement kernel at `packages/gove-zone/`. Some internal workspace tooling
+> uses the name `govern-zone`; it is not a separate Python distribution.
 
-### Prove it in 30 seconds
+## Prove it in 30 seconds
 
 No agent host, network call, production credential, or external service:
 
@@ -28,12 +27,11 @@ verify as a hash-linked audit chain — then exits non-zero if any check fails.
 See [One-command smoke proof](#one-command-smoke-proof) for the full output and
 `--audit` evidence retention.
 
-> Status: foundational / Alpha (`0.1.0a1`). Local proof and
-> production-shaped foundation only. **NOT** production-certified and **NOT**
-> compliance-certified. Do not make live production deployment claims without
-> evidence. See `docs/PLAN-GOVE-ZONE-KERNEL.md` in the parent monorepo for
-> roadmap context, and `ARCHITECTURE.md` / `SECURITY.md` for the implemented
-> design and security boundary.
+> **Current source status:** release candidate `1.0.0rc1`, with a Beta package
+> classifier. This source status does not prove PyPI publication, production
+> deployment, certification, regulatory approval, or independent assurance.
+> See `ARCHITECTURE.md`, `SECURITY.md`, and `docs/RELEASING.md` for the
+> implemented boundary and release contract.
 
 ## Why this exists
 
@@ -73,7 +71,7 @@ gove-zone is a narrow enforcement layer, not a platform. It earns its place when
 you need *verifiable proof, gated before the act* — and it is the wrong tool when
 you need breadth.
 
-**Use gove-zone if**
+### Use gove-zone if
 
 - You need machine-checkable proof that a **specific tool call, with specific
   arguments**, was authorized by policy *before* it ran — not logged after.
@@ -86,13 +84,13 @@ you need breadth.
 - You already own **authentication and tool sandboxing**, and need the
   governance decision in the last mile before execution — inside an MCP server,
   a LangGraph / OpenAI-Agents tool, a CI/deploy step, or a custom executor.
-- You want **cryptographic non-repudiation** of decisions: the default
-  production profile signs receipts (Ed25519), so a recomputed-hash forgery is
-  infeasible without the key.
+- You need cryptographically authenticated decisions. gove-zone supports
+  Ed25519 receipt signing; governed executor gates require trusted signature
+  verification by default, but they do not auto-generate or auto-trust keys.
 - You are **multi-tenant** and need one tenant's policy/receipt to be unusable
   in another's execution context.
 
-**Do NOT use gove-zone if**
+### Do not use gove-zone if
 
 - You want an **agent framework**. gove-zone has no planner and no orchestration
   of its own; integrate it *into* your framework, don't replace it.
@@ -108,9 +106,9 @@ you need breadth.
   the kernel surfaces a *resumable* pending approval (`approve_escalation` →
   `resume_with_receipt`), but routing it to a human reviewer — the queue, the
   notification, the UI — is yours to build.
-- You need **production / compliance certification**. gove-zone is alpha
-  (`0.1.0a1`); local receipts and smoke proofs are readiness evidence, not
-  certification.
+- You need **production / compliance certification**. `1.0.0rc1` is a release
+  candidate; local receipts and smoke proofs are readiness evidence, not
+  certification or production deployment proof.
 
 For the full boundary — what is enforced, what is explicitly out of scope, and
 what you must supply externally — see the one-page
@@ -127,11 +125,13 @@ what you must supply externally — see the one-page
 | Governed execution flow | `docs/governed-execution.md` |
 | Audit evidence & chain | `docs/audit-evidence.md` |
 | Policy bundles & tenant binding | `docs/policy-bundles.md` |
+| API stability | `docs/API_STABILITY.md` |
+| Changelog | `CHANGELOG.md` |
+| Release runbook | `docs/RELEASING.md` |
 
 ## Install
 
-`gove-zone` is currently developed as a local workspace package, not a PyPI
-release:
+The verified development path is the monorepo workspace:
 
 ```bash
 # Sync this package with the signing extra installed (Ed25519 receipts).
@@ -143,11 +143,19 @@ uv run --package gove-zone gove-zone doctor
 uv run --package gove-zone gove-zone smoke
 ```
 
-When published, the install target will be:
+After a human-gated PyPI release has been independently verified, install the
+exact published version from the public index:
 
 ```bash
-pip install gove-zone
+python -m pip install --index-url https://pypi.org/simple \
+  "gove-zone[crypto]==1.0.0rc1"
+gove-zone doctor
+gove-zone smoke
 ```
+
+Do not infer publication from the source version alone. See the
+[release runbook](docs/RELEASING.md) and the monorepo
+[readiness checklist](../../docs/gove-zone-pypi-readiness.md).
 
 ## One-command smoke proof
 
@@ -695,8 +703,10 @@ verifies the chain, then proves fail-closed enforcement under
 
 ## Platform support
 
-Unix only (Linux, macOS). The store uses `fcntl.flock` to serialize
-process-level appends. Windows support is deferred.
+The audit store includes POSIX `fcntl` and Windows `msvcrt` locking paths, with
+platform-specific lock behavior covered by the package test matrix. Validate
+the complete CLI and runtime on every intended target environment before
+production use; test coverage is not a production deployment claim.
 
 ## License
 
