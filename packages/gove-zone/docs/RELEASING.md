@@ -95,9 +95,11 @@ Start from the latest `master`. Keep release preparation in one reviewable PR.
    ```bash
    cd packages/gove-zone
    bash scripts/release_check.sh
-   uv run --extra dev python -m pytest \
-     tests/test_release_metadata.py tests/test_public_api.py -q
    cd ../..
+   uv run --package gove-zone --extra dev python -m pytest \
+     packages/gove-zone/tests/test_release_metadata.py \
+     packages/gove-zone/tests/test_public_api.py \
+     --import-mode=importlib -q
    uv run python -m pytest tests/docs --import-mode=importlib -q
    make lint-docs
    git diff --check
