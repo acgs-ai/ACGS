@@ -181,7 +181,8 @@ class GovernedMCPServer:
         return sorted(str(path.resolve().relative_to(base)) for path in base.rglob("*") if path.is_file())
 
     def query_sql_select(self, sql: str) -> list[dict[str, Any]]:
-        if sql.strip().split(None, 1)[0].upper() != "SELECT":
+        stripped = sql.strip()
+        if not stripped or stripped.split(None, 1)[0].upper() != "SELECT":
             raise ValueError("query_sql_select accepts SELECT only")
         with sqlite3.connect(self.targets.sqlite_path) as connection:
             connection.row_factory = sqlite3.Row

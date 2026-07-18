@@ -108,7 +108,7 @@ def main() -> int:
 
     lowered = text.lower()
     for claim in FORBIDDEN_CLAIMS:
-        if claim in lowered:
+        if claim.lower() in lowered:
             failures.append(f"forbidden overclaim present: {claim}")
 
     if MAIN_TABLE_HEADER not in text:
