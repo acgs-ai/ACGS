@@ -25,7 +25,7 @@ Zenodo deposit, DOI `10.5281/zenodo.16417581` — *“ACGS-2: A Production-Ready
 **Secondary — source history (corroborating context, not primary date proof).**
 Two repositories, in sequence:
 
-- `github.com/ACGSpgp/acgs2` — the July-2025-era ACGS-2 implementation. Initial commit `32816c04854a4f3d23eb1b21ef3d736f290debdd` is stated to live **in this repository** (and is verified **absent** from `dislovelhl/ACGS`; see §6 — its positive presence in `ACGSpgp/acgs2` is asserted, not verified in the landing pass).
+- `github.com/ACGSpgp/acgs2` — the July-2025-era ACGS-2 implementation. Initial commit `32816c04854a4f3d23eb1b21ef3d736f290debdd` is stated to live **in that repository** (and is verified **absent** from `dislovelhl/ACGS`; see §6 — its positive presence in `ACGSpgp/acgs2` is asserted, not verified in the landing pass).
 - `github.com/dislovelhl/ACGS` — the current canonical repository. History begins **2026-05-04** (root commit `35ebf7d`, “initial: acgi-ai marketing + console + deployment scaffold”; confirmed parentless — i.e. the true first commit — via the GitHub API on 2026-07-18). The total commit count and signing breakdown live in §6; see the note there on reconciling the reported totals.
 
 First appearance of the narrow-claim elements in the canonical repository (re-verified from the live commit graph, 2026-07-18):
