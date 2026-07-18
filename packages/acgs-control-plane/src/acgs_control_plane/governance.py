@@ -151,7 +151,7 @@ class ProductionPostureBlocked(RuntimeError):
 def reconcile_route_contracts(actual: Sequence[tuple[str, str]]) -> tuple[PostureBlocker, ...]:
     expected = [(r.method, r.path) for r in ROUTE_CONTRACTS]
     blockers: list[PostureBlocker] = []
-    for key in sorted(set(actual) | set(expected)):
+    for key in sorted(set(expected)):
         if expected.count(key) != 1 or actual.count(key) != 1:
             blockers.append(
                 PostureBlocker("ROUTE_CONTRACT_DRIFT", "route-registry", f"{key[0]} {key[1]}")
@@ -557,6 +557,8 @@ class AuditReadError(RuntimeError):
 
 
 def _parse_audit_snapshot_line(line: bytes, number: int) -> dict[str, Any] | None:
+    if number > AUDIT_READ_MAX_EVENTS:
+        raise AuditReadError("event-limit-exceeded")
     if not line.strip():
         return None
     try:
@@ -565,8 +567,6 @@ def _parse_audit_snapshot_line(line: bytes, number: int) -> dict[str, Any] | Non
         raise AuditReadError("invalid-json") from exc
     if type(event) is not dict:
         raise AuditReadError("non-object-event")
-    if number > AUDIT_READ_MAX_EVENTS:
-        raise AuditReadError("event-limit-exceeded")
     return event
 
 

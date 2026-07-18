@@ -54,7 +54,7 @@ Post-ALLOW execution failures (the tool ran and raised) are mirrored from the
 kernel's synthesized `:failure` chain event into the receipts table, so the
 explorer, dashboard, and exports stay consistent with the chain.
 
-## Run
+## Run (explicit local-development posture)
 
 > **INSECURE LOCAL DEVELOPMENT ONLY.** The current mutation API uses legacy,
 > unsigned receipts. It must be started only with the explicit local-development
@@ -66,8 +66,16 @@ export ACP_RUNTIME_POSTURE="local-dev-legacy-unsigned"
 export ACP_DATABASE_URL="postgresql+psycopg://acgs:acgs@localhost:5432/acgs_control_plane"
 export ACP_AUDIT_DIR="/var/lib/acgs/audit"
 export ACP_BOOTSTRAP_TOKEN="<one-time provisioning secret>"   # unset ⇒ org creation disabled (fail closed)
+export ACP_CREATE_TABLES=1
 uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:create_app
 ```
+
+This posture is deliberately non-production: its legacy bootstrap may create only the frozen
+pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
+secret-safe operator CLI to revision `0002`, then set `ACP_CREATE_TABLES=0`. Schema currency is
+reported separately from production readiness. `ACP_RUNTIME_POSTURE=production` currently refuses
+before constructing a database engine because the existing mutation routes still use the legacy
+unsigned membrane; an exact `0002` schema does not weaken that blocker.
 
 Bootstrap the first org (returns the org-admin API key exactly once):
 
@@ -93,8 +101,12 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **Receipts are legacy and unsigned.** This differs from gove-zone's secure
   `require_signature=True` profile, which fails loudly without configured trust
   material; production posture refuses the legacy mutation routes.
-- **Schema migrations** are `create_all` (idempotent, additive-only); Alembic arrives
-  when the schema stabilises.
+- **Schema mutation is operator-only**: Alembic revisions `0001` and `0002` are advanced through
+  `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact, read-only
+  revision preflight and never migrates. The legacy `create_all` bootstrap remains available only
+  under the explicit local-development posture above.
+- **Production posture remains blocked** while mutation routes use the legacy unsigned governance
+  membrane. A current database schema is necessary startup evidence, not production readiness.
 - The chain-tip anchor is written by the same service that writes the chain — it
   detects accidents and file-level tampering, not a fully compromised service.
 - **A blocked bootstrap leaves no DB receipt**: if a policy ever denies/escalates

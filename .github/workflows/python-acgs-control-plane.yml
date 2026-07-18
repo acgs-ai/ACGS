@@ -4,10 +4,14 @@ name: python-acgs-control-plane
 
 on:
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - 'beta/**'
     paths:
       - 'packages/acgs-control-plane/**'
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/cp-test.in'
+      - 'requirements/saas-beta/cp-test.lock'
       - 'pyproject.toml'
       - '.github/workflows/python-acgs-control-plane.yml'
   push:
@@ -15,6 +19,8 @@ on:
     paths:
       - 'packages/acgs-control-plane/**'
       - 'packages/gove-zone/**'
+      - 'requirements/saas-beta/cp-test.in'
+      - 'requirements/saas-beta/cp-test.lock'
       - 'pyproject.toml'
       - '.github/workflows/python-acgs-control-plane.yml'
 
@@ -39,10 +45,13 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: 0.11.19
           enable-cache: true
           cache-dependency-glob: 'packages/acgs-control-plane/pyproject.toml'
 
@@ -66,3 +75,208 @@ jobs:
 
       - name: Test
         run: .venv/bin/pytest -q
+
+  postgresql-migrations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: 'postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+        env:
+          POSTGRES_DB: acgs_control_plane_test
+          POSTGRES_USER: acgs_control_plane_test
+          POSTGRES_PASSWORD: g101-test-password-17
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: 0.11.19
+          enable-cache: true
+          cache-dependency-glob: 'requirements/saas-beta/cp-test.lock'
+
+      - name: Install locked migration test environment
+        run: |
+          uv python install 3.11.14
+          uv venv --python 3.11.14 --clear .venv
+          uv pip sync \
+            --python .venv/bin/python \
+            --require-hashes \
+            ../../requirements/saas-beta/cp-test.lock
+          uv pip install \
+            --python .venv/bin/python \
+            --no-deps \
+            --no-build-isolation \
+            --editable ../gove-zone \
+            --editable .
+
+      - name: Provision digest-pinned PostgreSQL 17.10 client wrappers
+        shell: bash
+        run: |
+          set -euo pipefail
+          client_image='postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          client_dir="$RUNNER_TEMP/postgresql-client-17.10"
+          mkdir -p "$client_dir"
+          docker pull "$client_image"
+          docker image inspect --format '{{json .RepoDigests}}' "$client_image" \
+            | grep --fixed-strings 'sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          cat >"$client_dir/postgresql-client" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          image='postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394'
+          tool="$(basename "$0")"
+          case "$tool" in
+            psql|pg_dump|pg_restore) ;;
+            *) echo 'unsupported PostgreSQL client wrapper' >&2; exit 64 ;;
+          esac
+
+          declare -A mount_directories=()
+          add_path_parent() {
+            local candidate="$1"
+            local directory
+            if [[ -d "$candidate" ]]; then
+              directory="$(realpath "$candidate")"
+            else
+              directory="$(realpath -m "$(dirname "$candidate")")"
+            fi
+            mount_directories["$directory"]=1
+          }
+
+          for variable in PGPASSFILE PGSSLROOTCERT PGSSLCERT PGSSLKEY; do
+            if [[ -n "${!variable:-}" ]]; then
+              add_path_parent "${!variable}"
+            fi
+          done
+          for argument in "$@"; do
+            case "$argument" in
+              --file=*) add_path_parent "${argument#--file=}" ;;
+              /*) add_path_parent "$argument" ;;
+            esac
+          done
+
+          docker_arguments=(
+            run --rm --network host
+          )
+          if ! docker info --format '{{json .SecurityOptions}}' | grep --quiet rootless; then
+            docker_arguments+=(--user "$(id -u):$(id -g)")
+          fi
+          for variable in \
+            PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE PGPASSFILE \
+            PGCONNECT_TIMEOUT PGOPTIONS PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY \
+            PGAPPNAME LANG LC_ALL LC_CTYPE
+          do
+            if [[ -v "$variable" ]]; then
+              docker_arguments+=(--env "$variable")
+            fi
+          done
+          for directory in "${!mount_directories[@]}"; do
+            docker_arguments+=(
+              --volume "$directory:$directory:rw,Z"
+            )
+          done
+          exec docker "${docker_arguments[@]}" "$image" "$tool" "$@"
+          BASH
+          chmod 0755 "$client_dir/postgresql-client"
+          ln -s postgresql-client "$client_dir/psql"
+          ln -s postgresql-client "$client_dir/pg_dump"
+          ln -s postgresql-client "$client_dir/pg_restore"
+          echo "$client_dir" >> "$GITHUB_PATH"
+          export PATH="$client_dir:$PATH"
+          test "$(psql --version | awk '{print $3}')" = '17.10'
+          test "$(pg_dump --version | awk '{print $3}')" = '17.10'
+          test "$(pg_restore --version | awk '{print $3}')" = '17.10'
+
+      - name: Create fixed disposable databases
+        shell: bash
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: ${{ job.services.postgres.ports['5432'] }}
+          PGUSER: acgs_control_plane_test
+          PGPASSWORD: g101-test-password-17
+          PGDATABASE: acgs_control_plane_test
+        run: |
+          set -euo pipefail
+          for database in \
+            acgs_control_plane_recovery_source_test \
+            acgs_control_plane_recovery_target_test \
+            acgs_control_plane_recovery_bytea_test \
+            acgs_control_plane_rolling_upgrade_test
+          do
+            psql --set ON_ERROR_STOP=1 --command "CREATE DATABASE ${database}"
+          done
+
+      - name: Build immutable pre-G101 candidate twice
+        id: old-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          old_commit='4f0c685b5d2ffac0e6a71810b77c6357b8d56a94'
+          pinned_digest='40ff7b40f27a2b698d3b607c710f1866f11850a9a2c42a7c0eb51a6fe8be3d93'
+          git -C "$GITHUB_WORKSPACE" cat-file -e "${old_commit}^{commit}"
+          mkdir -p "$RUNNER_TEMP/acp-old" "$RUNNER_TEMP/old-1" "$RUNNER_TEMP/old-2"
+          git -C "$GITHUB_WORKSPACE" archive "$old_commit" \
+            | tar -x -C "$RUNNER_TEMP/acp-old"
+          export SOURCE_DATE_EPOCH
+          SOURCE_DATE_EPOCH="$(git -C "$GITHUB_WORKSPACE" show -s --format=%ct "$old_commit")"
+          uv build --no-build-isolation \
+            --python "$GITHUB_WORKSPACE/packages/acgs-control-plane/.venv/bin/python" \
+            --offline --no-index --no-cache --wheel --out-dir "$RUNNER_TEMP/old-1" \
+            "$RUNNER_TEMP/acp-old/packages/acgs-control-plane"
+          uv build --no-build-isolation \
+            --python "$GITHUB_WORKSPACE/packages/acgs-control-plane/.venv/bin/python" \
+            --offline --no-index --no-cache --wheel --out-dir "$RUNNER_TEMP/old-2" \
+            "$RUNNER_TEMP/acp-old/packages/acgs-control-plane"
+          old_wheel="$RUNNER_TEMP/old-1/acgs_control_plane-0.1.0-py3-none-any.whl"
+          second_wheel="$RUNNER_TEMP/old-2/acgs_control_plane-0.1.0-py3-none-any.whl"
+          test -f "$old_wheel"
+          test -f "$second_wheel"
+          cmp "$old_wheel" "$second_wheel"
+          test "$(sha256sum "$old_wheel" | awk '{print $1}')" = "$pinned_digest"
+          test "$(sha256sum "$second_wheel" | awk '{print $1}')" = "$pinned_digest"
+          printf 'wheel=%s\n' "$old_wheel" >> "$GITHUB_OUTPUT"
+          printf 'digest=%s\n' "$pinned_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Test PostgreSQL migration, coordination, CLI, and startup suites
+        shell: bash
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_POSTGRES_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_test
+        run: |
+          UV_BIN="$(command -v uv)" .venv/bin/pytest -q \
+            tests/test_postgresql_migrations.py \
+            tests/test_postgresql_migration_cli.py \
+            tests/test_startup_preflight.py
+
+      - name: Test PostgreSQL migration recovery
+        shell: bash
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_RECOVERY_SOURCE_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_recovery_source_test
+          ACP_TEST_RECOVERY_TARGET_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_recovery_target_test
+        run: .venv/bin/pytest -q tests/test_postgresql_migration_recovery.py
+
+      - name: Test PostgreSQL bytea recovery preflight
+        shell: bash
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_RECOVERY_BYTEA_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_recovery_bytea_test
+        run: .venv/bin/pytest -q tests/test_postgresql_migration_recovery_bytea.py
+
+      - name: Test PostgreSQL candidate rolling upgrade
+        shell: bash
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_POSTGRES_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_rolling_upgrade_test
+          ACP_TEST_OLD_APP_ARTIFACT: ${{ steps.old-candidate.outputs.wheel }}
+          ACP_TEST_OLD_APP_ARTIFACT_SHA256: ${{ steps.old-candidate.outputs.digest }}
+        run: .venv/bin/pytest -q tests/test_postgresql_rolling_upgrade.py
