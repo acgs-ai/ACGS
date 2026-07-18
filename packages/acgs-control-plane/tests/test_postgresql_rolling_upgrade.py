@@ -260,8 +260,6 @@ def test_cleanup_is_bounded_and_attempts_every_collector_and_probe(
     assert timeout_process.poll() is not None
     assert timeout_process.stdout is not None and timeout_process.stdout.closed
     assert timeout_process.stderr is not None and timeout_process.stderr.closed
-    retained_output = getattr(timeout_process, "_fileobj2output", None)
-    assert "sentinel-timeout-secret" not in repr(retained_output)
 
 
 def _required_old_artifact() -> OldArtifact:
@@ -670,7 +668,7 @@ def _terminate_process(process: subprocess.Popen[Any]) -> None:
         process.wait(timeout=3)
 
 
-def _close_and_scrub_operator_streams(process: subprocess.Popen[str]) -> bool:
+def _close_operator_streams(process: subprocess.Popen[str]) -> bool:
     clean = True
     for stream in (process.stdout, process.stderr):
         if stream is None or stream.closed:
@@ -679,15 +677,6 @@ def _close_and_scrub_operator_streams(process: subprocess.Popen[str]) -> bool:
             stream.close()
         except BaseException:
             clean = False
-    try:
-        retained_output = getattr(process, "_fileobj2output", None)
-        if isinstance(retained_output, dict):
-            for chunks in retained_output.values():
-                if isinstance(chunks, list):
-                    chunks.clear()
-            retained_output.clear()
-    except BaseException:
-        clean = False
     return clean
 
 
@@ -705,7 +694,13 @@ def _finish_operator(process: subprocess.Popen[str]) -> subprocess.CompletedProc
             _terminate_process(process)
         except BaseException:
             cleanup_failed = True
-        if not _close_and_scrub_operator_streams(process):
+        try:
+            # Drain through the public subprocess API after termination.  Do
+            # not inspect CPython's private output-retention implementation.
+            process.communicate(timeout=3)
+        except BaseException:
+            cleanup_failed = True
+        if not _close_operator_streams(process):
             cleanup_failed = True
         if cleanup_failed:
             raise AssertionError("migration operator timeout cleanup failed")

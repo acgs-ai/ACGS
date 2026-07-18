@@ -37,12 +37,6 @@ if not DATABASE_URL:
         f"set {DATABASE_ENV} to run PostgreSQL bytea recovery tests",
         allow_module_level=True,
     )
-if os.environ.get("ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE") != "1":
-    raise RuntimeError(
-        "Set ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 to acknowledge that these tests "
-        "reset the exactly named disposable PostgreSQL public schema."
-    )
-
 pytest.importorskip("psycopg")
 
 
@@ -91,6 +85,11 @@ def _public_tables_and_other_sessions() -> tuple[list[str], int]:
 
 @pytest.fixture()
 def _isolated_database() -> Iterator[None]:
+    if os.environ.get("ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE") != "1":
+        raise RuntimeError(
+            "Set ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 to acknowledge that these tests "
+            "reset the exactly named disposable PostgreSQL public schema."
+        )
     _reset_public_schema()
     try:
         yield

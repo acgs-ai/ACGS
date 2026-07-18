@@ -234,6 +234,32 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
     assert _sha256(database_path) == before
 
 
+def test_application_shutdown_disposes_its_database_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database_url = _database_url(tmp_path / "local.sqlite3")
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=tmp_path / "audit",
+            create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    calls = {"dispose": 0}
+    real_dispose = app.state.engine.dispose
+
+    def dispose() -> None:
+        calls["dispose"] += 1
+        real_dispose()
+
+    monkeypatch.setattr(app.state.engine, "dispose", dispose)
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+
+    assert calls == {"dispose": 1}
+
+
 def test_unclassified_future_write_route_keeps_production_blocked_before_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

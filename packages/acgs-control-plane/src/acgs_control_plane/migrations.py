@@ -236,27 +236,28 @@ _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
 }
 
-_LEGACY_FOREIGN_KEYS: Final[dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]] = {
+_ForeignKeySpec = tuple[tuple[str, ...], str | None, str, tuple[str, ...]]
+
+
+_LEGACY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     "organizations": frozenset(),
-    "users": frozenset({(("org_id",), "organizations", ("id",))}),
-    "agents": frozenset({(("org_id",), "organizations", ("id",))}),
-    "policy_bundles": frozenset({(("org_id",), "organizations", ("id",))}),
-    "receipts": frozenset({(("org_id",), "organizations", ("id",))}),
-    "compliance_exports": frozenset({(("org_id",), "organizations", ("id",))}),
+    "users": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "agents": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "policy_bundles": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "receipts": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "compliance_exports": frozenset({(("org_id",), None, "organizations", ("id",))}),
 }
-_SCOPED_FOREIGN_KEYS: Final[dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]] = {
+_SCOPED_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
-    "projects": frozenset({(("org_id",), "organizations", ("id",))}),
+    "projects": frozenset({(("org_id",), None, "organizations", ("id",))}),
     "environments": frozenset(
         {
-            (("org_id",), "organizations", ("id",)),
-            (("org_id", "project_id"), "projects", ("org_id", "id")),
+            (("org_id",), None, "organizations", ("id",)),
+            (("org_id", "project_id"), None, "projects", ("org_id", "id")),
         }
     ),
 }
-_PROJECTS_ONLY_FOREIGN_KEYS: Final[
-    dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]]
-] = {
+_PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
 }
@@ -846,12 +847,20 @@ def _non_table_object_detail(connection: Connection) -> str | None:
     return None
 
 
+def _canonical_referred_schema(value: object, dialect_name: str) -> str | None:
+    """Map the dialect's canonical local schema to the frozen ``None`` sentinel."""
+    canonical = {"postgresql": "public", "sqlite": "main"}.get(dialect_name)
+    if value is None or (canonical is not None and value == canonical):
+        return None
+    return str(value)
+
+
 def _schema_detail(
     inspector: Inspector,
     actual_tables: set[str],
     expected_columns: dict[str, tuple[_ColumnSpec, ...]],
     expected_primary_keys: dict[str, tuple[str, ...]],
-    expected_foreign_keys: dict[str, frozenset[tuple[tuple[str, ...], str, tuple[str, ...]]]],
+    expected_foreign_keys: dict[str, frozenset[_ForeignKeySpec]],
     expected_uniques: dict[str, frozenset[tuple[str, ...]]],
     expected_non_unique_indexes: dict[str, frozenset[tuple[str, ...]]],
 ) -> str | None:
@@ -861,8 +870,11 @@ def _schema_detail(
             f"unexpected table set: expected {sorted(expected_tables)}, got {sorted(actual_tables)}"
         )
 
+    dialect_name = inspector.bind.dialect.name
+    inspection_schema = "public" if dialect_name == "postgresql" else None
+
     for table_name, columns in expected_columns.items():
-        actual_columns = inspector.get_columns(table_name)
+        actual_columns = inspector.get_columns(table_name, schema=inspection_schema)
         if [column["name"] for column in actual_columns] != [column.name for column in columns]:
             return f"{table_name} has an unexpected column layout"
         for actual, expected in zip(actual_columns, columns, strict=True):
@@ -870,21 +882,23 @@ def _schema_detail(
                 return f"{table_name}.{expected.name} has an unexpected nullability"
             if actual.get("default") is not None:
                 return f"{table_name}.{expected.name} has an unexpected server default"
-            if not _matches_type(actual["type"], expected, inspector.bind.dialect.name):
+            if not _matches_type(actual["type"], expected, dialect_name):
                 return f"{table_name}.{expected.name} has an unexpected type"
 
         actual_primary_key = tuple(
-            inspector.get_pk_constraint(table_name)["constrained_columns"] or ()
+            inspector.get_pk_constraint(table_name, schema=inspection_schema)["constrained_columns"]
+            or ()
         )
         if actual_primary_key != expected_primary_keys[table_name]:
             return f"{table_name} has an unexpected primary key"
 
-        foreign_keys = inspector.get_foreign_keys(table_name)
+        foreign_keys = inspector.get_foreign_keys(table_name, schema=inspection_schema)
         if any(foreign_key.get("options") for foreign_key in foreign_keys):
             return f"{table_name} has foreign-key options outside the frozen schema"
         actual_foreign_keys = frozenset(
             (
                 tuple(foreign_key["constrained_columns"]),
+                _canonical_referred_schema(foreign_key.get("referred_schema"), dialect_name),
                 foreign_key["referred_table"],
                 tuple(foreign_key["referred_columns"]),
             )
@@ -894,13 +908,13 @@ def _schema_detail(
             return f"{table_name} has unexpected foreign keys"
 
         actual_uniques: set[tuple[str, ...]] = set()
-        for constraint in inspector.get_unique_constraints(table_name):
+        for constraint in inspector.get_unique_constraints(table_name, schema=inspection_schema):
             column_names = _reflected_column_tuple(constraint["column_names"])
             if column_names is None:
                 return f"{table_name} has an unnamed unique constraint"
             actual_uniques.add(column_names)
         actual_indexes: set[tuple[str, ...]] = set()
-        for index in inspector.get_indexes(table_name):
+        for index in inspector.get_indexes(table_name, schema=inspection_schema):
             column_names = _reflected_column_tuple(index["column_names"])
             if column_names is None:
                 return f"{table_name} has an unnamed index"

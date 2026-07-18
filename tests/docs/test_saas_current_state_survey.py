@@ -24,6 +24,10 @@ BASELINE_COMMIT = "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96"
 PARENT_PROGRAM_RECORD = "b2aa0c928b6ba21baa8e4a123452eebeeda3e050"
 OBSERVED_PARENT_HEAD = "e4af0731aece89c1b7bcc050b609260571497145"
 OBSERVED_AT = "2026-07-13T09:59:25Z"
+PARENT_PROGRAM_RECORD_DRIFT = (
+    "Survey work started from the parent commit; the parent ref advanced with a test-only "
+    "hardening commit. Rebase onto the observed parent head before publication."
+)
 BASELINE_SCOPE = (
     "Source, tests, tracked documentation, and forge metadata observed at the frozen baseline."
 )
@@ -57,16 +61,6 @@ def _snapshot() -> dict[str, Any]:
     return payload
 
 
-def _strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [item for child in value for item in _strings(child)]
-    if isinstance(value, dict):
-        return [item for child in value.values() for item in _strings(child)]
-    return []
-
-
 def test_snapshot_schema_baseline_and_evidence_boundary() -> None:
     snapshot = _snapshot()
     assert set(snapshot) == {
@@ -91,7 +85,7 @@ def test_snapshot_schema_baseline_and_evidence_boundary() -> None:
         "program_record_parent_commit": PARENT_PROGRAM_RECORD,
         "program_record_parent_ref": "beta/p0-program-record-005",
         "program_record_parent_observed_head": OBSERVED_PARENT_HEAD,
-        "program_record_parent_drift": "Survey work started from the parent commit; the parent ref advanced with a test-only hardening commit. Rebase onto the observed parent head before publication.",
+        "program_record_parent_drift": PARENT_PROGRAM_RECORD_DRIFT,
         "observed_at": OBSERVED_AT,
         "scope": BASELINE_SCOPE,
     }
@@ -132,8 +126,14 @@ def test_hypotheses_cover_required_ids_and_all_dispositions() -> None:
         assert item["next_validation"].strip()
     assert by_id["H-EVIDENCE-INGESTION-008"]["status"] == "contradicted"
     assert "local and mcp approval-resume" in by_id["H-EVIDENCE-INGESTION-008"]["finding"].lower()
-    assert "managed control-plane approval/resume api" in by_id["H-EVIDENCE-INGESTION-008"]["finding"].lower()
-    assert "when a consumption ledger is configured" in by_id["H-RUNTIME-CANONICAL-001"]["finding"].lower()
+    assert (
+        "managed control-plane approval/resume api"
+        in by_id["H-EVIDENCE-INGESTION-008"]["finding"].lower()
+    )
+    assert (
+        "when a consumption ledger is configured"
+        in by_id["H-RUNTIME-CANONICAL-001"]["finding"].lower()
+    )
     assert by_id["H-CP-AUDIT-ATOMICITY-004"]["status"] == "unverified"
     assert by_id["H-POLICY-ACTIVATION-RACE-006"]["status"] == "unverified"
 
@@ -235,7 +235,12 @@ def test_paths_are_portable_and_capture_is_sanitized() -> None:
         assert result.returncode == 0, f"missing frozen source: {path}"
     assert "packages/gove-zone/src/gove_zone/audit.py" in provenance
 
-    text = "\n".join([SURVEY_PATH.read_text(encoding="utf-8"), *_strings(snapshot)]).lower()
+    text = "\n".join(
+        [
+            SURVEY_PATH.read_text(encoding="utf-8"),
+            SNAPSHOT_PATH.read_text(encoding="utf-8"),
+        ]
+    ).lower()
     for forbidden in (
         "/home/",
         "http://",

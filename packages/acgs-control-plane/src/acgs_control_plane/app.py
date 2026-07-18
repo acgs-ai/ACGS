@@ -272,6 +272,11 @@ def create_app(
     app.state.engine = engine
     app.state.schema_preflight = schema_preflight
     app.state.session_factory = make_session_factory(engine)
+
+    async def _dispose_engine() -> None:
+        app.state.engine.dispose()
+
+    app.router.add_event_handler("shutdown", _dispose_engine)
     return app
 
 

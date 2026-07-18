@@ -208,13 +208,20 @@ def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() ->
             assert isinstance(project_columns["created_at"]["type"], postgresql.TIMESTAMP)
             assert project_columns["created_at"]["type"].timezone is True
 
+            reflected_environment_foreign_keys = inspector.get_foreign_keys(
+                "environments", schema="public"
+            )
+            assert all(
+                foreign_key.get("referred_schema") in (None, "public")
+                for foreign_key in reflected_environment_foreign_keys
+            )
             environment_foreign_keys = {
                 (
                     tuple(foreign_key["constrained_columns"]),
                     foreign_key["referred_table"],
                     tuple(foreign_key["referred_columns"]),
                 )
-                for foreign_key in inspector.get_foreign_keys("environments")
+                for foreign_key in reflected_environment_foreign_keys
             }
             assert (("org_id", "project_id"), "projects", ("org_id", "id")) in (
                 environment_foreign_keys
@@ -358,6 +365,87 @@ def test_raw_postgresql_alembic_commands_reject_before_schema_or_version_mutatio
 
     assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
+
+
+def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A same-named parent outside ``public`` must never satisfy the frozen contract."""
+    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with cleanup_engine.begin() as connection:
+            connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
+    finally:
+        cleanup_engine.dispose()
+
+    result = upgrade_database(_TEST_POSTGRES_URL)
+    assert result.after.state is DatabaseSchemaState.VERSION_0002
+
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("CREATE SCHEMA shadow"))
+            connection.execute(
+                sa.text("CREATE TABLE shadow.organizations (id VARCHAR(64) PRIMARY KEY)")
+            )
+            connection.execute(sa.text("ALTER TABLE users DROP CONSTRAINT users_org_id_fkey"))
+            connection.execute(
+                sa.text(
+                    "ALTER TABLE users ADD CONSTRAINT users_org_id_fkey "
+                    "FOREIGN KEY (org_id) REFERENCES shadow.organizations (id)"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    malformed = inspect_schema(_TEST_POSTGRES_URL)
+    assert malformed.state is DatabaseSchemaState.UNKNOWN
+    assert malformed.detail == "users has unexpected foreign keys"
+    before = _catalog_and_data_snapshot()
+
+    with pytest.raises(MigrationPreflightError, match="users has unexpected foreign keys"):
+        upgrade_database(_TEST_POSTGRES_URL)
+    with pytest.raises(MigrationPreflightError, match="Refusing a raw Alembic operation"):
+        command.stamp(migration_config(_TEST_POSTGRES_URL), HEAD_REVISION)
+
+    observed_engine = make_engine(_TEST_POSTGRES_URL)
+    statements: list[str] = []
+
+    @sa.event.listens_for(observed_engine, "before_cursor_execute")
+    def _record_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: object,
+    ) -> None:
+        statements.append(statement)
+
+    monkeypatch.setattr(app_module, "make_engine", lambda _url: observed_engine)
+    audit_dir = tmp_path / "audit"
+    with pytest.raises(StartupSchemaPreflightError) as stopped:
+        create_app(
+            Settings(
+                database_url=_TEST_POSTGRES_URL,
+                audit_dir=audit_dir,
+                create_tables=False,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+            )
+        )
+
+    assert stopped.value.schema_state is DatabaseSchemaState.UNKNOWN
+    assert statements
+    assert _catalog_and_data_snapshot() == before
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.UNKNOWN
+    assert not audit_dir.exists()
+
+    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with cleanup_engine.begin() as connection:
+            connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
+    finally:
+        cleanup_engine.dispose()
 
 
 _WORKER_SCRIPT = Path(__file__).with_name("_postgresql_migration_worker.py")
