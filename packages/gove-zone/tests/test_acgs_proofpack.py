@@ -117,6 +117,37 @@ def test_golden_bundle_regenerates_byte_identical(tmp_path: Path) -> None:
         )
 
 
+def test_generated_bundle_forces_lf_at_every_text_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep proof-pack bytes stable when the host defaults to CRLF."""
+    fresh = tmp_path / "regen"
+    original_write_text = Path.write_text
+    observed: dict[str, str | None] = {}
+
+    def _record_write_text(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        if path.is_relative_to(fresh):
+            observed[path.relative_to(fresh).as_posix()] = newline
+        return original_write_text(path, data, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(Path, "write_text", _record_write_text)
+    _generate_golden(fresh)
+
+    expected = sorted([EVIDENCE_FILE, *ARTIFACT_FILES])
+    assert sorted(observed) == expected
+    assert set(observed.values()) == {"\n"}
+    for name in expected:
+        payload = (fresh / name).read_bytes()
+        assert b"\r" not in payload, f"{name}: unexpected CR/CRLF line ending"
+        assert payload.endswith(b"\n"), f"{name}: missing terminal LF"
+
+
 def test_golden_layout_is_the_documented_contract() -> None:
     # The five files named in the product contract, no more, no less.
     assert sorted(p.name for p in GOLDEN.iterdir()) == sorted(

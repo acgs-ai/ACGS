@@ -93,6 +93,20 @@ def test_every_pack_document_carries_the_not_certified_disclaimer() -> None:
         assert "self-assessment" in text.lower(), f"{doc.name}: missing self-assessment framing"
 
 
+def test_pack_text_documents_use_lf_and_end_with_exactly_one_lf() -> None:
+    """Keep generated text artifacts LF-only and free of an EOF blank line."""
+    docs = (
+        [COMMITTED_PACK / "README.md"]
+        + [COMMITTED_PACK / "frameworks" / filename for _, filename in ep.PACK_FRAMEWORKS]
+        + [COMMITTED_PACK / "manifest.json"]
+    )
+    for doc in docs:
+        payload = doc.read_bytes()
+        assert b"\r" not in payload, f"{doc.name}: unexpected CR/CRLF line ending"
+        assert payload.endswith(b"\n"), f"{doc.name}: missing terminal LF"
+        assert not payload.endswith(b"\n\n"), f"{doc.name}: unexpected EOF blank line"
+
+
 def test_runtime_evidence_is_the_audit_export_and_receipt() -> None:
     proofpack = COMMITTED_PACK / "runtime-evidence" / "proofpack"
     # requested artifacts #4 (audit export) and #5 (decision receipt report)
