@@ -180,8 +180,12 @@ def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> Non
             return None
 
     class _RecordingConnection:
+        class _Dialect:
+            name = "sqlite"
+
         def __init__(self) -> None:
             self.statements: list[object] = []
+            self.dialect = self._Dialect()
 
         def execute(self, statement: object) -> _Result:
             self.statements.append(statement)

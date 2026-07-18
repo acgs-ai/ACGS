@@ -43,6 +43,7 @@ from acgs_control_plane.migrations import (
     _POSTGRES_MIGRATION_LOCK_STATEMENT,
     HEAD_REVISION,
     LEGACY_V0_REVISION,
+    DatabaseSchemaBindingMismatch,
     DatabaseSchemaState,
     MigrationLockUnavailable,
     MigrationPreflightError,
@@ -439,6 +440,160 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
     assert _catalog_and_data_snapshot() == before
     assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.UNKNOWN
     assert not audit_dir.exists()
+
+    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with cleanup_engine.begin() as connection:
+            connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
+    finally:
+        cleanup_engine.dispose()
+
+
+def test_application_refuses_shadow_first_search_path_before_serving_or_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete same-name shadow schema must not become the runtime schema."""
+    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with cleanup_engine.begin() as connection:
+            connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
+    finally:
+        cleanup_engine.dispose()
+
+    result = upgrade_database(_TEST_POSTGRES_URL)
+    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("CREATE SCHEMA shadow"))
+            table_names = sa.inspect(connection).get_table_names(schema="public")
+            for table_name in table_names:
+                connection.execute(
+                    sa.text(
+                        f'CREATE TABLE shadow."{table_name}" '
+                        f'(LIKE public."{table_name}" INCLUDING ALL)'
+                    )
+                )
+            connection.execute(
+                sa.text("INSERT INTO shadow.alembic_version (version_num) VALUES (:revision)"),
+                {"revision": HEAD_REVISION},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO shadow.organizations "
+                    "(id, name, created_at, audit_anchor_count, audit_anchor_hash) "
+                    "VALUES ('shadow-org', 'Shadow Organization', now(), 0, '')"
+                )
+            )
+            connection.execute(sa.text("CREATE TABLE shadow.sentinel (id INTEGER PRIMARY KEY)"))
+            connection.execute(sa.text("INSERT INTO shadow.sentinel (id) VALUES (11)"))
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION shadow.current_schema()
+                    RETURNS name LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 12 WHERE id = 11;
+                        RETURN 'shadow';
+                    END
+                    $function$
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE FUNCTION shadow.current_database()
+                    RETURNS name LANGUAGE plpgsql AS $function$
+                    BEGIN
+                        UPDATE shadow.sentinel SET id = 13 WHERE id = 11;
+                        RETURN 'shadow_database';
+                    END
+                    $function$
+                    """
+                )
+            )
+    finally:
+        engine.dispose()
+
+    before = _catalog_and_data_snapshot()
+    hostile_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
+    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0002
+    session_factory_calls = {"count": 0}
+
+    def forbidden_session_factory(_engine: object) -> object:
+        session_factory_calls["count"] += 1
+        raise AssertionError("shadow-first startup reached session-factory creation")
+
+    monkeypatch.setattr(app_module, "make_session_factory", forbidden_session_factory)
+
+    with pytest.raises(
+        DatabaseSchemaBindingMismatch,
+        match="canonical public schema",
+    ):
+        app = create_app(
+            Settings(
+                database_url=hostile_url,
+                audit_dir=tmp_path / "audit",
+                create_tables=False,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+            )
+        )
+        app.state.engine.dispose()
+
+    assert _catalog_and_data_snapshot() == before
+    check_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with check_engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
+            assert connection.scalar(sa.text("SELECT count(*) FROM shadow.organizations")) == 1
+    finally:
+        check_engine.dispose()
+    assert session_factory_calls == {"count": 0}
+    assert not (tmp_path / "audit").exists()
+
+    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with cleanup_engine.begin() as connection:
+            connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
+    finally:
+        cleanup_engine.dispose()
+
+
+def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Path) -> None:
+    result = upgrade_database(_TEST_POSTGRES_URL)
+    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("CREATE SCHEMA shadow"))
+    finally:
+        engine.dispose()
+
+    public_first_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dpublic%2Cshadow%2Cpg_catalog"
+    app = create_app(
+        Settings(
+            database_url=public_first_url,
+            audit_dir=tmp_path / "audit",
+            create_tables=False,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    try:
+        for _ in range(2):
+            with app.state.engine.connect() as connection:
+                assert (
+                    connection.scalar(sa.text("SELECT pg_catalog.current_database()"))
+                    == _DISPOSABLE_DATABASE_NAME
+                )
+                assert connection.scalar(sa.text("SELECT pg_catalog.current_schema()")) == "public"
+                assert (
+                    connection.scalar(sa.text("SELECT pg_catalog.current_setting('search_path')"))
+                    == "public"
+                )
+            app.state.engine.dispose()
+    finally:
+        app.state.engine.dispose()
 
     cleanup_engine = make_engine(_TEST_POSTGRES_URL)
     try:

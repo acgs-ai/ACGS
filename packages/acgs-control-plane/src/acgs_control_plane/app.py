@@ -53,6 +53,7 @@ from acgs_control_plane.migrations import (
     SchemaPreflight,
     assert_current_startup_schema,
     inspect_connection,
+    install_postgresql_application_connection_guard,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -256,6 +257,7 @@ def create_app(
     if settings.runtime_posture is RuntimePosture.PRODUCTION:
         raise ProductionPostureBlocked(blockers)
     engine = make_engine(settings.database_url)
+    install_postgresql_application_connection_guard(engine)
     try:
         if settings.create_tables:
             # Deliberately retained only for disposable legacy development

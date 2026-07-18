@@ -335,7 +335,7 @@ def inspect_schema(database_url: str, *, expected_database: str | None = None) -
     if expected_database is not None:
         _assert_expected_postgresql_url(database_url, expected_database)
     engine = make_engine(database_url)
-    if expected_database is not None:
+    if engine.dialect.name == "postgresql":
         _install_postgresql_operator_connection_guard(engine)
     try:
         with engine.connect() as connection:
@@ -355,7 +355,8 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, non_table_detail)
 
     inspector = sa.inspect(connection)
-    table_names = set(inspector.get_table_names()) - _SQLITE_INTERNAL_TABLES
+    inspection_schema = "public" if connection.dialect.name == "postgresql" else None
+    table_names = set(inspector.get_table_names(schema=inspection_schema)) - _SQLITE_INTERNAL_TABLES
     if not table_names:
         return SchemaPreflight(DatabaseSchemaState.EMPTY, "database has no user tables")
 
@@ -620,6 +621,55 @@ def _install_postgresql_operator_connection_guard(engine: sa.Engine) -> None:
     )
 
 
+def install_postgresql_application_connection_guard(engine: sa.Engine) -> None:
+    """Reject shadow-first PostgreSQL sessions and pin every accepted pool connection."""
+    if engine.dialect.name != "postgresql":
+        return
+    expected_database = engine.url.database
+    if not expected_database:
+        raise DatabaseIdentityMismatch("PostgreSQL application URL must name its database.")
+
+    def guard(dbapi_connection: Any, connection_record: Any) -> None:
+        _guard_postgresql_application_connection(
+            dbapi_connection,
+            connection_record,
+            expected_database,
+        )
+
+    sa.event.listen(
+        engine.pool,
+        "connect",
+        guard,
+        insert=True,
+    )
+
+
+def _guard_postgresql_application_connection(
+    dbapi_connection: Any,
+    _connection_record: Any,
+    expected_database: str,
+) -> None:
+    previous_autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True
+    try:
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SELECT pg_catalog.current_database()")
+            database_row = cursor.fetchone()
+            if not database_row or database_row[0] != expected_database:
+                raise DatabaseIdentityMismatch(
+                    "PostgreSQL application database does not match its URL target."
+                )
+            cursor.execute("SELECT pg_catalog.current_schema()")
+            row = cursor.fetchone()
+            if not row or row[0] != "public":
+                raise DatabaseSchemaBindingMismatch(
+                    "PostgreSQL application target is not bound to the canonical public schema."
+                )
+            cursor.execute("SET SESSION search_path TO public")
+    finally:
+        dbapi_connection.autocommit = previous_autocommit
+
+
 def _guard_postgresql_dbapi_connection(dbapi_connection: Any, connection_record: Any) -> None:
     previous_autocommit = dbapi_connection.autocommit
     dbapi_connection.autocommit = True
@@ -760,7 +810,14 @@ def _classify_revision_0001(
 
 
 def _migration_versions(connection: Connection) -> list[str]:
-    rows = connection.execute(sa.select(_ALEMBIC_VERSION_TABLE.c.version_num))
+    version_table = _ALEMBIC_VERSION_TABLE
+    if connection.dialect.name == "postgresql":
+        version_table = sa.table(
+            _VERSION_TABLE,
+            sa.column("version_num"),
+            schema="public",
+        )
+    rows = connection.execute(sa.select(version_table.c.version_num))
     return list(rows.scalars())
 
 
@@ -774,7 +831,10 @@ def _scope_tables_empty(connection: Connection, table_names: Sequence[str]) -> s
 
     try:
         for table_name in table_names:
-            statement = sa.select(sa.literal(1)).select_from(_SCOPE_TABLES[table_name]).limit(1)
+            table = _SCOPE_TABLES[table_name]
+            if connection.dialect.name == "postgresql":
+                table = sa.table(table_name, schema="public")
+            statement = sa.select(sa.literal(1)).select_from(table).limit(1)
             row = connection.execute(statement).first()
             if row is not None:
                 return f"partial scope table {table_name} contains data and cannot be resumed"
@@ -928,7 +988,7 @@ def _schema_detail(
         if frozenset(actual_indexes) != expected_non_unique_indexes[table_name]:
             return f"{table_name} has unexpected non-unique indexes"
 
-        if inspector.get_check_constraints(table_name):
+        if inspector.get_check_constraints(table_name, schema=inspection_schema):
             return f"{table_name} has check constraints outside the frozen schema"
 
     return None
