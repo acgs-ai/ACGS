@@ -22,31 +22,37 @@ and SIEM. It does not replace them. The ACGS monorepo contains several
 governance components; [`packages/gove-zone`](packages/gove-zone/) is the core
 Python enforcement kernel.
 
-**Current source status:** `gove-zone 1.0.0rc1` — release candidate, with a
-Beta package classifier. This describes the checked-in source and does not by
-itself prove a PyPI publication, production deployment, certification,
-regulatory approval, or independent assurance. Other monorepo components have
-independent versions and maturity levels.
+**Current source metadata:** `gove-zone 1.0.0rc1`, with a Beta package
+classifier. The candidate history still requires release reconciliation. These
+checked-in values do not by themselves prove that this version was tagged,
+published on PyPI, deployed to production, certified, or independently
+assured. Other monorepo components have independent versions and maturity
+levels.
 
 ## How it works
 
 ```mermaid
 flowchart TD
     A[Agent or workflow] --> B[Proposed action]
-    B --> C{ACGS policy gate}
-    C -->|Valid ALLOW or TRANSFORM receipt| D[Governed executor]
-    C -->|DENY, ESCALATE, or invalid receipt| E[No side effect]
-    C --> F[Audit and replay evidence]
+    B --> C{Policy decision}
+    C -->|Four verdicts or fail-closed decision| D[Audit event and Decision Receipt]
+    D -->|Audit or issuance failure| E[No side effect]
+    D --> F{Governed executor verifies}
+    F -->|Valid ALLOW or TRANSFORM| G[Side effect]
+    F -->|DENY, ESCALATE, missing, or invalid| E
 ```
 
 The agent proposes an action; it does not authorize itself. The gate binds the
-decision to the exact execution context. A mismatched, missing, expired,
-consumed, or otherwise invalid receipt fails closed at the governed executor.
+decision to the exact execution context. Every completed decision—including
+`DENY` and `ESCALATE`—retains an audit event and receipt, but only a valid
+`ALLOW` or `TRANSFORM` can execute. A mismatched, missing, expired, or otherwise
+invalid receipt fails closed at the governed executor. When a shared
+`ReceiptConsumptionLedger` is configured, a consumed receipt also fails closed.
 
 ## Verify the invariant locally
 
-Prerequisites: Python 3.11+ and [`uv`](https://docs.astral.sh/uv/). Run from the
-repository root:
+Prerequisites: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and a POSIX
+shell such as Bash for the commands below. Run from the repository root:
 
 ```bash
 tmp="$(mktemp -d)"
@@ -59,14 +65,15 @@ uv run --package gove-zone python examples/tamper_demo/demo.py
 
 Expected result: the allowed action executes; denied, missing, tampered, and
 mismatched receipts do not; the audit chain verifies; and tampered evidence
-fails replay or integrity verification.
+fails chain or receipt verification.
 
 Start with the guided [`START_HERE`](docs/START_HERE.md) path or read the
 canonical [`PROOF_PATH`](docs/PROOF_PATH.md) narrative. Recorded evidence is
-available as an [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast)
-and [plain-text transcript](docs/launch/evidence/demo-proof-sequence.txt); treat
-recordings as point-in-time evidence and reproduce them against the commit you
-intend to evaluate.
+available as a legacy [asciinema cast](docs/launch/evidence/demo-proof-sequence.cast)
+and [plain-text transcript](docs/launch/evidence/demo-proof-sequence.txt), both
+recorded against `0.1.0.dev0` without a captured commit SHA. Treat them as
+point-in-time evidence and reproduce the commands against the commit you intend
+to evaluate.
 
 ## Implemented surfaces and evidence
 
@@ -77,7 +84,8 @@ intend to evaluate.
 | Receipt-gated executor | `packages/gove-zone/src/gove_zone/executor.py`; `packages/gove-zone/tests/test_executor_guard.py` |
 | Actor, action, argument, tenant, and policy binding | `packages/gove-zone/tests/test_argument_binding.py`; `test_tenant_safety.py`; `test_receipt_expiry.py` |
 | Tamper-evident audit chain | `packages/gove-zone/src/gove_zone/audit.py`; `packages/gove-zone/tests/test_audit_chain.py`; `test_audit_chain_corruption.py` |
-| Replay and side-store re-derivation | `packages/gove-zone/src/gove_zone/replay.py`; `packages/gove-zone/tests/test_replay.py` |
+| Audit-only replay verification | `packages/gove-zone/src/gove_zone/replay.py`; `packages/gove-zone/tests/test_replay.py` |
+| Side-store decision re-derivation when raw calls and the original policy are retained | `packages/gove-zone/src/gove_zone/replay_store.py`; `packages/gove-zone/tests/test_replay.py` |
 | Ed25519 receipt-signing support | `packages/gove-zone/src/gove_zone/signing.py`; `packages/gove-zone/tests/test_receipt_signing.py` |
 | Runtime, MCP, and function-call adapter surfaces | `packages/gove-zone/src/gove_zone/integration.py`; [`docs/INTEGRATION_MATRIX.md`](docs/INTEGRATION_MATRIX.md) |
 | Local proof pack and offline verifier | `gove-zone proofpack`; `packages/gove-zone/tests/test_cli.py` |
@@ -91,17 +99,19 @@ making compatibility claims.
 The invariant holds only on execution paths that are wired through a governed
 gate. Three deployment choices are load-bearing:
 
-- **Trusted signatures.** Governed executor gates require trusted signature
-  verification by default. They do not auto-generate or auto-trust a signing
-  key. Unsigned development mode requires an explicit opt-out through
-  `require_signature=False` or `GovernanceProfile.dev`.
+- **Trusted signatures.** Receipt issuance signs only with an explicit signer.
+  Governed executor gates separately require trusted signature verification by
+  default; they do not generate or trust a key. Without a configured matching
+  verifier, the gate raises before calling the tool. Unsigned development mode
+  requires an explicit opt-out through `require_signature=False` or
+  `GovernanceProfile.dev`.
 - **Single use.** Stateless verification does not prevent a valid receipt from
   being reused. Share a `ReceiptConsumptionLedger` across every executor call
   that must enforce one-time consumption.
 - **External audit anchoring.** A hash chain detects internal modification, but
   a truncated prefix can remain internally consistent. Persist the expected
   event count and/or final event hash outside the local audit store and verify
-  those anchors during replay.
+  those anchors during chain verification.
 
 Use `gove_zone.executor.execute_with_receipt`, `GovernedExecutor`, or the
 documented receipt-verification boundary. Do not treat a direct
