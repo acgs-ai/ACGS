@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gove_zone.audit import GENESIS_HASH, ChainHashAuditStore
+from gove_zone.decision import sha256_json
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.verifier import (
     SCHEMA_VERSION as INNER_SCHEMA_VERSION,
@@ -231,6 +232,8 @@ def generate_proof_pack(
     side_store: str | Path | None = None,
     now_iso: str | None = None,
     force: bool = False,
+    constitution_path: str | Path | None = None,
+    constitution_registry_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate an ACGS proof pack for one governed action.
 
@@ -245,6 +248,15 @@ def generate_proof_pack(
         now_iso: injected generation timestamp for deterministic output;
             defaults to the wall clock.
         force: overwrite pack files already present in ``out_dir``.
+        constitution_path: optional path to the governing constitution JSON. When
+            supplied, its canonical-JSON SHA-256 (``sha256_json`` — the same
+            canonicalization used for every other hash) is stamped into the
+            OPTIONAL ``evidence.constitution`` block so a relying party can cross-
+            check it against a trusted constitution-hash registry at verify time.
+            Omitted -> the ``constitution`` key is absent (frozen-v1 back-compat).
+        constitution_registry_id: optional identifier of the registry the
+            constitution hash is expected to appear in; recorded verbatim under
+            ``evidence.constitution.registry_id`` when a constitution is stamped.
 
     Returns:
         A summary dict: ``{"status": "pass", "output_directory": ..., "files",
@@ -394,6 +406,19 @@ def generate_proof_pack(
         "artifacts": artifacts,
         "how_to_verify": "acgs proofpack verify <pack-dir> [--verifier-key <pubkey>]",
     }
+    # Optional, additive constitution stamp. Only present when a constitution
+    # source is supplied, so existing packs/fixtures are byte-identical.
+    if constitution_path is not None:
+        try:
+            constitution = json.loads(Path(constitution_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise PackGenerationError(
+                f"cannot load constitution {constitution_path}: {exc}"
+            ) from exc
+        constitution_block: dict[str, Any] = {"hash": sha256_json(constitution)}
+        if constitution_registry_id is not None:
+            constitution_block["registry_id"] = constitution_registry_id
+        evidence["constitution"] = constitution_block
     _dump_json(out / EVIDENCE_FILE, evidence)
 
     return {

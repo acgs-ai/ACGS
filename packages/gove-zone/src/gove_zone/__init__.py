@@ -115,6 +115,7 @@ from gove_zone.integration import (
     GateModeError,
     emit_receipt_for_hook,
     emit_receipts_for_hook,
+    make_langgraph_tool_node,
     tool_call_from_hook_payload,
     tool_calls_from_hook_payload,
 )
@@ -316,6 +317,7 @@ __all__ = [
     "load_benchmark_suite",
     "load_evaluation_scenarios",
     "load_evaluation_suite",
+    "make_langgraph_tool_node",
     "canonical_json",
     "find_event",
     "govern_identity_action",

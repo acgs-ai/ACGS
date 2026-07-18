@@ -124,6 +124,23 @@ FAMILY_PAYLOADS: dict[str, dict[str, Any]] = {
         "goal": GOAL,
         "state": STATE,
     },
+    "langgraph-tool-call": {
+        # LangGraph forwards AIMessage.tool_calls items, which carry the
+        # idiomatic ``id`` + ``type: "tool_call"`` fields on top of the
+        # LangChain ``{name, args}`` shape. Those extra fields are runtime
+        # bookkeeping only: the adapter must route this to the SAME
+        # (tool_name, args) result so cross-family parity holds.
+        "tool_calls": [
+            {
+                "name": CANONICAL_TOOL,
+                "args": CANONICAL_ARGS,
+                "id": "call_1",
+                "type": "tool_call",
+            }
+        ],
+        "goal": GOAL,
+        "state": STATE,
+    },
     "generic-name-args": {
         "name": CANONICAL_TOOL,
         "args": CANONICAL_ARGS,

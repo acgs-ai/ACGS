@@ -37,6 +37,8 @@ def _generate(args: argparse.Namespace) -> int:
             side_store=args.side_store,
             now_iso=args.now_iso,
             force=args.force,
+            constitution_path=args.constitution,
+            constitution_registry_id=args.constitution_registry_id,
         )
     except PackGenerationError as exc:
         print(f"acgs proofpack generate: {exc}", file=sys.stderr)
@@ -146,6 +148,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     generate.add_argument(
         "--force", action="store_true", help="overwrite pack files already in --out"
+    )
+    generate.add_argument(
+        "--constitution",
+        default=None,
+        help="governing constitution JSON to stamp: its canonical-JSON SHA-256 is "
+        "recorded under evidence.constitution.hash for verify-time registry cross-check",
+    )
+    generate.add_argument(
+        "--constitution-registry-id",
+        default=None,
+        help="identifier of the registry the constitution hash is expected in "
+        "(recorded under evidence.constitution.registry_id; requires --constitution)",
     )
     generate.set_defaults(func=_generate)
 

@@ -100,6 +100,7 @@ def _verify(args: argparse.Namespace) -> int:
         revoked_keys=revoked_keys,
         policy_bundle=args.policy_bundle,
         side_store=args.side_store,
+        constitution_registry=args.constitution_registry,
     )
     print(json.dumps(result.to_dict(), indent=2))
     return 0 if result.valid else 1
@@ -184,6 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--side-store",
         default=None,
         help="replay side store JSONL for re-derivation (with --policy-bundle)",
+    )
+    verify.add_argument(
+        "--constitution-registry",
+        default=None,
+        help="JSON array of trusted constitution hashes; fail-closed if the pack's "
+        "stamped evidence.constitution.hash is absent from it (omitted -> not checked)",
     )
     verify.set_defaults(func=_verify)
 
