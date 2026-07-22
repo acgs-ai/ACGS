@@ -50,7 +50,7 @@ pinned SHA in a follow-up parent commit.
 
 | Package | Submodule pin (branch) | PyPI? | uv.sources dev resolver | Parent CI |
 |---|---|---|---|---|
-| `packages/acgs-lite/` | `main` | yes — v2.10.0 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
+| `packages/acgs-lite/` | `main` | yes — v2.10.1 (`requires-python = ">=3.10"`) | n/a (it IS acgs-lite) | `python-acgs-lite.yml` |
 | `packages/Acgs-Swarm/` | `main` | no — depends on `acgs-lite>=2.8.1` | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-acgs-swarm.yml` |
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
 | `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
