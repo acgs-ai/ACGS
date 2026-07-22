@@ -86,7 +86,7 @@ Rule 12 from the skill, sharpened for this repo:
 - gove-zone gates (via `.venv-gz`): `pytest tests/ -q`, `ruff check src tests`,
   `ruff format --check src tests`, and the G1.3 coverage gate
   `pytest --cov=gove_zone.kernel --cov-branch --cov-fail-under=100 -q`.
-- Set `TMPDIR=/home/martin/.cache/gz-tmp` — `/tmp` is a quota-capped tmpfs that throws
+- Set `TMPDIR="$HOME/.cache/gz-tmp"` — `/tmp` is a quota-capped tmpfs that throws
   phantom `Errno 122` failures under the suite's temp-file load.
 - `git status --short` to catch files Claude created but didn't mention, and to ensure
   the commit excludes `.venv-gz/` and build artifacts.

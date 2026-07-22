@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Governance Hub — CTA Verification Report
 
 > **Two scopes in this report.** The main body tests the **live URL** the CTA points agents at (`https://acgs.ai`). **Addendum A** (appended at the end) re-tests **C2–C5 against the source on branch `feat/marketing-governance-hub` @ `5129fab`**, where the interview is actually implemented. The combined bottom line is at the very end.

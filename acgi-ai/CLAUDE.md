@@ -21,7 +21,7 @@ and the network-layer expression of the privilege boundary, read
 contract above the wire; `DEPLOY.md` is the deployment contract below it.
 
 `DESIGN.md` is downstream of the canonical
-`/home/martin/Downloads/govern-zone/ACGS/DESIGN.md`. When the two disagree,
+design-token `DESIGN.md`. When the two disagree,
 the canonical wins for tokens; this file wins for project-local React surface
 mappings (routing, build, file layout). Runtime references like
 "DESIGN.md §X.Y" mean the project-local file.

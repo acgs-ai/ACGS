@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Customer Onboarding Flow — ACGS / gove-zone
 
 > **Core invariant: No valid Decision Receipt, no side effect.**

@@ -152,7 +152,7 @@ The AML runner wraps every sensitive capability inside an `execute_with_receipt`
 gate. Both `DENY` and `ESCALATE` receipts fail closed at this gate — only an
 `ALLOW` receipt reaches the underlying tool implementation. Under production
 profiles (`require_signature=True`), this also guarantees the receipt was
-issued by the authorized `Validator` and its contents are tamper-proof.
+issued by the authorized `Validator` and its contents are tamper-evident.
 
 ```python
 from gove_zone import execute_with_receipt, DecisionReceipt

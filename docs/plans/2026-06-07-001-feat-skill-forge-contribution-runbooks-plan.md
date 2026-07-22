@@ -3,7 +3,7 @@ title: "feat: Skill Forge contribution runbooks (adapter + policy-bundle)"
 status: active
 date: 2026-06-07
 type: feat
-origin: docs/HERMES_DOJO_ONBOARDING_EVALUATION.md
+origin: docs/internal/HERMES_DOJO_ONBOARDING_EVALUATION.md
 ---
 
 # feat: Skill Forge contribution runbooks (adapter + policy-bundle)
@@ -40,7 +40,7 @@ Traceability: R1–R2 → U1; R3 → U2; R4 → U3; R5 → U1, U2 (authoring dis
 ## Key Technical Decisions
 
 - **KTD-1: Vendor-neutral markdown runbooks, not `.claude/skills/`.** Matches ACGS's vendor-neutral positioning and the existing `docs/runbooks/` convention (`submodule-token.md`). A Claude-only skill would couple contributor onboarding to one agent vendor. (Both CCA lanes agreed.)
-- **KTD-2: No adapter registry — extend the hardcoded parse/expand branches.** Per Codex review, adding a framework today means extending `_tool_name_and_input_from_payload` (`integration.py:305-394`) and batch expansion (`integration.py:252-302`); there is no plugin registry. The runbook must say this plainly so contributors don't look for (or invent) one. (see origin: `docs/HERMES_DOJO_ONBOARDING_EVALUATION.md` §3)
+- **KTD-2: No adapter registry — extend the hardcoded parse/expand branches.** Per Codex review, adding a framework today means extending `_tool_name_and_input_from_payload` (`integration.py:305-394`) and batch expansion (`integration.py:252-302`); there is no plugin registry. The runbook must say this plainly so contributors don't look for (or invent) one. (see origin: `docs/internal/HERMES_DOJO_ONBOARDING_EVALUATION.md` §3)
 - **KTD-3: The required test is a CLI-gate enforcement test + a `runtime.malformed_batch` negative-path test — not a parser-only unit test called "dispatcher-level".** The real inbound path is `gove-zone gate → _gate → emit_receipts_for_hook → tool_calls_from_hook_payload` (`cli.py:188-240`). A parser unit test (`test_integration_hook.py:287-396`) does not prove the new shape is reached by the gate; the gate-level test (pattern: `test_setup.py:220-274`, `test_setup.py:407-457`) does. (Codex, correctness/wiring lane.)
 - **KTD-4: Distinguish "parser-shape contribution" from "full host adapter".** The advertised good-first-issue is a *parser shape* (normalize a framework's payload). A *real* framework adapter additionally requires proof that the framework's execution path calls the gate before the raw tool runs — `integration.py` provides no host registration, so an unwired parser is dead code (handler-wiring rule). The runbook must scope the good-first-issue to the parser shape and flag host-wiring as the larger, separate effort.
 - **KTD-5: Discoverability via a link in a `REQUIRED_DOCS`-scanned doc, plus the human home in `CONTRIBUTING.md`.** Codex confirmed `tests/docs` has **no** orphan-doc check and the link checker scans only `REQUIRED_DOCS` + example READMEs (`test_docs_and_examples.py:161-172`). A link in `CONTRIBUTING.md` aids humans but is not CI-validated unless `CONTRIBUTING.md` is in `REQUIRED_DOCS`; a link in a confirmed `REQUIRED_DOCS` doc (e.g. `docs/INTEGRATION_GUIDE.md`) *is* validated. Add both; the validated one satisfies R4.
@@ -188,7 +188,7 @@ In scope: two markdown runbooks + their discovery links + a green docs gate.
 
 ## Sources & Research
 
-- **Origin / eval:** `docs/HERMES_DOJO_ONBOARDING_EVALUATION.md` (§3 adapter pattern + CCA corrections, §4 blog/positioning, §5 recommendation table).
+- **Origin / eval:** `docs/internal/HERMES_DOJO_ONBOARDING_EVALUATION.md` (§3 adapter pattern + CCA corrections, §4 blog/positioning, §5 recommendation table).
 - **CCA review artifacts (2026-06-07):** Codex GPT-5 correctness/wiring lane and agy governance/critic lane — both VERDICT **AMEND, plan shape correct**. Codex findings are line-cited against `integration.py`, `cli.py`, `policy.py`, `test_setup.py`, `test_docs_and_examples.py`, `Makefile`. agy artifact: `.omc/artifacts/ask/agy-research-critic-lane-*.md`.
 - **Code ground truth:** `packages/gove-zone/src/gove_zone/integration.py`, `cli.py`, `policy.py`; tests `test_setup.py`, `test_integration_hook.py`, `test_policy_bundle_io.py`; gate `tests/docs/test_docs_and_examples.py`; `Makefile:130-132` (`lint-docs`).
 - **Conventions:** `docs/runbooks/submodule-token.md` (runbook format), `CONTRIBUTING.md` (good-first-issues), `~/.claude/rules/review-handler-wiring.md` (wiring rubric).

@@ -10,18 +10,6 @@
 	path = packages/Acgs-Swarm
 	url = https://github.com/dislovelhl/Acgs-Swarm.git
 	branch = main
-[submodule "external/natural_language_autoencoders"]
-	path = external/natural_language_autoencoders
-	url = https://github.com/kitft/natural_language_autoencoders.git
-[submodule "external/UI-TARS-desktop"]
-	path = external/UI-TARS-desktop
-	url = https://github.com/bytedance/UI-TARS-desktop
-[submodule "external/everything-claude-code"]
-	path = external/everything-claude-code
-	url = https://github.com/affaan-m/everything-claude-code.git
-[submodule "external/openswarm"]
-	path = external/openswarm
-	url = https://github.com/VRSEN/OpenSwarm.git
 [submodule "packages/ACGS-agency-agents"]
 	path = packages/ACGS-agency-agents
 	url = https://github.com/dislovelhl/ACGS-agency-agents.git

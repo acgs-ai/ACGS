@@ -1098,5 +1098,5 @@ hash-anchored, operator-readable.
 - `DESIGN.md` — visual + UX contract; the source of truth for the
   privilege boundary this document deploys.
 - `CLAUDE.md` — agent contract; first-stop for future Claudes.
-- Canonical: `/home/martin/Downloads/govern-zone/ACGS/DESIGN.md`.
+- Canonical: the design-token source of truth (`DESIGN.md`).
 - Constitutional hash (brand furniture): `608508a9bd224290`.

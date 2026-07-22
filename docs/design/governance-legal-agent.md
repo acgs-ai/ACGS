@@ -160,7 +160,7 @@ always ALLOW — drafting itself is low-risk; the gate is on the downstream irre
 The legal agent runner wraps all sensitive side-effectful capabilities inside
 `execute_with_receipt` gates. Under production profiles (`require_signature=True`), this
 guarantees that policies were evaluated by the authorized `Validator` and that the receipt
-contents are tamper-proof. Both `DENY` and `ESCALATE` receipts fail closed at this gate — an
+contents are tamper-evident. Both `DENY` and `ESCALATE` receipts fail closed at this gate — an
 `ESCALATE` receipt cannot authorize execution on its own; it means the action requires human
 approval (via `gove-zone approve-escalation`) before it can resume.
 

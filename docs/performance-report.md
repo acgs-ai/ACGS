@@ -1,6 +1,6 @@
 # gove-zone Runtime Performance Report
 
-**Date:** 2026-07-07 · **Package:** `packages/gove-zone` (0.1.0a1) · **Benchmark:** [`governed_actions_bench.py`](../packages/gove-zone/benchmarks/governed_actions_bench.py) (run via [`benchmarks/run_gove_zone.sh`](../benchmarks/run_gove_zone.sh))
+**Date:** 2026-07-07 · **Package:** `packages/gove-zone` (1.0.0rc1) · **Benchmark:** [`governed_actions_bench.py`](../packages/gove-zone/benchmarks/governed_actions_bench.py) (run via [`benchmarks/run_gove_zone.sh`](../benchmarks/run_gove_zone.sh))
 
 This report measures the four gove-zone runtime hot paths — receipt validation,
 policy evaluation, audit write, and replay verification — at 100 / 1,000 /

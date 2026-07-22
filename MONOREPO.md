@@ -55,27 +55,22 @@ pinned SHA in a follow-up parent commit.
 | `packages/clinicalguard/` | `main` | no | active — `[tool.uv.sources] acgs-lite = { workspace = true }` | `python-clinicalguard.yml` |
 | `packages/ACGS-agency-agents/` | pinned SHA (no `branch` in `.gitmodules`) | no | n/a — not a uv workspace member; often an empty checkout locally | none |
 
-## Third-party `external/` submodules
+## Third-party `external/` references
 
-Reference checkouts of upstream research/agent projects, registered in
-`.gitmodules` and pinned by SHA. Unlike `packages/*` these are **not first-party
-ACGS code**: they carry their own upstream licenses, are **not** built, linted,
-imported, or gated by any parent CI workflow, and are left uninitialized by
-default (`git submodule status` shows them with a leading `-`). They exist only
-as provenance-anchored reading material; nothing in the tree imports them.
+Upstream research/agent projects referenced for provenance. These are **not
+first-party ACGS code**: they carry their own upstream licenses and are **not**
+built, linted, imported, or gated by any CI workflow — nothing in the tree
+imports them.
 
-| Submodule | Upstream | Why vendored | License |
-|---|---|---|---|
-| `external/natural_language_autoencoders/` | `kitft/natural_language_autoencoders` | Research reference for NL→latent encoding experiments | upstream (verify before reuse) |
-| `external/UI-TARS-desktop/` | `bytedance/UI-TARS-desktop` | Reference GUI-agent architecture | Apache-2.0 (upstream) |
-| `external/everything-claude-code/` | `affaan-m/everything-claude-code` | Agent-tooling pattern reference | upstream (verify before reuse) |
-| `external/openswarm/` | `VRSEN/OpenSwarm` | Multi-agent orchestration reference | upstream (verify before reuse) |
+They are **no longer git submodules.** Embedding them as submodules made
+`git clone --recursive` pull megabytes of unrelated upstream code (and fail when
+an upstream remote was unavailable), so they were removed from `.gitmodules` and
+are recorded as a pinned reference list in [`external/README.md`](external/README.md)
+(project, purpose, upstream URL, pinned commit, license). A plain `git clone`
+now succeeds for any reviewer. See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
 
-Because no first-party code depends on them, no SHA bump is required for ACGS
-releases. To pull one for inspection: `git submodule update --init
-external/<name>`. To pin it to a tracking branch, add a `branch = ...` line to
-its `.gitmodules` stanza (currently SHA-only). Before vendoring any of this code
-into first-party packages, confirm the upstream license permits redistribution.
+Before reusing any of this code in first-party packages, confirm the upstream
+license permits redistribution.
 
 ## Cross-cutting CI
 

@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # govern-zone Architecture Audit — 2026-05-22
 
 > **Status:** Audit + plan only. No structural moves executed. Pre-existing
