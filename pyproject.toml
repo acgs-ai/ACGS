@@ -23,7 +23,6 @@ package = false
 [tool.uv.workspace]
 members = [
     "packages/acgs-lite",
-    "packages/acgs-chatgpt-app",
     "packages/Acgs-Swarm",
     "packages/clinicalguard",
     "packages/gove-zone",
