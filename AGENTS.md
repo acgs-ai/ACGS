@@ -1,6 +1,6 @@
 # ACGS / gove-zone — Agent Operating Manual
 
-This file is the operating contract for AI coding agents working in `/home/martin/Documents/ACGS` and adjacent ACGS / govern-zone checkouts.
+This file is the operating contract for AI coding agents working in this repository and adjacent ACGS / govern-zone checkouts.
 
 ## Project purpose
 
@@ -23,11 +23,11 @@ Before editing, reviewing, testing, documenting, or planning:
 Helpful commands in this environment:
 
 ```bash
-python3 /home/martin/.claude/scripts/scope-detect.py --json .
-python3 /home/martin/.claude/scripts/validate-subproject.py .
+python3 ~/.claude/scripts/scope-detect.py --json .
+python3 ~/.claude/scripts/validate-subproject.py .
 ```
 
-If `/home/martin/.Codex/scripts/*` exists in your environment, it may be the equivalent path. Trust the script output over filesystem guesses.
+If `~/.Codex/scripts/*` exists in your environment, it may be the equivalent path. Trust the script output over filesystem guesses.
 
 ## Repository map
 

@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # ACGS Productization Pack
 
 > **Core invariant: No valid Decision Receipt, no side effect.**

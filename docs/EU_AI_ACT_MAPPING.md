@@ -86,7 +86,7 @@ sub-duty, stated plainly so the mapping cannot be read as overclaiming.
 
 ## Non-conformity disclaimer
 
-This mapping is **alpha** (`0.1.0.dev0`) developer documentation. It is **not a
+This mapping is **beta** (`1.0.0rc1`) developer documentation. It is **not a
 compliance certification, conformity assessment, or legal advice**, and it does
 **not** assert that any system using gove-zone conforms to the EU AI Act.
 

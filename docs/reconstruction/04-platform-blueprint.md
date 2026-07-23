@@ -84,7 +84,7 @@ off the critical path as a plugin ring per audit §4.5; it is not a platform lay
 **(a) Two-lineage question — kernel of record vs published SDK spine.**
 Recommend: **`gove-zone` is the enforcement kernel of record** (the fail-closed
 executor gate and receipt issuer), and **`acgs-lite` remains the published SDK/spine**
-(PyPI v2.10.0, the base of `Acgs-Swarm`/`clinicalguard`). Do **not** merge the nested
+(PyPI v2.10.1, the base of `Acgs-Swarm`/`clinicalguard`). Do **not** merge the nested
 repos — they are independent git repos under `.gitmodules` (hard constraint; parent
 `CLAUDE.md` §2) and `acgs-lite` carries a `>=3.10` published floor that must not break
 (constraint §3). Bind them with an explicit **receipt-format compatibility contract**:

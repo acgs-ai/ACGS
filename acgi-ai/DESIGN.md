@@ -268,7 +268,7 @@ pills (`--risk-*`) map to the bright `--allow/--review/--deny` under the
 control-plane register.
 
 > **Divergence from canonical.** Per `CLAUDE.md`, this file is downstream of
-> `/home/martin/Downloads/govern-zone/ACGS/DESIGN.md`, which "wins for tokens."
+> the canonical design-token `DESIGN.md`, which "wins for tokens."
 > The two-register model, the `--gz-*` aliases, `--accent-on`, and the status
 > colour system are a project-local superset added here on 2026-06-07. Fold them
 > back into the canonical file when it is next revised.

@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Wave 3 (Plug) — A2A Receipt-Gated Delegation: Design Spec
 
 **Status:** APPROVED-FOR-BUILD (governance-reviewed 2026-06-28; 2 blocking findings resolved — see Design review section).

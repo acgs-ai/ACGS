@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # API Documentation — ACGS / gove-zone
 
 > **Core invariant: No valid Decision Receipt, no side effect.**

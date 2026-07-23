@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Pricing Model — ACGS / gove-zone
 
 Status: **internal pricing draft — no public price list exists and nothing is

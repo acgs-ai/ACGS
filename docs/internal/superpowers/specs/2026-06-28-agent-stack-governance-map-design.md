@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Design — Agent Stack Governance Map (Wave 1 of "Connect the Stacks")
 
 - **Date:** 2026-06-28

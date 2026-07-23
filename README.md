@@ -53,7 +53,30 @@ invalid receipt fails closed at the governed executor. When a shared
 ## Verify the invariant locally
 
 Prerequisites: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and a POSIX
-shell such as Bash for the commands below. Run from the repository root:
+shell such as Bash. This runs on a plain clone — no submodules or private tokens
+required.
+
+The one-command reviewer path:
+
+```bash
+make review
+```
+
+`make review` runs the documentation smoke suite, the full `gove-zone`
+enforcement-kernel test suite, and the receipt-gated invariant smoke, and prints
+`review OK` when the core invariant is proven. The full multi-package CI gate is
+`make verify` (adds JS, typecheck, submodule-bound packages, and coverage/budget
+gates; it needs submodules and all stacks present). `make verify` is a superset
+of `make review`'s checks.
+
+The separate constitutional hash verification
+(`scripts/verify_constitutional_hashes.py`) requires the complete source tree,
+including required submodule contents, and fails closed on a bare clone. The
+core governance kernel remains independently reproducible without optional
+research references — the `make review` path above needs no submodules. See
+[`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md).
+
+Or run the underlying steps directly from the repository root:
 
 ```bash
 tmp="$(mktemp -d)"
@@ -177,8 +200,10 @@ make lint-docs
 For `gove-zone` package changes:
 
 ```bash
-uv run --package gove-zone python -m pytest \
-  packages/gove-zone/tests --import-mode=importlib -q
+# Run from inside the package so uv resolves gove-zone's own dependencies
+# (crypto/yaml/mcp). The root `uv run --package gove-zone …` form needs
+# `--extra crypto --extra yaml --extra mcp` added or 15 optional-dep tests fail.
+cd packages/gove-zone && uv run python -m pytest --import-mode=importlib -q
 cd packages/gove-zone && bash scripts/release_check.sh
 ```
 

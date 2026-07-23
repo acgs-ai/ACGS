@@ -36,7 +36,7 @@ These belong to other agents / prior sessions. Out of scope; do not touch.
 | `ACGS/` (nested repo) | dirty, 0/2 behind | feat/agency-swarm-bridge |
 | `ca-legal-agent-skills/` | submodule dirty | design/codex-landing |
 | `.gitignore` | modified | unknown |
-| `??` untracked dirs (`.codegraph/`, `.cursor/`, `.gove-zone/`, `acgi-ai/dist-*`, `docs/superpowers/`, etc.) | tooling cache + earlier session artifacts | leave alone |
+| `??` untracked dirs (`.codegraph/`, `.cursor/`, `.gove-zone/`, `acgi-ai/dist-*`, `docs/internal/superpowers/`, etc.) | tooling cache + earlier session artifacts | leave alone |
 | `pnpm-lock.yaml`, `uv.lock` (untracked at root) | generated; do not stage | leave alone |
 | `external/openswarm/` | untracked external dep | another lane |
 

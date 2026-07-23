@@ -27,7 +27,7 @@ environment, a possibly-unarmed production approval gate, and integrity features
 
 - **Kernel (`packages/gove-zone/`)** — strongest asset; fail-closed policy → receipt
   → executor gate → hash-chained audit → replay; zero cross-package imports.
-- **Published spine** — `acgs-lite` (PyPI v2.10.0) under `Acgs-Swarm`/`clinicalguard`
+- **Published spine** — `acgs-lite` (PyPI v2.10.1) under `Acgs-Swarm`/`clinicalguard`
   (nested repos); a second receipt lineage with **no code-level link** to the kernel.
 - **Working satellites** — eval-mvp (reference gate engine), agent-bus-analyzer
   (observability, deploy-ready), cft-pack + hermes (host adapters), acgi-ai console +

@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Hermes Repo Dojo Evaluation — Borrow the onboarding ideas?
 
 **Date:** 2026-06-07

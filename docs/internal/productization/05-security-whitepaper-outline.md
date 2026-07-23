@@ -1,3 +1,5 @@
+> **Internal engineering document.** Not part of the public release artifact.
+
 # Security Whitepaper Outline — ACGS / gove-zone
 
 > Working title: **"No Valid Decision Receipt, No Side Effect: A Reference-Monitor

@@ -14,7 +14,7 @@
 > document may be claimed publicly until its named gate passes. The per-track
 > claim-discipline notes map to the **`Status` + `Safe public wording`** ledger in
 > `docs/CLAIMS.md` (status values: `implemented / tested / partial / roadmap / not
-> claimed`). Current honest claims (alpha, `gove-zone` `0.1.0a1`, tamper-*evident* not
+> claimed`). Current honest claims (beta, `gove-zone` `1.0.0rc1`, tamper-*evident* not
 > trustless, tested not verified) stand unchanged until superseded by a passed gate.
 
 ---
