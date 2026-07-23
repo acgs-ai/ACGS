@@ -61,3 +61,19 @@ parent repo.
 ## Verification
 
 Run the local package gate before claiming work complete. For multi-package changes, run `make verify` at root. A passing unit test does not prove handler wiring — see `~/.claude/rules/review-handler-wiring.md`.
+
+## Modular rules
+
+`AGENTS.md` is the full operating manual. For fine-grained, single-topic guidance, these
+`.claude/rules/` files are the canonical extractions (AGENTS.md remains authoritative):
+
+| Rule file | Covers |
+|---|---|
+| `.claude/rules/repo-boundaries.md` | Repository map, nested-repo/submodule discipline, scope gate, git discipline |
+| `.claude/rules/claim-safety.md` | Safe vs unsafe claim wording, reporting uncertainty, verify-before-editing-docs |
+| `.claude/rules/security-sensitive-files.md` | Dangerous edit zones, forbidden changes, required behavior for receipt/policy/audit/signing/executor changes |
+| `.claude/rules/verification-gates.md` | All test/demo/proof commands, path-selected gates |
+
+See also `.claude/rules/permission-posture.md` (permission modes),
+`.claude/rules/headless-delegation.md` (Claude-headless lane), and
+`.claude/rules/worktree-lanes.md` (parallel `claude -w` worktree lanes).

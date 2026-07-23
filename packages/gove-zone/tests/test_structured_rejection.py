@@ -24,6 +24,7 @@ from gove_zone import (
     EscalateError,
     Kernel,
     Policy,
+    ToolEffect,
     new_event_id,
     rejection_dict,
     sha256_json,
@@ -98,7 +99,7 @@ def _deny_kernel(tmp_path, *, rule_id: str) -> tuple[Kernel, list[str]]:
         actor="agent-x",
     )
 
-    @kernel.tool("do.thing")
+    @kernel.tool("do.thing", effect=ToolEffect.PURE_READ_ONLY)
     def thing(trigger: str) -> str:
         ran.append(trigger)
         return f"ran:{trigger}"
@@ -110,7 +111,7 @@ def _kernel_with(policy: Policy, tmp_path) -> Kernel:
     audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
     kernel = Kernel(policy=policy, audit=audit, actor="agent-x")
 
-    @kernel.tool("do.thing")
+    @kernel.tool("do.thing", effect=ToolEffect.PURE_READ_ONLY)
     def thing(**kwargs: object) -> str:  # pragma: no cover - never runs on DENY/ESCALATE
         return "ran"
 
@@ -302,13 +303,15 @@ def test_reason_is_the_only_value_bearing_channel(tmp_path) -> None:
     the README warning "keep policy ``reason`` strings non-sensitive".
     """
     kernel = _kernel_with(_EchoReasonPolicy(), tmp_path)
-    secret = "ECHO-SENTINEL-2cf24dba5fb0a30e"
+    test_marker = "obvious-test-marker"
     with pytest.raises(DeniedError) as ei:
-        kernel.dispatch("do.thing", {"secret": secret}, goal="g")
+        kernel.dispatch("do.thing", {"secret": test_marker}, goal="g")
     env = ei.value.to_rejection_dict()
 
-    assert secret in env["reason"]  # the one by-design value channel
-    leaked_elsewhere = {k: v for k, v in env.items() if k != "reason" and secret in json.dumps(v)}
+    assert test_marker in env["reason"]  # the one by-design value channel
+    leaked_elsewhere = {
+        k: v for k, v in env.items() if k != "reason" and test_marker in json.dumps(v)
+    }
     assert leaked_elsewhere == {}  # nowhere else
 
 

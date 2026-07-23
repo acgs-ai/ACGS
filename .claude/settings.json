@@ -54,7 +54,6 @@
       "Bash(git clean -f:*)",
       "Bash(git checkout master:*)",
       "Bash(git checkout main:*)",
-      "Bash(gh pr merge:*)",
       "Bash(gh pr close:*)",
       "Bash(gh release:*)",
       "Bash(gh secret:*)",
@@ -123,6 +122,36 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/source-doc-suggest.sh\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/audit\" && date -Is >> \"$CLAUDE_PROJECT_DIR/.claude/audit/compaction.log\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-verify.sh\""
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/audit\" && echo \"$(date -Is) subagent-stop\" >> \"$CLAUDE_PROJECT_DIR/.claude/audit/subagents.log\""
           }
         ]
       }

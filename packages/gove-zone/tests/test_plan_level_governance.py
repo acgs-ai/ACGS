@@ -17,7 +17,8 @@ effect fire before the rejection.
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, cast
 
 import pytest
 
@@ -35,6 +36,7 @@ from gove_zone import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
 from gove_zone.decision import sha256_json
 from gove_zone.signing import ReceiptSigner
 
@@ -45,6 +47,66 @@ STEP_VALIDATOR = Validator("constitutional-council")
 PLAN_VALIDATOR = Validator("plan-council")  # never a step actor or the runner
 AUTHORITY = "tenant-A/write-grant"
 WORKFLOW_ID = "wf-run-1"
+
+_ACTIVE_STRICT_GATE: StrictReceiptGateFixture | None = None
+
+
+@pytest.fixture(autouse=True)
+def _bind_strict_receipt_gate(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> Iterator[None]:
+    """Bind each test to isolated schema-v4 consumption and audit state."""
+    global _ACTIVE_STRICT_GATE
+    _ACTIVE_STRICT_GATE = strict_receipt_gate
+    yield
+    _ACTIVE_STRICT_GATE = None
+
+
+def _strict_gate() -> StrictReceiptGateFixture:
+    assert _ACTIVE_STRICT_GATE is not None
+    return _ACTIVE_STRICT_GATE
+
+
+_DEFAULT_SIGNER = object()
+
+
+def _workflow_executor(**kwargs: Any) -> WorkflowExecutor:
+    kwargs.setdefault("verifier", _strict_gate().signer)
+    kwargs.setdefault("require_signature", True)
+    return WorkflowExecutor(**kwargs)
+
+
+def _envelope(
+    inner: DecisionReceipt,
+    *,
+    signer: ReceiptSigner | None | object = _DEFAULT_SIGNER,
+    **kwargs: Any,
+) -> WorkflowStepReceipt:
+    effective = _strict_gate().signer if signer is _DEFAULT_SIGNER else signer
+    return WorkflowStepReceipt.from_inner(
+        inner,
+        signer=cast(ReceiptSigner | None, effective),
+        **kwargs,
+    )
+
+
+def _verify_workflow_replay(
+    dag: WorkflowDAG,
+    receipts: list[WorkflowStepReceipt],
+    *,
+    verifier: ReceiptSigner | dict[str, ReceiptSigner] | object = _DEFAULT_SIGNER,
+    inner_verifier: ReceiptSigner | dict[str, ReceiptSigner] | object = _DEFAULT_SIGNER,
+    **kwargs: Any,
+) -> None:
+    envelope_root = _strict_gate().signer if verifier is _DEFAULT_SIGNER else verifier
+    inner_root = _strict_gate().signer if inner_verifier is _DEFAULT_SIGNER else inner_verifier
+    verify_workflow_replay(
+        dag,
+        receipts,
+        verifier=cast(ReceiptSigner | dict[str, ReceiptSigner], envelope_root),
+        inner_verifier=cast(ReceiptSigner | dict[str, ReceiptSigner], inner_root),
+        **kwargs,
+    )
 
 
 class Tool:
@@ -76,10 +138,12 @@ def _inner_receipt(
         event_id=event_id,
         actor=actor,
     )
+    gate = _strict_gate()
+    event = gate.audit.append(record)
     return DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev_audit_hash",
+        audit_hash=str(event["event_hash"]),
+        previous_audit_hash=str(event["previous_hash"]),
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         policy_bundle_id="policy-bundle",
@@ -87,17 +151,18 @@ def _inner_receipt(
         request_id="req-" + event_id,
         validator=validator,
         authority=AUTHORITY,
+        signer=gate.signer,
     )
 
 
 def _governed(tool: Tool, action: str, *, actor: str = RUNNER) -> GovernedExecutor:
-    # Inner step receipts here are unsigned; authorization/envelope signing is
-    # exercised separately. Run the inner gate in explicit dev mode.
+    gate = _strict_gate()
     g = GovernedExecutor(
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor=actor,
-        require_signature=False,
+        require_signature=True,
+        **gate.executor_kwargs(),
     )
     g.register(action, tool.run)
     return g
@@ -113,7 +178,7 @@ def _auth(
     tenant_id: str = TENANT,
     execution_boundary: str = BOUNDARY,
     expires_at: str = "",
-    signer: ReceiptSigner | None = None,
+    signer: ReceiptSigner | None | object = _DEFAULT_SIGNER,
 ) -> WorkflowAuthorization:
     """A clean plan authorization bound to *dag*.
 
@@ -121,6 +186,7 @@ def _auth(
     ``plan_validator`` is a principal that is never a step actor or the runner, so
     cross-level (b) holds.
     """
+    effective = _strict_gate().signer if signer is _DEFAULT_SIGNER else signer
     return WorkflowAuthorization.from_plan(
         dag.dag_hash(),
         workflow_id=workflow_id,
@@ -131,7 +197,7 @@ def _auth(
         execution_boundary=execution_boundary,
         declared_goal="run the plan",
         expires_at=expires_at,
-        signer=signer,
+        signer=cast(ReceiptSigner | None, effective),
     )
 
 
@@ -153,7 +219,7 @@ def _step_env(
 ) -> WorkflowStepReceipt:
     a = args if args is not None else {"url": "u"}
     inner = _inner_receipt(action=action, args=a, actor=actor, validator=validator)
-    return WorkflowStepReceipt.from_inner(
+    return _envelope(
         inner,
         workflow_id=WORKFLOW_ID,
         step_id=step_id,
@@ -173,8 +239,8 @@ def test_from_plan_binds_hash_and_is_self_consistent() -> None:
     dag = _single_step_dag()
     auth = _auth(dag)
     assert auth.authorization_hash == auth.compute_authorization_hash()
-    assert auth.signature == "unsigned_local"
-    assert auth.signature_algorithm == "none"
+    assert auth.signature != "unsigned_local"
+    assert auth.signature_algorithm != "none"
 
 
 def test_from_plan_rejects_self_validated_plan() -> None:
@@ -223,7 +289,7 @@ def test_authorized_step_executes() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -240,7 +306,7 @@ def test_plan_proposer_may_equal_runner() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag, plan_proposer=RUNNER, plan_validator=PLAN_VALIDATOR)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -262,7 +328,7 @@ def test_missing_step_receipt_still_rejected_first() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -280,7 +346,7 @@ def test_tampered_authorization_hash_rejected_tool_not_called() -> None:
     auth = _auth(dag)
     # Tamper a hashed field WITHOUT recomputing authorization_hash.
     tampered = dataclasses.replace(auth, authority="tenant-A/escalated-grant")
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -309,7 +375,7 @@ def test_forged_recomputed_authorization_rejected_without_private_key() -> None:
     forged = dataclasses.replace(auth, authority="tenant-A/escalated-grant")
     forged = dataclasses.replace(forged, authorization_hash=forged.compute_authorization_hash())
     assert forged.compute_authorization_hash() == forged.authorization_hash  # A's hash PASSES
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -324,7 +390,7 @@ def test_forged_recomputed_authorization_rejected_without_private_key() -> None:
 
 
 def test_signed_authorization_no_verifier_rejected_tool_not_called() -> None:
-    """A signed authorization presented with no verifier is a hard reject → A."""
+    """A workflow cannot be constructed without a frozen verifier root."""
     cryptography = pytest.importorskip("cryptography")
     del cryptography
     from gove_zone import Ed25519Signer
@@ -333,17 +399,15 @@ def test_signed_authorization_no_verifier_rejected_tool_not_called() -> None:
     tool = Tool()
     signer = Ed25519Signer.generate()
     auth = _auth(dag, signer=signer)
-    wf = WorkflowExecutor(
-        workflow_id=WORKFLOW_ID,
-        dag=dag,
-        governed=_governed(tool, "runtime.http.get"),
-        authorization=auth,
-        verifier=None,
-        require_signature=False,
-    )
-    env = _step_env(dag, authorization_hash=auth.authorization_hash)
-    with pytest.raises(ReceiptValidationError, match="signed authorization requires"):
-        wf.execute_step("fetch", {"url": "u"}, env)
+    with pytest.raises(ValueError, match="requires signed authorization"):
+        _workflow_executor(
+            workflow_id=WORKFLOW_ID,
+            dag=dag,
+            governed=_governed(tool, "runtime.http.get"),
+            authorization=auth,
+            verifier=None,
+            require_signature=False,
+        )
     assert tool.calls == 0
 
 
@@ -355,13 +419,13 @@ def test_unsigned_authorization_with_require_signature_rejected_tool_not_called(
     """
     dag = _single_step_dag()
     tool = Tool()
-    auth = _auth(dag)  # unsigned (signer=None)
-    wf = WorkflowExecutor(
+    auth = _auth(dag, signer=None)
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
         authorization=auth,
-        verifier=None,
+        verifier=_strict_gate().signer,
         require_signature=True,
     )
     env = _step_env(dag, authorization_hash=auth.authorization_hash)
@@ -385,7 +449,7 @@ def test_authorization_unknown_signing_key_rejected_tool_not_called() -> None:
     # A verifier map that does NOT contain this authorization's signing key.
     other = Ed25519Signer.generate()
     verifier = {other.key_id: Ed25519Signer.from_public_bytes(other.public_bytes())}
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -409,7 +473,7 @@ def test_signed_authorization_verifies_and_executes() -> None:
     signer = Ed25519Signer.generate()
     verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
     auth = _auth(dag, signer=signer)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -420,7 +484,7 @@ def test_signed_authorization_verifies_and_executes() -> None:
     # require_signature is shared with the envelope gate, so the step envelope is
     # signed too; the positive path here proves authorization signing is accepted.
     inner = _inner_receipt(action="runtime.http.get", args={"url": "u"})
-    env = WorkflowStepReceipt.from_inner(
+    env = _envelope(
         inner,
         workflow_id=WORKFLOW_ID,
         step_id="fetch",
@@ -444,7 +508,7 @@ def test_cross_plan_workflow_id_rejected_tool_not_called() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag, workflow_id="some-other-run")
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -467,7 +531,7 @@ def test_cross_plan_dag_hash_rejected_tool_not_called() -> None:
     )
     tool = Tool()
     auth = _auth(other_dag)  # workflow_id matches, dag_hash does not
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -484,7 +548,7 @@ def test_expired_authorization_rejected_tool_not_called() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag, expires_at="2000-01-01T00:00:00+00:00")
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -500,7 +564,7 @@ def test_authorization_tenant_mismatch_rejected_tool_not_called() -> None:
     dag = _single_step_dag()
     tool = Tool()
     auth = _auth(dag, tenant_id="tenant-EVIL")
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -528,7 +592,7 @@ def test_runner_is_plan_validator_rejected_tool_not_called() -> None:
     tool = Tool()
     # plan_proposer != runner so from_plan's MACI passes; plan_validator == runner.
     auth = _auth(dag, plan_proposer="external-proposer", plan_validator=Validator(RUNNER))
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -555,7 +619,7 @@ def test_step_lifted_to_different_plan_rejected_tool_not_called() -> None:
     auth_b = _auth(dag, authority="tenant-A/grant-B")
     assert auth_a.authorization_hash != auth_b.authorization_hash
     assert auth_a.dag_hash == auth_b.dag_hash and auth_a.workflow_id == auth_b.workflow_id
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -591,7 +655,7 @@ def test_cross_level_collusion_plan_validator_is_step_proposer() -> None:
     tool = Tool()
     colluder = "colluder-X"  # ≠ runner and ≠ plan_proposer
     auth = _auth(dag, plan_proposer=RUNNER, plan_validator=Validator(colluder))
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -614,7 +678,11 @@ def test_self_validated_plan_rejected_at_gate_via_check_c() -> None:
     clean = _auth(dag, plan_proposer="P", plan_validator=PLAN_VALIDATOR)
     forged = dataclasses.replace(clean, plan_validator_id="P")  # validator == proposer
     forged = dataclasses.replace(forged, authorization_hash=forged.compute_authorization_hash())
-    wf = WorkflowExecutor(
+    forged = dataclasses.replace(
+        forged,
+        signature=_strict_gate().signer.sign(forged.authorization_hash.encode("utf-8")),
+    )
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -641,7 +709,7 @@ def test_runner_anchor_runner_is_plan_validator() -> None:
     # plan_proposer != runner (so from_plan's plan-MACI passes); plan_validator is
     # the runner.
     auth = _auth(dag, plan_proposer="external-proposer", plan_validator=Validator(RUNNER))
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -661,7 +729,7 @@ def test_cross_level_collusion_step_validator_is_plan_proposer() -> None:
     # plan_proposer = plan-author (≠ runner). A later step's validator is also
     # plan-author → it would validate a step while having proposed the plan.
     auth = _auth(dag, plan_proposer=proposer, plan_validator=PLAN_VALIDATOR)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.http.get"),
@@ -686,25 +754,19 @@ def test_cross_level_separation_persists_across_steps() -> None:
     )
     dag.validate()
     tool = Tool()
-    g = GovernedExecutor(
-        tenant_id=TENANT,
-        execution_boundary=BOUNDARY,
-        expected_actor=RUNNER,
-        require_signature=False,  # explicit dev mode: unsigned inner step receipt
-    )
-    g.register("runtime.act", tool.run)
+    g = _governed(tool, "runtime.act")
     # plan_proposer P (≠ runner) is a seeded proposer; a later step validated by P
     # is cross-level collusion. Distinct plan_validator keeps plan MACI + runner
     # anchor clean.
     proposer = "plan-author"
     auth = _auth(dag, plan_proposer=proposer, plan_validator=PLAN_VALIDATOR)
-    wf = WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=auth)
+    wf = _workflow_executor(workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=auth)
 
     # Step a: clean (actor = runner, validator = a fresh principal).
     a_inner = _inner_receipt(
         action="runtime.act", args={"k": "a"}, validator=Validator("val-a"), event_id="ev-a"
     )
-    a_env = WorkflowStepReceipt.from_inner(
+    a_env = _envelope(
         a_inner,
         workflow_id=WORKFLOW_ID,
         step_id="a",
@@ -720,7 +782,7 @@ def test_cross_level_separation_persists_across_steps() -> None:
     b_inner = _inner_receipt(
         action="runtime.act", args={"k": "b"}, validator=Validator(proposer), event_id="ev-b"
     )
-    b_env = WorkflowStepReceipt.from_inner(
+    b_env = _envelope(
         b_inner,
         workflow_id=WORKFLOW_ID,
         step_id="b",
@@ -741,7 +803,7 @@ def test_rejected_step_does_not_pollute_cross_level_state() -> None:
     tool = Tool()
     proposer = "plan-author"
     auth = _auth(dag, plan_proposer=proposer, plan_validator=PLAN_VALIDATOR)
-    wf = WorkflowExecutor(
+    wf = _workflow_executor(
         workflow_id=WORKFLOW_ID,
         dag=dag,
         governed=_governed(tool, "runtime.act"),
@@ -785,7 +847,7 @@ def _two_step_chain(dag: WorkflowDAG, auth: WorkflowAuthorization) -> list[Workf
         step = dag.steps[sid]
         inner = _inner_receipt(action=step.action, args=args[sid], event_id="ev-" + sid)
         pred = {p: envelopes[p].step_receipt_hash for p in step.predecessor_step_ids}
-        envelopes[sid] = WorkflowStepReceipt.from_inner(
+        envelopes[sid] = _envelope(
             inner,
             workflow_id=WORKFLOW_ID,
             step_id=sid,
@@ -811,7 +873,12 @@ def _ab_dag() -> WorkflowDAG:
 def test_replay_passes_with_authorization() -> None:
     dag = _ab_dag()
     auth = _auth(dag)
-    verify_workflow_replay(dag, _two_step_chain(dag, auth), authorization=auth)
+    _verify_workflow_replay(
+        dag,
+        _two_step_chain(dag, auth),
+        authorization=auth,
+        inner_verifier=_strict_gate().signer,
+    )
 
 
 def test_replay_rejects_tampered_authorization() -> None:
@@ -820,7 +887,9 @@ def test_replay_rejects_tampered_authorization() -> None:
     chain = _two_step_chain(dag, auth)
     tampered = dataclasses.replace(auth, authority="escalated")  # stale hash
     with pytest.raises(ReceiptValidationError, match="authorization_hash mismatch"):
-        verify_workflow_replay(dag, chain, authorization=tampered)
+        _verify_workflow_replay(
+            dag, chain, authorization=tampered, inner_verifier=_strict_gate().signer
+        )
 
 
 def test_replay_rejects_step_bound_to_other_authorization() -> None:
@@ -830,7 +899,9 @@ def test_replay_rejects_step_bound_to_other_authorization() -> None:
     auth_b = _auth(dag, authority="grant-B")
     chain = _two_step_chain(dag, auth_a)  # steps bound to A
     with pytest.raises(ReceiptValidationError, match="does not match the authorization"):
-        verify_workflow_replay(dag, chain, authorization=auth_b)
+        _verify_workflow_replay(
+            dag, chain, authorization=auth_b, inner_verifier=_strict_gate().signer
+        )
 
 
 def test_replay_rejects_self_validated_plan() -> None:
@@ -841,9 +912,15 @@ def test_replay_rejects_self_validated_plan() -> None:
     # Hand-forge a self-validated authorization with a consistent hash.
     forged = dataclasses.replace(auth, plan_validator_id=auth.plan_proposer)
     forged = dataclasses.replace(forged, authorization_hash=forged.compute_authorization_hash())
+    forged = dataclasses.replace(
+        forged,
+        signature=_strict_gate().signer.sign(forged.authorization_hash.encode("utf-8")),
+    )
     chain = _two_step_chain(dag, forged)
     with pytest.raises(ReceiptValidationError, match="plan self-validation"):
-        verify_workflow_replay(dag, chain, authorization=forged)
+        _verify_workflow_replay(
+            dag, chain, authorization=forged, inner_verifier=_strict_gate().signer
+        )
 
 
 def test_replay_rejects_cross_level_collusion() -> None:
@@ -856,7 +933,7 @@ def test_replay_rejects_cross_level_collusion() -> None:
     a_inner = _inner_receipt(
         action="runtime.act", args={"k": "a"}, validator=Validator(proposer), event_id="ev-a"
     )
-    a_env = WorkflowStepReceipt.from_inner(
+    a_env = _envelope(
         a_inner,
         workflow_id=WORKFLOW_ID,
         step_id="a",
@@ -866,7 +943,7 @@ def test_replay_rejects_cross_level_collusion() -> None:
         authorization_hash=auth.authorization_hash,
     )
     b_inner = _inner_receipt(action="runtime.act", args={"k": "b"}, event_id="ev-b")
-    b_env = WorkflowStepReceipt.from_inner(
+    b_env = _envelope(
         b_inner,
         workflow_id=WORKFLOW_ID,
         step_id="b",
@@ -876,4 +953,9 @@ def test_replay_rejects_cross_level_collusion() -> None:
         authorization_hash=auth.authorization_hash,
     )
     with pytest.raises(ReceiptValidationError, match="cross-level collusion"):
-        verify_workflow_replay(dag, [a_env, b_env], authorization=auth)
+        _verify_workflow_replay(
+            dag,
+            [a_env, b_env],
+            authorization=auth,
+            inner_verifier=_strict_gate().signer,
+        )

@@ -30,6 +30,7 @@ from gove_zone import (
     DeniedError,
     Kernel,
     Policy,
+    ToolEffect,
     sha256_json,
 )
 from gove_zone.tool import ToolCall
@@ -74,7 +75,7 @@ def test_policy_raised_synthesizes_deny_and_records(tmp_path: Path) -> None:
     k = Kernel(policy=_RaisingPolicy(), audit=audit)
     executed: list[str] = []
 
-    @k.tool("never_runs")
+    @k.tool("never_runs", effect=ToolEffect.PURE_READ_ONLY)
     def never_runs() -> None:
         executed.append("ran")
 
@@ -95,7 +96,7 @@ def test_audit_append_failure_raises_audit_error(tmp_path: Path) -> None:
     k = Kernel(policy=AllowAllPolicy(), audit=_BrokenAudit())  # type: ignore[arg-type]
     executed: list[str] = []
 
-    @k.tool("noop")
+    @k.tool("noop", effect=ToolEffect.PURE_READ_ONLY)
     def noop() -> None:
         executed.append("ran")
 
@@ -109,7 +110,7 @@ def test_execution_failure_propagates_and_records_failure(tmp_path: Path) -> Non
     audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
     k = Kernel(policy=AllowAllPolicy(), audit=audit)
 
-    @k.tool("explode")
+    @k.tool("explode", effect=ToolEffect.PURE_READ_ONLY)
     def explode() -> None:
         raise ValueError("boom")
 
@@ -132,7 +133,7 @@ def test_transform_without_args_is_treated_as_deny(tmp_path: Path) -> None:
     k = Kernel(policy=_TransformPolicy(), audit=audit)
     executed: list[str] = []
 
-    @k.tool("t")
+    @k.tool("t", effect=ToolEffect.PURE_READ_ONLY)
     def t(**_: Any) -> None:
         executed.append("ran")
 
@@ -174,7 +175,7 @@ def test_audit_chain_holds_under_mixed_outcomes(tmp_path: Path) -> None:
 
     k = Kernel(policy=FlipFlop(), audit=audit)
 
-    @k.tool("x")
+    @k.tool("x", effect=ToolEffect.PURE_READ_ONLY)
     def x() -> int:
         return 0
 

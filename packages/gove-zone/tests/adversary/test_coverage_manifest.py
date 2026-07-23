@@ -31,25 +31,25 @@ ADV_DIR = Path(__file__).resolve().parent
 MANIFEST: dict[str, dict[str, object]] = {
     "forged-authorization": {
         "status": "PARTIAL",
-        "adaptive": "BYPASSABLE",
+        "adaptive": "STABLE",
         "covering": [
             "test_receipt_signing.py::test_forged_recomputed_receipt_rejected_without_private_key",
             "test_maci_role_separation.py::test_gate_refuses_forged_self_validated_receipt",
             "test_executor_guard.py::test_executor_refuses_tampered_receipt",
+            "adversary/test_unsigned_forgery.py::test_strict_standalone_gate_rejects_unsigned_recomputed_forgery",
         ],
         "gap_tests": [
-            "test_unsigned_forgery.py::test_unsigned_recomputed_forgery_executes_KNOWN_LIMITATION",
+            "test_unsigned_forgery.py::test_receipt_verifier_default_accepts_unsigned_forgery_KNOWN_GAP",
         ],
     },
     "replayed-authorization": {
-        "status": "PARTIAL",
-        "adaptive": "BYPASSABLE",
+        "status": "DEFENDED",
+        "adaptive": "STABLE",
         "covering": [
             "test_workflow_receipt_chain.py::test_replayed_step_rejected_tool_not_called",
+            "adversary/test_standalone_receipt_replay.py::test_standalone_receipt_replay_is_rejected",
         ],
-        "gap_tests": [
-            "test_standalone_receipt_replay.py::test_standalone_receipt_is_replayable_KNOWN_LIMITATION",
-        ],
+        "gap_tests": [],
     },
     "ledger-tampering": {
         "status": "PARTIAL",
@@ -64,7 +64,7 @@ MANIFEST: dict[str, dict[str, object]] = {
     },
     "policy-downgrade": {
         "status": "PARTIAL",
-        "adaptive": "BYPASSABLE",
+        "adaptive": "STABLE",
         "covering": [
             "test_tenant_safety.py::test_policy_hash_mismatch_fails_closed",
             "test_receipt_signing.py::test_algorithm_downgrade_rejected",
@@ -77,9 +77,10 @@ MANIFEST: dict[str, dict[str, object]] = {
     "policy-default-allow": {
         "status": "NOT_DEFENDED",
         "adaptive": "BYPASSABLE",
-        "covering": [],
+        "covering": [
+            "adversary/test_ruleset_default_allow.py::test_unmatched_side_effect_is_receipt_gated_CLOSED",
+        ],
         "gap_tests": [
-            "test_ruleset_default_allow.py::test_unmatched_action_falls_through_to_allow_KNOWN_GAP",
             "test_pql_silent_fail_open.py::test_empty_vendor_feed_compiles_to_allow_all_KNOWN_GAP",
         ],
     },
@@ -103,13 +104,14 @@ MANIFEST: dict[str, dict[str, object]] = {
     },
     "validator-bypass": {
         "status": "PARTIAL",
-        "adaptive": "BYPASSABLE",
+        "adaptive": "STABLE",
         "covering": [
             "test_maci_role_separation.py::test_issuance_refuses_self_validation",
             "test_executor_guard.py::test_executor_refuses_denied_receipt",
+            "adversary/test_authority_scope_unenforced.py::test_pinned_gate_rejects_wrong_authority_before_adapter",
         ],
         "gap_tests": [
-            "test_authority_scope_unenforced.py::test_gate_ignores_authority_grant_KNOWN_GAP",
+            "test_authority_scope_unenforced.py::test_unpinned_gate_accepts_wrong_authority_KNOWN_GAP",
         ],
     },
     "evidence-omission": {
@@ -122,12 +124,14 @@ MANIFEST: dict[str, dict[str, object]] = {
         "gap_tests": [],
     },
     "adapter-bypass": {
-        "status": "NOT_DEFENDED",
-        "adaptive": "BYPASSABLE",
-        "covering": [],
-        "gap_tests": [
-            "test_adapter_bypass.py::test_managed_agent_default_policy_executes_untrusted_tool_KNOWN_LIMITATION",
+        # ManagedAgent side-effect tools require the receipt-gated dispatcher even under
+        # an explicit AllowAllPolicy. Raw Kernel/public registry use remains an A3 scope.
+        "status": "DEFENDED",
+        "adaptive": "STABLE",
+        "covering": [
+            "adversary/test_adapter_bypass.py::test_adapter_explicit_allow_policy_still_requires_receipt_dispatcher",
         ],
+        "gap_tests": [],
     },
 }
 _VALID_ADAPTIVE_STATUSES = frozenset({"STABLE", "BYPASSABLE", "UNTESTED"})
@@ -194,7 +198,7 @@ def test_every_gap_has_a_live_reproducing_test() -> None:
 
 
 def test_taxonomy_posture_is_pinned() -> None:
-    """Pin the honest headline: 3 defended, 5 partial, 2 not-defended. Changing the
+    """Pin the honest headline: 5 defended, 4 partial, 1 not-defended. Changing the
     posture must be a deliberate edit here, not an accident. Threat-model-v2 §10 is the
     prose companion to this pin."""
     defended = {c for c, e in MANIFEST.items() if e["status"] == "DEFENDED"}
@@ -205,12 +209,13 @@ def test_taxonomy_posture_is_pinned() -> None:
         "tenant-crossover",
         "signature-stripping",
         "evidence-omission",
+        "adapter-bypass",
+        "replayed-authorization",
     }, defended
     assert partial == {
         "forged-authorization",
-        "replayed-authorization",
         "ledger-tampering",
         "policy-downgrade",
         "validator-bypass",
     }, partial
-    assert not_defended == {"policy-default-allow", "adapter-bypass"}, not_defended
+    assert not_defended == {"policy-default-allow"}, not_defended

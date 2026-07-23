@@ -21,7 +21,9 @@ Scenarios:
 4. tampered receipt is blocked
 5. cross-tenant receipt is blocked
 6. a transformed action runs **only** as approved
-7. every decision left tamper-evident audit evidence
+7. every decision and execution left checkpointed, tamper-evident audit evidence
+8. receipts are Ed25519-signed and verified at the final execution boundary
+9. a forged/recomputed receipt is rejected without the private key
 
 > Status: foundational / Alpha. This proves the local invariant; it is **not**
 > a production, compliance, or regulator-ready certification.

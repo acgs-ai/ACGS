@@ -11,11 +11,14 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 from gove_zone.decision import (
@@ -52,6 +55,112 @@ class Policy(ABC):
         errors — return a DENY record instead. The kernel's fail-closed
         wrapper catches any leaked exception and converts it to a DENY.
         """
+
+    def authorization_snapshot(self) -> PolicyArtifactSnapshot:
+        """Return an immutable, content-addressed evaluator for authorization.
+
+        The ordinary :class:`Kernel` path deliberately remains compatible with
+        arbitrary ``Policy`` implementations.  The stricter side-effect
+        authorization path must not evaluate an opaque, mutable policy while
+        trusting a separately supplied digest, though, so custom policies fail
+        closed unless they explicitly implement this contract.
+        """
+        raise PolicySnapshotUnavailableError(
+            f"{type(self).__name__} does not provide an authorization snapshot"
+        )
+
+
+class PolicySnapshotUnavailableError(RuntimeError):
+    """Raised when a policy cannot produce a trusted authorization snapshot."""
+
+
+def _freeze_policy_json(value: Any) -> Any:
+    """Copy JSON-shaped policy data into deeply immutable containers."""
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("policy artifact numbers must be finite")
+        return value
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("policy artifact object keys must be strings")
+            frozen[key] = _freeze_policy_json(item)
+        return MappingProxyType(frozen)
+    if _is_sequence(value):
+        return tuple(_freeze_policy_json(item) for item in value)
+    raise ValueError(f"policy artifact contains unsupported value {type(value).__name__}")
+
+
+def _thaw_policy_json(value: Any) -> Any:
+    """Return plain JSON containers without exposing a mutable snapshot."""
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_policy_json(item) for key, item in value.items()}
+    if _is_sequence(value):
+        return [_thaw_policy_json(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyArtifactSnapshot:
+    """Immutable policy artifact and the evaluator rebuilt from that artifact.
+
+    ``digest`` is the full SHA-256 of ``canonical_artifact``.  ``evaluator`` is
+    a fresh policy reconstructed from that exact canonical artifact, not the
+    potentially mutable object on which ``authorization_snapshot`` was called.
+    """
+
+    canonical_artifact: str
+    digest: str
+    policy_version: str
+    evaluator: Policy
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.canonical_artifact, str) or not self.canonical_artifact:
+            raise ValueError("canonical policy artifact must be a non-empty JSON object")
+        try:
+            parsed = json.loads(self.canonical_artifact)
+        except (TypeError, ValueError):
+            raise ValueError("canonical policy artifact must be valid JSON") from None
+        if not isinstance(parsed, Mapping):
+            raise ValueError("canonical policy artifact must be a JSON object")
+        if canonical_json(parsed) != self.canonical_artifact:
+            raise ValueError("policy artifact is not canonical JSON")
+        if not re.fullmatch(r"[0-9a-f]{64}", self.digest):
+            raise ValueError("policy artifact digest must be 64 lowercase SHA-256 hex characters")
+        computed = hashlib.sha256(self.canonical_artifact.encode("utf-8")).hexdigest()
+        if self.digest != computed:
+            raise ValueError("policy artifact digest does not match canonical artifact")
+        if not isinstance(self.policy_version, str) or not self.policy_version.strip():
+            raise ValueError("policy snapshot version must be a non-empty string")
+        if not isinstance(self.evaluator, Policy):
+            raise TypeError("policy snapshot evaluator must implement Policy")
+        if self.evaluator.version != self.policy_version:
+            raise ValueError("policy snapshot evaluator version does not match artifact version")
+
+    @classmethod
+    def from_artifact(
+        cls,
+        artifact: Mapping[str, Any],
+        *,
+        evaluator: Policy,
+    ) -> PolicyArtifactSnapshot:
+        canonical = canonical_json(_thaw_policy_json(_freeze_policy_json(artifact)))
+        return cls(
+            canonical_artifact=canonical,
+            digest=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            policy_version=evaluator.version,
+            evaluator=evaluator,
+        )
+
+    @property
+    def artifact(self) -> Mapping[str, Any]:
+        """A deeply immutable parsed view of ``canonical_artifact``."""
+        parsed = json.loads(self.canonical_artifact)
+        assert isinstance(parsed, Mapping)
+        return cast(Mapping[str, Any], _freeze_policy_json(parsed))
 
 
 class AllowAllPolicy(Policy):
@@ -348,6 +457,21 @@ class PolicyRule:
     tiers: frozenset[ActionTier] = dataclasses.field(default_factory=frozenset)
     reason: str = ""
 
+    def __post_init__(self) -> None:
+        # ``frozen=True`` only prevents rebinding.  Snapshot nested rule values
+        # too so a caller cannot mutate the source dictionaries after policy
+        # construction and silently change evaluation under a cached version.
+        object.__setattr__(
+            self,
+            "state_equals",
+            cast(Mapping[str, Any], _freeze_policy_json(self.state_equals)),
+        )
+        object.__setattr__(
+            self,
+            "state_contains",
+            cast(Mapping[str, Any], _freeze_policy_json(self.state_contains)),
+        )
+
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> PolicyRule:
         rule_id = str(raw.get("id", "")).strip()
@@ -379,8 +503,8 @@ class PolicyRule:
             "effect": self.effect.value,
             "path_prefix": list(self.path_prefix),
             "tools": sorted(self.tools),
-            "state_equals": dict(self.state_equals),
-            "state_contains": dict(self.state_contains),
+            "state_equals": _thaw_policy_json(self.state_equals),
+            "state_contains": _thaw_policy_json(self.state_contains),
             "allowed_actors": sorted(self.allowed_actors),
             "allowed_trust_tiers": sorted(self.allowed_trust_tiers),
             "trust_tier_key": self.trust_tier_key,
@@ -403,9 +527,9 @@ class PolicyRule:
         if self.path_prefix:
             payload["path_prefix"] = list(self.path_prefix)
         if self.state_equals:
-            payload["state_equals"] = dict(self.state_equals)
+            payload["state_equals"] = _thaw_policy_json(self.state_equals)
         if self.state_contains:
-            payload["state_contains"] = dict(self.state_contains)
+            payload["state_contains"] = _thaw_policy_json(self.state_contains)
 
         allow: dict[str, list[str]] = {}
         if self.allowed_actors:
@@ -476,6 +600,12 @@ class RuleSetPolicy(Policy):
         self._rules = tuple(rules)
         self._tier_registry = tier_registry
         self._version = self._compute_version()
+        self._sealed = True
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("RuleSetPolicy is immutable after construction")
+        object.__setattr__(self, name, value)
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RuleSetPolicy:
@@ -558,6 +688,22 @@ class RuleSetPolicy(Policy):
 
     def dump(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json(), encoding="utf-8")
+
+    def authorization_snapshot(self) -> PolicyArtifactSnapshot:
+        """Freeze this complete bundle into its canonical evaluator artifact."""
+        artifact = self.to_dict()
+        # Rebuild the evaluator from the artifact instead of returning ``self``.
+        # That makes the object evaluated by the authorization path identical to
+        # the object whose bytes are hashed, closing digest/evaluator TOCTOU.
+        evaluator = RuleSetPolicy.from_dict(artifact)
+        snapshot = PolicyArtifactSnapshot.from_artifact(artifact, evaluator=evaluator)
+        if snapshot.policy_version != self.version:
+            # Defensive fail-closed check: serialization must preserve the
+            # existing short compatibility version exactly.
+            raise PolicySnapshotUnavailableError(
+                "canonical policy artifact changed the policy compatibility version"
+            )
+        return snapshot
 
     def evaluate(self, call: ToolCall) -> DecisionRecord:
         # Effective tier is registry-resolved (min(declared, registered) with

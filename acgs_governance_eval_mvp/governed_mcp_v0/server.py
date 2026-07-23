@@ -132,6 +132,7 @@ class GovernedMCPServer:
             with _evidence_lock(self.targets.audit_path):
                 index = _next_receipt_index(self.targets.receipts_dir, self.targets.audit_path)
                 receipt_path = self.targets.receipts_dir / f"{index:04d}-{action_id.replace('.', '-')}.json"
+                timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
                 receipt_core = {
                     "action_id": action_id,
                     "tool_name": tool_name,
@@ -140,7 +141,7 @@ class GovernedMCPServer:
                     "policy_ids": policy_ids,
                     "decision": decision,
                     "reason": reason,
-                    "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "timestamp": timestamp,
                     "constitution_hash": constitution_hash,
                 }
                 previous_hash = _last_audit_hash(self.targets.audit_path)
@@ -166,7 +167,19 @@ class GovernedMCPServer:
             raise
         except Exception as exc:  # pragma: no cover - covered through failure mode helpers if platform permits.
             raise GovernanceStorageError(f"fail closed while persisting governance evidence: {exc}") from exc
-        return AdmissionDecision(receipt_path=receipt_path, **receipt)
+        return AdmissionDecision(
+            action_id=action_id,
+            tool_name=tool_name,
+            normalized_args_hash=normalized_args_hash,
+            normalized_args=args,
+            policy_ids=policy_ids,
+            decision=decision,
+            reason=reason,
+            timestamp=timestamp,
+            constitution_hash=constitution_hash,
+            event_hash=event_hash,
+            receipt_path=receipt_path,
+        )
 
     def read_file(self, path: str) -> str:
         target = _resolve_fixture_path(self.targets.fs_dir, path)

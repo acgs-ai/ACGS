@@ -39,12 +39,15 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from gove_zone import (
     Decision,
     DecisionReceipt,
     DecisionRecord,
+    Ed25519Signer,
     GovernedExecutor,
     ReceiptValidationError,
     Validator,
@@ -55,6 +58,7 @@ from gove_zone import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
 from gove_zone.decision import sha256_json
 
 TENANT = "tenant-A"
@@ -89,7 +93,12 @@ def _fail(msg: str) -> None:
 
 
 def _inner(
-    action: str, args: dict[str, Any], event_id: str, *, actor: str = RUNNER
+    action: str,
+    args: dict[str, Any],
+    event_id: str,
+    signer: Ed25519Signer,
+    *,
+    actor: str = RUNNER,
 ) -> DecisionReceipt:
     record = DecisionRecord(
         decision=Decision.ALLOW,
@@ -110,10 +119,13 @@ def _inner(
         request_id="req-" + event_id,
         validator=STEP_VALIDATOR,
         authority=AUTHORITY,
+        signer=signer,
     )
 
 
 def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
+    workdir = Path(tempfile.mkdtemp(prefix="gove-zone-plan-governance-"))
+    strict = build_strict_receipt_gate_fixture(workdir / "strict-state", name="plan-governance")
     dag = WorkflowDAG(
         steps={
             "fetch": WorkflowStep("fetch", "runtime.http.get", ()),
@@ -135,6 +147,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     # The plan proposer proposes the DAG; the DISTINCT plan validator authorizes it.
     authorization = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         plan_proposer=PLAN_PROPOSER,
         plan_validator=PLAN_VALIDATOR,
@@ -148,10 +161,11 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
         envelopes: dict[str, WorkflowStepReceipt] = {}
         for sid in ("fetch", "transform", "write"):
             step = dag.steps[sid]
-            inner = _inner(step.action, args_by_step[sid], "ev-" + sid)
+            inner = _inner(step.action, args_by_step[sid], "ev-" + sid, strict.signer)
             pred_hashes = {p: envelopes[p].step_receipt_hash for p in step.predecessor_step_ids}
             envelopes[sid] = WorkflowStepReceipt.from_inner(
                 inner,
+                signer=strict.signer,
                 workflow_id=WORKFLOW_ID,
                 step_id=sid,
                 predecessor_step_ids=step.predecessor_step_ids,
@@ -167,12 +181,19 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
             tenant_id=TENANT,
             execution_boundary=BOUNDARY,
             expected_actor=RUNNER,
-            require_signature=False,  # explicit dev mode (unsigned inner receipt)
+            **strict.executor_kwargs(),
         )
         for sid, step in dag.steps.items():
-            g.register(step.action, tools[sid].run)
+            g.register_tool(
+                step.action,
+                tools[sid].run,
+            )
         return WorkflowExecutor(
-            workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=auth
+            workflow_id=WORKFLOW_ID,
+            dag=dag,
+            governed=g,
+            authorization=auth,
+            verifier=strict.signer,
         ), tools
 
     # 1. Authorized plan executes in order.
@@ -191,9 +212,12 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor=RUNNER,
-        require_signature=False,  # explicit dev mode (unsigned inner receipt)
+        **strict.executor_kwargs(),
     )
-    g.register("runtime.http.get", Tool("fetch").run)
+    g.register_tool(
+        "runtime.http.get",
+        Tool("fetch").run,
+    )
     try:
         WorkflowExecutor(workflow_id=WORKFLOW_ID, dag=dag, governed=g)  # type: ignore[call-arg]
         _fail("executor constructed without an authorization")
@@ -218,6 +242,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     try:
         WorkflowAuthorization.from_plan(
             dag.dag_hash(),
+            signer=strict.signer,
             workflow_id=WORKFLOW_ID,
             plan_proposer="same-principal",
             plan_validator=Validator("same-principal"),
@@ -234,6 +259,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     print("[5] A cross-plan authorization (wrong workflow_id) is blocked")
     cross = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id="some-other-run",  # not WORKFLOW_ID
         plan_proposer=PLAN_PROPOSER,
         plan_validator=PLAN_VALIDATOR,
@@ -256,6 +282,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     print("[6] A step lifted from a different plan is blocked")
     auth_b = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         plan_proposer=PLAN_PROPOSER,
         plan_validator=PLAN_VALIDATOR,
@@ -284,6 +311,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     colluder = "colluder-X"
     colluding = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         plan_proposer=PLAN_PROPOSER,
         plan_validator=Validator(colluder),  # X validates the plan
@@ -295,10 +323,15 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     wf, tools = fresh_executor(colluding)
     # The fetch step is proposed by X (inner.actor == colluder).
     colluding_inner = _inner(
-        "runtime.http.get", args_by_step["fetch"], "ev-collude", actor=colluder
+        "runtime.http.get",
+        args_by_step["fetch"],
+        "ev-collude",
+        strict.signer,
+        actor=colluder,
     )
     colluding_env = WorkflowStepReceipt.from_inner(
         colluding_inner,
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         step_id="fetch",
         predecessor_step_ids=(),
@@ -319,6 +352,7 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     print("[7b] Runner anchor (runner is the plan validator) is blocked")
     runner_collusion = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         plan_proposer="external-proposer",  # ≠ runner so plan MACI passes
         plan_validator=Validator(RUNNER),  # the runner validates the plan it runs
@@ -341,7 +375,13 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     print("[8] Offline replay verifies the recorded good chain")
     envelopes = build_chain(authorization.authorization_hash)
     try:
-        verify_workflow_replay(dag, list(envelopes.values()), authorization=authorization)
+        verify_workflow_replay(
+            dag,
+            list(envelopes.values()),
+            authorization=authorization,
+            verifier=strict.signer,
+            inner_verifier=strict.signer,
+        )
         _ok("replay verified: authorization integral, plan MACI + cross-level separation hold")
     except ReceiptValidationError as exc:
         _fail(f"replay rejected a good chain: {exc}")
@@ -350,7 +390,13 @@ def main() -> int:  # noqa: C901 - linear scenario script, intentionally flat
     print("[9] Offline replay rejects a tampered authorization")
     bad_auth = dataclasses.replace(authorization, authority="escalated")  # stale hash
     try:
-        verify_workflow_replay(dag, list(envelopes.values()), authorization=bad_auth)
+        verify_workflow_replay(
+            dag,
+            list(envelopes.values()),
+            authorization=bad_auth,
+            verifier=strict.signer,
+            inner_verifier=strict.signer,
+        )
         _fail("replay accepted a tampered authorization")
     except ReceiptValidationError as exc:
         _ok(f"tampered authorization rejected: {exc}")

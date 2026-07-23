@@ -34,11 +34,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, NewType
+from typing import TYPE_CHECKING, Any, NewType
 
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
+
+if TYPE_CHECKING:
+    from gove_zone.tier import ToolTierRegistry
 
 # An execution boundary is an opaque label for *where* an approved action may
 # run (e.g. "local-sandbox", "tenant-A/prod-egress"). It is a string today;
@@ -215,8 +218,14 @@ class ReceiptVerifier:
         expected_actor: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
+        expected_policy_version: str | None = None,
+        expected_validator_id: str | None = None,
+        expected_validator_role: str | None = None,
+        expected_authority: str | None = None,
+        expected_constraints: Mapping[str, Any] | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
+        tool_tier_registry: ToolTierRegistry | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -227,8 +236,16 @@ class ReceiptVerifier:
         self.expected_actor = expected_actor
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
+        self.expected_policy_version = expected_policy_version
+        self.expected_validator_id = expected_validator_id
+        self.expected_validator_role = expected_validator_role
+        self.expected_authority = expected_authority
+        self.expected_constraints = (
+            None if expected_constraints is None else dict(expected_constraints)
+        )
         self.verifier = verifier
         self.require_signature = require_signature
+        self.tool_tier_registry = tool_tier_registry
 
     def verify(
         self,
@@ -237,6 +254,7 @@ class ReceiptVerifier:
         expected_action: str | None = None,
         expected_args: dict[str, Any] | None = None,
         expected_audit_hash: str | None = None,
+        expected_request_id: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
     ) -> None:
@@ -262,6 +280,12 @@ class ReceiptVerifier:
             expected_execution_boundary=self.expected_execution_boundary,
             expected_policy_bundle_id=self.expected_policy_bundle_id,
             expected_policy_hash=self.expected_policy_hash,
+            expected_policy_version=self.expected_policy_version,
+            expected_validator_id=self.expected_validator_id,
+            expected_validator_role=self.expected_validator_role,
+            expected_authority=self.expected_authority,
+            expected_constraints=self.expected_constraints,
+            expected_request_id=expected_request_id,
             expected_action=expected_action,
             expected_args=expected_args,
             expected_audit_hash=expected_audit_hash,
@@ -269,6 +293,7 @@ class ReceiptVerifier:
             verifier=self.verifier,
             require_signature=self.require_signature,
             now_iso=now_iso,
+            tool_tier_registry=self.tool_tier_registry,
         )
 
     def is_valid(
@@ -278,6 +303,7 @@ class ReceiptVerifier:
         expected_action: str | None = None,
         expected_args: dict[str, Any] | None = None,
         expected_audit_hash: str | None = None,
+        expected_request_id: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
     ) -> bool:
@@ -288,6 +314,7 @@ class ReceiptVerifier:
                 expected_action=expected_action,
                 expected_args=expected_args,
                 expected_audit_hash=expected_audit_hash,
+                expected_request_id=expected_request_id,
                 expected_actor=expected_actor,
                 now_iso=now_iso,
             )

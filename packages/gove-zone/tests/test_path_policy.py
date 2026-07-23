@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from gove_zone import ChainHashAuditStore, DeniedError, Kernel, PathBoundaryPolicy
+from gove_zone import ChainHashAuditStore, DeniedError, Kernel, PathBoundaryPolicy, ToolEffect
 
 
 def test_path_boundary_denies_before_tool_execution_and_records_context(tmp_path: Path) -> None:
@@ -27,7 +27,7 @@ def test_path_boundary_denies_before_tool_execution_and_records_context(tmp_path
     )
     executed: list[str] = []
 
-    @kernel.tool("matter.fetch")
+    @kernel.tool("matter.fetch", effect=ToolEffect.PURE_READ_ONLY)
     def fetch(matter_id: str) -> str:
         executed.append(matter_id)
         return matter_id
@@ -65,7 +65,7 @@ def test_path_boundary_allows_authorized_actor_and_preserves_receipt_context(
         actor="review-lead",
     )
 
-    @kernel.tool("matter.fetch")
+    @kernel.tool("matter.fetch", effect=ToolEffect.PURE_READ_ONLY)
     def fetch(matter_id: str) -> str:
         return f"ok:{matter_id}"
 

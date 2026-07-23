@@ -104,7 +104,7 @@ def test_cli_smoke_passes_and_can_retain_audit(
     assert payload["deny"]["decision"] == "deny"
     assert payload["deny"]["matchedRules"] == ["SMOKE_SECRET_BOUNDARY:keyword:id_rsa"]
     assert payload["audit"]["valid"] is True
-    assert payload["audit"]["checked"] == 2
+    assert payload["audit"]["checked"] == 4
 
 
 def test_cli_setup_markdown_default(in_project: Path, capsys: pytest.CaptureFixture[str]) -> None:

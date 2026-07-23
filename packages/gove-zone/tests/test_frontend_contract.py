@@ -16,6 +16,7 @@ from gove_zone import (
     Decision,
     DeniedError,
     Kernel,
+    ToolEffect,
     receipt_to_governed_action,
     record_to_governed_action,
 )
@@ -30,15 +31,15 @@ def test_receipt_projects_to_frontend_action_contract(tmp_path: Path) -> None:
     )
     args = {"body": "hello"}
 
-    @kernel.tool("message.send")
+    @kernel.tool("message.preview", effect=ToolEffect.PURE_READ_ONLY)
     def send(body: str) -> dict[str, str]:
         return {"sent": body}
 
-    _, receipt = kernel.dispatch("message.send", args, goal="Patient update channel")
+    _, receipt = kernel.dispatch("message.preview", args, goal="Patient update channel")
     view = receipt_to_governed_action(receipt, args_before=args)
 
     assert view["agent"] == "agent-01"
-    assert view["action"] == "message.send"
+    assert view["action"] == "message.preview"
     assert view["target"] == "Patient update channel"
     assert view["outcome"] == "allowed"
     assert view["receiptId"] == receipt.record.event_id
@@ -59,7 +60,7 @@ def test_denial_projects_clear_reason_and_no_execution(tmp_path: Path) -> None:
     args = {"body": "contains secret"}
     executed: list[str] = []
 
-    @kernel.tool("matter.fetch")
+    @kernel.tool("matter.fetch", effect=ToolEffect.PURE_READ_ONLY)
     def fetch(body: str) -> None:
         executed.append(body)
 

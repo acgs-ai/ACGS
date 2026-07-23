@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 
 from gove_zone import GovernanceProfile
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.signing import NullSigner
 
 
@@ -102,10 +104,10 @@ def test_from_env_reads_os_environ(monkeypatch: pytest.MonkeyPatch) -> None:
     assert GovernanceProfile.from_env().is_production is True
 
 
-def test_profile_gate_kwargs_feed_execute_with_receipt() -> None:
-    """The dev-profile bundle wires straight into the side-effect gate, proving
-    the escape hatch is a coherent one-call opt-out for downstream callers.
-    """
+def test_profile_gate_kwargs_feed_execute_with_receipt(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
+    """The production profile wires a signer/verifier into the strict gate."""
     from gove_zone import Decision, DecisionReceipt, DecisionRecord, Validator
     from gove_zone.decision import sha256_json
     from gove_zone.executor import execute_with_receipt
@@ -119,10 +121,11 @@ def test_profile_gate_kwargs_feed_execute_with_receipt() -> None:
         event_id="ev_profile",
         actor="agent-1",
     )
+    event = strict_receipt_gate.audit.append(record)
     receipt = DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev",
+        audit_hash=str(event["event_hash"]),
+        previous_audit_hash=str(event["previous_hash"]),
         tenant_id="tenant-A",
         execution_boundary="local-sandbox",
         policy_bundle_id="policy-bundle",
@@ -130,6 +133,7 @@ def test_profile_gate_kwargs_feed_execute_with_receipt() -> None:
         request_id="req-1",
         validator=Validator("constitutional-council"),
         authority="tenant-A/write-grant",
+        signer=strict_receipt_gate.signer,
     )
 
     ran: list[bool] = []
@@ -138,15 +142,24 @@ def test_profile_gate_kwargs_feed_execute_with_receipt() -> None:
         ran.append(True)
         return "ok"
 
+    profile = GovernanceProfile.production(
+        signer=strict_receipt_gate.signer,
+        verifier=strict_receipt_gate.signer,
+    )
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool),
         tool_fn=tool,
         args=args,
         receipt=receipt,
+        lifecycle_signer=strict_receipt_gate.lifecycle_signer,
+        lifecycle_authority_id="fixture-lifecycle-validator",
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="agent-1",
-        **GovernanceProfile.dev().as_gate_kwargs(),
+        consumption_store=strict_receipt_gate.consumption_store,
+        rejection_audit=strict_receipt_gate.audit,
+        **profile.as_gate_kwargs(),
     )
     assert result == "ok"
     assert ran == [True]

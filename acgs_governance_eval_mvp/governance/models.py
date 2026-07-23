@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -418,7 +419,7 @@ class AuthorizationTrace:
             hop_payload = self._hop_signed_payload(index, entry)
             try:
                 signature = base64.urlsafe_b64decode(_pad_b64(entry["signature"]))
-            except (ValueError, base64.binascii.Error) as exc:
+            except (ValueError, binascii.Error) as exc:
                 raise AuthorizationTraceIntegrityError(f"hop {index} signature is not valid base64url") from exc
             try:
                 key_entry = key_store.get(entry["signing_key_id"])

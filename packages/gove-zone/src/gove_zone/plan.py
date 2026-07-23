@@ -33,13 +33,31 @@ identity.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from gove_zone.decision import sha256_json
 from gove_zone.errors import ReceiptValidationError
 from gove_zone.receipt import Validator
 from gove_zone.signing import ReceiptSigner
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -65,13 +83,16 @@ class WorkflowAuthorization:
     execution_boundary: str
     declared_goal: str
     policy_hash: str = ""
-    constraints: dict[str, Any] = field(default_factory=dict)
+    constraints: Mapping[str, Any] = field(default_factory=dict)
     issued_at: str = ""
     expires_at: str = ""
     authorization_hash: str = ""
     signature_algorithm: str = "none"
     signing_key_id: str = ""
     signature: str = "unsigned_local"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "constraints", _freeze_json(self.constraints))
 
     def _hash_payload(self) -> dict[str, Any]:
         return {
@@ -85,7 +106,7 @@ class WorkflowAuthorization:
             "execution_boundary": self.execution_boundary,
             "declared_goal": self.declared_goal,
             "policy_hash": self.policy_hash,
-            "constraints": dict(self.constraints),
+            "constraints": _plain_json(self.constraints),
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
             "signature_algorithm": self.signature_algorithm,

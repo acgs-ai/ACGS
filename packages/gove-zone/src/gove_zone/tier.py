@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from gove_zone.decision import ActionTier, canonical_json
 from gove_zone.tool import ToolCall
@@ -36,6 +37,15 @@ class ToolTierRegistry:
     """
 
     tiers: Mapping[str, ActionTier]
+
+    def __post_init__(self) -> None:
+        # ``frozen=True`` only blocks rebinding ``self.tiers``, not mutation of
+        # the underlying mapping. A policy caches its content-addressed version
+        # at construction while evaluation reads the live registry, so a mutated
+        # registry would change decisions without changing the policy version
+        # (breaking the "changed registry ⇒ changed version" binding in §3.3).
+        # Snapshot into a copy and expose it read-only so contents are frozen too.
+        object.__setattr__(self, "tiers", MappingProxyType(dict(self.tiers)))
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, object] | None) -> ToolTierRegistry:

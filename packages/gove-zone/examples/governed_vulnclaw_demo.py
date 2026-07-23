@@ -21,15 +21,18 @@ from gove_zone import (
     ChainHashAuditStore,
     Decision,
     DecisionReceipt,
-    GovernanceRequest,
-    ProposedAction,
     ReceiptValidationError,
     RuleSetPolicy,
     TenantPolicyStore,
     Validator,
-    evaluate_tenant_action,
+    adapter_artifact_digest,
     execute_with_receipt,
 )
+from gove_zone._strict_dispatch_fixture import (
+    StrictReceiptGateFixture,
+    build_strict_receipt_gate_fixture,
+)
+from gove_zone.signing import Ed25519Signer
 from gove_zone.tool import ToolCall, normalize_path_context
 
 TENANT = "tenant-security-ops"
@@ -38,45 +41,53 @@ VALIDATOR = Validator("constitutional-council")
 AUTHORITY = "tenant-security-ops/recon-gate"
 
 # Declarative policy bundle targeting VulnClaw pentest tools
-VULNCLAW_POLICY = RuleSetPolicy.from_dict({
-    "id": "policy-vulnclaw-governance",
-    "rules": [
-        {
-            "id": "DENY_UNAUTHORIZED_TARGETS",
-            "effect": "deny",
-            "tools": ["vulnclaw.port_scan", "vulnclaw.exploit"],
-            "state_equals": {
-                "is_unauthorized_target": True
+VULNCLAW_POLICY = RuleSetPolicy.from_dict(
+    {
+        "id": "policy-vulnclaw-governance",
+        "rules": [
+            {
+                "id": "DENY_UNAUTHORIZED_TARGETS",
+                "effect": "deny",
+                "tools": ["vulnclaw.port_scan", "vulnclaw.exploit"],
+                "state_equals": {"is_unauthorized_target": True},
+                "reason": (
+                    "Scanning or exploiting targets outside the authorized scoping "
+                    "boundary is prohibited."
+                ),
             },
-            "reason": "Scanning or exploiting targets outside the authorized scoping boundary is prohibited."
-        },
-        {
-            "id": "RESTRICT_EXPLOITATION_TO_ADMINS",
-            "effect": "deny",
-            "tools": ["vulnclaw.exploit"],
-            "allow": {
-                "actors": ["elevated-administrator", "system-operator"]
+            {
+                "id": "RESTRICT_EXPLOITATION_TO_ADMINS",
+                "effect": "deny",
+                "tools": ["vulnclaw.exploit"],
+                "allow": {"actors": ["elevated-administrator", "system-operator"]},
+                "reason": (
+                    "Standard agent actors are restricted from triggering target "
+                    "exploitation payloads."
+                ),
             },
-            "reason": "Standard agent actors are restricted from triggering target exploitation payloads."
-        },
-        {
-            "id": "BLOCK_LOCAL_PYTHON_EXECUTION",
-            "effect": "deny",
-            "tools": ["vulnclaw.python_execute"],
-            "allow": {
-                "trust_tiers": ["system-admin"]
+            {
+                "id": "BLOCK_LOCAL_PYTHON_EXECUTION",
+                "effect": "deny",
+                "tools": ["vulnclaw.python_execute"],
+                "allow": {"trust_tiers": ["system-admin"]},
+                "reason": (
+                    "Arbitrary local Python code execution is blocked for standard "
+                    "and elevated security agents."
+                ),
             },
-            "reason": "Arbitrary local Python code execution is blocked for standard and elevated security agents."
-        },
-        {
-            "id": "RESTRICT_REPORT_DIRECTORY",
-            "effect": "deny",
-            "tools": ["vulnclaw.generate_report"],
-            "path_prefix": "/opt/secure/secrets",
-            "reason": "Pentesting reports and PoC scripts cannot be written to secure secrets directory paths."
-        }
-    ]
-})
+            {
+                "id": "RESTRICT_REPORT_DIRECTORY",
+                "effect": "deny",
+                "tools": ["vulnclaw.generate_report"],
+                "path_prefix": "/opt/secure/secrets",
+                "reason": (
+                    "Pentesting reports and PoC scripts cannot be written to secure "
+                    "secrets directory paths."
+                ),
+            },
+        ],
+    }
+)
 
 
 class VulnClawMockTool:
@@ -95,13 +106,19 @@ class VulnClawMockTool:
 
     def exploit(self, target: str, cve_id: str, payload: str) -> dict[str, Any]:
         self.ran_exploit = True
-        print(f"    [REAL EXPLOIT] Delivering exploit '{cve_id}' with payload '{payload}' to target '{target}'")
+        print(
+            f"    [REAL EXPLOIT] Delivering exploit '{cve_id}' "
+            f"with payload '{payload}' to target '{target}'"
+        )
         return {"status": "success", "exploit_delivered": True}
 
     def python_execute(self, script_body: str) -> dict[str, Any]:
         self.ran_python_execute = True
         print(f"    [REAL LOCAL EXEC] Running Python script on local runner: {script_body!r}")
-        return {"status": "success", "stdout": "uid=1000(martin) gid=1000(martin) groups=1000(martin)\n"}
+        return {
+            "status": "success",
+            "stdout": "uid=1000(martin) gid=1000(martin) groups=1000(martin)\n",
+        }
 
     def generate_report(self, output_dir: str, format: str = "markdown") -> dict[str, Any]:
         self.ran_generate_report = True
@@ -129,6 +146,7 @@ def _issue_vulnclaw_receipt(
     is_unauthorized_target: bool,
     path_context: str | None,
     rid: str,
+    signer: Ed25519Signer,
 ) -> DecisionReceipt:
     # State used for policy checks
     state = {
@@ -165,6 +183,7 @@ def _issue_vulnclaw_receipt(
         request_id=rid,
         validator=VALIDATOR,
         authority=AUTHORITY,
+        signer=signer,
     )
 
 
@@ -172,6 +191,7 @@ def run_test_scenario(
     name: str,
     store: TenantPolicyStore,
     audit: ChainHashAuditStore,
+    strict_gate: StrictReceiptGateFixture,
     tool_name: str,
     tool_args: dict[str, Any],
     actor: str,
@@ -182,7 +202,11 @@ def run_test_scenario(
     expected_decision: Decision,
 ) -> None:
     print(f"\nScenario: {name}")
-    print(f"  Inputs: tool={tool_name}, args={tool_args}, actor={actor}, tier={trust_tier}, unauthorized_target={is_unauthorized_target}, path={path_context}")
+    print(
+        f"  Inputs: tool={tool_name}, args={tool_args}, actor={actor}, "
+        f"tier={trust_tier}, unauthorized_target={is_unauthorized_target}, "
+        f"path={path_context}"
+    )
 
     receipt = _issue_vulnclaw_receipt(
         store=store,
@@ -194,10 +218,14 @@ def run_test_scenario(
         is_unauthorized_target=is_unauthorized_target,
         path_context=path_context,
         rid=request_id,
+        signer=strict_gate.signer,
     )
 
     if receipt.decision != expected_decision.value:
-        _fail(f"Expected decision {expected_decision.value.upper()}, got {receipt.decision.upper()} (rules: {receipt.matched_rules})")
+        _fail(
+            f"Expected decision {expected_decision.value.upper()}, "
+            f"got {receipt.decision.upper()} (rules: {receipt.matched_rules})"
+        )
 
     tool = VulnClawMockTool()
 
@@ -212,6 +240,7 @@ def run_test_scenario(
 
     try:
         result = execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_fn),
             tool_fn=tool_fn,
             args=tool_args,
             receipt=receipt,
@@ -219,7 +248,7 @@ def run_test_scenario(
             expected_execution_boundary=BOUNDARY,
             expected_action=tool_name,
             expected_actor=actor,
-            require_signature=False,  # dev mode (unsigned)
+            **strict_gate.executor_kwargs(),
         )
 
         if expected_decision == Decision.DENY:
@@ -230,16 +259,21 @@ def run_test_scenario(
         if expected_decision == Decision.ALLOW:
             _fail(f"Allowed action was incorrectly blocked: {exc}")
         # Verify that mock tool did not run
-        if tool.ran_port_scan or tool.ran_exploit or tool.ran_python_execute or tool.ran_generate_report:
+        if (
+            tool.ran_port_scan
+            or tool.ran_exploit
+            or tool.ran_python_execute
+            or tool.ran_generate_report
+        ):
             _fail("Denied action triggered mock tool side-effects!")
         _ok(f"Blocked as expected by execution gate: {exc}")
 
 
-def main() -> int:
-    workdir = Path(tempfile.mkdtemp(prefix="gove-zone-vulnclaw-demo-"))
+def _run_demo(workdir: Path) -> int:
+    strict_gate = build_strict_receipt_gate_fixture(workdir, name="vulnclaw-local-fixture")
     store = TenantPolicyStore(workdir / "policies")
     store.store_bundle(TENANT, VULNCLAW_POLICY)
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
+    audit = strict_gate.audit
 
     print("\n=======================================================")
     print("gove-zone — Governed VulnClaw Pentesting Agent Proof")
@@ -250,6 +284,7 @@ def main() -> int:
         name="1. Reconnaissance scan on authorized target host",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.port_scan",
         tool_args={"target": "192.168.1.100", "ports": [22, 80, 443]},
         actor="recon-agent-1",
@@ -265,6 +300,7 @@ def main() -> int:
         name="2. Reconnaissance scan on unauthorized target host",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.port_scan",
         tool_args={"target": "10.0.0.1", "ports": [22, 80, 443]},
         actor="recon-agent-1",
@@ -280,6 +316,7 @@ def main() -> int:
         name="3. Exploitation payload delivered by standard agent",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.exploit",
         tool_args={"target": "192.168.1.100", "cve_id": "CVE-2024-1234", "payload": "id"},
         actor="recon-agent-1",
@@ -295,6 +332,7 @@ def main() -> int:
         name="4. Exploitation payload delivered by elevated administrator",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.exploit",
         tool_args={"target": "192.168.1.100", "cve_id": "CVE-2024-1234", "payload": "id"},
         actor="elevated-administrator",
@@ -310,6 +348,7 @@ def main() -> int:
         name="5. Local Python code execution by standard/elevated agent",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.python_execute",
         tool_args={"script_body": "import os; os.system('id')"},
         actor="recon-agent-1",
@@ -325,6 +364,7 @@ def main() -> int:
         name="6. Local Python code execution by system-admin trust tier",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.python_execute",
         tool_args={"script_body": "import os; os.system('id')"},
         actor="system-operator",
@@ -340,6 +380,7 @@ def main() -> int:
         name="7. Writing reports/PoC to a path-restricted directory prefix",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.generate_report",
         tool_args={"output_dir": "/opt/secure/secrets/critical"},
         actor="recon-agent-1",
@@ -355,6 +396,7 @@ def main() -> int:
         name="8. Writing reports/PoC to an allowed output directory",
         store=store,
         audit=audit,
+        strict_gate=strict_gate,
         tool_name="vulnclaw.generate_report",
         tool_args={"output_dir": "/home/martin/reports"},
         actor="recon-agent-1",
@@ -374,6 +416,11 @@ def main() -> int:
 
     print("\nAll VulnClaw governance invariants held. No valid Decision Receipt, no side effect.\n")
     return 0
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="gove-zone-vulnclaw-demo-") as workdir:
+        return _run_demo(Path(workdir))
 
 
 if __name__ == "__main__":

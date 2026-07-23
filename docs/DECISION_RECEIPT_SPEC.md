@@ -48,6 +48,79 @@ Implemented locally in `packages/gove-zone/src/gove_zone/receipt.py` as `Decisio
 | `receipt_hash` | yes | SHA-256 over canonical receipt JSON except `receipt_hash` and `signature`. |
 | `signature` | yes | `unsigned_local` or signature over `receipt_hash`. |
 
+## Three distinct schemas — do not conflate
+
+The table above is the **Decision Receipt** schema and is the only one of the
+three that is a receipt. Two adjacent record formats are versioned and evolve
+independently:
+
+| Artifact | Where | What it is | Version/field note |
+|---|---|---|---|
+| **Decision Receipt** | `receipt.py` (`DecisionReceipt`) | The authorization artifact for one decision, hash-bound and optionally signed. | The schema table above. It has **no** lifecycle fields and **no** `record_kind`. |
+| **Consumption-store schema v4** | `consumption.py` (`_SCHEMA_VERSION = 4`) | Persistent single-use consumption, receipt revocation, idempotency binding, and terminal state (`RESERVED` → `SUCCEEDED`/`UNKNOWN`). Stores tenant-scoped HMAC-SHA-256 digests only — never raw nonces, raw idempotency keys, receipt bodies, or arguments. | "v4" is the **store** schema. It is **not** Decision Receipt schema v4 and not a signing-key revocation service. |
+| **Audit record kind + lifecycle attestation** | `decision.py` (`RecordKind`, `DecisionRecord.lifecycle`), `signing.py` (`LifecycleAttestation`), `authorization.py` (`ExecutionRefusalEvidence`) | An authenticated audit-record classification with **three** kinds — `POLICY_DECISION`, `EXECUTION_LIFECYCLE`, and `EXECUTION_REFUSAL` — plus, for lifecycle records, an Ed25519 attestation and, for refusal records, execution-refusal evidence. | `record_kind` is an **audit-record** field. It is not a receipt field and not a consumption-schema field. |
+
+### Lifecycle attestation
+
+An execution-lifecycle audit record carries a `LifecycleAttestation` — an
+independent authorization proof for one exact lifecycle record.
+
+- **Evidence.** `execution_evidence` binds tenant, execution boundary, adapter id
+  and pinned adapter artifact digest, receipt id/hash, authorization audit hash,
+  tenant-bound nonce and idempotency digests, `attempt_id`, `binding_hash`,
+  `argument_hash`, `phase` (`claim_committed` / `terminal`), `reason_code`, and
+  `consumption_state`.
+- **Signing payload.** `lifecycle_signing_payload(payload)` is canonical JSON over
+  the full record **excluding** `lifecycle_attestation` itself, under the domain
+  separator `gove-zone:lifecycle-authorization:v1`. Supplying a payload that
+  already contains an attestation is rejected. `payload_hash` must be SHA-256.
+- **Trust roots are independent.** Lifecycle authorities live in a frozen,
+  immutable `LifecycleVerifierRegistry` keyed by authority id, snapshotting raw
+  Ed25519 public-key bytes. The lifecycle authority is **separate from the audit
+  checkpoint authority**: the executor refuses to append a lifecycle record when
+  the lifecycle signer's `key_id` equals the checkpoint `key_id`, or when the
+  lifecycle authority id collides with `audit-checkpoint` /
+  `audit-checkpoint:<namespace>`. This yields two distinct verification
+  identities/roots; separate physical custody is an operator responsibility —
+  the code enforces distinct `key_id`/authority identities, not that different
+  people or systems hold the keys.
+- **Fail closed.** Unsigned attestations are refused at construction
+  (`unsigned lifecycle attestations are not trusted`). Strict replay rejects a
+  lifecycle record whose attestation is missing, malformed, or unverifiable, and
+  forbidden key/authority ids can be excluded explicitly.
+- **Legacy.** Records predating `record_kind` deserialize as `POLICY_DECISION`.
+  They are **policy-compatible only** — an old unattested record can never be
+  promoted into execution-lifecycle evidence, and `from_dict` refuses to let a
+  policy record acquire lifecycle material.
+
+Evidence: `decision.py`, `signing.py`, `executor.py`, `replay.py`,
+`tests/test_lifecycle_verifier_registry.py`.
+
+### Execution-refusal evidence
+
+`EXECUTION_REFUSAL` is a first-class third `record_kind`, distinct from both
+`POLICY_DECISION` (no policy was re-evaluated) and `EXECUTION_LIFECYCLE` (no
+attempt was reserved-and-run). It records that a final execution gate refused a
+bound attempt **before any adapter ran**, and it never reuses either other
+schema.
+
+- **What it proves.** `ExecutionRefusalEvidence` (v1) is integrity evidence that
+  one bound attempt *never reached an adapter*: `adapter_invoked` is always
+  `False` and the type refuses to represent a claim that the adapter ran. Only
+  reason codes that prove the adapter was never entered may be carried; codes
+  that describe a possibly-mid-flight or post-adapter state — `TIMEOUT`,
+  `OUTCOME_UNKNOWN`, `ADAPTER_FAILED`, `SUCCEEDED` — are rejected at
+  construction. A refusal record must be non-executable (`DENY`) and must not
+  carry a lifecycle attestation.
+- **What it is not.** A refusal record must **never** be used to represent
+  `OUTCOME_UNKNOWN`. `OUTCOME_UNKNOWN` means the adapter may already have acted
+  (see the exactly-once boundary below); that ambiguity is carried only by a
+  terminal `EXECUTION_LIFECYCLE` record, never by refusal evidence.
+
+Evidence: `authorization.py` (`ExecutionRefusalEvidence`, `ExecutionReasonCode`,
+`EXECUTION_REFUSAL_REASON_CODES`), `decision.py` (`RecordKind`),
+`side_effect_kernel.py`, `release_proof.py`.
+
 ## Actor binding
 
 The receipt's `actor` is the proposer. The executor must supply `expected_actor` from trusted runtime context. The verifier rejects a receipt issued for a different actor and rejects a receipt where the invoking principal is also the validator.
@@ -98,6 +171,14 @@ Evidence: `receipt.py`, `tests/test_maci_role_separation.py`.
 
 Default local mode is unsigned: `signature_algorithm="none"`, `signature="unsigned_local"`. This is for development/local proof. It is not a production signing claim.
 
+**Unsigned mode is a low-level compatibility affordance only.** It exists so the
+low-level receipt APIs (`DecisionReceipt.verify`, `ReceiptVerifier`) remain usable
+for local development and policy projection. It is *rejected* by every strict
+path: strict standalone execution verifies with `require_signature=True`, and the
+P0 Release Gate, P1 MCP Gateway, and P2 Spend Guard managed paths require a
+trusted signature. An unsigned receipt cannot authorize a strict side effect and
+must never be presented as production evidence.
+
 Opt-in signing uses Ed25519:
 
 - signer signs `receipt_hash` with a private key;
@@ -138,6 +219,104 @@ Verifier rejects on the first failure:
 18. policy bundle id mismatch;
 19. validator role or authority mismatch when required;
 20. expired or unparseable expiry.
+
+## Strict execution algorithm
+
+Receipt verification above is step 1 of the strict path, not the whole path. The
+strict standalone and managed paths extend it:
+
+1. **Verify the receipt** (the algorithm above), with `require_signature=True`
+   and a trusted verifier.
+2. **Claim durably and atomically.** `reserve` the receipt in the anchored
+   schema-v4 consumption store under a fresh `attempt_id`, binding the receipt
+   hash, the tenant-scoped nonce digest, the idempotency digest, and the
+   `binding_hash` (actor/action/args/adapter identity + pinned adapter artifact
+   digest). Replay, revocation, or store failure ⇒ DENY and fail-stop with no
+   execution. The refusal is appended as audit evidence only while the audit
+   dependency remains available; if the audit sink is itself unavailable the
+   path still refuses to execute, but an audited DENY record cannot be
+   guaranteed.
+3. **Commit an attested lifecycle claim.** Append an `EXECUTION_LIFECYCLE` audit
+   record at `phase="claim_committed"`, signed by the lifecycle authority and
+   checkpointed. This happens **after** the reservation and **before** the
+   adapter runs. If the append fails, the path attempts a best-effort mark of the
+   reservation as `UNKNOWN` and then fail-stops — the adapter is not invoked. If
+   the consumption store or audit dependency is itself unavailable, that
+   `UNKNOWN` mark may not be confirmed, so terminal lifecycle evidence is
+   recorded only when those dependencies remain available.
+4. **Make at most one adapter attempt**, gated on the claim being committed. The
+   reservation is re-read and must still be `RESERVED` with the same
+   `attempt_id`, `binding_hash`, and idempotency digest; revocation is
+   re-checked; the receipt is re-verified immediately before the call. Any of
+   these revalidations can fail-stop the attempt before the adapter callable
+   runs, so "at most one attempt" is the bound — not "exactly one".
+5. **Commit a terminal lifecycle record.** Either `SUCCEEDED` (the adapter
+   confirmed success) or `UNKNOWN` (ambiguous outcome, exception, or unconfirmed
+   state), each appended as an attested `EXECUTION_LIFECYCLE` record at
+   `phase="terminal"`. This terminal record is recorded only while the
+   consumption store and audit dependencies remain available; if either is
+   unavailable the path fail-stops, and the terminal state may be unconfirmed
+   rather than durably recorded.
+6. **Deny later reuse.** A receipt in a terminal state — `SUCCEEDED` *or*
+   `UNKNOWN` — is not re-authorizable. There is no blind retry of an `UNKNOWN`.
+
+### Reconciliation requirement and the exactly-once boundary
+
+`UNKNOWN` means ACGS does not know whether the side effect happened. The kernel
+deliberately refuses to guess: it will not retry, because a retry could duplicate
+a real effect. **Operators must reconcile `UNKNOWN` records against the
+downstream system out of band.** The lifecycle evidence identifies exactly which
+attempt is unresolved; resolving it is outside ACGS.
+
+Consequently the guarantee is **at-most-once authorized attempt, not exactly-once
+effect**. Exactly-once effect is not claimed and cannot be, since the downstream
+adapter may already have acted before the outcome became ambiguous.
+
+## Deployment artifact digest binding (P0 Release Gate)
+
+The P0 Release Gate binds the deployment **artifact digest** into the receipt
+argument (`artifact_digest` — a lowercase SHA-256) and into the executor
+`binding_hash`. The bytes and pathname of the artifact are **not** part of the
+receipted arguments and are **not** serialized into the receipt or the exported
+proof pack:
+
+- The immutable byte snapshot the kernel captures immediately before the final
+  adapter boundary is *execution-local*. Only its recomputed digest is compared,
+  constant-time, against the receipted `artifact_digest`; the snapshot itself,
+  the source pathname, and the raw bytes are never written into the receipt or
+  the proof pack. A mutable lexical path is never treated as proof.
+- `PolicyArtifactAttestation` binds the content-addressed *policy* artifact only.
+  It attests which policy authorized the decision; it never covers the
+  deployment bytes. Policy-artifact attestation and deployment-artifact digest
+  binding are two independent bindings — do not present one as evidence of the
+  other.
+
+A pre-adapter refusal caused by an artifact that no longer matches its receipted
+digest is a `FAILED_CLOSED` denial with an `EXECUTION_REFUSAL` record proving the
+adapter was never entered — distinct from a post-adapter `OUTCOME_UNKNOWN` (see
+below). Evidence: `release_gate.py` (`RELEASE_ARTIFACT_ARGUMENT`,
+`RELEASE_ARTIFACT_SNAPSHOT_PARAMETER`, atomic `register_route` /
+`register_artifact_requirement`), `path_capability.py`
+(`ImmutableArtifactSnapshot`, `capture_immutable_artifact`), `release_proof.py`.
+
+## FAILED_CLOSED versus OUTCOME_UNKNOWN
+
+Two refusal shapes are deliberately kept distinct, because they carry different
+residual risk:
+
+- **`FAILED_CLOSED`** — the gate refused *before* the adapter was entered
+  (`adapter_attempted=False`). No side effect can have occurred. The Release Gate
+  reports this as `decision="DENY"` / `execution_status="FAILED_CLOSED"` and
+  emits an `EXECUTION_REFUSAL` record.
+- **`OUTCOME_UNKNOWN`** — the adapter was entered and the outcome became
+  ambiguous. The side effect may already have happened. The Release Gate reports
+  this as `decision="UNKNOWN"` / `execution_status="OUTCOME_UNKNOWN"`; there is
+  **no blind retry**, and the receipt is not re-authorizable once the terminal
+  `UNKNOWN` is confirmed.
+
+`decision="UNKNOWN"` is never downgraded to a proven `DENY`, and a `FAILED_CLOSED`
+refusal is never labelled `UNKNOWN`. Evidence: `release_proof.py` (the
+`FAILED_CLOSED`/`OUTCOME_UNKNOWN` and `decision` branch), `side_effect_kernel.py`.
 
 ## Invalid receipt cases
 

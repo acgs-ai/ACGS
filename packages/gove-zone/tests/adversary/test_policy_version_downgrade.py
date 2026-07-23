@@ -15,13 +15,14 @@ pinned path) — the net-new assertion is that the DEFAULT (unpinned) path is a 
 from __future__ import annotations
 
 from gove_zone import ReceiptValidationError
+from tests.adversary.conftest import _SIGNER
 
 
 def test_unpinned_gate_accepts_downgraded_policy_receipt_KNOWN_GAP(
     side_effect, issue, run_gate
 ) -> None:
     """Undefended: no pin -> a stale/permissive-policy receipt is accepted."""
-    stale = issue(policy_hash="policy/v1-permissive", policy_version="v1-permissive")
+    stale = issue(_SIGNER, policy_hash="policy/v1-permissive", policy_version="v1-permissive")
 
     result = run_gate(stale, side_effect, expected_policy_hash=None)
 
@@ -36,7 +37,7 @@ def test_pinned_gate_rejects_downgraded_policy_receipt(side_effect, issue, run_g
     """Defended: pinning expected_policy_hash to the in-force policy rejects a
     receipt carrying a different (downgraded) policy_hash, and the side effect
     never runs."""
-    stale = issue(policy_hash="policy/v1-permissive", policy_version="v1-permissive")
+    stale = issue(_SIGNER, policy_hash="policy/v1-permissive", policy_version="v1-permissive")
 
     try:
         run_gate(stale, side_effect, expected_policy_hash="policy/v2-current")
@@ -51,7 +52,7 @@ def test_pinned_gate_rejects_downgraded_policy_receipt(side_effect, issue, run_g
 def test_pinned_gate_accepts_matching_policy_receipt(side_effect, issue, run_gate) -> None:
     """Control: the same pin ACCEPTS a receipt whose policy_hash matches, proving
     the rejection above is about the downgrade, not about pinning per se."""
-    current = issue(policy_hash="policy/v2-current", policy_version="v2-current")
+    current = issue(_SIGNER, policy_hash="policy/v2-current", policy_version="v2-current")
 
     result = run_gate(current, side_effect, expected_policy_hash="policy/v2-current")
 

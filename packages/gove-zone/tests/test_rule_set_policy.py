@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from gove_zone import ChainHashAuditStore, DeniedError, Kernel, RuleSetPolicy
+from gove_zone import ChainHashAuditStore, DeniedError, Kernel, RuleSetPolicy, ToolEffect
 
 
 def _privileged_notes_policy() -> RuleSetPolicy:
@@ -46,7 +46,7 @@ def test_rule_set_policy_denies_matching_path_state_and_low_trust_actor(
     kernel = Kernel(policy=_privileged_notes_policy(), audit=audit, actor="analyst-12")
     executed: list[str] = []
 
-    @kernel.tool("matter.fetch")
+    @kernel.tool("matter.fetch", effect=ToolEffect.PURE_READ_ONLY)
     def fetch(matter_id: str) -> str:
         executed.append(matter_id)
         return matter_id
@@ -85,7 +85,7 @@ def test_rule_set_policy_allows_matching_rule_when_trust_tier_is_allowed(
         actor="analyst-12",
     )
 
-    @kernel.tool("matter.fetch")
+    @kernel.tool("matter.fetch", effect=ToolEffect.PURE_READ_ONLY)
     def fetch(matter_id: str) -> str:
         return f"ok:{matter_id}"
 

@@ -1,4 +1,5 @@
 """Test config — exposes scripts/ to imports as a flat module path."""
+
 from __future__ import annotations
 
 import sys
@@ -6,7 +7,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
+AUTONOMOUS_AGENT_SRC = ROOT / "autonomous-agent" / "src"
 
 # Make scripts/ importable so tests can `import verify_constitutional_hashes`.
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+
+# Make the root-owned autonomous control-plane scaffold importable.
+if str(AUTONOMOUS_AGENT_SRC) not in sys.path:
+    sys.path.insert(0, str(AUTONOMOUS_AGENT_SRC))

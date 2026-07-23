@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from acgs_cft_governance_pack.cli import main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +18,7 @@ def test_cli_imports_stable_package_facade() -> None:
     assert "from acgs_cft_governance_pack.evaluator import" not in source
 
 
-def test_cli_denied_plan_exits_two_and_writes_evidence(tmp_path: Path, capsys) -> None:
+def test_cli_denied_plan_exits_two_and_writes_evidence(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     output = tmp_path / "denied.jsonl"
 
     exit_code = main(

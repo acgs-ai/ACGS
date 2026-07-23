@@ -35,6 +35,8 @@ from gove_zone import (
     evaluate_tenant_action,
     execute_with_receipt,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.tenant import TransformPolicy
 
 BOUNDARY = "local-sandbox"
@@ -78,6 +80,7 @@ def _issue(
     request: GovernanceRequest,
     *,
     requester: str | None = None,
+    signer: Any,
 ) -> Any:
     return evaluate_tenant_action(
         store=store,
@@ -91,6 +94,7 @@ def _issue(
         validator=VALIDATOR,
         authority=AUTHORITY,
         audit_store=audit,
+        signer=signer,
     )
 
 
@@ -107,13 +111,16 @@ def _request(
     )
 
 
-def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None:
+def test_allow_path_executes_and_produces_audit_evidence(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
     request = _request()
 
-    receipt = _issue(store, audit, request)
+    receipt = _issue(store, audit, request, signer=strict_receipt_gate.signer)
     assert receipt.decision == "allow"
 
     # The gate verifies before the side effect can run.
@@ -121,7 +128,8 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
         expected_tenant_id="tenant-A",
         expected_execution_boundary=BOUNDARY,
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        verifier=strict_receipt_gate.signer,
+        require_signature=True,
     )
     verifier.verify(
         receipt,
@@ -131,6 +139,7 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
 
     side = SideEffect()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=request.proposed_action.args,
         receipt=receipt,
@@ -138,7 +147,7 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran
@@ -148,16 +157,22 @@ def test_allow_path_executes_and_produces_audit_evidence(tmp_path: Path) -> None
     assert chain["valid"]
     assert chain["checked"] >= 1
     events = audit.query()
-    event = AuditEvent.from_receipt_and_event(receipt, events[-1])
+    issuance_event = next(
+        event for event in events if event.get("event_hash") == receipt.audit_event_hash
+    )
+    event = AuditEvent.from_receipt_and_event(receipt, issuance_event)
     assert event.tenant_id == "tenant-A"
     assert event.decision == "allow"
     assert event.event_hash == receipt.audit_event_hash
 
 
-def test_missing_receipt_blocks_side_effect() -> None:
+def test_missing_receipt_blocks_side_effect(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="No receipt provided"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt"},
             receipt=None,
@@ -165,22 +180,31 @@ def test_missing_receipt_blocks_side_effect() -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
 
-def test_denied_receipt_blocks_but_still_audits(tmp_path: Path) -> None:
+def test_denied_receipt_blocks_but_still_audits(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", _deny_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
-    receipt = _issue(store, audit, _request())
+    receipt = _issue(
+        store,
+        audit,
+        _request(),
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.decision == "deny"
 
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="Denied receipt"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=receipt,
@@ -188,7 +212,7 @@ def test_denied_receipt_blocks_but_still_audits(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
     # A denial is still a decision: it must leave audit evidence.
@@ -196,17 +220,26 @@ def test_denied_receipt_blocks_but_still_audits(tmp_path: Path) -> None:
     assert audit.query()
 
 
-def test_tampered_issued_receipt_blocks(tmp_path: Path) -> None:
+def test_tampered_issued_receipt_blocks(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
-    receipt = _issue(store, audit, _request())
+    audit = strict_receipt_gate.audit
+    receipt = _issue(
+        store,
+        audit,
+        _request(),
+        signer=strict_receipt_gate.signer,
+    )
 
     # Flip the approved action without recomputing the receipt hash.
     tampered = dataclasses.replace(receipt, proposed_action="shell.exec")
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="receipt_hash mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=tampered,
@@ -214,21 +247,30 @@ def test_tampered_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
 
-def test_cross_tenant_issued_receipt_blocks(tmp_path: Path) -> None:
+def test_cross_tenant_issued_receipt_blocks(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
-    receipt = _issue(store, audit, _request())  # issued for tenant-A
+    audit = strict_receipt_gate.audit
+    receipt = _issue(
+        store,
+        audit,
+        _request(),
+        signer=strict_receipt_gate.signer,
+    )  # issued for tenant-A
 
     side = SideEffect()
     # A tenant-B executor must refuse a tenant-A receipt.
     with pytest.raises(ReceiptValidationError, match="Tenant mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=receipt,
@@ -236,15 +278,18 @@ def test_cross_tenant_issued_receipt_blocks(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
 
-def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> None:
+def test_issued_receipt_carries_expiry_and_expired_blocks(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     # The real issuer can mint an expiring receipt (not just hand-built ones).
     expired = evaluate_tenant_action(
@@ -260,6 +305,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         authority=AUTHORITY,
         audit_store=audit,
         expires_at="2020-01-01T00:00:00+00:00",  # unambiguously in the past
+        signer=strict_receipt_gate.signer,
     )
     assert expired.decision == "allow"
     assert expired.expires_at == "2020-01-01T00:00:00+00:00"
@@ -268,6 +314,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="expired"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=expired,
@@ -275,7 +322,7 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
@@ -293,9 +340,11 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         authority=AUTHORITY,
         audit_store=audit,
         expires_at="2999-01-01T00:00:00+00:00",
+        signer=strict_receipt_gate.signer,
     )
     side = SideEffect()
     execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args={"path": "safe.txt", "content": "hi"},
         receipt=live,
@@ -303,24 +352,33 @@ def test_issued_receipt_carries_expiry_and_expired_blocks(tmp_path: Path) -> Non
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert side.ran
 
 
-def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None:
+def test_transform_receipt_executes_only_approved_action(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle("tenant-A", TransformPolicy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     request = _request(args={"path": "original.txt"})
-    receipt = _issue(store, audit, request)
+    receipt = _issue(
+        store,
+        audit,
+        request,
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.decision == "transform"
 
     # Running the ORIGINAL (un-approved) args must be refused.
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="Transform mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "original.txt"},
             receipt=receipt,
@@ -328,13 +386,14 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
     # Only the approved transformed args reach the side effect.
     approved = {"path": "transformed.txt"}
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=approved,
         receipt=receipt,
@@ -342,7 +401,7 @@ def test_transform_receipt_executes_only_approved_action(tmp_path: Path) -> None
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran

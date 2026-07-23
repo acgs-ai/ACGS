@@ -11,12 +11,16 @@ from collections.abc import Callable
 from typing import Any
 
 from gove_zone.agent import ManagedAgent
+from gove_zone.managed_execution import ManagedExecutionResult
+from gove_zone.tool import ToolEffect
 
 
 def govern_autogen_tool(
     agent: ManagedAgent,
     name: str,
     fn: Callable[..., Any],
+    *,
+    effect: ToolEffect = ToolEffect.SIDE_EFFECT,
 ) -> Callable[..., Any]:
     """Wraps a tool function for AutoGen.
 
@@ -24,7 +28,7 @@ def govern_autogen_tool(
     while preserving the original function signature for AutoGen's prompt generation.
     """
     # Register the original function with the agent (which registers it in the sandbox)
-    agent.register_tool(name, fn)
+    agent.register_tool(name, fn, effect=effect)
 
     # Resolve function signature for AutoGen tool mapping
     sig = inspect.signature(fn)
@@ -35,7 +39,10 @@ def govern_autogen_tool(
         bound.apply_defaults()
 
         # Dispatch through the governed agent
-        result, _receipt = agent.dispatch(name, bound.arguments)
+        dispatched = agent.dispatch(name, bound.arguments)
+        if isinstance(dispatched, ManagedExecutionResult):
+            return dispatched.payload
+        result, _receipt = dispatched
         return result
 
     # Set metadata and signature to match the original function

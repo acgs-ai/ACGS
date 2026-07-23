@@ -38,6 +38,8 @@ from gove_zone import (
     execute_with_receipt,
     replay_call,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.tool import ToolCall
 
 BOUNDARY = "local-sandbox"
@@ -66,6 +68,15 @@ def _allow_policy() -> RuleSetPolicy:
     )
 
 
+def _resign(receipt: DecisionReceipt, signer: Any) -> DecisionReceipt:
+    """Re-sign a structurally forged test receipt so MACI remains the rejecting layer."""
+
+    return dataclasses.replace(
+        receipt,
+        signature=signer.sign(receipt.receipt_hash.encode("utf-8")),
+    )
+
+
 def _issue(
     store: TenantPolicyStore,
     audit: ChainHashAuditStore,
@@ -74,6 +85,7 @@ def _issue(
     validator: Validator,
     args: dict[str, Any] | None = None,
     request_id: str = "req-1",
+    signer: Any = None,
 ) -> DecisionReceipt:
     return evaluate_tenant_action(
         store=store,
@@ -87,6 +99,7 @@ def _issue(
         validator=validator,
         authority=AUTHORITY,
         audit_store=audit,
+        signer=signer,
     )
 
 
@@ -137,7 +150,10 @@ def test_from_record_refuses_self_validation_for_anonymous() -> None:
         )
 
 
-def test_gate_refuses_forged_self_validated_receipt(tmp_path: Path) -> None:
+def test_gate_refuses_forged_self_validated_receipt(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """THE WIRING PROOF — the gate (execute_with_receipt) refuses a forged
     self-validated receipt, and the side effect never runs.
 
@@ -148,21 +164,29 @@ def test_gate_refuses_forged_self_validated_receipt(tmp_path: Path) -> None:
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
-    minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    minted = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
     assert minted.decision == "allow"
     assert minted.validator_id == "constitutional-council"
 
     # Forge: make the validator the proposer, then recompute a consistent hash.
     forged = dataclasses.replace(minted, validator_id=minted.actor)
     forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    forged = _resign(forged, strict_receipt_gate.signer)
     assert forged.compute_hash() == forged.receipt_hash  # hash check would PASS
 
     side = SideEffect()
     args = {"path": "safe.txt", "content": "hi"}
     with pytest.raises(ReceiptValidationError, match="self-validation"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=args,
             receipt=forged,
@@ -177,19 +201,28 @@ def test_gate_refuses_forged_self_validated_receipt(tmp_path: Path) -> None:
             # Anchor matches the receipt's proposer; the forged validator_id==actor
             # trips the self-validation check (2b sub-check (ii)).
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran  # the side effect was NEVER executed
 
 
-def test_happy_path_distinct_validator_executes(tmp_path: Path) -> None:
+def test_happy_path_distinct_validator_executes(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """A receipt with a distinct validator reaches execution through the gate,
     including when expected_actor is supplied from the caller's runtime context."""
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
-    receipt = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    receipt = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.approval_chain_summary == {
         "proposer": "agent-1",
         "validator_id": "constitutional-council",
@@ -200,6 +233,7 @@ def test_happy_path_distinct_validator_executes(tmp_path: Path) -> None:
     side = SideEffect()
     args = {"path": "safe.txt", "content": "hi"}
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=args,
         receipt=receipt,
@@ -207,19 +241,28 @@ def test_happy_path_distinct_validator_executes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",  # anchor: caller supplies its own identity
-        require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran
     assert side.args == args
 
 
-def test_missing_validator_fields_fail_closed(tmp_path: Path) -> None:
+def test_missing_validator_fields_fail_closed(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """A receipt with empty validator/authority fields is refused at the gate."""
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
-    receipt = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    audit = strict_receipt_gate.audit
+    receipt = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
 
     for field in ("validator_id", "validator_role", "authority"):
         stripped = dataclasses.replace(receipt, **{field: ""})
@@ -228,6 +271,7 @@ def test_missing_validator_fields_fail_closed(tmp_path: Path) -> None:
         side = SideEffect()
         with pytest.raises(ReceiptValidationError, match="Missing or empty required field"):
             execute_with_receipt(
+                expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
                 tool_fn=side.run,
                 args={"path": "safe.txt", "content": "hi"},
                 receipt=stripped,
@@ -237,7 +281,7 @@ def test_missing_validator_fields_fail_closed(tmp_path: Path) -> None:
                 # Anchor matches the proposer; the missing-field check (#1) fires
                 # first regardless, so this stays a missing-field test.
                 expected_actor="agent-1",
-                require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+                **strict_receipt_gate.executor_kwargs(),
             )
         assert not side.ran
 
@@ -292,7 +336,10 @@ def test_expected_validator_role_and_authority_checks(tmp_path: Path) -> None:
     )
 
 
-def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
+def test_gate_refuses_actor_rewrite_forgery(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """GATE NEGATIVE PATH — actor-rewrite bypass closed by expected_actor anchor.
 
     The bypass: forge a receipt where ``validator_id`` is the REAL proposer
@@ -314,10 +361,16 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     # Mint a legitimate receipt for the real proposer "agent-1".
-    minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    minted = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
 
     # Forge: set validator_id to the real proposer, change actor to a phantom.
     # Also rewrite approval_chain_summary so it stays internally consistent with
@@ -333,6 +386,7 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
     )
     # Recompute a CONSISTENT hash so the receipt_hash check (2) passes.
     forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    forged = _resign(forged, strict_receipt_gate.signer)
     # Confirm: naive check 2c (validator_id == actor) would NOT catch this.
     assert forged.validator_id != forged.actor  # "agent-1" != "phantom"
     # Confirm: hash is internally consistent (check 2 passes).
@@ -349,6 +403,7 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
     # meaningful — 2b is the sole guard.
     with pytest.raises(ReceiptValidationError, match="actor mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=args,
             receipt=forged,
@@ -358,12 +413,15 @@ def test_gate_refuses_actor_rewrite_forgery(tmp_path: Path) -> None:
             # The invoking principal identifies itself as "agent-1".
             # 2b sub-check (i): actor mismatch (phantom != agent-1) → reject.
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran  # side effect was NEVER executed
 
 
-def test_gate_refuses_receipt_for_wrong_caller(tmp_path: Path) -> None:
+def test_gate_refuses_receipt_for_wrong_caller(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """GATE NEGATIVE PATH — a validly-minted receipt issued for actor "agent-1"
     is refused when the invoking principal identifies itself as "agent-2".
 
@@ -372,15 +430,22 @@ def test_gate_refuses_receipt_for_wrong_caller(tmp_path: Path) -> None:
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     # Receipt was minted for "agent-1".
-    receipt = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    receipt = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.actor == "agent-1"
 
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="actor mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=receipt,
@@ -388,7 +453,7 @@ def test_gate_refuses_receipt_for_wrong_caller(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-2",  # different principal invoking the gate
-            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
@@ -420,7 +485,10 @@ def test_approval_chain_summary_divergence_rejected(tmp_path: Path) -> None:
         diverged.verify()
 
 
-def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
+def test_gate_refuses_validator_equals_caller(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """GATE NEGATIVE PATH — sub-check (ii) in isolation.
 
     Sub-check (i) fires when actor != expected_actor (actor-mismatch).
@@ -438,10 +506,16 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     # Mint a legitimate receipt: proposer "agent-1", distinct validator.
-    minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    minted = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
     assert minted.actor == "agent-1"
     assert minted.validator_id == "constitutional-council"
 
@@ -457,6 +531,7 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
     )
     # Recompute a consistent hash so check 2 (tamper detection) passes.
     forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    forged = _resign(forged, strict_receipt_gate.signer)
 
     # Confirm sub-check (i) would NOT fire: actor == expected_actor.
     assert forged.actor == "agent-1"  # actor matches the invoking principal
@@ -469,6 +544,7 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="self-validation"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "safe.txt", "content": "hi"},
             receipt=forged,
@@ -476,12 +552,15 @@ def test_gate_refuses_validator_equals_caller(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",  # actor == expected_actor, so (i) does not fire
-            require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran  # side effect was NEVER executed
 
 
-def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: Path) -> None:
+def test_governed_executor_default_path_denies_actor_rewrite_forgery(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """DEFAULT-PATH GATE PROOF — the strong 2b anchor fires through the
     CONSTRUCTION context, not only when expected_actor is passed inline.
 
@@ -501,7 +580,7 @@ def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: P
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     # Build the executor with the anchor as CONSTRUCTION CONTEXT (no per-call override).
     side = SideEffect()
@@ -509,12 +588,18 @@ def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: P
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         expected_actor="agent-1",  # authenticated caller identity, supplied once
-        require_signature=False,  # explicit dev mode: MACI test, unsigned receipt
+        **strict_receipt_gate.executor_kwargs(),
     )
     executor.register(ACTION, side.run)
 
-    # Mint a real UNSIGNED receipt for proposer "agent-1", distinct validator.
-    minted = _issue(store, audit, actor="agent-1", validator=Validator("constitutional-council"))
+    # Mint a signed receipt for proposer "agent-1", distinct validator.
+    minted = _issue(
+        store,
+        audit,
+        actor="agent-1",
+        validator=Validator("constitutional-council"),
+        signer=strict_receipt_gate.signer,
+    )
 
     # Forge: validator_id = real proposer "agent-1", actor = phantom. Also rewrite
     # approval_chain_summary so it stays internally consistent with the forged
@@ -531,6 +616,7 @@ def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: P
         approval_chain_summary=forged_summary,
     )
     forged = dataclasses.replace(forged, receipt_hash=forged.compute_hash())
+    forged = _resign(forged, strict_receipt_gate.signer)
     assert forged.compute_hash() == forged.receipt_hash  # hash check would PASS
     assert forged.validator_id != forged.actor  # naive 2c would NOT catch this
     # Check 2d is satisfied — summary agrees with the forged top-level fields.
@@ -545,7 +631,10 @@ def test_governed_executor_default_path_denies_actor_rewrite_forgery(tmp_path: P
     assert not side.ran  # the side effect was NEVER executed
 
 
-def test_gate_construction_requires_expected_actor(tmp_path: Path) -> None:
+def test_gate_construction_requires_expected_actor(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """REGRESSION GUARD — the gate surfaces REQUIRE ``expected_actor``.
 
     Constructing GovernedExecutor / ReceiptVerifier with NO ``expected_actor``
@@ -563,7 +652,12 @@ def test_gate_construction_requires_expected_actor(tmp_path: Path) -> None:
 
     # Empty-string anchor → fail-closed ReceiptValidationError at construction.
     with pytest.raises(ReceiptValidationError, match="expected_actor is required"):
-        GovernedExecutor(tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor="")
+        GovernedExecutor(
+            tenant_id=TENANT,
+            execution_boundary=BOUNDARY,
+            expected_actor="",
+            **strict_receipt_gate.executor_kwargs(),
+        )
     with pytest.raises(ReceiptValidationError, match="expected_actor is required"):
         ReceiptVerifier(
             expected_tenant_id=TENANT,

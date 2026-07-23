@@ -147,3 +147,13 @@ class UnknownToolError(GoveZoneError):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"tool not registered: {name!r}")
+
+
+class SideEffectCallableAccessError(GoveZoneError):
+    """Public registry access to a side-effect callable is forbidden."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(
+            f"side-effect tool {name!r} is only executable through a receipt-gated dispatcher"
+        )

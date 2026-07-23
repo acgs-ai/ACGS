@@ -19,8 +19,8 @@ audit chain, and replay engine. Any violated invariant exits non-zero.
 
 Status: foundational / Alpha (0.1.0.dev0). This proves the LOCAL invariant.
 It is NOT a production, compliance, or regulator-ready certification. The demo
-runs UNSIGNED by default (receipts are ``unsigned_local``); Ed25519 signing is
-opt-in (see SECURITY.md). The registered "tool" is a stand-in — gove-zone decides
+uses Ed25519-signed receipts plus explicit fixture-only strict audit and
+consumption state. The registered "tool" is a stand-in — gove-zone decides
 *whether* and *with which arguments* it runs; it does not sandbox the side effect.
 """
 
@@ -32,9 +32,9 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone import (
-    ChainHashAuditStore,
     Decision,
     DecisionReceipt,
+    Ed25519Signer,
     GovernanceRequest,
     ProposedAction,
     ReceiptValidationError,
@@ -45,6 +45,9 @@ from gove_zone import (
     execute_with_receipt,
     replay_call,
 )
+from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
+from gove_zone.audit import ChainHashAuditStore
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.tool import ToolCall, normalize_path_context
 
 TENANT = "tenant-A"
@@ -85,7 +88,12 @@ def _fail(msg: str) -> None:
 
 
 def _issue(
-    store: TenantPolicyStore, audit: ChainHashAuditStore, tool: str, args: dict[str, Any], rid: str
+    store: TenantPolicyStore,
+    audit: ChainHashAuditStore,
+    signer: Ed25519Signer,
+    tool: str,
+    args: dict[str, Any],
+    rid: str,
 ) -> DecisionReceipt:
     req = GovernanceRequest(
         tenant_id=TENANT,
@@ -106,14 +114,16 @@ def _issue(
         validator=VALIDATOR,
         authority=AUTHORITY,
         audit_store=audit,
+        signer=signer,
     )
 
 
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="gove-zone-launch-demo-"))
+    strict = build_strict_receipt_gate_fixture(workdir / "strict-state", name="launch-demo")
     store = TenantPolicyStore(workdir / "policies")
     store.store_bundle(TENANT, POLICY)
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
+    audit = strict.audit
 
     print("\n\033[1mgove-zone — launch demo\033[0m")
     print("Invariant: No valid Decision Receipt, no side effect.\n")
@@ -121,11 +131,14 @@ def main() -> int:
     # --- Beat 1: ALLOW — a safe action runs under a valid receipt. ----------
     print("[1] A safe action runs — under a valid receipt")
     allow_args = {"path": "report.txt", "content": "quarterly numbers"}
-    allow_receipt = _issue(store, audit, "runtime.file.write", allow_args, "req-allow")
+    allow_receipt = _issue(
+        store, audit, strict.signer, "runtime.file.write", allow_args, "req-allow"
+    )
     if allow_receipt.decision != "allow":
         _fail(f"expected ALLOW, got {allow_receipt.decision}")
     tool = Tool()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
         tool_fn=tool.run,
         args=allow_args,
         receipt=allow_receipt,
@@ -133,7 +146,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor=CALLER_IDENTITY,
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict.executor_kwargs(),
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")
@@ -142,12 +155,13 @@ def main() -> int:
     # --- Beat 2: DENY — an unsafe action is blocked BEFORE the side effect. --
     print("\n[2] An unsafe action is blocked — before the side effect fires")
     deny_args = {"cmd": "rm -rf /"}
-    deny_receipt = _issue(store, audit, "shell.exec", deny_args, "req-deny")
+    deny_receipt = _issue(store, audit, strict.signer, "shell.exec", deny_args, "req-deny")
     if deny_receipt.decision != "deny":
         _fail(f"expected DENY, got {deny_receipt.decision}")
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args=deny_args,
             receipt=deny_receipt,
@@ -155,7 +169,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict.executor_kwargs(),
         )
         _fail("denied action reached execution")
     except ReceiptValidationError as exc:

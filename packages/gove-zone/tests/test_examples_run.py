@@ -10,6 +10,7 @@ evidence demos added alongside the production-profile default.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,10 @@ _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 # Demos that run to a clean exit 0 with no arguments and no stdin.
 _RUNNABLE_DEMOS = [
+    "launch-demo/demo.py",
+    "receipt-gated-execution/demo.py",
+    "plan-level-governance/demo.py",
+    "workflow-receipt-chain/demo.py",
     "mcp-tool-gateway/demo.py",
     "agent-framework-wrapper/demo.py",
     "ci-deployment-gate/demo.py",
@@ -44,3 +49,22 @@ def test_example_demo_runs_clean(rel_path: str) -> None:
         f"--- stdout (tail) ---\n{result.stdout[-2000:]}\n"
         f"--- stderr (tail) ---\n{result.stderr[-2000:]}"
     )
+
+
+def test_governed_vulnclaw_demo_is_strict_and_cleans_fixture_state(tmp_path: Path) -> None:
+    demo = _EXAMPLES / "governed_vulnclaw_demo.py"
+    environment = dict(os.environ)
+    environment["TMPDIR"] = str(tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, str(demo)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert list(tmp_path.iterdir()) == []

@@ -78,6 +78,11 @@ credentials/
 !/.omc/skills/**
 .remember
 .omx
+# Bob Shell (IBM agentic CLI) runtime state; keep the project MCP wiring trackable.
+# Ignore .bob/ contents (can't re-include a file under a dir-level ignore), then
+# re-add the project MCP config specifically — same pattern as the .omc/ block.
+/.bob/*
+!/.bob/mcp.json
 .autopilot
 .agents
 .specify
@@ -112,6 +117,10 @@ credentials/
 !/.claude/workflows/**
 !/.claude/policy/
 !/.claude/policy/**
+!/.claude/rules/
+!/.claude/rules/**
+!/.claude/commands/
+!/.claude/commands/**
 
 # Sibling projects — out of scope for this monorepo (each has its own home).
 # Add explicitly so the working tree stays clean for tooling that gates on

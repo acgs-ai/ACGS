@@ -8,9 +8,26 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from gove_zone.decision import sha256_json
+from gove_zone.errors import SideEffectCallableAccessError
+
+
+class ToolEffect(StrEnum):
+    """Declared effect class for a registered tool."""
+
+    SIDE_EFFECT = "side_effect"
+    PURE_READ_ONLY = "pure_read_only"
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredTool:
+    """Package-internal registry entry pairing a callable with its effect."""
+
+    fn: Callable[..., Any]
+    effect: ToolEffect
 
 
 def normalize_path_context(path: str | Sequence[str] | None = None) -> tuple[str, ...]:
@@ -97,15 +114,52 @@ class ToolRegistry:
     """Simple name → callable registry. Single registration per name."""
 
     def __init__(self) -> None:
-        self._tools: dict[str, Callable[..., Any]] = {}
+        self._tools: dict[str, RegisteredTool] = {}
 
-    def register(self, name: str, fn: Callable[..., Any]) -> None:
+    def register(
+        self,
+        name: str,
+        fn: Callable[..., Any],
+        *,
+        effect: ToolEffect = ToolEffect.SIDE_EFFECT,
+    ) -> None:
         """Register *fn* under *name*. Raises if *name* is already registered."""
         if name in self._tools:
             raise ValueError(f"tool already registered: {name!r}")
-        self._tools[name] = fn
+        self._tools[name] = RegisteredTool(fn=fn, effect=ToolEffect(effect))
 
     def get(self, name: str) -> Callable[..., Any]:
+        """Return a pure callable; side-effect callables are never public."""
+        entry = self._get_registered(name)
+        if entry.effect is ToolEffect.SIDE_EFFECT:
+            raise SideEffectCallableAccessError(name)
+        return entry.fn
+
+    def _get_pure_callable(self, name: str) -> Callable[..., Any]:
+        """Return the private legacy callable only when it is explicitly pure."""
+        entry = self._get_registered(name)
+        if entry.effect is not ToolEffect.PURE_READ_ONLY:
+            raise SideEffectCallableAccessError(name)
+        return entry.fn
+
+    def _seal_side_effect(
+        self,
+        name: str,
+        sentinel: Callable[..., Any],
+    ) -> Callable[..., Any]:
+        """Replace a side-effect callable and return it for dispatcher adoption."""
+        entry = self._get_registered(name)
+        if entry.effect is not ToolEffect.SIDE_EFFECT:
+            raise ValueError(f"tool is not side-effectful: {name!r}")
+        self._tools[name] = RegisteredTool(fn=sentinel, effect=entry.effect)
+        return entry.fn
+
+    def effect(self, name: str) -> ToolEffect:
+        """Return the declared effect class for *name*."""
+        return self._get_registered(name).effect
+
+    def _get_registered(self, name: str) -> RegisteredTool:
+        """Return the package-internal registration record for *name*."""
         if name not in self._tools:
             raise KeyError(f"unknown tool: {name!r}")
         return self._tools[name]

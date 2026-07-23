@@ -45,6 +45,22 @@ MANIFEST = _load("test_coverage_manifest").MANIFEST
 
 # Which classical property (per analysis §1/§4/§5.2) earns each STABLE verdict.
 _STABLE_PROPERTY: dict[str, str] = {
+    "forged-authorization": (
+        "cryptographic trust-root binding — strict standalone execution requires a valid "
+        "signature from the configured verifier"
+    ),
+    "replayed-authorization": (
+        "durable single-use authorization — reserve/commit consumption precedes execution "
+        "and rejects a second use"
+    ),
+    "policy-downgrade": (
+        "policy artifact binding — the strict caller pins the in-force policy hash and "
+        "bundle identity"
+    ),
+    "validator-bypass": (
+        "authority separation — the strict caller pins trusted authority and validator "
+        "identity at the final gate"
+    ),
     "signature-stripping": (
         "reference-monitor totality — require_signature=True is a total check; no "
         "receipt lacking a valid trusted signature is admitted"
@@ -58,6 +74,11 @@ _STABLE_PROPERTY: dict[str, str] = {
         "execute_with_receipt) and no anchored audit evidence (via Kernel.dispatch: "
         "stripped-audit fails closed, and the anchor is recorded before the tool runs) "
         "both mean no side effect, regardless of every other parameter"
+    ),
+    "adapter-bypass": (
+        "reference-monitor routing — ManagedAgent side-effect registrations retain only a "
+        "blocked legacy sentinel and require the receipt-gated dispatcher even when the "
+        "legacy policy is explicitly permissive"
     ),
 }
 
@@ -77,18 +98,16 @@ def test_adaptive_stability_matches_manifest() -> None:
             mismatches.append(
                 f"{cls}: pinned={pinned} observed={observed} first_bypass={result.first_bypass}"
             )
-    assert not mismatches, "adaptive stability drifted from the manifest:\n" + "\n".join(
-        mismatches
-    )
+    assert not mismatches, "adaptive stability drifted from the manifest:\n" + "\n".join(mismatches)
 
 
 def test_adaptive_posture_is_pinned() -> None:
-    """Freeze the adaptive headline: 3 STABLE / 7 BYPASSABLE / 0 UNTESTED. Changing the
+    """Freeze the adaptive headline: 8 STABLE / 2 BYPASSABLE / 0 UNTESTED. Changing the
     posture must be a deliberate manifest edit, mirroring test_taxonomy_posture_is_pinned."""
     counts = {"STABLE": 0, "BYPASSABLE": 0, "UNTESTED": 0}
     for entry in MANIFEST.values():
         counts[entry["adaptive"]] += 1  # type: ignore[index]
-    assert counts == {"STABLE": 3, "BYPASSABLE": 7, "UNTESTED": 0}, counts
+    assert counts == {"STABLE": 8, "BYPASSABLE": 2, "UNTESTED": 0}, counts
 
 
 def test_stable_classes_have_no_bypass_and_named_property() -> None:
@@ -103,9 +122,7 @@ def test_stable_classes_have_no_bypass_and_named_property() -> None:
             f"{cls} pinned STABLE but a variant bypassed: {result.first_bypass}"
         )
         assert result.variants_tried >= 1, f"{cls} tried no variants"
-        assert cls in _STABLE_PROPERTY, (
-            f"{cls} is STABLE but has no classical-property annotation"
-        )
+        assert cls in _STABLE_PROPERTY, f"{cls} is STABLE but has no classical-property annotation"
 
 
 def test_bypassable_classes_recover_a_minimal_bypass() -> None:

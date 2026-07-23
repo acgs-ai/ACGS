@@ -49,6 +49,8 @@ from gove_zone import (
     evaluate_tenant_action,
     execute_with_receipt,
 )
+from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.tenant import TransformPolicy
 
 BOUNDARY = "local-sandbox"
@@ -89,6 +91,7 @@ def _fail(msg: str) -> None:
 def _issue(
     store: TenantPolicyStore,
     audit: ChainHashAuditStore,
+    signer: Ed25519Signer,
     request: GovernanceRequest,
 ) -> DecisionReceipt:
     return evaluate_tenant_action(
@@ -103,6 +106,7 @@ def _issue(
         validator=VALIDATOR,
         authority="tenant-A/write-grant",
         audit_store=audit,
+        signer=signer,
     )
 
 
@@ -118,8 +122,12 @@ def _request(tool: str, args: dict[str, Any], request_id: str) -> GovernanceRequ
 
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="gove-zone-demo-"))
+    strict = build_strict_receipt_gate_fixture(
+        workdir / "strict-state", name="receipt-gated-execution"
+    )
     store = TenantPolicyStore(workdir / "policies")
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
+    audit = strict.audit
+    gate_kwargs = strict.executor_kwargs()
 
     # A bundle that denies shell.exec but lets file writes through (default ALLOW),
     # plus a separate transform bundle for tenant scenario 6.
@@ -138,7 +146,8 @@ def main() -> int:
         expected_tenant_id=TENANT,
         expected_execution_boundary=BOUNDARY,
         expected_actor=CALLER_IDENTITY,
-        require_signature=False,  # dev mode ([8]/[9] show the signed default)
+        verifier=strict.signer,
+        require_signature=True,
     )
 
     print("\ngove-zone — receipt-gated execution proof")
@@ -147,7 +156,7 @@ def main() -> int:
     # 1. ALLOW: a valid receipt authorizes the exact approved action.
     print("[1] Allowed action executes")
     req = _request("runtime.file.write", {"path": "report.txt", "content": "ok"}, "req-allow")
-    receipt = _issue(store, audit, req)
+    receipt = _issue(store, audit, strict.signer, req)
     if receipt.decision != "allow":
         _fail(f"expected ALLOW, got {receipt.decision}")
     # The OO gate (ReceiptVerifier) and the functional gate (execute_with_receipt)
@@ -159,6 +168,7 @@ def main() -> int:
     )
     tool = Tool()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
         tool_fn=tool.run,
         args=req.proposed_action.args,
         receipt=receipt,
@@ -170,7 +180,7 @@ def main() -> int:
         # attacker could set to match a forged receipt. The gate rejects a forged
         # receipt where validator_id == this caller, or one issued for someone else.
         expected_actor=CALLER_IDENTITY,
-        require_signature=False,  # dev mode ([8]/[9] show the signed default)
+        **gate_kwargs,
     )
     if not tool.ran:
         _fail("valid ALLOW receipt did not reach execution")
@@ -180,12 +190,13 @@ def main() -> int:
     print("[2] Denied action is blocked")
     store.store_bundle(TENANT, deny_bundle)
     req = _request("runtime.file.write", {"path": "report.txt", "content": "no"}, "req-deny")
-    denied = _issue(store, audit, req)
+    denied = _issue(store, audit, strict.signer, req)
     if denied.decision != "deny":
         _fail(f"expected DENY, got {denied.decision}")
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args=req.proposed_action.args,
             receipt=denied,
@@ -193,7 +204,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # dev mode ([8]/[9] show the signed default)
+            **gate_kwargs,
         )
         _fail("denied receipt reached execution")
     except ReceiptValidationError as exc:
@@ -207,6 +218,7 @@ def main() -> int:
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args={"path": "report.txt"},
             receipt=None,
@@ -214,7 +226,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # dev mode ([8]/[9] show the signed default)
+            **gate_kwargs,
         )
         _fail("missing receipt reached execution")
     except ReceiptValidationError as exc:
@@ -223,11 +235,12 @@ def main() -> int:
     # 4. TAMPERED receipt → block (hash mismatch).
     print("[4] Tampered receipt is blocked")
     req = _request("runtime.file.write", {"path": "report.txt", "content": "ok"}, "req-tamper")
-    good = _issue(store, audit, req)
+    good = _issue(store, audit, strict.signer, req)
     tampered = dataclasses.replace(good, proposed_action="shell.exec")
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args=req.proposed_action.args,
             receipt=tampered,
@@ -235,7 +248,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="shell.exec",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # dev mode ([8]/[9] show the signed default)
+            **gate_kwargs,
         )
         _fail("tampered receipt reached execution")
     except ReceiptValidationError as exc:
@@ -244,10 +257,11 @@ def main() -> int:
     # 5. CROSS-TENANT receipt → block.
     print("[5] Cross-tenant receipt is blocked")
     req = _request("runtime.file.write", {"path": "report.txt", "content": "ok"}, "req-tenant")
-    tenant_a_receipt = _issue(store, audit, req)
+    tenant_a_receipt = _issue(store, audit, strict.signer, req)
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args=req.proposed_action.args,
             receipt=tenant_a_receipt,
@@ -255,7 +269,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # dev mode ([8]/[9] show the signed default)
+            **gate_kwargs,
         )
         _fail("tenant-A receipt authorized a tenant-B executor")
     except ReceiptValidationError as exc:
@@ -266,13 +280,14 @@ def main() -> int:
     transform_store = TenantPolicyStore(workdir / "transform_policies")
     transform_store.store_bundle(TENANT, TransformPolicy())
     req = _request("runtime.file.write", {"path": "original.txt"}, "req-transform")
-    t_receipt = _issue(transform_store, audit, req)
+    t_receipt = _issue(transform_store, audit, strict.signer, req)
     if t_receipt.decision != "transform":
         _fail(f"expected TRANSFORM, got {t_receipt.decision}")
     # The original (un-approved) args are refused.
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args={"path": "original.txt"},
             receipt=t_receipt,
@@ -280,7 +295,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action="runtime.file.write",
             expected_actor=CALLER_IDENTITY,
-            require_signature=False,  # dev mode ([8]/[9] show the signed default)
+            **gate_kwargs,
         )
         _fail("un-approved original args reached execution")
     except ReceiptValidationError:
@@ -290,6 +305,7 @@ def main() -> int:
     # Only the approved transformed args run.
     tool = Tool()
     execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
         tool_fn=tool.run,
         args={"path": "transformed.txt"},
         receipt=t_receipt,
@@ -297,7 +313,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action="runtime.file.write",
         expected_actor=CALLER_IDENTITY,
-        require_signature=False,  # dev mode ([8]/[9] show the signed default)
+        **gate_kwargs,
     )
     if not tool.ran or tool.args != {"path": "transformed.txt"}:
         _fail("approved transformed action did not run as approved")
@@ -324,7 +340,7 @@ def main() -> int:
     # Issue with a private key; gate verifies with the PUBLIC key only.
     # Precondition for full closure: require_signature=True at the gate.
     print("[8] Signed receipt verified with public key + executed")
-    signing_key = Ed25519Signer.generate()
+    signing_key = strict.signer
     verify_key = Ed25519Signer.from_public_bytes(signing_key.public_bytes())
     req = _request("runtime.file.write", {"path": "signed-report.txt", "content": "ok"}, "req-sign")
     signed_receipt = evaluate_tenant_action(
@@ -345,6 +361,7 @@ def main() -> int:
         _fail(f"expected ed25519 signature, got {signed_receipt.signature_algorithm!r}")
     tool = Tool()
     execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
         tool_fn=tool.run,
         args=req.proposed_action.args,
         receipt=signed_receipt,
@@ -352,8 +369,7 @@ def main() -> int:
         expected_execution_boundary=BOUNDARY,
         expected_action=req.proposed_action.tool,
         expected_actor=CALLER_IDENTITY,
-        verifier=verify_key,
-        require_signature=True,
+        **{**gate_kwargs, "verifier": verify_key},
     )
     if not tool.ran:
         _fail("valid signed receipt did not reach execution")
@@ -374,6 +390,7 @@ def main() -> int:
     tool = Tool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
             tool_fn=tool.run,
             args=req.proposed_action.args,
             receipt=forged,
@@ -381,8 +398,7 @@ def main() -> int:
             expected_execution_boundary=BOUNDARY,
             expected_action=req.proposed_action.tool,
             expected_actor=CALLER_IDENTITY,
-            verifier=verify_key,
-            require_signature=True,
+            **{**gate_kwargs, "verifier": verify_key},
         )
         _fail("forged/recomputed receipt reached execution")
     except ReceiptValidationError as exc:

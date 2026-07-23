@@ -16,6 +16,7 @@ from gove_zone import (
     DeniedError,
     Kernel,
     RuleSetPolicy,
+    ToolEffect,
     sha256_json,
 )
 from gove_zone.cli import main
@@ -176,7 +177,7 @@ def _seed_chain_and_side_store(
         side_store=ReplaySideStore(side_path),
     )
 
-    @k.tool("write")
+    @k.tool("write", effect=ToolEffect.PURE_READ_ONLY)
     def write(**kwargs: object) -> str:
         return "ok"
 
@@ -284,7 +285,7 @@ def test_cli_replay_redacted_event(tmp_path: Path, capsys: pytest.CaptureFixture
         side_store=ReplaySideStore(side_path, redact=lambda c: True),
     )
 
-    @k.tool("write")
+    @k.tool("write", effect=ToolEffect.PURE_READ_ONLY)
     def write(**kwargs: object) -> str:
         return "ok"
 

@@ -27,9 +27,11 @@ def test_audit_module_import_does_not_require_fcntl() -> None:
         builtins.__import__ = guarded_import
 
         import gove_zone.audit
+        from gove_zone import SpendProofPack
 
         assert gove_zone.audit.ChainHashAuditStore
-        print("audit import ok without fcntl")
+        assert SpendProofPack
+        print("audit and public Spend import ok without fcntl")
         """
     )
 
@@ -41,4 +43,4 @@ def test_audit_module_import_does_not_require_fcntl() -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "audit import ok without fcntl" in result.stdout
+    assert "audit and public Spend import ok without fcntl" in result.stdout

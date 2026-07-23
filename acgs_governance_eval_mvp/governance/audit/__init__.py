@@ -3,16 +3,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol, runtime_checkable
 
-from governance.models import DecisionRecord
+from governance.models import AuthorizationTraceIntegrityError, DecisionRecord
 
 from .in_memory import InMemoryAuditStore
-from .jsonl_chain import (
-    AuthorizationTraceIntegrityError,
-    ChainHashAuditStore,
-    NonceReplayError,
-    UnsafeAuditStorageError,
-    extract_trace,
-)
+from .jsonl_chain import ChainHashAuditStore, NonceReplayError, UnsafeAuditStorageError, extract_trace
 
 
 @runtime_checkable

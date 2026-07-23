@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from gove_zone.agent import ManagedAgent
+from gove_zone.managed_execution import ManagedExecutionResult
+from gove_zone.tool import ToolEffect
 
 try:
     from langchain_core.tools import BaseTool  # type: ignore[import-not-found]
@@ -26,7 +28,13 @@ except ImportError:
 class GovernedTool(BaseTool):  # type: ignore[misc]
     """A LangChain BaseTool wrapper that delegates execution to a ManagedAgent."""
 
-    def __init__(self, tool: Any, agent: ManagedAgent) -> None:
+    def __init__(
+        self,
+        tool: Any,
+        agent: ManagedAgent,
+        *,
+        effect: ToolEffect = ToolEffect.SIDE_EFFECT,
+    ) -> None:
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("langchain-core is required to use GovernedTool")
 
@@ -43,13 +51,16 @@ class GovernedTool(BaseTool):  # type: ignore[misc]
 
         # Register the original execution function in the agent (and sandbox)
         # LangChain tools execute synchronous tool runs via `_run`
-        self._agent.register_tool(self.name, self._original_tool._run)
+        self._agent.register_tool(self.name, self._original_tool._run, effect=effect)
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Enforces policy check, auditing, and sandboxed execution of the tool."""
         # Convert positional args to keyword arguments if any (standard tools use kwargs)
         # Delegate to the agent's dispatch loop
-        result, _receipt = self._agent.dispatch(self.name, kwargs)
+        dispatched = self._agent.dispatch(self.name, kwargs)
+        if isinstance(dispatched, ManagedExecutionResult):
+            return dispatched.payload
+        result, _receipt = dispatched
         return result
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
@@ -58,8 +69,13 @@ class GovernedTool(BaseTool):  # type: ignore[misc]
         return self._run(*args, **kwargs)
 
 
-def govern_langgraph_tools(tools: list[Any], agent: ManagedAgent) -> list[BaseTool]:
+def govern_langgraph_tools(
+    tools: list[Any],
+    agent: ManagedAgent,
+    *,
+    effect: ToolEffect = ToolEffect.SIDE_EFFECT,
+) -> list[BaseTool]:
     """Wrap a list of LangChain/LangGraph tools with gove-zone governance."""
     if not LANGCHAIN_AVAILABLE:
         raise ImportError("langchain-core is required to use govern_langgraph_tools")
-    return [GovernedTool(tool, agent) for tool in tools]
+    return [GovernedTool(tool, agent, effect=effect) for tool in tools]

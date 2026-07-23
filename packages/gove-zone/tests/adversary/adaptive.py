@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone import (
+    AllowAllPolicy,
     ChainHashAuditStore,
     Decision,
     DecisionReceipt,
@@ -57,8 +58,10 @@ from gove_zone.adapters.autogen import govern_autogen_tool
 from gove_zone.audit import GENESIS_HASH
 from gove_zone.decision import sha256_json
 from gove_zone.errors import AuditError, EscalateError, UnknownToolError
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.pql_compiler import compile_pql_to_ruleset
 from gove_zone.tool import ToolCall
+from tests.adversary.conftest import _SIGNER, StrictGateDependencies, strict_gate_dependencies
 
 # Must match tests/adversary/conftest.py (the canonical governed-run idiom).
 TENANT = "tenant-A"
@@ -75,6 +78,7 @@ _DENY_EXCEPTIONS = (ReceiptValidationError, ProductionProfileError)
 # STABLE verdict enumerates the WHOLE family, so the family MUST stay strictly under
 # this ceiling — enforced by test_adaptive_stability.test_stable_class_families_fit_within_budget.
 DEFAULT_BUDGET = 40
+_DEFAULT_SIGNER = object()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,7 +128,7 @@ def _mint(
     boundary: str = BOUNDARY,
     authority: str = "tenant-A/write-grant",
     args: dict[str, Any] | None = None,
-    signer: Any | None = None,
+    signer: Any = _DEFAULT_SIGNER,
 ) -> DecisionReceipt:
     """Mint an ALLOW receipt via the real receipt schema (mirrors conftest._issue)."""
     effective_args = ARGS if args is None else args
@@ -147,7 +151,7 @@ def _mint(
         request_id="req-123",
         validator=Validator(validator_id),
         authority=authority,
-        signer=signer,
+        signer=_SIGNER if signer is _DEFAULT_SIGNER else signer,
     )
 
 
@@ -155,17 +159,21 @@ def _gate_admits(
     receipt: DecisionReceipt | None,
     *,
     args: dict[str, Any] | None = None,
-    require_signature: bool = False,
-    verifier: Any = None,
+    require_signature: bool = True,
+    verifier: Any = _SIGNER,
     expected_tenant_id: str = TENANT,
     expected_execution_boundary: str = BOUNDARY,
     expected_action: str = ACTION,
     expected_actor: str = "agent-1",
-    expected_policy_hash: str | None = None,
-    expected_policy_bundle_id: str | None = None,
+    expected_policy_hash: str | None = "policy/v2-current",
+    expected_policy_bundle_id: str | None = "policy-bundle",
+    expected_authority: str | None = "tenant-A/write-grant",
+    expected_validator_id: str | None = "constitutional-council",
+    dependencies: StrictGateDependencies | None = None,
 ) -> bool:
     """Run a receipt through the REAL gate; True iff the side effect ran (admitted)."""
     side_effect = _SideEffect()
+    active_dependencies = dependencies or strict_gate_dependencies(Path(tempfile.mkdtemp()))
     kwargs: dict[str, Any] = dict(
         tool_fn=side_effect.run,
         args=ARGS if args is None else args,
@@ -175,13 +183,18 @@ def _gate_admits(
         expected_action=expected_action,
         expected_actor=expected_actor,
         expected_policy_hash=expected_policy_hash,
+        expected_policy_bundle_id=expected_policy_bundle_id,
+        expected_authority=expected_authority,
+        expected_validator_id=expected_validator_id,
         verifier=verifier,
         require_signature=require_signature,
+        consumption_store=active_dependencies.consumption_store,
+        rejection_audit=active_dependencies.rejection_audit,
     )
-    if expected_policy_bundle_id is not None:
-        kwargs["expected_policy_bundle_id"] = expected_policy_bundle_id
     try:
-        execute_with_receipt(**kwargs)
+        execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest((kwargs)["tool_fn"]), **kwargs
+        )
     except _DENY_EXCEPTIONS:
         return False
     return side_effect.ran
@@ -381,13 +394,12 @@ def _gen_evidence_omission(budget: int) -> Iterator[Variant]:
 
 
 def _gen_forged_authorization(budget: int) -> Iterator[Variant]:
-    """Unsigned (dev) posture has no cryptographic root of trust: a self-minted ALLOW
-    verifies. The first, minimal forgery admits."""
+    """The strict standalone path requires a signature from its configured trust root;
+    unsigned self-minted ALLOW receipts must all be denied."""
     yield Variant(
         "forge:unsigned-recompute:actor=attacker",
         lambda: _gate_admits(
-            _mint(actor="attacker", validator_id="attacker-cabal"),
-            require_signature=False,
+            _mint(actor="attacker", validator_id="attacker-cabal", signer=None),
             expected_actor="attacker",
         ),
     )
@@ -395,22 +407,21 @@ def _gen_forged_authorization(budget: int) -> Iterator[Variant]:
         yield Variant(
             f"forge:unsigned-recompute:actor={actor}",
             lambda a=actor: _gate_admits(
-                _mint(actor=a, validator_id="attacker-cabal"),
-                require_signature=False,
+                _mint(actor=a, validator_id="attacker-cabal", signer=None),
                 expected_actor=a,
             ),
         )
 
 
 def _gen_replayed_authorization(budget: int) -> Iterator[Variant]:
-    """The standalone gate is stateless (no ReceiptConsumptionLedger on this branch):
-    the SAME receipt authorizes unbounded re-execution. The replay (2nd admit) is the
-    bypass."""
+    """The strict standalone gate durably consumes the receipt before execution; the
+    first use admits and the second use must be denied by the same dependency set."""
 
     def _replay(args: dict[str, Any]) -> bool:
         receipt = _mint(args=args)
-        first = _gate_admits(receipt, args=args)
-        second = _gate_admits(receipt, args=args)  # replay: identical receipt, new call
+        dependencies = strict_gate_dependencies(Path(tempfile.mkdtemp()))
+        first = _gate_admits(receipt, args=args, dependencies=dependencies)
+        second = _gate_admits(receipt, args=args, dependencies=dependencies)
         return first and second
 
     yield Variant("replay:same-receipt-twice", lambda: _replay(ARGS))
@@ -461,29 +472,27 @@ def _gen_ledger_tampering(budget: int) -> Iterator[Variant]:
 
 
 def _gen_policy_downgrade(budget: int) -> Iterator[Variant]:
-    """expected_policy_hash / expected_policy_bundle_id default to None: an unpinned
-    gate accepts a receipt minted under a stale/permissive policy. The first unpinned
-    variant admits."""
+    """The strict standalone caller pins the in-force hash and bundle identity; stale
+    or substituted policy artifacts must be denied."""
     yield Variant(
         "downgrade:unpinned-policy-hash",
         lambda: _gate_admits(
             _mint(policy_hash="policy/v1-permissive", policy_version="v1-permissive"),
-            expected_policy_hash=None,
+            expected_policy_hash="policy/v2-current",
         ),
     )
     yield Variant(
         "downgrade:unpinned-bundle-id",
         lambda: _gate_admits(
             _mint(policy_bundle_id="stale-bundle"),
-            expected_policy_bundle_id=None,
+            expected_policy_bundle_id="policy-bundle",
         ),
     )
 
 
 def _gen_validator_bypass(budget: int) -> Iterator[Variant]:
-    """No gate surface plumbs expected_authority / expected_validator_role: a receipt
-    executes regardless of the authority scope the caller intended to require. The
-    escalated-authority receipt admits because the gate cannot check it."""
+    """The strict standalone caller pins trusted authority and validator identity;
+    receipts carrying substituted authority scopes must be denied."""
     yield Variant(
         "authority:gate-ignores-escalated-scope",
         lambda: _gate_admits(_mint(authority="tenant-A/ADMIN-grant")),
@@ -545,14 +554,15 @@ def _gen_policy_default_allow(budget: int) -> Iterator[Variant]:
 
 
 def _gen_adapter_bypass(budget: int) -> Iterator[Variant]:
-    """govern_autogen_tool routes through ManagedAgent.dispatch -> Kernel.dispatch with a
-    self-asserted actor and NO receipt verification, and ManagedAgent defaults to
-    AllowAllPolicy: a default 'governed' agent executes every wrapped tool
-    unconditionally."""
+    """Probe that framework adapters cannot bypass a missing receipt dispatcher.
+
+    This bounded family covers explicit ``AllowAllPolicy`` configurations. Raw
+    ``Kernel.dispatch`` and public registry access remain outside this adapter surface.
+    """
 
     def _adapter_admits(tool_label: str, path: str) -> bool:
         tmp = Path(tempfile.mkdtemp()) / "audit.jsonl"
-        agent = ManagedAgent("vulnclaw", audit_path=tmp)
+        agent = ManagedAgent("vulnclaw", policy=AllowAllPolicy(), audit_path=tmp)
         ran: dict[str, int] = {"count": 0}
 
         def danger(path: str = "/etc/shadow") -> str:
@@ -567,12 +577,12 @@ def _gen_adapter_bypass(budget: int) -> Iterator[Variant]:
         return ran["count"] >= 1
 
     yield Variant(
-        "adapter:default-allowall:tool=shell",
+        "adapter:explicit-allowall:tool=shell",
         lambda: _adapter_admits("shell", "/etc/shadow"),
     )
     for tool_label in ("exec", "http"):
         yield Variant(
-            f"adapter:default-allowall:tool={tool_label}",
+            f"adapter:explicit-allowall:tool={tool_label}",
             lambda t=tool_label: _adapter_admits(t, "/etc/shadow"),
         )
 

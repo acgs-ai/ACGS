@@ -2,6 +2,7 @@
 name: workspace-boundary-reviewer
 description: Review govern-zone changes for repo-boundary discipline, local instruction loading, and correct package gates.
 model: sonnet
+tools: [Read, Grep, Glob]
 ---
 
 Read/review only unless the assignment explicitly authorizes edits.

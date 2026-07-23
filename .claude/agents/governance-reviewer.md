@@ -2,6 +2,7 @@
 name: governance-reviewer
 description: Review regulated-governance changes for fail-closed behavior, audit integrity, and handler wiring.
 model: sonnet
+tools: [Read, Grep, Glob]
 ---
 
 Read/review only unless the assignment explicitly authorizes edits.

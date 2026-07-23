@@ -68,13 +68,18 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone import (
-    ChainHashAuditStore,
     Ed25519Signer,
     GovernanceProfile,
     ProductionProfileError,
     ReceiptValidationError,
     RuleSetPolicy,
 )
+from gove_zone._strict_dispatch_fixture import (
+    StrictReceiptGateFixture,
+    build_strict_receipt_gate_fixture,
+)
+from gove_zone.audit import ChainHashAuditStore
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.tenant import TenantPolicyStore, evaluate_tenant_action
 
@@ -209,6 +214,7 @@ def gate(
     signer: Ed25519Signer,
     store: TenantPolicyStore,
     audit: ChainHashAuditStore,
+    strict_gate: StrictReceiptGateFixture,
 ) -> int:
     """Govern one deploy *payload*. Return 0 to allow the pipeline, non-zero to fail it.
 
@@ -277,6 +283,7 @@ def gate(
 
     try:
         result = execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(deploy.run),
             tool_fn=deploy.run,
             args=args,
             receipt=receipt,
@@ -284,6 +291,12 @@ def gate(
             expected_execution_boundary=EXECUTION_BOUNDARY,
             expected_action="deploy",
             expected_actor=CALLER_IDENTITY,
+            consumption_store=strict_gate.consumption_store,
+            rejection_audit=audit,
+            # Lifecycle provenance is signed by an authority distinct from the
+            # audit-checkpoint key: re-checkpointing cannot forge execution.
+            lifecycle_signer=strict_gate.lifecycle_signer,
+            lifecycle_authority_id="fixture-lifecycle-validator",
             **profile.as_gate_kwargs(),  # require_signature=True, verifier=<pubkey>
         )
     except ReceiptValidationError as exc:
@@ -326,7 +339,7 @@ def gate(
 # --- Build the production-profile context (signed) ----------------------------
 def _build_context(
     workdir: Path,
-) -> tuple[GovernanceProfile, Ed25519Signer, TenantPolicyStore, ChainHashAuditStore]:
+) -> tuple[GovernanceProfile, Ed25519Signer, TenantPolicyStore, StrictReceiptGateFixture]:
     """Production profile + a freshly generated Ed25519 signer/verifier pair.
 
     Generating the keypair in-process is fine for a self-contained example: the
@@ -341,8 +354,12 @@ def _build_context(
     profile = GovernanceProfile.production(signer=signer, verifier=verify_key)
     store = TenantPolicyStore(workdir / "policies")
     store.store_bundle(TENANT, _deploy_policy())
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
-    return profile, signer, store, audit
+    strict_gate = build_strict_receipt_gate_fixture(
+        workdir / "strict-receipt-gate",
+        name="ci-deployment-gate",
+        signer=signer,
+    )
+    return profile, signer, store, strict_gate
 
 
 # --- Entry points -------------------------------------------------------------
@@ -353,13 +370,21 @@ def run_payload(payload: dict[str, Any]) -> int:
     non-zero and fails the job.
     """
     workdir = Path(tempfile.mkdtemp(prefix="gove-zone-ci-gate-"))
-    profile, signer, store, audit = _build_context(workdir)
+    profile, signer, store, strict_gate = _build_context(workdir)
+    audit = strict_gate.audit
     print("\ngove-zone — CI deployment gate (production profile, signed receipts)")
     print(
         f"(tenant={TENANT}  boundary={EXECUTION_BOUNDARY}  "
         f"profile={'production' if profile.is_production else profile.name})\n"
     )
-    rc = gate(payload, profile=profile, signer=signer, store=store, audit=audit)
+    rc = gate(
+        payload,
+        profile=profile,
+        signer=signer,
+        store=store,
+        audit=audit,
+        strict_gate=strict_gate,
+    )
     print(f"\n(audit log: {audit.path})  exit={rc}\n")
     return rc
 
@@ -370,7 +395,8 @@ def main() -> int:
     Returns 0 iff the gate behaved as expected: allow → 0, deny → non-zero.
     """
     workdir = Path(tempfile.mkdtemp(prefix="gove-zone-ci-gate-"))
-    profile, signer, store, audit = _build_context(workdir)
+    profile, signer, store, strict_gate = _build_context(workdir)
+    audit = strict_gate.audit
 
     print("\ngove-zone — CI deployment gate proof")
     print(
@@ -391,7 +417,14 @@ def main() -> int:
         "approver": "release-manager",
         "request_id": "deploy-staging-1",
     }
-    rc_allow = gate(allow_payload, profile=profile, signer=signer, store=store, audit=audit)
+    rc_allow = gate(
+        allow_payload,
+        profile=profile,
+        signer=signer,
+        store=store,
+        audit=audit,
+        strict_gate=strict_gate,
+    )
     if rc_allow == 0:
         _ok("ALLOW path returned exit 0 as expected")
     else:
@@ -408,7 +441,14 @@ def main() -> int:
         "approver": "release-manager",
         "request_id": "deploy-prod-1",
     }
-    rc_deny = gate(deny_payload, profile=profile, signer=signer, store=store, audit=audit)
+    rc_deny = gate(
+        deny_payload,
+        profile=profile,
+        signer=signer,
+        store=store,
+        audit=audit,
+        strict_gate=strict_gate,
+    )
     if rc_deny != 0 and rc_deny != INVARIANT_VIOLATION_RC:
         _ok(f"DENY path returned non-zero exit ({rc_deny}) as expected — pipeline fails closed")
     else:
@@ -425,7 +465,14 @@ def main() -> int:
         "approver": "release-manager",
         "request_id": "deploy-restricted-1",
     }
-    rc_escalate = gate(escalate_payload, profile=profile, signer=signer, store=store, audit=audit)
+    rc_escalate = gate(
+        escalate_payload,
+        profile=profile,
+        signer=signer,
+        store=store,
+        audit=audit,
+        strict_gate=strict_gate,
+    )
     if rc_escalate != 0 and rc_escalate != INVARIANT_VIOLATION_RC:
         _ok(
             f"ESCALATE path returned non-zero exit ({rc_escalate}) as expected — "
@@ -445,7 +492,14 @@ def main() -> int:
         "approver": CALLER_IDENTITY,  # same principal proposes AND approves
         "request_id": "deploy-self-1",
     }
-    rc_self = gate(self_approve_payload, profile=profile, signer=signer, store=store, audit=audit)
+    rc_self = gate(
+        self_approve_payload,
+        profile=profile,
+        signer=signer,
+        store=store,
+        audit=audit,
+        strict_gate=strict_gate,
+    )
     if rc_self != 0:
         _ok(f"self-approval returned non-zero exit ({rc_self}) — MACI separation held")
     else:
@@ -457,15 +511,22 @@ def main() -> int:
     from gove_zone import execute_with_receipt
 
     misconfigured = GovernanceProfile.production()  # no verifier supplied
+
+    def misconfigured_adapter(**_: object) -> str:
+        return "should not run"
+
     try:
         execute_with_receipt(
-            tool_fn=lambda **_: "should not run",
+            expected_adapter_artifact_digest=adapter_artifact_digest(misconfigured_adapter),
+            tool_fn=misconfigured_adapter,
             args={"environment": "staging"},
             receipt=None,
             expected_tenant_id=TENANT,
             expected_execution_boundary=EXECUTION_BOUNDARY,
             expected_action="deploy",
             expected_actor=CALLER_IDENTITY,
+            consumption_store=strict_gate.consumption_store,
+            rejection_audit=audit,
             **misconfigured.as_gate_kwargs(),
         )
         failures.append("production profile with no verifier did not fail closed")

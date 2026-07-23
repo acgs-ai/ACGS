@@ -33,12 +33,15 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from gove_zone import (
     Decision,
     DecisionReceipt,
     DecisionRecord,
+    Ed25519Signer,
     GovernedExecutor,
     ReceiptValidationError,
     Validator,
@@ -49,6 +52,7 @@ from gove_zone import (
     WorkflowStepReceipt,
     verify_workflow_replay,
 )
+from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
 from gove_zone.decision import sha256_json
 
 TENANT = "tenant-A"
@@ -83,7 +87,9 @@ def _fail(msg: str) -> None:
     raise SystemExit(1)
 
 
-def _inner(action: str, args: dict[str, Any], event_id: str) -> DecisionReceipt:
+def _inner(
+    action: str, args: dict[str, Any], event_id: str, signer: Ed25519Signer
+) -> DecisionReceipt:
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool=action,
@@ -103,10 +109,15 @@ def _inner(action: str, args: dict[str, Any], event_id: str) -> DecisionReceipt:
         request_id="req-" + event_id,
         validator=VALIDATOR,
         authority=AUTHORITY,
+        signer=signer,
     )
 
 
 def main() -> int:
+    workdir = Path(tempfile.mkdtemp(prefix="gove-zone-workflow-receipt-chain-"))
+    strict = build_strict_receipt_gate_fixture(
+        workdir / "strict-state", name="workflow-receipt-chain"
+    )
     dag = WorkflowDAG(
         steps={
             "fetch": WorkflowStep("fetch", "runtime.http.get", ()),
@@ -121,6 +132,7 @@ def main() -> int:
     # step receipt is bound to it via authorization_hash.
     authorization = WorkflowAuthorization.from_plan(
         dag.dag_hash(),
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         plan_proposer=ACTOR,
         plan_validator=PLAN_VALIDATOR,
@@ -145,10 +157,11 @@ def main() -> int:
         envelopes: dict[str, WorkflowStepReceipt] = {}
         for sid in ("fetch", "transform", "write"):
             step = dag.steps[sid]
-            inner = _inner(step.action, args_by_step[sid], "ev-" + sid)
+            inner = _inner(step.action, args_by_step[sid], "ev-" + sid, strict.signer)
             pred_hashes = {p: envelopes[p].step_receipt_hash for p in step.predecessor_step_ids}
             envelopes[sid] = WorkflowStepReceipt.from_inner(
                 inner,
+                signer=strict.signer,
                 workflow_id=WORKFLOW_ID,
                 step_id=sid,
                 predecessor_step_ids=step.predecessor_step_ids,
@@ -164,13 +177,20 @@ def main() -> int:
             tenant_id=TENANT,
             execution_boundary=BOUNDARY,
             expected_actor=ACTOR,
-            require_signature=False,  # explicit dev mode (unsigned inner receipt)
+            **strict.executor_kwargs(),
         )
         for sid, step in dag.steps.items():
-            g.register(step.action, tools[sid].run)
+            g.register_tool(
+                step.action,
+                tools[sid].run,
+            )
         return (
             WorkflowExecutor(
-                workflow_id=WORKFLOW_ID, dag=dag, governed=g, authorization=authorization
+                workflow_id=WORKFLOW_ID,
+                dag=dag,
+                governed=g,
+                authorization=authorization,
+                verifier=strict.signer,
             ),
             tools,
         )
@@ -189,9 +209,12 @@ def main() -> int:
     print("[2] Reordered step (predecessor not yet run) is blocked")
     wf, tools = fresh_executor()
     # Fabricate a transform envelope claiming fetch ran (it has not).
-    t_inner = _inner("runtime.data.transform", args_by_step["transform"], "ev-t-reorder")
+    t_inner = _inner(
+        "runtime.data.transform", args_by_step["transform"], "ev-t-reorder", strict.signer
+    )
     t_env = WorkflowStepReceipt.from_inner(
         t_inner,
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         step_id="transform",
         predecessor_step_ids=("fetch",),
@@ -210,9 +233,10 @@ def main() -> int:
     # 3. Cross-workflow: a step receipt from another run cannot execute here.
     print("[3] Cross-workflow step receipt is blocked")
     wf, tools = fresh_executor()
-    f_inner = _inner("runtime.http.get", args_by_step["fetch"], "ev-f-cross")
+    f_inner = _inner("runtime.http.get", args_by_step["fetch"], "ev-f-cross", strict.signer)
     cross_env = WorkflowStepReceipt.from_inner(
         f_inner,
+        signer=strict.signer,
         workflow_id="some-other-run",  # not WORKFLOW_ID
         step_id="fetch",
         predecessor_step_ids=(),
@@ -237,9 +261,10 @@ def main() -> int:
             "exfiltrate": WorkflowStep("exfiltrate", "runtime.net.post", ()),
         }
     )
-    f_inner2 = _inner("runtime.http.get", args_by_step["fetch"], "ev-f-dag")
+    f_inner2 = _inner("runtime.http.get", args_by_step["fetch"], "ev-f-dag", strict.signer)
     tampered_env = WorkflowStepReceipt.from_inner(
         f_inner2,
+        signer=strict.signer,
         workflow_id=WORKFLOW_ID,
         step_id="fetch",
         predecessor_step_ids=(),
@@ -259,7 +284,13 @@ def main() -> int:
     print("[5] Offline replay verifies the recorded good chain")
     envelopes = build_chain()
     try:
-        verify_workflow_replay(dag, list(envelopes.values()), authorization=authorization)
+        verify_workflow_replay(
+            dag,
+            list(envelopes.values()),
+            authorization=authorization,
+            verifier=strict.signer,
+            inner_verifier=strict.signer,
+        )
         _ok("replay verified: chain is internally consistent + topologically faithful")
     except ReceiptValidationError as exc:
         _fail(f"replay rejected a good chain: {exc}")
@@ -269,7 +300,13 @@ def main() -> int:
     chain = list(envelopes.values())
     chain[0] = dataclasses.replace(chain[0], workflow_id="other-run")  # stale hash
     try:
-        verify_workflow_replay(dag, chain, authorization=authorization)
+        verify_workflow_replay(
+            dag,
+            chain,
+            authorization=authorization,
+            verifier=strict.signer,
+            inner_verifier=strict.signer,
+        )
         _fail("replay accepted a tampered chain")
     except ReceiptValidationError as exc:
         _ok(f"tampered chain rejected: {exc}")

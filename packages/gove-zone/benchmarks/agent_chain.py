@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from gove_zone import ChainHashAuditStore, Kernel, Policy
+from gove_zone import ChainHashAuditStore, Kernel, Policy, ToolEffect
 
 PAYLOAD_TARGET_BYTES = 50 * 1024
 
@@ -152,7 +152,7 @@ class AgentChainRunner:
             policy_timeout=self.policy_timeout,
         )
 
-        @kernel.tool(spec.tool)
+        @kernel.tool(spec.tool, effect=ToolEffect.PURE_READ_ONLY)
         def governed_tool(payload: Mapping[str, Any], authz: Mapping[str, Any]) -> dict[str, Any]:
             if self.tool_work is not None:
                 self.tool_work(payload)

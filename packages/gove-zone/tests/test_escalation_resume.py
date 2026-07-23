@@ -28,6 +28,7 @@ from gove_zone import (
     resume_with_receipt,
     sha256_json,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.tool import ToolCall
 
@@ -68,22 +69,30 @@ def _spy() -> tuple[object, list[str]]:
 
 
 def _escalated(
-    tmp_path, *, actor: str = PROPOSER, args: dict | None = None
+    strict: StrictReceiptGateFixture,
+    *,
+    actor: str = PROPOSER,
+    args: dict | None = None,
 ) -> tuple[EscalateError, ChainHashAuditStore]:
     args = {"path": "/tmp/safe"} if args is None else args
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict.audit
     kernel = Kernel(policy=_EscalatePolicy(), audit=audit, actor=actor)
+    call = ToolCall(
+        name="write_file",
+        args=args,
+        goal="do the thing",
+        actor=actor,
+    )
+    record, audit_hash = kernel.evaluate_and_record(call)
+    pending = PendingApproval(record, audit_hash, args)
+    return EscalateError(record, audit_hash, pending=pending), audit
 
-    @kernel.tool("write_file")
-    def _never(**kwargs):  # pragma: no cover - must never run on ESCALATE
-        raise AssertionError("kernel tool must not run on an ESCALATE dispatch")
 
-    with pytest.raises(EscalateError) as ei:
-        kernel.dispatch("write_file", args, goal="do the thing")
-    return ei.value, audit
-
-
-def _approve(pending: PendingApproval, audit: ChainHashAuditStore, **over) -> DecisionReceipt:
+def _approve(
+    pending: PendingApproval,
+    strict: StrictReceiptGateFixture,
+    **over,
+) -> DecisionReceipt:
     kw = dict(
         validator=Validator("human-alice", "approver"),
         authority="grant:write",
@@ -91,28 +100,31 @@ def _approve(pending: PendingApproval, audit: ChainHashAuditStore, **over) -> De
         execution_boundary=BOUNDARY,
         policy_bundle_id=BUNDLE,
         policy_hash=PHASH,
-        audit=audit,
+        audit=strict.audit,
+        signer=strict.signer,
     )
     kw.update(over)
     return approve_escalation(pending, **kw)
 
 
 def _executor(
+    strict: StrictReceiptGateFixture,
     *,
     tenant: str = TENANT,
     boundary: str = BOUNDARY,
     actor: str = PROPOSER,
-    require_signature: bool = False,
+    verifier: object | None = None,
 ):
-    # Default to the explicit unsigned dev profile: these tests exercise the
-    # actor/argument/tenant/decision gate logic, not signature verification.
-    # The signed-path test passes require_signature=True + a verifier per-call.
     fn, calls = _spy()
     ex = GovernedExecutor(
         tenant_id=tenant,
         execution_boundary=boundary,
         expected_actor=actor,
-        require_signature=require_signature,
+        consumption_store=strict.consumption_store,
+        rejection_audit=strict.audit,
+        verifier=verifier or strict.signer,
+        lifecycle_signer=strict.lifecycle_signer,
+        lifecycle_authority_id="fixture-lifecycle-validator",
     )
     ex.register("write_file", fn)
     return ex, calls
@@ -121,8 +133,8 @@ def _executor(
 # --- wiring + back-compat ---------------------------------------------------
 
 
-def test_kernel_attaches_pending_on_escalate(tmp_path):
-    err, _ = _escalated(tmp_path, args={"path": "/tmp/safe"})
+def test_kernel_attaches_pending_on_escalate(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _ = _escalated(strict_receipt_gate, args={"path": "/tmp/safe"})
     assert isinstance(err.pending, PendingApproval)
     assert err.pending.record is err.record
     assert err.pending.audit_hash == err.audit_hash
@@ -158,14 +170,14 @@ def test_non_escalate_pending_refused():
 # --- happy path -------------------------------------------------------------
 
 
-def test_happy_path_executes_once(tmp_path):
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit)
+def test_happy_path_executes_once(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _audit = _escalated(strict_receipt_gate)
+    receipt = _approve(err.pending, strict_receipt_gate)
     assert receipt.decision == "allow"
     assert receipt.validator_id == "human-alice"
     assert receipt.actor == PROPOSER
 
-    ex, calls = _executor()
+    ex, calls = _executor(strict_receipt_gate)
     result = resume_with_receipt(ex, err.pending, receipt)
     assert result == "wrote /tmp/safe"
     assert calls == ["/tmp/safe"]
@@ -174,8 +186,10 @@ def test_happy_path_executes_once(tmp_path):
 # --- fail-closed: the original escalation can never authorize execution ------
 
 
-def test_escalated_receipt_cannot_execute(tmp_path):
-    err, audit = _escalated(tmp_path)
+def test_escalated_receipt_cannot_execute(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
+    err, _audit = _escalated(strict_receipt_gate)
     # Mint a receipt straight from the ESCALATE record: decision stays "escalate".
     bad = DecisionReceipt.from_record(
         err.pending.record,
@@ -188,9 +202,10 @@ def test_escalated_receipt_cannot_execute(tmp_path):
         request_id="r1",
         validator=Validator("human-alice", "approver"),
         authority="grant:write",
+        signer=strict_receipt_gate.signer,
     )
     assert bad.decision == "escalate"
-    ex, calls = _executor()
+    ex, calls = _executor(strict_receipt_gate)
     with pytest.raises(ReceiptValidationError, match="cannot authorize execution"):
         resume_with_receipt(ex, err.pending, bad)
     assert calls == []
@@ -199,42 +214,50 @@ def test_escalated_receipt_cannot_execute(tmp_path):
 # --- fail-closed: human must differ from the agent (MACI) -------------------
 
 
-def test_self_approval_forbidden(tmp_path):
-    err, audit = _escalated(tmp_path, actor=PROPOSER)
+def test_self_approval_forbidden(strict_receipt_gate: StrictReceiptGateFixture):
+    err, audit = _escalated(strict_receipt_gate, actor=PROPOSER)
     with pytest.raises(ReceiptValidationError, match="self-validation forbidden"):
-        _approve(err.pending, audit, validator=Validator(PROPOSER, "approver"))
+        _approve(
+            err.pending,
+            strict_receipt_gate,
+            validator=Validator(PROPOSER, "approver"),
+        )
     # The rejected self-approval must NOT have polluted the audit chain.
     decisions = [e["decision"] for e in audit.iter_events()]
     assert "allow" not in decisions
 
 
-def test_wrong_invoking_principal_rejected(tmp_path):
-    err, audit = _escalated(tmp_path, actor=PROPOSER)
-    receipt = _approve(err.pending, audit)
-    ex, calls = _executor(actor="agent-y")
+def test_wrong_invoking_principal_rejected(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
+    err, _audit = _escalated(strict_receipt_gate, actor=PROPOSER)
+    receipt = _approve(err.pending, strict_receipt_gate)
+    ex, calls = _executor(strict_receipt_gate, actor="agent-y")
     with pytest.raises(ReceiptValidationError, match="actor mismatch"):
-        ex.execute("write_file", dict(err.pending.args), receipt, expected_actor="agent-y")
+        ex.execute("write_file", dict(err.pending.args), receipt)
     assert calls == []
 
 
 # --- fail-closed: exact-argument binding ------------------------------------
 
 
-def test_arg_tamper_rejected(tmp_path):
-    err, audit = _escalated(tmp_path, args={"path": "/tmp/safe"})
-    receipt = _approve(err.pending, audit)
-    ex, calls = _executor()
+def test_arg_tamper_rejected(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _audit = _escalated(strict_receipt_gate, args={"path": "/tmp/safe"})
+    receipt = _approve(err.pending, strict_receipt_gate)
+    ex, calls = _executor(strict_receipt_gate)
     with pytest.raises(ReceiptValidationError, match="argument mismatch"):
-        ex.execute("write_file", {"path": "/etc/shadow"}, receipt, expected_actor=PROPOSER)
+        ex.execute("write_file", {"path": "/etc/shadow"}, receipt)
     assert calls == []
 
 
 # --- audit integrity --------------------------------------------------------
 
 
-def test_approval_is_audited_and_chain_verifies(tmp_path):
-    err, audit = _escalated(tmp_path)
-    _approve(err.pending, audit)
+def test_approval_is_audited_and_chain_verifies(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
+    err, audit = _escalated(strict_receipt_gate)
+    _approve(err.pending, strict_receipt_gate)
     chain = audit.verify_chain()
     assert chain["valid"] is True
     pairs = [(e["decision"], e["event_id"]) for e in audit.iter_events()]
@@ -245,10 +268,10 @@ def test_approval_is_audited_and_chain_verifies(tmp_path):
 # --- fail-closed: tenant / boundary binding ---------------------------------
 
 
-def test_wrong_tenant_rejected(tmp_path):
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit, tenant_id=TENANT)
-    ex, calls = _executor(tenant="tenant-other")
+def test_wrong_tenant_rejected(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _audit = _escalated(strict_receipt_gate)
+    receipt = _approve(err.pending, strict_receipt_gate, tenant_id=TENANT)
+    ex, calls = _executor(strict_receipt_gate, tenant="tenant-other")
     with pytest.raises(ReceiptValidationError, match="[Tt]enant mismatch"):
         resume_with_receipt(ex, err.pending, receipt)
     assert calls == []
@@ -257,60 +280,70 @@ def test_wrong_tenant_rejected(tmp_path):
 # --- crypto closure ---------------------------------------------------------
 
 
-def test_signed_approval_roundtrips(tmp_path):
-    err, audit = _escalated(tmp_path)
+def test_signed_approval_roundtrips(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _audit = _escalated(strict_receipt_gate)
     signer = Ed25519Signer.generate(key_id="k1")
-    receipt = _approve(err.pending, audit, signer=signer)
+    receipt = _approve(err.pending, strict_receipt_gate, signer=signer)
     assert receipt.signature_algorithm == "ed25519"
 
     verifier = Ed25519Signer.from_public_bytes(signer.public_bytes(), key_id="k1")
-    ex, calls = _executor()
-    result = resume_with_receipt(
-        ex, err.pending, receipt, verifier=verifier, require_signature=True
-    )
+    ex, calls = _executor(strict_receipt_gate, verifier=verifier)
+    result = resume_with_receipt(ex, err.pending, receipt)
     assert result == "wrote /tmp/safe"
     assert calls == ["/tmp/safe"]
 
 
-def test_unsigned_approval_rejected_when_signature_required(tmp_path):
+def test_unsigned_approval_rejected_when_signature_required(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
     # Gate configured to verify signatures (verifier present), but the approval is
     # unsigned -> verify check 2a rejects it. (A verifier is supplied so we reach
     # verify rather than the production-misconfig guard, which the next test covers.)
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit)  # unsigned
-    verifier = Ed25519Signer.generate(key_id="kv")
-    ex, calls = _executor()
+    err, audit = _escalated(strict_receipt_gate)
+    receipt = approve_escalation(
+        err.pending,
+        validator=Validator("human-alice", "approver"),
+        authority="grant:write",
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        policy_bundle_id=BUNDLE,
+        policy_hash=PHASH,
+        audit=audit,
+    )
+    ex, calls = _executor(strict_receipt_gate)
     with pytest.raises(ReceiptValidationError, match="signature required"):
-        resume_with_receipt(ex, err.pending, receipt, verifier=verifier, require_signature=True)
+        resume_with_receipt(ex, err.pending, receipt)
     assert calls == []
 
 
-def test_production_executor_without_verifier_fails_closed(tmp_path):
+def test_production_executor_without_verifier_fails_closed(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
     # Production profile is the executor default (require_signature=True). Resuming
     # through it with no verifier configured fails closed LOUD (ProductionProfileError,
     # a ReceiptValidationError subclass) rather than silently downgrading — the bridge
     # inherits the secure default.
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit)
-    fn, calls = _spy()
-    ex = GovernedExecutor(
-        tenant_id=TENANT, execution_boundary=BOUNDARY, expected_actor=PROPOSER
-    )  # production default: require_signature=True, no verifier
-    ex.register("write_file", fn)
-    with pytest.raises(
-        ReceiptValidationError, match="production profile requires a signer/verifier"
-    ):
-        resume_with_receipt(ex, err.pending, receipt)
-    assert calls == []
+    with pytest.raises(ValueError, match="trusted verifier"):
+        GovernedExecutor(
+            tenant_id=TENANT,
+            execution_boundary=BOUNDARY,
+            expected_actor=PROPOSER,
+            consumption_store=strict_receipt_gate.consumption_store,
+            rejection_audit=strict_receipt_gate.audit,
+        )
 
 
 # --- expiry -----------------------------------------------------------------
 
 
-def test_expired_approval_rejected(tmp_path):
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit, expires_at="2000-01-01T00:00:00+00:00")
-    ex, calls = _executor()
+def test_expired_approval_rejected(strict_receipt_gate: StrictReceiptGateFixture):
+    err, _audit = _escalated(strict_receipt_gate)
+    receipt = _approve(
+        err.pending,
+        strict_receipt_gate,
+        expires_at="2000-01-01T00:00:00+00:00",
+    )
+    ex, calls = _executor(strict_receipt_gate)
     with pytest.raises(ReceiptValidationError, match="expired"):
         resume_with_receipt(ex, err.pending, receipt)
     assert calls == []
@@ -319,69 +352,54 @@ def test_expired_approval_rejected(tmp_path):
 # --- the bridge's own MACI anchor, exercised THROUGH resume_with_receipt -----
 
 
-def test_resume_anchors_expected_actor_to_proposer(tmp_path):
+def test_resume_rejects_executor_actor_pin_mismatch(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
     # resume_with_receipt must anchor expected_actor to pending.record.actor,
     # overriding the executor's own default. The executor here is built with a
     # DIFFERENT default actor; if the bridge's anchor regressed (e.g. to None),
     # the gate would fall back to that wrong default and reject the receipt.
     # Succeeding proves the proposer anchor is live on the resume path itself.
-    err, audit = _escalated(tmp_path, actor=PROPOSER)
-    receipt = _approve(err.pending, audit)  # issued for PROPOSER
-    fn, calls = _spy()
-    ex = GovernedExecutor(
-        tenant_id=TENANT,
-        execution_boundary=BOUNDARY,
-        expected_actor="executor-default-not-the-proposer",
-        require_signature=False,
+    err, _audit = _escalated(strict_receipt_gate, actor=PROPOSER)
+    receipt = _approve(err.pending, strict_receipt_gate)
+    ex, calls = _executor(
+        strict_receipt_gate,
+        actor="executor-default-not-the-proposer",
     )
-    ex.register("write_file", fn)
-    result = resume_with_receipt(ex, err.pending, receipt)
-    assert result == "wrote /tmp/safe"
-    assert calls == ["/tmp/safe"]
+    with pytest.raises(ReceiptValidationError, match="cannot override"):
+        resume_with_receipt(ex, err.pending, receipt)
+    assert calls == []
 
 
-def test_resume_rejects_receipt_issued_for_different_proposer(tmp_path):
+def test_resume_rejects_receipt_issued_for_different_proposer(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
     # Negative path THROUGH resume_with_receipt (not ex.execute): a receipt issued
     # for agent-x is resumed via a pending whose proposer is agent-y. The bridge
     # anchors expected_actor to pending.record.actor (agent-y), so verify check 2b
     # rejects the receipt naming agent-x. Guards the anchor against binding the
     # wrong identity.
-    err_x, audit = _escalated(tmp_path, actor="agent-x")
-    receipt_x = _approve(err_x.pending, audit)  # actor == agent-x
-    err_y, _ = _escalated(tmp_path, actor="agent-y")  # same tool+args, proposer agent-y
-    fn, calls = _spy()
-    ex = GovernedExecutor(
-        tenant_id=TENANT,
-        execution_boundary=BOUNDARY,
-        expected_actor="agent-y",
-        require_signature=False,
-    )
-    ex.register("write_file", fn)
+    err_x, _audit = _escalated(strict_receipt_gate, actor="agent-x")
+    receipt_x = _approve(err_x.pending, strict_receipt_gate)
+    err_y, _ = _escalated(strict_receipt_gate, actor="agent-y")
+    ex, calls = _executor(strict_receipt_gate, actor="agent-y")
     with pytest.raises(ReceiptValidationError, match="actor mismatch"):
         resume_with_receipt(ex, err_y.pending, receipt_x)
     assert calls == []
 
 
-# --- KNOWN LIMITATION: approvals are not single-use (pinned, tracked) --------
+# --- replay resistance ------------------------------------------------------
 
 
-def test_known_limitation_single_approval_is_replayable(tmp_path):
-    # The stateless gate enforces no single-use, so one approval resumes N times
-    # (an ordinary kernel ALLOW receipt behaves identically). This is a documented
-    # limitation (see approve_escalation docstring); the test pins the current
-    # behavior so adding a used-receipt ledger later is a conscious, visible change
-    # rather than a silent one. "No valid receipt, no side effect" still holds:
-    # every replay carries a genuinely valid ALLOW receipt.
-    err, audit = _escalated(tmp_path)
-    receipt = _approve(err.pending, audit)
-    fn, calls = _spy()
-    ex = GovernedExecutor(
-        tenant_id=TENANT,
-        execution_boundary=BOUNDARY,
-        expected_actor=PROPOSER,
-        require_signature=False,
-    )
-    ex.register("write_file", fn)
-    for _ in range(3):
-        assert resume_with_receipt(ex, err.pending, receipt) == "wrote /tmp/safe"
-    assert calls == ["/tmp/safe", "/tmp/safe", "/tmp/safe"]
+def test_single_approval_second_resume_is_denied(
+    strict_receipt_gate: StrictReceiptGateFixture,
+):
+    err, _audit = _escalated(strict_receipt_gate)
+    receipt = _approve(err.pending, strict_receipt_gate)
+    ex, calls = _executor(strict_receipt_gate)
+
+    assert resume_with_receipt(ex, err.pending, receipt) == "wrote /tmp/safe"
+    with pytest.raises(ReceiptValidationError, match="replay"):
+        resume_with_receipt(ex, err.pending, receipt)
+
+    assert calls == ["/tmp/safe"]

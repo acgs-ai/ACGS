@@ -52,7 +52,6 @@ from pathlib import Path
 from typing import Any
 
 from gove_zone import (
-    ChainHashAuditStore,
     Ed25519Signer,
     GovernanceProfile,
     GovernedExecutor,
@@ -64,6 +63,11 @@ from gove_zone import (
     evaluate_tenant_action,
     execute_with_receipt,
 )
+from gove_zone._strict_dispatch_fixture import (
+    StrictReceiptGateFixture,
+    build_strict_receipt_gate_fixture,
+)
+from gove_zone.executor import adapter_artifact_digest
 
 # --- Governance constants -------------------------------------------------
 # The execution boundary and tenant the gate is scoped to.
@@ -129,11 +133,12 @@ class GovernedToolGate:
         self,
         *,
         store: TenantPolicyStore,
-        audit: ChainHashAuditStore,
+        strict_gate: StrictReceiptGateFixture,
         profile: GovernanceProfile,
     ) -> None:
         self._store = store
-        self._audit = audit
+        self._strict_gate = strict_gate
+        self._audit = strict_gate.audit
         self._profile = profile
 
     def govern(
@@ -174,6 +179,7 @@ class GovernedToolGate:
         #    cryptographically verifies the receipt and refuses a denied one
         #    BEFORE ``tool_fn`` runs. The wrapped fn IS the governed side effect.
         return execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_fn),
             tool_fn=tool_fn,
             args=args,
             receipt=receipt,
@@ -181,6 +187,12 @@ class GovernedToolGate:
             expected_execution_boundary=BOUNDARY,
             expected_action=action,
             expected_actor=CALLER_IDENTITY,
+            consumption_store=self._strict_gate.consumption_store,
+            rejection_audit=self._audit,
+            # Lifecycle provenance is signed by an authority distinct from the
+            # audit-checkpoint key: re-checkpointing cannot forge execution.
+            lifecycle_signer=self._strict_gate.lifecycle_signer,
+            lifecycle_authority_id="fixture-lifecycle-validator",
             **self._profile.as_gate_kwargs(),
         )
 
@@ -257,7 +269,6 @@ def function_tool_governed(
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="gove-zone-agent-fw-"))
     store = TenantPolicyStore(workdir / "policies")
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
     tool = FileWriterTool(workdir / "out")
     (workdir / "out").mkdir(parents=True, exist_ok=True)
 
@@ -272,6 +283,12 @@ def main() -> int:
     # verifier reaches the gate.
     signer = Ed25519Signer.generate()
     verifier = Ed25519Signer.from_public_bytes(signer.public_bytes())
+    strict_gate = build_strict_receipt_gate_fixture(
+        workdir / "strict-receipt-gate",
+        name="agent-framework-wrapper",
+        signer=signer,
+    )
+    audit = strict_gate.audit
     profile = GovernanceProfile.production(signer=signer, verifier=verifier)
     _banner("Profile")
     print(f"  profile        = {profile.name} (is_production={profile.is_production})")
@@ -282,7 +299,7 @@ def main() -> int:
     # The reusable gate carries issuance + the production enforcement check. Both
     # framework adapters pass their OWN tool_fn to gate.govern() — the gate runs
     # the exact callable the framework would otherwise run.
-    gate = GovernedToolGate(store=store, audit=audit, profile=profile)
+    gate = GovernedToolGate(store=store, strict_gate=strict_gate, profile=profile)
 
     # Sanity: a production gate with NO verifier must fail closed loud. This is
     # the secure-by-default posture — we never silently downgrade to unsigned.
@@ -294,12 +311,14 @@ def main() -> int:
             tenant_id=TENANT,
             execution_boundary=BOUNDARY,
             expected_actor=CALLER_IDENTITY,
+            consumption_store=strict_gate.consumption_store,
+            rejection_audit=strict_gate.audit,
             # require_signature defaults True; no verifier supplied.
         )
         bad.register("runtime.file.write", tool.write_file)
         bad.execute("runtime.file.write", {"path": "x", "content": "y"}, None)
         _fail("production gate with no verifier did not fail closed")
-    except ProductionProfileError as exc:
+    except (ProductionProfileError, ValueError) as exc:
         _ok(f"production gate with no verifier fails closed loud: {exc}")
 
     # --- LangGraph-style node: ALLOW then DENY ----------------------------

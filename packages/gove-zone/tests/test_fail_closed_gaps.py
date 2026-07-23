@@ -26,6 +26,7 @@ from gove_zone import (
     DeniedError,
     Kernel,
     Policy,
+    ToolEffect,
 )
 from gove_zone.tool import ToolCall
 
@@ -77,7 +78,7 @@ def test_watchdog_timeout_fails_closed(tmp_path: Path) -> None:
 
     executed: list[str] = []
 
-    @kernel.tool("never_runs")
+    @kernel.tool("never_runs", effect=ToolEffect.PURE_READ_ONLY)
     def never_runs() -> None:
         executed.append("ran")
 
@@ -119,7 +120,7 @@ def test_watchdog_does_not_fire_on_fast_policy(tmp_path: Path) -> None:
     policy = _HangingPolicy(hang_seconds=0.01)  # 10ms — well under threshold
     kernel = Kernel(policy=policy, audit=audit, policy_timeout=0.5)
 
-    @kernel.tool("noop")
+    @kernel.tool("noop", effect=ToolEffect.PURE_READ_ONLY)
     def noop() -> str:
         return "ok"
 

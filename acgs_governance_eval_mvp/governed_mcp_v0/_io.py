@@ -7,6 +7,7 @@ re-exported by ``mcp_server`` for back-compat with external callers.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
 import json
@@ -55,7 +56,7 @@ def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
 
 
 @contextmanager
-def _evidence_lock(audit_path: Path) -> IO[str]:
+def _evidence_lock(audit_path: Path) -> Iterator[IO[str]]:
     """Serialize evidence writers with a sidecar POSIX lock file.
 
     TODO: ``fcntl`` is POSIX-only; Windows fallback is out of scope because

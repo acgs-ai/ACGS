@@ -11,11 +11,12 @@ from __future__ import annotations
 import pytest
 
 from gove_zone import ReceiptValidationError
+from tests.adversary.conftest import _SIGNER
 
 
 def test_valid_receipt_executes_exactly_once(side_effect, issue, run_gate) -> None:
     """A well-formed ALLOW receipt runs the guarded side effect once."""
-    result = run_gate(issue(), side_effect)
+    result = run_gate(issue(_SIGNER), side_effect)
     assert result == "SIDE EFFECT EXECUTED"
     assert side_effect.ran is True
     assert side_effect.run_count == 1

@@ -23,6 +23,7 @@ from gove_zone import (
     ReceiptValidationError,
     ReceiptVerifier,
     TenantPolicyBinding,
+    ToolTierRegistry,
     Validator,
 )
 
@@ -139,6 +140,53 @@ def test_verifier_rejects_tampered_receipt() -> None:
     tampered = dataclasses.replace(_allow_receipt(), actor="mallory")
     with pytest.raises(ReceiptValidationError, match="receipt_hash mismatch"):
         verifier.verify(tampered)
+
+
+def test_verifier_threads_tool_tier_registry_for_explore_receipt() -> None:
+    receipt = dataclasses.replace(_allow_receipt(), action_tier="explore")
+    receipt = dataclasses.replace(receipt, receipt_hash=receipt.compute_hash())
+    registry = ToolTierRegistry.from_dict({"runtime.file.write": "explore"})
+    verifier = ReceiptVerifier(
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
+        require_signature=False,
+        tool_tier_registry=registry,
+    )
+
+    verifier.verify(receipt, expected_action="runtime.file.write")
+    assert verifier.is_valid(receipt, expected_action="runtime.file.write")
+
+
+def test_verifier_rejects_explore_receipt_without_registry() -> None:
+    receipt = dataclasses.replace(_allow_receipt(), action_tier="explore")
+    receipt = dataclasses.replace(receipt, receipt_hash=receipt.compute_hash())
+    verifier = ReceiptVerifier(
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
+        require_signature=False,
+    )
+
+    with pytest.raises(ReceiptValidationError, match="requires.*registry"):
+        verifier.verify(receipt, expected_action="runtime.file.write")
+    assert verifier.is_valid(receipt, expected_action="runtime.file.write") is False
+
+
+def test_verifier_rejects_explore_receipt_for_commit_only_tool() -> None:
+    receipt = dataclasses.replace(_allow_receipt(), action_tier="explore")
+    receipt = dataclasses.replace(receipt, receipt_hash=receipt.compute_hash())
+    registry = ToolTierRegistry.from_dict({"runtime.file.write": "commit"})
+    verifier = ReceiptVerifier(
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_actor="anonymous",
+        require_signature=False,
+        tool_tier_registry=registry,
+    )
+
+    with pytest.raises(ReceiptValidationError, match="commit-only"):
+        verifier.verify(receipt, expected_action="runtime.file.write")
 
 
 # --- AuditEvent projection ----------------------------------------------

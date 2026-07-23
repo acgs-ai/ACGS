@@ -210,9 +210,16 @@ def resume_with_receipt(
     *,
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
+    expected_policy_version: str | None = None,
+    expected_validator_id: str | None = None,
+    expected_validator_role: str | None = None,
+    expected_authority: str | None = None,
+    expected_constraints: Mapping[str, Any] | None = None,
+    expected_request_id: str | None = None,
     expected_audit_hash: str | None = None,
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
     require_signature: bool | None = None,
+    now_iso: str | None = None,
 ) -> Any:
     """Resume an approved escalation by executing through the existing gate.
 
@@ -237,7 +244,14 @@ def resume_with_receipt(
         expected_actor=pending.record.actor,
         expected_policy_hash=expected_policy_hash,
         expected_policy_bundle_id=expected_policy_bundle_id,
+        expected_policy_version=expected_policy_version,
+        expected_validator_id=expected_validator_id,
+        expected_validator_role=expected_validator_role,
+        expected_authority=expected_authority,
+        expected_constraints=expected_constraints,
+        expected_request_id=expected_request_id,
         expected_audit_hash=expected_audit_hash,
         verifier=verifier,
         require_signature=require_signature,
+        now_iso=now_iso,
     )

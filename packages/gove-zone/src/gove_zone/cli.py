@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
+import os
+import stat
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Never, Self
 
 from gove_zone import __version__
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.benchmark_adapters import load_benchmark_suite
 from gove_zone.decision import Decision
 from gove_zone.evaluation import evaluate_policy_scenarios
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.integration import (
     GateMode,
     GateModeError,
@@ -32,9 +37,41 @@ from gove_zone.setup import (
 )
 from gove_zone.smoke import run_smoke
 
+_MCP_EXTRA_REASON_CODE = "MCP_EXTRA_REQUIRED"
+_MCP_OPTIONAL_DEPENDENCY_ROOTS = frozenset(
+    {"anyio", "cryptography", "httpx", "mcp", "starlette", "uvicorn"}
+)
+
+
+class _JSONArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> Never:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "CLI_USAGE_ERROR",
+                "error": message,
+            }
+        )
+        raise SystemExit(2)
+
 
 def _emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, sort_keys=True, ensure_ascii=False))
+
+
+def _mcp_extra_required(exc: ImportError) -> int:
+    missing = exc.name
+    root = missing.partition(".")[0] if missing else None
+    if root not in _MCP_OPTIONAL_DEPENDENCY_ROOTS:
+        raise exc
+    _emit(
+        {
+            "valid": False,
+            "reason_code": _MCP_EXTRA_REASON_CODE,
+            "error": (f"MCP optional dependency {root!r} is unavailable; install 'gove-zone[mcp]'"),
+        }
+    )
+    return 2
 
 
 def _find_event(
@@ -326,15 +363,1161 @@ def _smoke(args: argparse.Namespace) -> int:
     return 0 if report["status"] == "pass" else 1
 
 
+def _release_verify(args: argparse.Namespace) -> int:
+    from gove_zone.release_proof import ReleaseProofError, verify_release_proof_pack
+
+    try:
+        result = verify_release_proof_pack(
+            args.pack,
+            receipt_public_key=args.receipt_public_key,
+            checkpoint_public_key=args.checkpoint_public_key,
+            consumption_public_key=args.consumption_public_key,
+            lifecycle_public_key=args.lifecycle_public_key,
+            expected_pack_digest=args.expected_pack_digest,
+        )
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "RELEASE_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(
+        {
+            **result.to_dict(),
+            "verification_mode": "external-keys-and-digest",
+            "strict": True,
+            "operation": "verify",
+        }
+    )
+    return 0
+
+
+def _release_replay(args: argparse.Namespace) -> int:
+    from gove_zone.release_proof import ReleaseProofError, replay_release_proof_pack
+
+    try:
+        result = replay_release_proof_pack(
+            directory=args.pack,
+            receipt_public_key=args.receipt_public_key,
+            checkpoint_public_key=args.checkpoint_public_key,
+            consumption_public_key=args.consumption_public_key,
+            lifecycle_public_key=args.lifecycle_public_key,
+            expected_pack_digest=args.expected_pack_digest,
+        )
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "reason_code": "RELEASE_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit({**result.to_dict(), "strict": True, "operation": "replay"})
+    return 0
+
+
+def _release_demo(args: argparse.Namespace) -> int:
+    from gove_zone.release_gate import ReleaseProofSinkError
+    from gove_zone.release_proof import ReleaseProofError, generate_release_demo
+
+    try:
+        report = generate_release_demo(Path(args.output))
+    except ReleaseProofSinkError as exc:
+        _emit(
+            {
+                "valid": False,
+                "side_effect_confirmed": True,
+                "retry_safe": False,
+                "reason_code": "RELEASE_PROOF_POST_EXECUTION_FAILED",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "RELEASE_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(report)
+    return 0
+
+
+def _release_artifact_tamper_demo(args: argparse.Namespace) -> int:
+    from gove_zone.release_gate import ReleaseProofSinkError
+    from gove_zone.release_proof import (
+        ReleaseProofError,
+        generate_release_artifact_tamper_demo,
+    )
+
+    try:
+        report = generate_release_artifact_tamper_demo(Path(args.output))
+    except ReleaseProofSinkError as exc:
+        _emit(
+            {
+                "valid": False,
+                "side_effect_confirmed": True,
+                "retry_safe": False,
+                "reason_code": "RELEASE_PROOF_POST_EXECUTION_FAILED",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "RELEASE_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(report)
+    return 0
+
+
+def _release_reference_demo(args: argparse.Namespace) -> int:
+    from gove_zone.release_gate import ReleaseProofSinkError
+    from gove_zone.release_proof import ReleaseProofError, generate_release_reference_demo
+
+    try:
+        report = generate_release_reference_demo(
+            Path(args.output),
+            pre_capture_tamper=bool(args.pre_capture_tamper),
+        )
+    except ReleaseProofSinkError as exc:
+        _emit(
+            {
+                "valid": False,
+                "side_effect_confirmed": True,
+                "retry_safe": False,
+                "reason_code": "RELEASE_PROOF_POST_EXECUTION_FAILED",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "RELEASE_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(report)
+    # A denial or ambiguous outcome is a structured, non-zero result; only a
+    # verified ALLOW is a success exit.
+    return 0 if report.get("valid") is True else 1
+
+
+def _release_verify_denial(args: argparse.Namespace) -> int:
+    """Independently re-verify a persisted release denial in a fresh process.
+
+    Trust roots are loaded ONLY from the separately supplied ``--checkpoint-public-key``
+    and ``--lifecycle-public-key`` files; keys are never read from the untrusted
+    bundle. ``--refusal-evidence`` may point at the raw refusal-evidence object or
+    a persisted denial response carrying it under ``execution_refusal_evidence``.
+    """
+
+    from gove_zone.release_proof import ReleaseProofError, verify_release_denial_evidence
+
+    try:
+        loaded = json.loads(Path(args.refusal_evidence).read_bytes().decode("utf-8"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("execution_refusal_evidence"), dict):
+            refusal_evidence = loaded["execution_refusal_evidence"]
+        else:
+            refusal_evidence = loaded
+        if not isinstance(refusal_evidence, dict):
+            raise ValueError("refusal evidence must be a JSON object")
+        result = verify_release_denial_evidence(
+            args.bundle,
+            refusal_evidence=refusal_evidence,
+            checkpoint_public_key=args.checkpoint_public_key,
+            lifecycle_public_key=args.lifecycle_public_key,
+        )
+    except (OSError, ReleaseProofError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "RELEASE_DENIAL_EVIDENCE_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit({**result, "operation": "verify-denial"})
+    return 0 if result.get("valid") is True else 1
+
+
+def _mcp_serve_http(args: argparse.Namespace) -> int:
+    """Run the fixture-only reference gateway on loopback or remote TLS HTTP."""
+
+    if not args.remote and args.host not in {"127.0.0.1", "localhost"}:
+        print("mcp serve-http: direct serving is restricted to loopback", file=sys.stderr)
+        return 2
+    if args.remote:
+        return _mcp_serve_http_remote(args)
+    try:
+        import anyio
+        import uvicorn
+
+        from gove_zone.mcp_reference import create_reference_runtime
+        from gove_zone.mcp_runtime import (
+            build_mcp_server,
+            build_streamable_http_app,
+            read_secret_file,
+        )
+
+        token = read_secret_file(Path(args.token_file))
+
+        async def serve() -> None:
+            runtime = await create_reference_runtime(
+                Path(args.state_dir),
+                inbound_token=token,
+                session_id=args.session_id,
+            )
+            try:
+                server = build_mcp_server(runtime.gateway)
+                hosts = [f"{args.host}:{args.port}"]
+                origins = list(args.allowed_origin)
+                app = build_streamable_http_app(
+                    server,
+                    allowed_hosts=hosts,
+                    allowed_origins=origins,
+                )
+                config = uvicorn.Config(
+                    app,
+                    host=args.host,
+                    port=args.port,
+                    log_level="warning",
+                )
+                await uvicorn.Server(config).serve()
+            finally:
+                await runtime.aclose()
+
+        anyio.run(serve)
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"mcp serve-http: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _remote_identity_trust(args: argparse.Namespace) -> Any:
+    """Build the pinned Ed25519 trust snapshot from the operator's key file.
+
+    The file carries public keys only.  Nothing here fetches a key, negotiates an
+    algorithm, or falls back to a development identity.
+    """
+
+    from gove_zone.mcp_identity import Ed25519TrustSnapshot
+
+    raw = Path(args.identity_trust_file).read_text(encoding="utf-8")
+    document = json.loads(raw)
+    if type(document) is not dict or not document:
+        raise ValueError("--identity-trust-file must be a non-empty JSON object of kid -> key")
+    keys: dict[str, bytes] = {}
+    for kid, encoded in document.items():
+        if type(kid) is not str or type(encoded) is not str:
+            raise ValueError("--identity-trust-file entries must be kid -> base64url key strings")
+        padding = "=" * (-len(encoded) % 4)
+        try:
+            keys[kid] = base64.urlsafe_b64decode(encoded + padding)
+        except (binascii.Error, ValueError):
+            raise ValueError(f"--identity-trust-file key for {kid!r} is not base64url") from None
+    return Ed25519TrustSnapshot(keys)
+
+
+def _remote_budgets(args: argparse.Namespace) -> Any:
+    from gove_zone.mcp_runtime import RemoteMCPBudgets
+
+    return RemoteMCPBudgets(
+        max_body_bytes=args.max_body_bytes,
+        max_header_bytes=args.max_header_bytes,
+        max_header_count=args.max_header_count,
+        limit_concurrency=args.limit_concurrency,
+        backlog=args.backlog,
+        timeout_keep_alive=args.timeout_keep_alive,
+        timeout_graceful_shutdown=args.timeout_graceful_shutdown,
+        limit_max_requests=args.limit_max_requests,
+    )
+
+
+def _remote_preflight(args: argparse.Namespace) -> str | None:
+    """Return the operator-facing reason this remote invocation cannot start."""
+
+    if not args.cert_file or not args.key_file:
+        return "requires --cert-file and --key-file"
+    if not args.expected_host:
+        return "requires --expected-host"
+    if not args.allowed_origin and not args.allow_absent_origin:
+        return (
+            "requires --allowed-origin, or --allow-absent-origin for non-browser "
+            "workload clients only"
+        )
+    asymmetric = bool(args.identity_trust_file)
+    if asymmetric and not (args.identity_issuer and args.identity_audience):
+        return "--identity-trust-file requires --identity-issuer and --identity-audience"
+    if asymmetric and not args.identity_resource:
+        return "--identity-trust-file requires --identity-resource"
+    if args.allow_absent_origin and not asymmetric:
+        return (
+            "--allow-absent-origin requires the asymmetric verifier "
+            "(--identity-trust-file/--identity-issuer/--identity-audience); the fixture "
+            "identity is not authentication"
+        )
+    if args.allow_non_loopback and not asymmetric:
+        return (
+            "--allow-non-loopback requires the asymmetric verifier "
+            "(--identity-trust-file/--identity-issuer/--identity-audience); the fixture "
+            "identity is refused for a public bind"
+        )
+    return None
+
+
+def _mcp_serve_http_remote(args: argparse.Namespace) -> int:  # noqa: C901 - one flat startup ladder
+    """Serve the same gateway over directly terminated TLS with no plaintext fallback.
+
+    Remote mode adds no second governance server and no proxy trust: the same
+    MCPActionGateway is wrapped in the remote guard, and TLS terminates in Uvicorn
+    against a process-private snapshot of already-validated material.
+    """
+
+    rejection = _remote_preflight(args)
+    if rejection is not None:
+        print(f"mcp serve-http --remote: {rejection}", file=sys.stderr)
+        return 2
+    try:
+        import anyio
+        import uvicorn
+
+        from gove_zone.mcp_gateway import MCPGatewayStatus
+        from gove_zone.mcp_identity import EdDSAJWSVerifier, MCPTokenVerifier
+        from gove_zone.mcp_reference import (
+            HEALTH_EXPECTED_TOOLS,
+            HEALTH_SESSION_ID,
+            create_reference_runtime,
+        )
+        from gove_zone.mcp_runtime import (
+            RemoteIdentityTrust,
+            RemoteMCPConfig,
+            RemoteReadiness,
+            build_mcp_server,
+            build_remote_app,
+            build_remote_uvicorn_config,
+            build_streamable_http_app,
+            config_certificate_expiry,
+            read_secret_file,
+            remote_tls_snapshot,
+            run_readiness_probe,
+        )
+
+        asymmetric = bool(args.identity_trust_file)
+        token_verifier: MCPTokenVerifier | None = None
+        if asymmetric:
+            # The config below declares ASYMMETRIC_JWS trust, so this verifier
+            # must actually serve the listener.  Declaring asymmetric trust while
+            # a fixture string decided identity would be exactly the lie the
+            # config invariant exists to prevent.
+            token_verifier = EdDSAJWSVerifier(
+                trust=_remote_identity_trust(args),
+                issuer=args.identity_issuer,
+                audience=args.identity_audience,
+                resource=args.identity_resource,
+            )
+        config = RemoteMCPConfig(
+            canonical_host=args.expected_host,
+            allowed_origins=tuple(args.allowed_origin),
+            certfile=Path(args.cert_file),
+            keyfile=Path(args.key_file),
+            bind_host=args.host,
+            bind_port=args.port,
+            allow_non_loopback=args.allow_non_loopback,
+            allow_absent_origin=args.allow_absent_origin,
+            identity_trust=(
+                RemoteIdentityTrust.ASYMMETRIC_JWS
+                if asymmetric
+                else RemoteIdentityTrust.FIXTURE_STATIC
+            ),
+            budgets=_remote_budgets(args),
+        )
+        token = read_secret_file(Path(args.token_file))
+        health_token = (
+            read_secret_file(Path(args.health_token_file)) if args.health_token_file else None
+        )
+        if args.readyz and health_token is None:
+            print(
+                "mcp serve-http --remote: --readyz requires --health-token-file so the probe "
+                "runs under its own tools:list-only identity",
+                file=sys.stderr,
+            )
+            return 2
+
+        async def serve() -> None:
+            runtime = await create_reference_runtime(
+                Path(args.state_dir),
+                inbound_token=token,
+                session_id=args.session_id,
+                health_token=health_token,
+                token_verifier=token_verifier,
+            )
+            try:
+                inner = build_streamable_http_app(
+                    build_mcp_server(runtime.gateway),
+                    allowed_hosts=[config.canonical_host],
+                    allowed_origins=list(config.allowed_origins),
+                )
+                readiness: RemoteReadiness | None = None
+                if args.readyz:
+                    assert health_token is not None  # noqa: S101 - guarded above
+
+                    def probe() -> tuple[str, ...]:
+                        response = runtime.gateway.list_tools(
+                            inbound_token=health_token,
+                            session_id=HEALTH_SESSION_ID,
+                            request_id="readiness-probe",
+                        )
+                        if response.status is not MCPGatewayStatus.LISTED:
+                            raise RuntimeError("readiness catalog probe was not allowed")
+                        return tuple(item.name for item in response.tools)
+
+                    readiness = RemoteReadiness(
+                        probe=probe,
+                        expected_tools=HEALTH_EXPECTED_TOOLS,
+                        certificate_expiry=config_certificate_expiry(config),
+                        expiry_margin_seconds=config.certificate_expiry_margin_seconds,
+                        min_interval_seconds=args.readyz_interval_seconds,
+                    )
+                app = build_remote_app(inner, config, readiness=readiness)
+                with remote_tls_snapshot(config) as (certfile, keyfile):
+                    server = uvicorn.Server(
+                        build_remote_uvicorn_config(app, config, certfile=certfile, keyfile=keyfile)
+                    )
+                    if readiness is None:
+                        # No probe is configured, so /readyz stays a fail-closed
+                        # 503 rather than a route that claims ready on faith.
+                        await server.serve()
+                    else:
+                        async with run_readiness_probe(
+                            readiness,
+                            interval_seconds=args.readyz_interval_seconds,
+                        ):
+                            await server.serve()
+            finally:
+                await runtime.aclose()
+
+        anyio.run(serve)
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"mcp serve-http: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _mcp_serve_stdio(args: argparse.Namespace) -> int:
+    """Run the same fixture gateway as a local stdio MCP wrapper."""
+
+    try:
+        import anyio
+
+        from gove_zone.mcp_reference import create_reference_runtime
+        from gove_zone.mcp_runtime import build_mcp_server, read_secret_file, run_stdio_server
+
+        token = read_secret_file(Path(args.token_file))
+
+        async def serve() -> None:
+            runtime = await create_reference_runtime(
+                Path(args.state_dir),
+                inbound_token=token,
+                session_id=args.session_id,
+            )
+            try:
+                server = build_mcp_server(
+                    runtime.gateway,
+                    stdio_token=token,
+                    stdio_session_id=args.session_id,
+                )
+                await run_stdio_server(server)
+            finally:
+                await runtime.aclose()
+
+        anyio.run(serve)
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"mcp serve-stdio: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+class _MCPOutputRootError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        parent_identity_preserved: bool | None = None,
+        pinned_final_entry_exists: bool | None = None,
+        lexical_final_path_exists: bool | None = None,
+        final_path_exists: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.parent_identity_preserved = parent_identity_preserved
+        self.pinned_final_entry_exists = pinned_final_entry_exists
+        self.lexical_final_path_exists = lexical_final_path_exists
+        self.final_path_exists = final_path_exists
+
+
+class _MCPOutputRootGuard:
+    _EXPECTED_MEMBERS = {
+        "before-pack": frozenset(),
+        "after-pack": frozenset({"proof-pack"}),
+        "before-envelope": frozenset({"proof-pack"}),
+        "after-envelope": frozenset({"proof-pack", "verification-envelope"}),
+    }
+
+    def __init__(self, value: str) -> None:
+        raw = Path(value).expanduser()
+        if ".." in raw.parts:
+            raise _MCPOutputRootError("MCP proof output cannot contain parent traversal")
+        path = raw if raw.is_absolute() else Path.cwd() / raw
+        path = Path(os.path.abspath(path))
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        cloexec = getattr(os, "O_CLOEXEC", None)
+        if nofollow is None or directory_flag is None or cloexec is None:
+            raise _MCPOutputRootError("secure output-root open flags are unavailable")
+        flags = os.O_RDONLY | nofollow | directory_flag | cloexec
+        descriptor = os.open(path.anchor, flags)
+        try:
+            parts = path.parts[1:]
+            if not parts:
+                raise _MCPOutputRootError("MCP proof output cannot be the filesystem root")
+            for index, part in enumerate(parts):
+                final = index == len(parts) - 1
+                try:
+                    child = os.open(part, flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    if not final:
+                        raise _MCPOutputRootError(
+                            "MCP proof output parent directory does not exist"
+                        ) from None
+                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    child = os.open(part, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = child
+            info = os.fstat(descriptor)
+            mode = stat.S_IMODE(info.st_mode)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or mode & 0o022:
+                raise _MCPOutputRootError("MCP proof output must be an owner-controlled directory")
+            if os.listdir(descriptor):
+                raise _MCPOutputRootError("MCP proof output must be new or empty")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self.path = path
+        self._descriptor = descriptor
+        self._identity = (info.st_dev, info.st_ino)
+
+    @property
+    def identity(self) -> tuple[int, int]:
+        return self._identity
+
+    def open_directory(self, path: Path) -> tuple[int, tuple[int, int]]:
+        if Path(os.path.abspath(path)) != self.path:
+            raise _MCPOutputRootError(
+                "MCP output-root capability cannot open a different directory"
+            )
+        try:
+            info = os.fstat(self._descriptor)
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or (info.st_dev, info.st_ino) != self._identity
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o022
+            ):
+                raise _MCPOutputRootError("MCP output-root capability identity changed")
+            descriptor = os.dup(self._descriptor)
+        except OSError:
+            raise _MCPOutputRootError("MCP output-root capability is unavailable") from None
+        return descriptor, self._identity
+
+    def checkpoint(self, phase: str) -> None:
+        expected = self._EXPECTED_MEMBERS.get(phase)
+        if expected is None:
+            raise _MCPOutputRootError("unknown MCP output-root commit phase")
+        try:
+            opened = os.fstat(self._descriptor)
+            lexical = os.stat(self.path, follow_symlinks=False)
+            members = frozenset(os.listdir(self._descriptor))
+        except OSError:
+            raise _MCPOutputRootError("MCP proof output identity is unavailable") from None
+        identity_preserved = (
+            stat.S_ISDIR(opened.st_mode)
+            and stat.S_ISDIR(lexical.st_mode)
+            and (opened.st_dev, opened.st_ino) == self._identity
+            and (lexical.st_dev, lexical.st_ino) == self._identity
+        )
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or not stat.S_ISDIR(lexical.st_mode)
+            or (opened.st_dev, opened.st_ino) != self._identity
+            or (lexical.st_dev, lexical.st_ino) != self._identity
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) & 0o022
+        ):
+            final_member = (
+                "verification-envelope"
+                if phase == "after-envelope"
+                else "proof-pack"
+                if phase in {"after-pack", "before-envelope"}
+                else None
+            )
+            pinned_exists = final_member in members if final_member is not None else None
+            lexical_exists: bool | None = None
+            if final_member is not None:
+                try:
+                    os.stat(self.path / final_member, follow_symlinks=False)
+                except FileNotFoundError:
+                    lexical_exists = False
+                except OSError:
+                    lexical_exists = None
+                else:
+                    lexical_exists = True
+            raise _MCPOutputRootError(
+                "MCP proof output identity changed during export",
+                parent_identity_preserved=identity_preserved,
+                pinned_final_entry_exists=pinned_exists,
+                lexical_final_path_exists=lexical_exists,
+                final_path_exists=(
+                    pinned_exists
+                    if identity_preserved and pinned_exists is lexical_exists
+                    else None
+                ),
+            )
+        if members != expected:
+            raise _MCPOutputRootError("MCP proof output membership changed during export")
+        for member in expected:
+            try:
+                child = os.stat(member, dir_fd=self._descriptor, follow_symlinks=False)
+            except OSError:
+                raise _MCPOutputRootError("MCP proof output member is unavailable") from None
+            if not stat.S_ISDIR(child.st_mode):
+                raise _MCPOutputRootError("MCP proof output member is not a directory")
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        os.close(self._descriptor)
+
+
+def _existing_directory(value: str, label: str) -> Path:
+    path = Path(value)
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(f"{label} must be an existing non-symlink directory")
+    return path
+
+
+def _mcp_partial_export_payload(error: Any) -> dict[str, Any]:
+    return {
+        "valid": False,
+        "reason_code": "MCP_PROOF_EXPORT_PARTIAL",
+        "error": str(error),
+        "pack_committed": bool(error.pack_committed),
+        "envelope_committed": bool(error.envelope_committed),
+        "phase": error.phase,
+        "durability": error.durability,
+        "durability_uncertain": bool(error.durability_uncertain),
+        "retry_safe": False,
+        "pack_digest": error.pack_digest,
+        "cleanup_attempted": bool(error.cleanup_attempted),
+        "cleanup_succeeded": error.cleanup_succeeded,
+        "parent_identity_preserved": error.parent_identity_preserved,
+        "pinned_final_entry_exists": error.pinned_final_entry_exists,
+        "lexical_final_path_exists": error.lexical_final_path_exists,
+        "final_path_exists": error.final_path_exists,
+        "temp_path_exists": error.temp_path_exists,
+    }
+
+
+def _mcp_demo(args: argparse.Namespace) -> int:
+    try:
+        import tempfile
+
+        import anyio
+
+        from gove_zone.mcp_proof_export import (
+            MCPGenuineProofExportError,
+            MCPGenuineProofLease,
+            export_genuine_mcp_proof,
+            export_prompt_injection_disaster_proof,
+        )
+        from gove_zone.proof_pack import PinnedOutputRoot
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    try:
+
+        async def capture() -> None:
+            # This absolute path is private capability-construction input only.
+            # Capability-mode success output intentionally publishes no locator.
+            output_path = Path(os.path.abspath(Path(args.output).expanduser()))
+            with (
+                PinnedOutputRoot.create(
+                    output_path,
+                    error_type=_MCPOutputRootError,
+                ) as output_root,
+                output_root.attest() as output_capability,
+                tempfile.TemporaryDirectory(prefix="gove-zone-mcp-proof-") as private,
+                PinnedOutputRoot.create(Path(private) / "runtime") as runtime_root,
+                runtime_root.attest() as runtime_capability,
+            ):
+                exporter = (
+                    export_prompt_injection_disaster_proof
+                    if getattr(args, "prompt_injection", False)
+                    else export_genuine_mcp_proof
+                )
+                result = await exporter(
+                    output_path / "proof-pack",
+                    output_path / "verification-envelope",
+                    runtime_root=runtime_capability.display_path,
+                    output_capability=output_capability,
+                    runtime_capability=runtime_capability,
+                )
+                if not isinstance(result, MCPGenuineProofLease):
+                    raise RuntimeError("capability export did not return an owned proof lease")
+                with result:
+                    verified_digest = result.verify()
+                    replayed_digest = result.replay()
+                    if verified_digest != replayed_digest:
+                        raise RuntimeError("MCP proof verify and replay digests differ")
+                    summary = result.proof_summary
+                    verify_command = [
+                        "gove-zone",
+                        "mcp",
+                        "verify-proof-pack",
+                        "--pack",
+                        "proof-pack",
+                        "--verification",
+                        "verification-envelope",
+                        "--expected-envelope-digest",
+                        result.envelope_digest,
+                    ]
+                    replay_command = verify_command.copy()
+                    replay_command[2] = "replay-proof-pack"
+                    payload = {
+                        "valid": True,
+                        "pack_digest": verified_digest,
+                        "envelope_digest": result.envelope_digest,
+                        "structurally_valid": True,
+                        "semantic_verified": True,
+                        "semantic_status": "complete",
+                        "replay_complete": True,
+                        "replay_digest": replayed_digest,
+                        "proof_pack": "proof-pack",
+                        "verification_envelope": "verification-envelope",
+                        "verify_command": verify_command,
+                        "replay_command": replay_command,
+                    }
+                    if getattr(args, "prompt_injection", False):
+                        attack = summary["scenario"]["attack"]
+                        payload.update(
+                            {
+                                "scenario": "mcp-prompt-injection",
+                                "decision": "DENY",
+                                "reason_codes": [attack["expected_refusal_reason"]],
+                                "exact_arguments": attack["arguments"],
+                                "baseline_side_effect_calls": attack["baseline_side_effect_calls"],
+                                "governed_downstream_calls": attack["governed_downstream_calls"],
+                            }
+                        )
+                    _emit(payload)
+
+        anyio.run(capture)
+    except _MCPOutputRootError as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_OUTPUT_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    except MCPGenuineProofExportError as exc:
+        _emit(_mcp_partial_export_payload(exc))
+        return 1
+    except (OSError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_OUTPUT_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - capture/export failures are JSON fail-closed
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_PROOF_CAPTURE_FAILED",
+                "error": str(exc),
+            }
+        )
+        return 1
+    return 0
+
+
+def _mcp_verify(args: argparse.Namespace) -> int:
+    try:
+        from gove_zone.mcp_proof import MCPActionProofError
+        from gove_zone.mcp_proof_export import verify_exported_mcp_proof
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    try:
+        pack = _existing_directory(args.pack, "MCP proof pack")
+        verification = _existing_directory(args.verification, "MCP verification envelope")
+    except (OSError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_PROOF_PATH_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    try:
+        verified_digest = verify_exported_mcp_proof(
+            pack,
+            verification,
+            expected_envelope_digest=args.expected_envelope_digest,
+        )
+    except MCPActionProofError as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - verifier faults must not escape as tracebacks
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "MCP_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(
+        {
+            # This is evidence that the verifier operation above returned without
+            # raising, not a reusable authorization report.
+            "valid": True,
+            "pack_digest": verified_digest,
+            "structurally_valid": True,
+            "semantic_verified": True,
+            "semantic_status": "complete",
+            "replay_complete": True,
+            "command": "mcp verify-proof-pack",
+            "strict": True,
+            "operation": "verify",
+        }
+    )
+    return 0
+
+
+def _mcp_replay(args: argparse.Namespace) -> int:
+    try:
+        from gove_zone.mcp_proof import MCPActionProofError
+        from gove_zone.mcp_proof_export import verify_exported_mcp_proof
+    except ImportError as exc:
+        return _mcp_extra_required(exc)
+    try:
+        pack = _existing_directory(args.pack, "MCP proof pack")
+        verification = _existing_directory(args.verification, "MCP verification envelope")
+    except (OSError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "replay_complete": False,
+                "reason_code": "MCP_PROOF_PATH_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    try:
+        verified_digest = verify_exported_mcp_proof(
+            pack,
+            verification,
+            expected_envelope_digest=args.expected_envelope_digest,
+        )
+    except MCPActionProofError as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "replay_complete": False,
+                "reason_code": "MCP_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "replay_complete": False,
+                "reason_code": "MCP_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - replay faults must not escape as tracebacks
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "replay_complete": False,
+                "reason_code": "MCP_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(
+        {
+            # Informational output from this completed replay operation only.
+            "valid": True,
+            "pack_digest": verified_digest,
+            "structurally_valid": True,
+            "semantic_verified": True,
+            "semantic_status": "complete",
+            "replay_complete": True,
+            "command": "mcp replay-proof-pack",
+            "strict": True,
+            "operation": "replay",
+        }
+    )
+    return 0
+
+
+def _spend_demo(args: argparse.Namespace) -> int:
+    try:
+        import tempfile
+
+        from gove_zone.spend_proof_export import export_genuine_spend_proof
+    except ImportError as exc:
+        _emit({"valid": False, "reason_code": "SPEND_DEPENDENCY_MISSING", "error": str(exc)})
+        return 2
+    try:
+        with _MCPOutputRootGuard(args.output) as output_guard:
+            with tempfile.TemporaryDirectory(prefix="gove-zone-spend-proof-") as private:
+                result = export_genuine_spend_proof(
+                    output_guard.path / "proof-pack",
+                    output_guard.path / "verification-envelope",
+                    runtime_root=Path(private) / "runtime",
+                )
+            output_guard.checkpoint("after-envelope")
+    except _MCPOutputRootError as exc:
+        _emit({"valid": False, "reason_code": "SPEND_OUTPUT_INVALID", "error": str(exc)})
+        return 2
+    except (OSError, ValueError) as exc:
+        _emit({"valid": False, "reason_code": "SPEND_OUTPUT_INVALID", "error": str(exc)})
+        return 2
+    except Exception as exc:  # noqa: BLE001 - proof capture must be JSON fail-closed
+        _emit({"valid": False, "reason_code": "SPEND_PROOF_CAPTURE_FAILED", "error": str(exc)})
+        return 1
+    _emit(
+        {
+            "valid": True,
+            "pack_digest": result.pack_digest,
+            "envelope_digest": result.envelope_digest,
+            "pack": str(result.pack_directory),
+            "verification": str(result.envelope_directory),
+            "semantic_verified": True,
+            "replay_complete": True,
+            "fixture_only": True,
+            "provider_deltas": {"allow": 1, "deny": 0, "tamper": 0},
+            "command": "spend demo",
+        }
+    )
+    return 0
+
+
+def _spend_loop_demo(args: argparse.Namespace) -> int:
+    try:
+        import tempfile
+
+        from gove_zone.spend_proof_export import export_spend_loop_disaster_proof
+    except ImportError as exc:
+        _emit({"valid": False, "reason_code": "SPEND_DEPENDENCY_MISSING", "error": str(exc)})
+        return 2
+    try:
+        with _MCPOutputRootGuard(args.output) as output_guard:
+            with tempfile.TemporaryDirectory(prefix="gove-zone-spend-loop-proof-") as private:
+                result = export_spend_loop_disaster_proof(
+                    output_guard.path / "proof-pack",
+                    output_guard.path / "verification-envelope",
+                    runtime_root=Path(private) / "runtime",
+                )
+            output_guard.checkpoint("after-envelope")
+    except _MCPOutputRootError as exc:
+        _emit({"valid": False, "reason_code": "SPEND_OUTPUT_INVALID", "error": str(exc)})
+        return 2
+    except (OSError, ValueError) as exc:
+        _emit({"valid": False, "reason_code": "SPEND_OUTPUT_INVALID", "error": str(exc)})
+        return 2
+    except Exception as exc:  # noqa: BLE001 - proof capture must be JSON fail-closed
+        _emit({"valid": False, "reason_code": "SPEND_PROOF_CAPTURE_FAILED", "error": str(exc)})
+        return 1
+    _emit(
+        {
+            "valid": True,
+            "pack_digest": result.pack_digest,
+            "envelope_digest": result.envelope_digest,
+            "pack": str(result.pack_directory),
+            "verification": str(result.envelope_directory),
+            "semantic_verified": True,
+            "replay_complete": True,
+            "fixture_only": True,
+            "baseline_effect_count": 12,
+            "baseline_total_minor": 12000,
+            "governed_succeeded_count": 5,
+            "governed_denied_count": 7,
+            "governed_effect_count": 5,
+            "governed_total_minor": 5000,
+            "command": "spend loop-demo",
+        }
+    )
+    return 0
+
+
+def _spend_verify(args: argparse.Namespace) -> int:
+    return _spend_verify_or_replay(args, replay=False)
+
+
+def _spend_replay(args: argparse.Namespace) -> int:
+    return _spend_verify_or_replay(args, replay=True)
+
+
+def _spend_verify_or_replay(args: argparse.Namespace, *, replay: bool) -> int:
+    operation_name = "replay" if replay else "verify"
+    try:
+        from gove_zone.spend_proof import SpendProofError
+        from gove_zone.spend_proof_export import (
+            replay_exported_spend_proof,
+            verify_exported_spend_proof,
+        )
+    except ImportError as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "operation": operation_name,
+                "reason_code": "SPEND_DEPENDENCY_MISSING",
+                "error": str(exc),
+            }
+        )
+        return 2
+    try:
+        pack = _existing_directory(args.pack, "Spend proof pack")
+        verification = _existing_directory(args.verification, "Spend verification envelope")
+    except (OSError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "operation": operation_name,
+                "reason_code": "SPEND_PROOF_PATH_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    operation = replay_exported_spend_proof if replay else verify_exported_spend_proof
+    try:
+        digest = operation(
+            pack,
+            verification,
+            expected_envelope_digest=args.expected_envelope_digest,
+        )
+    except SpendProofError as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "operation": operation_name,
+                "replay_complete": False,
+                "reason_code": "SPEND_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "operation": operation_name,
+                "replay_complete": False,
+                "reason_code": "SPEND_PROOF_CONFIG_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 2
+    except Exception as exc:  # noqa: BLE001 - verifier faults must not escape as tracebacks
+        _emit(
+            {
+                "valid": False,
+                "strict": True,
+                "operation": operation_name,
+                "replay_complete": False,
+                "reason_code": "SPEND_PROOF_INVALID",
+                "error": str(exc),
+            }
+        )
+        return 1
+    _emit(
+        {
+            "valid": True,
+            "pack_digest": digest,
+            "semantic_verified": True,
+            "replay_complete": True,
+            "strict": True,
+            "operation": operation_name,
+            "fixture_only": True,
+            "command": f"spend {'replay' if replay else 'verify'}-proof-pack",
+        }
+    )
+    return 0
+
+
 def _proofpack(args: argparse.Namespace) -> int:
-    # This conformance proofpack exercises the allow/deny/transform/tamper gate
-    # behavior with UNSIGNED receipts — it runs the gate in explicit dev mode
-    # (require_signature=False) so it stays self-contained and key-free. The
-    # production profile (signed receipts, the default for execute_with_receipt)
-    # is demonstrated separately in examples/receipt-gated-execution/demo.py.
+    # This local conformance proofpack exercises allow/deny/transform/tamper
+    # behavior through the strict signed receipt gate. Runtime state is retained
+    # beside, not inside, the public evidence directory.
     import shutil
 
-    from gove_zone.audit import ChainHashAuditStore
+    from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
     from gove_zone.errors import ReceiptValidationError
     from gove_zone.executor import execute_with_receipt
     from gove_zone.policy import RuleSetPolicy
@@ -345,8 +1528,11 @@ def _proofpack(args: argparse.Namespace) -> int:
 
     # 1. Setup output directory
     dist_dir = Path("dist-govern-zone-proofpack")
+    state_dir = Path("dist-govern-zone-proofpack-state")
     if dist_dir.exists():
         shutil.rmtree(dist_dir)
+    if state_dir.exists():
+        shutil.rmtree(state_dir)
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     receipts_dir = dist_dir / "receipts"
@@ -372,9 +1558,11 @@ def _proofpack(args: argparse.Namespace) -> int:
     )
     tenant_store.store_bundle("tenant-A", policy)
 
-    # 3. Setup Audit Store
+    # 3. Setup explicit persistent strict execution state. The audit evidence is
+    # copied into the public pack after all execution lifecycle events commit.
     audit_path = dist_dir / "audit.jsonl"
-    audit_store = ChainHashAuditStore(audit_path)
+    strict_gate = build_strict_receipt_gate_fixture(state_dir, name="cli-proofpack")
+    audit_store = strict_gate.audit
 
     # Results tracker
     conformance_results = {
@@ -413,9 +1601,11 @@ def _proofpack(args: argparse.Namespace) -> int:
         validator=council,
         authority="tenant-A/write-grant",
         audit_store=audit_store,
+        signer=strict_gate.signer,
     )
     (receipts_dir / "allowed_receipt.json").write_text(allowed_receipt.to_json(), encoding="utf-8")
     res = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool.run),
         tool_fn=tool.run,
         args=allowed_args,
         receipt=allowed_receipt,
@@ -423,7 +1613,8 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="compliance-officer",
-        require_signature=False,  # dev-mode conformance proofpack (unsigned)
+        require_signature=True,
+        **strict_gate.executor_kwargs(),
     )
     conformance_results["allowed_action_executed"] = res == "executed" and tool.called
 
@@ -443,10 +1634,12 @@ def _proofpack(args: argparse.Namespace) -> int:
         validator=council,
         authority="tenant-A/write-grant",
         audit_store=audit_store,
+        signer=strict_gate.signer,
     )
     (receipts_dir / "denied_receipt.json").write_text(denied_receipt.to_json(), encoding="utf-8")
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_denied.run),
             tool_fn=tool_denied.run,
             args=denied_args,
             receipt=denied_receipt,
@@ -454,7 +1647,8 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compromised-agent",
-            require_signature=False,  # dev-mode conformance proofpack (unsigned)
+            require_signature=True,
+            **strict_gate.executor_kwargs(),
         )
     except ReceiptValidationError:
         conformance_results["denied_action_blocked"] = not tool_denied.called
@@ -480,6 +1674,7 @@ def _proofpack(args: argparse.Namespace) -> int:
         validator=council,
         authority="tenant-A/write-grant",
         audit_store=audit_store,
+        signer=strict_gate.signer,
     )
     (receipts_dir / "transformed_receipt.json").write_text(
         transformed_receipt.to_json(), encoding="utf-8"
@@ -489,6 +1684,7 @@ def _proofpack(args: argparse.Namespace) -> int:
     mismatch_blocked = False
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_transformed.run),
             tool_fn=tool_transformed.run,
             args=original_args,
             receipt=transformed_receipt,
@@ -496,13 +1692,15 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
-            require_signature=False,  # dev-mode conformance proofpack (unsigned)
+            require_signature=True,
+            **strict_gate.executor_kwargs(),
         )
     except ReceiptValidationError:
         mismatch_blocked = True
 
     # Executing transformed args succeeds
     res_t = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(tool_transformed.run),
         tool_fn=tool_transformed.run,
         args={"path": "transformed.txt", "content": "safe"},
         receipt=transformed_receipt,
@@ -510,7 +1708,8 @@ def _proofpack(args: argparse.Namespace) -> int:
         expected_execution_boundary="local-sandbox",
         expected_action="runtime.file.write",
         expected_actor="compliance-officer",
-        require_signature=False,  # dev-mode conformance proofpack (unsigned)
+        require_signature=True,
+        **strict_gate.executor_kwargs(),
     )
     conformance_results["transformed_action_executed"] = (
         mismatch_blocked
@@ -523,6 +1722,7 @@ def _proofpack(args: argparse.Namespace) -> int:
     tool_no_receipt = DummyTool()
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_no_receipt.run),
             tool_fn=tool_no_receipt.run,
             args={"path": "public_report.txt"},
             receipt=None,
@@ -530,7 +1730,8 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
-            require_signature=False,  # dev-mode conformance proofpack (unsigned)
+            require_signature=True,
+            **strict_gate.executor_kwargs(),
         )
     except ReceiptValidationError:
         conformance_results["missing_receipt_blocked"] = not tool_no_receipt.called
@@ -542,6 +1743,7 @@ def _proofpack(args: argparse.Namespace) -> int:
     tampered_receipt = dataclasses.replace(allowed_receipt, tenant_id="tenant-B")
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tool_tampered.run),
             tool_fn=tool_tampered.run,
             args=allowed_args,
             receipt=tampered_receipt,
@@ -549,7 +1751,8 @@ def _proofpack(args: argparse.Namespace) -> int:
             expected_execution_boundary="local-sandbox",
             expected_action="runtime.file.write",
             expected_actor="compliance-officer",
-            require_signature=False,  # dev-mode conformance proofpack (unsigned)
+            require_signature=True,
+            **strict_gate.executor_kwargs(),
         )
     except ReceiptValidationError:
         conformance_results["tampered_receipt_blocked"] = not tool_tampered.called
@@ -557,6 +1760,7 @@ def _proofpack(args: argparse.Namespace) -> int:
     # 4. Audit Chain verification
     verification = audit_store.verify_chain()
     conformance_results["audit_chain_verified"] = verification["valid"]
+    shutil.copyfile(audit_store.path, audit_path)
 
     # Write verification.json
     (dist_dir / "verification.json").write_text(
@@ -607,8 +1811,47 @@ def _proofpack(args: argparse.Namespace) -> int:
     return 0
 
 
+def _disaster_pocs_demo(args: argparse.Namespace) -> int:
+    from gove_zone.disaster_pocs import DisasterPoCError, run_disaster_pocs
+
+    try:
+        report = run_disaster_pocs(args.output, args.scenario)
+    except DisasterPoCError as exc:
+        _emit(
+            {
+                "valid": False,
+                "reason_code": exc.reason_code,
+                "error_type": "DisasterPoCError",
+            }
+        )
+        return 1
+    except Exception:  # noqa: BLE001 - fail-closed CLI boundary
+        _emit(
+            {
+                "valid": False,
+                "reason_code": "DISASTER_POCS_INTERNAL_ERROR",
+                "error_type": "DisasterPoCInternalError",
+            }
+        )
+        return 1
+    _emit(report)
+    return 0
+
+
+def _disaster_pocs_missing_command(args: argparse.Namespace) -> int:
+    del args
+    _emit(
+        {
+            "valid": False,
+            "reason_code": "CLI_USAGE_ERROR",
+            "error_type": "DisasterPoCUsageError",
+        }
+    )
+    return 2
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _JSONArgumentParser(
         prog="gove-zone",
         description="Gove Zone runtime governance: replay, setup, doctor, gate.",
     )
@@ -795,6 +2038,297 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     proofpack.set_defaults(func=_proofpack)
+
+    release = subparsers.add_parser(
+        "release",
+        help="generate and independently verify receipt-gated release proof packs",
+    )
+    release_commands = release.add_subparsers(dest="release_command", required=True)
+    release_demo = release_commands.add_parser(
+        "demo",
+        help="generate a local fixture-only release proof pack and external public keys",
+    )
+    release_demo.add_argument("--output", required=True, help="new or empty output directory")
+    release_demo.set_defaults(func=_release_demo)
+    release_tamper_demo = release_commands.add_parser(
+        "artifact-tamper-demo",
+        help="prove a fixture artifact substitution is refused before deployment",
+    )
+    release_tamper_demo.add_argument(
+        "--output", required=True, help="new or empty output directory"
+    )
+    release_tamper_demo.set_defaults(func=_release_artifact_tamper_demo)
+    release_reference_demo = release_commands.add_parser(
+        "reference-demo",
+        help="run the P0 reference and emit its structured ALLOW/FAILED_CLOSED report",
+    )
+    release_reference_demo.add_argument(
+        "--output", required=True, help="new or empty output directory"
+    )
+    release_reference_demo.add_argument(
+        "--pre-capture-tamper",
+        action="store_true",
+        help="replace the artifact after approval to force a fail-closed denial",
+    )
+    release_reference_demo.set_defaults(func=_release_reference_demo)
+
+    for command, handler, help_text in (
+        ("verify-proof-pack", _release_verify, "strongly verify a release proof pack"),
+        ("replay-proof-pack", _release_replay, "strictly replay a release proof pack"),
+    ):
+        verifier = release_commands.add_parser(command, help=help_text)
+        verifier.add_argument("--pack", required=True, help="release proof pack directory")
+        verifier.add_argument(
+            "--receipt-public-key", required=True, help="external raw Ed25519 receipt public key"
+        )
+        verifier.add_argument(
+            "--checkpoint-public-key",
+            required=True,
+            help="external raw Ed25519 checkpoint public key",
+        )
+        verifier.add_argument(
+            "--consumption-public-key",
+            required=True,
+            help="external raw Ed25519 consumption-summary public key",
+        )
+        verifier.add_argument(
+            "--lifecycle-public-key",
+            required=True,
+            help="external raw Ed25519 lifecycle-attestation public key",
+        )
+        verifier.add_argument(
+            "--expected-pack-digest",
+            required=True,
+            help="out-of-band expected lowercase SHA-256 pack digest",
+        )
+        verifier.set_defaults(func=handler)
+
+    verify_denial = release_commands.add_parser(
+        "verify-denial",
+        help="independently re-verify a persisted release denial from separate trust roots",
+    )
+    verify_denial.add_argument(
+        "--bundle",
+        required=True,
+        help="denial evidence bundle directory (audit.jsonl + audit-checkpoint.json)",
+    )
+    verify_denial.add_argument(
+        "--refusal-evidence",
+        required=True,
+        help="persisted refusal-evidence JSON, or a denial response carrying it",
+    )
+    verify_denial.add_argument(
+        "--checkpoint-public-key",
+        required=True,
+        help="external raw Ed25519 checkpoint public key (never read from the bundle)",
+    )
+    verify_denial.add_argument(
+        "--lifecycle-public-key",
+        required=True,
+        help="external raw Ed25519 lifecycle-attestation public key (never read from the bundle)",
+    )
+    verify_denial.set_defaults(func=_release_verify_denial)
+
+    mcp = subparsers.add_parser(
+        "mcp",
+        help="run the local fixture-only MCP action gateway reference",
+    )
+    mcp_commands = mcp.add_subparsers(dest="mcp_command", required=True)
+    demo = mcp_commands.add_parser(
+        "demo", help="capture a fixture-only official-client MCP proof pack"
+    )
+    demo.add_argument("--output", required=True, help="new or empty output directory")
+    demo.set_defaults(func=_mcp_demo)
+    prompt_injection_demo = mcp_commands.add_parser(
+        "prompt-injection-demo",
+        help="prove an injected fixture tool description cannot bypass the gateway",
+    )
+    prompt_injection_demo.add_argument(
+        "--output", required=True, help="new or empty output directory"
+    )
+    prompt_injection_demo.set_defaults(func=_mcp_demo, prompt_injection=True)
+
+    for command, handler, help_text in (
+        ("verify-proof-pack", _mcp_verify, "strongly verify an exported MCP proof pack"),
+        ("replay-proof-pack", _mcp_replay, "strictly replay an exported MCP proof pack"),
+    ):
+        verifier = mcp_commands.add_parser(command, help=help_text)
+        verifier.add_argument("--pack", required=True, help="MCP proof pack directory")
+        verifier.add_argument(
+            "--verification", required=True, help="external verification envelope directory"
+        )
+        verifier.add_argument(
+            "--expected-envelope-digest",
+            required=True,
+            help="out-of-band expected lowercase SHA-256 verification-envelope digest",
+        )
+        verifier.set_defaults(func=handler)
+
+    for command, handler, help_text in (
+        ("serve-http", _mcp_serve_http, "serve stateless MCP on a loopback /mcp endpoint"),
+        ("serve-stdio", _mcp_serve_stdio, "serve the same gateway as a stdio wrapper"),
+    ):
+        serve = mcp_commands.add_parser(command, help=help_text)
+        serve.add_argument("--state-dir", required=True, help="fixture state directory")
+        serve.add_argument(
+            "--token-file",
+            required=True,
+            help="0600 file containing the inbound fixture token; token values are never argv",
+        )
+        serve.add_argument("--session-id", required=True, help="immutable logical client session")
+        serve.set_defaults(func=handler)
+        if command == "serve-http":
+            serve.add_argument("--host", default="127.0.0.1", help="bind host")
+            serve.add_argument("--port", type=int, default=8765, help="bind port")
+            serve.add_argument(
+                "--allowed-origin",
+                action="append",
+                default=[],
+                help="exact allowed browser Origin header; may be repeated",
+            )
+            serve.add_argument(
+                "--remote",
+                action="store_true",
+                help="serve over directly terminated TLS; there is no plaintext fallback",
+            )
+            serve.add_argument(
+                "--cert-file",
+                default=None,
+                help="remote mode server certificate (PEM); one hostname per listener",
+            )
+            serve.add_argument(
+                "--key-file",
+                default=None,
+                help="remote mode server private key (PEM); must be an owner-only 0600 file",
+            )
+            serve.add_argument(
+                "--expected-host",
+                default=None,
+                help="remote mode exact canonical host:port required in the raw Host header",
+            )
+            serve.add_argument(
+                "--allow-absent-origin",
+                action="store_true",
+                help="permit non-browser bearer workload clients that send no Origin",
+            )
+            serve.add_argument(
+                "--allow-non-loopback",
+                action="store_true",
+                help="explicit remote opt-in required to publish beyond loopback",
+            )
+            serve.add_argument(
+                "--identity-trust-file",
+                default=None,
+                help=(
+                    "frozen JSON trust snapshot of kid -> base64url raw Ed25519 PUBLIC key; "
+                    "required for --allow-absent-origin and --allow-non-loopback"
+                ),
+            )
+            serve.add_argument(
+                "--identity-issuer",
+                default=None,
+                help="exact trusted token issuer for the asymmetric verifier",
+            )
+            serve.add_argument(
+                "--identity-audience",
+                default=None,
+                help="exact gateway audience the asymmetric verifier requires",
+            )
+            serve.add_argument(
+                "--identity-resource",
+                default="mcp://fixture-server",
+                help="exact downstream resource audience the asymmetric verifier requires",
+            )
+            serve.add_argument(
+                "--health-token-file",
+                default=None,
+                help=(
+                    "0600 file with the readiness probe's own token; the probe identity is "
+                    "tools:list-scoped and cannot reach tools/call"
+                ),
+            )
+            serve.add_argument(
+                "--readyz",
+                action="store_true",
+                help="enable /readyz; without it the route stays a fail-closed 503",
+            )
+            serve.add_argument(
+                "--readyz-interval-seconds",
+                type=float,
+                default=15.0,
+                help="minimum seconds between serialized background catalog probes",
+            )
+            for flag, default, budget_help in (
+                ("--max-body-bytes", 1_048_576, "maximum buffered request body bytes"),
+                ("--max-header-bytes", 16_384, "maximum aggregate request header bytes"),
+                ("--max-header-count", 64, "maximum request header count"),
+                ("--limit-concurrency", 32, "maximum concurrent governed dispatches"),
+                ("--backlog", 64, "listener accept backlog"),
+                ("--timeout-keep-alive", 5, "keep-alive timeout in seconds"),
+                ("--timeout-graceful-shutdown", 10, "graceful shutdown timeout in seconds"),
+                ("--limit-max-requests", 10_000, "requests served before the worker recycles"),
+            ):
+                serve.add_argument(
+                    flag,
+                    type=int,
+                    default=default,
+                    help=f"remote mode {budget_help}",
+                )
+
+    spend = subparsers.add_parser(
+        "spend",
+        help="capture and independently verify the local fixture-only Spend Guard proof",
+    )
+    spend_commands = spend.add_subparsers(dest="spend_command", required=True)
+    spend_demo = spend_commands.add_parser(
+        "demo",
+        help="capture genuine local allow/deny/tamper Spend Guard evidence",
+    )
+    spend_demo.add_argument("--output", required=True, help="new or empty output directory")
+    spend_demo.set_defaults(func=_spend_demo)
+    spend_loop_demo = spend_commands.add_parser(
+        "loop-demo",
+        help="capture the deterministic 12-call cumulative-budget disaster proof",
+    )
+    spend_loop_demo.add_argument("--output", required=True, help="new or empty output directory")
+    spend_loop_demo.set_defaults(func=_spend_loop_demo)
+    for command, handler, help_text in (
+        ("verify-proof-pack", _spend_verify, "strongly verify a Spend Guard proof pack"),
+        ("replay-proof-pack", _spend_replay, "strictly replay a Spend Guard proof pack"),
+    ):
+        verifier = spend_commands.add_parser(command, help=help_text)
+        verifier.add_argument("--pack", required=True, help="Spend proof pack directory")
+        verifier.add_argument(
+            "--verification",
+            required=True,
+            help="external Spend verification envelope directory",
+        )
+        verifier.add_argument(
+            "--expected-envelope-digest",
+            required=True,
+            help="out-of-band lowercase SHA-256 verification-envelope digest",
+        )
+        verifier.set_defaults(func=handler)
+
+    disaster_pocs = subparsers.add_parser(
+        "disaster-pocs",
+        help="Generate local-only deterministic disaster proof fixtures.",
+    )
+    disaster_pocs.set_defaults(func=_disaster_pocs_missing_command)
+    disaster_pocs_commands = disaster_pocs.add_subparsers(
+        dest="disaster_pocs_command",
+    )
+    disaster_pocs_demo = disaster_pocs_commands.add_parser(
+        "demo",
+        help="Generate and verify one or all disaster proof fixtures.",
+    )
+    disaster_pocs_demo.add_argument("--output", required=True, type=Path)
+    disaster_pocs_demo.add_argument(
+        "--scenario",
+        choices=("all", "release-artifact-tamper", "mcp-prompt-injection", "spend-loop"),
+        default="all",
+    )
+    disaster_pocs_demo.set_defaults(func=_disaster_pocs_demo)
 
     return parser
 

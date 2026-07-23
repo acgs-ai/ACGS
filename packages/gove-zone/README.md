@@ -35,6 +35,74 @@ See [One-command smoke proof](#one-command-smoke-proof) for the full output and
 > roadmap context, and `ARCHITECTURE.md` / `SECURITY.md` for the implemented
 > design and security boundary.
 
+## MCP Action Gateway (P1 local reference)
+
+The package includes a fixture-only MCP gateway that routes high-risk
+`tools/call` operations through the shared receipt-gated kernel, captures an
+offline proof pack, and verifies or replays that evidence with an independently
+supplied verification-envelope digest. Start with the
+[15-minute local quickstart](examples/mcp-tool-gateway/README.md).
+
+This is an alpha, single-machine reference for local evaluation. It does not
+claim production TLS/PKI, service availability, deployment hardening,
+certification, or protection for a downstream server that remains directly
+reachable outside the gateway topology.
+
+## Spend Guard (P2 local fixture)
+
+The same receipt-gated kernel now has a local-only Spend Guard reference. It
+captures genuine allow, policy-deny, and tampered-receipt lanes; the expected
+provider write deltas are exactly `1`, `0`, and `0`. The sealed pack binds the
+receipt, signed audit checkpoint, full offline policy replay, consumption
+summary, anchored spend-store summary, and fixture journal.
+
+```bash
+uv run --package gove-zone gove-zone spend demo --output /tmp/acgs-spend-proof
+```
+
+Verification and replay require the separately emitted verification envelope
+plus its out-of-band digest. See
+[`examples/spend-guard/README.md`](examples/spend-guard/README.md).
+
+This exercises no real payment provider or network. The local journal is not a
+standalone authorization boundary and is not independently resistant to a
+malicious same-UID process; the supported adapter treats the anchored spend
+store as authoritative. No production payment, certification, or distributed
+budget claim is made.
+
+## Shared strict kernel and evidence boundary
+
+Release Gate (P0, [`examples/release-gate/README.md`](examples/release-gate/README.md)),
+MCP Gateway (P1), and Spend Guard (P2) reuse the same managed
+side-effect authorization path. It binds a signed Decision Receipt, exact
+arguments and identity, `PolicyArtifactAttestation`, anchored audit event,
+receipt-revocation and idempotency state, then revalidates at the final adapter boundary.
+The persistent consumption store currently uses **schema v4**; that is a storage
+schema and must not be described as Decision Receipt schema v4.
+
+The receipt binds the **deployment/artifact digest** — the portable, verifiable
+claim. The captured artifact snapshot object, its filesystem path, and its raw
+bytes stay **execution-local**: the kernel recomputes the snapshot digest and
+constant-time compares it against the receipted digest at the last controllable
+boundary before the adapter latch, but none of the snapshot, path, or bytes enter
+the receipt or proof pack. `PolicyArtifactAttestation` is a **policy-only**
+attestation and does not substitute for that pre-adapter artifact-digest binding.
+Artifact capture is bounded: a configurable **64 MiB per-snapshot** limit and a
+configurable **256 MiB aggregate** leased capture budget across in-flight
+captures, and a request that would exceed either fails closed. An abandoned
+snapshot's lease is released by a GC finalizer or by explicit `close()`, so a
+dropped capture cannot permanently consume the executor's aggregate budget.
+
+The examples are local fixtures, not a production isolation topology. Operators
+must isolate raw adapters and downstream credentials, supply authenticated IAM,
+durable storage, key custody/rotation, and PKI, and verify that the gate cannot be
+bypassed. This package includes a Python-only `E2BSandbox` adapter but does not
+provide the E2B SDK, API key, service, or live/production proof. Node and worktree
+execution modes are not sandbox providers. The `bubblewrap`/`bwrap` option
+currently fails closed because anonymous response-FD transport is incompatible;
+no working bwrap profile is claimed. HSM, managed PKI, signing-key revocation,
+and service-availability guarantees remain external.
+
 ## Why this exists
 
 Most agent frameworks let an agent call `write_file`, `http_post`, `db_exec`,
@@ -86,9 +154,10 @@ you need breadth.
 - You already own **authentication and tool sandboxing**, and need the
   governance decision in the last mile before execution — inside an MCP server,
   a LangGraph / OpenAI-Agents tool, a CI/deploy step, or a custom executor.
-- You want **cryptographic non-repudiation** of decisions: the default
-  production profile signs receipts (Ed25519), so a recomputed-hash forgery is
-  infeasible without the key.
+- You want **signature integrity and authenticity under trusted key custody**:
+  the strict profile signs receipts with Ed25519, so verification can detect a
+  recomputed-hash forgery when the trusted signing key remains protected. Key
+  custody, distribution, rotation, and PKI remain operator responsibilities.
 - You are **multi-tenant** and need one tenant's policy/receipt to be unusable
   in another's execution context.
 
@@ -98,7 +167,7 @@ you need breadth.
   of its own; integrate it *into* your framework, don't replace it.
 - You expect **policies to be written for you**. Policies are explicit (rules /
   code); you author them.
-- You need a turnkey **PKI, key rotation, or revocation** service. Production
+- You need a turnkey **PKI, key rotation, or signing-key revocation** service. Production
   signing is point-to-point; key custody, distribution, and rotation are yours
   to operate (see `SECURITY.md` → *Ed25519 receipt signing*).
 - Your threat model is **a compromised host**. An attacker who can write the
@@ -123,7 +192,7 @@ what you must supply externally — see the one-page
 | Architecture & components | `ARCHITECTURE.md` |
 | Threat model (one page: prevents / does not / supply externally) | `docs/threat-model.md` |
 | Security boundary (deep) | `SECURITY.md` |
-| Receipt schema & verification | `docs/decision-receipts.md` |
+| Decision Receipt schema & verification | `docs/decision-receipts.md` |
 | Governed execution flow | `docs/governed-execution.md` |
 | Audit evidence & chain | `docs/audit-evidence.md` |
 | Policy bundles & tenant binding | `docs/policy-bundles.md` |

@@ -193,3 +193,48 @@ git add README.md docs/CLAIMS.md examples/tamper_demo/demo.py
 ```
 
 For submodules/nested repos, enter the nested repo and stage there. Do not accidentally stage parent gitlink drift.
+
+## Bob Shell governance membrane contract
+
+> Applies to IBM Bob Shell (`bob`, the agentic CLI) and any harness that loads this
+> `AGENTS.md`. Bob reads `AGENTS.md` hierarchically (global → project → local), so this
+> section is in force whenever Bob runs inside this workspace. It is the prompt-level
+> enforcement of ACGS's core invariant — **no valid governance decision, no side effect** —
+> for a harness whose own writes ACGS cannot yet intercept with a PreToolUse hook.
+
+The `.bob/mcp.json` in this repo wires the `acgs-governance` MCP server
+(`acgs_lite.integrations.mcp_server`, verified command:
+`uv run --package acgs-lite --extra mcp python -m acgs_lite.integrations.mcp_server`).
+Its tools are **advisory verdicts**, not an execution gate — so the discipline below is
+mandatory, not optional. `alwaysAllow` is empty by design: approve each governance call.
+
+### Before ANY side effect, consult governance first
+
+Before running a command, writing/editing a file, or invoking a tool that changes state,
+you MUST call the `acgs-governance` MCP server and act on its verdict:
+
+1. Call `validate_action` with `action` = a plain-language description of the intended side
+   effect, and `capability_tags` when the action class is known (e.g. `["command-execution"]`,
+   `["file-write"]`). This is the gate call.
+2. **Fail closed on the verdict:**
+   - DENY / any returned violations → **do not perform the action.** Call `explain_violation`
+     with the same `action` to report why, then stop or propose a compliant alternative.
+   - ESCALATE → treat as **not executable**; surface to the human. Never self-approve.
+   - ALLOW / compliant → proceed with exactly the validated action, nothing broader.
+3. For autonomy-sensitive actions, call `check_capability_tier` (`action_text`) first and
+   respect the returned tier — higher tiers require explicit human authorization.
+
+### Supporting tools (read-only, safe to call anytime)
+
+`get_constitution`, `check_compliance` (`text`), `get_audit_log`, `governance_stats`,
+`verify_audit_chain`. Use `check_compliance` to pre-screen generated content/scripts;
+use `verify_audit_chain` to confirm the audit log is intact before trusting a decision.
+
+### Hard rules (same as the rest of this manual)
+
+- Never treat DENY or ESCALATE as executable. Never skip the `validate_action` call to
+  "save a round-trip." Never widen an action beyond what was validated.
+- Respect every scope, nested-repo, sealed-file, and git-discipline rule above — governance
+  consult does not exempt you from them; it is layered on top.
+- This is prompt-level (soft) enforcement. It does not replace the receipt-gated kernel or
+  CI branch protection, and must not be described as a hard security boundary.

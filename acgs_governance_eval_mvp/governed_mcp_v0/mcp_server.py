@@ -33,15 +33,15 @@ from .verify import verify_replay_bundle
 
 def build_fastmcp_server(targets: RuntimeTargets | None = None) -> Any:
     try:  # pragma: no cover - optional MCP runtime integration.
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.fastmcp import FastMCP as MCPFastMCP
     except Exception:  # pragma: no cover
         try:
-            from fastmcp import FastMCP  # type: ignore
+            from fastmcp import FastMCP as StandaloneFastMCP
         except Exception:
-            FastMCP = None  # type: ignore[assignment]
-    if FastMCP is None:
-        return None
-    server = FastMCP("governed-mcp-v0")
+            return None
+        server = StandaloneFastMCP("governed-mcp-v0")
+    else:
+        server = MCPFastMCP("governed-mcp-v0")
     facade = GovernedMCPServer(targets or create_fixture_environment(Path.cwd() / ".governed_mcp_v0"))
 
     server.tool()(facade.read_file)

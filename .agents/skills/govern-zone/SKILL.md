@@ -1,4 +1,13 @@
-```markdown
+---
+name: govern-zone
+description: Development patterns and operational workflows for the govern-zone repository.
+triggers:
+  - govern-zone
+  - gove-zone
+  - ACGS
+argument-hint: "[task]"
+---
+
 # govern-zone Development Patterns
 
 > Auto-generated skill from repository analysis
@@ -210,4 +219,3 @@ dist/
 | /refresh-readiness-evidence | Update readiness docs, evidence, and preflight scripts      |
 | /update-gitignore       | Add or update .gitignore for tool/build artifacts               |
 | /remove-package         | Remove or extract an inactive or experimental package           |
-```

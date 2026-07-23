@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -153,6 +153,10 @@ class DecisionReceipt:
     signature_algorithm: str = "none"
     signing_key_id: str = ""
     signature: str = "unsigned_local"
+    # Deserialization provenance only; never serialized or hash-bound.  It
+    # distinguishes a genuinely pre-action-tier wire payload from a modern
+    # receipt whose explicit tier must be present in the canonical hash.
+    _action_tier_was_present: bool = field(default=True, init=False, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         transformations_list: Any = []
@@ -208,7 +212,7 @@ class DecisionReceipt:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DecisionReceipt:
-        return cls(
+        receipt = cls(
             receipt_id=d["receipt_id"],
             request_id=d["request_id"],
             tenant_id=d["tenant_id"],
@@ -239,6 +243,8 @@ class DecisionReceipt:
             signing_key_id=d.get("signing_key_id", ""),
             signature=d.get("signature", "unsigned_local"),
         )
+        object.__setattr__(receipt, "_action_tier_was_present", "action_tier" in d)
+        return receipt
 
     @classmethod
     def from_json(cls, text: str) -> DecisionReceipt:
@@ -246,6 +252,14 @@ class DecisionReceipt:
 
     def compute_hash(self) -> str:
         d = self.to_dict()
+        d.pop("receipt_hash", None)
+        d.pop("signature", None)
+        return sha256_json(d)
+
+    def _compute_legacy_hash_without_action_tier(self) -> str:
+        """Reproduce the canonical hash used before ``action_tier`` existed."""
+        d = self.to_dict()
+        d.pop("action_tier", None)
         d.pop("receipt_hash", None)
         d.pop("signature", None)
         return sha256_json(d)
@@ -354,8 +368,12 @@ class DecisionReceipt:
         expected_action: str | None = None,
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
+        expected_policy_version: str | None = None,
+        expected_validator_id: str | None = None,
         expected_validator_role: str | None = None,
         expected_authority: str | None = None,
+        expected_constraints: Mapping[str, Any] | None = None,
+        expected_request_id: str | None = None,
         expected_actor: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = False,
@@ -394,7 +412,19 @@ class DecisionReceipt:
         if not self.receipt_hash:
             raise ReceiptValidationError("receipt_hash is missing")
         expected_hash = self.compute_hash()
-        if self.receipt_hash != expected_hash:
+        hash_matches = self.receipt_hash == expected_hash
+        # C7 compatibility is deliberately narrow: only from_dict/from_json can
+        # record that the original wire payload genuinely lacked action_tier,
+        # and that missing value has already resolved to the strict commit tier.
+        # Modern payloads (including an explicit "commit") never receive this
+        # fallback.  Every verification check below still runs unchanged.
+        if (
+            not hash_matches
+            and not self._action_tier_was_present
+            and self.action_tier == ActionTier.COMMIT.value
+        ):
+            hash_matches = self.receipt_hash == self._compute_legacy_hash_without_action_tier()
+        if not hash_matches:
             raise ReceiptValidationError(
                 f"Altered field or invalid hash: receipt_hash mismatch. "
                 f"Expected {expected_hash}, got {self.receipt_hash}"
@@ -505,12 +535,14 @@ class DecisionReceipt:
             raise ReceiptValidationError(f"Unknown action tier: {self.action_tier}") from err
 
         # 3b. Executor-side tier enforcement (belt-and-suspenders vs. the
-        # policy-side check). When a tool-tier registry is supplied at the gate, a
-        # receipt claiming the explore tier for a tool the registry marks
-        # commit-only is refused — the declared tier can never downgrade a
-        # side-effecting tool (C5). The registry is authoritative; the receipt is
-        # untrusted about its own tier leniency.
-        if tool_tier_registry is not None and self.action_tier == ActionTier.EXPLORE.value:
+        # policy-side check). Explore is lenient only when the gate has an
+        # authoritative registry that explicitly marks this tool explore-capable.
+        # Omitting the registry therefore fails closed for explore receipts.
+        if self.action_tier == ActionTier.EXPLORE.value:
+            if tool_tier_registry is None:
+                raise ReceiptValidationError(
+                    "explore action tier requires an executor tool-tier registry"
+                )
             resolved_tier = tool_tier_registry.resolve(self.proposed_action, ActionTier.EXPLORE)
             if resolved_tier is not ActionTier.EXPLORE:
                 raise ReceiptValidationError(
@@ -544,6 +576,13 @@ class DecisionReceipt:
         if expected_action is not None and self.proposed_action != expected_action:
             raise ReceiptValidationError(
                 f"Action mismatch: expected {expected_action}, got {self.proposed_action}"
+            )
+
+        # 7b. Request identity is a caller-supplied pin.  Hash integrity alone
+        # cannot stop a valid receipt for a different request being substituted.
+        if expected_request_id is not None and self.request_id != expected_request_id:
+            raise ReceiptValidationError(
+                f"Request ID mismatch: expected {expected_request_id}, got {self.request_id}"
             )
 
         # 8. Audit hash mismatch
@@ -629,6 +668,21 @@ class DecisionReceipt:
                 f"got {self.policy_bundle_id}"
             )
 
+        # 12a. The compatibility version is independently pinned in the strict
+        # path.  ``policy_hash`` binds full content; this pin also prevents a
+        # caller/resolver contract from silently accepting the wrong version
+        # label for that content.
+        if expected_policy_version is not None and self.policy_version != expected_policy_version:
+            raise ReceiptValidationError(
+                f"Policy version mismatch: expected {expected_policy_version}, "
+                f"got {self.policy_version}"
+            )
+
+        if expected_validator_id is not None and self.validator_id != expected_validator_id:
+            raise ReceiptValidationError(
+                f"Validator ID mismatch: expected {expected_validator_id}, got {self.validator_id}"
+            )
+
         # 12b. Validator role mismatch (optional)
         if expected_validator_role is not None and self.validator_role != expected_validator_role:
             raise ReceiptValidationError(
@@ -640,6 +694,16 @@ class DecisionReceipt:
         if expected_authority is not None and self.authority != expected_authority:
             raise ReceiptValidationError(
                 f"Authority mismatch: expected {expected_authority}, got {self.authority}"
+            )
+
+        # 12d. Constraints are an exact execution contract, not an allow-list:
+        # extra, missing, or changed keys all require a new authorization.
+        if expected_constraints is not None and (
+            not isinstance(self.constraints, dict) or self.constraints != dict(expected_constraints)
+        ):
+            raise ReceiptValidationError(
+                "Constraints mismatch: receipt constraints do not exactly match "
+                "the execution context"
             )
 
         # 13. Expiry (only enforced when expires_at is set). expires_at is bound

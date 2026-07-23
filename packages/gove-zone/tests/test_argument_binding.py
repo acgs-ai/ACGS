@@ -31,6 +31,8 @@ from gove_zone import (
     execute_with_receipt,
     sha256_json,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 
 TENANT = "tenant-A"
 BOUNDARY = "local-sandbox"
@@ -64,6 +66,7 @@ def _issue(
     args: dict[str, Any],
     *,
     request_id: str = "req-1",
+    signer: Any = None,
 ) -> DecisionReceipt:
     return evaluate_tenant_action(
         store=store,
@@ -77,6 +80,7 @@ def _issue(
         validator=VALIDATOR,
         authority=AUTHORITY,
         audit_store=audit,
+        signer=signer,
     )
 
 
@@ -85,7 +89,10 @@ def _issue(
 # ---------------------------------------------------------------------------
 
 
-def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
+def test_allow_receipt_rejects_substituted_args(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """GATE PROOF — the executor rejects args different from those the receipt
     was issued for, and the side effect NEVER runs.
 
@@ -95,10 +102,10 @@ def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     a1 = {"path": "/tmp/safe", "content": "ok"}
-    receipt = _issue(store, audit, a1)
+    receipt = _issue(store, audit, a1, signer=strict_receipt_gate.signer)
     assert receipt.decision == "allow"
     assert receipt.argument_hash == sha256_json(a1)
 
@@ -106,6 +113,7 @@ def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="argument mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=a2,
             receipt=receipt,
@@ -113,7 +121,7 @@ def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran  # side effect was NEVER executed
 
@@ -123,18 +131,22 @@ def test_allow_receipt_rejects_substituted_args(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_allow_receipt_executes_for_matching_args(tmp_path: Path) -> None:
+def test_allow_receipt_executes_for_matching_args(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """An ALLOW receipt called with the exact args it was issued for executes."""
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     args = {"path": "/tmp/safe", "content": "ok"}
-    receipt = _issue(store, audit, args)
+    receipt = _issue(store, audit, args, signer=strict_receipt_gate.signer)
     assert receipt.decision == "allow"
 
     side = SideEffect()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=args,
         receipt=receipt,
@@ -142,7 +154,7 @@ def test_allow_receipt_executes_for_matching_args(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran
@@ -154,17 +166,20 @@ def test_allow_receipt_executes_for_matching_args(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_argument_hash_bound_into_receipt_hash(tmp_path: Path) -> None:
+def test_argument_hash_bound_into_receipt_hash(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """Tampering with argument_hash without recomputing receipt_hash is caught
     by the tamper check (#2), proving the arg hash is cryptographically bound.
     Recomputing the hash but submitting mismatching args is caught by #10b.
     """
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, _allow_policy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     args = {"path": "/tmp/safe", "content": "ok"}
-    receipt = _issue(store, audit, args)
+    receipt = _issue(store, audit, args, signer=strict_receipt_gate.signer)
 
     # --- tamper without recomputing hash: caught by check #2 ---
     tampered = dataclasses.replace(receipt, argument_hash="forged_hash")
@@ -178,6 +193,7 @@ def test_argument_hash_bound_into_receipt_hash(tmp_path: Path) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="argument mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=other_args,  # different from what the receipt was issued for
             receipt=receipt,  # original receipt; its argument_hash covers 'args', not 'other_args'
@@ -185,7 +201,7 @@ def test_argument_hash_bound_into_receipt_hash(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
@@ -195,7 +211,10 @@ def test_argument_hash_bound_into_receipt_hash(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
+def test_transform_receipt_still_verifies_and_executes(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """TRANSFORM receipts are not affected by the ALLOW arg check.
 
     The executed (transformed) args differ from the original proposed args that
@@ -206,10 +225,16 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
 
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, TransformPolicy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
     original_args = {"path": "original.txt"}
-    receipt = _issue(store, audit, original_args, request_id="req-transform")
+    receipt = _issue(
+        store,
+        audit,
+        original_args,
+        request_id="req-transform",
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.decision == "transform"
     # argument_hash covers the ORIGINAL args (as proposed).
     assert receipt.argument_hash == sha256_json(original_args)
@@ -218,6 +243,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="Transform mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=original_args,
             receipt=receipt,
@@ -225,7 +251,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
@@ -233,6 +259,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
     approved = {"path": "transformed.txt"}
     side = SideEffect()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=approved,
         receipt=receipt,
@@ -240,7 +267,7 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran
@@ -252,7 +279,10 @@ def test_transform_receipt_still_verifies_and_executes(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_transform_receipt_rejects_extra_executed_field(tmp_path: Path) -> None:
+def test_transform_receipt_rejects_extra_executed_field(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """GATE PROOF — execute_with_receipt rejects TRANSFORM execution that includes
     an extra field not in the approved transformed set.
 
@@ -266,9 +296,15 @@ def test_transform_receipt_rejects_extra_executed_field(tmp_path: Path) -> None:
 
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, TransformPolicy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
-    receipt = _issue(store, audit, {"path": "original.txt"}, request_id="req-extra")
+    receipt = _issue(
+        store,
+        audit,
+        {"path": "original.txt"},
+        request_id="req-extra",
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.decision == "transform"
     # Approved set is exactly {"path": "transformed.txt"}.
     assert receipt.transformations == [{"field": "path", "value": "transformed.txt"}]
@@ -278,6 +314,7 @@ def test_transform_receipt_rejects_extra_executed_field(tmp_path: Path) -> None:
     side = SideEffect()
     with pytest.raises(ReceiptValidationError, match="transform mismatch"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args=extra_args,
             receipt=receipt,
@@ -285,12 +322,15 @@ def test_transform_receipt_rejects_extra_executed_field(tmp_path: Path) -> None:
             expected_execution_boundary=BOUNDARY,
             expected_action=ACTION,
             expected_actor="agent-1",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran  # side effect was NEVER executed
 
 
-def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
+def test_transform_receipt_rejects_missing_field(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """execute_with_receipt rejects TRANSFORM execution that is missing an
     approved field from the transformed set.
 
@@ -309,10 +349,11 @@ def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
         event_id="ev-missing",
         transformed_args=approved_args,
     )
+    event = strict_receipt_gate.audit.append(record)
     receipt = DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev_hash",
+        audit_hash=str(event["event_hash"]),
+        previous_audit_hash=str(event["previous_hash"]),
         tenant_id=TENANT,
         execution_boundary=BOUNDARY,
         policy_bundle_id="bundle-A",
@@ -320,6 +361,7 @@ def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
         request_id="req-missing",
         validator=Validator("constitutional-council"),
         authority=AUTHORITY,
+        signer=strict_receipt_gate.signer,
     )
     assert receipt.decision == "transform"
     assert len(receipt.transformations) == 2  # both fields approved
@@ -332,6 +374,7 @@ def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
     # un-approved execution was blocked — match the common substring.
     with pytest.raises(ReceiptValidationError, match="[Mm]ismatch|missing"):
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
             tool_fn=side.run,
             args={"path": "transformed.txt"},  # missing "mode"
             receipt=receipt,
@@ -340,12 +383,15 @@ def test_transform_receipt_rejects_missing_field(tmp_path: Path) -> None:
             expected_action=ACTION,
             # Hand-built record has no actor → proposer resolves to "anonymous".
             expected_actor="anonymous",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert not side.ran
 
 
-def test_transform_exact_match_passes(tmp_path: Path) -> None:
+def test_transform_exact_match_passes(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     """Executing with EXACTLY the approved transformed set passes the gate.
 
     Confirms the completeness check is not over-restrictive: the existing
@@ -355,14 +401,21 @@ def test_transform_exact_match_passes(tmp_path: Path) -> None:
 
     store = TenantPolicyStore(tmp_path / "pol")
     store.store_bundle(TENANT, TransformPolicy())
-    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    audit = strict_receipt_gate.audit
 
-    receipt = _issue(store, audit, {"path": "original.txt"}, request_id="req-exact")
+    receipt = _issue(
+        store,
+        audit,
+        {"path": "original.txt"},
+        request_id="req-exact",
+        signer=strict_receipt_gate.signer,
+    )
     assert receipt.decision == "transform"
 
     approved = {"path": "transformed.txt"}
     side = SideEffect()
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(side.run),
         tool_fn=side.run,
         args=approved,
         receipt=receipt,
@@ -370,7 +423,7 @@ def test_transform_exact_match_passes(tmp_path: Path) -> None:
         expected_execution_boundary=BOUNDARY,
         expected_action=ACTION,
         expected_actor="agent-1",
-        require_signature=False,  # explicit dev mode (unsigned)
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert result == "executed"
     assert side.ran

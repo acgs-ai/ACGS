@@ -19,20 +19,20 @@ uv run --package gove-zone --extra crypto --extra dev \
 
 | Adversary class | Status | Where it's proven / reproduced |
 |---|---|---|
-| forged-authorization | **PARTIAL** | signed forgery blocked (`test_receipt_signing.py`); unsigned recompute residual → `test_unsigned_forgery.py` |
-| replayed-authorization | **PARTIAL** | intra-workflow replay blocked; standalone reuse → `test_standalone_receipt_replay.py` |
+| forged-authorization | **PARTIAL** | strict standalone execution rejects unsigned/untrusted receipts; raw `ReceiptVerifier` unsigned default remains a legacy residual → `test_unsigned_forgery.py` |
+| replayed-authorization | **DEFENDED** | workflow and strict standalone reuse are rejected before a second side effect → `test_standalone_receipt_replay.py` |
 | ledger-tampering | **PARTIAL** | single-field edit detected (`test_audit_chain.py`); full self-consistent rewrite → `test_audit_full_chain_rewrite.py` |
-| policy-downgrade | **PARTIAL** | pinned path blocked; unpinned hash → `test_policy_version_downgrade.py`, unpinned bundle-id → `test_policy_bundle_id_downgrade.py` |
+| policy-downgrade | **PARTIAL** | strict standalone caller pins hash/bundle; legacy unpinned hash and bundle-id paths remain live residuals |
 | policy-default-allow | **NOT-DEFENDED** | RuleSetPolicy allow-by-default → `test_ruleset_default_allow.py`; PQL empty-feed fail-open → `test_pql_silent_fail_open.py` |
 | tenant-crossover | **DEFENDED** | `test_tenant_safety.py`, `test_executor_guard.py` (+ adversary tripwire `test_tenant_boundary_isolation.py`) |
 | signature-stripping | **DEFENDED** | `test_receipt_signing.py` |
-| validator-bypass | **PARTIAL** | self-validation / cross-actor blocked; authority scope not gate-enforced → `test_authority_scope_unenforced.py` |
+| validator-bypass | **PARTIAL** | strict standalone caller pins authority/validator identity; legacy callers may omit the additive authority pin → `test_authority_scope_unenforced.py` |
 | evidence-omission | **DEFENDED** | `test_kernel_dispatch.py`, `test_executor_guard.py` |
-| adapter-bypass | **NOT-DEFENDED** | autogen/langgraph adapters route through `Kernel.dispatch` + `AllowAllPolicy` default → `test_adapter_bypass.py` |
+| adapter-bypass | **DEFENDED** | default `ManagedAgent` installs `DenyAllPolicy`; the adapter's `Kernel.dispatch` path fails closed and the wrapped tool never runs → `test_adapter_bypass.py`. Residual: the adapter path has no receipt gate, so an explicit `AllowAllPolicy` opt-in stays adaptively BYPASSABLE |
 
 The map itself is enforced by `test_coverage_manifest.py`: if a "covering" test is
 renamed/deleted, or a PARTIAL/NOT-DEFENDED gap loses its tripwire, the manifest test fails.
-Posture is pinned at **3 DEFENDED / 5 PARTIAL / 2 NOT-DEFENDED** — changing it must be a
+Posture is pinned at **5 DEFENDED / 4 PARTIAL / 1 NOT-DEFENDED** — changing it must be a
 deliberate edit to the manifest.
 
 ## Adaptive stability layer (NEW in cycle 7)
@@ -53,10 +53,12 @@ stripped-audit and anchor-before-execute) and returns:
 
 `test_adaptive_stability.py` compares `stable` to the manifest `"adaptive"` pin:
 `STABLE` (must remain denied) versus `BYPASSABLE` (one or more variant bypasses). The
-adaptive posture is pinned at **3 STABLE / 7 BYPASSABLE / 0 UNTESTED** in
+adaptive posture is pinned at **8 STABLE / 2 BYPASSABLE / 0 UNTESTED** in
 `test_adaptive_posture_is_pinned`, mirroring the static `test_taxonomy_posture_is_pinned`.
-The 3 STABLE classes are stable **by construction** — each rests on a total,
-bound-and-checked invariant: signature-stripping (reference-monitor totality),
+The 8 STABLE classes are stable **by construction** — each rests on a total,
+bound-and-checked invariant: forged authorization (trusted signature), replay
+(durable single-use consumption), policy downgrade (pinned artifact identity), validator
+bypass (pinned authority and validator), signature-stripping (reference-monitor totality),
 tenant-crossover (least-privilege binding), evidence-omission (Biba integrity /
 anchor-before-execute — probed on both the `execute_with_receipt` no-receipt axis and the
 `Kernel.dispatch` audit anchor: a failed/stripped audit append fails closed, and the anchor
@@ -78,25 +80,31 @@ Honest-scope limits (must be stated verbatim):
 - The paper's empirical result is one weak-model data point; we cite it as motivation for the
   methodology, never as evidence about gove-zone.
 
-## NOT-DEFENDED / open gaps (tracked as live tests)
+## Open gaps & residuals (tracked as live tests)
 
 Highest-severity first (see threat-model-v2.md §11 for the full remediation order):
 
-1. **Adapter bypass (Critical).** `govern_autogen_tool` / `govern_langgraph_tools` route
-   execution through `ManagedAgent.dispatch` → `Kernel.dispatch` (self-asserted actor, no
-   receipt verification, no signature), and `ManagedAgent` defaults to `AllowAllPolicy` — so
-   a default "governed" agent executes every tool unconditionally.
+1. **Adapter path has no receipt gate (architectural residual).** `govern_autogen_tool` /
+   `govern_langgraph_tools` route execution through `ManagedAgent.dispatch` → `Kernel.dispatch`
+   (self-asserted actor, no receipt verification, no signature) rather than the cryptographic
+   gate `execute_with_receipt`. The **default** posture is now DEFENDED: `ManagedAgent` defaults
+   to `DenyAllPolicy`, so a default "governed" agent fails closed and the wrapped side effect
+   never runs — proved by the integration negative-path test
+   (`test_adapter_bypass.py::test_managed_agent_default_policy_blocks_untrusted_tool`). The
+   critical residual is that the adapter path still verifies no receipt or signature, so an agent
+   **explicitly** configured with a permissive policy (`AllowAllPolicy`) executes every wrapped
+   tool unconditionally — an opt-in, not the default, which keeps this class adaptively
+   BYPASSABLE (`adaptive.py::_gen_adapter_bypass`). Closing it means routing the adapters
+   through `execute_with_receipt`.
 2. **PQL/GPA silent fail-open (High).** An empty/malformed vendor feed compiles to a
    functional allow-all with no error.
 3. **Audit full-chain rewrite (High).** The keyless chain has no external head anchor, so a
    self-consistent rewrite / truncation passes `verify_chain()`.
-4. **Standalone-receipt replay (High on this branch; closed on `master`).** The gate is
-   stateless; no `ReceiptConsumptionLedger` is wired here.
-5. **Authority scope not gate-enforced (Medium).** `expected_authority` /
-   `expected_validator_role` are not plumbed into any gate surface.
-6. **Gate default-posture inconsistency (Medium).** `ReceiptVerifier` defaults
+4. **Legacy authority pin omission (Medium).** The strict standalone path pins authority and
+   validator identity, but additive pins remain optional for legacy direct callers.
+5. **Gate default-posture inconsistency (Medium).** `ReceiptVerifier` defaults
    `require_signature=False` while `execute_with_receipt` defaults `True`.
-7. **Unpinned policy-bundle-id & RuleSetPolicy-as-sole-policy (Medium).**
+6. **Unpinned legacy policy-bundle-id & RuleSetPolicy-as-sole-policy (Medium).**
 
 Overclaiming a defense is a BLOCKER: a class is "DEFENDED" here only because a real exploit
 test proves it, and every gap is stated plainly with a live reproducing test rather than

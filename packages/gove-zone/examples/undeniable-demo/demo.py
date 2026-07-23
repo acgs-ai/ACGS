@@ -67,6 +67,8 @@ from gove_zone import (
     normalize_path_context,
     replay_call,
 )
+from gove_zone._strict_dispatch_fixture import build_strict_receipt_gate_fixture
+from gove_zone.executor import adapter_artifact_digest
 from gove_zone.tool import ToolCall
 
 # --- Fixed governance context for the scenario -------------------------------
@@ -195,10 +197,23 @@ def main() -> int:
     # explicit unsigned opt-out and is intentionally NOT used here.)
     signing_key = Ed25519Signer.generate()
     verify_key = Ed25519Signer.from_public_bytes(signing_key.public_bytes())
+    strict_gate = build_strict_receipt_gate_fixture(
+        workdir / "strict-receipt-gate",
+        name="undeniable-demo",
+        signer=signing_key,
+    )
     profile = GovernanceProfile.production(signer=signing_key, verifier=verify_key)
     if not profile.is_production or not profile.require_signature:
         _fail("expected the production profile to require signatures by default")
-    gate_kwargs = profile.as_gate_kwargs()  # {"require_signature": True, "verifier": verify_key}
+    gate_kwargs = {
+        **profile.as_gate_kwargs(),
+        "consumption_store": strict_gate.consumption_store,
+        "rejection_audit": strict_gate.audit,
+        # Lifecycle provenance is signed by an authority distinct from the
+        # audit-checkpoint key: re-checkpointing cannot forge execution.
+        "lifecycle_signer": strict_gate.lifecycle_signer,
+        "lifecycle_authority_id": "fixture-lifecycle-validator",
+    }
     print(
         f"profile: {profile.name}  require_signature={profile.require_signature}  "
         f"signing_key_id={signing_key.key_id}"
@@ -206,7 +221,7 @@ def main() -> int:
 
     store = TenantPolicyStore(workdir / "policies")
     store.store_bundle(TENANT, _build_policy())
-    audit = ChainHashAuditStore(workdir / "audit.jsonl")
+    audit = strict_gate.audit
 
     # An ALLOWED companion action gives the chain a second event and proves the
     # gate is not simply blocking everything (hard rule 3: show BOTH paths).
@@ -224,6 +239,7 @@ def main() -> int:
         _fail(f"expected ALLOW for a non-protected path, got {allow_receipt.decision!r}")
     allow_gateway = PrivilegedToolGateway(gateway_root)
     result = execute_with_receipt(
+        expected_adapter_artifact_digest=adapter_artifact_digest(allow_gateway.invoke),
         tool_fn=allow_gateway.invoke,
         args=allow_args,
         receipt=allow_receipt,
@@ -243,7 +259,7 @@ def main() -> int:
     _step("[1] DENIED — privileged write into secrets/prod/** is blocked")
     denied_args = {
         "path": f"{PROTECTED_PREFIX}/stripe_key.txt",
-        "content": "sk_live_exfiltrated",
+        "content": "<synthetic-payment-token>",
     }
     denied_receipt = _issue(
         store,
@@ -258,6 +274,7 @@ def main() -> int:
     deny_gateway = PrivilegedToolGateway(gateway_root)
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(deny_gateway.invoke),
             tool_fn=deny_gateway.invoke,
             args=denied_args,
             receipt=denied_receipt,
@@ -410,6 +427,7 @@ def main() -> int:
     forge_gateway = PrivilegedToolGateway(gateway_root)
     try:
         execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(forge_gateway.invoke),
             tool_fn=forge_gateway.invoke,
             args=denied_args,
             receipt=forged,

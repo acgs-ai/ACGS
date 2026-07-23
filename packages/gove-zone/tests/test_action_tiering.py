@@ -30,10 +30,13 @@ from gove_zone import (
     ReceiptValidationError,
     RuleSetPolicy,
     ToolCall,
+    ToolEffect,
     ToolTierRegistry,
     Validator,
     execute_with_receipt,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,6 +63,7 @@ def _commit_deny_policy(*, tool_tiers: dict[str, str]) -> RuleSetPolicy:
 
 
 def _mint_receipt(
+    strict_gate: StrictReceiptGateFixture | None = None,
     *,
     decision: str = "allow",
     action: str = "fs.write",
@@ -77,10 +81,13 @@ def _mint_receipt(
         event_id="ev_tier",
         action_tier=action_tier,
     )
+    event = strict_gate.audit.append(record) if strict_gate is not None else None
     return DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev_audit_hash",
+        audit_hash=str(event["event_hash"]) if event is not None else "audit_hash",
+        previous_audit_hash=(
+            str(event["previous_hash"]) if event is not None else "prev_audit_hash"
+        ),
         tenant_id="tenant-A",
         execution_boundary="local-sandbox",
         policy_bundle_id="policy-bundle",
@@ -88,6 +95,7 @@ def _mint_receipt(
         request_id="req-tier",
         validator=Validator("validator-1"),
         authority="tenant-A/write-grant",
+        signer=strict_gate.signer if strict_gate is not None else None,
     )
 
 
@@ -110,7 +118,7 @@ def test_t1_declared_explore_on_commit_tool_evaluated_as_commit_and_denied(
     )
     executed: list[str] = []
 
-    @kernel.tool("fs.write")
+    @kernel.tool("fs.write", effect=ToolEffect.PURE_READ_ONLY)
     def write(path: str) -> str:
         executed.append(path)
         return path
@@ -139,7 +147,7 @@ def test_t1b_explore_registered_tool_declared_explore_is_lenient(
     )
     executed: list[str] = []
 
-    @kernel.tool("fs.write")
+    @kernel.tool("fs.write", effect=ToolEffect.PURE_READ_ONLY)
     def write(path: str) -> str:
         executed.append(path)
         return path
@@ -194,41 +202,38 @@ def test_t3_tampered_action_tier_fails_hash(tmp_path: Path) -> None:
     assert "receipt_hash mismatch" in str(exc.value)
 
 
-def test_t3b_tampered_tier_refused_at_gate(tmp_path: Path) -> None:
-    receipt = _mint_receipt(action_tier="commit")
+def test_t3b_tampered_tier_refused_at_gate(
+    tmp_path: Path,
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
+    receipt = _mint_receipt(strict_receipt_gate, action_tier="commit")
     d = receipt.to_dict()
     d["action_tier"] = "explore"
     tampered = DecisionReceipt.from_dict(d)
     called: list[str] = []
 
+    def adapter(path: str) -> None:
+        called.append(path)
+
     with pytest.raises(ReceiptValidationError):
         execute_with_receipt(
-            tool_fn=lambda path: called.append(path),
+            expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+            tool_fn=adapter,
             args={"path": "safe.txt"},
             receipt=tampered,
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="fs.write",
             expected_actor="anonymous",
-            require_signature=False,
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert called == []
 
 
 # ---------------------------------------------------------------------------
-# T4 — legacy receipt (no action_tier key). Two honest halves:
-#   (i)  from_dict on a dict missing the key DEFAULTS the field to "commit"
-#        (the deserialization-compat part that IS true, C7);
-#   (ii) a receipt whose receipt_hash was genuinely computed WITHOUT
-#        action_tier in the hashed dict (i.e. by pre-schema code that never had
-#        the field) FAILS verify() with a receipt_hash mismatch.
-#
-# This is fail-closed and CORRECT. compute_hash() always re-includes
-# action_tier (the dataclass default "commit" is in to_dict()), so the recomputed
-# hash covers a field the old hash never did → mismatch. Accepting such a receipt
-# would require dropping action_tier from the hashed dict, weakening the C6 hash
-# binding so a tampered/omitted tier could slip past verify(). We do NOT do that:
-# an unverifiable pre-schema receipt is refused, not waved through.
+# T4 — a genuinely legacy wire payload (no action_tier key) resolves to the
+# strict commit tier and verifies against the pre-schema canonical hash.  The
+# fallback is unavailable when the original payload explicitly carried a tier.
 # ---------------------------------------------------------------------------
 
 
@@ -243,11 +248,7 @@ def test_t4a_from_dict_missing_tier_defaults_commit() -> None:
     assert legacy.action_tier == ActionTier.COMMIT.value
 
 
-def test_t4b_pre_schema_hash_without_tier_fails_verify() -> None:
-    # (ii) A GENUINELY pre-schema receipt: its receipt_hash was computed by old
-    # code over a dict that never contained action_tier. We reproduce that hash
-    # honestly — excluding action_tier from the hashed payload (exactly as
-    # compute_hash did before the field existed) — and pin it as receipt_hash.
+def test_t4b_pre_schema_hash_without_tier_verifies_as_commit() -> None:
     from gove_zone.decision import sha256_json
 
     receipt = _mint_receipt(action_tier=None)
@@ -262,12 +263,39 @@ def test_t4b_pre_schema_hash_without_tier_fails_verify() -> None:
     d["receipt_hash"] = pre_schema_hash  # hash computed WITHOUT action_tier
     legacy = DecisionReceipt.from_dict(d)
 
-    # from_dict still defaults the field to "commit", and compute_hash() re-includes
-    # it — so the recomputed hash covers a field the stored hash never did.
     assert legacy.action_tier == ActionTier.COMMIT.value
-    with pytest.raises(ReceiptValidationError) as exc:
-        legacy.verify()
-    assert "receipt_hash mismatch" in str(exc.value)  # fail-closed, C6 intact
+    legacy.verify()
+
+
+def test_t4c_explicit_commit_cannot_use_legacy_hash_shape() -> None:
+    from gove_zone.decision import sha256_json
+
+    receipt = _mint_receipt(action_tier="commit")
+    d = receipt.to_dict()
+    legacy_payload = dict(d)
+    legacy_payload.pop("action_tier")
+    legacy_payload.pop("receipt_hash")
+    legacy_payload.pop("signature")
+    d["receipt_hash"] = sha256_json(legacy_payload)
+
+    with pytest.raises(ReceiptValidationError, match="receipt_hash mismatch"):
+        DecisionReceipt.from_dict(d).verify()
+
+
+def test_t4d_legacy_hash_still_binds_every_other_field() -> None:
+    from gove_zone.decision import sha256_json
+
+    receipt = _mint_receipt(action_tier=None)
+    d = receipt.to_dict()
+    d.pop("action_tier")
+    legacy_payload = dict(d)
+    legacy_payload.pop("receipt_hash")
+    legacy_payload.pop("signature")
+    d["receipt_hash"] = sha256_json(legacy_payload)
+    d["tenant_id"] = "tenant-B"
+
+    with pytest.raises(ReceiptValidationError, match="receipt_hash mismatch"):
+        DecisionReceipt.from_dict(d).verify()
 
 
 # ---------------------------------------------------------------------------
@@ -276,43 +304,79 @@ def test_t4b_pre_schema_hash_without_tier_fails_verify() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_t5_explore_receipt_executes_for_explore_tool() -> None:
-    receipt = _mint_receipt(action_tier="explore")
+def test_t5_explore_receipt_executes_for_explore_tool(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
+    receipt = _mint_receipt(strict_receipt_gate, action_tier="explore")
     reg = ToolTierRegistry.from_dict({"fs.write": "explore"})
     called: list[str] = []
 
+    def adapter(path: str) -> None:
+        called.append(path)
+
     execute_with_receipt(
-        tool_fn=lambda path: called.append(path),
+        expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+        tool_fn=adapter,
         args={"path": "safe.txt"},
         receipt=receipt,
         expected_tenant_id="tenant-A",
         expected_execution_boundary="local-sandbox",
         expected_action="fs.write",
         expected_actor="anonymous",
-        require_signature=False,
         tool_tier_registry=reg,
+        **strict_receipt_gate.executor_kwargs(),
     )
     assert called == ["safe.txt"]
 
 
-def test_t5b_explore_receipt_refused_when_action_is_commit_only() -> None:
-    receipt = _mint_receipt(action_tier="explore")
+def test_t5b_explore_receipt_refused_when_action_is_commit_only(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
+    receipt = _mint_receipt(strict_receipt_gate, action_tier="explore")
     reg = ToolTierRegistry.from_dict({"fs.write": "commit"})  # commit-only tool
     called: list[str] = []
 
+    def adapter(path: str) -> None:
+        called.append(path)
+
     with pytest.raises(ReceiptValidationError) as exc:
         execute_with_receipt(
-            tool_fn=lambda path: called.append(path),
+            expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+            tool_fn=adapter,
             args={"path": "safe.txt"},
             receipt=receipt,
             expected_tenant_id="tenant-A",
             expected_execution_boundary="local-sandbox",
             expected_action="fs.write",
             expected_actor="anonymous",
-            require_signature=False,
             tool_tier_registry=reg,
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert "commit" in str(exc.value).lower()
+    assert called == []
+
+
+def test_t5c_explore_receipt_refused_when_registry_is_omitted(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
+    receipt = _mint_receipt(strict_receipt_gate, action_tier="explore")
+    called: list[str] = []
+
+    def adapter(path: str) -> None:
+        called.append(path)
+
+    with pytest.raises(ReceiptValidationError, match="requires.*registry"):
+        execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+            tool_fn=adapter,
+            args={"path": "safe.txt"},
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="fs.write",
+            expected_actor="anonymous",
+            **strict_receipt_gate.executor_kwargs(),
+        )
     assert called == []
 
 
@@ -350,7 +414,7 @@ def test_t7_audit_chain_contains_tier_and_verifies(tmp_path: Path) -> None:
         actor="agent-7",
     )
 
-    @kernel.tool("fs.read")
+    @kernel.tool("fs.read", effect=ToolEffect.PURE_READ_ONLY)
     def read(path: str) -> str:
         return path
 
@@ -372,3 +436,33 @@ def test_t8_deny_escalate_non_executable_under_explore(decision: str) -> None:
     receipt = _mint_receipt(decision=decision, action_tier="explore")
     with pytest.raises(ReceiptValidationError):
         receipt.verify()
+
+
+# ---------------------------------------------------------------------------
+# Codex-review regression — a frozen ToolTierRegistry must also freeze its
+# mapping CONTENTS, so a registry mutated after a policy caches its version
+# cannot flip decisions while the content-addressed version stays unchanged
+# (the "changed registry => changed version" binding, brief §3.3).
+# ---------------------------------------------------------------------------
+
+
+def test_tool_tier_registry_contents_are_immutable() -> None:
+    reg = ToolTierRegistry.from_dict({"fs.write": "commit"})
+    with pytest.raises(TypeError):
+        reg.tiers["fs.write"] = ActionTier.EXPLORE  # type: ignore[index]
+    assert reg.max_tier("fs.write") is ActionTier.COMMIT
+
+
+def test_registry_mutation_cannot_desync_version_from_decision() -> None:
+    policy = _commit_deny_policy(tool_tiers={"fs.write": "commit"})
+    call = ToolCall(actor="a", name="fs.write", args={}, state={"action_tier": "explore"})
+    version_before = policy.version
+    decision_before = policy.evaluate(call).decision
+    # An explore declaration on a commit-only tool resolves to commit -> DENY.
+    assert str(decision_before) == "deny"
+    # Attempting to widen the tool to explore in place must fail (frozen contents),
+    # so the cached version and the decision remain coupled.
+    with pytest.raises(TypeError):
+        policy._tier_registry.tiers["fs.write"] = ActionTier.EXPLORE  # type: ignore[union-attr,index]
+    assert policy.version == version_before
+    assert str(policy.evaluate(call).decision) == "deny"

@@ -14,6 +14,7 @@ Two properties matter and are tested directly:
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 
@@ -28,6 +29,7 @@ from gove_zone import (
     Kernel,
     Policy,
     ReplaySideStore,
+    ToolEffect,
     UnknownToolError,
     new_event_id,
     sha256_json,
@@ -121,7 +123,10 @@ class _MalformedTransformPolicy(Policy):
 
 
 def _side_count(path) -> int:
-    return sum(1 for _ in path.open()) if path.exists() else 0
+    if not path.exists():
+        return 0
+    with path.open() as side_file:
+        return sum(1 for _ in side_file)
 
 
 def _kernel(policy: Policy, tmp_path) -> tuple[Kernel, list[dict]]:
@@ -129,7 +134,7 @@ def _kernel(policy: Policy, tmp_path) -> tuple[Kernel, list[dict]]:
     ran: list[dict] = []
     kernel = Kernel(policy=policy, audit=audit, actor="agent-x")
 
-    @kernel.tool("do.thing")
+    @kernel.tool("do.thing", effect=ToolEffect.PURE_READ_ONLY)
     def thing(**kwargs: object) -> str:
         ran.append(dict(kwargs))
         return "did it"
@@ -246,7 +251,7 @@ def test_simulate_predicts_timeout_synth_deny(tmp_path) -> None:
     ran: list[dict] = []
     kernel = Kernel(policy=_SlowPolicy(), audit=audit, actor="agent-x", policy_timeout=0.05)
 
-    @kernel.tool("do.thing")
+    @kernel.tool("do.thing", effect=ToolEffect.PURE_READ_ONLY)
     def thing(**kwargs: object) -> str:
         ran.append(dict(kwargs))
         return "did it"
@@ -288,7 +293,7 @@ def test_simulate_does_not_write_side_store(tmp_path) -> None:
     ran: list[dict] = []
     kernel = Kernel(policy=AllowAllPolicy(), audit=audit, actor="agent-x", side_store=side)
 
-    @kernel.tool("do.thing")
+    @kernel.tool("do.thing", effect=ToolEffect.PURE_READ_ONLY)
     def thing(**kwargs: object) -> str:
         ran.append(dict(kwargs))
         return "did it"
@@ -309,7 +314,11 @@ def test_simulate_threads_path_and_state(tmp_path) -> None:
     """path/state context is threaded into the predicted record exactly as dispatch does."""
     kernel, ran = _kernel(AllowAllPolicy(), tmp_path)
     args = {"x": 1}
-    ctx = {"goal": "g", "path": "tenant/matter-9", "state": {"trust_tier": "analyst"}}
+    ctx: dict[str, Any] = {
+        "goal": "g",
+        "path": "tenant/matter-9",
+        "state": {"trust_tier": "analyst"},
+    }
 
     sim = kernel.simulate("do.thing", args, **ctx)
     assert sim.path  # non-empty normalized path

@@ -20,6 +20,8 @@ from gove_zone import (
     execute_with_receipt,
     sha256_json,
 )
+from gove_zone._strict_dispatch_fixture import StrictReceiptGateFixture
+from gove_zone.executor import adapter_artifact_digest
 
 
 @pytest.fixture
@@ -101,7 +103,9 @@ def test_missing_bundle_fails_closed(
     assert "Tenant bundle missing for tenant-A" in str(exc_info.value)
 
 
-def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
+def test_tenant_a_receipt_cannot_authorize_tenant_b_action(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool="runtime.file.write",
@@ -109,10 +113,11 @@ def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
         policy_version="v1",
         event_id="ev_1",
     )
+    event = strict_receipt_gate.audit.append(record)
     receipt = DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev_audit_hash",
+        audit_hash=str(event["event_hash"]),
+        previous_audit_hash=str(event["previous_hash"]),
         tenant_id="tenant-A",
         execution_boundary="sandbox",
         policy_bundle_id="bundle-A",
@@ -120,24 +125,31 @@ def test_tenant_a_receipt_cannot_authorize_tenant_b_action() -> None:
         request_id="req-1",
         validator=Validator("validator-1"),
         authority="tenant-A/write-grant",
+        signer=strict_receipt_gate.signer,
     )
+
+    def adapter(**_kw: object) -> str:
+        return "ok"
 
     # Executing for tenant-B raises ReceiptValidationError
     with pytest.raises(ReceiptValidationError) as exc_info:
         execute_with_receipt(
-            tool_fn=lambda **kw: "ok",
+            expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+            tool_fn=adapter,
             args={"path": "test.txt"},
             receipt=receipt,
             expected_tenant_id="tenant-B",
             expected_execution_boundary="sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
-            require_signature=False,  # explicit dev mode (unsigned)
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert "Tenant mismatch" in str(exc_info.value)
 
 
-def test_policy_hash_mismatch_fails_closed() -> None:
+def test_policy_hash_mismatch_fails_closed(
+    strict_receipt_gate: StrictReceiptGateFixture,
+) -> None:
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool="runtime.file.write",
@@ -145,10 +157,11 @@ def test_policy_hash_mismatch_fails_closed() -> None:
         policy_version="v1",
         event_id="ev_1",
     )
+    event = strict_receipt_gate.audit.append(record)
     receipt = DecisionReceipt.from_record(
         record=record,
-        audit_hash="audit_hash",
-        previous_audit_hash="prev_audit_hash",
+        audit_hash=str(event["event_hash"]),
+        previous_audit_hash=str(event["previous_hash"]),
         tenant_id="tenant-A",
         execution_boundary="sandbox",
         policy_bundle_id="bundle-A",
@@ -156,19 +169,24 @@ def test_policy_hash_mismatch_fails_closed() -> None:
         request_id="req-1",
         validator=Validator("validator-1"),
         authority="tenant-A/write-grant",
+        signer=strict_receipt_gate.signer,
     )
+
+    def adapter(**_kw: object) -> str:
+        return "ok"
 
     # Executing with mismatched policy hash raises ReceiptValidationError
     with pytest.raises(ReceiptValidationError) as exc_info:
         execute_with_receipt(
-            tool_fn=lambda **kw: "ok",
+            expected_adapter_artifact_digest=adapter_artifact_digest(adapter),
+            tool_fn=adapter,
             args={"path": "test.txt"},
             receipt=receipt,
             expected_tenant_id="tenant-A",
             expected_execution_boundary="sandbox",
             expected_action="runtime.file.write",
             expected_actor="anonymous",
-            require_signature=False,  # explicit dev mode (unsigned)
             expected_policy_hash="policy-hash-different",
+            **strict_receipt_gate.executor_kwargs(),
         )
     assert "Policy hash mismatch" in str(exc_info.value)

@@ -22,15 +22,16 @@ would otherwise fire before the envelope rejection. See ``BLOCKER`` in
 
 See ``SECURITY.md`` ("Workflow receipt chaining") for the honest scope of the
 guarantee: workflow chaining adds **no** cryptographic guarantee beyond the
-per-step receipts and their envelopes; unsigned offline replay proves internal
-chain consistency and topological faithfulness, not unforgeability.
+per-step receipts and their envelopes. Offline replay requires trusted verifier
+roots and valid authorization, envelope, and inner-receipt signatures.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from gove_zone.decision import sha256_json
@@ -54,7 +55,7 @@ class WorkflowStep:
     predecessor_step_ids: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowDAG:
     """A declared workflow plan: a set of steps with predecessor edges.
 
@@ -63,7 +64,18 @@ class WorkflowDAG:
     fail-closed: missing predecessors, duplicate ids, or cycles all raise.
     """
 
-    steps: dict[str, WorkflowStep]
+    steps: Mapping[str, WorkflowStep]
+
+    def __post_init__(self) -> None:
+        snapshot = {
+            step_id: WorkflowStep(
+                step_id=step.step_id,
+                action=step.action,
+                predecessor_step_ids=tuple(step.predecessor_step_ids),
+            )
+            for step_id, step in self.steps.items()
+        }
+        object.__setattr__(self, "steps", MappingProxyType(snapshot))
 
     def validate(self) -> None:
         """Fail-closed structural validation of the DAG.
@@ -130,7 +142,7 @@ class WorkflowDAG:
         return sha256_json(canonical)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowStepReceipt:
     """Envelope binding a single-action :class:`DecisionReceipt` to a DAG position.
 
@@ -146,13 +158,20 @@ class WorkflowStepReceipt:
     workflow_id: str
     step_id: str
     predecessor_step_ids: tuple[str, ...]
-    predecessor_receipt_hashes: dict[str, str]
+    predecessor_receipt_hashes: Mapping[str, str]
     dag_hash: str
     authorization_hash: str = ""
     step_receipt_hash: str = ""
     signature_algorithm: str = "none"
     signing_key_id: str = ""
     signature: str = "unsigned_local"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "predecessor_receipt_hashes",
+            MappingProxyType(dict(self.predecessor_receipt_hashes)),
+        )
 
     def _hash_payload(self) -> dict[str, Any]:
         return {
@@ -282,7 +301,30 @@ def _verify_authorization_signature(
         raise ReceiptValidationError("invalid authorization signature")
 
 
-@dataclass
+def _freeze_verifier(
+    verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None,
+    *,
+    label: str,
+) -> ReceiptSigner | Mapping[str, ReceiptSigner]:
+    if verifier is None:
+        raise ValueError(f"{label} requires a trusted verifier")
+    if isinstance(verifier, Mapping):
+        if not verifier:
+            raise ValueError(f"{label} verifier mapping must not be empty")
+        return MappingProxyType(dict(verifier))
+    return verifier
+
+
+@dataclass(frozen=True, slots=True)
+class _StepAdapterBinding:
+    step: WorkflowStep
+    execute: Callable[..., Any] = field(repr=False, compare=False)
+
+    def invoke(self, args: dict[str, Any], receipt: DecisionReceipt) -> Any:
+        return self.execute(self.step.action, args, receipt)
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowExecutor:
     """The per-run workflow gate.
 
@@ -316,18 +358,59 @@ class WorkflowExecutor:
     governed: GovernedExecutor
     authorization: WorkflowAuthorization
     verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None
-    require_signature: bool = False
-    ledger: dict[str, str] = field(default_factory=dict)
-    proposers: set[str] = field(init=False, default_factory=set)
-    validators: set[str] = field(init=False, default_factory=set)
+    require_signature: bool = True
+    _ledger: dict[str, str] = field(init=False, default_factory=dict, repr=False)
+    _proposers: set[str] = field(init=False, default_factory=set, repr=False)
+    _validators: set[str] = field(init=False, default_factory=set, repr=False)
+    _step_bindings: Mapping[str, _StepAdapterBinding] = field(init=False, repr=False)
+    _tenant_id: str = field(init=False, repr=False)
+    _execution_boundary: str = field(init=False, repr=False)
+    _expected_actor: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if self.require_signature is not True:
+            raise ValueError("WorkflowExecutor requires signed authorization and step receipts")
+        frozen_verifier = _freeze_verifier(self.verifier, label="WorkflowExecutor")
+        frozen_dag = WorkflowDAG(steps=self.dag.steps)
+        frozen_dag.validate()
+        frozen_authorization = dataclasses.replace(self.authorization)
+        bound_execute = self.governed.execute
+
+        object.__setattr__(self, "dag", frozen_dag)
+        object.__setattr__(self, "authorization", frozen_authorization)
+        object.__setattr__(self, "verifier", frozen_verifier)
+        object.__setattr__(self, "require_signature", True)
+        object.__setattr__(self, "_tenant_id", self.governed.tenant_id)
+        object.__setattr__(self, "_execution_boundary", self.governed.execution_boundary)
+        object.__setattr__(self, "_expected_actor", self.governed.expected_actor)
+        object.__setattr__(
+            self,
+            "_step_bindings",
+            MappingProxyType(
+                {
+                    step_id: _StepAdapterBinding(step=step, execute=bound_execute)
+                    for step_id, step in frozen_dag.steps.items()
+                }
+            ),
+        )
         # Seed the cross-level (b) separation sets. The runner is folded in as a
         # proposer (it cannot be any step's validator); plan_proposer MAY equal
         # the runner. These persist across execute_step calls and grow as steps
         # succeed.
-        self.proposers = {self.authorization.plan_proposer, self.governed.expected_actor}
-        self.validators = {self.authorization.plan_validator_id}
+        self._proposers.update({frozen_authorization.plan_proposer, self._expected_actor})
+        self._validators.add(frozen_authorization.plan_validator_id)
+
+    @property
+    def ledger(self) -> Mapping[str, str]:
+        return MappingProxyType(self._ledger)
+
+    @property
+    def proposers(self) -> frozenset[str]:
+        return frozenset(self._proposers)
+
+    @property
+    def validators(self) -> frozenset[str]:
+        return frozenset(self._validators)
 
     def _verify_authorization(self, step_receipt: WorkflowStepReceipt) -> tuple[str, str]:
         """Checks A–E from ``docs/plan-level-governance.md``.
@@ -339,7 +422,7 @@ class WorkflowExecutor:
         rejection.
         """
         authorization = self.authorization
-        runner = self.governed.expected_actor
+        runner = self._expected_actor
 
         # A. Authorization integrity. (`authorization` is a required field, so it
         #    is never None here; the type system enforces presence.)
@@ -363,15 +446,15 @@ class WorkflowExecutor:
             raise ReceiptValidationError(
                 "authorization dag_hash mismatch: authorization bound to a different plan"
             )
-        if authorization.tenant_id != self.governed.tenant_id:
+        if authorization.tenant_id != self._tenant_id:
             raise ReceiptValidationError(
-                f"authorization tenant mismatch: expected {self.governed.tenant_id!r}, "
+                f"authorization tenant mismatch: expected {self._tenant_id!r}, "
                 f"got {authorization.tenant_id!r}"
             )
-        if authorization.execution_boundary != self.governed.execution_boundary:
+        if authorization.execution_boundary != self._execution_boundary:
             raise ReceiptValidationError(
                 f"authorization boundary mismatch: expected "
-                f"{self.governed.execution_boundary!r}, got {authorization.execution_boundary!r}"
+                f"{self._execution_boundary!r}, got {authorization.execution_boundary!r}"
             )
         if authorization.expires_at:
             from datetime import UTC, datetime
@@ -411,8 +494,8 @@ class WorkflowExecutor:
         #    candidate is committed by the caller only on success.
         candidate_actor = step_receipt.inner.actor
         candidate_validator = step_receipt.inner.validator_id
-        candidate_proposers = self.proposers | {candidate_actor}
-        candidate_validators = self.validators | {candidate_validator}
+        candidate_proposers = self._proposers | {candidate_actor}
+        candidate_validators = self._validators | {candidate_validator}
         overlap = candidate_proposers & candidate_validators
         if overlap:
             raise ReceiptValidationError(
@@ -495,17 +578,17 @@ class WorkflowExecutor:
             )
 
         # 6. No replay (step already executed in this run).
-        if step_id in self.ledger:
+        if step_id in self._ledger:
             raise ReceiptValidationError(f"step {step_id!r} already executed (replay rejected)")
 
         # 7. Predecessor satisfaction (ordering + substitution).
         for pred in dag_predecessors:
-            if pred not in self.ledger:
+            if pred not in self._ledger:
                 raise ReceiptValidationError(
                     f"predecessor {pred!r} has not executed yet (reorder rejected)"
                 )
             recorded = step_receipt.predecessor_receipt_hashes.get(pred)
-            if recorded != self.ledger[pred]:
+            if recorded != self._ledger[pred]:
                 raise ReceiptValidationError(
                     f"predecessor {pred!r} receipt hash does not match the executed step "
                     "(predecessor substitution rejected)"
@@ -514,16 +597,16 @@ class WorkflowExecutor:
         # 8. Inner gate + execute (atomic, LAST). The single-action gate runs the
         #    full check (actor anchor, args binding, policy, boundary, signature,
         #    self-validation) and only then the side effect.
-        action = self.dag.steps[step_id].action
-        result = self.governed.execute(action, args, step_receipt.inner)
+        binding = self._step_bindings[step_id]
+        result = binding.invoke(args, step_receipt.inner)
 
         # 9. Record in the ledger, commit the cross-level set updates (only on
         #    success, so a rejected step never pollutes the separation state), and
         #    return.
-        self.ledger[step_id] = step_receipt.step_receipt_hash
+        self._ledger[step_id] = step_receipt.step_receipt_hash
         actor, validator_id = candidate
-        self.proposers.add(actor)
-        self.validators.add(validator_id)
+        self._proposers.add(actor)
+        self._validators.add(validator_id)
         return result
 
 
@@ -532,7 +615,8 @@ def verify_workflow_replay(
     step_receipts: list[WorkflowStepReceipt],
     *,
     authorization: WorkflowAuthorization,
-    verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
+    verifier: ReceiptSigner | Mapping[str, ReceiptSigner],
+    inner_verifier: ReceiptSigner | Mapping[str, ReceiptSigner],
 ) -> None:
     """Offline re-verification of a recorded workflow run (no ledger).
 
@@ -562,60 +646,67 @@ def verify_workflow_replay(
 
     Honesty: there is **no runner** offline (it is runtime-only and deliberately
     not in the authorization), so replay enforces plan MACI but **not** the runner
-    anchor (``plan_validator_id != runner``). Unsigned replay proves internal
-    consistency and topological faithfulness, NOT unforgeability (see
-    ``SECURITY.md``).
+    anchor (``plan_validator_id != runner``). Replay proves signed chain integrity
+    and topological faithfulness, but cannot reconstruct that runtime-only runner
+    identity (see ``SECURITY.md``).
     """
-    dag.validate()
-    expected_dag_hash = dag.dag_hash()
+    replay_dag = WorkflowDAG(steps=dag.steps)
+    replay_dag.validate()
+    replay_authorization = dataclasses.replace(authorization)
+    replay_receipts = tuple(dataclasses.replace(receipt) for receipt in step_receipts)
+    replay_verifier = _freeze_verifier(verifier, label="workflow replay")
+    replay_inner_verifier = _freeze_verifier(inner_verifier, label="workflow replay inner")
+    expected_dag_hash = replay_dag.dag_hash()
 
-    if not step_receipts:
+    if not replay_receipts:
         raise ReceiptValidationError("no step receipts to replay")
 
-    workflow_id = step_receipts[0].workflow_id
+    workflow_id = replay_receipts[0].workflow_id
 
     # Authorization integrity + plan binding + plan MACI.
-    if authorization.compute_authorization_hash() != authorization.authorization_hash:
+    if replay_authorization.compute_authorization_hash() != replay_authorization.authorization_hash:
         raise ReceiptValidationError("replay: authorization_hash mismatch (tampered authorization)")
     _verify_authorization_signature(
-        authorization, verifier=verifier, require_signature=verifier is not None
+        replay_authorization, verifier=replay_verifier, require_signature=True
     )
-    if authorization.dag_hash != expected_dag_hash:
+    if replay_authorization.dag_hash != expected_dag_hash:
         raise ReceiptValidationError("replay: authorization bound to a different DAG")
-    if authorization.workflow_id != workflow_id:
+    if replay_authorization.workflow_id != workflow_id:
         raise ReceiptValidationError("replay: authorization workflow_id does not match the chain")
-    if authorization.plan_validator_id == authorization.plan_proposer:
+    if replay_authorization.plan_validator_id == replay_authorization.plan_proposer:
         raise ReceiptValidationError(
             "replay: plan self-validation (plan validator == plan proposer)"
         )
 
     # Per-envelope integrity, binding, and signature.
-    for sr in step_receipts:
+    for sr in replay_receipts:
         if sr.workflow_id != workflow_id:
             raise ReceiptValidationError("replay: step receipts span more than one workflow_id")
         if sr.dag_hash != expected_dag_hash:
             raise ReceiptValidationError("replay: step receipt bound to a different DAG")
-        if sr.authorization_hash != authorization.authorization_hash:
+        if sr.authorization_hash != replay_authorization.authorization_hash:
             raise ReceiptValidationError(
                 f"replay: step {sr.step_id!r} authorization_hash does not match the authorization"
             )
-        if sr.step_id not in dag.steps:
+        if sr.step_id not in replay_dag.steps:
             raise ReceiptValidationError(f"replay: step {sr.step_id!r} is not in the DAG")
         if sr.compute_step_hash() != sr.step_receipt_hash:
             raise ReceiptValidationError(
                 f"replay: step_receipt_hash mismatch for step {sr.step_id!r}"
             )
-        _verify_envelope_signature(sr, verifier=verifier, require_signature=verifier is not None)
-        dag_predecessors = sorted(dag.steps[sr.step_id].predecessor_step_ids)
+        _verify_envelope_signature(sr, verifier=replay_verifier, require_signature=True)
+        dag_predecessors = sorted(replay_dag.steps[sr.step_id].predecessor_step_ids)
         if sorted(sr.predecessor_step_ids) != dag_predecessors:
             raise ReceiptValidationError(
                 f"replay: declared predecessors for step {sr.step_id!r} do not match the DAG"
             )
 
     # Cross-level separation (b) over the recorded set (no runner offline).
-    replay_proposers = {authorization.plan_proposer} | {sr.inner.actor for sr in step_receipts}
-    replay_validators = {authorization.plan_validator_id} | {
-        sr.inner.validator_id for sr in step_receipts
+    replay_proposers = {replay_authorization.plan_proposer} | {
+        sr.inner.actor for sr in replay_receipts
+    }
+    replay_validators = {replay_authorization.plan_validator_id} | {
+        sr.inner.validator_id for sr in replay_receipts
     }
     cross_overlap = replay_proposers & replay_validators
     if cross_overlap:
@@ -626,8 +717,8 @@ def verify_workflow_replay(
 
     # Topological consistency: walk in an order where predecessors precede a step,
     # confirming each predecessor_receipt_hash equals the predecessor's own hash.
-    by_id = {sr.step_id: sr for sr in step_receipts}
-    if len(by_id) != len(step_receipts):
+    by_id = {sr.step_id: sr for sr in replay_receipts}
+    if len(by_id) != len(replay_receipts):
         raise ReceiptValidationError("replay: duplicate step_id among step receipts")
 
     executed: dict[str, str] = {}
@@ -636,7 +727,7 @@ def verify_workflow_replay(
         progressed = False
         for sid in list(remaining):
             sr = remaining[sid]
-            preds = sorted(dag.steps[sid].predecessor_step_ids)
+            preds = sorted(replay_dag.steps[sid].predecessor_step_ids)
             if all(p in executed for p in preds):
                 for p in preds:
                     if sr.predecessor_receipt_hashes.get(p) != executed[p]:
@@ -651,6 +742,7 @@ def verify_workflow_replay(
                 "replay: chain is not topologically consistent (unsatisfiable predecessors)"
             )
 
-    # Each inner receipt independently verifies.
-    for sr in step_receipts:
-        sr.inner.verify()
+    # Each inner receipt independently verifies against the same frozen replay
+    # trust roots. A signed inner receipt must never silently skip verification.
+    for sr in replay_receipts:
+        sr.inner.verify(verifier=replay_inner_verifier, require_signature=True)

@@ -17,8 +17,7 @@ from typing import Any
 
 from gove_zone.audit import ChainHashAuditStore
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
-from gove_zone.errors import DeniedError
-from gove_zone.frontend_contract import receipt_to_governed_action, record_to_governed_action
+from gove_zone.frontend_contract import record_to_governed_action
 from gove_zone.kernel import Kernel
 from gove_zone.policy import BoundaryPolicy, Policy, new_event_id
 from gove_zone.tool import ToolCall
@@ -72,7 +71,7 @@ def _demo_audit_path() -> Path:
 
 
 def build_demo_actions() -> list[dict[str, Any]]:
-    """Create live governed-action JSON by running real kernel dispatches."""
+    """Create audit-anchored decision projections without executing a tool."""
     actions: list[dict[str, Any]] = []
 
     allow_kernel = Kernel(
@@ -81,17 +80,23 @@ def build_demo_actions() -> list[dict[str, Any]]:
         actor="redactor-03",
     )
 
-    @allow_kernel.tool("message.send")
-    def send(message: str, redaction: str = "") -> dict[str, str]:
-        return {"delivered": message, "redaction": redaction}
-
     allow_args = {"message": "Jane Doe, DOB 1972-04-18, The patient is ready for discharge."}
-    _, receipt = allow_kernel.dispatch(
-        "message.send",
-        allow_args,
-        goal="Patient update channel",
+    allow_record, allow_hash = allow_kernel.evaluate_and_record(
+        ToolCall(
+            name="message.preview",
+            args=allow_args,
+            goal="Patient update channel",
+            actor="redactor-03",
+        )
     )
-    actions.append(receipt_to_governed_action(receipt, args_before=allow_args))
+    actions.append(
+        record_to_governed_action(
+            allow_record,
+            audit_hash=allow_hash,
+            args_before=allow_args,
+            actor="redactor-03",
+        )
+    )
 
     deny_kernel = Kernel(
         policy=BoundaryPolicy(forbidden_keywords=["matter_id"], rule_id="P-1207"),
@@ -99,26 +104,23 @@ def build_demo_actions() -> list[dict[str, Any]]:
         actor="analyst-12",
     )
 
-    @deny_kernel.tool("matter.fetch")
-    def fetch(matter_id: str) -> str:
-        return matter_id
-
     deny_args = {"matter_id": "Matter-9821", "field": "private-notes"}
-    try:
-        deny_kernel.dispatch(
-            "matter.fetch",
-            deny_args,
+    deny_record, deny_hash = deny_kernel.evaluate_and_record(
+        ToolCall(
+            name="matter.fetch",
+            args=deny_args,
             goal="Matter-9821/private-notes",
+            actor="analyst-12",
         )
-    except DeniedError as exc:
-        actions.append(
-            record_to_governed_action(
-                exc.record,
-                audit_hash=exc.audit_hash,
-                args_before=deny_args,
-                actor="analyst-12",
-            )
+    )
+    actions.append(
+        record_to_governed_action(
+            deny_record,
+            audit_hash=deny_hash,
+            args_before=deny_args,
+            actor="analyst-12",
         )
+    )
 
     escalate_kernel = Kernel(
         policy=EscalatePolicy(),
@@ -126,29 +128,23 @@ def build_demo_actions() -> list[dict[str, Any]]:
         actor="executor-01",
     )
 
-    @escalate_kernel.tool("policy.promote")
-    def promote(policy_id: str) -> str:
-        return policy_id
-
     escalate_args = {"policy": "P-1502", "change": "promote", "reviewers": 1}
-    try:
-        escalate_kernel.dispatch(
-            "policy.promote",
-            escalate_args,
+    escalate_record, escalate_hash = escalate_kernel.evaluate_and_record(
+        ToolCall(
+            name="policy.promote",
+            args=escalate_args,
             goal="Policy P-1502",
+            actor="executor-01",
         )
-    except Exception as exc:
-        if hasattr(exc, "record") and hasattr(exc, "audit_hash"):
-            actions.append(
-                record_to_governed_action(
-                    exc.record,
-                    audit_hash=exc.audit_hash,
-                    args_before=escalate_args,
-                    actor="executor-01",
-                )
-            )
-        else:
-            raise
+    )
+    actions.append(
+        record_to_governed_action(
+            escalate_record,
+            audit_hash=escalate_hash,
+            args_before=escalate_args,
+            actor="executor-01",
+        )
+    )
 
     return actions
 
