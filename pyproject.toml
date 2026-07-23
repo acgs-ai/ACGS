@@ -34,6 +34,13 @@ members = [
     "packages/research-engine",
 ]
 
+# Phase-3 workspace source mapping (docs/PLAN-MONOREPO.md). acgs-lite's optional
+# `gove` extra depends on gove-zone, another workspace member; without this
+# mapping `uv sync --all-extras` fails to resolve gove-zone. Metadata-only —
+# does not affect any published PyPI wheel.
+[tool.uv.sources]
+gove-zone = { workspace = true }
+
 # Optional: cross-link members so local edits to acgs-lite flow into Acgs-Swarm
 # without manual `pip install -e`. uv does this automatically when both are
 # workspace members AND the consumer's [project.dependencies] references the
