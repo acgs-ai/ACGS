@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability (private)
+    url: https://github.com/dislovelhl/ACGS/security/advisories/new
+    about: "Report a security vulnerability privately — do NOT open a public issue. See SECURITY.md."
+  - name: Questions & support
+    url: https://github.com/dislovelhl/ACGS/blob/master/SUPPORT.md
+    about: "How to get help, verify the invariant locally, and read the claim boundary."
