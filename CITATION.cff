@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use ACGS / gove-zone in your research, please cite it using this metadata."
+title: "ACGS / gove-zone: receipt-gated runtime governance for AI-agent side effects"
+abstract: >-
+  ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer that sits
+  immediately before an AI agent can change files, infrastructure, data,
+  communications, or money. It evaluates policy, issues a Decision Receipt binding
+  the actor, action, exact arguments, tenant, and policy evidence, and lets a
+  governed executor proceed only when that receipt verifies (no valid Decision
+  Receipt, no side effect). This repository provides local engineering evidence;
+  it is not production-certified, compliance-certified, or regulator-approved.
+type: software
+authors:
+  # TODO(maintainer): replace this entity author with the named authors before
+  # any formal publication / DOI minting. Left as an entity to avoid asserting
+  # individual attribution that is not recorded in the repository.
+  - name: "ACGS / gove-zone contributors"
+repository-code: "https://github.com/dislovelhl/ACGS"
+url: "https://acgs.ai/"
+license: Apache-2.0
+version: "1.0.0rc1"
+keywords:
+  - ai-governance
+  - runtime-governance
+  - decision-receipt
+  - fail-closed
+  - tamper-evident-audit
+  - agent-safety
