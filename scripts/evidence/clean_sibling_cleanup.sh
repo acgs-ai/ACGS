@@ -269,7 +269,7 @@ clean_sibling_cleanup() {
   fi
   if [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
     case "$TMP_ROOT" in
-      "$TMP_PARENT"/acgs-p0-evidence.*)
+      "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -331,9 +331,20 @@ clean_sibling_cleanup() {
     launcher_attested=1
   fi
   if [[ "$status" -eq 0 && "$cleanup_status" -eq 0 && "$PROOF_COMPLETE" -eq 1 ]] &&
-    [[ "$TRANSCRIPT_RECORDS" == 10 && "$launcher_attested" == 1 ]]; then
-    printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=10 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
-      "$P" "$T" "$R"
+    [[ "$launcher_attested" == 1 ]]; then
+    case "${NODE_ID:-P0-EVIDENCE-000}:${TRANSCRIPT_RECORDS:-}:${ASSIGNED_BOOTSTRAPS:-}" in
+      P0-EVIDENCE-000:10:EVID+CP+GZ)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=10 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P1-MIGRATION-001:6:EVID+CP)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      *)
+        cleanup_status=2
+        ;;
+    esac
   elif [[ "$status" -eq 0 ]]; then
     status=2
   fi
