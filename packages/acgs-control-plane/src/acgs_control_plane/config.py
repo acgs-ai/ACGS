@@ -14,6 +14,9 @@ from enum import StrEnum
 from pathlib import Path
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://acgs:acgs@localhost:5432/acgs_control_plane"
+DEFAULT_MAX_REQUEST_BODY_BYTES = 1024 * 1024
+MIN_MAX_REQUEST_BODY_BYTES = 1
+MAX_MAX_REQUEST_BODY_BYTES = 16 * 1024 * 1024
 
 
 class RuntimePosture(StrEnum):
@@ -44,6 +47,29 @@ class RuntimePostureConfigurationError(RuntimeError):
         )
 
 
+class RequestBodyLimitConfigurationError(RuntimeError):
+    """Stable refusal for an unsafe request-body limit environment value."""
+
+    code = "REQUEST_BODY_LIMIT_CONFIGURATION_INVALID"
+    stage = "pre-persistence"
+
+    def __init__(self) -> None:
+        super().__init__(
+            json.dumps(
+                {
+                    "code": self.code,
+                    "stage": self.stage,
+                    "setting": "ACP_MAX_REQUEST_BODY_BYTES",
+                    "bounds": {
+                        "min": MIN_MAX_REQUEST_BODY_BYTES,
+                        "max": MAX_MAX_REQUEST_BODY_BYTES,
+                    },
+                },
+                sort_keys=True,
+            )
+        )
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable process configuration.
@@ -58,6 +84,14 @@ class Settings:
     bootstrap_token: str | None = None
     create_tables: bool = False
     runtime_posture: RuntimePosture | None = None
+    max_request_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "max_request_body_bytes",
+            validate_max_request_body_bytes(self.max_request_body_bytes),
+        )
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -79,4 +113,26 @@ class Settings:
             bootstrap_token=os.environ.get("ACP_BOOTSTRAP_TOKEN") or None,
             create_tables=os.environ.get("ACP_CREATE_TABLES", "0") == "1",
             runtime_posture=posture,
+            max_request_body_bytes=parse_max_request_body_bytes(
+                os.environ.get("ACP_MAX_REQUEST_BODY_BYTES")
+            ),
         )
+
+
+def parse_max_request_body_bytes(raw: str | None) -> int:
+    if raw is None or raw == "":
+        return DEFAULT_MAX_REQUEST_BODY_BYTES
+    if not raw.isdecimal():
+        raise RequestBodyLimitConfigurationError()
+    if len(raw) > len(str(MAX_MAX_REQUEST_BODY_BYTES)):
+        raise RequestBodyLimitConfigurationError()
+    value = int(raw)
+    return validate_max_request_body_bytes(value)
+
+
+def validate_max_request_body_bytes(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RequestBodyLimitConfigurationError()
+    if not (MIN_MAX_REQUEST_BODY_BYTES <= value <= MAX_MAX_REQUEST_BODY_BYTES):
+        raise RequestBodyLimitConfigurationError()
+    return value

@@ -67,6 +67,7 @@ export ACP_DATABASE_URL="postgresql+psycopg://acgs:acgs@localhost:5432/acgs_cont
 export ACP_AUDIT_DIR="/var/lib/acgs/audit"
 export ACP_BOOTSTRAP_TOKEN="<one-time provisioning secret>"   # unset ⇒ org creation disabled (fail closed)
 export ACP_CREATE_TABLES=1
+export ACP_MAX_REQUEST_BODY_BYTES=1048576                     # optional; default 1 MiB, max 16 MiB
 uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:create_app
 ```
 
@@ -86,6 +87,32 @@ curl -s -X POST localhost:8000/orgs \
 ```
 
 All other endpoints authenticate with `X-API-Key` (SHA-256 stored, never the raw key).
+
+## Request admission and error contract
+
+G102 request admission is partially implemented for the existing v0 route set only; it does not add
+`/v1` aliases, cursor pagination, idempotency, async jobs, or new database schema.
+
+- The server ignores inbound `X-Request-ID`, generates a bounded `req_<32 lowercase hex>` request
+  ID for every HTTP request, and returns it in the `X-Request-ID` response header. Redacted error
+  envelopes include the same `request_id`.
+- `ACP_MAX_REQUEST_BODY_BYTES` caps request bodies before FastAPI body parsing or route invocation.
+  The default is `1048576` bytes. Valid values are decimal integers from `1` through `16777216`;
+  invalid environment values fail loudly with a stable configuration error that does not echo the
+  raw environment value.
+- Declared `Content-Length` values above the configured limit are rejected without reading the body.
+  Missing `Content-Length` is handled by bounded pre-read of the incoming stream: the middleware
+  buffers only up to the configured limit, rejects overflow before route execution, then replays the
+  admitted request downstream. Malformed or multiple `Content-Length` headers are rejected without
+  echoing the header value.
+- Request admission failures return stable JSON such as
+  `{"code":"request_body_too_large","status":"error","request_id":"req_..."}` with HTTP 413.
+  Malformed JSON returns a redacted 400 envelope. Validation and ordinary HTTP exceptions use
+  stable redacted 4xx/5xx envelopes; rejected input, exception strings, credentials, and policy
+  bundle contents are not echoed by those handlers.
+- Governance DENY and ESCALATE responses preserve their existing receipt fields and add the
+  server-generated `request_id`. `AuditReadError` preserves its existing body shape; the response
+  header still carries the server-generated request ID.
 
 ## Verify
 

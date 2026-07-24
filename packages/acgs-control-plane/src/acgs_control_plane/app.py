@@ -20,12 +20,19 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from gove_zone.policy import RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from acgs_control_plane.api_contract import (
+    RequestAdmissionMiddleware,
+    has_json_decode_error,
+    redacted_error,
+    request_id_from_scope,
+)
 from acgs_control_plane.auth import (
     API_KEY_HEADER,
     BOOTSTRAP_HEADER,
@@ -153,6 +160,7 @@ def _membrane(request: Request, session: Session, org: Organization, principal: 
 def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse:
     receipt = exc.receipt  # type: ignore[attr-defined]
     reason = exc.reason  # type: ignore[attr-defined]
+    request = exc.__dict__.get("request")
     return JSONResponse(
         status_code=status_code,
         content={
@@ -160,6 +168,11 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
             "reason": reason,
             "receipt_id": receipt.id,
             "decision": receipt.decision,
+            **(
+                {"request_id": request_id_from_scope(request.scope)}
+                if isinstance(request, Request)
+                else {}
+            ),
         },
     )
 
@@ -180,20 +193,59 @@ def create_app(
         "No valid Decision Receipt, no side effect.",
     )
     app.state.settings = settings
+    app.add_middleware(
+        RequestAdmissionMiddleware,
+        max_request_body_bytes=settings.max_request_body_bytes,
+    )
 
     @app.exception_handler(PolicyDeniedError)
-    def _denied(_request: Request, exc: PolicyDeniedError) -> JSONResponse:
+    def _denied(request: Request, exc: PolicyDeniedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(403, "denied", exc)
 
     @app.exception_handler(PolicyEscalatedError)
-    def _escalated(_request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+    def _escalated(request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(202, "pending_approval", exc)
 
     @app.exception_handler(AuditReadError)
-    def _audit_read_refused(_request: Request, exc: AuditReadError) -> JSONResponse:
+    def _audit_read_refused(request: Request, exc: AuditReadError) -> JSONResponse:
+        request_id_from_scope(request.scope)
         return JSONResponse(
             status_code=503,
             content={"code": exc.code, "status": "audit-read-refused", "reason": exc.reason},
+        )
+
+    @app.exception_handler(HTTPException)
+    def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        status_code = int(exc.status_code)
+        code = "http_error"
+        if status_code == 401:
+            code = "unauthorized"
+        elif status_code == 403:
+            code = "forbidden"
+        elif status_code == 404:
+            code = "not_found"
+        elif status_code == 409:
+            code = "conflict"
+        elif status_code == 422:
+            code = "validation_error"
+        elif status_code >= 500:
+            code = "service_unavailable"
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
+            headers=dict(exc.headers or {}),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def _request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = exc.errors()
+        code = "malformed_json" if has_json_decode_error(errors) else "validation_error"
+        status_code = 400 if code == "malformed_json" else 422
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
         )
 
     _register_routes(app)
