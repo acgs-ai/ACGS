@@ -74,6 +74,34 @@ Evidence: `tests/test_argument_binding.py`, `tests/test_executor_guard.py`,
 
 Evidence: `tests/test_policy_bundle_io.py`, `tests/test_tenant_safety.py`.
 
+## Managed control-plane native receipts
+
+The SaaS control-plane worktree has one current canonical native route:
+agent creation through `POST /orgs/{org_id}/agents` and its additive `/v1`
+alias. That route mints a signed native `DecisionReceipt` for `ALLOW`, `DENY`,
+and `ESCALATE` decisions with:
+
+- explicit, distinct receipt issuer and consumption-attestation providers;
+- an environment-bound full policy hash;
+- project/environment scope carried through the governed event path;
+- `DENY` and `ESCALATE` recorded as non-executable native evidence with no
+  receipt consumption; and
+- `ALLOW` execution, DB mutation, native receipt row, governance event/head,
+  outbox row, and signed consumption attestation inside one rollbackable SQL
+  transaction.
+
+This is route-level evidence, not a full control-plane cutover. Twelve legacy
+unsigned write aliases remain and still block production posture. Native scope
+is hash-bound through the event path, not represented as direct
+project/environment columns on the receipt schema. SQL rollback does not prove
+external exactly-once delivery, and export/offline verification requires trusted
+public keys supplied out of band.
+
+Evidence:
+`packages/acgs-control-plane/tests/test_native_agent_transaction_route.py`,
+`packages/acgs-control-plane/tests/test_exports.py`, and PR #370 commit
+`feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f`.
+
 ## Expiry
 
 `expires_at` is optional for legacy receipts unless a strict profile requires

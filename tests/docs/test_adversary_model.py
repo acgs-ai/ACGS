@@ -29,7 +29,7 @@ SECURITY_MODEL = ROOT / "docs" / "SECURITY_MODEL.md"
 # review found the original eight missing the complete-mediation keystone.
 EXPECTED_ADVERSARIES = {f"ADV{i}" for i in range(1, 15)}
 
-# The per-mechanism threat table enumerates exactly these 22 named threats. The
+# The per-mechanism threat table enumerates exactly these 25 named threats. The
 # reconciliation must map every one of them to >=1 adversary. "Exactly" is
 # enforced in both directions: a dropped row and an *added* row both fail. The
 # one-directional (subset) form let four composition rows land in the threat
@@ -49,6 +49,7 @@ EXPECTED_THREATS = {
     "Consumption-ledger tampering",
     "Unsigned dev mode misuse",
     "Policy-bundle substitution",
+    "Native control-plane transaction drift",
     "MCP/tool-gateway misuse",
     "Executor bypass",
     "Policy evaluation failure",

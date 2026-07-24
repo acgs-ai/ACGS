@@ -2,20 +2,27 @@
 
 **Status:** Phase-0 target beta contract (G008).
 
-**Not an implementation claim:** This is a versioned contract for future
-management, policy, approval, fleet, and evidence APIs. It does not claim that
-the current control plane exposes /v1, browser sessions, a BFF, generated
-clients, project/environment scope, idempotency, ingestion, exports, or the
-resources described here.
+**Not an implementation claim:** This is a versioned contract for the complete
+future management, policy, approval, fleet, and evidence APIs. Current-local
+evidence exists for narrow slices such as additive legacy `/v1` aliases,
+project/environment attachment for agents and policy bundles, receipt explorer
+pagination, and one native agent-create transaction path. It does not claim that
+the current control plane exposes the complete `/v1` API, browser sessions, a
+BFF, generated clients, durable idempotency, external receipt ingestion, async
+export jobs, signed policy sync, or every resource described here.
 
 ## Current-state boundary
 
 The [G006 survey](CURRENT_STATE_SURVEY.md) records the current organization-
 scoped service surface and API-key model as distinct from this target. It also
-records absent surveyed /v1, idempotency, transactional outbox, project/
-environment scope, external receipt ingestion, signed policy sync, and browser-
-to-upstream boundary. Current routes and fixtures must not be relabeled as this
-contract without the corresponding implementation and integration evidence.
+records the baseline before later local slices added additive `/v1` aliases,
+project/environment attachment, and the first native agent-create transaction
+path. The remaining absent or incomplete areas include complete all-collections
+pagination, durable idempotency, async export jobs, external receipt ingestion,
+signed policy sync, browser-to-upstream boundary, production provider wiring,
+and full native-route cutover. Current routes and fixtures must not be relabeled
+as this contract without the corresponding implementation and integration
+evidence.
 
 This contract implements the product-level target in
 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md), preserves provenance in
@@ -133,6 +140,15 @@ outbox entry in one database transaction. The worker owns external delivery,
 object sealing, witness submission, and webhook retry state. If an external
 step fails, the API and evidence state remain explicitly pending/failed/retry;
 they never imply accepted, independently anchored evidence.
+
+Current-local evidence partially implements this contract for agent creation
+only. `POST /orgs/{org_id}/agents` and its `/v1` alias use a signed native
+DecisionReceipt, environment-bound policy hash, DB-backed event/head/outbox
+records, and signed consumption evidence inside one rollbackable SQL
+transaction. `DENY` and `ESCALATE` produce native evidence but do not execute or
+consume the receipt. This does not complete durable idempotency, external
+exactly-once delivery, all governed mutations, async export jobs, or production
+provider wiring. Twelve legacy unsigned route aliases remain.
 
 ## Target endpoint families
 

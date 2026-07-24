@@ -62,6 +62,26 @@
           "merged": false,
           "disposition": "superseded_closed_unmerged",
           "url": "https://github.com/dislovelhl/ACGS/pull/267"
+        },
+        {
+          "number": 369,
+          "state": "OPEN",
+          "merged": false,
+          "draft": true,
+          "disposition": "current_local_g102e4_scope_attachment_stack_unmerged",
+          "head": "beta/p0-g102e4-scope-attachment",
+          "base": "master",
+          "url": "https://github.com/dislovelhl/ACGS/pull/369"
+        },
+        {
+          "number": 370,
+          "state": "OPEN",
+          "merged": false,
+          "draft": true,
+          "disposition": "current_local_g102e5_native_transaction_spine_stack_unmerged",
+          "head": "beta/p0-g102e5-native-transaction-spine",
+          "base": "beta/p0-g102e4-scope-attachment",
+          "url": "https://github.com/dislovelhl/ACGS/pull/370"
         }
       ]
     },
@@ -218,9 +238,9 @@
       "title": "GitHub Actions account billing lock",
       "owner": "repository owner or GitHub organization billing administrator",
       "state": "open",
-      "exact_need": "Unlock the GitHub account or billing state so hosted PostgreSQL migration and codex-review jobs can start.",
+      "exact_need": "Unlock the GitHub account or billing state so hosted PostgreSQL migration, codex-review, and required PR checks can start.",
       "why_not_assumed": "The hosted jobs did not start because GitHub reported the account is locked due to a billing issue; engineering agents cannot resolve account billing state.",
-      "validation_after_unblock": "Re-run the affected PR checks and record the hosted PostgreSQL migration and codex-review job results.",
+      "validation_after_unblock": "Re-run the affected PR checks and record the hosted PostgreSQL migration, codex-review, and branch protection job results.",
       "downstream_nodes": [
         "G004",
         "G101",
@@ -641,14 +661,17 @@
         "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
         "packages/acgs-control-plane/tests/test_postgresql_migration_recovery_bytea.py",
         "packages/acgs-control-plane/tests/test_postgresql_rolling_upgrade.py",
-        ".github/workflows/python-acgs-control-plane.yml"
+        ".github/workflows/python-acgs-control-plane.yml",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_scope_attachment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/scope_defaults.py",
+        "packages/acgs-control-plane/tests/test_scope_attachment.py"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Current-local verification retains the SQLite migration-core suite; adds disposable PostgreSQL 17.10-bookworm coverage for advisory-lock contention, raw Alembic command denial, rollback/retry, startup exact-schema classification, CLI forward-only acknowledgement, rolling-upgrade compatibility, and migration recovery tool provenance; and records full control-plane package evidence at 214 passed and 32 skipped."
+        "Current-local verification retains the SQLite migration-core suite; adds disposable PostgreSQL 17.10-bookworm coverage for advisory-lock contention, raw Alembic command denial, rollback/retry, startup exact-schema classification, CLI forward-only acknowledgement, rolling-upgrade compatibility, and migration recovery tool provenance; records full control-plane package evidence at 214 passed and 32 skipped; and later PR #369 scope-attachment slice evidence at commit e4898d7fe250c519f623647cbf7951f7c1f076d4 records project/environment attachment for agents and policy bundles with full control-plane package evidence at 391 passed and 35 skipped."
       ],
       "forbidden_side_effect_negative_tests": [
-        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks, raw Alembic stamp/upgrade commands, unsafe recovery tool paths, exact-schema startup drift, failed upgrades, and missing forward-only acknowledgement are rejected before schema/version mutation or recovery tool spawn."
+        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks, raw Alembic stamp/upgrade commands, unsafe recovery tool paths, exact-schema startup drift, failed upgrades, and missing forward-only acknowledgement are rejected before schema/version mutation or recovery tool spawn; scope-attachment tests reject missing and cross-tenant environment bindings before accepting agent or policy-bundle rows."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
@@ -659,9 +682,10 @@
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv lock --check",
-        "git diff --check"
+        "git diff --check",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_scope_attachment.py -q"
       ],
-      "evidence_artifact": "Current-local G101 stack: draft PR #354 plus draft PR #355; full control-plane package 214 passed/32 skipped; real disposable PostgreSQL migration recovery 8 passed; focused migration, CLI, startup, and rolling-upgrade tests exist and are wired in .github/workflows/python-acgs-control-plane.yml. Recovery tests use ACP_TEST_RECOVERY_SOURCE_URL, ACP_TEST_RECOVERY_TARGET_URL, and explicit absolute pg_dump/pg_restore wrapper paths. Hosted PostgreSQL/codex-review jobs did not start because of EXT-GITHUB-BILLING. This is local migration/recovery evidence, not G603 production DR/PITR/object/witness recovery.",
+      "evidence_artifact": "Current-local G101 stack: draft PR #354 plus draft PR #355; full control-plane package 214 passed/32 skipped; real disposable PostgreSQL migration recovery 8 passed; focused migration, CLI, startup, and rolling-upgrade tests exist and are wired in .github/workflows/python-acgs-control-plane.yml. Recovery tests use ACP_TEST_RECOVERY_SOURCE_URL, ACP_TEST_RECOVERY_TARGET_URL, and explicit absolute pg_dump/pg_restore wrapper paths. Hosted PostgreSQL/codex-review jobs did not start because of EXT-GITHUB-BILLING. This is local migration/recovery evidence, not G603 production DR/PITR/object/witness recovery. PR #369 scope-attachment slice current-local evidence: branch beta/p0-g102e4-scope-attachment, worktree saas-beta/p1-g101-tool-provenance, commit e4898d7fe250c519f623647cbf7951f7c1f076d4, full control-plane 391 passed/35 skipped, with project/environment attachment for agents and policy bundles. This is local scope-attachment evidence, not complete G103 tenant isolation, RLS/search_path hardening, or production deployment.",
       "branch": "beta/p1-g101-tool-provenance",
       "worktree": "saas-beta/p1-g101-tool-provenance",
       "pr": 355,
@@ -708,14 +732,26 @@
         "packages/acgs-control-plane/tests/test_startup_preflight.py",
         "packages/acgs-control-plane/tests/test_v1_api_contract.py",
         "requirements/saas-beta/cp-test.in",
-        "requirements/saas-beta/cp-test.lock"
+        "requirements/saas-beta/cp-test.lock",
+        "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/exports.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/native_receipts.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/scope_defaults.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_scope_attachment.py",
+        "packages/acgs-control-plane/tests/test_exports.py",
+        "packages/acgs-control-plane/tests/test_native_agent_transaction_route.py",
+        "packages/acgs-control-plane/tests/test_native_evidence_verifier.py",
+        "packages/acgs-control-plane/tests/test_native_receipt_ledger.py",
+        "packages/acgs-control-plane/tests/test_receipts_dashboard.py",
+        "packages/acgs-control-plane/tests/test_scope_attachment.py"
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency, and async export jobs."
+        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency beyond this native agent-create transaction, and async export jobs."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Duplicate, oversized, malformed, or unversioned requests cannot create duplicate mutations or silently bypass the versioned API contract."
+        "Duplicate, oversized, malformed, or unversioned requests cannot create duplicate mutations or silently bypass the versioned API contract; for the native agent-create route, missing providers, same issuer/attestor trust material, DENY, ESCALATE, tampered native receipt/event/consumption evidence, wrong-environment policy, and legacy production posture execute or commit zero forbidden business side effects."
       ],
       "validation_commands": [
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
@@ -727,17 +763,20 @@
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 --exclude-newer 2026-07-10T00:00:00Z --generate-hashes requirements/saas-beta/cp-test.in --output-file requirements/saas-beta/cp-test.lock",
-        "git diff --check"
+        "git diff --check",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_scope_attachment.py -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_native_agent_transaction_route.py tests/test_native_receipt_ledger.py tests/test_exports.py tests/test_receipts_dashboard.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py -q",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane tests/test_native_agent_transaction_route.py tests/test_exports.py tests/test_scope_attachment.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py"
       ],
-      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A local PR #357 evidence exists, G102B local PR #359 evidence covers receipt-only opaque cursor pagination, G102C local PR #361 evidence covers a current-v0 OpenAPI drift sentinel, and G102D local PR #363 evidence covers additive legacy-v0 /v1 aliases plus typed /v1 root, but complete all-collections cursor pagination, durable idempotency persistence, and async export jobs are still missing from the accepted aggregate contract.",
-      "branch": "beta/p1-g102-request-admission",
+      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A local PR #357 evidence exists, G102B local PR #359 evidence covers receipt-only opaque cursor pagination, G102C local PR #361 evidence covers a current-v0 OpenAPI drift sentinel, G102D local PR #363 evidence covers additive legacy-v0 /v1 aliases plus typed /v1 root, the PR #369 scope-attachment slice at commit e4898d7fe250c519f623647cbf7951f7c1f076d4 covers project/environment attachment with full control-plane 391 passed/35 skipped, and the PR #370 native transaction slice at commit feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f covers the first canonical native agent-create route with full control-plane 403 passed/35 skipped, Ruff pass, CI mypy src plus changed tests pass, and independent code/security/verifier PASS. The native route uses explicit distinct trust providers; environment-bound full policy hash; signed native DecisionReceipt for ALLOW/DENY/ESCALATE; DENY/ESCALATE non-executable/no consumption; ALLOW strict execute_with_receipt plus DB consumption in one rollbackable SQL transaction; DB event/outbox/head evidence; typed API list/detail/verify/dashboard/export preserving native versus legacy assurance; and cryptographic verification/export with receipt, event, head, and consumption evidence. Hosted GitHub checks did not start because the account was locked due to a billing issue, and live opt-in PostgreSQL cases were skipped. The accepted aggregate contract still lacks complete all-collections cursor pagination, durable idempotency outside this native agent-create transaction, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, and full native cutover from the 12 legacy unsigned route aliases.",
+      "branch": "beta/p0-g102e5-native-transaction-spine",
       "worktree": "saas-beta/p1-g101-tool-provenance",
-      "pr": 357,
+      "pr": 370,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
-      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency persistence, and async export jobs remain missing; hosted PostgreSQL migration and codex-review checks for G102A/G102B/G102C/G102D did not start due to EXT-GITHUB-BILLING.",
-      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #357, PR #359, PR #361, and PR #363 hosted PostgreSQL migration and codex-review checks, then complete the remaining all-collections cursor pagination, durable idempotency, and async export jobs before unlocking G103 as complete.",
+      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency beyond the first native agent-create transaction, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from 12 legacy unsigned route aliases remain missing; hosted GitHub checks for the current G102 stack did not start due to EXT-GITHUB-BILLING, and live opt-in PostgreSQL cases were skipped.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #369 and PR #370 hosted checks plus the earlier G102 stack, then complete all-collections cursor pagination, durable idempotency beyond agent-create, async export jobs, provider environment wiring, policy signing/distribution, and native cutover before unlocking G103 as complete.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

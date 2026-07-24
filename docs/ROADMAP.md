@@ -17,6 +17,14 @@ The Phase-0 target product contract is specified in
 [`saas/ENTITLEMENT_AND_METERING_MATRIX.md`](saas/ENTITLEMENT_AND_METERING_MATRIX.md).
 They are future acceptance contracts, not evidence that the managed service,
 entitlements, pricing, or billing implementation exists.
+As of the local PR #369 scope-attachment slice and PR #370 native transaction
+slice, the managed control plane has additional current-local evidence for
+project/environment attachment on agents and policy bundles plus one signed
+native agent-create transaction route. That evidence is recorded in the SaaS
+DAG/matrix and does not promote the full managed service: legacy unsigned route
+aliases, provider wiring, durable idempotency, async export jobs, tenant
+isolation, external exactly-once delivery, hosted CI check-starts, and
+production launch remain open.
 The companion Phase-0 architecture packet is
 [`saas/ARCHITECTURE.md`](saas/ARCHITECTURE.md),
 [`saas/THREAT_MODEL.md`](saas/THREAT_MODEL.md),
