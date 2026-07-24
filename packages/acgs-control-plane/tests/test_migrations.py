@@ -9,6 +9,7 @@ import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -108,8 +109,8 @@ def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
 ) -> None:
     database_url = _database_url(tmp_path)
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
 
     engine = make_engine(database_url)
     try:
@@ -447,7 +448,7 @@ def _interrupt_0002_after_table(
     database_url: str, monkeypatch: pytest.MonkeyPatch, table_name: str
 ) -> None:
     """Crash revision 0002 immediately after one exact scope table exists."""
-    original_create_table = alembic_op.create_table
+    original_create_table = cast(Any, alembic_op.create_table)
 
     def _create_table_then_fail(created_table_name: str, *args: object, **kwargs: object) -> object:
         result = original_create_table(created_table_name, *args, **kwargs)
@@ -502,8 +503,8 @@ def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> Non
             return _Result()
 
     malicious = _RecordingConnection()
-    detail = migration_module._scope_tables_empty(  # type: ignore[arg-type]
-        malicious,
+    detail = migration_module._scope_tables_empty(
+        cast(Any, malicious),
         ("projects", "projects; DROP TABLE receipts; --"),
     )
 
@@ -514,7 +515,7 @@ def test_scope_table_probe_rejects_unexpected_identifier_before_execute() -> Non
     assert malicious.statements == []
 
     valid = _RecordingConnection()
-    assert migration_module._scope_tables_empty(valid, ("projects",)) is None  # type: ignore[arg-type]
+    assert migration_module._scope_tables_empty(cast(Any, valid), ("projects",)) is None
     assert len(valid.statements) == 1
     assert isinstance(valid.statements[0], sa.sql.Select)
 
@@ -591,6 +592,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0007_governance_events.py",
             "acgs_control_plane/migrations/versions/0008_native_receipt_ledger.py",
             "acgs_control_plane/migrations/versions/0009_native_receipt_artifacts.py",
+            "acgs_control_plane/migrations/versions/0010_scope_attachment.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -616,8 +618,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0009
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+assert result.after.state is DatabaseSchemaState.VERSION_0010
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -677,7 +679,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     assert _table_names(database_url) == EXPECTED_HEAD_TABLES
 
     engine = make_engine(database_url)
@@ -879,7 +881,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -897,8 +899,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -932,7 +934,7 @@ def test_exact_revision_0007_upgrades_additively_to_0008(tmp_path: Path) -> None
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0007
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     engine = make_engine(database_url)
     try:
         with engine.connect() as connection:
@@ -975,7 +977,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -1120,7 +1122,7 @@ def test_legacy_create_all_rejection_preserves_a_caller_owned_connection_transac
     assert _table_names(database_url) == {"projects"}
 
 
-def test_app_create_tables_bootstraps_only_an_empty_database_as_legacy_v0(tmp_path: Path) -> None:
+def test_app_create_tables_bootstraps_only_an_empty_database_to_head(tmp_path: Path) -> None:
     database_url = _database_url(tmp_path)
 
     app = create_app(
@@ -1132,39 +1134,33 @@ def test_app_create_tables_bootstraps_only_an_empty_database_as_legacy_v0(tmp_pa
         )
     )
     try:
-        assert inspect_schema(database_url).state is DatabaseSchemaState.LEGACY_V0
-        assert _table_names(database_url) == {
-            "agents",
-            "compliance_exports",
-            "organizations",
-            "policy_bundles",
-            "receipts",
-            "users",
-        }
+        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+        assert _table_names(database_url) == EXPECTED_HEAD_TABLES
     finally:
         app.state.engine.dispose()
 
 
-def test_legacy_create_tables_cannot_create_unversioned_scope_tables(tmp_path: Path) -> None:
-    """The legacy app factory must not bypass the Alembic adoption guard."""
+def test_app_create_tables_rejects_exact_legacy_v0_without_mutation(tmp_path: Path) -> None:
+    """The local app factory must not upgrade non-empty historical schemas."""
     database_url = _database_url(tmp_path)
     _seed_exact_legacy_v0_schema(database_url)
+    table_names_before = _table_names(database_url)
 
-    app = create_app(
-        Settings(
-            database_url=database_url,
-            audit_dir=tmp_path / "audit",
-            create_tables=True,
-            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+    with pytest.raises(
+        MigrationPreflightError, match="can initialize only an empty local database"
+    ):
+        create_app(
+            Settings(
+                database_url=database_url,
+                audit_dir=tmp_path / "audit",
+                create_tables=True,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+            )
         )
-    )
-    try:
-        assert inspect_schema(database_url).state is DatabaseSchemaState.LEGACY_V0
-        assert "alembic_version" not in _table_names(database_url)
-        assert "projects" not in _table_names(database_url)
-        assert "environments" not in _table_names(database_url)
-    finally:
-        app.state.engine.dispose()
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.LEGACY_V0
+    assert _table_names(database_url) == table_names_before
+    assert "alembic_version" not in _table_names(database_url)
 
 
 def test_app_create_tables_rejects_a_projects_only_database_before_mutation(tmp_path: Path) -> None:
@@ -1176,7 +1172,7 @@ def test_app_create_tables_rejects_a_projects_only_database_before_mutation(tmp_
     finally:
         engine.dispose()
 
-    with pytest.raises(RuntimeError, match="Refusing legacy create_all"):
+    with pytest.raises(MigrationPreflightError, match="Found unknown; run the migration CLI"):
         create_app(
             Settings(
                 database_url=database_url,
@@ -1190,7 +1186,7 @@ def test_app_create_tables_rejects_a_projects_only_database_before_mutation(tmp_
     assert _table_names(database_url) == {"projects"}
 
 
-def test_legacy_create_tables_does_not_mutate_an_unversioned_mixed_scope_schema(
+def test_app_create_tables_does_not_mutate_an_unversioned_mixed_scope_schema(
     tmp_path: Path,
 ) -> None:
     """Startup fails before it can heal or extend a mixed scope state."""
@@ -1204,7 +1200,7 @@ def test_legacy_create_tables_does_not_mutate_an_unversioned_mixed_scope_schema(
         engine.dispose()
     table_names_before = _table_names(database_url)
 
-    with pytest.raises(RuntimeError, match="Refusing legacy create_all"):
+    with pytest.raises(MigrationPreflightError, match="Found unknown; run the migration CLI"):
         create_app(
             Settings(
                 database_url=database_url,
@@ -1220,28 +1216,28 @@ def test_legacy_create_tables_does_not_mutate_an_unversioned_mixed_scope_schema(
     assert "environments" not in _table_names(database_url)
 
 
-def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_integration(
+def test_app_create_tables_accepts_current_versioned_schema_idempotently(
     tmp_path: Path,
 ) -> None:
     database_url = _database_url(tmp_path)
     upgrade_database(database_url)
     table_names_before = _table_names(database_url)
 
-    with pytest.raises(RuntimeError, match="Refusing legacy create_all"):
-        create_app(
-            Settings(
-                database_url=database_url,
-                audit_dir=tmp_path / "audit",
-                create_tables=True,
-                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
-            )
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=tmp_path / "audit",
+            create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         )
+    )
+    app.state.engine.dispose()
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert _table_names(database_url) == table_names_before
 
 
-def test_app_create_tables_rejects_a_partial_scope_schema_before_mutation(
+def test_app_create_tables_rejects_an_exact_partial_scope_schema_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     database_url = _database_url(tmp_path)
@@ -1249,7 +1245,9 @@ def test_app_create_tables_rejects_a_partial_scope_schema_before_mutation(
     _interrupt_0002_after_table(database_url, monkeypatch, "projects")
     table_names_before = _table_names(database_url)
 
-    with pytest.raises(RuntimeError, match="Refusing legacy create_all"):
+    with pytest.raises(
+        MigrationPreflightError, match="can initialize only an empty local database"
+    ):
         create_app(
             Settings(
                 database_url=database_url,
@@ -1437,7 +1435,7 @@ def test_postgresql_non_table_objects_and_probe_failures_are_fail_closed() -> No
             raise sa.exc.SQLAlchemyError("catalog unavailable")
 
     probe = _PostgreSQLProbe([("policy", "public.receipts.tenant_isolation")])
-    detail = migration_module._non_table_object_detail(probe)  # type: ignore[arg-type]
+    detail = migration_module._non_table_object_detail(cast(Any, probe))
 
     assert detail == "unexpected non-table schema objects: policy:public.receipts.tenant_isolation"
     assert "pg_catalog.pg_views" in probe.statement
@@ -1446,9 +1444,7 @@ def test_postgresql_non_table_objects_and_probe_failures_are_fail_closed() -> No
     assert "relrowsecurity" in probe.statement
     assert "pg_catalog.pg_policies" in probe.statement
     assert (
-        migration_module._non_table_object_detail(  # type: ignore[arg-type]
-            _FailingPostgreSQLProbe()
-        )
+        migration_module._non_table_object_detail(cast(Any, _FailingPostgreSQLProbe()))
         == "unable to inspect non-table schema objects: SQLAlchemyError"
     )
 
@@ -1457,8 +1453,16 @@ def test_postgresql_preflight_does_not_accept_naive_timestamps_or_plain_json() -
     datetime_column = _ColumnSpec("created_at", "datetime", False)
     json_column = _ColumnSpec("payload", "json", False)
 
-    assert _matches_type(postgresql.TIMESTAMP(timezone=True), datetime_column, "postgresql")
-    assert not _matches_type(postgresql.TIMESTAMP(timezone=False), datetime_column, "postgresql")
+    assert _matches_type(
+        cast(sa.types.TypeEngine[object], postgresql.TIMESTAMP(timezone=True)),
+        datetime_column,
+        "postgresql",
+    )
+    assert not _matches_type(
+        cast(sa.types.TypeEngine[object], postgresql.TIMESTAMP(timezone=False)),
+        datetime_column,
+        "postgresql",
+    )
     assert _matches_type(postgresql.JSONB(), json_column, "postgresql")
     assert not _matches_type(postgresql.JSON(), json_column, "postgresql")
 
@@ -1566,9 +1570,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0009
-    assert second.before.state is DatabaseSchemaState.VERSION_0009
-    assert second.after.state is DatabaseSchemaState.VERSION_0009
+    assert first.after.state is DatabaseSchemaState.VERSION_0010
+    assert second.before.state is DatabaseSchemaState.VERSION_0010
+    assert second.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -1652,7 +1656,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -1676,7 +1680,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -1698,7 +1702,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

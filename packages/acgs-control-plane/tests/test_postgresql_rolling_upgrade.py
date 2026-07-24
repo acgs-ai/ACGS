@@ -892,6 +892,16 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                         "ADD CONSTRAINT uq_agents_org_name UNIQUE (org_id, name)"
                     )
                 )
+                # Revision 0010 puts the same scope columns on policy_bundles.
+                # Dropping them takes the scope foreign key and check
+                # constraint with them, so environments can be dropped below
+                # without CASCADE, preserving the same invariant as above.
+                connection.execute(
+                    sa.text(
+                        "ALTER TABLE policy_bundles "
+                        "DROP COLUMN project_id, DROP COLUMN environment_id"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -1002,7 +1012,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0009",
+            "after": "version_0010",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1066,7 +1076,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0009.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0010.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1145,5 +1155,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

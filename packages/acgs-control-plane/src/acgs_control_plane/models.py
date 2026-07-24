@@ -455,6 +455,18 @@ class AgentRecord(Base):
 class PolicyBundle(Base):
     __tablename__ = "policy_bundles"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_policy_bundles_scope_environment",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "(project_id IS NULL AND environment_id IS NULL) OR "
+            "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
+            name="ck_policy_bundles_scope_both_null_or_set",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
         Index(
             "uq_policy_bundles_one_active_per_org",
             "org_id",
@@ -467,6 +479,12 @@ class PolicyBundle(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True}
+    )
+    environment_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True}
+    )
     policy_id: Mapped[str] = mapped_column(String(200), nullable=False)
     # Content-addressed version computed by gove_zone.RuleSetPolicy — never
     # hand-assigned, so two bundles with the same rules share a version.

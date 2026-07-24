@@ -162,7 +162,7 @@ def test_schema_managed_startup_rejects_noncurrent_schema_without_mutation_or_se
         calls["session_factory"] += 1
         raise AssertionError("session/worker wiring occurred before schema refusal")
 
-    monkeypatch.setattr(app_module.Base.metadata, "create_all", forbidden_create_all)
+    monkeypatch.setattr(Base.metadata, "create_all", forbidden_create_all)
     monkeypatch.setattr(app_module, "make_session_factory", forbidden_session_factory)
 
     with pytest.raises(StartupSchemaPreflightError) as stopped:
@@ -227,7 +227,7 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
         "POST /v1/orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert not (tmp_path / "audit").exists()
 
 
@@ -248,9 +248,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0009.value,
+            "schema_state": DatabaseSchemaState.VERSION_0010.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0009
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0010
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()
@@ -330,8 +330,8 @@ def test_local_dev_bootstrap_is_explicit_and_never_reports_production_ready(tmp_
             "stage": ProductionPostureBlocked.stage,
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
-            "schema_current": False,
-            "schema_state": DatabaseSchemaState.LEGACY_V0.value,
+            "schema_current": True,
+            "schema_state": DatabaseSchemaState.VERSION_0010.value,
         }
     finally:
         app.state.engine.dispose()

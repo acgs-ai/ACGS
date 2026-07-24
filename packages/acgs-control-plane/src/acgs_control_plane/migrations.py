@@ -43,7 +43,8 @@ AGENT_SCOPE_REVISION: Final = "0006"
 GOVERNANCE_EVENT_REVISION: Final = "0007"
 NATIVE_RECEIPT_LEDGER_REVISION: Final = "0008"
 NATIVE_ARTIFACT_REVISION: Final = "0009"
-HEAD_REVISION: Final = NATIVE_ARTIFACT_REVISION
+SCOPE_ATTACHMENT_REVISION: Final = "0010"
+HEAD_REVISION: Final = SCOPE_ATTACHMENT_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -53,6 +54,10 @@ _SCOPE_TABLES: Final = MappingProxyType(
     }
 )
 _SQLITE_INTERNAL_TABLES: Final = frozenset({"sqlite_sequence"})
+_SCOPE_ATTACHMENT_TEMP_TABLES: Final = frozenset({"_alembic_tmp_policy_bundles"})
+_SCOPE_ATTACHMENT_TEMP_BASE_TABLES: Final = MappingProxyType(
+    {"_alembic_tmp_policy_bundles": "policy_bundles"}
+)
 _LEGACY_ADOPTION_TOKEN: Final = object()
 _SCOPE_RESUME_TOKEN: Final = object()
 # Fixed PostgreSQL two-int advisory-lock identifiers for the entire
@@ -86,6 +91,8 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0007 = "version_0007"
     VERSION_0008 = "version_0008"
     VERSION_0009 = "version_0009"
+    VERSION_0009_PARTIAL_SCOPE_ATTACHMENT = "version_0009_partial_scope_attachment"
+    VERSION_0010 = "version_0010"
     UNKNOWN = "unknown"
 
 
@@ -110,7 +117,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0009.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0010.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -604,6 +611,23 @@ _NATIVE_ARTIFACT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("attestation_signature", "string", True, 256),
     ),
 }
+_SCOPE_ATTACHMENT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_NATIVE_ARTIFACT_COLUMNS,
+    "policy_bundles": (
+        *_NATIVE_ARTIFACT_COLUMNS["policy_bundles"],
+        _ColumnSpec("project_id", "string", True, 64),
+        _ColumnSpec("environment_id", "string", True, 64),
+    ),
+}
+# Revision 0010 adds the two nullable policy_bundles scope columns as separate
+# ALTER statements, so an interruption can leave only project_id behind.
+_SCOPE_ATTACHMENT_PROJECT_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_NATIVE_ARTIFACT_COLUMNS,
+    "policy_bundles": (
+        *_NATIVE_ARTIFACT_COLUMNS["policy_bundles"],
+        _ColumnSpec("project_id", "string", True, 64),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -656,6 +680,9 @@ _NATIVE_RECEIPT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
 }
 _NATIVE_ARTIFACT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
     _NATIVE_RECEIPT_PRIMARY_KEYS
+)
+_SCOPE_ATTACHMENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
+    _NATIVE_ARTIFACT_PRIMARY_KEYS
 )
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -878,6 +905,20 @@ _NATIVE_RECEIPT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
 _NATIVE_ARTIFACT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = dict(
     _NATIVE_RECEIPT_FOREIGN_KEYS
 )
+_SCOPE_ATTACHMENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_NATIVE_ARTIFACT_FOREIGN_KEYS,
+    "policy_bundles": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1101,6 +1142,12 @@ _NATIVE_ARTIFACT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
 _NATIVE_ARTIFACT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = dict(
     _NATIVE_RECEIPT_UNIQUE_INDEXES
 )
+_SCOPE_ATTACHMENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
+    _NATIVE_ARTIFACT_UNIQUES
+)
+_SCOPE_ATTACHMENT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = dict(
+    _NATIVE_ARTIFACT_UNIQUE_INDEXES
+)
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
@@ -1265,6 +1312,9 @@ _NATIVE_RECEIPT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]]
 _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
     _NATIVE_RECEIPT_NON_UNIQUE_INDEXES
 )
+_SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
+    _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES
+)
 _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **_GOVERNANCE_EVENT_CHECKS,
     "native_decision_receipts": frozenset(
@@ -1276,6 +1326,18 @@ _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     "native_receipt_consumptions": frozenset(),
 }
 _NATIVE_ARTIFACT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = dict(_NATIVE_RECEIPT_CHECKS)
+_SCOPE_ATTACHMENT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_NATIVE_ARTIFACT_CHECKS,
+    "policy_bundles": frozenset(
+        {
+            (
+                "ck_policy_bundles_scope_both_null_or_set",
+                "(project_id IS NULL AND environment_id IS NULL) OR "
+                "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
     "projects": _SCOPED_NON_UNIQUE_INDEXES["projects"],
@@ -1534,7 +1596,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0008, "known Alembic revision 0008")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [NATIVE_ARTIFACT_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1548,6 +1610,29 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0009, "known Alembic revision 0009")
+        partial_detail = _partial_scope_attachment_detail(connection, inspector, user_tables)
+        if partial_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT,
+                "known interrupted revision 0010 scope-attachment state; bounded retry allowed",
+            )
+        if user_tables & _SCOPE_ATTACHMENT_TEMP_TABLES:
+            return SchemaPreflight(DatabaseSchemaState.UNKNOWN, partial_detail)
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _SCOPE_ATTACHMENT_COLUMNS,
+            _SCOPE_ATTACHMENT_PRIMARY_KEYS,
+            _SCOPE_ATTACHMENT_FOREIGN_KEYS,
+            _SCOPE_ATTACHMENT_UNIQUES,
+            _SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES,
+            _SCOPE_ATTACHMENT_CHECKS,
+            _SCOPE_ATTACHMENT_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1563,7 +1648,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0009:
+    if preflight.state is not DatabaseSchemaState.VERSION_0010:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1666,7 +1751,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0009:
+    if after.state is not DatabaseSchemaState.VERSION_0010:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1728,7 +1813,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0009:
+                    if after.state is not DatabaseSchemaState.VERSION_0010:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2019,6 +2104,161 @@ def _classify_revision_0001(
         DatabaseSchemaState.UNKNOWN,
         _detail_after_nullable_user_fallback(legacy_detail, legacy_create_all_detail),
     )
+
+
+def _partial_scope_attachment_detail(
+    connection: Connection, inspector: Inspector, user_tables: set[str]
+) -> str | None:
+    """Recognize only bounded, retryable or explicitly refused revision 0010 fragments."""
+    unexpected_tables = user_tables - set(_NATIVE_ARTIFACT_COLUMNS) - _SCOPE_ATTACHMENT_TEMP_TABLES
+    if unexpected_tables:
+        return f"unexpected table set during revision 0010 resume: {sorted(unexpected_tables)}"
+
+    temp_tables = user_tables & _SCOPE_ATTACHMENT_TEMP_TABLES
+    stable_tables = user_tables - temp_tables
+    missing_stable_tables = set(_NATIVE_ARTIFACT_COLUMNS) - stable_tables
+    missing_without_temp = {
+        table_name
+        for table_name in missing_stable_tables
+        if f"_alembic_tmp_{table_name}" not in temp_tables
+    }
+    if missing_without_temp:
+        return (
+            "revision 0010 partial state is missing canonical tables without an "
+            f"Alembic temp-table recovery marker: {sorted(missing_without_temp)}"
+        )
+
+    for table_name in stable_tables:
+        table_detail = _scope_attachment_partial_table_detail(inspector, table_name)
+        if table_detail is not None:
+            return table_detail
+    for temp_table in temp_tables:
+        temp_detail = _scope_attachment_temp_table_detail(connection, inspector, temp_table)
+        if temp_detail is not None:
+            return temp_detail
+    return None
+
+
+def _scope_attachment_temp_table_detail(
+    connection: Connection, inspector: Inspector, temp_table: str
+) -> str | None:
+    base_table = _SCOPE_ATTACHMENT_TEMP_BASE_TABLES[temp_table]
+    expected_columns = _SCOPE_ATTACHMENT_COLUMNS[base_table]
+    dialect_name = inspector.bind.dialect.name
+    inspection_schema = "public" if dialect_name == "postgresql" else None
+    actual_columns = inspector.get_columns(temp_table, schema=inspection_schema)
+    if [column["name"] for column in actual_columns] != [
+        column.name for column in expected_columns
+    ]:
+        return f"{temp_table} has malformed columns"
+    for actual, expected in zip(actual_columns, expected_columns, strict=True):
+        if not _matches_type(actual["type"], expected, dialect_name):
+            return f"{temp_table}.{expected.name} has an unexpected type"
+        if actual.get("default") is not None:
+            return f"{temp_table}.{expected.name} has an unexpected server default"
+    try:
+        table = sa.table(temp_table)
+        if connection.dialect.name == "postgresql":
+            table = sa.table(temp_table, schema="public")
+        if connection.execute(sa.select(sa.literal(1)).select_from(table).limit(1)).first():
+            return f"{temp_table} contains data and cannot be resumed automatically"
+    except SQLAlchemyError as exc:
+        return f"unable to inspect {temp_table}: {type(exc).__name__}"
+    return None
+
+
+def _scope_attachment_partial_table_detail(inspector: Inspector, table_name: str) -> str | None:
+    if table_name == "policy_bundles":
+        # Revision 0010 only alters policy_bundles DDL.  The bounded partial
+        # states are: untouched revision 0009 shape, scope columns added but
+        # the scope check/foreign key batch not yet applied, or the complete
+        # revision 0010 shape.
+        return _schema_detail_for_table_variants(
+            inspector,
+            table_name,
+            (
+                (
+                    _NATIVE_ARTIFACT_COLUMNS,
+                    _NATIVE_ARTIFACT_PRIMARY_KEYS,
+                    _NATIVE_ARTIFACT_FOREIGN_KEYS,
+                    _NATIVE_ARTIFACT_UNIQUES,
+                    _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES,
+                    _NATIVE_ARTIFACT_CHECKS,
+                    _NATIVE_ARTIFACT_UNIQUE_INDEXES,
+                ),
+                (
+                    _SCOPE_ATTACHMENT_PROJECT_ONLY_COLUMNS,
+                    _NATIVE_ARTIFACT_PRIMARY_KEYS,
+                    _NATIVE_ARTIFACT_FOREIGN_KEYS,
+                    _NATIVE_ARTIFACT_UNIQUES,
+                    _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES,
+                    _NATIVE_ARTIFACT_CHECKS,
+                    _NATIVE_ARTIFACT_UNIQUE_INDEXES,
+                ),
+                (
+                    _SCOPE_ATTACHMENT_COLUMNS,
+                    _NATIVE_ARTIFACT_PRIMARY_KEYS,
+                    _NATIVE_ARTIFACT_FOREIGN_KEYS,
+                    _NATIVE_ARTIFACT_UNIQUES,
+                    _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES,
+                    _NATIVE_ARTIFACT_CHECKS,
+                    _NATIVE_ARTIFACT_UNIQUE_INDEXES,
+                ),
+                (
+                    _SCOPE_ATTACHMENT_COLUMNS,
+                    _SCOPE_ATTACHMENT_PRIMARY_KEYS,
+                    _SCOPE_ATTACHMENT_FOREIGN_KEYS,
+                    _SCOPE_ATTACHMENT_UNIQUES,
+                    _SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES,
+                    _SCOPE_ATTACHMENT_CHECKS,
+                    _SCOPE_ATTACHMENT_UNIQUE_INDEXES,
+                ),
+            ),
+        )
+    return _schema_detail(
+        inspector,
+        {table_name},
+        {table_name: _NATIVE_ARTIFACT_COLUMNS[table_name]},
+        {table_name: _NATIVE_ARTIFACT_PRIMARY_KEYS[table_name]},
+        {table_name: _NATIVE_ARTIFACT_FOREIGN_KEYS[table_name]},
+        {table_name: _NATIVE_ARTIFACT_UNIQUES[table_name]},
+        {table_name: _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES[table_name]},
+        _NATIVE_ARTIFACT_CHECKS,
+        _NATIVE_ARTIFACT_UNIQUE_INDEXES,
+    )
+
+
+_SchemaVariant = tuple[
+    dict[str, tuple[_ColumnSpec, ...]],
+    dict[str, tuple[str, ...]],
+    dict[str, frozenset[_ForeignKeySpec]],
+    dict[str, frozenset[tuple[str, ...]]],
+    dict[str, frozenset[tuple[str, ...]]],
+    dict[str, frozenset[tuple[str, str]]],
+    dict[str, frozenset[_UniqueIndexSpec]],
+]
+
+
+def _schema_detail_for_table_variants(
+    inspector: Inspector, table_name: str, variants: Sequence[_SchemaVariant]
+) -> str | None:
+    last_detail = ""
+    for columns, primary_keys, foreign_keys, uniques, indexes, checks, unique_indexes in variants:
+        detail = _schema_detail(
+            inspector,
+            {table_name},
+            {table_name: columns[table_name]},
+            {table_name: primary_keys[table_name]},
+            {table_name: foreign_keys[table_name]},
+            {table_name: uniques[table_name]},
+            {table_name: indexes[table_name]},
+            checks,
+            unique_indexes,
+        )
+        if detail is None:
+            return None
+        last_detail = detail
+    return last_detail
 
 
 def _migration_versions(connection: Connection) -> list[str]:

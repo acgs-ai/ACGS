@@ -1054,9 +1054,10 @@ class GovernanceMembrane:
             # failure must stay visible in the queryable receipts store —
             # these are exactly the receipts a compliance review needs.
             self.session.rollback()
-            self._persist_failure_row(tool_name, exc)
-            _anchor(self.session, self.org_id, self.store)
-            self.session.commit()
+            if persist_blocked_row:
+                self._persist_failure_row(tool_name, exc)
+                _anchor(self.session, self.org_id, self.store)
+                self.session.commit()
             raise
 
         row = self._persist_allowed(receipt)
