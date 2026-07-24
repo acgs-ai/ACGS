@@ -50,6 +50,8 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "governance_events",
         "audit_projection_outbox",
         "governance_event_cutover",
+        "native_decision_receipts",
+        "native_receipt_consumptions",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

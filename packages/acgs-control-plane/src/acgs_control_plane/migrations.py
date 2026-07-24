@@ -41,7 +41,8 @@ TRUST_V2_REVISION: Final = "0004"
 TENANT_BOOTSTRAP_REVISION: Final = "0005"
 AGENT_SCOPE_REVISION: Final = "0006"
 GOVERNANCE_EVENT_REVISION: Final = "0007"
-HEAD_REVISION: Final = GOVERNANCE_EVENT_REVISION
+NATIVE_RECEIPT_LEDGER_REVISION: Final = "0008"
+HEAD_REVISION: Final = NATIVE_RECEIPT_LEDGER_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -82,6 +83,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0005 = "version_0005"
     VERSION_0006 = "version_0006"
     VERSION_0007 = "version_0007"
+    VERSION_0008 = "version_0008"
     UNKNOWN = "unknown"
 
 
@@ -106,7 +108,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0007.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0008.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -545,6 +547,39 @@ _GOVERNANCE_EVENT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("cutover_at", "datetime", True),
     ),
 }
+_NATIVE_RECEIPT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_GOVERNANCE_EVENT_COLUMNS,
+    "native_decision_receipts": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("assurance_class", "string", False, 32),
+        _ColumnSpec("source_system", "string", False, 64),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("execution_boundary", "string", False, 200),
+        _ColumnSpec("proposed_action", "string", False, 200),
+        _ColumnSpec("policy_bundle_id", "string", False, 200),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("policy_hash", "string", False, 128),
+        _ColumnSpec("issued_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+        _ColumnSpec("signing_key_id", "string", False, 200),
+        _ColumnSpec("signature_algorithm", "string", False, 32),
+        _ColumnSpec("projection", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "native_receipt_consumptions": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("native_receipt_id", "string", False, 64),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("consumed_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -589,6 +624,11 @@ _GOVERNANCE_EVENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "governance_events": ("id",),
     "audit_projection_outbox": ("id",),
     "governance_event_cutover": ("org_id",),
+}
+_NATIVE_RECEIPT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_GOVERNANCE_EVENT_PRIMARY_KEYS,
+    "native_decision_receipts": ("id",),
+    "native_receipt_consumptions": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -793,6 +833,21 @@ _GOVERNANCE_EVENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     ),
     "governance_event_cutover": frozenset({(("org_id",), None, "organizations", ("id",))}),
 }
+_NATIVE_RECEIPT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_GOVERNANCE_EVENT_FOREIGN_KEYS,
+    "native_decision_receipts": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "native_receipt_consumptions": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "native_receipt_id"),
+                None,
+                "native_decision_receipts",
+                ("org_id", "id"),
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -938,6 +993,24 @@ _GOVERNANCE_EVENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     "audit_projection_outbox": frozenset({("org_id", "sequence")}),
     "governance_event_cutover": frozenset(),
 }
+_NATIVE_RECEIPT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_GOVERNANCE_EVENT_UNIQUES,
+    "native_decision_receipts": frozenset(
+        {
+            ("org_id", "id"),
+            ("org_id", "receipt_id"),
+            ("org_id", "receipt_hash"),
+            ("org_id", "audit_event_hash"),
+        }
+    ),
+    "native_receipt_consumptions": frozenset(
+        {
+            ("org_id", "native_receipt_id"),
+            ("org_id", "receipt_hash"),
+            ("org_id", "audit_event_hash"),
+        }
+    ),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -986,6 +1059,11 @@ _GOVERNANCE_EVENT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] 
     "governance_events": frozenset(),
     "audit_projection_outbox": frozenset(),
     "governance_event_cutover": frozenset(),
+}
+_NATIVE_RECEIPT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_GOVERNANCE_EVENT_UNIQUE_INDEXES,
+    "native_decision_receipts": frozenset(),
+    "native_receipt_consumptions": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -1142,6 +1220,21 @@ _GOVERNANCE_EVENT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     "governance_events": frozenset(),
     "audit_projection_outbox": frozenset(),
     "governance_event_cutover": frozenset(),
+}
+_NATIVE_RECEIPT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_GOVERNANCE_EVENT_NON_UNIQUE_INDEXES,
+    "native_decision_receipts": frozenset({("org_id",)}),
+    "native_receipt_consumptions": frozenset({("org_id",)}),
+}
+_NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_GOVERNANCE_EVENT_CHECKS,
+    "native_decision_receipts": frozenset(
+        {
+            ("ck_native_receipts_assurance_class", "assurance_class='native'"),
+            ("ck_native_receipts_source_system", "source_system='gove-zone'"),
+        }
+    ),
+    "native_receipt_consumptions": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -1371,7 +1464,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0006, "known Alembic revision 0006")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [GOVERNANCE_EVENT_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1385,6 +1478,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0007, "known Alembic revision 0007")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _NATIVE_RECEIPT_COLUMNS,
+            _NATIVE_RECEIPT_PRIMARY_KEYS,
+            _NATIVE_RECEIPT_FOREIGN_KEYS,
+            _NATIVE_RECEIPT_UNIQUES,
+            _NATIVE_RECEIPT_NON_UNIQUE_INDEXES,
+            _NATIVE_RECEIPT_CHECKS,
+            _NATIVE_RECEIPT_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0008, "known Alembic revision 0008")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1400,7 +1508,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0007:
+    if preflight.state is not DatabaseSchemaState.VERSION_0008:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1503,7 +1611,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0007:
+    if after.state is not DatabaseSchemaState.VERSION_0008:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1565,7 +1673,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0007:
+                    if after.state is not DatabaseSchemaState.VERSION_0008:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
