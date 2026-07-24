@@ -180,3 +180,6 @@ jobs:
       - name: Console unit tests
         working-directory: acgi-ai
         run: pnpm test:unit
+
+      - name: Assert tracked worktree clean
+        run: git diff --exit-code -- .

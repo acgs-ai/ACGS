@@ -210,10 +210,14 @@ def test_saas_beta_required_gate_runs_ordered_local_contract_sequence() -> None:
         "pnpm run build",
         "pnpm run test:all",
         "pnpm test:unit",
+        "git diff --exit-code -- .",
     ]
 
     positions = [_index(text, needle) for needle in ordered_needles]
     assert positions == sorted(positions)
+    assert text.rstrip().endswith(
+        "      - name: Assert tracked worktree clean\n        run: git diff --exit-code -- ."
+    )
 
 
 def test_control_plane_test_step_uses_offline_indexless_cache_available_uv_env() -> None:
@@ -255,6 +259,8 @@ def test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surfa
         "terraform ",
         "npm publish",
         "twine ",
+        "git clean",
+        "git reset",
         "git push",
         "gh pr",
         "gh release",

@@ -277,11 +277,11 @@
         },
         {
           "file": "packages/gove-zone/SECURITY.md",
-          "anchor": "The audit log is an append-only hash chain"
+          "anchor": "The audit log is an append-oriented hash chain"
         },
         {
           "file": "packages/gove-zone/SECURITY.md",
-          "anchor": "Dev mode is explicitly unsigned."
+          "anchor": "Dev mode permits unsigned receipts."
         },
         {
           "file": "docs/launch/STAGE3-landing-thesis.md",

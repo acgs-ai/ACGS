@@ -53,7 +53,7 @@ describe('governance presentation components', () => {
   })
 
   it('links product evidence claims to the audit console proof route', () => {
-    render(<ProductSurface path="/products/acgs" />)
+    render(<ProductSurface path="/products/gove-zone" />)
 
     expect(screen.getByRole('link', { name: /receipt/i })).toHaveAttribute('href', '/console/audit')
     expect(screen.getByRole('link', { name: /audit chain/i })).toHaveAttribute(
