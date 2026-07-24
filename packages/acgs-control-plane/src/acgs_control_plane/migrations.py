@@ -867,30 +867,76 @@ def _non_table_object_detail(connection: Connection) -> str | None:
                     WITH non_table_objects AS (
                         SELECT 'view' AS kind, schemaname || '.' || viewname AS object_name
                         FROM pg_catalog.pg_views
-                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                        WHERE schemaname = 'public'
                         UNION ALL
                         SELECT 'materialized_view', schemaname || '.' || matviewname
                         FROM pg_catalog.pg_matviews
-                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                        WHERE schemaname = 'public'
                         UNION ALL
                         SELECT 'trigger', n.nspname || '.' || c.relname || '.' || t.tgname
                         FROM pg_catalog.pg_trigger AS t
                         JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid
                         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
                         WHERE NOT t.tgisinternal
-                          AND n.nspname <> 'information_schema'
-                          AND n.nspname NOT LIKE 'pg_%'
+                          AND n.nspname = 'public'
                         UNION ALL
                         SELECT 'row_level_security', n.nspname || '.' || c.relname
                         FROM pg_catalog.pg_class AS c
                         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
                         WHERE (c.relrowsecurity OR c.relforcerowsecurity)
-                          AND n.nspname <> 'information_schema'
-                          AND n.nspname NOT LIKE 'pg_%'
+                          AND n.nspname = 'public'
                         UNION ALL
                         SELECT 'policy', schemaname || '.' || tablename || '.' || policyname
                         FROM pg_catalog.pg_policies
-                        WHERE schemaname <> 'information_schema' AND schemaname NOT LIKE 'pg_%'
+                        WHERE schemaname = 'public'
+                        UNION ALL
+                        SELECT
+                            CASE p.prokind
+                                WHEN 'p' THEN 'procedure'
+                                WHEN 'a' THEN 'aggregate'
+                                WHEN 'w' THEN 'window_function'
+                                ELSE 'function'
+                            END,
+                            n.nspname || '.' || p.proname || '('
+                            || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')'
+                        FROM pg_catalog.pg_proc AS p
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                        WHERE n.nspname = 'public'
+                        UNION ALL
+                        SELECT 'sequence', n.nspname || '.' || c.relname
+                        FROM pg_catalog.pg_class AS c
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND c.relkind = 'S'
+                        UNION ALL
+                        SELECT
+                            CASE t.typtype
+                                WHEN 'd' THEN 'domain'
+                                WHEN 'e' THEN 'enum'
+                                WHEN 'c' THEN 'composite_type'
+                                WHEN 'r' THEN 'range_type'
+                                WHEN 'm' THEN 'multirange_type'
+                                ELSE 'base_type'
+                            END,
+                            n.nspname || '.' || t.typname
+                        FROM pg_catalog.pg_type AS t
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+                        LEFT JOIN pg_catalog.pg_class AS c ON c.oid = t.typrelid
+                        WHERE n.nspname = 'public'
+                          AND t.typtype IN ('b', 'c', 'd', 'e', 'r', 'm')
+                          AND NOT (t.typtype = 'b' AND t.typelem <> 0)
+                          AND NOT (
+                              t.typtype = 'c'
+                              AND c.reltype = t.oid
+                              AND c.relkind IN ('r', 'p')
+                          )
+                        UNION ALL
+                        SELECT 'rewrite_rule', n.nspname || '.' || c.relname || '.' || r.rulename
+                        FROM pg_catalog.pg_rewrite AS r
+                        JOIN pg_catalog.pg_class AS c ON c.oid = r.ev_class
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND r.rulename <> '_RETURN'
                     )
                     SELECT kind, object_name FROM non_table_objects ORDER BY kind, object_name
                     """

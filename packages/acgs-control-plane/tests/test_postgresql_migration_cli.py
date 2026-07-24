@@ -347,7 +347,7 @@ def test_public_function_hijack_cannot_mutate_during_status() -> None:
         assert payload == {
             "command": "status",
             "ok": True,
-            "schema_state": "version_0002",
+            "schema_state": "unknown",
             "target_revision": HEAD_REVISION,
         }
         with engine.connect() as connection:
