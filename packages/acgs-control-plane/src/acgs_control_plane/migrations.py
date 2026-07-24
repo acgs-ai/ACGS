@@ -42,7 +42,8 @@ TENANT_BOOTSTRAP_REVISION: Final = "0005"
 AGENT_SCOPE_REVISION: Final = "0006"
 GOVERNANCE_EVENT_REVISION: Final = "0007"
 NATIVE_RECEIPT_LEDGER_REVISION: Final = "0008"
-HEAD_REVISION: Final = NATIVE_RECEIPT_LEDGER_REVISION
+NATIVE_ARTIFACT_REVISION: Final = "0009"
+HEAD_REVISION: Final = NATIVE_ARTIFACT_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -84,6 +85,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0006 = "version_0006"
     VERSION_0007 = "version_0007"
     VERSION_0008 = "version_0008"
+    VERSION_0009 = "version_0009"
     UNKNOWN = "unknown"
 
 
@@ -108,7 +110,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0008.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0009.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -580,6 +582,28 @@ _NATIVE_RECEIPT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("consumed_at", "datetime", False),
     ),
 }
+_NATIVE_ARTIFACT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_NATIVE_RECEIPT_COLUMNS,
+    "governance_event_cutover": (
+        *_NATIVE_RECEIPT_COLUMNS["governance_event_cutover"],
+        _ColumnSpec("native_event_count", "integer", True),
+        _ColumnSpec("native_event_head_hash", "string", True, 64),
+    ),
+    "native_decision_receipts": (
+        *_NATIVE_RECEIPT_COLUMNS["native_decision_receipts"],
+        _ColumnSpec("receipt_artifact", "json", True),
+        _ColumnSpec("receipt_artifact_hash", "string", True, 64),
+        _ColumnSpec("evidence_profile", "string", True, 64),
+    ),
+    "native_receipt_consumptions": (
+        *_NATIVE_RECEIPT_COLUMNS["native_receipt_consumptions"],
+        _ColumnSpec("attestation_artifact", "json", True),
+        _ColumnSpec("attestation_artifact_hash", "string", True, 64),
+        _ColumnSpec("attestation_signature_algorithm", "string", True, 32),
+        _ColumnSpec("attestation_signing_key_id", "string", True, 200),
+        _ColumnSpec("attestation_signature", "string", True, 256),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -630,6 +654,9 @@ _NATIVE_RECEIPT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "native_decision_receipts": ("id",),
     "native_receipt_consumptions": ("id",),
 }
+_NATIVE_ARTIFACT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
+    _NATIVE_RECEIPT_PRIMARY_KEYS
+)
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
 }
@@ -848,6 +875,9 @@ _NATIVE_RECEIPT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_NATIVE_ARTIFACT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = dict(
+    _NATIVE_RECEIPT_FOREIGN_KEYS
+)
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1065,6 +1095,12 @@ _NATIVE_RECEIPT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = 
     "native_decision_receipts": frozenset(),
     "native_receipt_consumptions": frozenset(),
 }
+_NATIVE_ARTIFACT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
+    _NATIVE_RECEIPT_UNIQUES
+)
+_NATIVE_ARTIFACT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = dict(
+    _NATIVE_RECEIPT_UNIQUE_INDEXES
+)
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
@@ -1226,6 +1262,9 @@ _NATIVE_RECEIPT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]]
     "native_decision_receipts": frozenset({("org_id",)}),
     "native_receipt_consumptions": frozenset({("org_id",)}),
 }
+_NATIVE_ARTIFACT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
+    _NATIVE_RECEIPT_NON_UNIQUE_INDEXES
+)
 _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **_GOVERNANCE_EVENT_CHECKS,
     "native_decision_receipts": frozenset(
@@ -1236,6 +1275,7 @@ _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     ),
     "native_receipt_consumptions": frozenset(),
 }
+_NATIVE_ARTIFACT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = dict(_NATIVE_RECEIPT_CHECKS)
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
     "projects": _SCOPED_NON_UNIQUE_INDEXES["projects"],
@@ -1479,7 +1519,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0007, "known Alembic revision 0007")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [NATIVE_RECEIPT_LEDGER_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1493,6 +1533,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0008, "known Alembic revision 0008")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _NATIVE_ARTIFACT_COLUMNS,
+            _NATIVE_ARTIFACT_PRIMARY_KEYS,
+            _NATIVE_ARTIFACT_FOREIGN_KEYS,
+            _NATIVE_ARTIFACT_UNIQUES,
+            _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES,
+            _NATIVE_ARTIFACT_CHECKS,
+            _NATIVE_ARTIFACT_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0009, "known Alembic revision 0009")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1508,7 +1563,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0008:
+    if preflight.state is not DatabaseSchemaState.VERSION_0009:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1611,7 +1666,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0008:
+    if after.state is not DatabaseSchemaState.VERSION_0009:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1673,7 +1728,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0008:
+                    if after.state is not DatabaseSchemaState.VERSION_0009:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"

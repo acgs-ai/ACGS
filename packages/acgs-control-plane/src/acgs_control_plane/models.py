@@ -1032,6 +1032,8 @@ class GovernanceEventCutover(Base):
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="legacy_jsonl")
     legacy_audit_anchor_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     legacy_audit_anchor_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    native_event_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    native_event_head_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     cutover_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1077,6 +1079,9 @@ class NativeDecisionReceiptRow(Base):
     signing_key_id: Mapped[str] = mapped_column(String(200), nullable=False)
     signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
     projection: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    receipt_artifact: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant, nullable=True)
+    receipt_artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -1103,4 +1108,9 @@ class NativeReceiptConsumption(Base):
     native_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attestation_artifact: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant, nullable=True)
+    attestation_artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attestation_signature_algorithm: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    attestation_signing_key_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    attestation_signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
     consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

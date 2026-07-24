@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -38,13 +38,15 @@ TARGET_DATABASE = "acgs_control_plane_recovery_target_test"
 SOURCE_ENV = "ACP_TEST_RECOVERY_SOURCE_URL"
 TARGET_ENV = "ACP_TEST_RECOVERY_TARGET_URL"
 
-SOURCE_URL = os.environ.get(SOURCE_ENV)
-TARGET_URL = os.environ.get(TARGET_ENV)
-if not SOURCE_URL or not TARGET_URL:
+_SOURCE_URL_RAW = os.environ.get(SOURCE_ENV)
+_TARGET_URL_RAW = os.environ.get(TARGET_ENV)
+if not _SOURCE_URL_RAW or not _TARGET_URL_RAW:
     pytest.skip(
         f"set both {SOURCE_ENV} and {TARGET_ENV} to run PostgreSQL recovery tests",
         allow_module_level=True,
     )
+assert _SOURCE_URL_RAW is not None
+assert _TARGET_URL_RAW is not None
 if os.environ.get("ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE") != "1":
     raise RuntimeError(
         "Set ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 to acknowledge that these tests "
@@ -57,14 +59,20 @@ pytest.importorskip("psycopg")
 def _required_tool_path(name: str) -> Path:
     resolved = shutil.which(name)
     if resolved is None:
-        pytest.skip(f"{name} is required to run PostgreSQL recovery integration tests")
+        pytest.skip(
+            f"{name} is required to run PostgreSQL recovery integration tests",
+            allow_module_level=True,
+        )
     selected = Path(resolved)
     if not selected.is_absolute():
         selected = Path.cwd() / selected
     try:
         selected.stat()
     except OSError:
-        pytest.skip(f"{name} resolved to an unavailable PostgreSQL client path: {selected}")
+        pytest.skip(
+            f"{name} resolved to an unavailable PostgreSQL client path: {selected}",
+            allow_module_level=True,
+        )
     return selected
 
 
@@ -82,8 +90,8 @@ def _validated_url(raw: str, expected_database: str, variable: str) -> str:
     return raw
 
 
-SOURCE_URL = _validated_url(SOURCE_URL, SOURCE_DATABASE, SOURCE_ENV)
-TARGET_URL = _validated_url(TARGET_URL, TARGET_DATABASE, TARGET_ENV)
+SOURCE_URL: str = _validated_url(_SOURCE_URL_RAW, SOURCE_DATABASE, SOURCE_ENV)
+TARGET_URL: str = _validated_url(_TARGET_URL_RAW, TARGET_DATABASE, TARGET_ENV)
 
 
 def _safe_admin_url(url: str) -> str:
@@ -326,7 +334,7 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     audit_source.mkdir()
     calls: list[list[str]] = []
 
-    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+    def forbidden_runner(command: Sequence[str], _environment: Mapping[str, str]) -> None:
         calls.append(list(command))
 
     with pytest.raises(RecoveryRefused, match="canonical public schema"):
@@ -361,7 +369,7 @@ def test_public_first_function_hijacks_refuse_before_subprocess(
     bundle = tmp_path / "bundle"
     calls: list[list[str]] = []
 
-    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+    def forbidden_runner(command: Sequence[str], _environment: Mapping[str, str]) -> None:
         calls.append(list(command))
 
     with pytest.raises(RecoveryRefused, match="exact supported migration head schema"):
@@ -414,7 +422,7 @@ def test_target_shadow_default_refuses_before_any_pg_restore_or_mutation(
     )
     calls: list[list[str]] = []
 
-    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+    def forbidden_runner(command: Sequence[str], _environment: Mapping[str, str]) -> None:
         calls.append(list(command))
 
     with pytest.raises(RecoveryRefused, match="canonical public schema"):
@@ -460,7 +468,7 @@ def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> Non
     )
 
     assert created == verified == restored
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0009
     engine = make_engine(TARGET_URL)
     try:
         with engine.connect() as connection:
@@ -487,7 +495,7 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
     upgrade_database(TARGET_URL)
     calls: list[list[str]] = []
 
-    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+    def forbidden_runner(command: Sequence[str], _environment: Mapping[str, str]) -> None:
         calls.append(list(command))
         raise AssertionError("nonempty public target must refuse before pg_restore --list")
 
@@ -502,7 +510,7 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         )
 
     assert calls == []
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0009
 
 
 def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(
@@ -521,7 +529,7 @@ def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(
     )
     mutating_commands: list[list[str]] = []
 
-    def recording_runner(command: list[str], environment: dict[str, str]) -> None:
+    def recording_runner(command: Sequence[str], environment: Mapping[str, str]) -> None:
         if "--list" not in command:
             mutating_commands.append(list(command))
         _run_command(command, environment)
@@ -565,7 +573,7 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
     audit_source.mkdir()
     bundle = tmp_path / "bundle"
 
-    def archive_injection_runner(command: list[str], environment: dict[str, str]) -> None:
+    def archive_injection_runner(command: Sequence[str], environment: Mapping[str, str]) -> None:
         if Path(command[0]).name != "pg_dump":
             _run_command(command, environment)
             return
@@ -650,7 +658,9 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
     mutating_commands: list[list[str]] = []
     late_failure_output: list[str] = []
 
-    def late_table_data_failure_runner(command: list[str], environment: dict[str, str]) -> None:
+    def late_table_data_failure_runner(
+        command: Sequence[str], environment: Mapping[str, str]
+    ) -> None:
         if "--list" in command:
             assert Path(command[0]) == PG_RESTORE_PATH
             _run_command(command, environment)

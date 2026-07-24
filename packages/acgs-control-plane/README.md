@@ -95,7 +95,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0008` at this writing), then set
+secret-safe operator CLI to the current head (`0009` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -168,7 +168,7 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0008` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0009` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.
@@ -183,6 +183,12 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   one transaction. A rollback removes all three. The database fixes `assurance_class` to `native`
   and `source_system` to `gove-zone`; federated and observed evidence require distinct provenance.
   Non-transactional external effects still require a separate durable execution protocol.
+- **Verifiable native receipt artifacts are groundwork only**: revision `0009` adds nullable
+  artifact columns and an opt-in verifier that reconstructs the signed `DecisionReceipt`, checks
+  trusted key status, compares the minimized projection and scalar bindings, walks the full
+  tenant governance-event chain, and refuses native cutover readiness if the marker is missing,
+  legacy writes remain active, or legacy receipt rows exist beyond the cutover boundary. No HTTP
+  route, mutation cutover, production blocker, or legacy JSONL authority changes in this slice.
 - **Production posture remains blocked** while any mutation route uses the legacy unsigned
   governance membrane. A current database schema is necessary startup evidence, not production
   readiness.
