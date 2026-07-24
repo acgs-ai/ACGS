@@ -52,6 +52,7 @@ REQUIRED_GRANULAR_NODES = {
     "G102",
     "G102A",
     "G102B",
+    "G102C",
     "G103",
     "G104",
     "G105",
@@ -500,6 +501,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     g102 = by_id["G102"]
     g102a = by_id["G102A"]
     g102b = by_id["G102B"]
+    g102c = by_id["G102C"]
     g603 = by_id["G603"]
     assert (g101["status"], g101["implementation_state"], g101["evidence_state"]) == (
         "blocked",
@@ -521,7 +523,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     )
     assert g102a["branch"] == "beta/p1-g102-request-admission"
     assert g102a["pr"] == 357
-    assert g102["dependencies"] == ["G101", "G102A", "G102B"]
+    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C"]
     assert set(g102a["dependencies"]) == {"G101"}
     assert g102a["consumers"] == ["G102"]
     assert "EXT-GITHUB-BILLING" in g102a["blocker"]
@@ -569,6 +571,17 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         "python scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml"
         not in g102b["validation_commands"]
     )
+    actual_g102c_files = {
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+    }
+    assert actual_g102c_files <= set(g102["likely_interfaces_files"])
+    assert actual_g102c_files <= set(g102c["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102c_files)
+    focused_openapi_command = (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q"
+    )
+    assert focused_openapi_command in g102["validation_commands"]
+    assert focused_openapi_command in g102c["validation_commands"]
     combined_g102a_contract = " ".join(
         g102["likely_interfaces_files"]
         + g102["validation_commands"]
@@ -596,7 +609,10 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         ]
     )
     assert "G102B separately covers receipt-route cursor pagination" in combined_g102a_status
+    assert "G102C separately covers the current-v0 OpenAPI drift sentinel" in combined_g102a_status
     assert "complete all-collections cursor pagination" in combined_g102a_status
+    assert "OpenAPI drift acceptance evidence" not in combined_g102a_status
+    assert "OpenAPI drift gates are completed" not in combined_g102a_status
     assert "until /v1, cursor pagination," not in combined_g102a_status
     assert "lacks /v1 root, cursor pagination," not in combined_g102a_status
     assert "partial until /v1 root, cursor pagination," not in combined_g102a_status
@@ -644,9 +660,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         "/v1 root",
         "durable idempotency",
         "async export jobs",
-        "OpenAPI drift",
         "PostgreSQL/schema change",
         "capacity claims",
+        "G102C OpenAPI drift sentinel evidence",
     ):
         assert forbidden_promotion in combined_g102b
     for missing_contract in (
@@ -654,10 +670,58 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         "all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
-        "OpenAPI drift",
     ):
         assert missing_contract in g102["blocker"]
         assert missing_contract in combined_g102b or missing_contract in g102["evidence_artifact"]
+    assert "OpenAPI drift verification remain missing" not in g102["blocker"]
+    assert "OpenAPI drift gates are still missing" not in g102["evidence_artifact"]
+    assert (
+        g102c["status"],
+        g102c["implementation_state"],
+        g102c["evidence_state"],
+    ) == ("blocked", "built", "local_verified")
+    assert set(g102c["dependencies"]) == {"G101"}
+    assert g102c["consumers"] == ["G102"]
+    assert g102c["branch"] == "beta/p1-g102c-openapi-drift"
+    assert g102c["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102c["pr"] == 361
+    combined_g102c = " ".join(
+        [
+            *g102c["likely_interfaces_files"],
+            *g102c["positive_tests"],
+            *g102c["forbidden_side_effect_negative_tests"],
+            *g102c["validation_commands"],
+            g102c["evidence_artifact"],
+            g102c["blocker"],
+            g102c["next_safe_action"],
+        ]
+    )
+    for evidence in (
+        "9341960c458e30648257926ab499b21bbb66796c",
+        "current-v0 OpenAPI drift sentinel evidence at 5 passed",
+        "full control-plane 265 passed/32 skipped",
+        "Ruff pass",
+        "package-local mypy pass",
+        "independent review finding repaired then APPROVE",
+        "verifier PASS",
+        "hosted Python 3.11",
+        "Python 3.12 pass",
+        "Hosted PostgreSQL migrations and codex-review did not start",
+        "EXT-GITHUB-BILLING",
+        "contract-test evidence only",
+    ):
+        assert evidence in combined_g102c
+    for forbidden_promotion in (
+        "no runtime behavior",
+        "database schema",
+        "production readiness",
+        "beta completion",
+        "/v1 root",
+        "durable idempotency",
+        "async export job",
+        "all-collections pagination",
+    ):
+        assert forbidden_promotion in combined_g102c
     combined_g101 = " ".join(
         g101["likely_interfaces_files"]
         + g101["validation_commands"]
@@ -693,7 +757,12 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert "opaque cursor pagination" in matrix
     assert "durable idempotency" in matrix
     assert "async export jobs" in matrix
-    assert "OpenAPI drift evidence" in matrix
+    assert "current-v0 OpenAPI drift sentinel evidence" in matrix
+    assert "OpenAPI drift evidence" not in matrix
+    assert (
+        "still lacks completed `/v1` root, complete all-collections cursor pagination, "
+        "durable idempotency, and async export jobs" in matrix
+    )
     assert "ACP_TEST_RECOVERY_SOURCE_URL" in matrix
     assert "ACP_TEST_RECOVERY_TARGET_URL" in matrix
     assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in matrix
