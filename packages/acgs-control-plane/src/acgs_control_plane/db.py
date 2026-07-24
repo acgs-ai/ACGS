@@ -52,6 +52,7 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "governance_event_cutover",
         "native_decision_receipts",
         "native_receipt_consumptions",
+        "managed_idempotency_results",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

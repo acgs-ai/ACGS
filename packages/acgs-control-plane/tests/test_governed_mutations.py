@@ -71,7 +71,7 @@ def test_agent_register_produces_receipt(
             "trust_tier": "internal",
             "allowed_tools": ["deploy.staging"],
         },
-        headers=admin_headers,
+        headers={**admin_headers, "Idempotency-Key": "agent-register-produces-receipt"},
     )
     assert resp.status_code == 201, resp.text
     agent = resp.json()
@@ -129,7 +129,7 @@ def test_policy_deny_blocks_side_effect_and_persists_receipt(
     resp = client.post(
         f"/orgs/{org_id}/agents",
         json={"name": "sketchy-bot", "trust_tier": "untrusted"},
-        headers=admin_headers,
+        headers={**admin_headers, "Idempotency-Key": "policy-deny-sketchy-bot"},
     )
     assert resp.status_code == 403, resp.text
     body = resp.json()
@@ -151,7 +151,7 @@ def test_policy_deny_blocks_side_effect_and_persists_receipt(
     ok = client.post(
         f"/orgs/{org_id}/agents",
         json={"name": "trusted-bot", "trust_tier": "internal"},
-        headers=admin_headers,
+        headers={**admin_headers, "Idempotency-Key": "policy-deny-trusted-bot"},
     )
     assert ok.status_code == 201
 

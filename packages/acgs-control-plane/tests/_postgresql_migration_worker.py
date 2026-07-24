@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Thread
-from typing import Final, Literal, Protocol
+from typing import Any, Final, Literal, Protocol, cast
 
 import sqlalchemy as sa
 from alembic.config import Config
@@ -143,10 +143,10 @@ def _main() -> int:
             _wait_for_release()
             raise _ReleasedBeforeUpgrade
 
-        original_upgrade(config, revision, **kwargs)
+        cast(Callable[..., Any], original_upgrade)(config, revision, **kwargs)
         if mode == "pause-after-upgrade":
             state = migration_module.inspect_connection(connection).state
-            if state is not DatabaseSchemaState.VERSION_0010:
+            if state is not DatabaseSchemaState.VERSION_0011:
                 raise RuntimeError(
                     f"migration DDL did not reach revision {HEAD_REVISION} inside transaction"
                 )
@@ -161,7 +161,7 @@ def _main() -> int:
             _wait_for_release()
 
     migration_module._acquire_postgresql_migration_lock = capture_and_acquire
-    migration_module.command.upgrade = controlled_upgrade
+    migration_module.command.upgrade = cast(Any, controlled_upgrade)
     try:
         result = upgrade_database(database_url)
     except _ReleasedBeforeUpgrade:

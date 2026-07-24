@@ -95,7 +95,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 This posture is deliberately non-production: its explicit local bootstrap runs the packaged
 operator migration path on an empty database only, and `/readyz` always returns 503. For a
 migration-managed database, run the
-secret-safe operator CLI to the current head (`0010` at this writing), then set
+secret-safe operator CLI to the current head (`0011` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -112,8 +112,11 @@ All other endpoints authenticate with `X-API-Key` (SHA-256 stored, never the raw
 
 ## Request admission and error contract
 
-G102 request admission is partially implemented for the existing v0 route set only; it does not add
-`/v1` aliases, idempotency, async jobs, or new database schema.
+G102 request admission covers the existing v0 route set plus additive `/v1` aliases. Canonical
+native agent creation requires a single `Idempotency-Key` header on both
+`POST /orgs/{org_id}/agents` and `POST /v1/orgs/{org_id}/agents`; the control plane stores only
+bounded replay evidence for terminal outcomes. Async jobs and `/v1/idempotency/schema` are not
+implemented.
 
 - The server ignores inbound `X-Request-ID`, generates a bounded `req_<32 lowercase hex>` request
   ID for every HTTP request, and returns it in the `X-Request-ID` response header. Redacted error
@@ -132,6 +135,9 @@ G102 request admission is partially implemented for the existing v0 route set on
   Malformed JSON returns a redacted 400 envelope. Validation and ordinary HTTP exceptions use
   stable redacted 4xx/5xx envelopes; rejected input, exception strings, credentials, and policy
   bundle contents are not echoed by those handlers.
+- Missing `Idempotency-Key` on canonical native agent creation returns a redacted HTTP 428
+  `precondition_required` envelope. Malformed or duplicate idempotency headers return redacted
+  HTTP 400. Same key with different canonical request semantics returns redacted HTTP 409.
 - Governance DENY and ESCALATE responses preserve their existing receipt fields and add the
   server-generated `request_id`. `AuditReadError` preserves its existing body shape; the response
   header still carries the server-generated request ID.
@@ -168,7 +174,7 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   native receipt evidence and the SQL single-use consumption ledger, but the remaining legacy
   routes still differ from gove-zone's secure `require_signature=True` profile. Production posture
   refuses while those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0010` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0011` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The frozen legacy `create_all` contract remains
   available only for migration-adoption tests; the app's explicit local-development bootstrap runs
@@ -199,6 +205,13 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   both-null-or-both-set check and composite environment foreign key. Scope columns stay nullable at
   the schema level; legacy write routes attach the default scope at write time. Legacy receipts and
   native receipt provenance are not backfilled or reclassified.
+- **Durable idempotency is terminal-only managed replay evidence**: revision `0011` adds bounded
+  result rows for canonical native agent creation. The table stores request/key digests, terminal
+  semantic response hashes in signed replay artifacts, native receipt bindings, and
+  governance-event bindings. Replay reconstructs the response from authoritative agent, native
+  receipt, and governance-event rows before comparing it with the stored hash; it deliberately has
+  no pending/lease/takeover protocol, async job surface, expiry, purge path, or raw response body
+  storage.
 - **Production posture remains blocked** while any mutation route uses the legacy unsigned
   governance membrane. A current database schema is necessary startup evidence, not production
   readiness.

@@ -199,7 +199,7 @@ def test_revision_0010_backfills_one_default_scope_per_org_and_attaches_legacy_r
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0009
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
     engine = make_engine(database_url)
     try:
         with engine.connect() as connection:
@@ -255,7 +255,7 @@ def test_revision_0010_leaves_already_scoped_agents_untouched(tmp_path: Path) ->
     _seed_0009_scoped_agent(database_url, "org-a", "project-managed", "environment-managed")
 
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
     engine = make_engine(database_url)
     try:
@@ -582,7 +582,7 @@ def test_revision_0010_retry_completes_after_scope_column_interruption(
     assert preflight.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_revision_0010_retry_drops_safe_leftover_batch_temp_table(
@@ -605,7 +605,7 @@ def test_revision_0010_retry_drops_safe_leftover_batch_temp_table(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0009_PARTIAL_SCOPE_ATTACHMENT
-    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert result.after.state is DatabaseSchemaState.VERSION_0011
 
 
 def test_revision_0010_refuses_malformed_batch_temp_table_before_retry(
@@ -734,6 +734,14 @@ def test_org_bootstrap_seeds_default_scope_and_mutations_reuse_it(
         headers = {"X-API-Key": org["admin_api_key"]}
         assert (
             client.post(
+                f"/orgs/{org['org_id']}/agents",
+                json={"name": "deploy-bot", "trust_tier": "internal"},
+                headers={**headers, "Idempotency-Key": "scope-default-deploy-bot"},
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
                 f"/orgs/{org['org_id']}/policies",
                 json={
                     "policy_id": "policy",
@@ -776,6 +784,10 @@ def test_org_bootstrap_seeds_default_scope_and_mutations_reuse_it(
                 )
                 == 1
             )
+            assert connection.execute(
+                sa.text("SELECT project_id, environment_id FROM agents WHERE org_id = :org_id"),
+                {"org_id": org_id},
+            ).all() == [(project_id, environment_id)]
             assert connection.execute(
                 sa.text(
                     "SELECT project_id, environment_id FROM policy_bundles WHERE org_id = :org_id"

@@ -27,7 +27,7 @@ import traceback
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 import pytest
 import sqlalchemy as sa
@@ -626,8 +626,8 @@ class ProbeProcess:
         )
         assert self.process.stdout is not None
         assert self.process.stderr is not None
-        self._stdout = _ProtocolReader(self.process.stdout)
-        self._stderr = _DigestDrain(self.process.stderr)
+        self._stdout = _ProtocolReader(cast(BinaryIO, self.process.stdout))
+        self._stderr = _DigestDrain(cast(BinaryIO, self.process.stderr))
         try:
             self.started = self.read()
         except BaseException as exc:
@@ -688,8 +688,8 @@ def _start_once(database_url: str, audit_dir: Path, pythonpath: Path) -> dict[st
     )
     assert process.stdout is not None
     assert process.stderr is not None
-    stdout = _ProtocolReader(process.stdout)
-    stderr = _DigestDrain(process.stderr)
+    stdout = _ProtocolReader(cast(BinaryIO, process.stdout))
+    stderr = _DigestDrain(cast(BinaryIO, process.stderr))
     try:
         payload = stdout.payload()
         process.wait(timeout=_PROTOCOL_TIMEOUT_SECONDS)
@@ -1034,7 +1034,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0010",
+            "after": "version_0011",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1054,6 +1054,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "managed_decision_receipts",
             "managed_governance_event_heads",
             "managed_governance_events",
+            "managed_idempotency_results",
             "managed_mutation_attempts",
             "managed_outbox",
             "managed_receipt_consumptions",
@@ -1108,6 +1109,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert migrated["rows"]["governance_events"] == ()
         assert migrated["rows"]["audit_projection_outbox"] == ()
         assert migrated["rows"]["governance_event_cutover"] == ()
+        assert migrated["rows"]["managed_idempotency_results"] == ()
         assert migrated["rows"]["native_decision_receipts"] == ()
         assert migrated["rows"]["native_receipt_consumptions"] == ()
         assert _audit_state(audit_dir) == audit_before
@@ -1121,7 +1123,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0010.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0011.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1200,5 +1202,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0011
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

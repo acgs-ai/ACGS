@@ -67,11 +67,23 @@ from acgs_control_plane.governance import (
     PolicyEscalatedError,
     PostureBlocker,
     ProductionPostureBlocked,
+    acquire_sqlite_tenant_transaction_lock,
     baseline_policy,
     existing_org_audit_store,
     load_active_policy,
     production_blockers,
     reconcile_http_routes,
+)
+from acgs_control_plane.idempotency import (
+    AGENT_CREATE_ACTION,
+    AGENT_CREATE_CANONICALIZER_VERSION,
+    AGENT_CREATE_REQUEST_DIGEST_VERSION,
+    IDEMPOTENCY_KEY_HEADER,
+    canonical_agent_create_digest,
+    idempotency_key_digest,
+    require_idempotency_key,
+    sign_result_artifact,
+    verify_replay_result,
 )
 from acgs_control_plane.migrations import (
     DatabaseSchemaState,
@@ -86,7 +98,9 @@ from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
     Environment,
+    GovernanceEvent,
     GovernanceEventHead,
+    ManagedIdempotencyResult,
     NativeDecisionReceiptRow,
     Organization,
     PolicyBundle,
@@ -457,6 +471,8 @@ def create_app(
             code = "conflict"
         elif status_code == 422:
             code = "validation_error"
+        elif status_code == 428:
+            code = "precondition_required"
         elif status_code >= 500:
             code = "service_unavailable"
         return JSONResponse(
@@ -659,7 +675,7 @@ def create_app(
                 local_preflight = inspect_connection(connection)
             if local_preflight.state is DatabaseSchemaState.EMPTY:
                 upgrade_database(settings.database_url)
-            elif local_preflight.state is not DatabaseSchemaState.VERSION_0010:
+            elif local_preflight.state is not DatabaseSchemaState.VERSION_0011:
                 msg = (
                     "ACP_CREATE_TABLES=1 can initialize only an empty local database. "
                     f"Found {local_preflight.state.value}; run the migration CLI."
@@ -735,7 +751,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0010
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0011
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -938,6 +954,20 @@ def _register_routes(app: FastAPI) -> None:
         response_model=AgentResponse,
         status_code=201,
         tags=["agents"],
+        responses={
+            409: {"description": "Idempotency conflict or duplicate agent name"},
+            428: {"description": "Missing required Idempotency-Key header"},
+        },
+        openapi_extra={
+            "parameters": [
+                {
+                    "name": IDEMPOTENCY_KEY_HEADER,
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            ]
+        },
     )
     def register_agent(
         body: AgentRegisterRequest,
@@ -946,6 +976,77 @@ def _register_routes(app: FastAPI) -> None:
         session: SessionDep,
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
     ) -> AgentResponse:
+        key = require_idempotency_key(request.headers.getlist(IDEMPOTENCY_KEY_HEADER))
+        body_dump = body.model_dump(mode="json")
+        request_digest = canonical_agent_create_digest(body_dump)
+        key_digest = idempotency_key_digest(key)
+        request_id = request_id_from_scope(request.scope)
+        environment = _existing_legacy_default_environment(session, org.id)
+        if environment is None:
+            raise HTTPException(status_code=503, detail="native agent scope unavailable")
+
+        # PostgreSQL serializes by locking the tenant row. SQLite has no
+        # row-level FOR UPDATE, so reuse the governance appender's same-process
+        # transaction-scoped tenant RLock before lookup. This does not claim
+        # multi-process SQLite safety.
+        acquire_sqlite_tenant_transaction_lock(session, org.id)
+        locked_org = session.execute(
+            select(Organization)
+            .where(Organization.id == org.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if locked_org is None:
+            raise HTTPException(status_code=404, detail="organization not found")
+        org = locked_org
+
+        existing = session.execute(
+            select(ManagedIdempotencyResult)
+            .where(
+                ManagedIdempotencyResult.org_id == org.id,
+                ManagedIdempotencyResult.environment_id == environment.id,
+                ManagedIdempotencyResult.principal_id == principal.user_id,
+                ManagedIdempotencyResult.canonical_action == AGENT_CREATE_ACTION,
+                ManagedIdempotencyResult.key_digest == key_digest,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if existing is not None:
+            if (
+                existing.request_digest != request_digest
+                or existing.request_digest_version != AGENT_CREATE_REQUEST_DIGEST_VERSION
+                or existing.canonicalizer_version != AGENT_CREATE_CANONICALIZER_VERSION
+            ):
+                return JSONResponse(
+                    status_code=409,
+                    content=redacted_error("idempotency_conflict", request_id),
+                )  # type: ignore[return-value]
+            providers = request.app.state.native_agent_transaction
+            if not isinstance(providers, NativeAgentTransactionProviders):
+                raise HTTPException(
+                    status_code=503,
+                    detail="native agent transaction providers missing",
+                )
+            try:
+                replay_body = verify_replay_result(
+                    session,
+                    existing,
+                    receipt_trust=providers.receipt_trust,
+                    consumption_trust=providers.consumption_trust,
+                )
+            except (ProductionProfileError, ReceiptValidationError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="idempotency replay unavailable",
+                ) from exc
+            if existing.response_status != 201:
+                replay_body["request_id"] = request_id
+            return JSONResponse(
+                status_code=existing.response_status,
+                content=replay_body,
+            )  # type: ignore[return-value]
+
         dup = session.execute(
             select(AgentRecord).where(AgentRecord.org_id == org.id, AgentRecord.name == body.name)
         ).scalar_one_or_none()
@@ -966,10 +1067,6 @@ def _register_routes(app: FastAPI) -> None:
                 detail="native agent transaction providers refused",
             ) from exc
 
-        environment = _existing_legacy_default_environment(session, org.id)
-        if environment is None:
-            raise HTTPException(status_code=503, detail="native agent scope unavailable")
-
         policy_row = session.execute(
             select(PolicyBundle).where(
                 PolicyBundle.org_id == org.id,
@@ -985,7 +1082,7 @@ def _register_routes(app: FastAPI) -> None:
         policy_bundle_value = policy_row.id if policy_row is not None else "baseline-policy"
         policy_hash = sha256_json(policy_row.bundle if policy_row is not None else policy.to_dict())
 
-        action = "database.agent.create"
+        action = AGENT_CREATE_ACTION
         boundary = "control-plane/sql-transaction"
         safe_actor = native_receipt_pseudonym(
             "actor", principal.actor_id, tenant_id=org.id, privacy=providers.privacy
@@ -1008,7 +1105,7 @@ def _register_routes(app: FastAPI) -> None:
         policy_bundle_id = native_receipt_reference(
             "policy_bundle_id", policy_bundle_value, tenant_id=org.id, privacy=providers.privacy
         )
-        args = body.model_dump()
+        args = body_dump
         call = ToolCall(
             name=action,
             args=args,
@@ -1047,6 +1144,12 @@ def _register_routes(app: FastAPI) -> None:
             matched_rules=tuple(sha256_json(rule) for rule in record.matched_rules),
         )
         event_payload = DatabaseGovernanceEventAppender(session, org.id).append(record)
+        event_row = session.execute(
+            select(GovernanceEvent).where(
+                GovernanceEvent.org_id == org.id,
+                GovernanceEvent.event_hash == str(event_payload["event_hash"]),
+            )
+        ).scalar_one()
         if record.decision not in {Decision.ALLOW, Decision.DENY, Decision.ESCALATE}:
             session.rollback()
             raise HTTPException(status_code=403, detail="unsupported native governance decision")
@@ -1072,40 +1175,93 @@ def _register_routes(app: FastAPI) -> None:
             execution_boundary=boundary,
             policy_bundle_id=policy_bundle_id,
             policy_hash=policy_hash,
-            request_id=hashlib.sha256(request_id_from_scope(request.scope).encode()).hexdigest(),
+            request_id=hashlib.sha256(request_id.encode()).hexdigest(),
             validator=Validator(validator_id, validator_role),
             authority=authority,
             expires_at=(issued + timedelta(minutes=2)).isoformat(),
             now=issued,
         )
-        DatabaseNativeReceiptStore(session, trust=providers.receipt_trust).persist_verifiable(
-            receipt,
-            context,
-            now=issued,
-        )
+        native_row = DatabaseNativeReceiptStore(
+            session,
+            trust=providers.receipt_trust,
+        ).persist_verifiable(receipt, context, now=issued)
         if record.decision is Decision.DENY:
+            response_body = {
+                "status": "denied",
+                "reason": record.reason,
+                "receipt_id": receipt.receipt_id,
+                "decision": record.decision.value,
+            }
+            idem = ManagedIdempotencyResult(
+                org_id=org.id,
+                project_id=environment.project_id,
+                environment_id=environment.id,
+                principal_id=principal.user_id,
+                canonical_action=action,
+                key_digest=key_digest,
+                request_digest_version=AGENT_CREATE_REQUEST_DIGEST_VERSION,
+                request_digest=request_digest,
+                canonicalizer_version=AGENT_CREATE_CANONICALIZER_VERSION,
+                terminal_decision=record.decision.value,
+                response_status=403,
+                response_body_hash=sha256_json(response_body),
+                native_receipt_row_id=native_row.id,
+                receipt_id=receipt.receipt_id,
+                governance_event_id=event_row.id,
+                governance_event_hash=str(event_payload["event_hash"]),
+                agent_id=None,
+                result_artifact={},
+                result_artifact_hash="",
+                result_signature_algorithm="",
+                result_signing_key_id="",
+                result_signature="",
+            )
+            sign_result_artifact(row=idem, consumption_trust=providers.consumption_trust)
+            session.add(idem)
+            session.flush()
             session.commit()
             return JSONResponse(
                 status_code=403,
-                content={
-                    "status": "denied",
-                    "reason": record.reason,
-                    "receipt_id": receipt.receipt_id,
-                    "decision": record.decision.value,
-                    "request_id": request_id_from_scope(request.scope),
-                },
+                content={**response_body, "request_id": request_id},
             )  # type: ignore[return-value]
         if record.decision is Decision.ESCALATE:
+            response_body = {
+                "status": "pending_approval",
+                "reason": record.reason,
+                "receipt_id": receipt.receipt_id,
+                "decision": record.decision.value,
+            }
+            idem = ManagedIdempotencyResult(
+                org_id=org.id,
+                project_id=environment.project_id,
+                environment_id=environment.id,
+                principal_id=principal.user_id,
+                canonical_action=action,
+                key_digest=key_digest,
+                request_digest_version=AGENT_CREATE_REQUEST_DIGEST_VERSION,
+                request_digest=request_digest,
+                canonicalizer_version=AGENT_CREATE_CANONICALIZER_VERSION,
+                terminal_decision=record.decision.value,
+                response_status=202,
+                response_body_hash=sha256_json(response_body),
+                native_receipt_row_id=native_row.id,
+                receipt_id=receipt.receipt_id,
+                governance_event_id=event_row.id,
+                governance_event_hash=str(event_payload["event_hash"]),
+                agent_id=None,
+                result_artifact={},
+                result_artifact_hash="",
+                result_signature_algorithm="",
+                result_signing_key_id="",
+                result_signature="",
+            )
+            sign_result_artifact(row=idem, consumption_trust=providers.consumption_trust)
+            session.add(idem)
+            session.flush()
             session.commit()
             return JSONResponse(
                 status_code=202,
-                content={
-                    "status": "pending_approval",
-                    "reason": record.reason,
-                    "receipt_id": receipt.receipt_id,
-                    "decision": record.decision.value,
-                    "request_id": request_id_from_scope(request.scope),
-                },
+                content={**response_body, "request_id": request_id},
             )  # type: ignore[return-value]
 
         def _do(
@@ -1148,8 +1304,36 @@ def _register_routes(app: FastAPI) -> None:
                 context=context,
             ),
         )
+        response_body = _agent_response(rec, receipt_id=receipt.receipt_id).model_dump(mode="json")
+        idem = ManagedIdempotencyResult(
+            org_id=org.id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            principal_id=principal.user_id,
+            canonical_action=action,
+            key_digest=key_digest,
+            request_digest_version=AGENT_CREATE_REQUEST_DIGEST_VERSION,
+            request_digest=request_digest,
+            canonicalizer_version=AGENT_CREATE_CANONICALIZER_VERSION,
+            terminal_decision=record.decision.value,
+            response_status=201,
+            response_body_hash=sha256_json(response_body),
+            native_receipt_row_id=native_row.id,
+            receipt_id=receipt.receipt_id,
+            governance_event_id=event_row.id,
+            governance_event_hash=str(event_payload["event_hash"]),
+            agent_id=rec.id,
+            result_artifact={},
+            result_artifact_hash="",
+            result_signature_algorithm="",
+            result_signing_key_id="",
+            result_signature="",
+        )
+        sign_result_artifact(row=idem, consumption_trust=providers.consumption_trust)
+        session.add(idem)
+        session.flush()
         session.commit()
-        return _agent_response(rec, receipt_id=receipt.receipt_id)
+        return JSONResponse(status_code=201, content=response_body)  # type: ignore[return-value]
 
     @app.get("/orgs/{org_id}/agents", response_model=list[AgentResponse], tags=["agents"])
     def list_agents(

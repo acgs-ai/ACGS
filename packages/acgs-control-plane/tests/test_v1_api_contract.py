@@ -196,7 +196,7 @@ def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
         created = client.post(
             f"/v1/orgs/{org_id}/agents",
             json={"name": "dispatcher", "allowed_tools": ["ticket.create"]},
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "v1-positive-dispatcher"},
         )
         assert created.status_code == 201, created.text
         assert created.json()["receipt_id"]
@@ -257,12 +257,16 @@ def test_v1_malformed_and_oversized_writes_are_rejected_before_side_effects(
         malformed = client.post(
             f"/v1/orgs/{org_id}/agents",
             content=f'{{"name":"{secret}",'.encode(),
-            headers={"Content-Type": "application/json", **_headers(org)},
+            headers={
+                "Content-Type": "application/json",
+                **_headers(org),
+                "Idempotency-Key": "v1-malformed",
+            },
         )
         oversized = client.post(
             f"/v1/orgs/{org_id}/agents",
             json={"name": "x" * 800},
-            headers=_headers(org),
+            headers={**_headers(org), "Idempotency-Key": "v1-oversized"},
         )
 
         assert malformed.status_code == 400
@@ -322,12 +326,20 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
         v1_denied = client.post(
             f"/v1/orgs/{v1_org['org_id']}/agents",
             json={"name": "sketchy-v1", "trust_tier": "untrusted"},
-            headers={**_headers(v1_org), "X-Request-ID": "attacker-controlled"},
+            headers={
+                **_headers(v1_org),
+                "X-Request-ID": "attacker-controlled",
+                "Idempotency-Key": "v1-denied",
+            },
         )
         v0_denied = client.post(
             f"/orgs/{v0_org['org_id']}/agents",
             json={"name": "sketchy-v0", "trust_tier": "untrusted"},
-            headers={**_headers(v0_org), "X-Request-ID": "attacker-controlled"},
+            headers={
+                **_headers(v0_org),
+                "X-Request-ID": "attacker-controlled",
+                "Idempotency-Key": "v0-denied",
+            },
         )
 
         assert v1_denied.status_code == 403

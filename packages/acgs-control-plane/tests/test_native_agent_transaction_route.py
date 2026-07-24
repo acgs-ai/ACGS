@@ -247,7 +247,10 @@ def test_agent_create_uses_single_native_sql_transaction_and_verifies_offline(
         created = client.post(
             f"/v1/orgs/{org_id}/agents",
             json={"name": "dispatcher", "allowed_tools": ["ticket.create"]},
-            headers={"X-API-Key": org["admin_api_key"]},
+            headers={
+                "X-API-Key": org["admin_api_key"],
+                "Idempotency-Key": "native-create-dispatcher",
+            },
         )
 
         assert created.status_code == 201, created.text
@@ -359,7 +362,10 @@ def test_agent_create_missing_native_providers_fails_before_mutation(tmp_path: P
         response = client.post(
             f"/orgs/{org['org_id']}/agents",
             json={"name": "dispatcher"},
-            headers={"X-API-Key": org["admin_api_key"]},
+            headers={
+                "X-API-Key": org["admin_api_key"],
+                "Idempotency-Key": "native-missing-providers",
+            },
         )
 
         assert response.status_code == 503
@@ -379,7 +385,10 @@ def test_agent_create_rejects_same_issuer_attestor_key_material_before_governanc
         response = client.post(
             f"/orgs/{org['org_id']}/agents",
             json={"name": "dispatcher"},
-            headers={"X-API-Key": org["admin_api_key"]},
+            headers={
+                "X-API-Key": org["admin_api_key"],
+                "Idempotency-Key": "native-same-key-material",
+            },
         )
 
         assert response.status_code == 503
@@ -421,7 +430,7 @@ def test_agent_create_policy_deny_has_no_agent_or_native_consumption(tmp_path: P
         denied = client.post(
             f"/v1/orgs/{org['org_id']}/agents",
             json={"name": "blocked", "trust_tier": "untrusted"},
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "native-deny-blocked"},
         )
 
         assert denied.status_code == 403
@@ -500,7 +509,7 @@ def test_agent_create_policy_escalate_has_no_agent_or_scope_creation(tmp_path: P
         escalated = client.post(
             f"/v1/orgs/{org['org_id']}/agents",
             json={"name": "pending", "trust_tier": "untrusted"},
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "native-escalate-pending"},
         )
 
         assert escalated.status_code == 202
@@ -586,7 +595,10 @@ def test_agent_create_uses_default_environment_policy_not_cross_env_allow(
         allowed = client.post(
             f"/orgs/{org_id}/agents",
             json={"name": "not-confused"},
-            headers={"X-API-Key": org["admin_api_key"]},
+            headers={
+                "X-API-Key": org["admin_api_key"],
+                "Idempotency-Key": "native-cross-env-not-confused",
+            },
         )
 
         assert allowed.status_code == 201, allowed.text
@@ -617,7 +629,10 @@ def test_agent_create_uses_default_environment_policy_not_cross_env_allow(
         denied = client.post(
             f"/orgs/{org_id}/agents",
             json={"name": "confused"},
-            headers={"X-API-Key": org["admin_api_key"]},
+            headers={
+                "X-API-Key": org["admin_api_key"],
+                "Idempotency-Key": "native-cross-env-confused",
+            },
         )
 
         assert denied.status_code == 403
@@ -646,7 +661,7 @@ def test_public_native_verify_fails_closed_on_tampered_evidence(
         created = client.post(
             f"/v1/orgs/{org_id}/agents",
             json={"name": f"tamper-{tamper}"},
-            headers=headers,
+            headers={**headers, "Idempotency-Key": f"native-tamper-{tamper}"},
         )
         assert created.status_code == 201, created.text
         receipt_id = created.json()["receipt_id"]
