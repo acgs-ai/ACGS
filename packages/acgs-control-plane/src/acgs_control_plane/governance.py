@@ -96,9 +96,15 @@ _LEGACY_WRITES = (
 ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),
+    RouteContract("GET", "/v1", ExecutionClass.PROTOCOL_OPERATION),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
+    *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(
         RouteContract(m, p, ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
+        for m, p, a in _LEGACY_WRITES
+    ),
+    *(
+        RouteContract(m, f"/v1{p}", ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
         for m, p, a in _LEGACY_WRITES
     ),
 )

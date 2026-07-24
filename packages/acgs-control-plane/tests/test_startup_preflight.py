@@ -193,15 +193,22 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
     legacy_routes = [
         blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
     ]
-    assert len(legacy_routes) == 7
+    assert len(legacy_routes) == 14
     assert {blocker.route for blocker in legacy_routes} == {
         "PATCH /orgs/{org_id}/agents/{agent_id}/status",
+        "PATCH /v1/orgs/{org_id}/agents/{agent_id}/status",
         "POST /orgs",
+        "POST /v1/orgs",
         "POST /orgs/{org_id}/agents",
+        "POST /v1/orgs/{org_id}/agents",
         "POST /orgs/{org_id}/exports",
+        "POST /v1/orgs/{org_id}/exports",
         "POST /orgs/{org_id}/policies",
+        "POST /v1/orgs/{org_id}/policies",
         "POST /orgs/{org_id}/policies/{bundle_id}/activate",
+        "POST /v1/orgs/{org_id}/policies/{bundle_id}/activate",
         "POST /orgs/{org_id}/users",
+        "POST /v1/orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
     assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002

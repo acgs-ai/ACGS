@@ -1,4 +1,4 @@
-"""OpenAPI drift sentinel for the current v0 control-plane contract."""
+"""OpenAPI drift sentinel for the current v0 plus additive v1 control-plane contract."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def _expected_params(*names: str) -> list[dict[str, Any]]:
     return [copy.deepcopy(PARAMETER_SCHEMAS[name]) for name in names]
 
 
-EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+EXPECTED_V0_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     "/healthz": {
         "get": {
             "operation_id": "healthz_healthz_get",
@@ -286,6 +286,32 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
+
+def _v1_operation_contract(operation: dict[str, Any]) -> dict[str, Any]:
+    aliased = copy.deepcopy(operation)
+    aliased["operation_id"] = f"v1_{operation['operation_id']}"
+    return aliased
+
+
+EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    **EXPECTED_V0_PATHS,
+    "/v1": {
+        "get": {
+            "operation_id": "get_v1_metadata",
+            "parameters": [],
+            "responses": ["200"],
+            "tag": "meta",
+        }
+    },
+    **{
+        f"/v1{path}": {
+            method: _v1_operation_contract(operation) for method, operation in methods.items()
+        }
+        for path, methods in EXPECTED_V0_PATHS.items()
+        if path == "/orgs" or path.startswith("/orgs/")
+    },
+}
+
 EXPECTED_COMPONENTS = {
     "AgentRegisterRequest",
     "AgentResponse",
@@ -311,6 +337,7 @@ EXPECTED_COMPONENTS = {
     "UserCreateResponse",
     "UserResponse",
     "ValidationError",
+    "V1MetadataResponse",
 }
 
 EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
@@ -518,12 +545,14 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
     schema = _app_for_openapi(tmp_path).openapi()
     serialized = json.dumps(schema, sort_keys=True)
 
-    assert not any(path == "/v1" or path.startswith("/v1/") for path in schema["paths"])
+    assert "/v1" in schema["paths"]
+    assert "/v1/orgs" in schema["paths"]
     assert "Idempotency-Key" not in serialized
     assert "idempotency_key" not in serialized
     assert "/jobs" not in serialized
     assert "AsyncExport" not in serialized
     assert "202" not in schema["paths"]["/orgs/{org_id}/exports"]["post"]["responses"]
+    assert "202" not in schema["paths"]["/v1/orgs/{org_id}/exports"]["post"]["responses"]
 
     cursor_parameters = [
         (path, method)
@@ -531,7 +560,10 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
         for method, operation in methods.items()
         if any(parameter["name"] == "cursor" for parameter in operation.get("parameters", []))
     ]
-    assert cursor_parameters == [("/orgs/{org_id}/receipts", "get")]
+    assert cursor_parameters == [
+        ("/orgs/{org_id}/receipts", "get"),
+        ("/v1/orgs/{org_id}/receipts", "get"),
+    ]
     assert all(
         "next_cursor" not in json.dumps(component, sort_keys=True)
         for name, component in schema["components"]["schemas"].items()
