@@ -73,10 +73,10 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to revision `0002`, then set `ACP_CREATE_TABLES=0`. Schema currency is
+secret-safe operator CLI to revision `0003`, then set `ACP_CREATE_TABLES=0`. Schema currency is
 reported separately from production readiness. `ACP_RUNTIME_POSTURE=production` currently refuses
 before constructing a database engine because the existing mutation routes still use the legacy
-unsigned membrane; an exact `0002` schema does not weaken that blocker.
+unsigned membrane; an exact `0003` schema does not weaken that blocker.
 
 Bootstrap the first org (returns the org-admin API key exactly once):
 
@@ -149,6 +149,9 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact, read-only
   revision preflight and never migrates. The legacy `create_all` bootstrap remains available only
   under the explicit local-development posture above.
+- **Database governance-event tables are groundwork only**: revision `0003` adds DB-primary event,
+  head, outbox, and cutover tables plus a caller-owned-session appender, but current routes and read
+  paths still use the legacy JSONL authority until a later explicit cutover.
 - **Production posture remains blocked** while mutation routes use the legacy unsigned governance
   membrane. A current database schema is necessary startup evidence, not production readiness.
 - The chain-tip anchor is written by the same service that writes the chain — it

@@ -34,7 +34,8 @@ from acgs_control_plane import models as _models  # noqa: F401  # load Base meta
 from acgs_control_plane.db import make_engine
 
 LEGACY_V0_REVISION: Final = "0001"
-HEAD_REVISION: Final = "0002"
+SCOPED_REVISION: Final = "0002"
+HEAD_REVISION: Final = "0003"
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -70,6 +71,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0001_PARTIAL_PROJECTS = "version_0001_partial_projects"
     VERSION_0001_PARTIAL_SCOPE = "version_0001_partial_scope"
     VERSION_0002 = "version_0002"
+    VERSION_0003 = "version_0003"
     UNKNOWN = "unknown"
 
 
@@ -94,7 +96,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0002.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0003.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -221,6 +223,51 @@ _SCOPED_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_GOVERNANCE_EVENT_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_SCOPED_COLUMNS,
+    "governance_event_heads": (
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("last_sequence", "integer", False),
+        _ColumnSpec("last_event_hash", "string", False, 64),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "governance_events": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("sequence", "integer", False),
+        _ColumnSpec("event_id", "string", False, 200),
+        _ColumnSpec("previous_hash", "string", False, 64),
+        _ColumnSpec("event_hash", "string", False, 64),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("tool", "string", False, 200),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "audit_projection_outbox": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("governance_event_id", "string", False, 64),
+        _ColumnSpec("sequence", "integer", False),
+        _ColumnSpec("event_hash", "string", False, 64),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("attempts", "integer", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("available_at", "datetime", False),
+        _ColumnSpec("delivered_at", "datetime", True),
+    ),
+    "governance_event_cutover": (
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("state", "string", False, 32),
+        _ColumnSpec("legacy_audit_anchor_count", "integer", False),
+        _ColumnSpec("legacy_audit_anchor_hash", "string", False, 128),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+        _ColumnSpec("cutover_at", "datetime", True),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -231,6 +278,13 @@ _LEGACY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
 }
 _SCOPED_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _SCOPED_COLUMNS
+}
+_GOVERNANCE_EVENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **{table_name: ("id",) for table_name in _SCOPED_COLUMNS},
+    "governance_event_heads": ("org_id",),
+    "governance_events": ("id",),
+    "audit_projection_outbox": ("id",),
+    "governance_event_cutover": ("org_id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -257,6 +311,23 @@ _SCOPED_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_GOVERNANCE_EVENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_SCOPED_FOREIGN_KEYS,
+    "governance_event_heads": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "governance_events": frozenset({(("org_id",), None, "organizations", ("id",))}),
+    "audit_projection_outbox": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "governance_event_id"),
+                None,
+                "governance_events",
+                ("org_id", "id"),
+            ),
+        }
+    ),
+    "governance_event_cutover": frozenset({(("org_id",), None, "organizations", ("id",))}),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -274,6 +345,15 @@ _SCOPED_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": frozenset({("org_id", "slug"), ("org_id", "id")}),
     "environments": frozenset({("org_id", "project_id", "slug")}),
+}
+_GOVERNANCE_EVENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_UNIQUES,
+    "governance_event_heads": frozenset(),
+    "governance_events": frozenset(
+        {("org_id", "id"), ("org_id", "sequence"), ("org_id", "event_id")}
+    ),
+    "audit_projection_outbox": frozenset({("org_id", "sequence")}),
+    "governance_event_cutover": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -295,6 +375,13 @@ _SCOPED_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     # interruption boundaries on SQLite.
     "projects": frozenset(),
     "environments": frozenset(),
+}
+_GOVERNANCE_EVENT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_NON_UNIQUE_INDEXES,
+    "governance_event_heads": frozenset(),
+    "governance_events": frozenset({("org_id",)}),
+    "audit_projection_outbox": frozenset({("org_id",)}),
+    "governance_event_cutover": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -381,7 +468,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
     user_tables = table_names - {_VERSION_TABLE}
     if versions == [LEGACY_V0_REVISION]:
         return _classify_revision_0001(connection, inspector, user_tables)
-    if versions == [HEAD_REVISION]:
+    if versions == [SCOPED_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -393,6 +480,19 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0002, "known Alembic revision 0002")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _GOVERNANCE_EVENT_COLUMNS,
+            _GOVERNANCE_EVENT_PRIMARY_KEYS,
+            _GOVERNANCE_EVENT_FOREIGN_KEYS,
+            _GOVERNANCE_EVENT_UNIQUES,
+            _GOVERNANCE_EVENT_NON_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0003, "known Alembic revision 0003")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -408,7 +508,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0002:
+    if preflight.state is not DatabaseSchemaState.VERSION_0003:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -511,7 +611,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0002:
+    if after.state is not DatabaseSchemaState.VERSION_0003:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -573,7 +673,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0002:
+                    if after.state is not DatabaseSchemaState.VERSION_0003:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"

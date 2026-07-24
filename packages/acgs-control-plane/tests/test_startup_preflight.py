@@ -87,6 +87,13 @@ def _seed_partial_0001(database_url: str) -> None:
     engine = make_engine(database_url)
     try:
         with engine.begin() as connection:
+            for table_name in (
+                "audit_projection_outbox",
+                "governance_events",
+                "governance_event_heads",
+                "governance_event_cutover",
+            ):
+                connection.execute(sa.text(f"DROP TABLE {table_name}"))
             connection.execute(sa.text("DROP TABLE environments"))
             connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
     finally:
@@ -211,7 +218,7 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
         "POST /v1/orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
     assert not (tmp_path / "audit").exists()
 
 
@@ -232,9 +239,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0002.value,
+            "schema_state": DatabaseSchemaState.VERSION_0003.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0002
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0003
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()

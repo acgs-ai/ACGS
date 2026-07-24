@@ -362,7 +362,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0002
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0003
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,

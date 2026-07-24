@@ -37,6 +37,23 @@ def _database_url(tmp_path: Path) -> str:
     return f"sqlite:///{tmp_path / 'control-plane.sqlite3'}"
 
 
+EXPECTED_HEAD_TABLES = {
+    "agents",
+    "alembic_version",
+    "audit_projection_outbox",
+    "compliance_exports",
+    "environments",
+    "governance_event_cutover",
+    "governance_event_heads",
+    "governance_events",
+    "organizations",
+    "policy_bundles",
+    "projects",
+    "receipts",
+    "users",
+}
+
+
 def _seed_exact_legacy_v0_schema(database_url: str) -> None:
     """Create the actual former v0 contract without an Alembic version marker."""
     engine = make_engine(database_url)
@@ -274,6 +291,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/env.py",
             "acgs_control_plane/migrations/versions/0001_legacy_v0.py",
             "acgs_control_plane/migrations/versions/0002_project_environment.py",
+            "acgs_control_plane/migrations/versions/0003_governance_events.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -299,15 +317,19 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0002
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+assert result.after.state is DatabaseSchemaState.VERSION_0003
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
         "agents",
         "alembic_version",
+        "audit_projection_outbox",
         "compliance_exports",
         "environments",
+        "governance_event_cutover",
+        "governance_event_heads",
+        "governance_events",
         "organizations",
         "policy_bundles",
         "projects",
@@ -339,18 +361,8 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
-    assert _table_names(database_url) == {
-        "agents",
-        "alembic_version",
-        "compliance_exports",
-        "environments",
-        "organizations",
-        "policy_bundles",
-        "projects",
-        "receipts",
-        "users",
-    }
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert _table_names(database_url) == EXPECTED_HEAD_TABLES
 
     engine = make_engine(database_url)
     try:
@@ -401,7 +413,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: Path) -> None:
@@ -421,7 +433,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -683,7 +695,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
     assert _table_names(database_url) == table_names_before
 
 
@@ -915,9 +927,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0002
-    assert second.before.state is DatabaseSchemaState.VERSION_0002
-    assert second.after.state is DatabaseSchemaState.VERSION_0002
+    assert first.after.state is DatabaseSchemaState.VERSION_0003
+    assert second.before.state is DatabaseSchemaState.VERSION_0003
+    assert second.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -1001,7 +1013,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -1025,7 +1037,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -1047,7 +1059,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

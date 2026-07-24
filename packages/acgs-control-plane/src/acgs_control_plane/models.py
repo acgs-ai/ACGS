@@ -196,3 +196,87 @@ class ComplianceExport(Base):
     bundle_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     bundle: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GovernanceEventHead(Base):
+    """Per-tenant database-primary audit chain head.
+
+    This is migration groundwork only. Existing route reads still use the
+    legacy JSONL-backed audit path until a later cutover explicitly switches
+    authority.
+    """
+
+    __tablename__ = "governance_event_heads"
+    __table_args__ = ({"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},)
+
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
+    last_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_event_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="0" * 64)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class GovernanceEvent(Base):
+    """Database-primary governance event plus complete append payload."""
+
+    __tablename__ = "governance_events"
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_governance_events_org_id_id"),
+        UniqueConstraint("org_id", "sequence", name="uq_governance_events_org_sequence"),
+        UniqueConstraint("org_id", "event_id", name="uq_governance_events_org_event_id"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    tool: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditProjectionOutbox(Base):
+    """Derived JSONL projection work item for one database governance event."""
+
+    __tablename__ = "audit_projection_outbox"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "governance_event_id"],
+            ["governance_events.org_id", "governance_events.id"],
+            name="fk_audit_projection_outbox_org_event",
+        ),
+        UniqueConstraint("org_id", "sequence", name="uq_audit_projection_outbox_org_sequence"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    governance_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GovernanceEventCutover(Base):
+    """Tenant cutover marker; not consulted by current route/read paths yet."""
+
+    __tablename__ = "governance_event_cutover"
+    __table_args__ = ({"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},)
+
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="legacy_jsonl")
+    legacy_audit_anchor_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    legacy_audit_anchor_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    cutover_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

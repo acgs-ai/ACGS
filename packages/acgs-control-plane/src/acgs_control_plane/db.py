@@ -19,7 +19,16 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 ALEMBIC_MANAGED_TABLE_INFO_KEY = "acgs_alembic_managed"
 """Explicit metadata marker for tables that legacy ``create_all`` must not create."""
 
-_ALEMBIC_MANAGED_TABLE_NAMES = frozenset({"projects", "environments"})
+_ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
+    {
+        "projects",
+        "environments",
+        "governance_event_heads",
+        "governance_events",
+        "audit_projection_outbox",
+        "governance_event_cutover",
+    }
+)
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(
     {
         "organizations",
@@ -36,11 +45,10 @@ class LegacyCreateAllMetaData(MetaData):
     """Preserve v0 ``create_all`` only for the explicit legacy table set.
 
     The app factory exposes this only behind its explicit local-development
-    posture. Project and environment tables are created only by Alembic
-    revision 0002. A future migration-managed table
-    must be both explicitly marked and added to the finite allowlist; an
-    unknown marker or an unmarked allowlisted table raises rather than silently
-    changing startup schema behaviour.
+    posture. Managed tables are created only by Alembic revisions. A future
+    migration-managed table must be both explicitly marked and added to the
+    finite allowlist; an unknown marker or an unmarked allowlisted table
+    raises rather than silently changing startup schema behaviour.
     """
 
     def create_all(
