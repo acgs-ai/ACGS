@@ -8,6 +8,7 @@ the explicit destructive-test acknowledgement.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -51,6 +52,25 @@ if os.environ.get("ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE") != "1":
     )
 
 pytest.importorskip("psycopg")
+
+
+def _required_tool_path(name: str) -> Path:
+    resolved = shutil.which(name)
+    if resolved is None:
+        pytest.skip(f"{name} is required to run PostgreSQL recovery integration tests")
+    selected = Path(resolved)
+    if not selected.is_absolute():
+        selected = Path.cwd() / selected
+    try:
+        selected.stat()
+    except OSError:
+        pytest.skip(f"{name} resolved to an unavailable PostgreSQL client path: {selected}")
+    return selected
+
+
+PG_DUMP_PATH = _required_tool_path("pg_dump")
+PG_RESTORE_PATH = _required_tool_path("pg_restore")
+PSQL_PATH = _required_tool_path("psql")
 
 
 def _validated_url(raw: str, expected_database: str, variable: str) -> str:
@@ -287,7 +307,13 @@ def _create_valid_bundle(tmp_path: Path) -> Path:
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
     bundle = tmp_path / "bundle"
-    create_recovery_bundle(source_url_env=SOURCE_ENV, audit_dir=audit_source, output=bundle)
+    create_recovery_bundle(
+        source_url_env=SOURCE_ENV,
+        audit_dir=audit_source,
+        output=bundle,
+        pg_dump_path=PG_DUMP_PATH,
+        pg_restore_path=PG_RESTORE_PATH,
+    )
     return bundle
 
 
@@ -322,7 +348,7 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     assert not (tmp_path / "bundle").exists()
 
 
-def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
+def test_public_first_function_hijacks_refuse_before_spawned_clients(
     tmp_path: Path,
 ) -> None:
     _seed_source()
@@ -330,41 +356,23 @@ def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
     bundle = tmp_path / "bundle"
-    observed_dump = False
+    calls: list[list[str]] = []
 
-    def probing_runner(command: list[str], environment: dict[str, str]) -> None:
-        nonlocal observed_dump
-        assert environment["PGOPTIONS"] == "-csearch_path=public"
-        if command[0] == "pg_dump":
-            observed_dump = True
-            probe = subprocess.run(
-                [
-                    "psql",
-                    "--no-psqlrc",
-                    "--tuples-only",
-                    "--no-align",
-                    "--set",
-                    "ON_ERROR_STOP=1",
-                    "--command",
-                    "SELECT current_database()",
-                ],
-                check=True,
-                capture_output=True,
-                env=environment,
-                text=True,
-            )
-            assert probe.stdout.strip() == SOURCE_DATABASE
-        _run_command(command, environment)
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
 
-    create_recovery_bundle(
-        source_url_env=SOURCE_ENV,
-        audit_dir=audit_source,
-        output=bundle,
-        runner=probing_runner,
-    )
+    with pytest.raises(RecoveryRefused, match="exact supported migration head schema"):
+        create_recovery_bundle(
+            source_url_env=SOURCE_ENV,
+            audit_dir=audit_source,
+            output=bundle,
+            pg_dump_path=PG_DUMP_PATH,
+            pg_restore_path=PG_RESTORE_PATH,
+            runner=forbidden_runner,
+        )
 
-    assert observed_dump
-    assert bundle.is_dir()
+    assert calls == []
+    assert not bundle.exists()
     engine = make_engine(_safe_admin_url(SOURCE_URL))
     try:
         with engine.connect() as connection:
@@ -422,14 +430,17 @@ def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> Non
         source_url_env=SOURCE_ENV,
         audit_dir=audit_source,
         output=bundle,
+        pg_dump_path=PG_DUMP_PATH,
+        pg_restore_path=PG_RESTORE_PATH,
     )
-    verified = verify_recovery_bundle(bundle=bundle)
+    verified = verify_recovery_bundle(bundle=bundle, pg_restore_path=PG_RESTORE_PATH)
     restored = restore_recovery_bundle(
         bundle=bundle,
         target_url_env=TARGET_ENV,
         target_database_name=TARGET_DATABASE,
         target_audit_dir=tmp_path / "target-audit",
         acknowledge_operator_controlled_bundle=True,
+        pg_restore_path=PG_RESTORE_PATH,
     )
 
     assert created == verified == restored
@@ -454,6 +465,8 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         source_url_env=SOURCE_ENV,
         audit_dir=audit_source,
         output=bundle,
+        pg_dump_path=PG_DUMP_PATH,
+        pg_restore_path=PG_RESTORE_PATH,
     )
     upgrade_database(TARGET_URL)
     calls: list[list[str]] = []
@@ -487,6 +500,8 @@ def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(
         source_url_env=SOURCE_ENV,
         audit_dir=audit_source,
         output=bundle,
+        pg_dump_path=PG_DUMP_PATH,
+        pg_restore_path=PG_RESTORE_PATH,
     )
     mutating_commands: list[list[str]] = []
 
@@ -516,6 +531,7 @@ def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(
                     target_database_name=TARGET_DATABASE,
                     target_audit_dir=tmp_path / "target-audit",
                     acknowledge_operator_controlled_bundle=True,
+                    pg_restore_path=PG_RESTORE_PATH,
                     runner=recording_runner,
                 )
     finally:
@@ -537,6 +553,7 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
         if Path(command[0]).name != "pg_dump":
             _run_command(command, environment)
             return
+        assert Path(command[0]) == PG_DUMP_PATH
         # First create the normal source snapshot, then use the dedicated
         # disposable target as an archive-rewrite fixture. This leaves the
         # source's exact supported schema untouched while producing a custom
@@ -554,7 +571,7 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
             ) as target_environment:
                 _run_command(
                     [
-                        "pg_restore",
+                        str(PG_RESTORE_PATH),
                         "--single-transaction",
                         "--exit-on-error",
                         "--no-owner",
@@ -611,18 +628,22 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
         audit_dir=audit_source,
         output=bundle,
         runner=archive_injection_runner,
+        pg_dump_path=PG_DUMP_PATH,
+        pg_restore_path=PG_RESTORE_PATH,
     )
     mutating_commands: list[list[str]] = []
     late_failure_output: list[str] = []
 
     def late_table_data_failure_runner(command: list[str], environment: dict[str, str]) -> None:
         if "--list" in command:
+            assert Path(command[0]) == PG_RESTORE_PATH
             _run_command(command, environment)
             return
         mutating_commands.append(list(command))
+        assert Path(command[0]) == PG_RESTORE_PATH
         archive = Path(command[-1])
         listed = subprocess.run(
-            ["pg_restore", "--list", str(archive)],
+            [str(PG_RESTORE_PATH), "--list", str(archive)],
             env=dict(environment),
             check=True,
             stdin=subprocess.DEVNULL,
@@ -675,6 +696,7 @@ def test_postgresql_injected_pg_restore_failure_rolls_back_all_objects(
             target_database_name=TARGET_DATABASE,
             target_audit_dir=tmp_path / "target-audit",
             acknowledge_operator_controlled_bundle=True,
+            pg_restore_path=PG_RESTORE_PATH,
             runner=late_table_data_failure_runner,
         )
 
