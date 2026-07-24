@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -435,6 +436,7 @@ class GovernedGateway:
             args=raw_args,
             actor=ctx.principal,
             path=_lift_path(raw_args),
+            state=_lift_trusted_state(os.environ),
         )
         # Chain-linkage anchor for the minted receipt (informational): the hash
         # the decision event chains onto. Captured before the decision append,
@@ -934,6 +936,18 @@ def _lift_path(arguments: Mapping[str, Any]) -> tuple[str, ...]:
     if isinstance(path, (str, list, tuple)):
         return normalize_path_context(path)
     return ()
+
+
+def _lift_trusted_state(environ: Mapping[str, str]) -> dict[str, Any]:
+    """Lift runner-supplied trusted state from the gateway process environment.
+
+    Keys are namespaced GOVE_ZONE_STATE_<KEY> and lower-cased into ToolCall
+    state. The gateway's env is set by the trusted runner that spawns it, NOT
+    by the agent — so this is a trusted channel. NEVER lift state from tool
+    arguments (that would let the untrusted agent self-authorize).
+    """
+    prefix = "GOVE_ZONE_STATE_"
+    return {k[len(prefix) :].lower(): v for k, v in environ.items() if k.startswith(prefix)}
 
 
 def build_gateway_server(config: GatewayConfig, downstream: ClientSession) -> Server:
