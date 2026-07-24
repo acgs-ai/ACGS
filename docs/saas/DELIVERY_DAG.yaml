@@ -2,7 +2,7 @@
   "schema": {
     "name": "acgs-saas-delivery-dag",
     "version": 3,
-    "updated": "2026-07-13",
+    "updated": "2026-07-24",
     "source_of_truth": "docs/ROADMAP.md",
     "serialization": "JSON, a strict YAML 1.2 subset"
   },
@@ -15,16 +15,46 @@
     "termination_rule": "Beta code-complete requires every mandatory non-external node and the clean-environment journey to pass its evidence gate; production launch and external validation remain separate.",
     "worktree_locator": "git worktree list --porcelain",
     "survey_snapshot": {
-      "baseline_commit": "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96",
-      "github_observed_at": "2026-07-13T09:59:25Z",
+      "baseline_commit": "ee83e189ec62eddea4a73be79e9bf492a2f6b371",
+      "github_observed_at": "2026-07-24T08:52:43Z",
       "repository": "dislovelhl/ACGS",
       "pull_requests": [
         {
           "number": 308,
+          "state": "CLOSED",
+          "merged": false,
+          "disposition": "closed_unmerged_superseded_by_current_master_rebuild_stack",
+          "url": "https://github.com/dislovelhl/ACGS/pull/308"
+        },
+        {
+          "number": 353,
           "state": "OPEN",
           "merged": false,
-          "disposition": "active_baseline_candidate",
-          "url": "https://github.com/dislovelhl/ACGS/pull/308"
+          "draft": true,
+          "disposition": "current_g004_master_rebuild_draft_unmerged",
+          "head": "beta/p0-gates-003-master-rebuild",
+          "base": "master",
+          "url": "https://github.com/dislovelhl/ACGS/pull/353"
+        },
+        {
+          "number": 354,
+          "state": "OPEN",
+          "merged": false,
+          "draft": true,
+          "disposition": "current_g101_migration_stack_draft_unmerged",
+          "head": "beta/p1-migration-001",
+          "base": "beta/p0-gates-003-master-rebuild",
+          "url": "https://github.com/dislovelhl/ACGS/pull/354"
+        },
+        {
+          "number": 355,
+          "state": "OPEN",
+          "merged": false,
+          "draft": true,
+          "disposition": "current_g101_tool_provenance_stack_draft_unmerged",
+          "head": "beta/p1-g101-tool-provenance",
+          "base": "beta/p1-migration-001",
+          "url": "https://github.com/dislovelhl/ACGS/pull/355"
         },
         {
           "number": 267,
@@ -181,6 +211,19 @@
         "G601",
         "G606",
         "G704"
+      ]
+    },
+    {
+      "id": "EXT-GITHUB-BILLING",
+      "title": "GitHub Actions account billing lock",
+      "owner": "repository owner or GitHub organization billing administrator",
+      "state": "open",
+      "exact_need": "Unlock the GitHub account or billing state so hosted PostgreSQL migration and codex-review jobs can start.",
+      "why_not_assumed": "The hosted jobs did not start because GitHub reported the account is locked due to a billing issue; engineering agents cannot resolve account billing state.",
+      "validation_after_unblock": "Re-run the affected PR checks and record the hosted PostgreSQL migration and codex-review job results.",
+      "downstream_nodes": [
+        "G004",
+        "G101"
       ]
     }
   ],
@@ -430,8 +473,8 @@
     {
       "id": "G030B",
       "phase": 0,
-      "title": "PR 308 baseline reconciliation",
-      "buyer_user_outcome": "G004 proof work uses a current accepted membrane baseline rather than overlapping or stale changes.",
+      "title": "Current master baseline reconciliation",
+      "buyer_user_outcome": "G004 proof work uses current origin/master plus the active rebuild stack rather than stale or closed-unmerged changes.",
       "repo_owner": "root integration evidence",
       "dependencies": [
         "G005"
@@ -441,30 +484,32 @@
       ],
       "likely_interfaces_files": [
         "GitHub PR 308",
+        "GitHub PR 353",
         "GitHub PR 267",
         "worktree and branch inventory"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "PR 308 disposition and exact accepted source identity are recorded."
+        "PR 308 closed-unmerged disposition, current origin/master identity, and PR 353 draft rebuild source are recorded."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Closed-unmerged PR 267 or an overlapping dirty worktree cannot become authoritative evidence."
+        "Closed-unmerged PR 267, closed-unmerged PR 308, or an overlapping dirty worktree cannot become authoritative evidence."
       ],
       "validation_commands": [
         "gh pr view 308 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
+        "gh pr view 353 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName",
         "gh pr view 267 --repo dislovelhl/ACGS --json number,state,mergedAt,closedAt,url,headRefName,baseRefName",
         "git diff --check"
       ],
-      "evidence_artifact": "PR 308 baseline reconciliation packet",
+      "evidence_artifact": "Current baseline reconciliation packet: origin/master ee83e189ec62eddea4a73be79e9bf492a2f6b371, PR #308 closed unmerged, PR #353 open draft unmerged",
       "branch": null,
       "worktree": null,
-      "pr": "#308",
-      "status": "blocked",
-      "implementation_state": "conflicting",
-      "evidence_state": "unverified",
-      "blocker": "PR #308 is open; PR #267 is closed unmerged and superseded.",
-      "next_safe_action": "Resolve PR #308 through normal review and record the exact accepted commit; never reuse PR #267 as current evidence.",
+      "pr": "#353",
+      "status": "completed",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": null,
+      "next_safe_action": "Use origin/master plus draft PR #353 as the current G004 rebuild path; never reuse PR #267 or #308 as current evidence.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -535,17 +580,18 @@
       "validation_commands": [
         "uv run --package gove-zone python -m pytest packages/gove-zone/tests --import-mode=importlib -q",
         "test -f evidence/g004/manifest.json",
+        "gh pr view 353 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName",
         "git diff --check"
       ],
-      "evidence_artifact": "New accepted-baseline G004 proof; prior material remains historical only",
-      "branch": "beta/p0-gates-003",
+      "evidence_artifact": "Draft PR #353 current-master G004 rebuild with local proof evidence; prior PR #267/#308 material remains historical only. Hosted checks remain blocked by EXT-GITHUB-BILLING.",
+      "branch": "beta/p0-gates-003-master-rebuild",
       "worktree": null,
-      "pr": null,
+      "pr": 353,
       "status": "blocked",
-      "implementation_state": "conflicting",
-      "evidence_state": "historical_only",
-      "blocker": "PR #308 remains open, so no accepted current membrane baseline is available for rebuilding G004 against the reviewed G031 claims and conformance corpus.",
-      "next_safe_action": "After PR #308 resolves and the accepted current baseline is recorded, rebuild G004 using the reviewed G031 corpus rather than reuse historical output.",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": "Draft PR #353 is open and unmerged; hosted checks are partly blocked by EXT-GITHUB-BILLING, so the current-master G004 rebuild is local verified but not accepted as completed DAG evidence.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #353 hosted checks through completion and keep the prior PR #267/#308 output historical-only unless the draft rebuild merges through normal review.",
       "historical_evidence": {
         "disposition": "superseded",
         "usable_as_current_verification": false,
@@ -577,35 +623,44 @@
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
-        "packages/acgs-control-plane/tests/test_postgresql_migrations.py"
+        "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery_bytea.py",
+        "packages/acgs-control-plane/tests/test_postgresql_rolling_upgrade.py",
+        ".github/workflows/python-acgs-control-plane.yml"
       ],
       "risk_class": "red",
       "positive_tests": [
-        "Current-local verification retains the SQLite migration-core suite and adds disposable PostgreSQL 17.10-bookworm evidence for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, injected atomic rollback and retry, and the cross-organization parent constraint."
+        "Current-local verification retains the SQLite migration-core suite; adds disposable PostgreSQL 17.10-bookworm coverage for advisory-lock contention, raw Alembic command denial, rollback/retry, startup exact-schema classification, CLI forward-only acknowledgement, rolling-upgrade compatibility, and migration recovery tool provenance; and records full control-plane package evidence at 214 passed and 32 skipped."
       ],
       "forbidden_side_effect_negative_tests": [
-        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks and raw Alembic stamp/upgrade commands are rejected before schema or version mutation; injected failures roll back the one controlled transaction before a retry."
+        "On local disposable PostgreSQL 17.10-bookworm, held advisory locks, raw Alembic stamp/upgrade commands, unsafe recovery tool paths, exact-schema startup drift, failed upgrades, and missing forward-only acknowledgement are rejected before schema/version mutation or recovery tool spawn."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest -q",
         "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 ACP_TEST_RECOVERY_SOURCE_URL=<ephemeral PG17 source URL> ACP_TEST_RECOVERY_TARGET_URL=<ephemeral PG17 empty target URL> PATH=<absolute pg_dump/pg_restore wrapper dir>:$PATH uv run --extra postgres python -m pytest tests/test_postgresql_migration_recovery.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migration_cli.py tests/test_postgresql_rolling_upgrade.py --import-mode=importlib -q",
         "cd packages/acgs-control-plane && uv run ruff check .",
         "cd packages/acgs-control-plane && uv run ruff format --check .",
         "cd packages/acgs-control-plane && uv run mypy src/",
         "uv lock --check",
         "git diff --check"
       ],
-      "evidence_artifact": "Independently reviewed, current-local migration-core record: SQLite coverage plus four disposable PostgreSQL 17.10-bookworm tests for a nonblocking transaction-level advisory lock, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It is not CI-backed PostgreSQL migration, recovery, G103 tenant database isolation, or accepted Phase-1 evidence.",
-      "branch": "beta/p1-g101-postgres-advisory-lock",
-      "worktree": "saas-beta/p1-g101-postgres-advisory-lock",
-      "pr": 324,
-      "status": "in_progress",
-      "implementation_state": "partial",
+      "evidence_artifact": "Current-local G101 stack: draft PR #354 plus draft PR #355; full control-plane package 214 passed/32 skipped; real disposable PostgreSQL migration recovery 8 passed; focused migration, CLI, startup, and rolling-upgrade tests exist and are wired in .github/workflows/python-acgs-control-plane.yml. Recovery tests use ACP_TEST_RECOVERY_SOURCE_URL, ACP_TEST_RECOVERY_TARGET_URL, and explicit absolute pg_dump/pg_restore wrapper paths. Hosted PostgreSQL/codex-review jobs did not start because of EXT-GITHUB-BILLING. This is local migration/recovery evidence, not G603 production DR/PITR/object/witness recovery.",
+      "branch": "beta/p1-g101-tool-provenance",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 355,
+      "status": "blocked",
+      "implementation_state": "built",
       "evidence_state": "local_verified",
-      "blocker": "Deliberately partial migration/core record: #308 startup integration remains unresolved; CI-backed PostgreSQL migration coverage and full multi-instance migration coordination remain unimplemented or unverified; migration backup/restore and a forward-only rollback runbook remain incomplete. Tenant database isolation is planned only in G103 after G101 and G102 complete.",
-      "next_safe_action": "Carry the isolated current-local migration core through a draft PR with its explicit limits, then resolve #308 startup integration without restoring create_all and add CI-backed PostgreSQL migration and multi-instance coordination coverage plus migration backup/restore and forward-only rollback operations evidence. G103 owns tenant database isolation after G101 and G102 complete.",
+      "blocker": "Draft dependency stack is unmerged (#354 based on #353, #355 based on #354), and hosted PostgreSQL migration plus codex-review jobs did not start due to EXT-GITHUB-BILLING. G603 production backup/PITR/object/witness DR remains planned separately, and G103 tenant database isolation remains planned after G101 and G102.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe #354/#355 hosted PostgreSQL and review checks through completion; merge the draft stack through normal review before unlocking G102. Keep production DR/PITR/object/witness recovery in G603.",
       "mandatory": true,
       "completion_scope": "non_external"
     },

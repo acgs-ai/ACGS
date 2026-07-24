@@ -224,55 +224,105 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         g101["status"],
         g101["implementation_state"],
         g101["evidence_state"],
-    ) == ("in_progress", "partial", "local_verified")
-    assert g101["branch"] == "beta/p1-g101-postgres-advisory-lock"
-    assert g101["worktree"] == "saas-beta/p1-g101-postgres-advisory-lock"
-    assert g101["pr"] == 324
+    ) == ("blocked", "built", "local_verified")
+    assert g101["branch"] == "beta/p1-g101-tool-provenance"
+    assert g101["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g101["pr"] == 355
     assert {
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/db.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/models.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/alembic.ini",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/env.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0001_legacy_v0.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0002_project_environment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_cli.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migration_recovery.py",
         "packages/acgs-control-plane/tests/test_migrations.py",
         "packages/acgs-control-plane/tests/test_project_environment_scope.py",
         "packages/acgs-control-plane/tests/test_postgresql_migrations.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_cli.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery.py",
+        "packages/acgs-control-plane/tests/test_postgresql_migration_recovery_bytea.py",
+        "packages/acgs-control-plane/tests/test_postgresql_rolling_upgrade.py",
+        ".github/workflows/python-acgs-control-plane.yml",
     } <= set(g101["likely_interfaces_files"])
-    assert "PostgreSQL 17.10-bookworm" in " ".join(g101["positive_tests"])
-    assert "four disposable PostgreSQL 17.10-bookworm tests" in g101["evidence_artifact"]
-    assert "G103 tenant database isolation" in g101["evidence_artifact"]
+    positive_tests = " ".join(g101["positive_tests"])
+    for evidence in (
+        "PostgreSQL 17.10-bookworm",
+        "advisory-lock contention",
+        "raw Alembic command denial",
+        "startup exact-schema classification",
+        "CLI forward-only acknowledgement",
+        "rolling-upgrade compatibility",
+        "migration recovery tool provenance",
+    ):
+        assert evidence in positive_tests
+    for evidence in (
+        "draft PR #354 plus draft PR #355",
+        "full control-plane package 214 passed/32 skipped",
+        "real disposable PostgreSQL migration recovery 8 passed",
+        ".github/workflows/python-acgs-control-plane.yml",
+        "ACP_TEST_RECOVERY_SOURCE_URL",
+        "ACP_TEST_RECOVERY_TARGET_URL",
+        "explicit absolute pg_dump/pg_restore wrapper paths",
+        "EXT-GITHUB-BILLING",
+        "not G603 production DR/PITR/object/witness recovery",
+    ):
+        assert evidence in g101["evidence_artifact"]
     for gap in (
+        "#354 based on #353",
+        "#355 based on #354",
+        "EXT-GITHUB-BILLING",
+        "G603 production backup/PITR/object/witness DR",
+        "G103 tenant database isolation",
+    ):
+        assert gap in g101["blocker"]
+    for retired_gap in (
         "#308 startup integration",
         "CI-backed PostgreSQL migration",
         "multi-instance migration",
         "migration backup/restore",
         "forward-only rollback",
     ):
-        assert gap in g101["blocker"]
-    for tenant_isolation_gap in ("RLS", "schema/search-path", "role hardening"):
-        assert tenant_isolation_gap not in g101["blocker"]
-    assert "G103 after G101 and G102 complete" in g101["blocker"]
-    assert "draft PR" in g101["next_safe_action"]
-    assert "G103 owns tenant database isolation after G101 and G102 complete" in g101["next_safe_action"]
+        assert retired_gap not in g101["blocker"]
+    assert "G103 tenant database isolation remains planned after G101 and G102" in g101["blocker"]
+    assert "observe #354/#355 hosted PostgreSQL and review checks" in g101["next_safe_action"]
+    assert "before unlocking G102" in g101["next_safe_action"]
+    assert "Keep production DR/PITR/object/witness recovery in G603" in g101["next_safe_action"]
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
         "current_local | G101, G102, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
-    for gap in (
+    for evidence in (
+        "214 passed/32 skipped",
+        "real disposable PostgreSQL migration recovery at 8 passed",
+        "focused migration, CLI, startup, rolling-upgrade, and recovery-tool-provenance tests",
+        ".github/workflows/python-acgs-control-plane.yml",
+        "ACP_TEST_RECOVERY_SOURCE_URL",
+        "ACP_TEST_RECOVERY_TARGET_URL",
+        "explicit absolute `pg_dump`/`pg_restore` wrapper paths",
+        "unmerged #353/#354/#355 draft stack",
+        "EXT-GITHUB-BILLING",
+        "G102 is not unlocked",
+        "G103 tenant isolation remains planned",
+        "G603 production DR/PITR/object/witness recovery remains separate",
+    ):
+        assert evidence in am_005
+    for retired_gap in (
         "#308 startup integration",
-        "G103-owned",
-        "tenant context",
-        "composite constraints",
-        "RLS",
-        "schema/search-path",
         "CI-backed PostgreSQL",
         "multi-instance",
         "backup/restore",
         "forward-only rollback",
         "API/policy/backfill",
     ):
-        assert gap in am_005
-    assert "this is not completed Phase-1 acceptance" in matrix
+        assert retired_gap not in am_005
+    assert "No row declares beta code-complete or production-ready" in matrix
+    assert "Production launch remains a separate human-authorized decision" in matrix
 
     for downstream_node_id in ("G102", "G103"):
         downstream_node = next(
@@ -283,6 +333,10 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
             downstream_node["implementation_state"],
             downstream_node["evidence_state"],
         ) == ("planned", "missing", "unverified")
+
+    g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
+    assert g102["dependencies"] == ["G101"]
+    assert "before implementation" in g102["next_safe_action"]
 
     g103 = next(node for node in dag["nodes"] if node["id"] == "G103")
     assert g103["dependencies"] == ["G101", "G102"]
@@ -303,3 +357,13 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "before implementation",
     ):
         assert requirement in g103_isolation_contract
+
+    g603 = next(node for node in dag["nodes"] if node["id"] == "G603")
+    assert (
+        g603["status"],
+        g603["implementation_state"],
+        g603["evidence_state"],
+    ) == ("planned", "missing", "unverified")
+    assert "backup, PITR, object, witness, and migration rollback" in " ".join(
+        [*g603["likely_interfaces_files"], *g603["positive_tests"], g603["evidence_artifact"]]
+    )

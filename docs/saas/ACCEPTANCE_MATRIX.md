@@ -1,9 +1,10 @@
 # SaaS Beta Acceptance Matrix
 
 This is the conservative capability view of the canonical
-[`DELIVERY_DAG.yaml`](DELIVERY_DAG.yaml). It freezes observations at commit
-`1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96`; G006 must survey current code,
-tests, GitHub, CI, releases, and deployment state before any capability is promoted.
+[`DELIVERY_DAG.yaml`](DELIVERY_DAG.yaml). It freezes observations at origin/master
+commit `ee83e189ec62eddea4a73be79e9bf492a2f6b371` as observed on
+2026-07-24; G006 must survey current code, tests, GitHub, CI, releases, and
+deployment state before any capability is promoted.
 `Built` means current accepted implementation evidence—not deployment, customer use,
 independent review, certification, or production readiness.
 
@@ -11,9 +12,9 @@ independent review, certification, or production readiness.
 |---|---|---|---|---|---|
 | AM-001 | Canonical resumable program record | built | independently_reviewed | G005 | Independently reviewed DELIVERY_DAG.yaml, ACCEPTANCE_MATRIX.md, and test_saas_delivery_dag.py with passing documentation gates. |
 | AM-002 | Frozen current-state and product-contract reconciliation | partial | current_local | G006, G007, G008 | G006 `CURRENT_STATE_SURVEY.md` plus G007/G008 target contracts are independently reviewed; owner-only provider, legal, licensing, spend, and deployment decisions remain proposed, so this is not an accepted product-contract decision or managed implementation evidence. |
-| AM-003 | Authoritative current-baseline gate proof | conflicting | historical_only | G004, G030B, G031 | Prior G004 material is superseded forensic history; PR #267 closed unmerged and PR #308 remains open. |
+| AM-003 | Authoritative current-baseline gate proof | partial | current_local | G004, G030B, G031 | G030B records current origin/master `ee83e189ec62eddea4a73be79e9bf492a2f6b371`, PR #308 closed unmerged, and PR #353 open draft as the current G004 rebuild path. G004 is built/local-verified in draft PR #353 but remains blocked by unmerged review and EXT-GITHUB-BILLING hosted check-start failures, so this is not completed accepted gate proof. |
 | AM-004 | Open local fail-closed execution plane in the canonical SaaS journey | missing | none | G004, G204 | No accepted journey evidence until G006 survey and G004 rebuild complete. |
-| AM-005 | Tenant-scoped managed control-plane foundation | partial | current_local | G101, G102, G103, G104, G105, G106 | Independently reviewed, current-local G101 migration-core evidence retains the SQLite suite and adds four disposable PostgreSQL 17.10-bookworm tests for transaction-level advisory-lock contention, raw Alembic stamp/upgrade denial, and injected atomic rollback/retry. It does not establish #308 startup integration, G103-owned tenant context, composite constraints, RLS, tenant schema/search-path, or role hardening, CI-backed PostgreSQL or full multi-instance coverage, backup/restore or a forward-only rollback runbook, or API/policy/backfill adoption; this is not completed Phase-1 acceptance. |
+| AM-005 | Tenant-scoped managed control-plane foundation | partial | current_local | G101, G102, G103, G104, G105, G106 | Current-local G101 evidence covers the full control-plane package at 214 passed/32 skipped, real disposable PostgreSQL migration recovery at 8 passed, and focused migration, CLI, startup, rolling-upgrade, and recovery-tool-provenance tests wired through `.github/workflows/python-acgs-control-plane.yml`. Recovery uses `ACP_TEST_RECOVERY_SOURCE_URL`, `ACP_TEST_RECOVERY_TARGET_URL`, and explicit absolute `pg_dump`/`pg_restore` wrapper paths. It remains blocked by the unmerged #353/#354/#355 draft stack and EXT-GITHUB-BILLING hosted PostgreSQL/codex-review check-start failures; G102 is not unlocked, G103 tenant isolation remains planned, and G603 production DR/PITR/object/witness recovery remains separate. |
 | AM-006 | Enrolled gates, signed policy lifecycle, degraded sync, and proven-wired fleet | missing | none | G201, G202, G203, G204, G205 | No accepted Phase-2 evidence. |
 | AM-007 | Provenance-preserving native, federated, and observed assurance | missing | none | G206, G301, G404 | No accepted assurance-class integration evidence. |
 | AM-008 | Durable retained evidence, independent witness, offline proof, alerts, and outbound delivery | missing | none | G301, G302, G303, G304, G306 | No accepted managed evidence-plane artifact. |
