@@ -23,9 +23,15 @@ import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from typing import Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Generic
 
-from gove_zone.audit import ChainHashAuditStore
+if TYPE_CHECKING:
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
+
+from gove_zone.audit import AuditAppender
 from gove_zone.authz import AuthzReason, PrincipalRegistry
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import (
@@ -40,8 +46,26 @@ from gove_zone.receipt import Receipt, safe_result_hash
 from gove_zone.replay_store import ReplaySideStore
 from gove_zone.tool import ToolCall, ToolRegistry, normalize_path_context
 
+if TYPE_CHECKING:
+    AuditT = TypeVar("AuditT", bound=AuditAppender, default=AuditAppender)
+else:
+    AuditT = TypeVar("AuditT", bound=AuditAppender)
 
-class Kernel:
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AuditedDecision:
+    """Decision record plus the immutable append result returned by the audit sink."""
+
+    record: DecisionRecord
+    append_result: Mapping[str, Any]
+
+    @property
+    def audit_hash(self) -> str:
+        """The append-produced event hash for this audited decision."""
+        return str(self.append_result["event_hash"])
+
+
+class Kernel(Generic[AuditT]):
     """Governed dispatch kernel.
 
     Usage::
@@ -62,7 +86,7 @@ class Kernel:
         self,
         *,
         policy: Policy,
-        audit: ChainHashAuditStore,
+        audit: AuditT,
         registry: ToolRegistry | None = None,
         actor: str = "anonymous",
         policy_timeout: float | None = None,
@@ -145,7 +169,10 @@ class Kernel:
             path=normalize_path_context(path),
             state=dict(state or {}),
         )
-        record, audit_hash = self._evaluate_and_record(call)
+        original_call = call
+        audited = self.evaluate_and_append(call)
+        record = audited.record
+        audit_hash = audited.audit_hash
 
         if record.decision is Decision.DENY:
             raise DeniedError(record, audit_hash)
@@ -172,7 +199,7 @@ class Kernel:
         try:
             result = tool_fn(**args_dict)
         except Exception as exc:
-            self._record_execution_failure(call, record, exc)
+            self._record_execution_failure(original_call, audited, exc, executed_call=call)
             raise
 
         receipt = Receipt(
@@ -215,7 +242,18 @@ class Kernel:
         :class:`~gove_zone.errors.EscalateError`: the caller inspects
         ``record.decision`` and drives the DENY / ESCALATE / ALLOW branch itself.
         """
-        return self._evaluate_and_record(call)
+        audited = self.evaluate_and_append(call)
+        return audited.record, audited.audit_hash
+
+    def evaluate_and_append(self, call: ToolCall) -> AuditedDecision:
+        """Evaluate *call*, append exactly one audit event, and return the full
+        immutable append result.
+
+        This is the canonical no-execution decision primitive. It uses the same
+        fail-closed evaluation path as dispatch and refuses malformed or
+        mismatched append responses before returning authorization material.
+        """
+        return self._evaluate_and_append(call)
 
     def simulate(
         self,
@@ -356,12 +394,19 @@ class Kernel:
 
         Surfaces :class:`AuditError` if the append fails.
         """
-        record = self._evaluate_only(call)
+        audited = self._evaluate_and_append(call)
+        return audited.record, audited.audit_hash
 
-        try:
-            payload = self.audit.append(record)
-        except Exception as exc:
-            raise AuditError(f"audit append failed for {record.event_id}: {exc}") from exc
+    def _evaluate_and_append(self, call: ToolCall) -> AuditedDecision:
+        """Evaluate (fail-closed) then append the decision to the audit chain.
+
+        Surfaces :class:`AuditError` if the append fails or returns malformed
+        authorization material.
+        """
+        record = self._evaluate_only(call)
+        self._pin_original_call_bindings(call)
+
+        audited = self._append_validated(record)
 
         # Additive raw-args side-store write. The audit chain is the source of
         # truth and is already recorded; a side-store failure must never corrupt
@@ -370,7 +415,33 @@ class Kernel:
             with contextlib.suppress(Exception):
                 self.side_store.append(call, record)
 
-        return record, str(payload["event_hash"])
+        return audited
+
+    def _append_validated(self, record: DecisionRecord) -> AuditedDecision:
+        try:
+            payload = self.audit.append(record)
+        except Exception as exc:
+            raise AuditError(f"audit append failed for {record.event_id}: {exc}") from exc
+        self._validate_append_payload(record, payload)
+        return AuditedDecision(record=record, append_result=_freeze_mapping(payload))
+
+    def _validate_append_payload(self, record: DecisionRecord, payload: Mapping[str, Any]) -> None:
+        if not isinstance(payload, Mapping):
+            raise AuditError(f"audit append returned non-mapping for {record.event_id}")
+        expected = record.to_dict()
+        for key, expected_value in expected.items():
+            if payload.get(key) != expected_value:
+                raise AuditError(f"audit append returned mismatched {key!r} for {record.event_id}")
+        previous_hash = payload.get("previous_hash")
+        event_hash = payload.get("event_hash")
+        if not _looks_like_sha256(previous_hash):
+            raise AuditError(f"audit append returned invalid previous_hash for {record.event_id}")
+        if not _looks_like_sha256(event_hash):
+            raise AuditError(f"audit append returned invalid event_hash for {record.event_id}")
+        hash_payload = dict(payload)
+        hash_payload.pop("event_hash", None)
+        if sha256_json(hash_payload) != event_hash:
+            raise AuditError(f"audit append returned mismatched event_hash for {record.event_id}")
 
     def _evaluate_with_watchdog(self, call: ToolCall) -> DecisionRecord:
         """Run ``policy.evaluate`` under the configured watchdog.
@@ -399,8 +470,10 @@ class Kernel:
     def _record_execution_failure(
         self,
         call: ToolCall,
-        decision_record: DecisionRecord,
+        audited_decision: AuditedDecision,
         exc: BaseException,
+        *,
+        executed_call: ToolCall | None = None,
     ) -> None:
         """Best-effort: append a failure record after tool execution raises.
 
@@ -408,28 +481,119 @@ class Kernel:
         this append succeeds — execution failures are surfaced to the caller
         even when we can't anchor them in the audit chain.
 
-        ``argument_hash`` here is deliberately recomputed fresh (NOT the
-        memoized ``call.argument_hash()``): this record is written *after*
-        tool execution, so hashing the args as they are now preserves the
-        audit trail's divergence signal — a tool (or shared nested value)
-        that mutated the args before raising produces a failure record whose
-        hash visibly differs from the pre-execution decision record.
-        ``decision_request_hash``/``state_hash`` stay memoized: they identify
-        the request as originally authorized.
+        Failure details are redacted to the exception class, and the strict
+        public append helper binds the failure record back to the original
+        audited decision and call.
         """
+        with contextlib.suppress(Exception):
+            self.append_execution_failure(
+                call,
+                audited_decision,
+                exc,
+                executed_call=executed_call,
+            )
+
+    def append_execution_failure(
+        self,
+        call: ToolCall,
+        audited_decision: AuditedDecision,
+        exc: BaseException,
+        *,
+        executed_call: ToolCall | None = None,
+    ) -> AuditedDecision:
+        """Strictly append a redacted execution-failure record.
+
+        Unlike dispatch's best-effort failure logging wrapper, this public
+        primitive propagates binding or audit failures so callers that need a
+        hard failure-audit contract can fail closed.
+        """
+        decision_record = audited_decision.record
+        if decision_record.decision not in (Decision.ALLOW, Decision.TRANSFORM):
+            raise AuditError(
+                "execution-failure audit requires an ALLOW or TRANSFORM audited decision"
+            )
+        self._validate_failure_binding(call, audited_decision)
+        effective_call = executed_call or call
+        self._validate_effective_failure_call(call, effective_call)
+        error_class = type(exc).__name__
+        failure_argument_hash = sha256_json(dict(effective_call.args))
+        matched_rules: tuple[str, ...] = (f"EXEC_FAILURE:{error_class}",)
+        if failure_argument_hash != decision_record.argument_hash:
+            matched_rules = (*matched_rules, "EXEC_ARGS_DIVERGED")
         failure = DecisionRecord(
             decision=Decision.DENY,
             tool=call.name,
-            argument_hash=sha256_json(dict(call.args)),
+            argument_hash=failure_argument_hash,
             policy_version=decision_record.policy_version,
             event_id=decision_record.event_id + ":failure",
-            matched_rules=(f"EXEC_FAILURE:{type(exc).__name__}",),
-            reason=f"execution raised: {exc}",
+            matched_rules=matched_rules,
+            reason=f"execution raised: {error_class}",
             goal=call.goal,
             actor=call.actor,
             path=call.path,
             state_hash=call.state_hash(),
             decision_request_hash=call.decision_request_hash(),
         )
-        with contextlib.suppress(Exception):
-            self.audit.append(failure)
+        return self._append_validated(failure)
+
+    def _validate_failure_binding(
+        self,
+        call: ToolCall,
+        audited_decision: AuditedDecision,
+    ) -> None:
+        record = audited_decision.record
+        if record.tool != call.name:
+            raise AuditError("execution-failure audit binding mismatch: tool")
+        if record.argument_hash != call.argument_hash():
+            raise AuditError("execution-failure audit binding mismatch: argument_hash")
+        if record.goal != call.goal:
+            raise AuditError("execution-failure audit binding mismatch: goal")
+        if record.actor != call.actor:
+            raise AuditError("execution-failure audit binding mismatch: actor")
+        if record.path != call.path:
+            raise AuditError("execution-failure audit binding mismatch: path")
+        if record.state_hash != call.state_hash():
+            raise AuditError("execution-failure audit binding mismatch: state_hash")
+        if record.decision_request_hash != call.decision_request_hash():
+            raise AuditError("execution-failure audit binding mismatch: decision_request_hash")
+
+    def _validate_effective_failure_call(
+        self,
+        original_call: ToolCall,
+        effective_call: ToolCall,
+    ) -> None:
+        if effective_call.name != original_call.name:
+            raise AuditError("execution-failure effective call mismatch: tool")
+        if effective_call.goal != original_call.goal:
+            raise AuditError("execution-failure effective call mismatch: goal")
+        if effective_call.actor != original_call.actor:
+            raise AuditError("execution-failure effective call mismatch: actor")
+        if effective_call.path != original_call.path:
+            raise AuditError("execution-failure effective call mismatch: path")
+        if effective_call.state_hash() != original_call.state_hash():
+            raise AuditError("execution-failure effective call mismatch: state_hash")
+
+    def _pin_original_call_bindings(self, call: ToolCall) -> None:
+        call.argument_hash()
+        call.state_hash()
+        call.decision_request_hash()
+
+
+def _looks_like_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+    )
+
+
+def _freeze_mapping(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType({str(key): _freeze_value(value) for key, value in payload.items()})
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set | frozenset):
+        return frozenset(_freeze_value(item) for item in value)
+    return value
