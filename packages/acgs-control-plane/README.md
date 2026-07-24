@@ -91,7 +91,7 @@ All other endpoints authenticate with `X-API-Key` (SHA-256 stored, never the raw
 ## Request admission and error contract
 
 G102 request admission is partially implemented for the existing v0 route set only; it does not add
-`/v1` aliases, cursor pagination, idempotency, async jobs, or new database schema.
+`/v1` aliases, idempotency, async jobs, or new database schema.
 
 - The server ignores inbound `X-Request-ID`, generates a bounded `req_<32 lowercase hex>` request
   ID for every HTTP request, and returns it in the `X-Request-ID` response header. Redacted error
@@ -113,6 +113,23 @@ G102 request admission is partially implemented for the existing v0 route set on
 - Governance DENY and ESCALATE responses preserve their existing receipt fields and add the
   server-generated `request_id`. `AuditReadError` preserves its existing body shape; the response
   header still carries the server-generated request ID.
+
+### Receipt cursor pagination
+
+`GET /orgs/{org_id}/receipts` preserves the legacy `limit`/`offset` response fields and offset
+pagination behavior. It also returns an additive `next_cursor` for the first page when more
+receipt rows are available. Passing `cursor=<next_cursor>` switches that request to receipt-only
+keyset pagination ordered by `created_at DESC, id DESC`; `cursor` cannot be combined with a
+non-zero `offset`.
+
+Cursors are opaque AES-256-GCM tokens scoped to the organization, receipt resource, fixed sort
+order, normalized filter digest, boundary timestamp/id, key id, issue time, and expiry. Cursor
+errors return a generic redacted `invalid_cursor` envelope with `Cache-Control: private, no-store`;
+the token and filters are never echoed. Local development without `ACP_CURSOR_KEY_ID` and
+`ACP_CURSOR_KEY` uses a per-app ephemeral key, so cursors are not portable across process restarts.
+Configured deployments must set both variables, where `ACP_CURSOR_KEY` is a base64-encoded 32-byte
+key. Production posture still refuses startup before persistence because the provider preflight
+contains a `cursor-aead-keyring` blocker alongside the existing legacy governance blockers.
 
 ## Verify
 

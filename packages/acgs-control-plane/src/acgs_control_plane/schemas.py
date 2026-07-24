@@ -155,6 +155,7 @@ class ReceiptListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    next_cursor: str | None = None
 
 
 class ReceiptVerifyResponse(BaseModel):

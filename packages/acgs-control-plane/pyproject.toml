@@ -8,6 +8,7 @@ authors = [{ name = "ACGS Team", email = "hello@acgs.dev" }]
 
 dependencies = [
     "alembic>=1.14,<2",
+    "cryptography>=42",
     "fastapi>=0.110",
     "pydantic[email]>=2.8",
     "sqlalchemy>=2.0",
