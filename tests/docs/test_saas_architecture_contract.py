@@ -289,7 +289,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G102A, G102B, G102C, G103, G104, G105, G106 |"
+        "current_local | G101, G102, G102A, G102B, G102C, G102D, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
     for evidence in (
@@ -331,17 +331,29 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "verifier PASS",
         "contract-test evidence only",
         "no runtime behavior, schema, production readiness, beta completion",
+        "additive legacy-v0 `/v1` alias and typed `/v1` root evidence",
+        "PR #363 branch `beta/p1-g102d-v1-api-contract`",
+        "commit `d3ce182fc23927b447b211c917ade0a251cfafc2`",
+        (
+            "focused `cd packages/acgs-control-plane && uv run pytest "
+            "tests/test_v1_api_contract.py tests/test_openapi_drift.py "
+            "tests/test_startup_preflight.py tests/integration/test_production_posture.py -q` "
+            "at 42 passed"
+        ),
+        "full control-plane 272 passed/32 skipped",
+        "independent code and security APPROVE",
+        "production remains fail-closed with 14 LEGACY_UNSIGNED_WRITE blockers",
+        "no signed production governance, schema, migration, generated client",
         "real disposable PostgreSQL migration recovery at 8 passed",
         "focused migration, CLI, startup, rolling-upgrade, and recovery-tool-provenance tests",
         ".github/workflows/python-acgs-control-plane.yml",
         "ACP_TEST_RECOVERY_SOURCE_URL",
         "ACP_TEST_RECOVERY_TARGET_URL",
         "explicit absolute `pg_dump`/`pg_restore` wrapper paths",
-        "unmerged #353/#354/#355/#357/#359/#361 draft stack",
+        "unmerged #353/#354/#355/#357/#359/#361/#363 draft stack",
         "EXT-GITHUB-BILLING",
         "hosted PostgreSQL migration/codex-review check-start failures",
         "aggregate G102 remains in_progress/partial/current-local",
-        "completed `/v1` root",
         "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
@@ -362,7 +374,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "Production launch remains a separate human-authorized decision" in matrix
 
     g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
-    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C"]
+    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
     assert (
         g102["status"],
         g102["implementation_state"],
@@ -370,7 +382,6 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     ) == ("in_progress", "partial", "local_verified")
     assert "EXT-GITHUB-BILLING" in g102["blocker"]
     for missing_contract in (
-        "/v1 root",
         "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
@@ -417,6 +428,22 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "cd packages/acgs-control-plane && uv run pytest tests/test_openapi_drift.py -q"
         in g102["validation_commands"]
     )
+    actual_g102d_files = {
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+    }
+    assert actual_g102d_files <= set(g102["likely_interfaces_files"])
+    assert all((ROOT / path).is_file() for path in actual_g102d_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py "
+        "tests/test_openapi_drift.py tests/test_startup_preflight.py "
+        "tests/integration/test_production_posture.py -q" in g102["validation_commands"]
+    )
 
     g102a = next(node for node in dag["nodes"] if node["id"] == "G102A")
     assert g102a["title"] == "Bounded request admission and redacted error contract"
@@ -453,9 +480,9 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "Python 3.12 pass",
         "Hosted PostgreSQL migrations and codex-review did not start",
         "EXT-GITHUB-BILLING",
-        "/v1 root",
         "G102B separately covers receipt-route cursor pagination",
         "G102C separately covers the current-v0 OpenAPI drift sentinel",
+        "G102D separately covers additive legacy-v0 /v1 aliases",
         "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
@@ -517,7 +544,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     for forbidden_promotion in (
         "aggregate G102",
         "all-collections pagination",
-        "/v1 root",
+        "G102D /v1 alias evidence",
         "durable idempotency",
         "async export jobs",
         "PostgreSQL/schema change",
@@ -570,12 +597,67 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "database schema",
         "production readiness",
         "beta completion",
-        "/v1 root",
+        "G102D /v1 alias",
         "durable idempotency",
         "async export job",
         "all-collections pagination",
     ):
         assert forbidden_promotion in combined_g102c
+
+    g102d = next(node for node in dag["nodes"] if node["id"] == "G102D")
+    assert g102d["title"] == "Additive legacy-v0 /v1 API aliases"
+    assert set(g102d["dependencies"]) == {"G101"}
+    assert g102d["consumers"] == ["G102"]
+    assert (
+        g102d["status"],
+        g102d["implementation_state"],
+        g102d["evidence_state"],
+    ) == ("blocked", "built", "local_verified")
+    assert g102d["branch"] == "beta/p1-g102d-v1-api-contract"
+    assert g102d["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102d["pr"] == 363
+    assert actual_g102d_files <= set(g102d["likely_interfaces_files"])
+    combined_g102d = " ".join(
+        [
+            *g102d["likely_interfaces_files"],
+            *g102d["positive_tests"],
+            *g102d["forbidden_side_effect_negative_tests"],
+            *g102d["validation_commands"],
+            g102d["evidence_artifact"],
+            g102d["blocker"],
+            g102d["next_safe_action"],
+        ]
+    )
+    for evidence in (
+        "d3ce182fc23927b447b211c917ade0a251cfafc2",
+        "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
+        "full control-plane package evidence at 272 passed and 32 skipped",
+        "Ruff pass",
+        "package-local mypy pass",
+        "independent code and security APPROVE",
+        "verifier PASS",
+        "hosted Python 3.11",
+        "Python 3.12 pass",
+        "Hosted PostgreSQL migrations and codex-review did not start",
+        "EXT-GITHUB-BILLING",
+        "additive legacy-v0 /v1 aliases",
+        "typed /v1 root",
+        "v0 is preserved",
+        "14 LEGACY_UNSIGNED_WRITE blockers",
+    ):
+        assert evidence in combined_g102d
+    for forbidden_promotion in (
+        "signed production governance",
+        "database schema",
+        "migration",
+        "generated client",
+        "production readiness",
+        "beta completion",
+        "complete all-collections pagination",
+        "durable idempotency",
+        "async export job",
+    ):
+        assert forbidden_promotion in combined_g102d
 
     for downstream_node_id in ("G103",):
         downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
