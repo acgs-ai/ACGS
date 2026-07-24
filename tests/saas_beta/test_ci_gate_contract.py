@@ -211,12 +211,16 @@ def test_saas_beta_required_gate_runs_ordered_local_contract_sequence() -> None:
         "pnpm run test:all",
         "pnpm test:unit",
         "git diff --exit-code -- .",
+        "git diff --cached --exit-code -- .",
     ]
 
     positions = [_index(text, needle) for needle in ordered_needles]
     assert positions == sorted(positions)
     assert text.rstrip().endswith(
-        "      - name: Assert tracked worktree clean\n        run: git diff --exit-code -- ."
+        "      - name: Assert tracked worktree clean\n"
+        "        run: |\n"
+        "          git diff --exit-code -- .\n"
+        "          git diff --cached --exit-code -- ."
     )
 
 

@@ -87,6 +87,15 @@ uv run --extra crypto --package gove-zone python \
 uv run --package gove-zone python examples/tamper_demo/demo.py
 ```
 
+The console package also ships a dependency-free local buyer-evidence gallery
+for reviewer handoff. It is local buyer-evidence only, not hosted Storybook
+proof, production deployment proof, legal review, or external assurance.
+
+```bash
+pnpm -F acgi-ai run evidence:build
+pnpm -F acgi-ai run test:buyer-evidence
+```
+
 Expected result: the allowed action executes; denied, missing, tampered, and
 mismatched receipts do not; the audit chain verifies; and tampered evidence
 fails chain or receipt verification.

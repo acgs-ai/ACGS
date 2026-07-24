@@ -182,4 +182,6 @@ jobs:
         run: pnpm test:unit
 
       - name: Assert tracked worktree clean
-        run: git diff --exit-code -- .
+        run: |
+          git diff --exit-code -- .
+          git diff --cached --exit-code -- .
