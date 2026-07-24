@@ -40,6 +40,7 @@ TRANSCRIPT_RECORD_KEYS = {
     "finished_at_utc",
     "selectors",
 }
+NODE_AWARE_TRANSCRIPT_RECORD_KEYS = TRANSCRIPT_RECORD_KEYS | {"cwd_scope"}
 REVIEWED_P0_TRANSCRIPT = (
     (
         "root:EVID-gate",
@@ -152,6 +153,29 @@ REVIEWED_P0_TRANSCRIPT = (
         ),
     ),
 )
+P1_MIGRATION_SELECTORS = (
+    "tests/integration/test_migrations_postgres.py::test_empty_and_existing_alpha_upgrade_head",
+    "tests/integration/test_migrations_postgres.py::test_declared_reversible_round_trip",
+    "tests/integration/test_migrations_postgres.py::test_mixed_version_rolling_compatibility",
+    "tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget",
+    "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
+    "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
+)
+REVIEWED_P1_MIGRATION_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate",
+        ("./scripts/run_postgres_gate.sh", *P1_MIGRATION_SELECTORS),
+    ),
+)
+REVIEWED_TRANSCRIPTS_BY_NODE = {
+    "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
+    "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
+}
+REVIEWED_CWD_SCOPES_BY_NODE = {
+    "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+}
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
     "EVID",
@@ -420,7 +444,16 @@ def parse_canonical_positive_decimal(value: Any, *, label: str) -> int:
     return int(value)
 
 
-def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
+def _reviewed_transcript(node_id: str | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if node_id is None:
+        return REVIEWED_P0_TRANSCRIPT
+    transcript = REVIEWED_TRANSCRIPTS_BY_NODE.get(node_id)
+    if transcript is None:
+        fail("node lacks reviewed transcript corpus", phase="B6")
+    return transcript
+
+
+def _reviewed_gate(argv: Any, *, expected_node: str | None = None) -> tuple[list[str], str]:
     """Classify one exact, reviewed transcript command; deny every extension."""
 
     if (
@@ -435,9 +468,19 @@ def _reviewed_gate(argv: Any) -> tuple[list[str], str]:
         )
     ):
         fail("command argv is outside the reviewed closed contract", phase="B6")
-    selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
-    if selector is None:
-        fail("command argv is outside the reviewed closed contract", phase="B6")
+    if expected_node is None:
+        selector = REVIEWED_COMMAND_SELECTORS.get(tuple(argv))
+        if selector is None:
+            fail("command argv is outside the reviewed closed contract", phase="B6")
+    else:
+        matches = [
+            selector
+            for selector, reviewed_argv in _reviewed_transcript(expected_node)
+            if reviewed_argv == tuple(argv)
+        ]
+        if len(matches) != 1:
+            fail("command argv is outside the reviewed node contract", phase="B6")
+        selector = matches[0]
     return argv, selector
 
 
@@ -447,12 +490,17 @@ def validate_safe_argv(argv: Any) -> list[str]:
     return _reviewed_gate(argv)[0]
 
 
-def validate_transcript_record(value: Any) -> dict[str, Any]:
+def validate_transcript_record(value: Any, *, expected_node: str | None = None) -> dict[str, Any]:
     """Validate the full immutable command record before any persistence or use."""
 
-    if not isinstance(value, dict) or set(value) != TRANSCRIPT_RECORD_KEYS:
+    required_keys = (
+        NODE_AWARE_TRANSCRIPT_RECORD_KEYS
+        if expected_node in REVIEWED_CWD_SCOPES_BY_NODE
+        else TRANSCRIPT_RECORD_KEYS
+    )
+    if not isinstance(value, dict) or set(value) != required_keys:
         fail("command record is outside the reviewed closed contract", phase="B6")
-    argv, selector = _reviewed_gate(value.get("argv"))
+    argv, selector = _reviewed_gate(value.get("argv"), expected_node=expected_node)
     if type(value.get("exit_code")) is not int or value["exit_code"] != 0:
         fail("command record is outside the reviewed closed contract", phase="B6")
     if any(
@@ -471,20 +519,57 @@ def validate_transcript_record(value: Any) -> dict[str, Any]:
             fail("command record is outside the reviewed closed contract", phase="B6")
     if timestamps[1] < timestamps[0] or value.get("selectors") != [selector]:
         fail("command record is outside the reviewed closed contract", phase="B6")
+    if expected_node in REVIEWED_CWD_SCOPES_BY_NODE:
+        observed = tuple(value["argv"])
+        expected_scopes = {
+            reviewed_argv: cwd_scope
+            for (_, reviewed_argv), cwd_scope in zip(
+                _reviewed_transcript(expected_node),
+                REVIEWED_CWD_SCOPES_BY_NODE[expected_node],
+                strict=True,
+            )
+        }
+        if value.get("cwd_scope") != expected_scopes.get(observed):
+            fail("command cwd differs from the reviewed node contract", phase="B6")
     value["argv"] = argv
     return value
+
+
+def validate_transcript_sequence(commands: Any, *, expected_node: str) -> None:
+    """Require the exact reviewed command/cwd corpus for one node."""
+
+    if not isinstance(commands, list):
+        fail("transcript differs from the reviewed ordered command corpus", phase="B6")
+    expected = _reviewed_transcript(expected_node)
+    expected_cwd_scopes = REVIEWED_CWD_SCOPES_BY_NODE.get(expected_node)
+    observed: list[tuple[str, tuple[str, ...], str | None]] = []
+    for command in commands:
+        validated = validate_transcript_record(command, expected_node=expected_node)
+        observed.append(
+            (
+                validated["selectors"][0],
+                tuple(validated["argv"]),
+                validated.get("cwd_scope"),
+            )
+        )
+    expected_observed = tuple(
+        (
+            selector,
+            argv,
+            None if expected_cwd_scopes is None else expected_cwd_scopes[index],
+        )
+        for index, (selector, argv) in enumerate(expected)
+    )
+    if tuple(observed) != expected_observed:
+        fail("transcript differs from the reviewed ordered command corpus", phase="B6")
 
 
 def validate_p0_transcript_sequence(commands: Any) -> None:
     """Require EVID, product gates, and the P0 root selector in exact order."""
 
-    if not isinstance(commands, list):
-        fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
-    observed: list[tuple[str, tuple[str, ...]]] = []
-    for command in commands:
-        validated = validate_transcript_record(command)
-        observed.append((validated["selectors"][0], tuple(validated["argv"])))
-    if tuple(observed) != REVIEWED_P0_TRANSCRIPT:
+    try:
+        validate_transcript_sequence(commands, expected_node="P0-EVIDENCE-000")
+    except EvidenceError:
         fail("P0 transcript differs from the reviewed ordered command corpus", phase="B6")
 
 
@@ -497,13 +582,19 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or not value["commands"]
     ):
         fail("run command metadata is outside the closed safe structure", phase="B6")
+    node_id = expected_node if expected_node is not None else value.get("node_id")
+    node_for_record = (
+        node_id if isinstance(node_id, str) and node_id in REVIEWED_TRANSCRIPTS_BY_NODE else None
+    )
     for command in value["commands"]:
-        validate_transcript_record(command)
+        validate_transcript_record(
+            command,
+            expected_node=node_for_record,
+        )
     if expected_node is not None and value.get("node_id") != expected_node:
         fail("run node identity differs from its evidence path", phase="B6")
-    if expected_node == "P0-EVIDENCE-000" or value.get("node_id") == "P0-EVIDENCE-000":
-        validate_p0_transcript_sequence(value["commands"])
-    node_id = expected_node if expected_node is not None else value.get("node_id")
+    if isinstance(node_id, str) and node_id in REVIEWED_TRANSCRIPTS_BY_NODE:
+        validate_transcript_sequence(value["commands"], expected_node=node_id)
     reviewed = REVIEWED_RUN_METADATA_BY_NODE.get(node_id)
     determinism = value.get("determinism")
     clock = value.get("clock")
@@ -519,12 +610,18 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or value.get("external") != list(reviewed["external"])
     ):
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
+    if node_id == "P1-MIGRATION-001" and (
+        determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"
+    ):
+        fail("migration run determinism differs from the reviewed node contract", phase="B6")
 
 
-def append_safe_transcript_record(path: Path, record: Mapping[str, Any]) -> None:
+def append_safe_transcript_record(
+    path: Path, record: Mapping[str, Any], *, expected_node: str | None = None
+) -> None:
     """Validate a command record before its first byte can enter evidence."""
 
-    validated = validate_transcript_record(dict(record))
+    validated = validate_transcript_record(dict(record), expected_node=expected_node)
     payload = (
         json.dumps(validated, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
     ).encode("utf-8")
