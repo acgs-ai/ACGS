@@ -1,6 +1,12 @@
 # Workflow Receipt Chain — design
 
-> Status: design / in progress on `feat/gove-zone-workflow-receipt-chain`.
+> Status: **implemented on `master`** — `src/gove_zone/workflow.py`
+> (`WorkflowDAG`, `WorkflowStepReceipt`, `WorkflowExecutor.execute_step`,
+> `verify_workflow_replay`); tests in `tests/test_workflow_receipt_chain.py`.
+> This file is retained as the design rationale. **The code is authoritative
+> where the two differ** — the executor carries at least one check this document
+> predates (4b, positional binding: an envelope may only drive the DAG position
+> its `step_id` names).
 > Extends the single-action receipt gate to a multi-step workflow (a DAG of
 > steps). The invariant grows from *"no valid Decision Receipt, no side effect"*
 > to *"no valid step receipt — bound to this workflow, this step, and its

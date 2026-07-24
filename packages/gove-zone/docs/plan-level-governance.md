@@ -1,7 +1,12 @@
 # Plan-Level Governance — design
 
-> Status: design / in progress on `feat/gove-zone-plan-level-governance`
-> (stacked on `feat/gove-zone-workflow-receipt-chain`, PR #69).
+> Status: **implemented on `master`** — `src/gove_zone/plan.py`
+> (`WorkflowAuthorization`, `from_plan`, `compute_authorization_hash`) plus the
+> A–E checks in `WorkflowExecutor._verify_authorization`
+> (`src/gove_zone/workflow.py`); tests in `tests/test_plan_level_governance.py`.
+> This file is retained as the design rationale, so its build-sequencing and
+> "new files" sections describe work already landed. **The code is
+> authoritative where the two differ.**
 > Makes the workflow **plan** a governed object. The invariant grows from
 > *"no valid step receipt … no side effect for that step"* to add:
 > **"no authorized plan, no workflow step executes."**
