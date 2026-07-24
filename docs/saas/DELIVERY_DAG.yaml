@@ -223,7 +223,9 @@
       "validation_after_unblock": "Re-run the affected PR checks and record the hosted PostgreSQL migration and codex-review job results.",
       "downstream_nodes": [
         "G004",
-        "G101"
+        "G101",
+        "G102",
+        "G102A"
       ]
     }
   ],
@@ -612,6 +614,7 @@
       ],
       "consumers": [
         "G102",
+        "G102A",
         "G103"
       ],
       "likely_interfaces_files": [
@@ -660,7 +663,7 @@
       "implementation_state": "built",
       "evidence_state": "local_verified",
       "blocker": "Draft dependency stack is unmerged (#354 based on #353, #355 based on #354), and hosted PostgreSQL migration plus codex-review jobs did not start due to EXT-GITHUB-BILLING. G603 production backup/PITR/object/witness DR remains planned separately, and G103 tenant database isolation remains planned after G101 and G102.",
-      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe #354/#355 hosted PostgreSQL and review checks through completion; merge the draft stack through normal review before unlocking G102. Keep production DR/PITR/object/witness recovery in G603.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe #354/#355 hosted PostgreSQL and review checks through completion; merge the draft stack through normal review before accepting aggregate G102. Keep production DR/PITR/object/witness recovery in G603.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -671,7 +674,8 @@
       "buyer_user_outcome": "API consumers receive stable /v1 errors, pagination, IDs, idempotency, limits, and asynchronous export contracts.",
       "repo_owner": "packages/acgs-control-plane",
       "dependencies": [
-        "G101"
+        "G101",
+        "G102A"
       ],
       "consumers": [
         "G103",
@@ -679,29 +683,84 @@
         "G401"
       ],
       "likely_interfaces_files": [
-        "packages/acgs-control-plane",
-        "OpenAPI contract"
+        "OpenAPI contract",
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py"
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "OpenAPI drift, pagination, idempotency, payload-limit, and export-job tests pass."
+        "G102A proves the bounded request-admission and redacted-error slice locally; the aggregate G102 contract still lacks completed /v1 root, opaque cursor pagination, durable idempotency, async export jobs, and OpenAPI drift evidence."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Duplicate, oversized, or malformed requests cannot create duplicate mutations."
+        "Duplicate, oversized, malformed, or unversioned requests cannot create duplicate mutations or silently bypass the versioned API contract."
       ],
       "validation_commands": [
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
         "git diff --check"
       ],
-      "evidence_artifact": "Versioned OpenAPI and contract-test artifact",
-      "branch": null,
-      "worktree": null,
-      "pr": null,
-      "status": "planned",
-      "implementation_state": "missing",
-      "evidence_state": "unverified",
-      "blocker": null,
-      "next_safe_action": "Survey and freeze the versioned api and error contract contract before implementation.",
+      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A local PR #357 evidence exists, but completed /v1 root, opaque cursor pagination, durable idempotency persistence, async export jobs, and OpenAPI drift gates are still missing from the accepted aggregate contract.",
+      "branch": "beta/p1-g102-request-admission",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 357,
+      "status": "in_progress",
+      "implementation_state": "partial",
+      "evidence_state": "local_verified",
+      "blocker": "Aggregate G102 is not complete: /v1 root, opaque cursor pagination, durable idempotency persistence, async export jobs, and OpenAPI drift verification remain missing; hosted PostgreSQL migration and codex-review checks for G102A did not start due to EXT-GITHUB-BILLING.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #357 hosted PostgreSQL migration and codex-review checks, then complete the remaining /v1, cursor pagination, durable idempotency, async export jobs, and OpenAPI drift work before unlocking G103 as complete.",
+      "mandatory": true,
+      "completion_scope": "non_external"
+    },
+    {
+      "id": "G102A",
+      "phase": 1,
+      "title": "Bounded request admission and redacted error contract",
+      "buyer_user_outcome": "API consumers receive locally verified bounded request admission and redacted error behavior without claiming the full G102 API contract is complete.",
+      "repo_owner": "packages/acgs-control-plane",
+      "dependencies": [
+        "G101"
+      ],
+      "consumers": [
+        "G102"
+      ],
+      "likely_interfaces_files": [
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py"
+      ],
+      "risk_class": "yellow",
+      "positive_tests": [
+        "PR #357 on branch beta/p1-g102-request-admission at commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d recorded focused bounded request-admission and redacted-error contract evidence at 14 passed, full control-plane package evidence at 228 passed and 32 skipped, Ruff and mypy pass, independent security/code approve/verifier pass, and hosted Python 3.11/3.12 pass."
+      ],
+      "forbidden_side_effect_negative_tests": [
+        "The local G102A evidence cannot promote aggregate G102 to completed until /v1, cursor pagination, durable idempotency, async export jobs, OpenAPI drift, hosted PostgreSQL migration, and codex-review evidence are present."
+      ],
+      "validation_commands": [
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
+        "cd packages/acgs-control-plane && uv run pytest -q",
+        "cd packages/acgs-control-plane && uv run ruff check .",
+        "cd packages/acgs-control-plane && uv run ruff format --check .",
+        "cd packages/acgs-control-plane && uv run mypy src/",
+        "gh pr view 357 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
+        "git diff --check"
+      ],
+      "evidence_artifact": "G102A current-local PR #357 evidence: branch beta/p1-g102-request-admission, commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d, focused 14 passed, full control-plane 228 passed/32 skipped, Ruff pass, mypy pass, independent security/code approve/verifier pass, hosted Python 3.11 and Python 3.12 pass. Hosted PostgreSQL migrations and codex-review did not start because of EXT-GITHUB-BILLING. Aggregate G102 still lacks /v1 root, cursor pagination, durable idempotency, async export jobs, and OpenAPI drift acceptance evidence.",
+      "branch": "beta/p1-g102-request-admission",
+      "worktree": "saas-beta/p1-g101-tool-provenance",
+      "pr": 357,
+      "status": "blocked",
+      "implementation_state": "built",
+      "evidence_state": "local_verified",
+      "blocker": "PR #357 G102A local evidence is built, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until /v1 root, cursor pagination, durable idempotency, async export jobs, and OpenAPI drift gates are completed.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #357 hosted PostgreSQL migration and codex-review checks, then reconcile the remaining aggregate G102 contract gaps before marking G102 complete.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
