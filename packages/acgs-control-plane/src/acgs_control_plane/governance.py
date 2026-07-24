@@ -25,6 +25,7 @@ import math
 import os
 import re
 import stat
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -40,18 +41,29 @@ from gove_zone import (
     Kernel,
     Receipt,
 )
+from gove_zone.audit import GENESIS_HASH
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
+from gove_zone.errors import AuditError
 from gove_zone.policy import Policy, PolicyRule, RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 
 from acgs_control_plane.auth import Principal
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
     TENANT_BOOTSTRAP_ACTION,
 )
-from acgs_control_plane.models import Organization, PolicyBundle, ReceiptRow
+from acgs_control_plane.models import (
+    AuditProjectionOutbox,
+    GovernanceEvent,
+    GovernanceEventHead,
+    Organization,
+    PolicyBundle,
+    ReceiptRow,
+    utcnow,
+)
 
 BASELINE_POLICY_ID = "acp-baseline/v1"
 
@@ -750,7 +762,12 @@ def _anchor(session: Session, org_id: str, store: ChainHashAuditStore) -> None:
     truncated.
     """
     count, last = chain_tip(store)
-    org = session.get(Organization, org_id, with_for_update=True)
+    org = session.execute(
+        select(Organization)
+        .where(Organization.id == org_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
     if org is not None and count >= org.audit_anchor_count:
         org.audit_anchor_count = count
         org.audit_anchor_hash = last
@@ -798,6 +815,171 @@ def mirror_managed_decision(
     session.add(row)
     _anchor(session, org_id, store)
     return row
+
+
+_HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_SQLITE_EVENT_LOCKS_GUARD = threading.Lock()
+_SQLITE_EVENT_LOCKS: dict[str, threading.RLock] = {}
+_SQLITE_SESSION_LOCK_INFO = "acgs_governance_event_sqlite_locks"
+_SQLITE_SESSION_LOCK_LISTENER = "acgs_governance_event_sqlite_lock_listener"
+
+
+def _require_sha256(value: object, *, field: str, allow_empty: bool = False) -> None:
+    if allow_empty and value == "":
+        return
+    if not isinstance(value, str) or _HEX_SHA256.fullmatch(value) is None:
+        raise AuditError(f"database governance append refused malformed {field}")
+
+
+class DatabaseGovernanceEventAppender:
+    """Database-primary audit appender for a single tenant.
+
+    The caller owns the SQLAlchemy session and transaction. This appender may
+    flush to prove constraints and assign ORM defaults, but it never commits or
+    rolls back. Existing route/read paths are not switched to this store in the
+    0003 groundwork slice.
+    """
+
+    def __init__(self, session: Session, org_id: str) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", org_id):
+            raise ValueError("invalid governance event organization identifier")
+        self.session = session
+        self.org_id = org_id
+
+    def append(self, decision: DecisionRecord) -> Mapping[str, Any]:
+        """Append one gove-zone decision record and return its full payload."""
+        self._validate_record(decision)
+        self._acquire_sqlite_transaction_lock()
+        return self._append_locked(decision)
+
+    def _append_locked(self, decision: DecisionRecord) -> Mapping[str, Any]:
+        # The organization row is the portable tenant serialization lock:
+        # PostgreSQL enforces row locking; SQLite uses the transaction-scoped
+        # process lock installed by ``_acquire_sqlite_transaction_lock``. The
+        # head row remains the chain state.
+        org = self.session.execute(
+            select(Organization)
+            .where(Organization.id == self.org_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if org is None:
+            raise AuditError("database governance append refused unknown tenant")
+
+        head = self.session.execute(
+            select(GovernanceEventHead)
+            .where(GovernanceEventHead.org_id == self.org_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one_or_none()
+        if head is None:
+            head = GovernanceEventHead(
+                org_id=self.org_id,
+                last_sequence=0,
+                last_event_hash=GENESIS_HASH,
+            )
+            self.session.add(head)
+            self.session.flush()
+
+        previous_hash = head.last_event_hash or GENESIS_HASH
+        _require_sha256(previous_hash, field="previous_hash")
+        sequence = head.last_sequence + 1
+        payload = decision.to_dict()
+        payload["previous_hash"] = previous_hash
+        payload.pop("event_hash", None)
+        payload["event_hash"] = sha256_json(payload)
+        _require_sha256(payload["event_hash"], field="event_hash")
+
+        event = GovernanceEvent(
+            org_id=self.org_id,
+            sequence=sequence,
+            event_id=decision.event_id,
+            previous_hash=previous_hash,
+            event_hash=str(payload["event_hash"]),
+            decision=decision.decision.value,
+            tool=decision.tool,
+            actor=decision.actor,
+            policy_version=decision.policy_version,
+            payload=payload,
+        )
+        self.session.add(event)
+        self.session.flush()
+        self.session.add(
+            AuditProjectionOutbox(
+                org_id=self.org_id,
+                governance_event_id=event.id,
+                sequence=sequence,
+                event_hash=str(payload["event_hash"]),
+                payload=payload,
+            )
+        )
+        head.last_sequence = sequence
+        head.last_event_hash = str(payload["event_hash"])
+        head.updated_at = utcnow()
+        self.session.flush()
+        return payload
+
+    def _sqlite_lock(self) -> threading.RLock | None:
+        bind = self.session.get_bind()
+        if bind.dialect.name != "sqlite":
+            return None
+        with _SQLITE_EVENT_LOCKS_GUARD:
+            lock = _SQLITE_EVENT_LOCKS.get(self.org_id)
+            if lock is None:
+                lock = threading.RLock()
+                _SQLITE_EVENT_LOCKS[self.org_id] = lock
+            return lock
+
+    def _acquire_sqlite_transaction_lock(self) -> None:
+        lock = self._sqlite_lock()
+        if lock is None:
+            return
+        if not self.session.info.get(_SQLITE_SESSION_LOCK_LISTENER):
+            sqlalchemy_event.listen(
+                self.session,
+                "after_transaction_end",
+                _release_sqlite_transaction_locks,
+            )
+            self.session.info[_SQLITE_SESSION_LOCK_LISTENER] = True
+        held = cast(
+            dict[str, tuple[threading.RLock, int]],
+            self.session.info.setdefault(_SQLITE_SESSION_LOCK_INFO, {}),
+        )
+        current = held.get(self.org_id)
+        if current is None:
+            lock.acquire()
+            held[self.org_id] = (lock, 1)
+        else:
+            current[0].acquire()
+            held[self.org_id] = (current[0], current[1] + 1)
+
+    def _validate_record(self, decision: DecisionRecord) -> None:
+        if not decision.path:
+            raise AuditError("database governance append refused empty decision path")
+        if decision.path[0] != self.org_id:
+            raise AuditError("database governance append refused tenant path mismatch")
+        _require_sha256(decision.argument_hash, field="argument_hash")
+        if decision.state_hash is not None:
+            _require_sha256(decision.state_hash, field="state_hash")
+        _require_sha256(
+            decision.decision_request_hash,
+            field="decision_request_hash",
+            allow_empty=True,
+        )
+
+
+def _release_sqlite_transaction_locks(session: Session, transaction: SessionTransaction) -> None:
+    if transaction.parent is not None:
+        return
+    held = cast(
+        dict[str, tuple[threading.RLock, int]] | None,
+        session.info.pop(_SQLITE_SESSION_LOCK_INFO, None),
+    )
+    if held is None:
+        return
+    for lock, count in held.values():
+        for _ in range(count):
+            lock.release()
 
 
 class GovernanceMembrane:
