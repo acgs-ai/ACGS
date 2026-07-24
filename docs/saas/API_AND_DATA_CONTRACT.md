@@ -6,10 +6,11 @@
 future management, policy, approval, fleet, and evidence APIs. Current-local
 evidence exists for narrow slices such as additive legacy `/v1` aliases,
 project/environment attachment for agents and policy bundles, receipt explorer
-pagination, and one native agent-create transaction path. It does not claim that
-the current control plane exposes the complete `/v1` API, browser sessions, a
-BFF, generated clients, durable idempotency, external receipt ingestion, async
-export jobs, signed policy sync, or every resource described here.
+pagination, and one native agent-create transaction path with durable terminal
+idempotency replay. It does not claim that the current control plane exposes the
+complete `/v1` API, browser sessions, a BFF, generated clients, durable
+idempotency for other mutating routes, external receipt ingestion, async export
+jobs, signed policy sync, or every resource described here.
 
 ## Current-state boundary
 
@@ -17,12 +18,13 @@ The [G006 survey](CURRENT_STATE_SURVEY.md) records the current organization-
 scoped service surface and API-key model as distinct from this target. It also
 records the baseline before later local slices added additive `/v1` aliases,
 project/environment attachment, and the first native agent-create transaction
-path. The remaining absent or incomplete areas include complete all-collections
-pagination, durable idempotency, async export jobs, external receipt ingestion,
-signed policy sync, browser-to-upstream boundary, production provider wiring,
-and full native-route cutover. Current routes and fixtures must not be relabeled
-as this contract without the corresponding implementation and integration
-evidence.
+path with durable terminal idempotency replay. The remaining absent or
+incomplete areas include complete all-collections pagination, durable
+idempotency for other mutating routes, async export jobs, external receipt
+ingestion, signed policy sync, browser-to-upstream boundary, production provider
+wiring, and full native-route cutover. Current routes and fixtures must not be
+relabeled as this contract without the corresponding implementation and
+integration evidence.
 
 This contract implements the product-level target in
 [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md), preserves provenance in
@@ -142,13 +144,21 @@ step fails, the API and evidence state remain explicitly pending/failed/retry;
 they never imply accepted, independently anchored evidence.
 
 Current-local evidence partially implements this contract for agent creation
-only. `POST /orgs/{org_id}/agents` and its `/v1` alias use a signed native
-DecisionReceipt, environment-bound policy hash, DB-backed event/head/outbox
-records, and signed consumption evidence inside one rollbackable SQL
-transaction. `DENY` and `ESCALATE` produce native evidence but do not execute or
-consume the receipt. This does not complete durable idempotency, external
-exactly-once delivery, all governed mutations, async export jobs, or production
-provider wiring. Twelve legacy unsigned route aliases remain.
+only. `POST /orgs/{org_id}/agents` and its `/v1` alias require exactly one
+bounded `Idempotency-Key`; use a signed native DecisionReceipt,
+environment-bound policy hash, DB-backed event/head/outbox records, signed
+consumption evidence, and signed terminal idempotency result inside one
+rollbackable SQL transaction; and replay `ALLOW`, `DENY`, or `ESCALATE` from
+authoritative rows when the same key/request digest returns. The idempotency
+row stores digest-only key, request, and response evidence, not the raw key or
+raw response body. A same key with a different request digest conflicts without
+a second mutation, receipt, event, outbox row, or idempotency result. PostgreSQL
+uses a tenant row lock; SQLite coverage is same-process only. `DENY` and
+`ESCALATE` produce native evidence but do not execute or consume the receipt.
+This does not complete durable idempotency for other mutating routes, external
+exactly-once delivery, all governed mutations, async export jobs, async recovery
+paths, rolling-upgrade safety, or production provider wiring. Twelve legacy
+unsigned route aliases remain.
 
 ## Target endpoint families
 
