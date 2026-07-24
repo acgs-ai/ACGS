@@ -1,4 +1,4 @@
-"""Live-PostgreSQL gates for the managed agent-registration slice."""
+"""Live-PostgreSQL gate for concurrent policy activation (P2 register slice)."""
 
 from __future__ import annotations
 
@@ -11,19 +11,12 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
-from acgs_control_plane.agent_registration import local_agent_registration_issuer
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import PolicyBundle, new_id
-from tests.test_agent_registration_managed_route import (
-    BOOTSTRAP_TOKEN,
-    _admin_headers,
-    _bootstrap_org,
-    _publish_and_activate_allow_agent_create,
-    _seed_default_scope_and_trust,
-)
 
+BOOTSTRAP_TOKEN = "test-bootstrap-token"
 EXPECTED_DATABASE = "acgs_control_plane_test"
 
 
@@ -41,9 +34,8 @@ def test_real_postgres_concurrent_policy_activation_preserves_single_active(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
-    issuer = local_agent_registration_issuer()
     app = create_app(
         Settings(
             database_url=database_url,
@@ -52,13 +44,11 @@ def test_real_postgres_concurrent_policy_activation_preserves_single_active(
             create_tables=False,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         ),
-        agent_registration_issuer=issuer,
     )
     client = TestClient(app, raise_server_exceptions=False)
     try:
         org = _bootstrap_org(client)
-        _seed_default_scope_and_trust(app, org["org_id"])
-        _publish_and_activate_allow_agent_create(client, org)
+        _publish_and_activate_initial_policy(client, org)
         candidate_ids = tuple(_publish_candidate_policy(client, org) for _ in range(2))
 
         def activate(bundle_id: str) -> int:
@@ -96,6 +86,33 @@ def test_real_postgres_concurrent_policy_activation_preserves_single_active(
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
+
+
+def _bootstrap_org(client: TestClient) -> dict[str, Any]:
+    resp = client.post(
+        "/orgs",
+        json={
+            "name": f"Acme {new_id()}",
+            "admin_name": "Root Admin",
+            "admin_email": f"root-{new_id()}@acme.example.com",
+        },
+        headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
+    )
+    assert resp.status_code == 201, resp.text
+    return dict(resp.json())
+
+
+def _admin_headers(org: dict[str, Any]) -> dict[str, str]:
+    return {"X-API-Key": org["admin_api_key"]}
+
+
+def _publish_and_activate_initial_policy(client: TestClient, org: dict[str, Any]) -> None:
+    bundle_id = _publish_candidate_policy(client, org)
+    response = client.post(
+        f"/orgs/{org['org_id']}/policies/{bundle_id}/activate",
+        headers=_admin_headers(org),
+    )
+    assert response.status_code == 200, response.text
 
 
 def _publish_candidate_policy(client: TestClient, org: dict[str, Any]) -> str:

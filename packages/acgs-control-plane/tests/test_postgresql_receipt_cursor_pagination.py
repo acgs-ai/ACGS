@@ -34,7 +34,6 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
@@ -42,21 +41,11 @@ from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.models import (
-    Environment,
-    Project,
-    ReceiptRow,
-    new_id,
-    utcnow,
-)
+from acgs_control_plane.models import ReceiptRow
 from acgs_control_plane.pagination import (
     CursorKeyring,
     decode_receipt_cursor,
     receipt_filter_digest,
-)
-from acgs_control_plane.trust import (
-    ManagedTrustLifecycleService,
-    public_spki_der_from_signer,
 )
 
 BOOTSTRAP_TOKEN = "pg-cursor-bootstrap-token"
@@ -139,75 +128,20 @@ def _bootstrap(client: TestClient, *, name: str, email: str) -> tuple[str, dict[
     assert resp.status_code == 201, resp.text
     body = resp.json()
     headers = {"X-API-Key": body["admin_api_key"]}
-    _seed_agent_registration_prerequisites(client, body["org_id"], headers)
     return body["org_id"], headers
 
 
-def _seed_agent_registration_prerequisites(
-    client: TestClient, org_id: str, headers: dict[str, str]
-) -> None:
-    """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
-
-    Mirrors the SQLite twin in ``test_receipt_cursor_pagination.py``: agent
-    registration is a canonical managed mutation, so it needs the org's
-    default project/environment scope, a trusted key for that scope, and an
-    active policy bundle. These tests use agent creation only to produce
-    receipts to paginate.
-    """
-    app = client.app
-    project_id = f"project-{new_id()}"
-    environment_id = f"environment-{new_id()}"
-    with app.state.session_factory.begin() as session:
-        session.add_all(
-            [
-                Project(id=project_id, org_id=org_id, slug="default", name="Default"),
-                Environment(
-                    id=environment_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                    slug="production",
-                    name="Production",
-                ),
-            ]
-        )
-        session.flush()
-        scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
-        signer = app.state.agent_registration_service.issuer.signer_for_scope(scope, trust_epoch=1)
-        ManagedTrustLifecycleService(session).bootstrap(
-            scope=scope,
-            key_id=signer.key_id,
-            algorithm=signer.algorithm,
-            public_key_spki_der=public_spki_der_from_signer(signer),
-            not_after=utcnow() + timedelta(days=1),
-        )
-    publish = client.post(
-        f"/orgs/{org_id}/policies",
-        json={
-            "policy_id": f"policy-{new_id()}",
-            "rules": [
-                {
-                    "id": "deny-unrelated",
-                    "effect": "deny",
-                    "tools": ["unrelated.tool"],
-                    "reason": "unrelated tools disabled",
-                }
-            ],
-        },
-        headers=headers,
-    )
-    assert publish.status_code == 201, publish.text
-    activate = client.post(
-        f"/orgs/{org_id}/policies/{publish.json()['bundle_id']}/activate",
-        headers=headers,
-    )
-    assert activate.status_code == 200, activate.text
-
-
 def _seed_receipts(client: TestClient, org_id: str, headers: dict[str, str], *, count: int) -> None:
+    """Mirror the SQLite twin: agent creation is native receipt-governed now,
+    so these tests seed legacy receipt rows via user creation instead."""
     for i in range(count):
         resp = client.post(
-            f"/orgs/{org_id}/agents",
-            json={"name": f"pg-cursor-bot-{i}"},
+            f"/orgs/{org_id}/users",
+            json={
+                "name": f"PG Cursor User {i}",
+                "email": f"pg-cursor-user-{i}@example.com",
+                "role": "viewer",
+            },
             headers=headers,
         )
         assert resp.status_code == 201, resp.text

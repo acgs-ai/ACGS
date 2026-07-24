@@ -8,25 +8,27 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from acgs_control_plane.models import AgentRecord
-
 
 def _seed_activity(client: TestClient, org_id: str, headers: dict[str, str]) -> None:
     for i in range(3):
         assert (
             client.post(
+                f"/orgs/{org_id}/agents", json={"name": f"bot-{i}"}, headers=headers
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
                 f"/orgs/{org_id}/users",
                 json={
-                    "name": f"operator-{i}",
-                    "email": f"operator-{i}@acme.example.com",
+                    "name": f"Receipt User {i}",
+                    "email": f"receipt-user-{i}@example.com",
                     "role": "viewer",
                 },
                 headers=headers,
             ).status_code
             == 201
         )
-    with client.app.state.session_factory.begin() as session:
-        session.add_all([AgentRecord(org_id=org_id, name=f"bot-{i}") for i in range(3)])
 
 
 def test_receipt_list_filters_and_pagination(
@@ -35,7 +37,10 @@ def test_receipt_list_filters_and_pagination(
     org_id = org["org_id"]
     _seed_activity(client, org_id, admin_headers)
     all_receipts = client.get(f"/orgs/{org_id}/receipts", headers=admin_headers).json()
-    assert all_receipts["total"] == 4  # org.create + 3 registrations
+    assert all_receipts["total"] == 7
+    native_items = [item for item in all_receipts["items"] if item["assurance_class"] == "native"]
+    assert len(native_items) == 3
+    assert {item["source_system"] for item in native_items} == {"gove-zone"}
 
     filtered = client.get(
         f"/orgs/{org_id}/receipts",
@@ -43,6 +48,13 @@ def test_receipt_list_filters_and_pagination(
         headers=admin_headers,
     ).json()
     assert filtered["total"] == 3
+    native_filtered = client.get(
+        f"/orgs/{org_id}/receipts",
+        params={"tool": "database.agent.create"},
+        headers=admin_headers,
+    ).json()
+    assert native_filtered["total"] == 3
+    assert {item["assurance_class"] for item in native_filtered["items"]} == {"native"}
 
     page = client.get(
         f"/orgs/{org_id}/receipts",
@@ -50,7 +62,7 @@ def test_receipt_list_filters_and_pagination(
         headers=admin_headers,
     ).json()
     assert len(page["items"]) == 2
-    assert page["total"] == 4
+    assert page["total"] == 7
 
 
 def test_receipt_verify_clean_chain(
@@ -123,11 +135,12 @@ def test_dashboard_aggregates(
         headers=admin_headers,
     )
     dash = client.get(f"/orgs/{org_id}/dashboard", headers=admin_headers).json()
-    assert dash["total_receipts"] == 5
-    assert dash["decisions"]["allow"] == 5
+    assert dash["total_receipts"] == 8
+    assert dash["decisions"]["allow"] == 8
     assert dash["agents_total"] == 3
     assert dash["agents_suspended"] == 1
     assert dash["chain_valid"] is True
     tools = {t["tool"]: t["count"] for t in dash["top_tools"]}
     assert tools["user.create"] == 3
+    assert tools["database.agent.create"] == 3
     assert dash["active_policy_version"] is None

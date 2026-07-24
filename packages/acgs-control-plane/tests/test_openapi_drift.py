@@ -410,12 +410,14 @@ EXPECTED_SELECTED_COMPONENTS: dict[str, dict[str, Any]] = {
     "ReceiptSummary": {
         "properties": {
             "actor": {"type": "string"},
+            "assurance_class": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "audit_hash": {"type": "string"},
             "created_at": {"format": "date-time", "type": "string"},
             "decision": {"type": "string"},
             "goal": {"type": "string"},
             "policy_version": {"type": "string"},
             "receipt_id": {"type": "string"},
+            "source_system": {"anyOf": [{"type": "string"}, {"type": "null"}]},
             "tool": {"type": "string"},
         },
         "required": [

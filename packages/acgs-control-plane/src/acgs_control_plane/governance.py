@@ -51,10 +51,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, SessionTransaction
 
 from acgs_control_plane.auth import Principal
-from acgs_control_plane.managed_mutations import (
-    CONTROL_PLANE_AGENT_CREATE_ACTION,
-    TENANT_BOOTSTRAP_ACTION,
-)
+from acgs_control_plane.managed_mutations import TENANT_BOOTSTRAP_ACTION
 from acgs_control_plane.models import (
     AuditProjectionOutbox,
     GovernanceEvent,
@@ -108,6 +105,7 @@ _LEGACY_WRITES = (
     ("POST", "/orgs/{org_id}/policies/{bundle_id}/activate", "policy.activate"),
     ("POST", "/orgs/{org_id}/exports", "export.generate"),
 )
+_CANONICAL_MANAGED_WRITES = (("POST", "/orgs/{org_id}/agents", "database.agent.create"),)
 ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),
@@ -121,27 +119,6 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         False,
         False,
     ),
-    RouteContract(
-        "POST",
-        "/orgs/{org_id}/agents",
-        ExecutionClass.CANONICAL_MANAGED_WRITE,
-        CONTROL_PLANE_AGENT_CREATE_ACTION,
-        True,
-        False,
-        False,
-    ),
-    # The /v1 alias is served for every org route, so agent creation needs the
-    # same governed contract under both prefixes. Classifying only the unversioned
-    # path would leave the alias unclassified, which the registry refuses.
-    RouteContract(
-        "POST",
-        "/v1/orgs/{org_id}/agents",
-        ExecutionClass.CANONICAL_MANAGED_WRITE,
-        CONTROL_PLANE_AGENT_CREATE_ACTION,
-        True,
-        False,
-        False,
-    ),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(
@@ -151,6 +128,14 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     *(
         RouteContract(m, f"/v1{p}", ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
         for m, p, a in _LEGACY_WRITES
+    ),
+    *(
+        RouteContract(m, p, ExecutionClass.CANONICAL_MANAGED_WRITE, a, True)
+        for m, p, a in _CANONICAL_MANAGED_WRITES
+    ),
+    *(
+        RouteContract(m, f"/v1{p}", ExecutionClass.CANONICAL_MANAGED_WRITE, a, True)
+        for m, p, a in _CANONICAL_MANAGED_WRITES
     ),
 )
 FRAMEWORK_PROTOCOL_ROUTES: tuple[tuple[str, str], ...] = (

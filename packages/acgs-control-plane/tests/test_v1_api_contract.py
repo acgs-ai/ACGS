@@ -2,59 +2,72 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
+from gove_zone.signing import Ed25519Signer
 from sqlalchemy import select
 
 from acgs_control_plane.api_contract import REQUEST_ID_RE
-from acgs_control_plane.app import create_app
+from acgs_control_plane.app import NativeAgentTransactionProviders, create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.governance import (
     ROUTE_CONTRACTS,
     ExecutionClass,
 )
-from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.models import (
-    AgentRecord,
-    ComplianceExport,
-    Environment,
-    Organization,
-    Project,
-    ReceiptRow,
-    new_id,
-    utcnow,
-)
-from acgs_control_plane.trust import (
-    ManagedTrustLifecycleService,
-    public_spki_der_from_signer,
+from acgs_control_plane.models import AgentRecord, ComplianceExport, Organization, ReceiptRow
+from acgs_control_plane.native_receipts import (
+    ManagedConsumptionAttestationTrust,
+    ManagedNativeReceiptTrust,
+    TenantPrivacyProvider,
 )
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
+_ISSUER_PRIVATE = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+_ATTESTOR_PRIVATE = bytes.fromhex(
+    "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+)
+
+
+def _providers() -> NativeAgentTransactionProviders:
+    issuer = Ed25519Signer.from_private_bytes(_ISSUER_PRIVATE, key_id="v1-native-agent-issuer")
+    attestor = Ed25519Signer.from_private_bytes(
+        _ATTESTOR_PRIVATE,
+        key_id="v1-native-agent-attestor",
+    )
+    return NativeAgentTransactionProviders(
+        receipt_trust=ManagedNativeReceiptTrust(
+            signer=issuer,
+            verifiers={issuer.key_id: issuer},
+        ),
+        consumption_trust=ManagedConsumptionAttestationTrust(
+            signer=attestor,
+            verifiers={attestor.key_id: attestor},
+        ),
+        privacy=TenantPrivacyProvider(b"v1-native-agent-route-privacy-32b"),
+    )
 
 
 def _client(tmp_path: Path, audit_dir: Path, *, limit: int = 1024) -> TestClient:
-    # Migrate rather than create_tables=True: the latter builds only the frozen
-    # v0 surface, which has no projects/environments tables, so agent
-    # registration cannot resolve its scope. The /v1 alias is served from a
-    # migrated schema in every deployment.
-    database_url = f"sqlite:///{tmp_path / 'v1.sqlite3'}"
-    upgrade_database(database_url)
     app = create_app(
         Settings(
-            database_url=database_url,
+            database_url=f"sqlite:///{tmp_path / 'v1.sqlite3'}",
             audit_dir=audit_dir,
             bootstrap_token=BOOTSTRAP_TOKEN,
-            create_tables=False,
+            create_tables=True,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             max_request_body_bytes=limit,
-        )
+        ),
+        native_agent_transaction=_providers(),
     )
     return TestClient(app, raise_server_exceptions=False)
+
+
+def _app(client: TestClient) -> FastAPI:
+    return cast(FastAPI, client.app)
 
 
 def _bootstrap(client: TestClient, name: str) -> dict[str, Any]:
@@ -68,64 +81,7 @@ def _bootstrap(client: TestClient, name: str) -> dict[str, Any]:
         headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
     )
     assert response.status_code == 201, response.text
-    org = response.json()
-    _seed_agent_registration_prerequisites(client, org)
-    return org
-
-
-def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, Any]) -> None:
-    """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
-
-    Agent registration is a canonical managed mutation: it resolves the org's
-    default project/environment scope, mints a receipt-v2 under a trusted key
-    for that scope, and requires an active policy bundle. Mirrors
-    test_agent_registration_managed_route.py.
-
-    The permissive bundle seeded here denies only an unrelated tool. Callers
-    that need their own rules publish and activate over the top; activation
-    retires the currently active bundle, so the two never collide.
-    """
-    org_id = org["org_id"]
-    app = client.app
-    project_id = f"project-{new_id()}"
-    environment_id = f"environment-{new_id()}"
-    with app.state.session_factory.begin() as session:
-        session.add_all(
-            [
-                Project(id=project_id, org_id=org_id, slug="default", name="Default"),
-                Environment(
-                    id=environment_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                    slug="production",
-                    name="Production",
-                ),
-            ]
-        )
-        session.flush()
-        scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
-        signer = app.state.agent_registration_service.issuer.signer_for_scope(scope, trust_epoch=1)
-        ManagedTrustLifecycleService(session).bootstrap(
-            scope=scope,
-            key_id=signer.key_id,
-            algorithm=signer.algorithm,
-            public_key_spki_der=public_spki_der_from_signer(signer),
-            not_after=utcnow() + timedelta(days=1),
-        )
-    _publish_and_activate(
-        client,
-        org_id,
-        _headers(org),
-        policy_id=f"policy-{new_id()}",
-        rules=[
-            {
-                "id": "deny-unrelated",
-                "effect": "deny",
-                "tools": ["unrelated.tool"],
-                "reason": "unrelated tools disabled",
-            }
-        ],
-    )
+    return response.json()
 
 
 def _headers(org: dict[str, Any]) -> dict[str, str]:
@@ -144,7 +100,7 @@ def _audit_bytes(audit_dir: Path) -> bytes:
 
 
 def _snapshot(client: TestClient, audit_dir: Path, org_id: str) -> dict[str, Any]:
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         org = session.get(Organization, org_id)
         assert org is not None
         return {
@@ -199,7 +155,7 @@ def test_v1_org_aliases_share_v0_endpoints_with_stable_operation_ids(tmp_path: P
     try:
         routes = {
             (method, route.path): route
-            for route in client.app.routes
+            for route in _app(client).routes
             if isinstance(route, APIRoute)
             for method in route.methods or ()
         }
@@ -219,7 +175,7 @@ def test_v1_org_aliases_share_v0_endpoints_with_stable_operation_ids(tmp_path: P
                 assert route.operation_id is None
         assert all(path not in {"/v1/healthz", "/v1/readyz"} for _, path in routes)
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
@@ -253,14 +209,9 @@ def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
             item["tool"]
             for item in client.get(f"/v1/orgs/{org_id}/receipts", headers=headers).json()["items"]
         ]
-        # Newest first. The seeded policy bundle sits between the org
-        # creation and this write, so assert the registration is the most
-        # recent receipt and the org creation is still on the chain, rather
-        # than pinning two adjacent positions.
-        assert receipt_tools[0] == "agent.register"
-        assert "org.create" in receipt_tools
+        assert receipt_tools == ["database.agent.create", "org.create"]
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_unauthenticated_and_cross_tenant_refusals_are_redacted_and_unreceipted(
@@ -289,7 +240,7 @@ def test_v1_unauthenticated_and_cross_tenant_refusals_are_redacted_and_unreceipt
             assert other["org_id"] not in response.text
         assert _snapshot(client, audit_dir, org["org_id"]) == before
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_malformed_and_oversized_writes_are_rejected_before_side_effects(
@@ -324,7 +275,7 @@ def test_v1_malformed_and_oversized_writes_are_rejected_before_side_effects(
             assert "receipt" not in response.text
         assert _snapshot(client, audit_dir, org_id) == before
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
@@ -343,13 +294,10 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
             },
             headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
         ).json()
-        # Created without _bootstrap, so it still needs the governed scope and
-        # trust that agent registration resolves.
-        _seed_agent_registration_prerequisites(client, v0_org)
         rule = {
             "id": "no-untrusted-agents",
             "effect": "deny",
-            "tools": ["agent.register"],
+            "tools": ["database.agent.create"],
             "state_equals": {"trust_tier": "untrusted"},
             "reason": "untrusted agents are not allowed in this org",
         }
@@ -390,8 +338,8 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
             == {
                 "status",
                 "reason",
-                "receipt_id",
                 "decision",
+                "receipt_id",
                 "request_id",
             }
         )
@@ -405,17 +353,10 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
         v0_after = _snapshot(client, audit_dir, v0_org["org_id"])
         assert v1_after["agents"] == v1_before["agents"]
         assert v0_after["agents"] == v0_before["agents"]
-        assert len(v1_after["receipts"]) == len(v1_before["receipts"]) + 1
-        assert len(v0_after["receipts"]) == len(v0_before["receipts"]) + 1
-        receipt = client.get(
-            f"/v1/orgs/{v1_org['org_id']}/receipts/{v1_denied.json()['receipt_id']}",
-            headers=_headers(v1_org),
-        )
-        assert receipt.status_code == 200
-        assert receipt.json()["tool"] == "agent.register"
-        assert receipt.json()["decision"] == "deny"
+        assert len(v1_after["receipts"]) == len(v1_before["receipts"])
+        assert len(v0_after["receipts"]) == len(v0_before["receipts"])
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_policy_escalate_matches_v0_error_semantics_and_blocks_side_effect(
@@ -501,7 +442,7 @@ def test_v1_policy_escalate_matches_v0_error_semantics_and_blocks_side_effect(
         assert receipt.json()["tool"] == "export.generate"
         assert receipt.json()["decision"] == "escalate"
     finally:
-        client.app.state.engine.dispose()
+        _app(client).state.engine.dispose()
 
 
 def test_v1_contract_is_alias_only_not_beta_feature_completion() -> None:
@@ -512,11 +453,12 @@ def test_v1_contract_is_alias_only_not_beta_feature_completion() -> None:
         if contract.path == "/v1/orgs" or contract.path.startswith("/v1/orgs/")
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
-    # 6, not 7: agent registration is now governed with receipt v2, so
-    # POST /v1/orgs/{org_id}/agents is a CANONICAL_MANAGED_WRITE rather than a
-    # legacy unsigned one. The alias itself is still alias-only.
     assert len(v1_writes) == 6
     assert all(contract.permits_persistent_effect for contract in v1_writes)
+    assert (
+        contracts[("POST", "/v1/orgs/{org_id}/agents")].execution_class
+        is ExecutionClass.CANONICAL_MANAGED_WRITE
+    )
     assert ("GET", "/v1") in contracts
     assert contracts[("GET", "/v1")].execution_class is ExecutionClass.PROTOCOL_OPERATION
 

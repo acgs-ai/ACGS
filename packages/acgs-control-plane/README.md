@@ -38,27 +38,26 @@ production governance membrane. In the local development profile:
 2. **The governance membrane** answers *"does the org's active policy permit this
    specific action?"* Policy denials are governed decisions and are **always receipted**.
 
-`POST /orgs/{org}/agents` is the first canonical managed mutation path. It uses
-the server-owned default project/environment scope from Alembic revision `0006`,
-mints a signed receipt-v2 `DecisionReceipt` before execution, verifies it through
-`execute_with_receipt`, consumes ALLOW receipts once, records DENY/ESCALATE as
-non-executable evidence, and rejects stale policy, trust, binding mismatch, and
-replay cases before the forbidden agent row can be inserted.
+`POST /orgs/{org}/agents` is the first native receipt-governed mutation path. It
+uses the server-owned default project/environment scope from Alembic revision
+`0010`, issues a signed native `DecisionReceipt` (action `database.agent.create`,
+boundary `control-plane/sql-transaction`) inside the same SQL transaction as the
+agent row, verifies it strictly before the protected insert, burns ALLOW receipts
+once in the single-use consumption ledger, records DENY/ESCALATE as signed
+non-executable evidence, and fails closed on stale policy, trust, binding
+mismatch, and replay cases before the forbidden agent row can be inserted.
 
-The general receipt explorer and export bundle read the legacy `receipts` table
-only. So that a managed agent decision is not invisible to auditors, each one is
-mirrored onto that table inside its own transaction: the decision is appended to
-the org chain, the row is inserted, and the anchor is advanced from the resulting
-chain tip. The mirror is recorded under the pre-rename tool name `agent.register`
-— the name saved explorer queries and exports already filter on — while the
-managed lineage keeps `control-plane.agent.create`, so the two lineages name the
-same decision differently by design. A refusal that never becomes final leaves no
-trace, because the mirror commits with the decision or not at all.
+Native agent decisions are not mirrored onto the legacy `receipts` table.
+Instead, the receipt list/detail/verify endpoints, the dashboard, and the export
+bundle read the native ledger alongside legacy rows and keep the two lineages
+distinct: native entries carry `assurance_class: native` and
+`source_system: gove-zone`, and verifying a native receipt runs the full
+cryptographic evidence-chain verifier (artifact, projection, governance event,
+consumption attestation, signatures) rather than the legacy chain walk.
 
-This mirror covers `POST /orgs/{org}/agents` only. Other managed mutations —
-`tenant.bootstrap` — still write `ManagedDecisionReceipt` with no legacy
-projection and remain invisible to the explorer and export bundle. Native
-receipt-v2 explorer/export support remains future work.
+Other managed mutations — `tenant.bootstrap` — still write
+`ManagedDecisionReceipt` with no legacy projection and remain invisible to the
+explorer and export bundle.
 
 ## Tamper evidence
 
@@ -166,9 +165,9 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   no approve/resume endpoint yet (gove-zone's `escalation.PendingApproval` is the
   intended substrate).
 - **Most route receipts are legacy and unsigned.** `POST /orgs/{org}/agents` now uses signed
-  managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
-  differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
-  those legacy mutation routes remain.
+  native receipt evidence and the SQL single-use consumption ledger, but the remaining legacy
+  routes still differ from gove-zone's secure `require_signature=True` profile. Production posture
+  refuses while those legacy mutation routes remain.
 - **Schema mutation is operator-only**: Alembic revisions `0001` through `0010` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The frozen legacy `create_all` contract remains
@@ -177,20 +176,22 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **Database governance-event tables are groundwork only**: revision `0007` adds DB-primary event,
   head, outbox, and cutover tables plus a caller-owned-session appender, but current routes and read
   paths still use the legacy JSONL authority until a later explicit cutover.
-- **Native receipt persistence is a transaction provider, not a route cutover**: revision `0008`
+- **Native receipt persistence is a transaction provider with one route cutover**: revision `0008`
   adds tenant-bound verified, minimized signed-receipt projections and single-use consumption
   burns. It rejects TRANSFORM and freeform subject, goal, constraint, transformation, or extra
   approval metadata; request IDs and matched-rule identifiers are stored only as hashes. Providers
   flush but never commit or roll back; callers must keep receipt, burn, and protected SQL effect in
   one transaction. A rollback removes all three. The database fixes `assurance_class` to `native`
   and `source_system` to `gove-zone`; federated and observed evidence require distinct provenance.
+  Only `POST /orgs/{org}/agents` has cut over to this path; other mutation routes have not.
   Non-transactional external effects still require a separate durable execution protocol.
-- **Verifiable native receipt artifacts are groundwork only**: revision `0009` adds nullable
-  artifact columns and an opt-in verifier that reconstructs the signed `DecisionReceipt`, checks
+- **Verifiable native receipt artifacts back one route**: revision `0009` adds nullable
+  artifact columns and a verifier that reconstructs the signed `DecisionReceipt`, checks
   trusted key status, compares the minimized projection and scalar bindings, walks the full
   tenant governance-event chain, and refuses native cutover readiness if the marker is missing,
-  legacy writes remain active, or legacy receipt rows exist beyond the cutover boundary. No HTTP
-  route, mutation cutover, production blocker, or legacy JSONL authority changes in this slice.
+  legacy writes remain active, or legacy receipt rows exist beyond the cutover boundary. The
+  agent-create route and native receipt verify endpoint use this verifier; the legacy JSONL
+  authority is unchanged for all other routes.
 - **Default scope attachment is additive compatibility groundwork**: revision `0010` creates or
   reuses one canonical legacy default project/environment per organization, backfills still-unscoped
   legacy agents and policy bundles onto it, and extends the nullable composite

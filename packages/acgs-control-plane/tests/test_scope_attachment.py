@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 import acgs_control_plane.app as app_module
-from acgs_control_plane.app import create_app
+from acgs_control_plane.app import NativeAgentTransactionProviders, create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migrations import (
@@ -703,7 +703,10 @@ def test_revision_0010_refuses_missing_base_table_batch_recovery(
         upgrade_database(database_url)
 
 
-def test_org_bootstrap_seeds_default_scope_and_policy_publish_reuses_it(tmp_path: Path) -> None:
+def test_org_bootstrap_seeds_default_scope_and_mutations_reuse_it(
+    tmp_path: Path,
+    native_agent_transaction_providers: NativeAgentTransactionProviders,
+) -> None:
     database_url = _database_url(tmp_path)
     app = create_app(
         Settings(
@@ -712,7 +715,8 @@ def test_org_bootstrap_seeds_default_scope_and_policy_publish_reuses_it(tmp_path
             bootstrap_token="bootstrap",
             create_tables=True,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
-        )
+        ),
+        native_agent_transaction=native_agent_transaction_providers,
     )
     try:
         client = TestClient(app, raise_server_exceptions=False)

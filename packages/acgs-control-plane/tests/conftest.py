@@ -13,12 +13,22 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from gove_zone.signing import Ed25519Signer
 
-from acgs_control_plane.app import create_app
+from acgs_control_plane.app import NativeAgentTransactionProviders, create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.migrations import upgrade_database
+from acgs_control_plane.native_receipts import (
+    ManagedConsumptionAttestationTrust,
+    ManagedNativeReceiptTrust,
+    TenantPrivacyProvider,
+)
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
+_ISSUER_PRIVATE = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+_ATTESTOR_PRIVATE = bytes.fromhex(
+    "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100"
+)
 
 
 @pytest.fixture()
@@ -32,7 +42,31 @@ def audit_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def client(tmp_path: Path, audit_dir: Path) -> TestClient:
+def native_agent_transaction_providers() -> NativeAgentTransactionProviders:
+    issuer = Ed25519Signer.from_private_bytes(_ISSUER_PRIVATE, key_id="test-native-issuer")
+    attestor = Ed25519Signer.from_private_bytes(
+        _ATTESTOR_PRIVATE,
+        key_id="test-native-attestor",
+    )
+    return NativeAgentTransactionProviders(
+        receipt_trust=ManagedNativeReceiptTrust(
+            signer=issuer,
+            verifiers={issuer.key_id: issuer},
+        ),
+        consumption_trust=ManagedConsumptionAttestationTrust(
+            signer=attestor,
+            verifiers={attestor.key_id: attestor},
+        ),
+        privacy=TenantPrivacyProvider(b"shared-test-native-privacy-key-32b"),
+    )
+
+
+@pytest.fixture()
+def client(
+    tmp_path: Path,
+    audit_dir: Path,
+    native_agent_transaction_providers: NativeAgentTransactionProviders,
+) -> TestClient:
     database_url = f"sqlite:///{tmp_path / 'acp.sqlite3'}"
     upgrade_database(database_url)
     settings = Settings(
@@ -42,7 +76,7 @@ def client(tmp_path: Path, audit_dir: Path) -> TestClient:
         create_tables=False,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
-    app = create_app(settings)
+    app = create_app(settings, native_agent_transaction=native_agent_transaction_providers)
     # raise_server_exceptions=False: policy DENY/ESCALATE map to HTTP via
     # exception handlers; tests assert status codes, not tracebacks.
     return TestClient(app, raise_server_exceptions=False)

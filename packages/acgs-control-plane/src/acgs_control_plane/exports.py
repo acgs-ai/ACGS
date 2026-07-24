@@ -15,7 +15,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from acgs_control_plane.governance import GovernanceMembrane, chain_tip
-from acgs_control_plane.models import AgentRecord, Organization, PolicyBundle, ReceiptRow
+from acgs_control_plane.models import (
+    AgentRecord,
+    GovernanceEvent,
+    GovernanceEventHead,
+    NativeDecisionReceiptRow,
+    NativeReceiptConsumption,
+    Organization,
+    PolicyBundle,
+    ReceiptRow,
+)
 
 EXPORT_SCHEMA = "acgs-control-plane/export/v1"
 
@@ -33,6 +42,70 @@ def build_export_bundle(
             select(ReceiptRow)
             .where(ReceiptRow.org_id == org.id)
             .order_by(ReceiptRow.created_at.asc(), ReceiptRow.id.asc())
+        ).scalars()
+    ]
+    native_receipts = [
+        {
+            "native_receipt_row_id": row.id,
+            "receipt_id": row.receipt_id,
+            "assurance_class": row.assurance_class,
+            "source_system": row.source_system,
+            "evidence_profile": row.evidence_profile,
+            "decision": row.decision,
+            "tool": row.proposed_action,
+            "actor": row.actor,
+            "policy_version": row.policy_version,
+            "audit_event_hash": row.audit_event_hash,
+            "receipt_hash": row.receipt_hash,
+            "receipt_artifact_hash": row.receipt_artifact_hash,
+            "projection": row.projection,
+            "receipt_artifact": row.receipt_artifact,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in session.execute(
+            select(NativeDecisionReceiptRow)
+            .where(NativeDecisionReceiptRow.org_id == org.id)
+            .order_by(NativeDecisionReceiptRow.created_at.asc(), NativeDecisionReceiptRow.id.asc())
+        ).scalars()
+    ]
+    native_governance_events = [
+        {
+            "event_row_id": row.id,
+            "sequence": row.sequence,
+            "event_id": row.event_id,
+            "previous_hash": row.previous_hash,
+            "event_hash": row.event_hash,
+            "decision": row.decision,
+            "tool": row.tool,
+            "actor": row.actor,
+            "policy_version": row.policy_version,
+            "payload": row.payload,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in session.execute(
+            select(GovernanceEvent)
+            .where(GovernanceEvent.org_id == org.id)
+            .order_by(GovernanceEvent.sequence.asc())
+        ).scalars()
+    ]
+    native_head = session.get(GovernanceEventHead, org.id)
+    native_consumptions = [
+        {
+            "consumption_id": row.id,
+            "native_receipt_id": row.native_receipt_id,
+            "receipt_hash": row.receipt_hash,
+            "audit_event_hash": row.audit_event_hash,
+            "attestation_artifact": row.attestation_artifact,
+            "attestation_artifact_hash": row.attestation_artifact_hash,
+            "attestation_signature_algorithm": row.attestation_signature_algorithm,
+            "attestation_signing_key_id": row.attestation_signing_key_id,
+            "attestation_signature": row.attestation_signature,
+            "consumed_at": row.consumed_at.isoformat(),
+        }
+        for row in session.execute(
+            select(NativeReceiptConsumption)
+            .where(NativeReceiptConsumption.org_id == org.id)
+            .order_by(NativeReceiptConsumption.consumed_at.asc(), NativeReceiptConsumption.id.asc())
         ).scalars()
     ]
     policies = [
@@ -72,6 +145,18 @@ def build_export_bundle(
         "policies": policies,
         "agents": agents,
         "receipts": receipts,
+        "native_receipts": native_receipts,
+        "native_governance_chain": {
+            "head": None
+            if native_head is None
+            else {
+                "last_sequence": native_head.last_sequence,
+                "last_event_hash": native_head.last_event_hash,
+                "updated_at": native_head.updated_at.isoformat(),
+            },
+            "events": native_governance_events,
+        },
+        "native_consumptions": native_consumptions,
         "audit_chain": {"events": audit_events, "event_count": count, "last_hash": last},
     }
     manifest = {name: sha256_json(payload) for name, payload in sections.items()}
