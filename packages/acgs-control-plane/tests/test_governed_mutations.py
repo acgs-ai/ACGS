@@ -16,6 +16,7 @@ from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import AgentRecord
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
@@ -72,7 +73,7 @@ def test_agent_register_without_default_scope_fails_closed_before_receipt(
             "trust_tier": "internal",
             "allowed_tools": ["deploy.staging"],
         },
-        headers=admin_headers,
+        headers={**admin_headers, BOOTSTRAP_IDEMPOTENCY_HEADER: "missing-scope-agent-0001"},
     )
     assert resp.status_code == 409, resp.text
     assert resp.json()["code"] == "SCOPE_NOT_READY"

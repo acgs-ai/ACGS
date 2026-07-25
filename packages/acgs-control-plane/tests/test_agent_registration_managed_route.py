@@ -26,9 +26,11 @@ from acgs_control_plane.managed_mutations import CONTROL_PLANE_AGENT_CREATE_ACTI
 from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import (
     AgentRecord,
+    AgentRegistrationIdempotency,
     Environment,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
+    ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
     Organization,
@@ -38,6 +40,7 @@ from acgs_control_plane.models import (
     new_id,
     utcnow,
 )
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
     ManagedTrustLifecycleService,
     public_spki_der_from_signer,
@@ -62,7 +65,7 @@ def test_agent_register_route_executes_through_managed_receipt_v2_spine(
             "trust_tier": "untrusted",
             "allowed_tools": ["deploy.production"],
         },
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, "agent-register-route-0001"),
     )
 
     assert resp.status_code == 201, resp.text
@@ -146,6 +149,36 @@ def test_agent_register_mirror_stays_verifiable_on_the_org_audit_chain(
     assert body["chain_valid"] is True, body
     assert body["anchor_matched"] is True, body
     assert body["failures"] == [], body
+
+
+def test_agent_register_route_requires_idempotency_key_before_issuance_or_persistence(
+    tmp_path: Path,
+) -> None:
+    receipt_issuer = _IssuanceForbidden()
+    app, client = _migrated_client(tmp_path, receipt_issuer=receipt_issuer)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate_allow_agent_create(client, org)
+
+    resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "missing-key-bot", "trust_tier": "internal"},
+        headers=_admin_headers(org),
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["code"] == "IDEMPOTENCY_KEY_REQUIRED"
+    assert resp.json()["status"] == "idempotency_key_required"
+    assert receipt_issuer.calls == 0
+    with app.state.session_factory() as session:
+        assert _count_agents(session, org["org_id"], "missing-key-bot") == 0
+        assert _count(session, AgentRegistrationIdempotency) == 0
+        assert _count(session, ManagedDecisionReceipt) == 0
+        assert _count(session, ManagedReceiptConsumption) == 0
+        assert _count(session, ManagedGovernanceEvent) == 0
+        assert _count(session, ManagedOutboxMessage) == 0
+        assert _count(session, ManagedMutationAttempt) == 0
+        assert _count_legacy_agent_receipts(session, org["org_id"]) == 0
 
 
 def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
@@ -404,9 +437,12 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
                         name="blocked-bot",
                     )
                 )
-        headers = _admin_headers(org)
+        headers = _agent_headers(org, f"agent-refusal-{case['name']}-0001")
         if case.get("role") == "viewer":
-            headers = _create_user(client, org, role="viewer")
+            headers = {
+                **_create_user(client, org, role="viewer"),
+                BOOTSTRAP_IDEMPOTENCY_HEADER: f"agent-refusal-{case['name']}-0001",
+            }
         if case["name"] == "missing_auth":
             headers = {}
 
@@ -454,11 +490,13 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
                 assert _count(session, ManagedDecisionReceipt) == 0, case["name"]
                 assert _count(session, ManagedGovernanceEvent) == 0, case["name"]
                 assert _count(session, ManagedOutboxMessage) == 0, case["name"]
+                assert _count(session, AgentRegistrationIdempotency) == 0, case["name"]
             else:
                 receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
                 assert receipt.decision == case["evidence"], case["name"]
                 assert _count(session, ManagedGovernanceEvent) == 1, case["name"]
                 assert _count(session, ManagedOutboxMessage) == 1, case["name"]
+                assert _count(session, AgentRegistrationIdempotency) == 1, case["name"]
 
     _assert_replay_case(tmp_path, decision="allow")
     _assert_replay_case(tmp_path, decision="deny")
@@ -489,7 +527,7 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
             "allowed_tools": [],
             "project_id": "caller-controlled",
         },
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, "agent-scope-invalid-0001"),
     )
 
     assert resp.status_code == 422, resp.text
@@ -501,7 +539,7 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
             "trust_tier": "internal",
             "allowed_tools": [],
         },
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, "agent-scope-ok-0001"),
     )
     assert ok.status_code == 201, ok.text
     with app.state.session_factory() as session:
@@ -517,6 +555,72 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
         assert receipt.project_id == project_id
         assert receipt.environment_id == environment_id
         assert receipt.policy_bundle_id is not None
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_status", "expected_code"),
+    [
+        ("deny", 403, "POLICY_DENIED"),
+        ("escalate", 202, "ESCALATE_PENDING"),
+    ],
+)
+def test_agent_register_route_duplicate_refusals_replay_original_terminal_response(
+    tmp_path: Path,
+    decision: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    app, client = _migrated_client(tmp_path, label=f"duplicate-{decision}")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy(decision))
+    headers = _agent_headers(org, f"agent-refusal-duplicate-{decision}-0001")
+    body = {"name": f"duplicate-{decision}-bot", "trust_tier": "internal"}
+
+    first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    second = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+
+    assert first.status_code == expected_status, first.text
+    assert second.status_code == expected_status, second.text
+    assert first.json() == second.json()
+    assert second.json()["code"] == expected_code
+    _assert_single_refusal_evidence(app, org["org_id"], f"duplicate-{decision}-bot", decision)
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_status", "expected_code"),
+    [
+        ("deny", 403, "POLICY_DENIED"),
+        ("escalate", 202, "ESCALATE_PENDING"),
+    ],
+)
+def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_response(
+    tmp_path: Path,
+    decision: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    app, client = _migrated_client(tmp_path, label=f"concurrent-{decision}")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy(decision))
+    headers = _agent_headers(org, f"agent-refusal-concurrent-{decision}-0001")
+    body = {"name": f"concurrent-{decision}-bot", "trust_tier": "internal"}
+
+    def register() -> tuple[int, str | None]:
+        resp = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+        code = (
+            resp.json().get("code")
+            if resp.headers.get("content-type", "").startswith("application/json")
+            else None
+        )
+        return resp.status_code, code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: register(), range(2)))
+
+    assert results == [(expected_status, expected_code), (expected_status, expected_code)]
+    _assert_single_refusal_evidence(app, org["org_id"], f"concurrent-{decision}-bot", decision)
 
 
 class _FailingReceiptSealer:
@@ -583,6 +687,15 @@ class _MutatingReceiptIssuer:
         raise AssertionError(f"unsupported receipt mutation mode: {self.mode}")
 
 
+class _IssuanceForbidden:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def issue(self, **_kwargs: Any) -> DecisionReceipt:
+        self.calls += 1
+        raise AssertionError("receipt issuance should not run")
+
+
 def _rehashed_receipt(receipt: DecisionReceipt, **changes: Any) -> DecisionReceipt:
     mutated = replace(receipt, **changes)
     return replace(mutated, receipt_hash=mutated.compute_hash())
@@ -613,12 +726,13 @@ def _migrated_client(
     receipt_mode: str | None = None,
     on_issue: Any | None = None,
     receipt_sealer: Any | None = None,
+    receipt_issuer: Any | None = None,
 ) -> tuple[Any, TestClient]:
     database_url = f"sqlite:///{tmp_path / f'{label}.sqlite3'}"
     upgrade_database(database_url)
     issuer = local_agent_registration_issuer()
     issuer_mode = receipt_mode or ("pass_through" if on_issue is not None else None)
-    receipt_issuer = (
+    effective_receipt_issuer = receipt_issuer or (
         _MutatingReceiptIssuer(
             DefaultAgentRegistrationReceiptIssuer(issuer),
             issuer_mode,
@@ -637,7 +751,7 @@ def _migrated_client(
         ),
         agent_registration_issuer=issuer,
         agent_registration_receipt_sealer=receipt_sealer,
-        agent_registration_receipt_issuer=receipt_issuer,
+        agent_registration_receipt_issuer=effective_receipt_issuer,
     )
     return app, TestClient(app, raise_server_exceptions=False)
 
@@ -658,6 +772,13 @@ def _bootstrap_org(client: TestClient) -> dict[str, Any]:
 
 def _admin_headers(org: dict[str, Any]) -> dict[str, str]:
     return {"X-API-Key": org["admin_api_key"]}
+
+
+def _agent_headers(org: dict[str, Any], idempotency_key: str) -> dict[str, str]:
+    return {
+        **_admin_headers(org),
+        BOOTSTRAP_IDEMPOTENCY_HEADER: idempotency_key,
+    }
 
 
 def _seed_default_scope_and_trust(
@@ -838,6 +959,23 @@ def _managed_allow_receipts(session: Any) -> int:
     )
 
 
+def _assert_single_refusal_evidence(
+    app: Any,
+    org_id: str,
+    name: str,
+    decision: str,
+) -> None:
+    with app.state.session_factory() as session:
+        assert _count_agents(session, org_id, name) == 0
+        assert _count(session, ManagedReceiptConsumption) == 0
+        assert _count(session, AgentRegistrationIdempotency) == 1
+        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _count(session, ManagedGovernanceEvent) == 1
+        assert _count(session, ManagedOutboxMessage) == 1
+        receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+        assert receipt.decision == decision
+
+
 def _assert_replay_case(tmp_path: Path, *, decision: str) -> None:
     app, client = _migrated_client(
         tmp_path,
@@ -850,14 +988,14 @@ def _assert_replay_case(tmp_path: Path, *, decision: str) -> None:
     first = client.post(
         f"/orgs/{org['org_id']}/agents",
         json={"name": "replay-bot", "trust_tier": "internal"},
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, f"agent-replay-{decision}-0001"),
     )
     expected_first = 201 if decision == "allow" else 403
     assert first.status_code == expected_first, first.text
     second = client.post(
         f"/orgs/{org['org_id']}/agents",
         json={"name": "replay-bot", "trust_tier": "internal"},
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, f"agent-replay-{decision}-0002"),
     )
     assert second.status_code == 409, second.text
     assert second.json()["code"] == "RECEIPT_ALREADY_USED"
@@ -881,15 +1019,15 @@ def _assert_concurrent_replay_case(tmp_path: Path) -> None:
     first = client.post(
         f"/orgs/{org['org_id']}/agents",
         json={"name": "concurrent-replay-bot", "trust_tier": "internal"},
-        headers=_admin_headers(org),
+        headers=_agent_headers(org, "agent-concurrent-replay-0001"),
     )
     assert first.status_code == 403, first.text
 
-    def replay() -> tuple[int, str | None]:
+    def replay(index: int) -> tuple[int, str | None]:
         resp = client.post(
             f"/orgs/{org['org_id']}/agents",
             json={"name": "concurrent-replay-bot", "trust_tier": "internal"},
-            headers=_admin_headers(org),
+            headers=_agent_headers(org, f"agent-concurrent-replay-000{index}"),
         )
         code = (
             resp.json().get("code")
@@ -899,7 +1037,7 @@ def _assert_concurrent_replay_case(tmp_path: Path) -> None:
         return resp.status_code, code
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: replay(), range(2)))
+        results = list(pool.map(replay, range(2, 4)))
 
     assert results == [(409, "RECEIPT_ALREADY_USED"), (409, "RECEIPT_ALREADY_USED")]
     with app.state.session_factory() as session:
