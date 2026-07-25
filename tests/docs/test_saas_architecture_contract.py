@@ -47,8 +47,7 @@ def test_g008_contracts_are_target_only_and_grounded_in_g006_g007() -> None:
     assert "Authentication secrets, credentials, access tokens, private keys" in architecture
     assert "durably persists a pre-effect issuance/audit-anchor record" in architecture
     assert (
-        "Audit append/anchor verification, receipt validation, canonicalization, or"
-        in architecture
+        "Audit append/anchor verification, receipt validation, canonicalization, or" in architecture
     )
     assert "canonicalization algorithm/version and canonical argument digest" in architecture
     assert (
@@ -109,17 +108,14 @@ def test_migration_policy_requires_safe_evolution_and_preserves_verifiability() 
     assert "explicit, reviewed Alembic migration history" in policy
     assert "backup before execution" in policy
     assert all(
-        stage in policy
-        for stage in ("Expand.", "Migrate/backfill.", "Validate.", "Contract.")
+        stage in policy for stage in ("Expand.", "Migrate/backfill.", "Validate.", "Contract.")
     )
     assert "Backfills do not manufacture signatures, native assurance" in policy
     assert (
-        "Original schema/version/canonical bytes/digest/signature/bindings remain "
-        "verifiable"
+        "Original schema/version/canonical bytes/digest/signature/bindings remain verifiable"
     ) in policy
     assert (
-        "Reclassifying, countersigning, importing, or exporting it as native "
-        "authorization evidence"
+        "Reclassifying, countersigning, importing, or exporting it as native authorization evidence"
     ) in policy
     assert "clean-install migration from empty supported PostgreSQL" in policy
     assert "backup/PITR/restore drill" in policy
@@ -215,8 +211,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "current_local | G006, G007, G008 |"
     ) in matrix
     assert (
-        "owner-only provider, legal, licensing, spend, and deployment decisions "
-        "remain proposed"
+        "owner-only provider, legal, licensing, spend, and deployment decisions remain proposed"
     ) in matrix
 
     g101 = next(node for node in dag["nodes"] if node["id"] == "G101")
@@ -325,9 +320,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "Production launch remains a separate human-authorized decision" in matrix
 
     for downstream_node_id in ("G102", "G103"):
-        downstream_node = next(
-            node for node in dag["nodes"] if node["id"] == downstream_node_id
-        )
+        downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
         assert (
             downstream_node["status"],
             downstream_node["implementation_state"],
