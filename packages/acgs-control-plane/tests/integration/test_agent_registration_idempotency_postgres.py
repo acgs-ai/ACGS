@@ -195,7 +195,9 @@ def _postgres_agent_registration_app(
     return app, client, org, database_url
 
 
-def _post_agent_registration(args: tuple[str, str, dict[str, Any], str, dict[str, Any]]) -> tuple[
+def _post_agent_registration(
+    args: tuple[str, str, dict[str, Any], str, dict[str, Any]],
+) -> tuple[
     int,
     str | None,
     str | None,

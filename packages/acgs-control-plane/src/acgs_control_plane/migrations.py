@@ -947,9 +947,7 @@ _AGENT_SCOPE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     ),
     "policy_bundles": frozenset({(("org_id",), "status:active")}),
 }
-_AGENT_REGISTRATION_IDEMPOTENCY_UNIQUE_INDEXES: Final[
-    dict[str, frozenset[_UniqueIndexSpec]]
-] = {
+_AGENT_REGISTRATION_IDEMPOTENCY_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **_AGENT_SCOPE_UNIQUE_INDEXES,
     "agent_registration_idempotency": frozenset(),
 }
@@ -1002,9 +1000,7 @@ _TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]
     "tenant_bootstrap_pending_outbox": frozenset({("invitation_id",), ("policy_artifact_id",)}),
     "tenant_bootstrap_refusal_events": frozenset(),
 }
-_AGENT_REGISTRATION_IDEMPOTENCY_NON_UNIQUE_INDEXES: Final[
-    dict[str, frozenset[tuple[str, ...]]]
-] = {
+_AGENT_REGISTRATION_IDEMPOTENCY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES,
     "agent_registration_idempotency": frozenset({("org_id",)}),
 }
