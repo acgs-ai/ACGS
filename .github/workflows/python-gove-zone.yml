@@ -137,7 +137,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, blacksmith-4vcpu-windows-2025]
         python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
@@ -189,7 +189,7 @@ jobs:
         run: bash packages/gove-zone/scripts/release_smoke_check.sh
 
   dist-check:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
