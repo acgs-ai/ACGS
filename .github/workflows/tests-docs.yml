@@ -67,7 +67,7 @@ jobs:
   test:
     # GitHub-hosted (ephemeral) — see the SECURITY note in the header. Do NOT
     # change to a self-hosted runner: this job runs fork-editable demo code.
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     strategy:
       matrix:

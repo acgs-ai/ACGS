@@ -63,7 +63,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     defaults:
       run:
@@ -105,7 +105,7 @@ jobs:
   deploy-pages:
     needs: build
     if: github.event_name == 'push' && vars.STORYBOOK_PAGES_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     environment:
       name: github-pages

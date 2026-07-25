@@ -57,7 +57,7 @@ permissions:
 jobs:
   test:
     name: Root invariants (GitHub-hosted advisory)
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       # Submodules intentionally NOT initialized — these guards read
