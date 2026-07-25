@@ -1957,11 +1957,13 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     try:
         with engine.begin() as connection:
             if state == "version-0001":
+                _drop_post_0001_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("DROP TABLE projects"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001
             if state == "partial-0001":
+                _drop_post_0001_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
@@ -1971,6 +1973,20 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     finally:
         engine.dispose()
     raise AssertionError(f"unknown PostgreSQL startup seed state: {state}")
+
+
+def _drop_post_0001_tables(connection: Connection) -> None:
+    for table_name in (
+        "managed_trust_keys",
+        "managed_trust_scopes",
+        "managed_outbox",
+        "managed_governance_events",
+        "managed_governance_event_heads",
+        "managed_receipt_consumptions",
+        "managed_mutation_attempts",
+        "managed_decision_receipts",
+    ):
+        connection.execute(sa.text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
 
 
 @pytest.mark.parametrize(
