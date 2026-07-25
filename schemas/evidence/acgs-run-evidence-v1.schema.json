@@ -878,8 +878,18 @@
           "pattern": "^(0|[1-9][0-9]*)$"
         },
         "process_schedule": {
-          "const": [
-            "single-process"
+          "oneOf": [
+            {
+              "const": [
+                "single-process"
+              ]
+            },
+            {
+              "const": [
+                "single-process-evidence-and-package-gates",
+                "postgres-100-request-multiprocess-agent-registration-idempotency"
+              ]
+            }
           ]
         }
       }
