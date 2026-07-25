@@ -161,6 +161,19 @@ P1_MIGRATION_SELECTORS = (
     "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
     "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
 )
+P1_SCOPE_SELECTORS = (
+    "tests/test_project_environment_scope.py::"
+    "test_environment_cannot_reference_a_project_from_another_org",
+    "tests/test_project_environment_scope.py::test_orm_models_use_the_same_composite_parent_join",
+    "tests/test_project_environment_scope.py::"
+    "test_public_api_exposes_no_project_or_environment_mutation_routes",
+    "tests/test_repositories.py::test_prospective_scope_ids_persist_exactly_without_commit",
+    "tests/test_repositories.py::test_cross_tenant_reads_are_non_enumerating",
+    "tests/test_repositories.py::test_cross_tenant_updates_and_deletes_mutate_zero_rows",
+    "tests/test_repositories.py::test_prospective_id_conflicts_fail_atomically",
+    "tests/integration/test_production_posture.py::"
+    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -169,12 +182,26 @@ REVIEWED_P1_MIGRATION_TRANSCRIPT = (
         ("./scripts/run_postgres_gate.sh", *P1_MIGRATION_SELECTORS),
     ),
 )
+REVIEWED_P1_SCOPE_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_SCOPE_SELECTORS,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
+    "P1-SCOPE-002": REVIEWED_P1_SCOPE_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-SCOPE-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -610,10 +637,10 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or value.get("external") != list(reviewed["external"])
     ):
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
-    if node_id == "P1-MIGRATION-001" and (
+    if node_id in {"P1-MIGRATION-001", "P1-SCOPE-002"} and (
         determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"
     ):
-        fail("migration run determinism differs from the reviewed node contract", phase="B6")
+        fail("P1 run determinism differs from the reviewed node contract", phase="B6")
 
 
 def append_safe_transcript_record(

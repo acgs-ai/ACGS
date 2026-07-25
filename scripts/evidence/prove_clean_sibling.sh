@@ -166,6 +166,7 @@ T="$1"
 REQUESTED_NODE_ID="${NODE_ID:-P0-EVIDENCE-000}"
 P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
 P1_MIGRATION_REVIEWED_BASE='79a3c39f841cfc5a6c79e85973887814caf0e694'
+P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -186,6 +187,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=0
     EXPECTED_TRANSCRIPT_RECORDS=6
     TMP_BASENAME='acgs-p1-migration'
+    ;;
+  P1-SCOPE-002)
+    [[ "$P" == "$P1_SCOPE_REVIEWED_BASE" ]] ||
+      die "P1-SCOPE-002 reviewed parent must be exact $P1_SCOPE_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP'
+    INCLUDE_GZ=0
+    EXPECTED_TRANSCRIPT_RECORDS=6
+    TMP_BASENAME='acgs-p1-scope'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -237,7 +246,7 @@ if [[ -z "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
   [[ -x "$SNAPSHOT_PYTHON" && \
     "$(realpath -e "$SNAPSHOT_PYTHON" 2>/dev/null || true)" == /usr/bin/python3.* ]] ||
     die 'trusted snapshot interpreter /usr/bin/python3 is unavailable'
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX='' \
     "$SNAPSHOT_PYTHON" - "${BASH_SOURCE[0]}" "$@" <<'PY'
 import os
 import sys
@@ -700,22 +709,30 @@ run_recorded_gate() {
 }
 
 phase B5
+node_cwd_scope() {
+  local default_scope="$1"
+  case "$NODE_ID" in
+    P1-MIGRATION-001 | P1-SCOPE-002) printf '%s' "$default_scope" ;;
+    *) printf __NONE__ ;;
+  esac
+}
+
 append_record "$EVID_GATE_STARTED" "$EVID_GATE_FINISHED" \
   "$NODE_EVIDENCE/evid-gate.stdout" "$NODE_EVIDENCE/evid-gate.stderr" \
-  'root:EVID-gate' "$( [[ "$NODE_ID" == P1-MIGRATION-001 ]] && printf REPO_ROOT || printf __NONE__ )" \
+  'root:EVID-gate' "$(node_cwd_scope REPO_ROOT)" \
   "${EVID_GATE[@]}"
 
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-ruff-check \
-  'packages/acgs-control-plane:local-gate' "$( [[ "$NODE_ID" == P1-MIGRATION-001 ]] && printf CP || printf __NONE__ )" \
+  'packages/acgs-control-plane:local-gate' "$(node_cwd_scope CP)" \
   .venv/bin/ruff check .
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-ruff-format \
-  'packages/acgs-control-plane:local-gate' "$( [[ "$NODE_ID" == P1-MIGRATION-001 ]] && printf CP || printf __NONE__ )" \
+  'packages/acgs-control-plane:local-gate' "$(node_cwd_scope CP)" \
   .venv/bin/ruff format --check .
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-mypy \
-  'packages/acgs-control-plane:local-gate' "$( [[ "$NODE_ID" == P1-MIGRATION-001 ]] && printf CP || printf __NONE__ )" \
+  'packages/acgs-control-plane:local-gate' "$(node_cwd_scope CP)" \
   .venv/bin/mypy src/
 run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-pytest \
-  'packages/acgs-control-plane:local-gate' "$( [[ "$NODE_ID" == P1-MIGRATION-001 ]] && printf CP || printf __NONE__ )" \
+  'packages/acgs-control-plane:local-gate' "$(node_cwd_scope CP)" \
   .venv/bin/pytest -q
 
 if [[ "$INCLUDE_GZ" == 1 ]]; then
@@ -769,7 +786,7 @@ if [[ "$NODE_ID" == P0-EVIDENCE-000 ]]; then
   run_recorded_gate P0 "$WORKTREE" p0-root-gate 'root:P0-EVIDENCE-000' __NONE__ \
     "${P0_ROOT_GATE[@]}"
   unset ACGS_P0_LITERAL_PROVER_INNER_T
-else
+elif [[ "$NODE_ID" == P1-MIGRATION-001 ]]; then
   P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh \
     tests/integration/test_migrations_postgres.py::test_empty_and_existing_alpha_upgrade_head \
     tests/integration/test_migrations_postgres.py::test_declared_reversible_round_trip \
@@ -780,6 +797,21 @@ else
   run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-migration-postgres \
     'packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate' CP \
     "${P1_MIGRATION_GATE[@]}"
+elif [[ "$NODE_ID" == P1-SCOPE-002 ]]; then
+  P1_SCOPE_GATE=(.venv/bin/pytest -q \
+    tests/test_project_environment_scope.py::test_environment_cannot_reference_a_project_from_another_org \
+    tests/test_project_environment_scope.py::test_orm_models_use_the_same_composite_parent_join \
+    tests/test_project_environment_scope.py::test_public_api_exposes_no_project_or_environment_mutation_routes \
+    tests/test_repositories.py::test_prospective_scope_ids_persist_exactly_without_commit \
+    tests/test_repositories.py::test_cross_tenant_reads_are_non_enumerating \
+    tests/test_repositories.py::test_cross_tenant_updates_and_deletes_mutate_zero_rows \
+    tests/test_repositories.py::test_prospective_id_conflicts_fail_atomically \
+    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation)
+  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-scope-posture \
+    'packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate' CP \
+    "${P1_SCOPE_GATE[@]}"
+else
+  die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi
 
 phase B6
