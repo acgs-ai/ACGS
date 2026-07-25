@@ -3408,6 +3408,62 @@ def test_p2_idempotency_run_validation_rejects_forged_corpus_metadata_before_out
             _common.validate_secret_free_run(forged, expected_node="P2-IDEMPOTENCY-002")
 
 
+def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
+    schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
+    validator = jsonschema.Draft202012Validator(schema["$defs"]["determinism"])
+    p2_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-100-request-multiprocess-agent-registration-idempotency",
+    ]
+
+    for process_schedule in (["single-process"], p2_schedule):
+        validator.validate(
+            {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": process_schedule,
+            }
+        )
+
+    for process_schedule in (
+        [*reversed(p2_schedule)],
+        [*p2_schedule, "unreviewed-extra-process"],
+        ["unreviewed-process"],
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            validator.validate(
+                {
+                    "seed": 20260710,
+                    "python_hash_seed": "0",
+                    "process_schedule": process_schedule,
+                }
+            )
+
+
+def test_non_p2_idempotency_node_rejects_p2_process_schedule_before_output() -> None:
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P2-REGISTER-001",
+            "commands": _reviewed_p2_register_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": [
+                    "single-process-evidence-and-package-gates",
+                    "postgres-100-request-multiprocess-agent-registration-idempotency",
+                ],
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    with pytest.raises(_common.EvidenceError, match="run metadata"):
+        _common.validate_secret_free_run(run_with(), expected_node="P2-REGISTER-001")
+
+
 def _shell_function(source: str, name: str) -> str:
     start_marker = f"\n{name}() {{\n"
     start = source.index(start_marker) + 1
