@@ -12,7 +12,15 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from sqlalchemy import MetaData, Table, create_engine, event
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    MetaData,
+    Table,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -80,17 +88,109 @@ class LegacyCreateAllMetaData(MetaData):
         self._assert_legacy_create_all_preflight(bind)
         self._assert_legacy_metadata_contract()
 
-        legacy_tables = [
-            table for table in self.sorted_tables if table.name in _LEGACY_CREATE_ALL_TABLE_NAMES
-        ]
+        legacy_metadata, legacy_tables = self._legacy_create_all_tables()
         if supplied_connection_was_clean:
             # The preflight has released its read transaction.  Own and close
             # the subsequent DDL transaction so a clean caller can immediately
             # begin its own transaction; never touch a caller-owned one.
             with bind.begin():
-                super().create_all(bind, tables=legacy_tables, checkfirst=checkfirst)
+                legacy_metadata.create_all(bind, tables=legacy_tables, checkfirst=checkfirst)
         else:
-            super().create_all(bind, tables=legacy_tables, checkfirst=checkfirst)
+            legacy_metadata.create_all(bind, tables=legacy_tables, checkfirst=checkfirst)
+
+    def _legacy_create_all_tables(self) -> tuple[MetaData, list[Table]]:
+        """Clone only the frozen v0 table surface for transitional ``create_all``.
+
+        Some ORM models now carry Alembic-managed columns/indexes on tables
+        that existed in v0.  The explicit local-development bootstrap must not
+        leak those partial managed shapes, because that would create a schema
+        the migration adoption guard cannot safely classify.
+        """
+        legacy_metadata = MetaData()
+        legacy_source_tables = [
+            table for table in self.sorted_tables if table.name in _LEGACY_CREATE_ALL_TABLE_NAMES
+        ]
+        legacy_table_names = {table.name for table in legacy_source_tables}
+        managed_constraint_names = {
+            source_table.name: {
+                constraint.name
+                for constraint in source_table.constraints
+                if constraint.info.get(ALEMBIC_MANAGED_TABLE_INFO_KEY) is True
+            }
+            for source_table in legacy_source_tables
+        }
+        managed_index_names = {
+            source_table.name: {
+                index.name
+                for index in source_table.indexes
+                if index.info.get(ALEMBIC_MANAGED_TABLE_INFO_KEY) is True
+            }
+            for source_table in legacy_source_tables
+        }
+
+        for source_table in legacy_source_tables:
+            source_table.to_metadata(
+                legacy_metadata,
+                referred_schema_fn=lambda _table, _to_schema, constraint, _referred_schema: (
+                    None
+                    if constraint.referred_table.name in legacy_table_names
+                    else "__acgs_legacy_create_all_invalid__"
+                ),
+            )
+
+        for table_name in legacy_table_names:
+            table = legacy_metadata.tables[table_name]
+            managed_column_names = {
+                column.name
+                for column in table.columns
+                if column.info.get(ALEMBIC_MANAGED_TABLE_INFO_KEY) is True
+            }
+            for column_name in managed_column_names:
+                table._columns.remove(table.c[column_name])
+
+            for constraint in list(table.constraints):
+                if constraint.name in managed_constraint_names[table_name]:
+                    _discard_constraint(table, constraint)
+                    continue
+                if isinstance(constraint, UniqueConstraint) and any(
+                    column.name in managed_column_names for column in constraint.columns
+                ):
+                    msg = (
+                        "Legacy create_all cannot clone an unmarked unique constraint that "
+                        f"references migration-managed columns: {table.name}.{constraint.name}"
+                    )
+                    raise RuntimeError(msg)
+                if isinstance(constraint, CheckConstraint) and managed_column_names:
+                    sqltext = str(constraint.sqltext)
+                    if any(column_name in sqltext for column_name in managed_column_names):
+                        msg = (
+                            "Legacy create_all cannot clone an unmarked check constraint that "
+                            f"references migration-managed columns: {table.name}.{constraint.name}"
+                        )
+                        raise RuntimeError(msg)
+
+            for constraint in list(table.foreign_key_constraints):
+                if constraint.name in managed_constraint_names[table_name]:
+                    _discard_constraint(table, constraint)
+
+            for index in list(table.indexes):
+                if index.name in managed_index_names[table_name]:
+                    table.indexes.remove(index)
+                    continue
+                if any(column.name in managed_column_names for column in index.columns):
+                    msg = (
+                        "Legacy create_all cannot clone an unmarked index that references "
+                        f"migration-managed columns: {table.name}.{index.name}"
+                    )
+                    raise RuntimeError(msg)
+
+            if table_name == "agents":
+                table.append_constraint(
+                    UniqueConstraint("org_id", "name", name="uq_agents_org_name")
+                )
+
+        legacy_tables = [legacy_metadata.tables[table.name] for table in legacy_source_tables]
+        return legacy_metadata, legacy_tables
 
     def _assert_legacy_metadata_contract(self) -> None:
         """Keep the transitional bootstrap table set finite and explicit."""
@@ -177,6 +277,15 @@ class LegacyCreateAllMetaData(MetaData):
 
 class Base(DeclarativeBase):
     metadata = LegacyCreateAllMetaData()
+
+
+def _discard_constraint(table: Table, constraint: Any) -> None:
+    table.constraints.discard(constraint)
+    if isinstance(constraint, ForeignKeyConstraint):
+        table.foreign_key_constraints.discard(constraint)
+        for element in constraint.elements:
+            table.foreign_keys.discard(element)
+            element.parent.foreign_keys.discard(element)
 
 
 def _enable_sqlite_foreign_key_pragma(dbapi_connection: Any) -> None:

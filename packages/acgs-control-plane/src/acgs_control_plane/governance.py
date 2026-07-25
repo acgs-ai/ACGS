@@ -47,7 +47,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from acgs_control_plane.auth import Principal
-from acgs_control_plane.managed_mutations import TENANT_BOOTSTRAP_ACTION
+from acgs_control_plane.managed_mutations import (
+    CONTROL_PLANE_AGENT_CREATE_ACTION,
+    TENANT_BOOTSTRAP_ACTION,
+)
 from acgs_control_plane.models import Organization, PolicyBundle, ReceiptRow
 
 BASELINE_POLICY_ID = "acp-baseline/v1"
@@ -88,7 +91,6 @@ _READ_PATHS = (
 _LEGACY_WRITES = (
     ("POST", "/orgs", "org.create"),
     ("POST", "/orgs/{org_id}/users", "user.create"),
-    ("POST", "/orgs/{org_id}/agents", "agent.register"),
     ("PATCH", "/orgs/{org_id}/agents/{agent_id}/status", "agent.set_status"),
     ("POST", "/orgs/{org_id}/policies", "policy.publish"),
     ("POST", "/orgs/{org_id}/policies/{bundle_id}/activate", "policy.activate"),
@@ -102,6 +104,15 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         "/v1/tenant-bootstrap",
         ExecutionClass.CANONICAL_MANAGED_WRITE,
         TENANT_BOOTSTRAP_ACTION,
+        True,
+        False,
+        False,
+    ),
+    RouteContract(
+        "POST",
+        "/orgs/{org_id}/agents",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_AGENT_CREATE_ACTION,
         True,
         False,
         False,

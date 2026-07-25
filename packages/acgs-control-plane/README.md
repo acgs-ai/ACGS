@@ -5,12 +5,12 @@
 
 > **No valid Decision Receipt, no side effect.**
 
-The current development path dispatches mutations through the organization's
-legacy gove-zone `Kernel` under its **active policy bundle**. It stores legacy,
-unsigned `Receipt` records, not signed canonical `DecisionReceipt` artifacts
-verified through `execute_with_receipt`. Production posture refuses these legacy
-mutation routes rather than representing them as a production governance
-membrane. In the local development profile:
+Most current development routes still dispatch mutations through the
+organization's legacy gove-zone `Kernel` under its **active policy bundle**.
+Those routes store legacy, unsigned `Receipt` records, not signed canonical
+`DecisionReceipt` artifacts verified through `execute_with_receipt`. Production
+posture refuses legacy mutation routes rather than representing them as a
+production governance membrane. In the local development profile:
 
 - **ALLOW** → database side effect + receipt row commit together; the file-backed
   audit append is outside the SQL transaction and is not atomic with it.
@@ -37,6 +37,15 @@ membrane. In the local development profile:
    produces no side effect and **no receipt** — nothing governed was attempted.
 2. **The governance membrane** answers *"does the org's active policy permit this
    specific action?"* Policy denials are governed decisions and are **always receipted**.
+
+`POST /orgs/{org}/agents` is the first canonical managed mutation path. It uses
+the server-owned default project/environment scope from Alembic revision `0006`,
+mints a signed receipt-v2 `DecisionReceipt` before execution, verifies it through
+`execute_with_receipt`, consumes ALLOW receipts once, records DENY/ESCALATE as
+non-executable evidence, and rejects stale policy, trust, binding mismatch, and
+replay cases before the forbidden agent row can be inserted. The general receipt
+explorer and export bundle still target the legacy receipt table; managed
+receipt-v2 explorer/export support remains future work.
 
 ## Tamper evidence
 
@@ -72,10 +81,10 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to revision `0002`, then set `ACP_CREATE_TABLES=0`. Schema currency is
-reported separately from production readiness. `ACP_RUNTIME_POSTURE=production` currently refuses
-before constructing a database engine because the existing mutation routes still use the legacy
-unsigned membrane; an exact `0002` schema does not weaken that blocker.
+secret-safe operator CLI to the current head (`0006` at this writing), then set
+`ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
+`ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
+legacy mutation routes still exist; an exact current schema does not weaken that blocker.
 
 Bootstrap the first org (returns the org-admin API key exactly once):
 
@@ -98,15 +107,17 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
 - **Escalation is record-only**: ESCALATE persists a receipt and returns 202; there is
   no approve/resume endpoint yet (gove-zone's `escalation.PendingApproval` is the
   intended substrate).
-- **Receipts are legacy and unsigned.** This differs from gove-zone's secure
-  `require_signature=True` profile, which fails loudly without configured trust
-  material; production posture refuses the legacy mutation routes.
-- **Schema mutation is operator-only**: Alembic revisions `0001` and `0002` are advanced through
-  `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact, read-only
-  revision preflight and never migrates. The legacy `create_all` bootstrap remains available only
-  under the explicit local-development posture above.
-- **Production posture remains blocked** while mutation routes use the legacy unsigned governance
-  membrane. A current database schema is necessary startup evidence, not production readiness.
+- **Most route receipts are legacy and unsigned.** `POST /orgs/{org}/agents` now uses signed
+  managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
+  differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
+  those legacy mutation routes remain.
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0006` are advanced
+  through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
+  read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
+  available only under the explicit local-development posture above.
+- **Production posture remains blocked** while any mutation route uses the legacy unsigned
+  governance membrane. A current database schema is necessary startup evidence, not production
+  readiness.
 - The chain-tip anchor is written by the same service that writes the chain — it
   detects accidents and file-level tampering, not a fully compromised service.
 - **A blocked bootstrap leaves no DB receipt**: if a policy ever denies/escalates

@@ -6,14 +6,63 @@ database row; ESCALATE leaves an escalate receipt and NO database row.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
+from acgs_control_plane.app import create_app
+from acgs_control_plane.config import RuntimePosture, Settings
+from acgs_control_plane.migrations import upgrade_database
+from acgs_control_plane.models import AgentRecord
 
-def test_agent_register_produces_receipt(
+BOOTSTRAP_TOKEN = "test-bootstrap-token"
+
+
+def _agent_count(client: TestClient, org_id: str) -> int:
+    with client.app.state.session_factory() as session:
+        count = session.scalar(
+            sa.text("SELECT COUNT(*) FROM agents WHERE org_id = :org_id"),
+            {"org_id": org_id},
+        )
+    assert isinstance(count, int)
+    return count
+
+
+def _migrated_client(tmp_path: Path, audit_dir: Path) -> TestClient:
+    database_url = f"sqlite:///{tmp_path / 'managed-control-plane.sqlite3'}"
+    upgrade_database(database_url)
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=audit_dir,
+            bootstrap_token=BOOTSTRAP_TOKEN,
+            create_tables=False,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _bootstrap_org(client: TestClient) -> dict[str, Any]:
+    resp = client.post(
+        "/orgs",
+        json={
+            "name": "Acme AI",
+            "admin_name": "Root Admin",
+            "admin_email": "root@acme.example.com",
+        },
+        headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_agent_register_without_default_scope_fails_closed_before_receipt(
     client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
 ) -> None:
+    before = _agent_count(client, org["org_id"])
     org_id = org["org_id"]
     resp = client.post(
         f"/orgs/{org_id}/agents",
@@ -25,68 +74,28 @@ def test_agent_register_produces_receipt(
         },
         headers=admin_headers,
     )
-    assert resp.status_code == 201, resp.text
-    agent = resp.json()
-    assert agent["receipt_id"]
-
-    receipt = client.get(
-        f"/orgs/{org_id}/receipts/{agent['receipt_id']}", headers=admin_headers
-    ).json()
-    assert receipt["tool"] == "agent.register"
-    assert receipt["decision"] == "allow"
-    assert receipt["payload"]["result_hash"] is not None
-    assert receipt["audit_hash"]
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "SCOPE_NOT_READY"
+    assert _agent_count(client, org_id) == before
 
 
-def test_policy_deny_blocks_side_effect_and_persists_receipt(
+def test_agent_register_rbac_denial_has_no_governed_side_effect(
     client: TestClient,
     org: dict[str, Any],
-    admin_headers: dict[str, str],
-    publish_and_activate: Any,
+    make_user: Any,
 ) -> None:
     org_id = org["org_id"]
-    publish_and_activate(
-        org_id,
-        admin_headers,
-        rules=[
-            {
-                "id": "no-untrusted-agents",
-                "effect": "deny",
-                "tools": ["agent.register"],
-                "state_equals": {"trust_tier": "untrusted"},
-                "reason": "untrusted agents are not allowed in this org",
-            }
-        ],
-    )
+    before = _agent_count(client, org_id)
+    viewer_headers = make_user("viewer")
     resp = client.post(
         f"/orgs/{org_id}/agents",
-        json={"name": "sketchy-bot", "trust_tier": "untrusted"},
-        headers=admin_headers,
+        json={"name": "sketchy-bot", "trust_tier": "internal"},
+        headers=viewer_headers,
     )
     assert resp.status_code == 403, resp.text
-    body = resp.json()
-    assert body["status"] == "denied"
-    assert body["decision"] == "deny"
-    assert "untrusted" in body["reason"]
-
-    # Deny receipt is persisted and queryable.
-    receipt = client.get(
-        f"/orgs/{org_id}/receipts/{body['receipt_id']}", headers=admin_headers
-    ).json()
-    assert receipt["decision"] == "deny"
-    assert receipt["tool"] == "agent.register"
 
     # THE invariant: no side effect happened.
-    agents = client.get(f"/orgs/{org_id}/agents", headers=admin_headers).json()
-    assert all(a["name"] != "sketchy-bot" for a in agents)
-
-    # A trusted registration still passes under the same policy.
-    ok = client.post(
-        f"/orgs/{org_id}/agents",
-        json={"name": "trusted-bot", "trust_tier": "internal"},
-        headers=admin_headers,
-    )
-    assert ok.status_code == 201
+    assert _agent_count(client, org_id) == before
 
 
 def test_policy_escalate_returns_202_and_no_side_effect(
@@ -203,14 +212,19 @@ def test_simulate_previews_without_receipt(
 
 
 def test_agent_lifecycle_status_change_is_governed(
-    client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
+    tmp_path: Path, audit_dir: Path
 ) -> None:
+    client = _migrated_client(tmp_path, audit_dir)
+    org = _bootstrap_org(client)
     org_id = org["org_id"]
-    agent = client.post(
-        f"/orgs/{org_id}/agents", json={"name": "bot"}, headers=admin_headers
-    ).json()
+    admin_headers = {"X-API-Key": org["admin_api_key"]}
+    with client.app.state.session_factory.begin() as session:
+        agent = AgentRecord(org_id=org_id, name="bot")
+        session.add(agent)
+        session.flush()
+        agent_id = agent.id
     resp = client.patch(
-        f"/orgs/{org_id}/agents/{agent['agent_id']}/status",
+        f"/orgs/{org_id}/agents/{agent_id}/status",
         json={"status": "suspended"},
         headers=admin_headers,
     )

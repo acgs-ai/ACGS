@@ -29,6 +29,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from acgs_control_plane.agent_registration import (
+    AgentRegistrationHttpError,
+    AgentRegistrationService,
+    local_agent_registration_issuer,
+    local_agent_registration_receipt_sealer,
+)
 from acgs_control_plane.auth import (
     API_KEY_HEADER,
     BOOTSTRAP_HEADER,
@@ -275,6 +281,9 @@ def create_app(
     platform_bootstrap_trust_registry: Any | None = None,
     platform_receipt_sealer: Any | None = None,
     platform_bootstrap_receipt_issuer: Any | None = None,
+    agent_registration_issuer: Any | None = None,
+    agent_registration_receipt_sealer: Any | None = None,
+    agent_registration_receipt_issuer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -311,6 +320,19 @@ def create_app(
                 "detail": _TENANT_BOOTSTRAP_PUBLIC_DETAILS.get(
                     exc.code, "tenant bootstrap request was refused"
                 ),
+            },
+        )
+
+    @app.exception_handler(AgentRegistrationHttpError)
+    def _agent_registration_error(
+        _request: Request, exc: AgentRegistrationHttpError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": exc.code,
+                "status": exc.status,
+                "detail": exc.detail,
             },
         )
 
@@ -458,6 +480,31 @@ def create_app(
         trust_registry=bootstrap_trust_registry,
         receipt_issuer=platform_bootstrap_receipt_issuer,
     )
+    if settings.runtime_posture is RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED:
+        effective_agent_registration_issuer = (
+            agent_registration_issuer or local_agent_registration_issuer()
+        )
+        effective_agent_registration_receipt_sealer = (
+            agent_registration_receipt_sealer or local_agent_registration_receipt_sealer()
+        )
+    else:
+        if agent_registration_issuer is None or agent_registration_receipt_sealer is None:
+            raise ProductionPostureBlocked(
+                (
+                    PostureBlocker(
+                        "AGENT_REGISTRATION_PROVIDER_REQUIRED",
+                        "agent-registration-provider",
+                    ),
+                )
+            )
+        effective_agent_registration_issuer = agent_registration_issuer
+        effective_agent_registration_receipt_sealer = agent_registration_receipt_sealer
+    app.state.agent_registration_service = AgentRegistrationService(
+        app.state.session_factory,
+        issuer=effective_agent_registration_issuer,
+        receipt_sealer=effective_agent_registration_receipt_sealer,
+        receipt_issuer=agent_registration_receipt_issuer,
+    )
 
     async def _dispose_engine() -> None:
         app.state.engine.dispose()
@@ -476,7 +523,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0005
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0006
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -670,43 +717,22 @@ def _register_routes(app: FastAPI) -> None:
         body: AgentRegisterRequest,
         org: OrgDep,
         request: Request,
-        session: SessionDep,
+        _session: SessionDep,
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
     ) -> AgentResponse:
-        dup = session.execute(
-            select(AgentRecord).where(AgentRecord.org_id == org.id, AgentRecord.name == body.name)
-        ).scalar_one_or_none()
-        if dup is not None:
-            raise HTTPException(status_code=409, detail="agent name already exists in org")
-
-        holder: dict[str, AgentRecord] = {}
-
-        def _do(
-            name: str, description: str, trust_tier: str, allowed_tools: list[str]
-        ) -> dict[str, str]:
-            rec = AgentRecord(
-                org_id=org.id,
-                name=name,
-                description=description,
-                trust_tier=trust_tier,
-                allowed_tools=allowed_tools,
-            )
-            session.add(rec)
-            session.flush()
-            holder["agent"] = rec
-            return {"agent_id": rec.id}
-
-        membrane = _membrane(request, session, org, principal)
-        outcome = membrane.run(
-            "agent.register",
-            body.model_dump(),
-            _do,
-            goal="register agent in org registry",
-            path=["control-plane", "agents"],
-            state={"trust_tier": body.trust_tier},
+        service: AgentRegistrationService = request.app.state.agent_registration_service
+        result = service.register(org_id=org.id, principal=principal, body=body)
+        return AgentResponse(
+            agent_id=result.agent_id,
+            org_id=result.org_id,
+            name=result.name,
+            description=result.description,
+            trust_tier=result.trust_tier,
+            allowed_tools=result.allowed_tools,
+            status=result.status,
+            created_at=result.created_at,
+            receipt_id=result.receipt_id,
         )
-        rec = holder["agent"]
-        return _agent_response(rec, receipt_id=outcome.receipt.id)
 
     @app.get("/orgs/{org_id}/agents", response_model=list[AgentResponse], tags=["agents"])
     def list_agents(
@@ -834,7 +860,9 @@ def _register_routes(app: FastAPI) -> None:
         principal: Annotated[Principal, require(Permission.POLICY_ACTIVATE)],
     ) -> PolicyResponse:
         target = session.execute(
-            select(PolicyBundle).where(PolicyBundle.org_id == org.id, PolicyBundle.id == bundle_id)
+            select(PolicyBundle)
+            .where(PolicyBundle.org_id == org.id, PolicyBundle.id == bundle_id)
+            .with_for_update()
         ).scalar_one_or_none()
         if target is None:
             raise HTTPException(status_code=404, detail="policy bundle not found")
@@ -845,10 +873,11 @@ def _register_routes(app: FastAPI) -> None:
             current = session.execute(
                 select(PolicyBundle).where(
                     PolicyBundle.org_id == org.id, PolicyBundle.status == "active"
-                )
+            ).with_for_update()
             ).scalar_one_or_none()
             if current is not None:
                 current.status = "retired"
+                session.flush()
             target.status = "active"
             target.activated_at = _now()
             session.flush()

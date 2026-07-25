@@ -208,18 +208,17 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
     legacy_routes = [
         blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
     ]
-    assert len(legacy_routes) == 7
+    assert len(legacy_routes) == 6
     assert {blocker.route for blocker in legacy_routes} == {
         "PATCH /orgs/{org_id}/agents/{agent_id}/status",
         "POST /orgs",
-        "POST /orgs/{org_id}/agents",
         "POST /orgs/{org_id}/exports",
         "POST /orgs/{org_id}/policies",
         "POST /orgs/{org_id}/policies/{bundle_id}/activate",
         "POST /orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert not (tmp_path / "audit").exists()
 
 
@@ -240,9 +239,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0005.value,
+            "schema_state": DatabaseSchemaState.VERSION_0006.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0005
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0006
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()

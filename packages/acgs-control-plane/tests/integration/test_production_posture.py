@@ -42,6 +42,7 @@ from acgs_control_plane.governance import (
     org_audit_store,
 )
 from acgs_control_plane.migrations import DatabaseSchemaState
+from acgs_control_plane.models import AgentRecord
 
 
 def _settings(
@@ -74,7 +75,7 @@ def test_production_rejects_legacy_unsigned_routes(
     legacy = [
         r for r in ROUTE_CONTRACTS if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
-    assert len(legacy) == 7
+    assert len(legacy) == 6
     assert TestClient(local).get("/healthz").status_code == 200
     ready = TestClient(local).get("/readyz")
     assert ready.status_code == 503
@@ -113,7 +114,7 @@ def test_production_rejects_legacy_unsigned_routes(
             production_providers=providers,
         )
     assert calls == {"engine": 0}
-    assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 7
+    assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 6
     assert not (tmp_path / "must-not-exist.sqlite3").exists()
     assert not (tmp_path / "audit").exists()
 
@@ -275,8 +276,13 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     org_id = org["org_id"]
-    agent = client.post(f"/orgs/{org_id}/agents", json={"name": "reader"}, headers=admin_headers)
+    with client.app.state.session_factory.begin() as session:
+        agent = AgentRecord(org_id=org_id, name="reader")
+        session.add(agent)
+        session.flush()
+        agent_id = agent.id
     export = client.post(f"/orgs/{org_id}/exports", json={"note": ""}, headers=admin_headers)
+    assert export.status_code == 201, export.text
     receipt_id = client.get(f"/orgs/{org_id}/receipts", headers=admin_headers).json()["items"][0][
         "receipt_id"
     ]
@@ -298,7 +304,7 @@ def test_all_read_operations_and_simulation_are_filesystem_pure(
         f"/orgs/{org_id}",
         f"/orgs/{org_id}/users",
         f"/orgs/{org_id}/agents",
-        f"/orgs/{org_id}/agents/{agent.json()['agent_id']}",
+        f"/orgs/{org_id}/agents/{agent_id}",
         f"/orgs/{org_id}/policies",
         f"/orgs/{org_id}/receipts",
         f"/orgs/{org_id}/receipts/{receipt_id}",

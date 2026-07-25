@@ -90,12 +90,12 @@ def test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("v2-scope-bound", args={"name": "scope-bound"}, signer=signer)
+    receipt = _receipt("v2-scope-bound", args=_agent_args("scope-bound"), signer=signer)
 
     _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
-        args={"name": "scope-bound"},
+        args=_agent_args("scope-bound"),
     )
 
     with session_factory() as session:
@@ -119,7 +119,7 @@ def test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch(
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(),
             receipt=wrong_project,
-            args={"name": "scope-bound"},
+            args=_agent_args("scope-bound"),
         )
 
 
@@ -156,7 +156,7 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
 
     retired_receipt = _receipt(
         "retired-history",
-        args={"name": "history-only"},
+        args=_agent_args("history-only"),
         signer=signer,
         trust_epoch=1,
     )
@@ -166,7 +166,7 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
             expected_execution_boundary=_boundary(),
             expected_action=ACTION,
             expected_actor=ACTOR,
-            expected_args={"name": "history-only"},
+            expected_args=_agent_args("history-only"),
             expected_policy_hash=POLICY_HASH,
             expected_policy_bundle_id=POLICY_BUNDLE_ID,
             expected_project_id=PROJECT_ID,
@@ -183,19 +183,19 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(),
             receipt=retired_receipt,
-            args={"name": "history-only"},
+            args=_agent_args("history-only"),
         )
 
     active_receipt = _receipt(
         "rotated-active",
-        args={"name": "rotated-agent"},
+        args=_agent_args("rotated-agent"),
         signer=rotated_signer,
         trust_epoch=2,
     )
     ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
         context=_context(),
         receipt=active_receipt,
-        args={"name": "rotated-agent"},
+        args=_agent_args("rotated-agent"),
     )
     with session_factory.begin() as session:
         ManagedTrustLifecycleService(session).revoke(
@@ -215,7 +215,7 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
             )
     revoked_receipt = _receipt(
         "revoked-active",
-        args={"name": "revoked-agent"},
+        args=_agent_args("revoked-agent"),
         signer=rotated_signer,
         trust_epoch=2,
     )
@@ -223,7 +223,7 @@ def test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(),
             receipt=revoked_receipt,
-            args={"name": "revoked-agent"},
+            args=_agent_args("revoked-agent"),
         )
     with session_factory() as session:
         assert _count(session, AgentRecord) == 1
@@ -264,18 +264,18 @@ def test_wrong_scope_missing_trust_and_replay_reject_without_side_effect(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("wrong-scope-zero", args={"name": "zero-agent"}, signer=signer)
+    receipt = _receipt("wrong-scope-zero", args=_agent_args("zero-agent"), signer=signer)
     with pytest.raises(ReceiptValidationError):
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(environment_id=SECOND_ENVIRONMENT_ID),
             receipt=receipt,
-            args={"name": "zero-agent"},
+            args=_agent_args("zero-agent"),
         )
     with pytest.raises(ReceiptValidationError):
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "zero-agent"},
+            args=_agent_args("zero-agent"),
         )
     with session_factory() as session:
         assert _counts(session) == {
@@ -289,13 +289,13 @@ def test_wrong_scope_missing_trust_and_replay_reject_without_side_effect(
     _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
-        args={"name": "zero-agent"},
+        args=_agent_args("zero-agent"),
     )
     with pytest.raises(ReceiptAlreadyUsedError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "zero-agent"},
+            args=_agent_args("zero-agent"),
         )
     with session_factory() as session:
         assert _counts(session) == {
@@ -354,6 +354,15 @@ def _context(
         validator_role=VALIDATOR_ROLE,
         authority=authority,
     )
+
+
+def _agent_args(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": "",
+        "trust_tier": "internal",
+        "allowed_tools": [],
+    }
 
 
 def _receipt(

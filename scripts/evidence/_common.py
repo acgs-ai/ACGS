@@ -219,12 +219,12 @@ P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
     "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
 )
 P2_REGISTER_CP_SELECTORS = (
-    "tests/integration/test_production_posture.py::"
-    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
-    "tests/integration/test_production_posture.py::"
-    "test_inert_stub_has_no_provider_executor_or_persistence_callback_surface",
-    "tests/integration/test_production_posture.py::"
-    "test_managed_contract_hashes_the_exact_canonical_snapshot",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_executes_through_managed_receipt_v2_spine",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_refusal_matrix_has_zero_managed_side_effects",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_scope_and_policy_are_server_owned",
 )
 P2_REGISTER_GZ_SELECTORS = (
     "packages/gove-zone/tests/test_authz_enforcement.py::"

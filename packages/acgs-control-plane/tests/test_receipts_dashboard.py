@@ -8,14 +8,26 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from acgs_control_plane.models import AgentRecord
+
 
 def _seed_activity(client: TestClient, org_id: str, headers: dict[str, str]) -> None:
     for i in range(3):
         assert (
             client.post(
-                f"/orgs/{org_id}/agents", json={"name": f"bot-{i}"}, headers=headers
+                f"/orgs/{org_id}/users",
+                json={
+                    "name": f"operator-{i}",
+                    "email": f"operator-{i}@acme.example.com",
+                    "role": "viewer",
+                },
+                headers=headers,
             ).status_code
             == 201
+        )
+    with client.app.state.session_factory.begin() as session:
+        session.add_all(
+            [AgentRecord(org_id=org_id, name=f"bot-{i}") for i in range(3)]
         )
 
 
@@ -29,7 +41,7 @@ def test_receipt_list_filters_and_pagination(
 
     filtered = client.get(
         f"/orgs/{org_id}/receipts",
-        params={"tool": "agent.register"},
+        params={"tool": "user.create"},
         headers=admin_headers,
     ).json()
     assert filtered["total"] == 3
@@ -119,5 +131,5 @@ def test_dashboard_aggregates(
     assert dash["agents_suspended"] == 1
     assert dash["chain_valid"] is True
     tools = {t["tool"]: t["count"] for t in dash["top_tools"]}
-    assert tools["agent.register"] == 3
+    assert tools["user.create"] == 3
     assert dash["active_policy_version"] is None
