@@ -47,6 +47,48 @@ if ! declare -F git >/dev/null; then
   }
 fi
 
+clean_sibling_reject_control_path() {
+  local label="$1"
+  local value="$2"
+  local had_lc_all=0
+  local saved_lc_all=''
+  if [[ "${LC_ALL+x}" == x ]]; then
+    had_lc_all=1
+    saved_lc_all="$LC_ALL"
+  fi
+  LC_ALL=C
+  case "$value" in
+    *[![:print:]]*)
+      if [[ "$had_lc_all" == 1 ]]; then
+        LC_ALL="$saved_lc_all"
+      else
+        unset LC_ALL
+      fi
+      printf 'cleanup refused control-character path: %s\n' "$label" >&2
+      return 2
+      ;;
+  esac
+  if [[ "$had_lc_all" == 1 ]]; then
+    LC_ALL="$saved_lc_all"
+  else
+    unset LC_ALL
+  fi
+}
+
+clean_sibling_worktree_list_contains() {
+  local listing="$1"
+  local worktree="$2"
+  printf '%s\n' "$listing" | awk '
+    BEGIN {
+      expected = ARGV[1]
+      ARGV[1] = ""
+      found = 0
+    }
+    $0 == expected { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "worktree $worktree"
+}
+
 clean_sibling_snapshot_direct_entries() {
   local root_fd="$1"
   local expected_identity="$2"
@@ -254,27 +296,57 @@ PY
 clean_sibling_cleanup() {
   local status="$1"
   local cleanup_status=0
+  local worktree_still_registered=0
   local current_parent_entries=''
   local current_parent_stat=''
+  local path_label=''
+  local path_value=''
+  local worktree_list=''
+
+  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE; do
+    path_value="${!path_label-}"
+    if [[ -n "$path_value" ]]; then
+      clean_sibling_reject_control_path "$path_label" "$path_value" || return 2
+    fi
+  done
 
   if [[ -n "$WORKTREE" ]]; then
     rm -rf --one-file-system -- \
       "$WORKTREE/.pytest_cache" "$WORKTREE/.ruff_cache" "$WORKTREE/tests/__pycache__"
   fi
-  if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]] &&
-    git -C "$SOURCE_REPO" worktree list --porcelain | grep -Fqx "worktree $WORKTREE"; then
-    if ! git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1; then
-      printf 'cleanup retry after worktree removal failure: %s\n' "$WORKTREE" >&2
+  if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]]; then
+    worktree_still_registered=1
+    if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
+      printf 'cleanup refused because worktree registry query failed: %s\n' "$WORKTREE" >&2
       cleanup_status=2
-      git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+    elif clean_sibling_worktree_list_contains "$worktree_list" "$WORKTREE"; then
+      if ! git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1; then
+        printf 'cleanup retry after worktree removal failure: %s\n' "$WORKTREE" >&2
+        cleanup_status=2
+        git -C "$SOURCE_REPO" worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+      fi
+      if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
+        printf 'cleanup refused because worktree registry query failed: %s\n' "$WORKTREE" >&2
+        cleanup_status=2
+      elif ! clean_sibling_worktree_list_contains "$worktree_list" "$WORKTREE"; then
+        worktree_still_registered=0
+      fi
+    else
+      worktree_still_registered=0
+    fi
+    if [[ "$worktree_still_registered" == 1 ]]; then
+      printf 'cleanup refused to delete still-registered worktree root: %s\n' "$WORKTREE" >&2
+      cleanup_status=2
     fi
   fi
-  if [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
+  if [[ "$worktree_still_registered" == 1 ]]; then
+    :
+  elif [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
     case "$TMP_ROOT" in
       "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.* | \
         "$TMP_PARENT"/acgs-p1-scope.* | "$TMP_PARENT"/acgs-p1-ledger.* | \
         "$TMP_PARENT"/acgs-p1-trust.* | \
-        "$TMP_PARENT"/acgs-p2-tenant-bootstrap.*)
+        "$TMP_PARENT"/acgs-p2-tenant-bootstrap.* | "$TMP_PARENT"/acgs-p2-register.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -359,6 +431,10 @@ clean_sibling_cleanup() {
           "$P" "$T" "$R"
         ;;
       P2-TENANT-BOOTSTRAP-000:11:EVID+CP+GZ)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=11 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P2-REGISTER-001:11:EVID+CP+GZ)
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=11 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;
