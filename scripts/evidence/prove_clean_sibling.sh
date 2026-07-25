@@ -168,6 +168,7 @@ P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
 P1_MIGRATION_REVIEWED_BASE='79a3c39f841cfc5a6c79e85973887814caf0e694'
 P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'
 P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'
+P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -204,6 +205,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=0
     EXPECTED_TRANSCRIPT_RECORDS=6
     TMP_BASENAME='acgs-p1-ledger'
+    ;;
+  P1-TRUST-004)
+    [[ "$P" == "$P1_TRUST_REVIEWED_BASE" ]] ||
+      die "P1-TRUST-004 reviewed parent must be exact $P1_TRUST_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'
+    INCLUDE_GZ=1
+    EXPECTED_TRANSCRIPT_RECORDS=11
+    TMP_BASENAME='acgs-p1-trust'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -721,7 +730,9 @@ phase B5
 node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
-    P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003) printf '%s' "$default_scope" ;;
+    P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004)
+      printf '%s' "$default_scope"
+      ;;
     *) printf __NONE__ ;;
   esac
 }
@@ -746,15 +757,19 @@ run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" cp-pytest \
 
 if [[ "$INCLUDE_GZ" == 1 ]]; then
   GZ_PREFIX=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone)
-  run_recorded_gate GZ "$WORKTREE" gz-ruff-check 'packages/gove-zone:local-gate' __NONE__ \
+  run_recorded_gate GZ "$WORKTREE" gz-ruff-check \
+    'packages/gove-zone:local-gate' "$(node_cwd_scope REPO_ROOT)" \
     "${GZ_PREFIX[@]}" ruff check \
     packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
-  run_recorded_gate GZ "$WORKTREE" gz-ruff-format 'packages/gove-zone:local-gate' __NONE__ \
+  run_recorded_gate GZ "$WORKTREE" gz-ruff-format \
+    'packages/gove-zone:local-gate' "$(node_cwd_scope REPO_ROOT)" \
     "${GZ_PREFIX[@]}" ruff format --check \
     packages/gove-zone/src packages/gove-zone/tests packages/gove-zone/examples
-  run_recorded_gate GZ "$WORKTREE" gz-mypy 'packages/gove-zone:local-gate' __NONE__ \
+  run_recorded_gate GZ "$WORKTREE" gz-mypy \
+    'packages/gove-zone:local-gate' "$(node_cwd_scope REPO_ROOT)" \
     "${GZ_PREFIX[@]}" mypy packages/gove-zone/src/gove_zone
-  run_recorded_gate GZ "$WORKTREE" gz-pytest 'packages/gove-zone:local-gate' __NONE__ \
+  run_recorded_gate GZ "$WORKTREE" gz-pytest \
+    'packages/gove-zone:local-gate' "$(node_cwd_scope REPO_ROOT)" \
     "${GZ_PREFIX[@]}" python -m pytest packages/gove-zone/tests \
     --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
 fi
@@ -830,6 +845,25 @@ elif [[ "$NODE_ID" == P1-LEDGER-003 ]]; then
   run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-ledger-uow \
     'packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate' CP \
     "${P1_LEDGER_GATE[@]}"
+elif [[ "$NODE_ID" == P1-TRUST-004 ]]; then
+  P1_TRUST_CP_GATE=(.venv/bin/pytest -q \
+    tests/test_trust_receipt_v2.py::test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch \
+    tests/test_trust_receipt_v2.py::test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_new_or_revoked \
+    tests/test_trust_receipt_v2.py::test_trust_readiness_report_requires_active_root_and_rotation_window \
+    tests/test_trust_receipt_v2.py::test_wrong_scope_missing_trust_and_replay_reject_without_side_effect)
+  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-trust-control-plane \
+    'packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate' CP \
+    "${P1_TRUST_CP_GATE[@]}"
+  P1_TRUST_GZ_GATE=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone \
+    python -m pytest \
+    packages/gove-zone/tests/test_trust_receipt_v2.py::test_receipt_v2_scoped_trust_verification_requires_scope_binding \
+    packages/gove-zone/tests/test_trust_receipt_v2.py::test_active_retired_revoked_runtime_rotation_verifies_historical_retired_and_denies_revoked \
+    packages/gove-zone/tests/test_trust_receipt_v2.py::test_trust_readiness_runtime_reports_missing_or_expired_roots \
+    packages/gove-zone/tests/test_trust_receipt_v2.py::test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute \
+    --import-mode=importlib -q)
+  run_recorded_gate GZ "$WORKTREE" p1-trust-runtime \
+    'packages/gove-zone:P1-TRUST-004-trust-runtime-gate' REPO_ROOT \
+    "${P1_TRUST_GZ_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

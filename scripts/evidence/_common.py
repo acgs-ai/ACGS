@@ -187,6 +187,26 @@ P1_LEDGER_SELECTORS = (
     "test_concurrent_receipt_consumption_has_single_committed_winner",
     "tests/test_managed_mutation_uow.py::test_outbox_rows_appear_only_after_sql_commit",
 )
+P1_TRUST_CP_SELECTORS = (
+    "tests/test_trust_receipt_v2.py::"
+    "test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch",
+    "tests/test_trust_receipt_v2.py::"
+    "test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_new_or_revoked",
+    "tests/test_trust_receipt_v2.py::"
+    "test_trust_readiness_report_requires_active_root_and_rotation_window",
+    "tests/test_trust_receipt_v2.py::"
+    "test_wrong_scope_missing_trust_and_replay_reject_without_side_effect",
+)
+P1_TRUST_GZ_SELECTORS = (
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_receipt_v2_scoped_trust_verification_requires_scope_binding",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_active_retired_revoked_runtime_rotation_verifies_historical_retired_and_denies_revoked",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_trust_readiness_runtime_reports_missing_or_expired_roots",
+    "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+    "test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -219,16 +239,61 @@ REVIEWED_P1_LEDGER_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P1_TRUST_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_TRUST_CP_SELECTORS,
+        ),
+    ),
+    (
+        "packages/gove-zone:P1-TRUST-004-trust-runtime-gate",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P1_TRUST_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
     "P1-SCOPE-002": REVIEWED_P1_SCOPE_TRANSCRIPT,
     "P1-LEDGER-003": REVIEWED_P1_LEDGER_TRANSCRIPT,
+    "P1-TRUST-004": REVIEWED_P1_TRUST_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-SCOPE-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-LEDGER-003": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-TRUST-004": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -664,9 +729,12 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or value.get("external") != list(reviewed["external"])
     ):
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
-    if node_id in {"P1-MIGRATION-001", "P1-SCOPE-002", "P1-LEDGER-003"} and (
-        determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"
-    ):
+    if node_id in {
+        "P1-MIGRATION-001",
+        "P1-SCOPE-002",
+        "P1-LEDGER-003",
+        "P1-TRUST-004",
+    } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         fail("P1 run determinism differs from the reviewed node contract", phase="B6")
 
 
