@@ -47,6 +47,8 @@ fi
 unset PYTEST_ADDOPTS PYTHONPATH PYTHONHOME PYTHONOPTIMIZE PGOPTIONS
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 export PYTHONNOUSERSITE=1
+export ACGS_TEST_SEED=20260710
+export PYTHONHASHSEED=0
 
 if [[ ! -x "$package_dir/.venv/bin/python" || ! -x "$package_dir/.venv/bin/pytest" ]]; then
   echo 'packages/acgs-control-plane/.venv/bin/python and .venv/bin/pytest are required' >&2

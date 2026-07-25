@@ -29,6 +29,8 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "managed_governance_event_heads",
         "managed_governance_events",
         "managed_outbox",
+        "managed_trust_scopes",
+        "managed_trust_keys",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

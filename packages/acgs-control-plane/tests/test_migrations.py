@@ -28,6 +28,7 @@ from acgs_control_plane.migrations import (
     MigrationPreflightError,
     _check_constraint_signature,
     _ColumnSpec,
+    _index_where_signature,
     _matches_type,
     inspect_schema,
     migration_config,
@@ -382,6 +383,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0001_legacy_v0.py",
             "acgs_control_plane/migrations/versions/0002_project_environment.py",
             "acgs_control_plane/migrations/versions/0003_managed_mutation_uow.py",
+            "acgs_control_plane/migrations/versions/0004_managed_trust_v2.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -407,8 +409,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0003
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
+assert result.after.state is DatabaseSchemaState.VERSION_0004
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -422,6 +424,8 @@ try:
         "managed_mutation_attempts",
         "managed_outbox",
         "managed_receipt_consumptions",
+        "managed_trust_keys",
+        "managed_trust_scopes",
         "organizations",
         "policy_bundles",
         "projects",
@@ -453,7 +457,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     assert _table_names(database_url) == {
         "agents",
         "alembic_version",
@@ -465,6 +469,8 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
         "managed_mutation_attempts",
         "managed_outbox",
         "managed_receipt_consumptions",
+        "managed_trust_keys",
+        "managed_trust_scopes",
         "organizations",
         "policy_bundles",
         "projects",
@@ -481,6 +487,90 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
             )
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("replacement_sql", "expected_detail"),
+    [
+        (
+            None,
+            "managed_trust_keys has unexpected unique index predicates",
+        ),
+        (
+            """
+            CREATE UNIQUE INDEX uq_managed_trust_key_active_scope
+            ON managed_trust_keys (org_id, project_id, environment_id, purpose)
+            """,
+            "managed_trust_keys has unexpected unique constraints or indexes",
+        ),
+        (
+            """
+            CREATE UNIQUE INDEX uq_managed_trust_key_active_scope
+            ON managed_trust_keys (org_id, project_id, environment_id, purpose)
+            WHERE status = 'revoked'
+            """,
+            "managed_trust_keys has unexpected unique index predicates",
+        ),
+    ],
+)
+def test_head_schema_rejects_trust_active_root_unique_predicate_drift(
+    tmp_path: Path,
+    replacement_sql: str | None,
+    expected_detail: str,
+) -> None:
+    database_url = _database_url(tmp_path)
+    upgrade_database(database_url)
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("DROP INDEX uq_managed_trust_key_active_scope"))
+            if replacement_sql is not None:
+                connection.execute(sa.text(replacement_sql))
+    finally:
+        engine.dispose()
+
+    preflight = inspect_schema(database_url)
+
+    assert preflight.state is DatabaseSchemaState.UNKNOWN
+    assert expected_detail in preflight.detail
+
+
+def test_postgresql_trust_active_root_predicate_reflection_is_normalized() -> None:
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "postgresql_where": "((status)::text = 'active'::text)",
+                }
+            },
+            "postgresql",
+        )
+        == "status:active"
+    )
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "postgresql_where": "((status)::text = 'revoked'::text)",
+                }
+            },
+            "postgresql",
+        )
+        != "status:active"
+    )
+
+
+def test_postgres_gate_wrapper_exports_exact_reproducibility_environment() -> None:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    reset_line = "unset PYTEST_ADDOPTS PYTHONPATH PYTHONHOME PYTHONOPTIMIZE PGOPTIONS"
+
+    assert reset_line in script
+    assert "export ACGS_TEST_SEED=20260710" in script
+    assert "export PYTHONHASHSEED=0" in script
+    assert script.index("export ACGS_TEST_SEED=20260710") > script.index(reset_line)
+    assert script.index("export PYTHONHASHSEED=0") > script.index(reset_line)
 
 
 def test_raw_alembic_upgrade_rejects_an_empty_database_before_schema_mutation(
@@ -521,7 +611,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -539,8 +629,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -565,7 +655,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -827,7 +917,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
     assert _table_names(database_url) == table_names_before
 
 
@@ -1058,6 +1148,11 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
     status_expected = _check_constraint_signature(
         "status IN ('in_progress', 'succeeded', 'failed')"
     )
+    trust_retired_epoch_expected = _check_constraint_signature(
+        "(status = 'retired' AND retired_epoch IS NOT NULL "
+        "AND retired_epoch > activated_epoch) OR "
+        "(status IN ('active', 'revoked') AND retired_epoch IS NULL)"
+    )
 
     assert _check_constraint_signature("((assurance_class)::text = 'native'::text)") == expected
     assert _check_constraint_signature("source_system='gove-zone'") == _check_constraint_signature(
@@ -1071,6 +1166,38 @@ def test_check_constraint_signature_matches_postgresql_native_reflection_without
             "('failed'::character varying)::text])"
         )
         == status_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "status::text = 'retired'::text "
+            "AND retired_epoch IS NOT NULL "
+            "AND retired_epoch > activated_epoch "
+            "OR (status::text = ANY "
+            "(ARRAY['active'::character varying, 'revoked'::character varying]::text[])) "
+            "AND retired_epoch IS NULL"
+        )
+        == trust_retired_epoch_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "status::text = 'retired'::text "
+            "AND retired_epoch IS NOT NULL "
+            "AND retired_epoch >= activated_epoch "
+            "OR (status::text = ANY "
+            "(ARRAY['active'::character varying, 'revoked'::character varying]::text[])) "
+            "AND retired_epoch IS NULL"
+        )
+        != trust_retired_epoch_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "status::text = 'retired'::text "
+            "AND retired_epoch IS NOT NULL "
+            "OR (status::text = ANY "
+            "(ARRAY['active'::character varying, 'revoked'::character varying]::text[])) "
+            "AND retired_epoch IS NULL"
+        )
+        != trust_retired_epoch_expected
     )
     assert (
         _check_constraint_signature("assurance_class IN ('native', 'development-unsigned')")
@@ -1119,9 +1246,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0003
-    assert second.before.state is DatabaseSchemaState.VERSION_0003
-    assert second.after.state is DatabaseSchemaState.VERSION_0003
+    assert first.after.state is DatabaseSchemaState.VERSION_0004
+    assert second.before.state is DatabaseSchemaState.VERSION_0004
+    assert second.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -1205,7 +1332,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -1229,7 +1356,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -1251,7 +1378,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

@@ -16,7 +16,7 @@ for deployment orchestration or recovery procedures.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -36,7 +36,8 @@ from acgs_control_plane.db import make_engine
 
 LEGACY_V0_REVISION: Final = "0001"
 SCOPED_REVISION: Final = "0002"
-HEAD_REVISION: Final = "0003"
+MANAGED_MUTATION_REVISION: Final = "0003"
+HEAD_REVISION: Final = "0004"
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -73,6 +74,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0001_PARTIAL_SCOPE = "version_0001_partial_scope"
     VERSION_0002 = "version_0002"
     VERSION_0003 = "version_0003"
+    VERSION_0004 = "version_0004"
     UNKNOWN = "unknown"
 
 
@@ -97,7 +99,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0003.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0004.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -319,6 +321,43 @@ _MANAGED_MUTATION_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("delivered_at", "datetime", True),
     ),
 }
+_TRUST_V2_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **{
+        table_name: columns
+        for table_name, columns in _MANAGED_MUTATION_COLUMNS.items()
+        if table_name != "managed_decision_receipts"
+    },
+    "managed_decision_receipts": (
+        *_MANAGED_MUTATION_COLUMNS["managed_decision_receipts"],
+        _ColumnSpec("receipt_schema_version", "string", True, 64),
+        _ColumnSpec("trust_epoch", "integer", True),
+    ),
+    "managed_trust_scopes": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("purpose", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "managed_trust_keys": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("purpose", "string", False, 64),
+        _ColumnSpec("key_id", "string", False, 200),
+        _ColumnSpec("algorithm", "string", False, 32),
+        _ColumnSpec("public_key_spki_der", "binary", False),
+        _ColumnSpec("activated_epoch", "integer", False),
+        _ColumnSpec("not_after", "datetime", False),
+        _ColumnSpec("status", "string", False, 16),
+        _ColumnSpec("retired_epoch", "integer", True),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -339,11 +378,17 @@ _MANAGED_MUTATION_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "managed_governance_events": ("id",),
     "managed_outbox": ("id",),
 }
+_TRUST_V2_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_MANAGED_MUTATION_PRIMARY_KEYS,
+    "managed_trust_scopes": ("id",),
+    "managed_trust_keys": ("id",),
+}
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
 }
 
 _ForeignKeySpec = tuple[tuple[str, ...], str | None, str, tuple[str, ...]]
+_UniqueIndexSpec = tuple[tuple[str, ...], str]
 
 
 _LEGACY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
@@ -424,6 +469,28 @@ _MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "purpose"),
+    None,
+    "managed_trust_scopes",
+    ("org_id", "project_id", "environment_id", "purpose"),
+)
+_TRUST_V2_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_MANAGED_MUTATION_FOREIGN_KEYS,
+    "managed_trust_scopes": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+        }
+    ),
+    "managed_trust_keys": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _TRUST_SCOPE_FK,
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -491,6 +558,34 @@ _MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_TRUST_V2_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_MANAGED_MUTATION_UNIQUES,
+    "managed_trust_scopes": frozenset({("org_id", "project_id", "environment_id", "purpose")}),
+    "managed_trust_keys": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "purpose",
+                "key_id",
+                "algorithm",
+                "activated_epoch",
+            ),
+        }
+    ),
+}
+_TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
+    "managed_trust_keys": frozenset(
+        {
+            (
+                ("org_id", "project_id", "environment_id", "purpose"),
+                "status:active",
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
@@ -521,6 +616,11 @@ _MANAGED_MUTATION_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]
     "managed_governance_events": frozenset({("org_id",)}),
     "managed_outbox": frozenset({("org_id",)}),
 }
+_TRUST_V2_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_MANAGED_MUTATION_NON_UNIQUE_INDEXES,
+    "managed_trust_scopes": frozenset({("org_id",)}),
+    "managed_trust_keys": frozenset({("org_id",)}),
+}
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
     "managed_decision_receipts": frozenset(
@@ -541,6 +641,25 @@ _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     "managed_governance_event_heads": frozenset(),
     "managed_governance_events": frozenset(),
     "managed_outbox": frozenset(),
+}
+_TRUST_V2_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_MANAGED_MUTATION_CHECKS,
+    "managed_trust_scopes": frozenset(),
+    "managed_trust_keys": frozenset(
+        {
+            (
+                "ck_managed_trust_key_status",
+                "status IN ('active', 'retired', 'revoked')",
+            ),
+            ("ck_managed_trust_key_epoch_positive", "activated_epoch > 0"),
+            (
+                "ck_managed_trust_key_retired_epoch",
+                "(status = 'retired' AND retired_epoch IS NOT NULL "
+                "AND retired_epoch > activated_epoch) OR "
+                "(status IN ('active', 'revoked') AND retired_epoch IS NULL)",
+            ),
+        }
+    ),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -640,7 +759,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0002, "known Alembic revision 0002")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [MANAGED_MUTATION_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -653,6 +772,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0003, "known Alembic revision 0003")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _TRUST_V2_COLUMNS,
+            _TRUST_V2_PRIMARY_KEYS,
+            _TRUST_V2_FOREIGN_KEYS,
+            _TRUST_V2_UNIQUES,
+            _TRUST_V2_NON_UNIQUE_INDEXES,
+            _TRUST_V2_CHECKS,
+            _TRUST_V2_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0004, "known Alembic revision 0004")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -668,7 +802,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0003:
+    if preflight.state is not DatabaseSchemaState.VERSION_0004:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -771,7 +905,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0003:
+    if after.state is not DatabaseSchemaState.VERSION_0004:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -833,7 +967,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0003:
+                    if after.state is not DatabaseSchemaState.VERSION_0004:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -1230,6 +1364,7 @@ def _schema_detail(
     expected_uniques: dict[str, frozenset[tuple[str, ...]]],
     expected_non_unique_indexes: dict[str, frozenset[tuple[str, ...]]],
     expected_checks: dict[str, frozenset[tuple[str, str]]] | None = None,
+    expected_unique_indexes: dict[str, frozenset[_UniqueIndexSpec]] | None = None,
 ) -> str | None:
     expected_tables = set(expected_columns)
     if actual_tables != expected_tables:
@@ -1240,6 +1375,9 @@ def _schema_detail(
     dialect_name = inspector.bind.dialect.name
     inspection_schema = "public" if dialect_name == "postgresql" else None
     expected_checks_by_table = expected_checks or {
+        table_name: frozenset() for table_name in expected_columns
+    }
+    expected_unique_indexes_by_table = expected_unique_indexes or {
         table_name: frozenset() for table_name in expected_columns
     }
 
@@ -1278,6 +1416,7 @@ def _schema_detail(
             return f"{table_name} has unexpected foreign keys"
 
         actual_uniques: set[tuple[str, ...]] = set()
+        actual_unique_indexes: set[_UniqueIndexSpec] = set()
         for constraint in inspector.get_unique_constraints(table_name, schema=inspection_schema):
             column_names = _reflected_column_tuple(constraint["column_names"])
             if column_names is None:
@@ -1289,11 +1428,18 @@ def _schema_detail(
             if column_names is None:
                 return f"{table_name} has an unnamed index"
             if index.get("unique"):
-                actual_uniques.add(column_names)
+                predicate = _index_where_signature(index, dialect_name)
+                if predicate is None:
+                    actual_uniques.add(column_names)
+                else:
+                    actual_unique_indexes.add((column_names, predicate))
             else:
                 actual_indexes.add(column_names)
         if frozenset(actual_uniques) != expected_uniques[table_name]:
             return f"{table_name} has unexpected unique constraints or indexes"
+
+        if frozenset(actual_unique_indexes) != expected_unique_indexes_by_table[table_name]:
+            return f"{table_name} has unexpected unique index predicates"
 
         if frozenset(actual_indexes) != expected_non_unique_indexes[table_name]:
             return f"{table_name} has unexpected non-unique indexes"
@@ -1344,6 +1490,61 @@ def _check_constraint_signature(value: object) -> str:
         "status=any(array['in_progress','succeeded','failed'])",
     }:
         return "status:in_progress,succeeded,failed"
+    if compact in {
+        "statusin('active','retired','revoked')",
+        "status=any(array['active','retired','revoked'])",
+    }:
+        return "status:active,retired,revoked"
+    if compact in {
+        "activated_epoch>0",
+    }:
+        return "activated_epoch:positive"
+    if compact in {
+        (
+            "status='retired'andretired_epochisnotnull"
+            "andretired_epoch>activated_epochor"
+            "statusin('active','revoked')andretired_epochisnull"
+        ),
+        (
+            "(status='retired'andretired_epochisnotnull"
+            "andretired_epoch>activated_epoch)or"
+            "(statusin('active','revoked')andretired_epochisnull)"
+        ),
+        (
+            "status='retired'andretired_epochisnotnull"
+            "andretired_epoch>activated_epochor"
+            "(status=any(array['active','revoked']))andretired_epochisnull"
+        ),
+    }:
+        return "retired_epoch:retired-only-and-terminal-null"
+    return compact
+
+
+def _index_where_signature(index: Mapping[str, object], dialect_name: str) -> str | None:
+    dialect_options = index.get("dialect_options") or {}
+    if not isinstance(dialect_options, Mapping):
+        return None
+    for key in (f"{dialect_name}_where", "postgresql_where", "sqlite_where"):
+        predicate = dialect_options.get(key)
+        if predicate is not None:
+            return _where_predicate_signature(predicate)
+    return None
+
+
+def _where_predicate_signature(value: object) -> str:
+    raw = str(value if value is not None else "").lower()
+    compact = _normalized_constraint_sql(
+        re.sub(
+            r"::(?:text|character\s+varying)(?:\[\])?",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
+    ).lower()
+    compact = compact.replace("(status)", "status")
+    compact = _strip_outer_parentheses(compact)
+    if compact == "status='active'":
+        return "status:active"
     return compact
 
 
@@ -1394,6 +1595,8 @@ def _matches_type(
         )
     if expected.type_name == "integer":
         return isinstance(actual_type, sa.Integer) and not isinstance(actual_type, sa.Boolean)
+    if expected.type_name == "binary":
+        return isinstance(actual_type, sa.LargeBinary)
     if expected.type_name == "boolean":
         return isinstance(actual_type, sa.Boolean)
     if expected.type_name == "json":
