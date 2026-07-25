@@ -976,6 +976,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         migrated = _state(pg_engine)
         assert migrated["version"] == HEAD_REVISION
         assert set(migrated["tables"]) - set(before["tables"]) == {
+            "agent_registration_idempotency",
             "environments",
             "managed_decision_receipts",
             "managed_governance_event_heads",
@@ -1003,6 +1004,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             if table == "alembic_version":
                 continue
             assert migrated["rows"][table] == before["rows"][table]
+        assert migrated["rows"]["agent_registration_idempotency"] == ()
         assert migrated["rows"]["projects"] == ()
         assert migrated["rows"]["environments"] == ()
         assert _audit_state(audit_dir) == audit_before
