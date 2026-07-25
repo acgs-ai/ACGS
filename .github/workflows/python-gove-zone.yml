@@ -189,7 +189,7 @@ jobs:
         run: bash packages/gove-zone/scripts/release_smoke_check.sh
 
   dist-check:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
