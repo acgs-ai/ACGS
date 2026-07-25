@@ -240,6 +240,70 @@ def _safe_regular_file(path: Path, *, label: str) -> Path:
     return path
 
 
+def _validate_archive_tool_path(path: Path | None, *, label: str) -> Path:
+    if path is None:
+        raise RecoveryRefused(f"{label} path is required for the real subprocess runner")
+    if not path.is_absolute():
+        raise RecoveryRefused(f"{label} path must be absolute")
+    try:
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+    except OSError as exc:
+        raise RecoveryRefused(f"{label} path must resolve to an executable regular file") from exc
+    if not stat.S_ISREG(info.st_mode):
+        raise RecoveryRefused(f"{label} path must resolve to an executable regular file")
+    if not os.access(resolved, os.X_OK):
+        raise RecoveryRefused(f"{label} path must be executable by the current process")
+    if os.name == "posix" and info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RecoveryRefused(f"{label} path must not be group-writable or world-writable")
+    if os.name == "posix":
+        _validate_archive_tool_directory_chain(
+            path.parent, label=f"{label} invocation", resolve_start=False
+        )
+        _validate_archive_tool_directory_chain(
+            resolved.parent, label=f"{label} resolved target", resolve_start=True
+        )
+    return path
+
+
+def _validate_archive_tool_directory_chain(path: Path, *, label: str, resolve_start: bool) -> None:
+    try:
+        current = path.resolve(strict=True) if resolve_start else path
+    except OSError as exc:
+        raise RecoveryRefused(f"{label} directory chain must exist") from exc
+    start = current
+    while True:
+        try:
+            info = current.stat()
+        except OSError as exc:
+            raise RecoveryRefused(f"{label} directory chain could not be inspected") from exc
+        if not stat.S_ISDIR(info.st_mode):
+            raise RecoveryRefused(f"{label} directory chain must contain only directories")
+        writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        sticky_shared_ancestor = current != start and info.st_mode & stat.S_ISVTX
+        if writable and not sticky_shared_ancestor:
+            raise RecoveryRefused(
+                f"{label} directory chain must not be group-writable or world-writable"
+            )
+        parent = current.parent
+        if parent == current:
+            return
+        current = parent
+
+
+def _archive_tool_command(
+    tool_name: str,
+    *,
+    explicit_path: Path | None,
+    runner: CommandRunner,
+) -> str:
+    if runner is _run_command:
+        return str(_validate_archive_tool_path(explicit_path, label=tool_name))
+    if explicit_path is not None:
+        return str(_validate_archive_tool_path(explicit_path, label=tool_name))
+    return tool_name
+
+
 def _contained(root: Path, candidate: Path) -> bool:
     try:
         candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
@@ -347,9 +411,12 @@ def _minimal_child_environment() -> dict[str, str]:
 
 
 def _run_command(command: Sequence[str], environment: Mapping[str, str]) -> None:
+    if not command:
+        raise RecoveryRefused("database tool command is empty")
+    tool_path = _validate_archive_tool_path(Path(command[0]), label=Path(command[0]).name)
     try:
         subprocess.run(
-            list(command),
+            [str(tool_path), *list(command[1:])],
             env=dict(environment),
             check=True,
             stdin=subprocess.DEVNULL,
@@ -696,6 +763,8 @@ def create_recovery_bundle(
     source_url_env: str,
     audit_dir: Path,
     output: Path,
+    pg_dump_path: Path | None = None,
+    pg_restore_path: Path | None = None,
     runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
     """Create and atomically publish one integrity-labelled recovery bundle."""
@@ -706,6 +775,10 @@ def create_recovery_bundle(
         raise RecoveryRefused("bundle output must not already exist")
     if output.parent.resolve(strict=True) != output_parent:
         raise RecoveryRefused("bundle output must be a direct child of its real parent")
+    pg_dump_command = _archive_tool_command("pg_dump", explicit_path=pg_dump_path, runner=runner)
+    pg_restore_command = _archive_tool_command(
+        "pg_restore", explicit_path=pg_restore_path, runner=runner
+    )
 
     before = _capture_database_state_url(source_url)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output_parent))
@@ -733,7 +806,7 @@ def create_recovery_bundle(
                     with _pg_environment(parsed_url, staging) as pg_environment:
                         runner(
                             [
-                                "pg_dump",
+                                pg_dump_command,
                                 "--format=custom",
                                 f"--file={archive}",
                                 f"--snapshot={snapshot_id}",
@@ -747,7 +820,7 @@ def create_recovery_bundle(
                     os.chmod(archive, 0o600)
                     _fsync_file(archive)
                     runner(
-                        ["pg_restore", "--list", str(archive)],
+                        [pg_restore_command, "--list", str(archive)],
                         _minimal_child_environment(),
                     )
                     after = _capture_database_state_url(source_url)
@@ -784,7 +857,9 @@ def create_recovery_bundle(
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def _load_and_verify_manifest(bundle: Path, *, runner: CommandRunner) -> dict[str, Any]:
+def _load_and_verify_manifest(
+    bundle: Path, *, runner: CommandRunner, pg_restore_path: Path | None = None
+) -> dict[str, Any]:
     root = _safe_existing_directory(bundle, label="recovery bundle")
     manifest_path = _safe_regular_file(root / MANIFEST_NAME, label="recovery manifest")
     if not _contained(root, manifest_path):
@@ -873,7 +948,10 @@ def _load_and_verify_manifest(bundle: Path, *, runner: CommandRunner) -> dict[st
     archive = root / ARCHIVE_NAME
     if artifacts[0].get("path") != ARCHIVE_NAME:
         raise RecoveryRefused("recovery database archive path is invalid")
-    runner(["pg_restore", "--list", str(archive)], _minimal_child_environment())
+    pg_restore_command = _archive_tool_command(
+        "pg_restore", explicit_path=pg_restore_path, runner=runner
+    )
+    runner([pg_restore_command, "--list", str(archive)], _minimal_child_environment())
 
     seen_orgs: set[str] = set()
     for descriptor in audit_descriptors:
@@ -912,9 +990,18 @@ def _load_and_verify_manifest(bundle: Path, *, runner: CommandRunner) -> dict[st
     return manifest
 
 
-def verify_recovery_bundle(*, bundle: Path, runner: CommandRunner = _run_command) -> dict[str, Any]:
+def verify_recovery_bundle(
+    *,
+    bundle: Path,
+    pg_restore_path: Path | None = None,
+    runner: CommandRunner = _run_command,
+) -> dict[str, Any]:
     """Verify unkeyed bundle integrity without mutating a database."""
-    return _load_and_verify_manifest(bundle, runner=runner)
+    if runner is _run_command or pg_restore_path is not None:
+        pg_restore_path = Path(
+            _archive_tool_command("pg_restore", explicit_path=pg_restore_path, runner=runner)
+        )
+    return _load_and_verify_manifest(bundle, runner=runner, pg_restore_path=pg_restore_path)
 
 
 @contextmanager
@@ -1046,6 +1133,7 @@ def restore_recovery_bundle(
     target_database_name: str,
     target_audit_dir: Path,
     acknowledge_operator_controlled_bundle: bool = False,
+    pg_restore_path: Path | None = None,
     runner: CommandRunner = _run_command,
 ) -> dict[str, Any]:
     """Restore only into an explicitly named empty disposable target."""
@@ -1053,6 +1141,9 @@ def restore_recovery_bundle(
         raise RecoveryRefused(
             "untrusted bundles are prohibited; explicitly acknowledge an operator-controlled bundle"
         )
+    pg_restore_command = _archive_tool_command(
+        "pg_restore", explicit_path=pg_restore_path, runner=runner
+    )
     target_url, parsed_url = _url_from_named_environment(target_url_env)
     if not _DATABASE_NAME.fullmatch(target_database_name):
         raise RecoveryRefused("explicit target database name is invalid")
@@ -1066,7 +1157,9 @@ def restore_recovery_bundle(
     bundle_root = bundle.resolve(strict=True)
     with _target_migration_session_lock(target_url, target_database_name) as target_connection:
         _assert_empty_target_connection(target_connection, target_database_name)
-        manifest = _load_and_verify_manifest(bundle_root, runner=runner)
+        manifest = _load_and_verify_manifest(
+            bundle_root, runner=runner, pg_restore_path=pg_restore_path
+        )
         restore_work, staged_archive, staged_audits = _stage_restore_inputs(
             bundle_root, target_audit_dir, manifest
         )
@@ -1077,7 +1170,7 @@ def restore_recovery_bundle(
             with _pg_environment(parsed_url, restore_work) as pg_environment:
                 runner(
                     [
-                        "pg_restore",
+                        pg_restore_command,
                         "--single-transaction",
                         "--exit-on-error",
                         "--no-owner",
@@ -1127,13 +1220,17 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("--source-url-env", required=True)
     create.add_argument("--audit-dir", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)
+    create.add_argument("--pg-dump-path", type=Path, required=True)
+    create.add_argument("--pg-restore-path", type=Path, required=True)
     verify = subparsers.add_parser("verify", help="verify a recovery bundle")
     verify.add_argument("--bundle", type=Path, required=True)
+    verify.add_argument("--pg-restore-path", type=Path, required=True)
     restore = subparsers.add_parser("restore", help="restore into an empty disposable target")
     restore.add_argument("--bundle", type=Path, required=True)
     restore.add_argument("--target-url-env", required=True)
     restore.add_argument("--target-database-name", required=True)
     restore.add_argument("--target-audit-dir", type=Path, required=True)
+    restore.add_argument("--pg-restore-path", type=Path, required=True)
     restore.add_argument(
         "--acknowledge-operator-controlled-bundle",
         action="store_true",
@@ -1153,9 +1250,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_url_env=args.source_url_env,
                 audit_dir=args.audit_dir,
                 output=args.output,
+                pg_dump_path=args.pg_dump_path,
+                pg_restore_path=args.pg_restore_path,
             )
         elif args.operation == "verify":
-            verify_recovery_bundle(bundle=args.bundle)
+            verify_recovery_bundle(bundle=args.bundle, pg_restore_path=args.pg_restore_path)
         else:
             print("WARNING: restore is only for a distinct empty disposable target.")
             restore_recovery_bundle(
@@ -1166,6 +1265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 acknowledge_operator_controlled_bundle=(
                     args.acknowledge_operator_controlled_bundle
                 ),
+                pg_restore_path=args.pg_restore_path,
             )
     except RecoveryRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)

@@ -600,6 +600,9 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
         source_engine = make_engine(source_url)
         try:
             with source_engine.begin() as connection:
+                # CASCADE detaches the revision 0003/0004 foreign keys that now
+                # reference environments; the corrupted source still
+                # classifies as UNKNOWN.
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
         finally:
             source_engine.dispose()
