@@ -182,6 +182,7 @@ The complete workspace registry and package boundaries are documented in
 |---|---|
 | Prove the core invariant | [`START_HERE`](docs/START_HERE.md) → [`PROOF_PATH`](docs/PROOF_PATH.md) |
 | Integrate an execution gate | [`INTEGRATION_GUIDE`](docs/INTEGRATION_GUIDE.md) → [`INTEGRATION_MATRIX`](docs/INTEGRATION_MATRIX.md) |
+| Map the layered governance stack | [`governance-stack-index`](docs/governance-stack-index.md) |
 | Review the receipt contract | [`DECISION_RECEIPT_SPEC`](docs/DECISION_RECEIPT_SPEC.md) |
 | Review security and limitations | [`SECURITY_MODEL`](docs/SECURITY_MODEL.md) → [`CLAIMS`](docs/CLAIMS.md) |
 | Understand package stability | [`API_STABILITY`](packages/gove-zone/docs/API_STABILITY.md) → [`CHANGELOG`](packages/gove-zone/CHANGELOG.md) |
