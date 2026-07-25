@@ -37,7 +37,8 @@ from acgs_control_plane.db import make_engine
 LEGACY_V0_REVISION: Final = "0001"
 SCOPED_REVISION: Final = "0002"
 MANAGED_MUTATION_REVISION: Final = "0003"
-HEAD_REVISION: Final = "0004"
+TRUST_V2_REVISION: Final = "0004"
+HEAD_REVISION: Final = "0005"
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -75,6 +76,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0002 = "version_0002"
     VERSION_0003 = "version_0003"
     VERSION_0004 = "version_0004"
+    VERSION_0005 = "version_0005"
     UNKNOWN = "unknown"
 
 
@@ -99,7 +101,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0004.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0005.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -142,6 +144,26 @@ class _ColumnSpec:
     type_name: str
     nullable: bool
     length: int | None = None
+
+
+def _with_nullable_user_api_key_hash(
+    columns_by_table: dict[str, tuple[_ColumnSpec, ...]],
+) -> dict[str, tuple[_ColumnSpec, ...]]:
+    return {
+        **columns_by_table,
+        "users": tuple(
+            _ColumnSpec("api_key_hash", "string", True, 64)
+            if column.name == "api_key_hash"
+            else column
+            for column in columns_by_table["users"]
+        ),
+    }
+
+
+def _detail_after_nullable_user_fallback(primary_detail: str, fallback_detail: str) -> str:
+    if primary_detail == "users.api_key_hash has an unexpected nullability":
+        return fallback_detail
+    return primary_detail
 
 
 _LEGACY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
@@ -207,6 +229,9 @@ _LEGACY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_LEGACY_CREATE_ALL_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = (
+    _with_nullable_user_api_key_hash(_LEGACY_COLUMNS)
+)
 
 _SCOPED_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
@@ -226,6 +251,9 @@ _SCOPED_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_SCOPED_CREATE_ALL_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = (
+    _with_nullable_user_api_key_hash(_SCOPED_COLUMNS)
+)
 _MANAGED_MUTATION_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_SCOPED_COLUMNS,
     "managed_decision_receipts": (
@@ -321,6 +349,9 @@ _MANAGED_MUTATION_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("delivered_at", "datetime", True),
     ),
 }
+_MANAGED_MUTATION_CREATE_ALL_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = (
+    _with_nullable_user_api_key_hash(_MANAGED_MUTATION_COLUMNS)
+)
 _TRUST_V2_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **{
         table_name: columns
@@ -358,10 +389,111 @@ _TRUST_V2_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("updated_at", "datetime", False),
     ),
 }
+_TRUST_V2_CREATE_ALL_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = (
+    _with_nullable_user_api_key_hash(_TRUST_V2_COLUMNS)
+)
+_TENANT_BOOTSTRAP_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_TRUST_V2_CREATE_ALL_COLUMNS,
+    "organization_memberships": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("user_id", "string", False, 64),
+        _ColumnSpec("role", "string", False, 32),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "platform_bootstrap_invitations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("token_hash", "string", False, 64),
+        _ColumnSpec("invitee_actor", "string", False, 200),
+        _ColumnSpec("invitee_role", "string", False, 64),
+        _ColumnSpec("prospective_org_id", "string", False, 64),
+        _ColumnSpec("prospective_project_id", "string", False, 64),
+        _ColumnSpec("prospective_environment_id", "string", False, 64),
+        _ColumnSpec("prospective_membership_id", "string", False, 64),
+        _ColumnSpec("policy_outcome", "string", False, 16),
+        _ColumnSpec("revoked_at", "datetime", True),
+        _ColumnSpec("consumed_at", "datetime", True),
+        _ColumnSpec("consumed_org_id", "string", True, 64),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+    ),
+    "tenant_bootstrap_idempotency": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("idempotency_key", "string", False, 200),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("response", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "tenant_bootstrap_policy_artifacts": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("invitation_id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("sealed_receipt", "json", False),
+        _ColumnSpec("event", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "pending_approvals": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("action", "string", False, 200),
+        _ColumnSpec("invitation_id", "string", False, 64),
+        _ColumnSpec("policy_artifact_id", "string", False, 64),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("lineage", "json", False),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "tenant_bootstrap_pending_outbox": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("invitation_id", "string", False, 64),
+        _ColumnSpec("policy_artifact_id", "string", False, 64),
+        _ColumnSpec("delivery_key", "string", False, 200),
+        _ColumnSpec("payload_digest", "string", False, 64),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("attempts", "integer", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("available_at", "datetime", False),
+        _ColumnSpec("delivered_at", "datetime", True),
+    ),
+    "tenant_bootstrap_refusal_events": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("request_id", "string", False, 64),
+        _ColumnSpec("route", "string", False, 64),
+        _ColumnSpec("method", "string", False, 8),
+        _ColumnSpec("stage", "string", False, 32),
+        _ColumnSpec("code", "string", False, 64),
+        _ColumnSpec("http_status", "integer", False),
+        _ColumnSpec("invitation_id", "string", True, 64),
+        _ColumnSpec("invitation_digest", "string", True, 64),
+        _ColumnSpec("idempotency_digest", "string", True, 64),
+        _ColumnSpec("event_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
 }
+_PROJECTS_ONLY_CREATE_ALL_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = (
+    _with_nullable_user_api_key_hash(_PROJECTS_ONLY_COLUMNS)
+)
 
 _LEGACY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _LEGACY_COLUMNS
@@ -382,6 +514,16 @@ _TRUST_V2_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     **_MANAGED_MUTATION_PRIMARY_KEYS,
     "managed_trust_scopes": ("id",),
     "managed_trust_keys": ("id",),
+}
+_TENANT_BOOTSTRAP_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_TRUST_V2_PRIMARY_KEYS,
+    "organization_memberships": ("id",),
+    "platform_bootstrap_invitations": ("id",),
+    "tenant_bootstrap_idempotency": ("id",),
+    "tenant_bootstrap_policy_artifacts": ("id",),
+    "pending_approvals": ("id",),
+    "tenant_bootstrap_pending_outbox": ("id",),
+    "tenant_bootstrap_refusal_events": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -469,6 +611,9 @@ _MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
+    _MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys()
+)
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
     ("org_id", "project_id", "environment_id", "purpose"),
     None,
@@ -491,6 +636,67 @@ _TRUST_V2_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_TENANT_BOOTSTRAP_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_TRUST_V2_FOREIGN_KEYS,
+    "organization_memberships": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (("user_id",), None, "users", ("id",)),
+            (("org_id", "user_id"), None, "users", ("org_id", "id")),
+        }
+    ),
+    "platform_bootstrap_invitations": frozenset(),
+    "tenant_bootstrap_idempotency": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+        }
+    ),
+    "tenant_bootstrap_policy_artifacts": frozenset(
+        {
+            (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
+            (
+                ("invitation_id", "org_id", "project_id", "environment_id"),
+                None,
+                "platform_bootstrap_invitations",
+                (
+                    "id",
+                    "prospective_org_id",
+                    "prospective_project_id",
+                    "prospective_environment_id",
+                ),
+            ),
+        }
+    ),
+    "pending_approvals": frozenset(
+        {
+            (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
+            (
+                ("invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"),
+                None,
+                "tenant_bootstrap_policy_artifacts",
+                ("invitation_id", "id", "org_id", "project_id", "environment_id"),
+            ),
+        }
+    ),
+    "tenant_bootstrap_pending_outbox": frozenset(
+        {
+            (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
+            (
+                ("invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"),
+                None,
+                "tenant_bootstrap_policy_artifacts",
+                ("invitation_id", "id", "org_id", "project_id", "environment_id"),
+            ),
+        }
+    ),
+    "tenant_bootstrap_refusal_events": frozenset(),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -508,6 +714,14 @@ _SCOPED_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": frozenset({("org_id", "slug"), ("org_id", "id")}),
     "environments": frozenset({("org_id", "project_id", "slug")}),
+}
+_LEGACY_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_UNIQUES,
+    "users": _LEGACY_UNIQUES["users"] | frozenset({("org_id", "id")}),
+}
+_SCOPED_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
 }
 _MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_SCOPED_UNIQUES,
@@ -558,6 +772,10 @@ _MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_MANAGED_MUTATION_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_MANAGED_MUTATION_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
+}
 _TRUST_V2_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_MANAGED_MUTATION_UNIQUES,
     "managed_trust_scopes": frozenset({("org_id", "project_id", "environment_id", "purpose")}),
@@ -575,6 +793,42 @@ _TRUST_V2_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_TRUST_V2_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TRUST_V2_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
+}
+_TENANT_BOOTSTRAP_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TRUST_V2_UNIQUES,
+    "users": frozenset({("org_id", "email"), ("api_key_hash",), ("org_id", "id")}),
+    "organization_memberships": frozenset({("org_id", "user_id")}),
+    "platform_bootstrap_invitations": frozenset(
+        {
+            ("token_hash",),
+            ("prospective_org_id", "prospective_project_id", "prospective_environment_id"),
+            (
+                "id",
+                "prospective_org_id",
+                "prospective_project_id",
+                "prospective_environment_id",
+            ),
+        }
+    ),
+    "tenant_bootstrap_idempotency": frozenset({("idempotency_key",), ("org_id",)}),
+    "tenant_bootstrap_policy_artifacts": frozenset(
+        {
+            ("invitation_id", "id"),
+            ("invitation_id", "id", "org_id", "project_id", "environment_id"),
+            ("invitation_id",),
+            ("receipt_hash",),
+            ("audit_event_hash",),
+        }
+    ),
+    "pending_approvals": frozenset({("receipt_hash",), ("audit_event_hash",)}),
+    "tenant_bootstrap_pending_outbox": frozenset(
+        {("policy_artifact_id",), ("delivery_key",), ("payload_digest",)}
+    ),
+    "tenant_bootstrap_refusal_events": frozenset({("request_id",)}),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -586,8 +840,27 @@ _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
         }
     ),
 }
+_TENANT_BOOTSTRAP_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_TRUST_V2_UNIQUE_INDEXES,
+    **{
+        table_name: frozenset()
+        for table_name in (
+            "organization_memberships",
+            "platform_bootstrap_invitations",
+            "tenant_bootstrap_idempotency",
+            "tenant_bootstrap_policy_artifacts",
+            "pending_approvals",
+            "tenant_bootstrap_pending_outbox",
+            "tenant_bootstrap_refusal_events",
+        )
+    },
+}
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
+    "projects": _SCOPED_UNIQUES["projects"],
+}
+_PROJECTS_ONLY_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_CREATE_ALL_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
 }
 
@@ -620,6 +893,16 @@ _TRUST_V2_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_MANAGED_MUTATION_NON_UNIQUE_INDEXES,
     "managed_trust_scopes": frozenset({("org_id",)}),
     "managed_trust_keys": frozenset({("org_id",)}),
+}
+_TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TRUST_V2_NON_UNIQUE_INDEXES,
+    "organization_memberships": frozenset({("org_id",), ("user_id",)}),
+    "platform_bootstrap_invitations": frozenset({("invitee_actor",)}),
+    "tenant_bootstrap_idempotency": frozenset(),
+    "tenant_bootstrap_policy_artifacts": frozenset({("invitation_id",)}),
+    "pending_approvals": frozenset({("org_id",), ("invitation_id",), ("policy_artifact_id",)}),
+    "tenant_bootstrap_pending_outbox": frozenset({("invitation_id",), ("policy_artifact_id",)}),
+    "tenant_bootstrap_refusal_events": frozenset(),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -658,6 +941,47 @@ _TRUST_V2_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
                 "AND retired_epoch > activated_epoch) OR "
                 "(status IN ('active', 'revoked') AND retired_epoch IS NULL)",
             ),
+        }
+    ),
+}
+_TENANT_BOOTSTRAP_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_TRUST_V2_CHECKS,
+    "organization_memberships": frozenset({("ck_org_memberships_role", "role IN ('owner')")}),
+    "platform_bootstrap_invitations": frozenset(
+        {
+            (
+                "ck_platform_bootstrap_invitation_policy_outcome",
+                "policy_outcome IN ('allow', 'deny', 'escalate')",
+            ),
+        }
+    ),
+    "tenant_bootstrap_idempotency": frozenset(),
+    "tenant_bootstrap_policy_artifacts": frozenset(
+        {
+            (
+                "ck_tenant_bootstrap_policy_decision",
+                "decision IN ('deny', 'escalate')",
+            ),
+        }
+    ),
+    "pending_approvals": frozenset({("ck_pending_approvals_status", "status IN ('pending')")}),
+    "tenant_bootstrap_pending_outbox": frozenset(
+        {
+            (
+                "ck_tenant_bootstrap_pending_status",
+                "status IN ('pending', 'delivered', 'failed')",
+            ),
+        }
+    ),
+    "tenant_bootstrap_refusal_events": frozenset(
+        {
+            ("ck_tbr_route", "route = 'POST /v1/tenant-bootstrap'"),
+            ("ck_tbr_method", "method = 'POST'"),
+            (
+                "ck_tbr_stage",
+                "stage IN ('transport', 'authn', 'authz', 'policy', 'issuance', 'executor', 'tx')",
+            ),
+            ("ck_tbr_status", "http_status IN (400, 401, 403, 409, 413, 503)"),
         }
     ),
 }
@@ -740,7 +1064,24 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
                 DatabaseSchemaState.LEGACY_V0,
                 "exact pre-Alembic v0 schema; safe to stamp revision 0001",
             )
-        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, legacy_detail)
+        legacy_create_all_detail = _schema_detail(
+            inspector,
+            table_names,
+            _LEGACY_CREATE_ALL_COLUMNS,
+            _LEGACY_PRIMARY_KEYS,
+            _LEGACY_FOREIGN_KEYS,
+            _LEGACY_CREATE_ALL_UNIQUES,
+            _LEGACY_NON_UNIQUE_INDEXES,
+        )
+        if legacy_create_all_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.LEGACY_V0,
+                "current metadata-created v0 schema; safe to stamp revision 0001",
+            )
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(legacy_detail, legacy_create_all_detail),
+        )
 
     versions = _migration_versions(connection)
     user_tables = table_names - {_VERSION_TABLE}
@@ -758,7 +1099,24 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0002, "known Alembic revision 0002")
-        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+        create_all_detail = _schema_detail(
+            inspector,
+            user_tables,
+            _SCOPED_CREATE_ALL_COLUMNS,
+            _SCOPED_PRIMARY_KEYS,
+            _SCOPED_FOREIGN_KEYS,
+            _SCOPED_CREATE_ALL_UNIQUES,
+            _SCOPED_NON_UNIQUE_INDEXES,
+        )
+        if create_all_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0002,
+                "known Alembic revision 0002 with metadata-created nullable user key",
+            )
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(detail, create_all_detail),
+        )
     if versions == [MANAGED_MUTATION_REVISION]:
         detail = _schema_detail(
             inspector,
@@ -772,8 +1130,26 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0003, "known Alembic revision 0003")
-        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+        create_all_detail = _schema_detail(
+            inspector,
+            user_tables,
+            _MANAGED_MUTATION_CREATE_ALL_COLUMNS,
+            _MANAGED_MUTATION_PRIMARY_KEYS,
+            _MANAGED_MUTATION_FOREIGN_KEYS,
+            _MANAGED_MUTATION_CREATE_ALL_UNIQUES,
+            _MANAGED_MUTATION_NON_UNIQUE_INDEXES,
+            _MANAGED_MUTATION_CHECKS,
+        )
+        if create_all_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0003,
+                "known Alembic revision 0003 with metadata-created nullable user key",
+            )
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(detail, create_all_detail),
+        )
+    if versions == [TRUST_V2_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -787,6 +1163,40 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0004, "known Alembic revision 0004")
+        create_all_detail = _schema_detail(
+            inspector,
+            user_tables,
+            _TRUST_V2_CREATE_ALL_COLUMNS,
+            _TRUST_V2_PRIMARY_KEYS,
+            _TRUST_V2_FOREIGN_KEYS,
+            _TRUST_V2_CREATE_ALL_UNIQUES,
+            _TRUST_V2_NON_UNIQUE_INDEXES,
+            _TRUST_V2_CHECKS,
+            _TRUST_V2_UNIQUE_INDEXES,
+        )
+        if create_all_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0004,
+                "known Alembic revision 0004 with metadata-created nullable user key",
+            )
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(detail, create_all_detail),
+        )
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _TENANT_BOOTSTRAP_COLUMNS,
+            _TENANT_BOOTSTRAP_PRIMARY_KEYS,
+            _TENANT_BOOTSTRAP_FOREIGN_KEYS,
+            _TENANT_BOOTSTRAP_UNIQUES,
+            _TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES,
+            _TENANT_BOOTSTRAP_CHECKS,
+            _TENANT_BOOTSTRAP_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0005, "known Alembic revision 0005")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -802,7 +1212,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0004:
+    if preflight.state is not DatabaseSchemaState.VERSION_0005:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -905,7 +1315,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0004:
+    if after.state is not DatabaseSchemaState.VERSION_0005:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -967,7 +1377,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0004:
+                    if after.state is not DatabaseSchemaState.VERSION_0005:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -1159,6 +1569,20 @@ def _classify_revision_0001(
     )
     if legacy_detail is None:
         return SchemaPreflight(DatabaseSchemaState.VERSION_0001, "known Alembic revision 0001")
+    legacy_create_all_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _LEGACY_CREATE_ALL_COLUMNS,
+        _LEGACY_PRIMARY_KEYS,
+        _LEGACY_FOREIGN_KEYS,
+        _LEGACY_CREATE_ALL_UNIQUES,
+        _LEGACY_NON_UNIQUE_INDEXES,
+    )
+    if legacy_create_all_detail is None:
+        return SchemaPreflight(
+            DatabaseSchemaState.VERSION_0001,
+            "known Alembic revision 0001 with metadata-created nullable user key",
+        )
 
     projects_detail = _schema_detail(
         inspector,
@@ -1170,6 +1594,23 @@ def _classify_revision_0001(
         _PROJECTS_ONLY_NON_UNIQUE_INDEXES,
     )
     if projects_detail is None:
+        empty_detail = _scope_tables_empty(connection, ("projects",))
+        if empty_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS,
+                "exact, empty projects table exists before revision 0002 was recorded",
+            )
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, empty_detail)
+    projects_create_all_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _PROJECTS_ONLY_CREATE_ALL_COLUMNS,
+        _PROJECTS_ONLY_PRIMARY_KEYS,
+        _PROJECTS_ONLY_FOREIGN_KEYS,
+        _PROJECTS_ONLY_CREATE_ALL_UNIQUES,
+        _PROJECTS_ONLY_NON_UNIQUE_INDEXES,
+    )
+    if projects_create_all_detail is None:
         empty_detail = _scope_tables_empty(connection, ("projects",))
         if empty_detail is None:
             return SchemaPreflight(
@@ -1195,12 +1636,38 @@ def _classify_revision_0001(
                 "exact, empty scope tables exist before revision 0002 was recorded",
             )
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, empty_detail)
+    scoped_create_all_detail = _schema_detail(
+        inspector,
+        user_tables,
+        _SCOPED_CREATE_ALL_COLUMNS,
+        _SCOPED_PRIMARY_KEYS,
+        _SCOPED_FOREIGN_KEYS,
+        _SCOPED_CREATE_ALL_UNIQUES,
+        _SCOPED_NON_UNIQUE_INDEXES,
+    )
+    if scoped_create_all_detail is None:
+        empty_detail = _scope_tables_empty(connection, ("projects", "environments"))
+        if empty_detail is None:
+            return SchemaPreflight(
+                DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE,
+                "exact, empty scope tables exist before revision 0002 was recorded",
+            )
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, empty_detail)
 
     if user_tables == set(_PROJECTS_ONLY_COLUMNS):
-        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, projects_detail)
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(projects_detail, projects_create_all_detail),
+        )
     if user_tables == set(_SCOPED_COLUMNS):
-        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, scoped_detail)
-    return SchemaPreflight(DatabaseSchemaState.UNKNOWN, legacy_detail)
+        return SchemaPreflight(
+            DatabaseSchemaState.UNKNOWN,
+            _detail_after_nullable_user_fallback(scoped_detail, scoped_create_all_detail),
+        )
+    return SchemaPreflight(
+        DatabaseSchemaState.UNKNOWN,
+        _detail_after_nullable_user_fallback(legacy_detail, legacy_create_all_detail),
+    )
 
 
 def _migration_versions(connection: Connection) -> list[str]:
@@ -1355,6 +1822,27 @@ def _canonical_referred_schema(value: object, dialect_name: str) -> str | None:
     return str(value)
 
 
+def _has_only_expected_foreign_key_options(
+    table_name: str,
+    foreign_key: Mapping[str, Any],
+    dialect_name: str,
+) -> bool:
+    options = foreign_key.get("options") or {}
+    if not options:
+        return True
+    if dialect_name not in {"postgresql", "sqlite"}:
+        return False
+    if table_name not in _DEFERRABLE_MANAGED_MUTATION_FK_TABLES:
+        return False
+
+    normalized = {str(key).lower(): value for key, value in options.items()}
+    return (
+        normalized.get("deferrable") is True
+        and str(normalized.get("initially", "")).upper() == "DEFERRED"
+        and set(normalized) <= {"deferrable", "initially"}
+    )
+
+
 def _schema_detail(
     inspector: Inspector,
     actual_tables: set[str],
@@ -1401,7 +1889,10 @@ def _schema_detail(
             return f"{table_name} has an unexpected primary key"
 
         foreign_keys = inspector.get_foreign_keys(table_name, schema=inspection_schema)
-        if any(foreign_key.get("options") for foreign_key in foreign_keys):
+        if any(
+            not _has_only_expected_foreign_key_options(table_name, foreign_key, dialect_name)
+            for foreign_key in foreign_keys
+        ):
             return f"{table_name} has foreign-key options outside the frozen schema"
         actual_foreign_keys = frozenset(
             (
@@ -1496,9 +1987,57 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "status:active,retired,revoked"
     if compact in {
+        "status='pending'",
+        "statusin('pending')",
+        "statusin'pending'",
+        "status=any(array['pending'])",
+    }:
+        return "status:pending"
+    if compact in {
+        "statusin('pending','delivered','failed')",
+        "status=any(array['pending','delivered','failed'])",
+        "status=any((array['pending','delivered','failed']))",
+    }:
+        return "status:pending,delivered,failed"
+    if compact in {
         "activated_epoch>0",
     }:
         return "activated_epoch:positive"
+    if compact in {
+        "role='owner'",
+        "rolein('owner')",
+        "rolein'owner'",
+        "role=any(array['owner'])",
+    }:
+        return "role:owner"
+    if compact in {
+        "policy_outcomein('allow','deny','escalate')",
+        "policy_outcome=any(array['allow','deny','escalate'])",
+    }:
+        return "policy_outcome:allow,deny,escalate"
+    if compact in {
+        "decisionin('deny','escalate')",
+        "decision=any(array['deny','escalate'])",
+    }:
+        return "decision:deny,escalate"
+    if compact in {
+        "route='post/v1/tenant-bootstrap'",
+    }:
+        return "route:tenant-bootstrap"
+    if compact in {
+        "method='post'",
+    }:
+        return "method:post"
+    if compact in {
+        ("stagein('transport','authn','authz','policy','issuance','executor','tx')"),
+        ("stage=any(array['transport','authn','authz','policy','issuance','executor','tx'])"),
+    }:
+        return "stage:transport,authn,authz,policy,issuance,executor,tx"
+    if compact in {
+        "http_statusin(400,401,403,409,413,503)",
+        "http_status=any(array[400,401,403,409,413,503])",
+    }:
+        return "http_status:400,401,403,409,413,503"
     if compact in {
         (
             "status='retired'andretired_epochisnotnull"

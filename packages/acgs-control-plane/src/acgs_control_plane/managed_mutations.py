@@ -13,19 +13,28 @@ import binascii
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import sqlalchemy as sa
 from gove_zone.decision import Decision, sha256_json
-from gove_zone.errors import ConsumptionLedgerError, ReceiptAlreadyUsedError, ReceiptValidationError
+from gove_zone.errors import (
+    ConsumptionLedgerError,
+    ReceiptAlreadyUsedError,
+    ReceiptRejectionReason,
+    ReceiptValidationError,
+)
 from gove_zone.executor import execute_with_receipt
-from gove_zone.receipt import DecisionReceipt, safe_result_hash
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    safe_result_hash,
+)
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
-from gove_zone.trust import RECEIPT_V2
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2, ReceiptTrustRegistry
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -45,6 +54,8 @@ from acgs_control_plane.trust import SqlReceiptTrustRegistry
 _GENESIS_HASH = "0" * 64
 ASSURANCE_CLASS_NATIVE = "native"
 CONTROL_PLANE_AGENT_CREATE_ACTION = "control-plane.agent.create"
+TENANT_BOOTSTRAP_ACTION = "tenant.bootstrap"
+TENANT_BOOTSTRAP_EXECUTION_BOUNDARY = "control-plane:tenant.bootstrap/v1"
 _BOUNDARY_SCHEMA = "acgs-control-plane:managed-mutation-uow/v1"
 
 
@@ -209,6 +220,23 @@ class ManagedMutationUnitOfWork:
         context: ManagedMutationContext,
         receipt: DecisionReceipt | None,
         args: Mapping[str, Any],
+        before_execute: Callable[[Session], None] | None = None,
+        after_success: Callable[
+            [
+                Session,
+                ManagedDecisionReceipt,
+                ManagedGovernanceEvent,
+                ManagedOutboxMessage,
+                ManagedMutationResult,
+            ],
+            None,
+        ]
+        | None = None,
+        operation_effect: Callable[[Session, dict[str, Any]], Any] | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        before_consume: Callable[[Session], None] | None = None,
+        revoked_keys: RevocationList | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
     ) -> ManagedMutationResult:
         canonical_boundary = _validated_execution_boundary(context)
         if receipt is None:
@@ -220,12 +248,18 @@ class ManagedMutationUnitOfWork:
             receipt=receipt,
             execution_args=execution_args,
             execution_boundary=canonical_boundary,
+            trust_registry=trust_registry,
+            revoked_keys=revoked_keys,
+            trust_purpose=trust_purpose,
         )
-        attempt_id = _reserve_mutation_attempt(
-            self._session_factory,
-            context=context,
-            receipt=receipt,
-        )
+        if context.action == TENANT_BOOTSTRAP_ACTION:
+            attempt_id = ""
+        else:
+            attempt_id = _reserve_mutation_attempt(
+                self._session_factory,
+                context=context,
+                receipt=receipt,
+            )
         try:
             return self._execute_reserved_attempt(
                 attempt_id=attempt_id,
@@ -234,13 +268,21 @@ class ManagedMutationUnitOfWork:
                 execution_args=execution_args,
                 execution_boundary=canonical_boundary,
                 assurance_class=assurance_class,
+                before_execute=before_execute,
+                after_success=after_success,
+                operation_effect=operation_effect,
+                trust_registry=trust_registry,
+                before_consume=before_consume,
+                revoked_keys=revoked_keys,
+                trust_purpose=trust_purpose,
             )
         except Exception as exc:
-            _mark_mutation_attempt_failed(
-                self._session_factory,
-                attempt_id=attempt_id,
-                exc=exc,
-            )
+            if attempt_id:
+                _mark_mutation_attempt_failed(
+                    self._session_factory,
+                    attempt_id=attempt_id,
+                    exc=exc,
+                )
             raise
 
     def _execute_reserved_attempt(
@@ -252,16 +294,46 @@ class ManagedMutationUnitOfWork:
         execution_args: Mapping[str, Any],
         execution_boundary: str,
         assurance_class: str,
+        before_execute: Callable[[Session], None] | None,
+        after_success: Callable[
+            [
+                Session,
+                ManagedDecisionReceipt,
+                ManagedGovernanceEvent,
+                ManagedOutboxMessage,
+                ManagedMutationResult,
+            ],
+            None,
+        ]
+        | None,
+        operation_effect: Callable[[Session, dict[str, Any]], Any] | None,
+        trust_registry: ReceiptTrustRegistry | None,
+        before_consume: Callable[[Session], None] | None,
+        revoked_keys: RevocationList | None,
+        trust_purpose: str,
     ) -> ManagedMutationResult:
         with self._session_factory() as session:
             with session.begin():
-                attempt = _locked_in_progress_attempt(session, attempt_id)
+                if session.bind is not None and session.bind.dialect.name == "postgresql":
+                    session.execute(sa.text("SET CONSTRAINTS ALL DEFERRED"))
+                if before_execute is not None:
+                    before_execute(session)
+                attempt: ManagedMutationAttempt | None = None
+                if attempt_id:
+                    attempt = _locked_in_progress_attempt(session, attempt_id)
+                elif context.action != TENANT_BOOTSTRAP_ACTION:
+                    attempt = _reserve_mutation_attempt_row(
+                        session,
+                        context=context,
+                        receipt=receipt,
+                    )
                 ledger = _SqlReceiptConsumptionLedger(
                     session,
                     context=context,
                     execution_boundary=execution_boundary,
                     assurance_class=assurance_class,
                     receipt_sealer=self._receipt_sealer,
+                    before_persist_receipt=before_consume,
                 )
 
                 def protected_effect(**verified_args: Any) -> Any:
@@ -269,6 +341,8 @@ class ManagedMutationUnitOfWork:
                         raise ReceiptValidationError(
                             "managed mutation arguments changed before SQL execution"
                         )
+                    if operation_effect is not None:
+                        return operation_effect(session, dict(verified_args))
                     return _execute_verified_operation(session, context, verified_args)
 
                 result = execute_with_receipt(
@@ -289,13 +363,23 @@ class ManagedMutationUnitOfWork:
                     verifier=None,
                     require_signature=self._require_signature,
                     require_expiry=self._require_expiry,
-                    revoked_keys=self._revoked_keys,
-                    trust_registry=SqlReceiptTrustRegistry(session, lock_rows=True),
+                    revoked_keys=revoked_keys if revoked_keys is not None else self._revoked_keys,
+                    trust_registry=trust_registry
+                    if trust_registry is not None
+                    else SqlReceiptTrustRegistry(session, lock_rows=True),
+                    trust_purpose=trust_purpose,
+                    max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
                     consumption_ledger=ledger,
                 )
 
                 result_hash = safe_result_hash(result)
                 receipt_row = ledger.receipt_row
+                if attempt is None:
+                    attempt = _reserve_mutation_attempt_row(
+                        session,
+                        context=context,
+                        receipt=receipt,
+                    )
                 event = _append_governance_event(
                     session,
                     context=context,
@@ -315,8 +399,7 @@ class ManagedMutationUnitOfWork:
                 )
                 attempt.status = "succeeded"
                 attempt.updated_at = utcnow()
-                session.flush()
-                return ManagedMutationResult(
+                mutation_result = ManagedMutationResult(
                     receipt_row_id=receipt_row.id,
                     consumption_row_id=ledger.consumption_id,
                     event_row_id=event.id,
@@ -325,6 +408,10 @@ class ManagedMutationUnitOfWork:
                     result_hash=result_hash,
                     result=result,
                 )
+                if after_success is not None:
+                    after_success(session, receipt_row, event, outbox, mutation_result)
+                session.flush()
+                return mutation_result
 
     def _assurance_class(self, receipt: DecisionReceipt | None) -> str:
         if receipt is None:
@@ -346,46 +433,127 @@ class ManagedMutationUnitOfWork:
         receipt: DecisionReceipt,
         execution_args: Mapping[str, Any],
         execution_boundary: str,
+        trust_registry: ReceiptTrustRegistry | None,
+        revoked_keys: RevocationList | None,
+        trust_purpose: str,
     ) -> None:
         if receipt.decision != Decision.ALLOW.value:
-            raise ReceiptValidationError("managed mutation requires an ALLOW receipt")
+            raise ReceiptValidationError(
+                "managed mutation requires an ALLOW receipt",
+                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
+            )
         if receipt.receipt_schema_version != RECEIPT_V2:
-            raise ReceiptValidationError("managed mutation canonical path requires receipt-v2")
-        if (
-            receipt.project_id != context.project_id
-            or receipt.environment_id != context.environment_id
-        ):
-            raise ReceiptValidationError("managed mutation receipt scope does not match context")
+            raise ReceiptValidationError(
+                "managed mutation canonical path requires receipt-v2",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if receipt.project_id != context.project_id:
+            raise ReceiptValidationError(
+                "managed mutation receipt project does not match context",
+                reason_code=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+            )
+        if receipt.environment_id != context.environment_id:
+            raise ReceiptValidationError(
+                "managed mutation receipt environment does not match context",
+                reason_code=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+            )
         if receipt.receipt_hash != receipt.compute_hash():
-            raise ReceiptValidationError("managed mutation receipt hash mismatch")
+            raise ReceiptValidationError(
+                "managed mutation receipt hash mismatch",
+                reason_code=ReceiptRejectionReason.RECEIPT_HASH_MISMATCH,
+            )
         if receipt.argument_hash != sha256_json(dict(execution_args)):
-            raise ReceiptValidationError("managed mutation receipt arguments do not match")
+            raise ReceiptValidationError(
+                "managed mutation receipt arguments do not match",
+                reason_code=ReceiptRejectionReason.ARGUMENT_MISMATCH,
+            )
         if receipt.tenant_id != context.org_id:
-            raise ReceiptValidationError("managed mutation receipt tenant does not match context")
+            raise ReceiptValidationError(
+                "managed mutation receipt tenant does not match context",
+                reason_code=ReceiptRejectionReason.TENANT_MISMATCH,
+            )
         if receipt.execution_boundary != execution_boundary:
-            raise ReceiptValidationError("managed mutation receipt boundary does not match context")
+            raise ReceiptValidationError(
+                "managed mutation receipt boundary does not match context",
+                reason_code=ReceiptRejectionReason.EXECUTION_BOUNDARY_MISMATCH,
+            )
         if receipt.proposed_action != context.action:
-            raise ReceiptValidationError("managed mutation receipt action does not match context")
+            raise ReceiptValidationError(
+                "managed mutation receipt action does not match context",
+                reason_code=ReceiptRejectionReason.ACTION_MISMATCH,
+            )
         if receipt.actor != context.actor:
-            raise ReceiptValidationError("managed mutation receipt actor does not match context")
+            raise ReceiptValidationError(
+                "managed mutation receipt actor does not match context",
+                reason_code=ReceiptRejectionReason.ACTOR_MISMATCH,
+            )
         if receipt.policy_hash != context.policy_hash:
-            raise ReceiptValidationError("managed mutation receipt policy hash does not match")
+            raise ReceiptValidationError(
+                "managed mutation receipt policy hash does not match",
+                reason_code=ReceiptRejectionReason.POLICY_HASH_MISMATCH,
+            )
         if receipt.policy_bundle_id != context.policy_bundle_id:
-            raise ReceiptValidationError("managed mutation receipt policy bundle does not match")
+            raise ReceiptValidationError(
+                "managed mutation receipt policy bundle does not match",
+                reason_code=ReceiptRejectionReason.POLICY_BUNDLE_MISMATCH,
+            )
         if (
             receipt.validator_role != context.validator_role
             or receipt.authority != context.authority
         ):
-            raise ReceiptValidationError("managed mutation receipt authority does not match")
+            reason = (
+                ReceiptRejectionReason.VALIDATOR_ROLE_MISMATCH
+                if receipt.validator_role != context.validator_role
+                else ReceiptRejectionReason.AUTHORITY_MISMATCH
+            )
+            raise ReceiptValidationError(
+                "managed mutation receipt authority does not match",
+                reason_code=reason,
+            )
         if (
             context.expected_audit_hash is not None
             and receipt.audit_event_hash != context.expected_audit_hash
         ):
-            raise ReceiptValidationError("managed mutation receipt audit hash does not match")
-        if self._revoked_keys is not None and self._revoked_keys.is_revoked(receipt.signing_key_id):
-            raise ReceiptValidationError("managed mutation signing key revoked")
+            raise ReceiptValidationError(
+                "managed mutation receipt audit hash does not match",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
+            )
+        effective_revoked_keys = revoked_keys if revoked_keys is not None else self._revoked_keys
+        if effective_revoked_keys is not None and effective_revoked_keys.is_revoked(
+            receipt.signing_key_id
+        ):
+            raise ReceiptValidationError(
+                "managed mutation signing key revoked",
+                reason_code=ReceiptRejectionReason.SIGNING_KEY_REVOKED,
+            )
         if not receipt.expires_at:
-            raise ReceiptValidationError("managed mutation receipt-v2 requires expiry")
+            raise ReceiptValidationError(
+                "managed mutation receipt-v2 requires expiry",
+                reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
+            )
+        if context.action == TENANT_BOOTSTRAP_ACTION:
+            receipt.verify(
+                expected_tenant_id=context.org_id,
+                expected_execution_boundary=execution_boundary,
+                expected_action=context.action,
+                expected_actor=context.actor,
+                expected_audit_hash=context.expected_audit_hash,
+                expected_args=dict(execution_args),
+                expected_policy_hash=context.policy_hash,
+                expected_policy_bundle_id=context.policy_bundle_id,
+                expected_project_id=context.project_id,
+                expected_environment_id=context.environment_id,
+                expected_validator_role=context.validator_role,
+                expected_authority=context.authority,
+                verifier=None,
+                require_signature=self._require_signature,
+                require_expiry=self._require_expiry,
+                revoked_keys=effective_revoked_keys,
+                trust_registry=trust_registry,
+                trust_purpose=trust_purpose,
+                max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+            )
+            return
         with self._session_factory() as session:
             with session.begin():
                 receipt.verify(
@@ -404,8 +572,10 @@ class ManagedMutationUnitOfWork:
                     verifier=None,
                     require_signature=self._require_signature,
                     require_expiry=self._require_expiry,
-                    revoked_keys=self._revoked_keys,
+                    revoked_keys=effective_revoked_keys,
                     trust_registry=SqlReceiptTrustRegistry(session),
+                    trust_purpose=trust_purpose,
+                    max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
                 )
 
 
@@ -451,6 +621,37 @@ def _reserve_mutation_attempt(
                 "managed-mutation-attempt",
             ) from exc
         raise
+
+
+def _reserve_mutation_attempt_row(
+    session: Session,
+    *,
+    context: ManagedMutationContext,
+    receipt: DecisionReceipt,
+) -> ManagedMutationAttempt:
+    existing = _existing_mutation_attempt(session, context=context, receipt=receipt)
+    if existing is not None:
+        raise ReceiptAlreadyUsedError(receipt.audit_event_hash, "managed-mutation-attempt")
+
+    attempt = ManagedMutationAttempt(
+        id=new_id(),
+        org_id=context.org_id,
+        project_id=context.project_id,
+        environment_id=context.environment_id,
+        receipt_hash=receipt.receipt_hash,
+        audit_event_hash=receipt.audit_event_hash,
+        action=receipt.proposed_action,
+        actor_hash=sha256_json(receipt.actor),
+        argument_hash=receipt.argument_hash,
+        status="in_progress",
+        failure_class_hash=None,
+        failure_digest=None,
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    session.add(attempt)
+    session.flush()
+    return attempt
 
 
 def _existing_mutation_attempt(
@@ -525,12 +726,14 @@ class _SqlReceiptConsumptionLedger:
         execution_boundary: str,
         assurance_class: str,
         receipt_sealer: ReceiptArtifactSealer,
+        before_persist_receipt: Callable[[Session], None] | None = None,
     ) -> None:
         self._session = session
         self._context = context
         self._execution_boundary = execution_boundary
         self._assurance_class = assurance_class
         self._receipt_sealer = receipt_sealer
+        self._before_persist_receipt = before_persist_receipt
         self._receipt_row: ManagedDecisionReceipt | None = None
         self.consumption_id = ""
 
@@ -541,6 +744,9 @@ class _SqlReceiptConsumptionLedger:
         return self._receipt_row
 
     def consume(self, receipt: DecisionReceipt) -> dict[str, Any]:
+        if self._before_persist_receipt is not None:
+            self._before_persist_receipt(self._session)
+            self._before_persist_receipt = None
         receipt_row = _persist_receipt_projection(
             self._session,
             context=self._context,
@@ -647,6 +853,8 @@ def _persist_receipt_projection(
         "constraints_hash": sha256_json(receipt.constraints),
         "approval_chain_hash": sha256_json(receipt.approval_chain_summary),
         "argument_hash": receipt.argument_hash,
+        "authority": receipt.authority,
+        "validator_role": receipt.validator_role,
         "receipt_schema_version": receipt.receipt_schema_version,
         "project_id": receipt.project_id,
         "environment_id": receipt.environment_id,
@@ -825,6 +1033,10 @@ def _enqueue_outbox(
 
 
 def _validated_execution_boundary(context: ManagedMutationContext) -> str:
+    if context.action == TENANT_BOOTSTRAP_ACTION:
+        if context.execution_boundary != TENANT_BOOTSTRAP_EXECUTION_BOUNDARY:
+            raise ReceiptValidationError("tenant.bootstrap execution boundary is not canonical")
+        return TENANT_BOOTSTRAP_EXECUTION_BOUNDARY
     canonical_boundary = managed_mutation_execution_boundary(
         org_id=context.org_id,
         project_id=context.project_id,
@@ -855,6 +1067,8 @@ def managed_receipt_artifact_aad(
 
 
 def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str, Any]:
+    if action == TENANT_BOOTSTRAP_ACTION:
+        return _validated_tenant_bootstrap_args(args)
     if action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {action}")
     allowed_fields = {"name"}
@@ -867,11 +1081,44 @@ def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str,
     return {"name": name}
 
 
+def _validated_tenant_bootstrap_args(args: Mapping[str, Any]) -> dict[str, Any]:
+    allowed_fields = {
+        "display_name",
+        "admin_name",
+        "admin_email_hash",
+        "org_id",
+        "project_id",
+        "environment_id",
+        "owner_user_id",
+        "owner_membership_id",
+        "idempotency_key_hash",
+        "invitation_id_hash",
+    }
+    actual_fields = set(args)
+    if actual_fields != allowed_fields:
+        raise ReceiptValidationError("tenant.bootstrap requires exactly the canonical arguments")
+    normalized: dict[str, Any] = {}
+    for field_name in allowed_fields:
+        value = args.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ReceiptValidationError(f"tenant.bootstrap {field_name} must be non-empty text")
+        normalized[field_name] = value
+    return normalized
+
+
 def _execute_verified_operation(
     session: Session,
     context: ManagedMutationContext,
     verified_args: Mapping[str, Any],
 ) -> dict[str, str]:
+    if context.action == TENANT_BOOTSTRAP_ACTION:
+        return {
+            "org_id_hash": sha256_json(context.org_id),
+            "project_id_hash": sha256_json(context.project_id),
+            "environment_id_hash": sha256_json(context.environment_id),
+            "owner_user_id_hash": sha256_json(verified_args["owner_user_id"]),
+            "owner_membership_id_hash": sha256_json(verified_args["owner_membership_id"]),
+        }
     if context.action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {context.action}")
     name = str(verified_args["name"])

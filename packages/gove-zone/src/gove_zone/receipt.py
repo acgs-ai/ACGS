@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from gove_zone.decision import DecisionRecord, sha256_json
@@ -20,6 +20,32 @@ from gove_zone.signing import ReceiptSigner
 if TYPE_CHECKING:
     from gove_zone.revocation import RevocationList
     from gove_zone.trust import ReceiptTrustRegistry
+
+
+DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS = 300
+MAX_RECEIPT_CLOCK_SKEW_SECONDS = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS
+
+
+def validate_receipt_clock_skew_seconds(value: int) -> int:
+    """Return a bounded receipt clock-skew allowance or fail closed.
+
+    The receipt liveness skew is a security boundary. Callers may tighten it,
+    but never widen it beyond the library default.
+    """
+    from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
+
+    if type(value) is not int:
+        raise ReceiptValidationError(
+            "max_clock_skew_seconds must be an integer",
+            reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+        )
+    if value < 0 or value > MAX_RECEIPT_CLOCK_SKEW_SECONDS:
+        raise ReceiptValidationError(
+            "max_clock_skew_seconds must be between 0 and "
+            f"{MAX_RECEIPT_CLOCK_SKEW_SECONDS} seconds",
+            reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+        )
+    return value
 
 
 def _now_iso() -> str:
@@ -543,7 +569,9 @@ class DecisionReceipt:
         revoked_keys: RevocationList | None = None,
         trust_registry: ReceiptTrustRegistry | None = None,
         historical_trust_verification: bool = False,
+        trust_purpose: str = "decision-receipt",
         now_iso: str | None = None,
+        max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
     ) -> None:
         """Low-level receipt verification primitive.
 
@@ -572,11 +600,19 @@ class DecisionReceipt:
         *before* the signature is trusted — independent of whether the key is
         still present in ``verifier``. ``None`` (the default) preserves current
         behavior exactly.
+
+        ``max_clock_skew_seconds`` bounds receipt not-before liveness. A receipt
+        whose signed issuance ``timestamp`` is more than this many seconds in
+        the verifier's future is rejected with
+        :data:`ReceiptRejectionReason.RECEIPT_EXPIRED`, the same liveness class
+        used for expired receipts. The default five-minute skew preserves normal
+        distributed-clock tolerance while preventing correctly signed receipts
+        issued far in the future from becoming bearer authorizations before
+        their issuance time.
         """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
         from gove_zone.trust import (
-            DECISION_RECEIPT_PURPOSE,
             RECEIPT_V2,
             ReceiptTrustScope,
             TrustConfigurationError,
@@ -584,6 +620,11 @@ class DecisionReceipt:
         )
 
         verification_now_iso = now_iso if now_iso is not None else _now_iso()
+        if not isinstance(trust_purpose, str) or not trust_purpose.strip():
+            raise ReceiptValidationError(
+                "trust_purpose is required for scoped receipt verification",
+                reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+            )
 
         # 1. Missing fields
         required_fields = [
@@ -742,7 +783,7 @@ class DecisionReceipt:
                     tenant_id=expected_tenant_id,
                     project_id=expected_project_id,
                     environment_id=expected_environment_id,
-                    purpose=DECISION_RECEIPT_PURPOSE,
+                    purpose=trust_purpose,
                 )
                 mode: Literal["execution", "historical"] = (
                     "historical" if historical_trust_verification else "execution"
@@ -761,7 +802,7 @@ class DecisionReceipt:
                     trusted_key.validate()
                     if (
                         trusted_key.scope != scope
-                        or trusted_key.scope.purpose != DECISION_RECEIPT_PURPOSE
+                        or trusted_key.scope.purpose != trust_purpose
                         or trusted_key.key_id != self.signing_key_id
                         or trusted_key.algorithm != self.signature_algorithm
                         or not trusted_key.verifies_epoch(self.trust_epoch, mode=mode)
@@ -870,18 +911,6 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.UNKNOWN_DECISION,
             ) from err
 
-        # 4. Denied and escalated receipts
-        if self.decision == Decision.DENY:
-            raise ReceiptValidationError(
-                "Denied receipt cannot authorize execution",
-                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
-            )
-        if self.decision == Decision.ESCALATE:
-            raise ReceiptValidationError(
-                "Escalated receipt cannot authorize execution",
-                reason_code=ReceiptRejectionReason.ESCALATED_RECEIPT,
-            )
-
         # 5. Wrong tenant
         if expected_tenant_id is not None and self.tenant_id != expected_tenant_id:
             raise ReceiptValidationError(
@@ -969,8 +998,13 @@ class DecisionReceipt:
                     reason_code=ReceiptRejectionReason.TRANSFORM_MISMATCH,
                 )
 
-        # 10b. ALLOW argument binding: for ALLOW decisions, verify that the args
-        # the gate is about to execute were exactly what the receipt authorized.
+        # 10b. Native argument binding: for ALLOW/DENY/ESCALATE decisions, verify
+        # that the args presented at the gate were exactly what the receipt
+        # covers. DENY/ESCALATE still cannot authorize execution, but this check
+        # keeps their refusal diagnostics provenance-preserving: a correctly
+        # signed non-ALLOW receipt with wrong arguments is first rejected as an
+        # argument mismatch rather than being rendered as a fully bound
+        # DENY/ESCALATE artifact.
         # argument_hash is sha256_json(dict(args)) — same canonicalization as
         # ToolCall.argument_hash(). This closes the substitution gap: a valid
         # ALLOW receipt for write_file(path=/tmp/safe) cannot authorize
@@ -979,7 +1013,15 @@ class DecisionReceipt:
         # TRANSFORM because the executed args are the transformed args, which
         # differ from the original proposed args that argument_hash covers;
         # the transform-field check (#10) already binds TRANSFORM execution.
-        if self.decision == Decision.ALLOW.value and expected_args is not None:
+        if (
+            self.decision
+            in (
+                Decision.ALLOW.value,
+                Decision.DENY.value,
+                Decision.ESCALATE.value,
+            )
+            and expected_args is not None
+        ):
             from gove_zone.decision import sha256_json as _sha256_json
 
             computed_arg_hash = _sha256_json(dict(expected_args))
@@ -1035,11 +1077,20 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
             )
 
-        # 13. Expiry (only enforced when expires_at is set). expires_at is bound
-        # into receipt_hash, so a tampered expiry is already caught by check 2;
-        # this rejects a genuinely-issued receipt used past its lifetime. The
-        # clock is injectable so expiry is deterministically testable; in
-        # production it defaults to the real UTC wall clock. Fail-closed.
+        bounded_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
+
+        # 13. Liveness window. ``timestamp`` and ``expires_at`` are both bound
+        # into receipt_hash, so tampering is already caught by check 2. Parse
+        # timezone-aware datetimes and enforce expiry for every expiring receipt.
+        # For signed/v2 receipts, also enforce a closed interval with bounded
+        # future issuance skew:
+        #
+        #   timestamp - skew <= now <= expires_at
+        #
+        # A correctly signed receipt issued too far in the future is not yet
+        # valid. A receipt whose expiry predates issuance has no valid lifetime.
+        # Both reject under RECEIPT_EXPIRED so higher-level contracts can map
+        # the entire liveness class to EXPIRED.
         #
         # OPERATOR TRUST ASSUMPTION: expiry trusts the verifying host's wall
         # clock. A host whose clock is rolled BACK accepts a genuinely-expired
@@ -1051,15 +1102,18 @@ class DecisionReceipt:
         if self.expires_at:
             current = verification_now_iso
             # Compare timezone-aware datetimes, not strings: a lexicographic
-            # compare is wrong across UTC offsets and would fail OPEN (accept an
-            # expired receipt). Unparseable timestamps are a validation failure.
+            # compare is wrong across UTC offsets and would fail OPEN. Both
+            # timestamp and expires_at participate in liveness; unparseable
+            # timestamps are validation failures.
             try:
                 current_dt = datetime.fromisoformat(current)
+                issued_dt = datetime.fromisoformat(self.timestamp)
                 expires_dt = datetime.fromisoformat(self.expires_at)
             except (ValueError, TypeError) as err:
                 raise ReceiptValidationError(
                     f"Unparseable or mismatched expiry timestamp: "
-                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    f"timestamp={self.timestamp!r}, expires_at={self.expires_at!r}, "
+                    f"now={current!r}",
                     reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 ) from err
             # Reject offset-naive timestamps on either side. Two naive datetimes
@@ -1067,16 +1121,47 @@ class DecisionReceipt:
             # ambiguous — a naive comparison can silently fail OPEN across
             # offsets. Demand aware-vs-aware so expiry is unambiguous; a naive
             # input is a validation failure, never silently accepted.
-            if current_dt.tzinfo is None or expires_dt.tzinfo is None:
+            if current_dt.tzinfo is None or issued_dt.tzinfo is None or expires_dt.tzinfo is None:
                 raise ReceiptValidationError(
                     f"Expiry timestamps must be timezone-aware (offset-naive "
                     f"compares are ambiguous and can fail open): "
-                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    f"timestamp={self.timestamp!r}, expires_at={self.expires_at!r}, "
+                    f"now={current!r}",
                     reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 )
-            is_expired = current_dt > expires_dt
-            if is_expired:
+            authenticated_liveness = is_v2 or self.signature_algorithm != "none"
+            if authenticated_liveness:
+                if expires_dt < issued_dt:
+                    raise ReceiptValidationError(
+                        f"Receipt expired before it was issued: timestamp {self.timestamp}, "
+                        f"expires_at {self.expires_at}",
+                        reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
+                    )
+                skew = timedelta(seconds=bounded_clock_skew_seconds)
+                if issued_dt - current_dt > skew:
+                    raise ReceiptValidationError(
+                        f"Receipt is not yet valid: issued at {self.timestamp} "
+                        f"(now {current}, allowed skew {bounded_clock_skew_seconds}s)",
+                        reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
+                    )
+            if current_dt > expires_dt:
                 raise ReceiptValidationError(
                     f"Receipt expired at {self.expires_at} (now {current})",
                     reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
                 )
+
+        # 14. Denied and escalated receipts. Keep this after integrity,
+        # signature/trust, liveness, and all caller-supplied bindings so the
+        # rejection reason reports the first real verifier failure for malformed
+        # DENY/ESCALATE artifacts, while still refusing before any gate can burn
+        # a ledger entry or run the side effect.
+        if self.decision == Decision.DENY:
+            raise ReceiptValidationError(
+                "Denied receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
+            )
+        if self.decision == Decision.ESCALATE:
+            raise ReceiptValidationError(
+                "Escalated receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.ESCALATED_RECEIPT,
+            )

@@ -16,7 +16,11 @@ import pytest
 import sqlalchemy as sa
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptValidationError
-from gove_zone.receipt import DecisionReceipt, Validator
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    Validator,
+)
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import Ed25519Signer
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
@@ -220,6 +224,41 @@ def test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically(
         assert attempt.status == "succeeded"
         assert attempt.failure_class_hash is None
         assert attempt.failure_digest is None
+
+
+def test_uow_pins_canonical_receipt_clock_skew_at_gate(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = _receipt(
+        "explicit-clock-skew-pin",
+        args={"name": "clock-skew-agent"},
+        signer=signer,
+    )
+    observed_gate_kwargs: dict[str, Any] = {}
+    original_execute_with_receipt = managed_mutations_module.execute_with_receipt
+
+    def observed_execute_with_receipt(*args: Any, **kwargs: Any) -> Any:
+        observed_gate_kwargs.update(kwargs)
+        return original_execute_with_receipt(*args, **kwargs)
+
+    monkeypatch.setattr(
+        managed_mutations_module,
+        "execute_with_receipt",
+        observed_execute_with_receipt,
+    )
+
+    _signed_uow(session_factory, signer, receipt_sealer).execute(
+        context=_context(),
+        receipt=receipt,
+        args={"name": "clock-skew-agent"},
+    )
+
+    assert (
+        observed_gate_kwargs["max_clock_skew_seconds"] == DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS == 300
+    )
 
 
 def test_injected_failure_before_commit_rolls_back_consumption_receipt_event_outbox_and_side_effect(

@@ -13,8 +13,10 @@ document is a threat model, not release, deployment, or certification evidence.
 |---|---|---|---|---|---|
 | Missing receipt | Executor runs a side effect with no authorization evidence. | `execute_with_receipt`, `GovernedExecutor`, and `ReceiptVerifier` reject `None`. | `test_executor_refuses_no_receipt`, `gove-zone proofpack`, `examples/tamper_demo`. | Direct tool paths outside the gate can bypass ACGS. | Integration hardening and gateway conformance tests. |
 | Malformed receipt | Bad or incomplete evidence is accepted. | Required-field checks fail closed. | `test_executor_refuses_malformed_receipt`, `test_verification_rejects_missing_fields`. | External runtimes must not catch-and-ignore validation errors. | Standard error contracts for adapters. |
-| Expired receipt | Old authorization is replayed after its valid period. | `expires_at` is hash-bound and compared as a timezone-aware timestamp. | `test_receipt_expiry.py`. | Expiry is optional. An operator-supplied static list can revoke receipt-signing key IDs, but there is no global receipt/nonce revocation service. | Default expiry and default-on single-use profiles. |
+| Expired receipt | Old authorization is replayed after its valid period, a signed receipt is pre-minted too far in the verifier's future, a caller tries to widen the future-issuance skew, or the receipt has no valid lifetime because expiry predates issuance. | `expires_at` and `timestamp` are hash-bound and compared as timezone-aware timestamps. Signed receipts and receipt-v2 enforce `timestamp - skew <= now <= expires_at`. The default and maximum skew are both 300 seconds; overrides may only tighten to integer values from 0 through 300. Bool, non-integer, negative, or greater-than-300 skew values fail as `EXPIRY_UNPARSEABLE` before verification, ledger burn, or execution. Liveness failures map to `RECEIPT_EXPIRED` / `EXPIRED` before consumption or side effects. | `test_receipt_expiry.py`, `test_future_issued_receipt_beyond_default_skew_rejects_before_side_effect`, `test_clock_skew_override_can_tighten_but_not_weaken_verification`, `test_receipt_expires_before_issued_rejects_as_liveness_failure`. | Expiry remains optional for legacy receipts unless a strict profile requires it. Host-clock trust remains an operator responsibility; there is no built-in trusted time source or global receipt/nonce revocation service. | Default expiry, default-on single-use profiles, and trusted-time binding. |
 | Tampered receipt | Actor/action/policy/expiry/authority fields are edited. | `receipt_hash` recomputation detects edits; signing verifies hash when explicitly configured. | `test_verification_rejects_altered_fields`, `test_receipt_signing.py`, demo output. | Unsigned hashes are recomputable under host compromise; low-level issuance does not auto-provision a signer. | Managed signer/verifier provisioning and key lifecycle. |
+| Scoped trust-purpose confusion | A receipt or key for one trust domain is replayed into another domain. | Receipt-v2 trust resolution includes tenant, project, environment, and purpose. The default decision-receipt purpose is `decision-receipt`; platform tenant bootstrap uses `acgs.platform-bootstrap.receipt.v1`. Purpose mismatch, missing purpose, untrusted/revoked/unavailable trust material, and expired trust keys fail closed. | `test_receipt_v2_trust_purpose_defaults_and_custom_scope_passthrough`, `test_receipt_v2_trust_purpose_threads_through_wrappers`, tenant-bootstrap integration tests. | This is scoped key selection, not full PKI or automatic trust distribution. | Managed trust registry and key lifecycle. |
+| Non-ALLOW provenance masking | A forged `DENY` or `ESCALATE` receipt hides a wrong actor/action/argument/policy/trust binding behind a generic non-executable refusal. | Signed non-ALLOW receipts are still non-executable, but verifier checks integrity, signature/scoped trust, liveness, actor/action/argument/audit/policy/authority bindings before the final `DENIED_RECEIPT` or `ESCALATED_RECEIPT` refusal. | `test_signed_non_allow_receipts_report_late_binding_before_decision_reason`, `test_signed_non_allow_receipts_report_wrong_args_before_decision_reason`, `test_fully_bound_signed_non_allow_receipts_reject_before_side_effect`. | Only paths that pass `expected_*` values from authenticated runtime context get those bindings checked. | Adapter conformance and runtime-context hardening. |
 | Mismatched actor | Receipt issued for one actor is used by another. | Gate requires `expected_actor` from runtime context and checks receipt actor. | `test_maci_role_separation.py`, executor tests. | Actor authentication is integrator-owned. | Identity binding adapters and production auth profile. |
 | Mismatched action | Receipt for one tool authorizes another. | `expected_action` check. | `test_decision_receipt.py`, `test_executor_guard.py`. | None inside gate; bypass risk remains outside gate. | Gateway coverage for all tool entrypoints. |
 | Argument substitution | Receipt for safe args is reused for dangerous args. | `argument_hash` and exact transform checks. | `test_argument_binding.py`, `test_executor_guard.py`. | Raw args are not stored in audit by default; strong replay needs side-store. | Proof packs with side-store or redaction policy. |
@@ -124,6 +126,8 @@ the complete-mediation property of the reference monitor.
 | Predecessor substitution | ADV1 | ADV2 |
 | Cross-workflow / cross-plan step lifting | ADV4 | ADV1 |
 | Cross-level collusion (plan/step) | ADV1 | ADV12, ADV5 |
+| Scoped trust-purpose confusion | ADV5 | ADV11, ADV4 |
+| Non-ALLOW provenance masking | ADV1 | ADV7 |
 
 The takeaway the per-actor view makes visible: **thirteen of fourteen adversaries are
 systems-and-cryptography problems**, not model-quality problems. ADV1 is the only adversary
@@ -154,6 +158,30 @@ candidate:
   Production closure needs both explicitly signed issuance and a gate configured
   with `require_signature=True` plus the corresponding trusted verifier
   (`signing.py`, `test_receipt_signing.py`).
+- **Scoped trust purpose is part of receipt-v2 key selection.**
+  `DecisionReceipt.verify` defaults to the public `decision-receipt` purpose;
+  executor wrappers and `ReceiptVerifier` pass that default unless configured
+  with a caller-owned `trust_purpose`. The control plane's tenant-bootstrap
+  path deliberately uses `acgs.platform-bootstrap.receipt.v1`, so a generic
+  runtime key cannot verify a platform-bootstrap receipt and vice versa. A
+  blank purpose, wrong-purpose key, revoked key, expired key, or unavailable
+  trust registry fails closed before any side effect.
+- **Signed and receipt-v2 liveness includes bounded not-before skew.**
+  `timestamp` and `expires_at` are both hash-bound. Signed receipts and
+  receipt-v2 are valid only when the verifier's time is within
+  `timestamp - max_clock_skew_seconds <= now <= expires_at`. The default and
+  maximum skew are both 300 seconds. Overrides may only tighten the bound to an
+  integer from 0 through 300; a bool, non-integer, negative value, or value over
+  300 fails as `EXPIRY_UNPARSEABLE` before receipt verification, ledger burn, or
+  side effect. A receipt issued farther in the verifier's future, or one whose
+  expiry predates issuance, fails closed as `RECEIPT_EXPIRED` (mapped by wrapper
+  contracts to the liveness class `EXPIRED`) before any consumption-ledger burn
+  or side effect. `execute_with_receipt`, `GovernedExecutor`, and
+  `ReceiptVerifier` thread this bound, with per-call or construction-time
+  tighten-only override. The tenant-bootstrap canonical managed-mutation UoW
+  pins `DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS` (300 seconds) for its governed SQL
+  mutation. This does not add a trusted-time source; the verifier still depends
+  on the supplied `now_iso` or the host clock.
 - **Anti-replay is opt-in, off by default.** `DecisionReceipt.verify` is
   stateless, so a valid `ALLOW` receipt can be replayed until its `expires_at`
   *unless* the gate carries a single-use ledger. Passing a

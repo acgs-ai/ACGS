@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -14,6 +15,7 @@ from gove_zone import (  # noqa: E402
     DecisionReceipt,
     DecisionRecord,
     Ed25519Signer,
+    GovernedExecutor,
     ReceiptAlreadyUsedError,
     ReceiptConsumptionLedger,
     ReceiptRejectionReason,
@@ -25,6 +27,10 @@ from gove_zone import (  # noqa: E402
     Validator,
     execute_with_receipt,
     sha256_json,
+)
+from gove_zone.receipt import (  # noqa: E402
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    MAX_RECEIPT_CLOCK_SKEW_SECONDS,
 )
 from gove_zone.trust import ReceiptTrustScope  # noqa: E402
 
@@ -56,14 +62,21 @@ class _SideEffect:
         return "ran"
 
 
-def _record(*, args: dict[str, Any] | None = None, event_id: str = "event-1") -> DecisionRecord:
+def _record(
+    *,
+    args: dict[str, Any] | None = None,
+    event_id: str = "event-1",
+    decision: Decision = Decision.ALLOW,
+    timestamp_iso: str = NOW,
+) -> DecisionRecord:
     return DecisionRecord(
-        decision=Decision.ALLOW,
+        decision=decision,
         tool=ACTION,
         argument_hash=sha256_json(args or ARGS),
         policy_version="policy-v1",
         event_id=event_id,
         actor=ACTOR,
+        timestamp_iso=timestamp_iso,
     )
 
 
@@ -91,9 +104,11 @@ def _v2_receipt(
     project_id: str = PROJECT,
     environment_id: str = ENV,
     expires_at: str = FUTURE,
+    decision: Decision = Decision.ALLOW,
+    timestamp_iso: str = NOW,
 ) -> DecisionReceipt:
     return DecisionReceipt.from_record_v2(
-        record=_record(event_id=event_id),
+        record=_record(event_id=event_id, decision=decision, timestamp_iso=timestamp_iso),
         audit_hash=f"audit-{event_id}",
         previous_audit_hash=f"prev-{event_id}",
         tenant_id=TENANT,
@@ -204,6 +219,10 @@ def _resign(receipt: DecisionReceipt, signer: Ed25519Signer) -> DecisionReceipt:
         receipt_hash=receipt_hash,
         signature=signer.sign(receipt_hash.encode("utf-8")),
     )
+
+
+def _iso_after(seconds: int) -> str:
+    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat()
 
 
 def test_v1_receipt_wire_and_hash_are_byte_compatible() -> None:
@@ -394,6 +413,539 @@ def test_receipt_v2_scoped_trust_verification_requires_scope_binding(tmp_path) -
 
     assert _run(receipt, registry, side_effect) == "ran"
     assert side_effect.calls == [ARGS]
+
+
+def test_receipt_v2_trust_purpose_defaults_and_custom_scope_passthrough(tmp_path) -> None:
+    signer = Ed25519Signer.generate(key_id="purpose-key")
+    receipt = _v2_receipt(signer, event_id="purpose-ok")
+    default_registry = _registry(signer)
+    customer_registry = _registry(
+        signer,
+        scope=ReceiptTrustScope(TENANT, PROJECT, ENV, "customer-runtime"),
+    )
+
+    default_side_effect = _SideEffect()
+    assert _run(receipt, default_registry, default_side_effect) == "ran"
+    assert default_side_effect.calls == [ARGS]
+
+    wrong_purpose_side_effect = _SideEffect()
+    wrong_purpose_ledger = _ledger(tmp_path, "wrong-purpose-default")
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=wrong_purpose_side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=customer_registry,
+            consumption_ledger=wrong_purpose_ledger,
+        ),
+        wrong_purpose_side_effect,
+        ledger=wrong_purpose_ledger,
+        reason=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+    )
+
+    custom_side_effect = _SideEffect()
+    assert (
+        execute_with_receipt(
+            tool_fn=custom_side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=customer_registry,
+            trust_purpose="customer-runtime",
+        )
+        == "ran"
+    )
+    assert custom_side_effect.calls == [ARGS]
+
+    empty_purpose_side_effect = _SideEffect()
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=empty_purpose_side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=default_registry,
+            trust_purpose=" ",
+        ),
+        empty_purpose_side_effect,
+        reason=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+    )
+
+
+def test_receipt_v2_trust_purpose_threads_through_wrappers() -> None:
+    signer = Ed25519Signer.generate(key_id="purpose-wrapper-key")
+    receipt = _v2_receipt(signer, event_id="purpose-wrapper")
+    registry = _registry(
+        signer,
+        scope=ReceiptTrustScope(TENANT, PROJECT, ENV, "platform-bootstrap"),
+    )
+
+    default_verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=registry,
+    )
+    assert not default_verifier.is_valid(receipt, expected_action=ACTION, expected_args=ARGS)
+
+    purpose_verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=registry,
+        trust_purpose="platform-bootstrap",
+    )
+    purpose_verifier.verify(receipt, expected_action=ACTION, expected_args=ARGS, now_iso=NOW)
+    assert purpose_verifier.is_valid(receipt, expected_action=ACTION, expected_args=ARGS)
+
+    side_effect = _SideEffect()
+    executor = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        trust_registry=registry,
+        trust_purpose="platform-bootstrap",
+    )
+    executor.register(ACTION, side_effect.run)
+    assert executor.execute(ACTION, ARGS, receipt) == "ran"
+    assert side_effect.calls == [ARGS]
+
+
+def test_future_issued_receipt_within_default_skew_verifies_through_wrapper() -> None:
+    signer = Ed25519Signer.generate(key_id="future-within-skew-key")
+    receipt = _v2_receipt(
+        signer,
+        event_id="future-within-skew",
+        timestamp_iso="2026-01-01T00:04:59+00:00",
+        expires_at="2026-01-01T01:00:00+00:00",
+    )
+    verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=_registry(signer),
+    )
+
+    verifier.verify(receipt, expected_action=ACTION, expected_args=ARGS, now_iso=NOW)
+    assert verifier.is_valid(receipt, expected_action=ACTION, expected_args=ARGS, now_iso=NOW)
+
+
+def test_future_issued_receipt_beyond_default_skew_rejects_before_side_effect(
+    tmp_path,
+) -> None:
+    signer = Ed25519Signer.generate(key_id="future-beyond-skew-key")
+    issued_too_late = _iso_after(DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS + 60)
+    receipt = _v2_receipt(
+        signer,
+        event_id="future-beyond-skew",
+        timestamp_iso=issued_too_late,
+        expires_at=FUTURE,
+    )
+    registry = _registry(signer)
+    side_effect = _SideEffect()
+    ledger = _ledger(tmp_path, "future-beyond-skew")
+
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=registry,
+            consumption_ledger=ledger,
+        ),
+        side_effect,
+        ledger=ledger,
+        reason=ReceiptRejectionReason.RECEIPT_EXPIRED,
+    )
+
+
+def test_clock_skew_override_can_tighten_but_not_weaken_verification(tmp_path) -> None:
+    signer = Ed25519Signer.generate(key_id="bounded-skew-key")
+    receipt = _v2_receipt(
+        signer,
+        event_id="bounded-skew",
+        timestamp_iso="2026-01-01T00:05:00+00:00",
+        expires_at="2026-01-01T01:00:00+00:00",
+    )
+    registry = _registry(signer)
+    max_skew = MAX_RECEIPT_CLOCK_SKEW_SECONDS
+    too_large_skew = max_skew + 1
+
+    receipt.verify(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_action=ACTION,
+        expected_actor=ACTOR,
+        expected_args=ARGS,
+        trust_registry=registry,
+        require_signature=True,
+        now_iso=NOW,
+        max_clock_skew_seconds=max_skew,
+    )
+    with pytest.raises(ReceiptValidationError) as direct_exc:
+        receipt.verify(
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            expected_args=ARGS,
+            trust_registry=registry,
+            require_signature=True,
+            now_iso=NOW,
+            max_clock_skew_seconds=too_large_skew,
+        )
+    assert direct_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+    for invalid_skew in (True, 1.5, -1):
+        with pytest.raises(ReceiptValidationError) as invalid_exc:
+            receipt.verify(
+                expected_tenant_id=TENANT,
+                expected_project_id=PROJECT,
+                expected_environment_id=ENV,
+                expected_execution_boundary=BOUNDARY,
+                expected_action=ACTION,
+                expected_actor=ACTOR,
+                expected_args=ARGS,
+                trust_registry=registry,
+                require_signature=True,
+                now_iso=NOW,
+                max_clock_skew_seconds=invalid_skew,  # type: ignore[arg-type]
+            )
+        assert invalid_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+
+    execute_side_effect = _SideEffect()
+    assert (
+        execute_with_receipt(
+            tool_fn=execute_side_effect.run,
+            args=ARGS,
+            receipt=_v2_receipt(signer, event_id="bounded-skew-execute"),
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=registry,
+            max_clock_skew_seconds=max_skew,
+        )
+        == "ran"
+    )
+    assert execute_side_effect.calls == [ARGS]
+
+    execute_reject_side_effect = _SideEffect()
+    execute_reject_ledger = _ledger(tmp_path, "bounded-skew-execute-reject")
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=execute_reject_side_effect.run,
+            args=ARGS,
+            receipt=_v2_receipt(signer, event_id="bounded-skew-execute-reject"),
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=registry,
+            max_clock_skew_seconds=too_large_skew,
+            consumption_ledger=execute_reject_ledger,
+        ),
+        execute_reject_side_effect,
+        ledger=execute_reject_ledger,
+        reason=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+    )
+
+    constructor_executor = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        trust_registry=registry,
+        max_clock_skew_seconds=max_skew,
+    )
+    constructor_executor_side_effect = _SideEffect()
+    constructor_executor.register(ACTION, constructor_executor_side_effect.run)
+    assert (
+        constructor_executor.execute(
+            ACTION,
+            ARGS,
+            _v2_receipt(signer, event_id="bounded-skew-executor-constructor-ok"),
+        )
+        == "ran"
+    )
+    assert constructor_executor_side_effect.calls == [ARGS]
+    with pytest.raises(ReceiptValidationError) as executor_constructor_exc:
+        GovernedExecutor(
+            tenant_id=TENANT,
+            execution_boundary=BOUNDARY,
+            expected_actor=ACTOR,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            trust_registry=registry,
+            max_clock_skew_seconds=too_large_skew,
+        )
+    assert executor_constructor_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+
+    per_call_executor = GovernedExecutor(
+        tenant_id=TENANT,
+        execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        trust_registry=registry,
+    )
+    per_call_executor_side_effect = _SideEffect()
+    per_call_executor.register(ACTION, per_call_executor_side_effect.run)
+    assert (
+        per_call_executor.execute(
+            ACTION,
+            ARGS,
+            _v2_receipt(signer, event_id="bounded-skew-executor-call-ok"),
+            max_clock_skew_seconds=max_skew,
+        )
+        == "ran"
+    )
+    per_call_reject_ledger = _ledger(tmp_path, "bounded-skew-executor-call-reject")
+    with pytest.raises(ReceiptValidationError) as executor_call_exc:
+        per_call_executor.execute(
+            ACTION,
+            ARGS,
+            _v2_receipt(signer, event_id="bounded-skew-executor-call-reject"),
+            max_clock_skew_seconds=too_large_skew,
+            consumption_ledger=per_call_reject_ledger,
+        )
+    assert executor_call_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+    assert per_call_executor_side_effect.calls == [ARGS]
+    _assert_no_consumption(per_call_reject_ledger)
+
+    constructor_verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=registry,
+        max_clock_skew_seconds=max_skew,
+    )
+    constructor_verifier.verify(
+        _v2_receipt(signer, event_id="bounded-skew-verifier-constructor-ok"),
+        expected_action=ACTION,
+        expected_args=ARGS,
+        now_iso=NOW,
+    )
+    with pytest.raises(ReceiptValidationError) as verifier_constructor_exc:
+        ReceiptVerifier(
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_actor=ACTOR,
+            trust_registry=registry,
+            max_clock_skew_seconds=too_large_skew,
+        )
+    assert verifier_constructor_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+
+    per_call_verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=registry,
+    )
+    per_call_verifier.verify(
+        _v2_receipt(signer, event_id="bounded-skew-verifier-call-ok"),
+        expected_action=ACTION,
+        expected_args=ARGS,
+        now_iso=NOW,
+        max_clock_skew_seconds=max_skew,
+    )
+    with pytest.raises(ReceiptValidationError) as verifier_call_exc:
+        per_call_verifier.verify(
+            _v2_receipt(signer, event_id="bounded-skew-verifier-call-reject"),
+            expected_action=ACTION,
+            expected_args=ARGS,
+            now_iso=NOW,
+            max_clock_skew_seconds=too_large_skew,
+        )
+    assert verifier_call_exc.value.reason_code == ReceiptRejectionReason.EXPIRY_UNPARSEABLE
+
+
+def test_receipt_expires_before_issued_rejects_as_liveness_failure() -> None:
+    signer = Ed25519Signer.generate(key_id="invalid-lifespan-key")
+    receipt = _v2_receipt(
+        signer,
+        event_id="invalid-lifespan",
+        timestamp_iso="2026-01-01T00:10:00+00:00",
+        expires_at="2026-01-01T00:09:59+00:00",
+    )
+    verifier = ReceiptVerifier(
+        expected_tenant_id=TENANT,
+        expected_project_id=PROJECT,
+        expected_environment_id=ENV,
+        expected_execution_boundary=BOUNDARY,
+        expected_actor=ACTOR,
+        trust_registry=_registry(signer),
+    )
+
+    with pytest.raises(ReceiptValidationError) as exc_info:
+        verifier.verify(receipt, expected_action=ACTION, expected_args=ARGS, now_iso=NOW)
+    assert exc_info.value.reason_code == ReceiptRejectionReason.RECEIPT_EXPIRED
+
+
+@pytest.mark.parametrize(
+    ("decision", "wrong_expected_action", "expected_reason"),
+    (
+        (Decision.DENY, "runtime.file.delete", ReceiptRejectionReason.ACTION_MISMATCH),
+        (Decision.ESCALATE, "runtime.file.delete", ReceiptRejectionReason.ACTION_MISMATCH),
+    ),
+)
+def test_signed_non_allow_receipts_report_late_binding_before_decision_reason(
+    tmp_path,
+    decision: Decision,
+    wrong_expected_action: str,
+    expected_reason: ReceiptRejectionReason,
+) -> None:
+    signer = Ed25519Signer.generate(key_id=f"{decision.value}-late-binding-key")
+    receipt = _v2_receipt(signer, event_id=f"{decision.value}-late-binding", decision=decision)
+    registry = _registry(signer)
+    side_effect = _SideEffect()
+    ledger = _ledger(tmp_path, f"{decision.value}-late-binding")
+
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=wrong_expected_action,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=registry,
+            consumption_ledger=ledger,
+        ),
+        side_effect,
+        ledger=ledger,
+        reason=expected_reason,
+    )
+
+
+@pytest.mark.parametrize("decision", (Decision.DENY, Decision.ESCALATE))
+def test_signed_non_allow_receipts_report_wrong_args_before_decision_reason(
+    tmp_path,
+    decision: Decision,
+) -> None:
+    signer = Ed25519Signer.generate(key_id=f"{decision.value}-wrong-args-key")
+    receipt = _v2_receipt(signer, event_id=f"{decision.value}-wrong-args", decision=decision)
+    registry = _registry(signer)
+    side_effect = _SideEffect()
+    ledger = _ledger(tmp_path, f"{decision.value}-wrong-args")
+
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=side_effect.run,
+            args={"path": "/safe.txt", "body": "tampered"},
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            require_signature=True,
+            trust_registry=registry,
+            consumption_ledger=ledger,
+        ),
+        side_effect,
+        ledger=ledger,
+        reason=ReceiptRejectionReason.ARGUMENT_MISMATCH,
+    )
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_reason"),
+    (
+        (Decision.DENY, ReceiptRejectionReason.DENIED_RECEIPT),
+        (Decision.ESCALATE, ReceiptRejectionReason.ESCALATED_RECEIPT),
+    ),
+)
+def test_fully_bound_signed_non_allow_receipts_reject_before_side_effect(
+    tmp_path,
+    decision: Decision,
+    expected_reason: ReceiptRejectionReason,
+) -> None:
+    signer = Ed25519Signer.generate(key_id=f"{decision.value}-bound-key")
+    receipt = _v2_receipt(signer, event_id=f"{decision.value}-bound", decision=decision)
+    registry = _registry(signer)
+    side_effect = _SideEffect()
+    ledger = _ledger(tmp_path, f"{decision.value}-bound")
+
+    _assert_rejects_without_side_effect(
+        lambda: execute_with_receipt(
+            tool_fn=side_effect.run,
+            args=ARGS,
+            receipt=receipt,
+            expected_tenant_id=TENANT,
+            expected_project_id=PROJECT,
+            expected_environment_id=ENV,
+            expected_execution_boundary=BOUNDARY,
+            expected_action=ACTION,
+            expected_actor=ACTOR,
+            expected_audit_hash=receipt.audit_event_hash,
+            expected_policy_hash=receipt.policy_hash,
+            expected_policy_bundle_id=receipt.policy_bundle_id,
+            expected_validator_role=receipt.validator_role,
+            expected_authority=receipt.authority,
+            require_signature=True,
+            trust_registry=registry,
+            consumption_ledger=ledger,
+        ),
+        side_effect,
+        ledger=ledger,
+        reason=expected_reason,
+    )
 
 
 def test_receipt_v2_unsigned_receipt_rejects_even_when_signature_not_required() -> None:

@@ -73,6 +73,9 @@ class InProcessPlatformIssuer:
     """Local injected signer provider with repr-safe private-key custody."""
 
     signer: ReceiptSigner = field(repr=False, compare=False)
+    allowed_purposes: frozenset[str] = field(
+        default_factory=lambda: frozenset({DECISION_RECEIPT_PURPOSE})
+    )
 
     @property
     def key_id(self) -> str:
@@ -83,8 +86,8 @@ class InProcessPlatformIssuer:
         return self.signer.algorithm
 
     def signer_for_scope(self, scope: ReceiptTrustScope, *, trust_epoch: int) -> ReceiptSigner:
-        if scope.purpose != DECISION_RECEIPT_PURPOSE:
-            raise ManagedTrustError("managed platform issuer only signs decision receipts")
+        if scope.purpose not in self.allowed_purposes:
+            raise ManagedTrustError("managed platform issuer is not authorized for this purpose")
         if type(trust_epoch) is not int or trust_epoch <= 0:
             raise ManagedTrustError("managed platform issuer requires a positive trust epoch")
         return self.signer
@@ -420,6 +423,7 @@ def mint_managed_decision_receipt_v2(
     trust_epoch: int,
     request_id: str,
     expires_at: str,
+    purpose: str = DECISION_RECEIPT_PURPOSE,
     constraints: dict[str, Any] | None = None,
     approval_chain_summary: dict[str, Any] | None = None,
 ) -> DecisionReceipt:
@@ -429,7 +433,7 @@ def mint_managed_decision_receipt_v2(
         tenant_id=context.org_id,
         project_id=context.project_id,
         environment_id=context.environment_id,
-        purpose=DECISION_RECEIPT_PURPOSE,
+        purpose=purpose,
     )
     signer = issuer.signer_for_scope(scope, trust_epoch=trust_epoch)
     if signer.key_id != issuer.key_id or signer.algorithm != issuer.algorithm:
