@@ -1939,6 +1939,26 @@ def test_postgresql_windows_kill_rolls_back_uncommitted_ddl_and_releases_lock(
     )
 
 
+# Revision 0003 tables in reverse dependency order. Seeding a pre-0002 schema has
+# to remove them explicitly: every one carries a composite foreign key onto
+# ``environments``, so dropping that table alone raises DependentObjectsStillExist.
+# Dropping ``environments`` with CASCADE instead would leave these tables in place
+# minus their foreign keys, which is not the schema any real 0001 database has.
+_REVISION_0003_TABLES = (
+    "managed_outbox",
+    "managed_governance_events",
+    "managed_governance_event_heads",
+    "managed_receipt_consumptions",
+    "managed_mutation_attempts",
+    "managed_decision_receipts",
+)
+
+
+def _drop_revision_0003_tables(connection: sa.Connection) -> None:
+    for table in _REVISION_0003_TABLES:
+        connection.execute(sa.text(f"DROP TABLE {table}"))
+
+
 def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     if state == "empty":
         return DatabaseSchemaState.EMPTY
@@ -1957,11 +1977,13 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     try:
         with engine.begin() as connection:
             if state == "version-0001":
+                _drop_revision_0003_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("DROP TABLE projects"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001
             if state == "partial-0001":
+                _drop_revision_0003_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS

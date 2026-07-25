@@ -789,6 +789,27 @@ def _wait_for_blocked_scope_ddl(engine: Engine, operator: subprocess.Popen[str])
     raise AssertionError("migration operator did not reach the deterministically blocked 0002 DDL")
 
 
+# Revision 0003 tables in reverse dependency order. Rewinding a head schema to a
+# 0001-era shape has to remove them explicitly: each carries a composite foreign
+# key onto ``environments``, so dropping that table alone raises
+# DependentObjectsStillExist. Dropping ``environments`` with CASCADE instead would
+# leave these tables behind minus their foreign keys, which is not the schema any
+# real 0001 database has.
+_REVISION_0003_TABLES = (
+    "managed_outbox",
+    "managed_governance_events",
+    "managed_governance_event_heads",
+    "managed_receipt_consumptions",
+    "managed_mutation_attempts",
+    "managed_decision_receipts",
+)
+
+
+def _drop_revision_0003_tables(connection: Connection) -> None:
+    for table in _REVISION_0003_TABLES:
+        connection.execute(sa.text(f"DROP TABLE {table}"))
+
+
 def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
     pg_engine: Engine, tmp_path: Path
 ) -> None:
@@ -806,6 +827,7 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
+                _drop_revision_0003_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -932,6 +954,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "managed_decision_receipts",
             "managed_governance_event_heads",
             "managed_governance_events",
+            "managed_mutation_attempts",
             "managed_outbox",
             "managed_receipt_consumptions",
             "projects",

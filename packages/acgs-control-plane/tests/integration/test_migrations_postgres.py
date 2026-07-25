@@ -575,6 +575,26 @@ def _seed_recovery_source(database_url: str, expected_database: str) -> None:
         engine.dispose()
 
 
+# Revision 0003 tables in reverse dependency order. Each carries a composite
+# foreign key onto ``environments``, so dropping that table alone raises
+# DependentObjectsStillExist. Dropping ``environments`` with CASCADE instead would
+# leave these tables behind minus their foreign keys, which is a schema shape no
+# real database reaches.
+_REVISION_0003_TABLES = (
+    "managed_outbox",
+    "managed_governance_events",
+    "managed_governance_event_heads",
+    "managed_receipt_consumptions",
+    "managed_mutation_attempts",
+    "managed_decision_receipts",
+)
+
+
+def _drop_revision_0003_tables(connection: Connection) -> None:
+    for table in _REVISION_0003_TABLES:
+        connection.execute(sa.text(f"DROP TABLE {table}"))
+
+
 def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
     source_url = _required_url(_SOURCE_ENV)
     target_url = _required_url(_TARGET_ENV)
@@ -600,6 +620,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
         source_engine = make_engine(source_url)
         try:
             with source_engine.begin() as connection:
+                _drop_revision_0003_tables(connection)
                 connection.execute(sa.text("DROP TABLE environments"))
         finally:
             source_engine.dispose()
