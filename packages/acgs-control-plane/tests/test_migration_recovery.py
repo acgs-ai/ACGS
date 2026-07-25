@@ -76,6 +76,13 @@ def _write_bundle(root: Path, *, archive: bytes = b"PGDMP-test") -> dict[str, An
     return manifest
 
 
+def _executable_tool(tmp_path: Path, name: str, *, mode: int = 0o700) -> Path:
+    tool = tmp_path / name
+    tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    os.chmod(tool, mode)
+    return tool
+
+
 class _FakeTransaction:
     def __enter__(self) -> _FakeTransaction:
         return self
@@ -204,6 +211,416 @@ def test_create_publishes_canonical_private_bundle_without_secrets(
     assert "--no-owner" in dump
     assert "--no-acl" in dump
     assert any(item.startswith("--snapshot=") for item in dump)
+
+
+def test_create_with_explicit_tool_paths_preserves_selected_symlink_for_injected_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    real_dump = _executable_tool(tmp_path, "real-pg-dump")
+    real_restore = _executable_tool(tmp_path, "real-pg-restore")
+    dump_link = tmp_path / "dump-link"
+    restore_link = tmp_path / "restore-link"
+    dump_link.symlink_to(real_dump)
+    restore_link.symlink_to(real_restore)
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    commands: list[list[str]] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        commands.append(list(command))
+        if command[0] == str(dump_link):
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    create_recovery_bundle(
+        source_url_env="RECOVERY_SOURCE_URL",
+        audit_dir=audit_dir,
+        output=output,
+        pg_dump_path=dump_link,
+        pg_restore_path=restore_link,
+        runner=runner,
+    )
+
+    assert [command[0] for command in commands] == [
+        str(dump_link),
+        str(restore_link),
+    ]
+
+
+def test_fake_runner_remains_host_independent_without_tool_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    commands: list[str] = []
+
+    def runner(command: list[str], _environment: dict[str, str]) -> None:
+        commands.append(command[0])
+        if command[0] == "pg_dump":
+            file_argument = next(item for item in command if item.startswith("--file="))
+            Path(file_argument.removeprefix("--file=")).write_bytes(b"PGDMP-test")
+
+    create_recovery_bundle(
+        source_url_env="RECOVERY_SOURCE_URL",
+        audit_dir=audit_dir,
+        output=output,
+        runner=runner,
+    )
+
+    assert commands == ["pg_dump", "pg_restore"]
+
+
+def test_real_command_spawning_injected_runner_without_tool_paths_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
+    monkeypatch.setattr(recovery, "_capture_database_state_url", lambda _url: _state())
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="path must be absolute"):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=output,
+            runner=lambda command, environment: recovery._run_command(command, environment),
+        )
+
+    assert not output.exists()
+
+
+def test_default_create_requires_tool_paths_before_database_or_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(
+        recovery,
+        "_capture_database_state_url",
+        lambda _url: (_ for _ in ()).throw(AssertionError("database must not be touched")),
+    )
+    monkeypatch.setattr(
+        recovery,
+        "make_engine",
+        lambda _url: (_ for _ in ()).throw(AssertionError("engine must not be created")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="pg_dump path is required"):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=tmp_path / "bundle",
+        )
+
+    assert list(tmp_path.glob(".bundle.staging-*")) == []
+
+
+def test_default_verify_requires_tool_path_before_bundle_read(tmp_path: Path) -> None:
+    with pytest.raises(RecoveryRefused, match="pg_restore path is required"):
+        verify_recovery_bundle(bundle=tmp_path / "missing-bundle")
+
+
+@pytest.mark.parametrize(
+    ("path_factory", "expected"),
+    [
+        (lambda tmp_path: Path("pg_restore"), "absolute"),
+        (lambda tmp_path: tmp_path / "missing-pg-restore", "resolve"),
+        (lambda tmp_path: tmp_path, "regular file"),
+        (lambda tmp_path: _executable_tool(tmp_path, "not-executable", mode=0o600), "executable"),
+    ],
+)
+def test_default_verify_rejects_invalid_restore_path_before_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path_factory: Any,
+    expected: str,
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match=expected):
+        verify_recovery_bundle(bundle=bundle, pg_restore_path=path_factory(tmp_path))
+
+
+def test_default_verify_rejects_group_or_world_writable_tool_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX mode-bit writeability check is platform-specific")
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    tool = _executable_tool(tmp_path, "pg-restore", mode=0o722)
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="group-writable or world-writable"):
+        verify_recovery_bundle(bundle=bundle, pg_restore_path=tool)
+
+
+def test_default_verify_rejects_tool_selected_from_insecure_directory_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX directory mode-bit writeability check is platform-specific")
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    target = _executable_tool(tmp_path, "postgresql-client")
+    insecure = tmp_path / "insecure"
+    insecure.mkdir()
+    os.chmod(insecure, 0o777)
+    selected = insecure / "pg_restore"
+    selected.symlink_to(target)
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="invocation directory chain"):
+        verify_recovery_bundle(bundle=bundle, pg_restore_path=selected)
+
+
+def test_default_verify_rejects_lexically_insecure_directory_symlink_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX directory mode-bit writeability check is platform-specific")
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    safe_root = tmp_path / "safe"
+    safe_root.mkdir(mode=0o700)
+    safe_tools = safe_root / "tools"
+    safe_tools.mkdir(mode=0o700)
+    selected = _executable_tool(safe_tools, "pg_restore")
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir()
+    os.chmod(unsafe, 0o777)
+    unsafe_tools = unsafe / "tools"
+    unsafe_tools.symlink_to(safe_tools, target_is_directory=True)
+    lexical_selection = unsafe_tools / "pg_restore"
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="invocation directory chain"):
+        verify_recovery_bundle(bundle=bundle, pg_restore_path=lexical_selection)
+
+    assert lexical_selection.resolve(strict=True) == selected
+
+
+def test_default_verify_rejects_tool_resolved_from_insecure_directory_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX directory mode-bit writeability check is platform-specific")
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    insecure = tmp_path / "insecure-target"
+    insecure.mkdir()
+    os.chmod(insecure, 0o777)
+    target = _executable_tool(insecure, "postgresql-client")
+    selected = tmp_path / "pg_restore"
+    selected.symlink_to(target)
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("subprocess must not run")),
+    )
+
+    with pytest.raises(RecoveryRefused, match="resolved target directory chain"):
+        verify_recovery_bundle(bundle=bundle, pg_restore_path=selected)
+
+
+def test_default_verify_allows_sticky_shared_ancestor_with_private_tool_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX sticky directory semantics are platform-specific")
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    sticky_parent = tmp_path / "sticky-parent"
+    sticky_parent.mkdir()
+    os.chmod(sticky_parent, 0o1777)
+    private_tools = sticky_parent / "operator-tools"
+    private_tools.mkdir(mode=0o700)
+    tool = _executable_tool(private_tools, "pg_restore")
+    calls: list[list[str]] = []
+
+    def observed_run(
+        command: list[str],
+        **_kwargs: object,
+    ) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(recovery.subprocess, "run", observed_run)
+
+    verify_recovery_bundle(bundle=bundle, pg_restore_path=tool)
+
+    assert calls == [[str(tool), "--list", str(bundle / ARCHIVE_NAME)]]
+
+
+def test_restore_rejects_invalid_tool_path_before_lock_or_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "bundle"
+    _write_bundle(bundle)
+    monkeypatch.setenv("RECOVERY_TARGET_URL", TARGET_URL)
+    monkeypatch.setattr(
+        recovery,
+        "_target_migration_session_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("lock must not be acquired")
+        ),
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_stage_restore_inputs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("restore inputs must not be staged")
+        ),
+    )
+
+    with pytest.raises(RecoveryRefused, match="absolute"):
+        restore_recovery_bundle(
+            bundle=bundle,
+            target_url_env="RECOVERY_TARGET_URL",
+            target_database_name="target_drill",
+            target_audit_dir=tmp_path / "target-audit",
+            acknowledge_operator_controlled_bundle=True,
+            pg_restore_path=Path("pg_restore"),
+        )
+
+
+def test_default_runner_ignores_hostile_path_with_explicit_absolute_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _executable_tool(tmp_path, "selected-pg-restore")
+    hostile = tmp_path / "hostile"
+    hostile.mkdir()
+    _executable_tool(hostile, "selected-pg-restore")
+    calls: list[list[str]] = []
+
+    def observed_run(
+        command: list[str],
+        **_kwargs: object,
+    ) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(recovery.subprocess, "run", observed_run)
+
+    recovery._run_command([str(tool), "--list", "archive.dump"], {"PATH": str(hostile)})
+
+    assert calls == [[str(tool.resolve()), "--list", "archive.dump"]]
+
+
+def test_default_runner_preserves_selected_symlink_basename_for_dispatch_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatcher = _executable_tool(tmp_path, "postgresql-client")
+    selected_restore = tmp_path / "pg_restore"
+    selected_restore.symlink_to(dispatcher)
+    hostile = tmp_path / "hostile"
+    hostile.mkdir()
+    _executable_tool(hostile, "pg_restore")
+    calls: list[list[str]] = []
+
+    def observed_run(
+        command: list[str],
+        **_kwargs: object,
+    ) -> None:
+        calls.append(command)
+
+    monkeypatch.setattr(recovery.subprocess, "run", observed_run)
+
+    recovery._run_command([str(selected_restore), "--list", "archive.dump"], {"PATH": str(hostile)})
+
+    assert calls == [[str(selected_restore), "--list", "archive.dump"]]
+    assert Path(calls[0][0]).resolve(strict=True) == dispatcher
+
+
+def test_default_runner_revalidates_tool_path_immediately_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    output = tmp_path / "bundle"
+    pg_dump = _executable_tool(tmp_path, "pg-dump")
+    pg_restore = _executable_tool(tmp_path, "pg-restore")
+    monkeypatch.setenv("RECOVERY_SOURCE_URL", SOURCE_URL)
+    monkeypatch.setattr(recovery, "make_engine", lambda _url: _FakeEngine())
+    _patch_fake_connection_binding(monkeypatch)
+    captures = 0
+
+    def capture_url(_url: str) -> DatabaseState:
+        nonlocal captures
+        captures += 1
+        if captures == 1:
+            pg_dump.unlink()
+            pg_dump.mkdir()
+        return _state()
+
+    monkeypatch.setattr(recovery, "_capture_database_state_url", capture_url)
+    monkeypatch.setattr(
+        recovery, "_capture_database_state", lambda _connection, **_kwargs: _state()
+    )
+    monkeypatch.setattr(
+        recovery.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("subprocess must not run after path mutation")
+        ),
+    )
+
+    with pytest.raises(RecoveryRefused, match="regular file"):
+        create_recovery_bundle(
+            source_url_env="RECOVERY_SOURCE_URL",
+            audit_dir=audit_dir,
+            output=output,
+            pg_dump_path=pg_dump,
+            pg_restore_path=pg_restore,
+        )
+
+    assert not output.exists()
+    assert list(tmp_path.glob(".bundle.staging-*")) == []
 
 
 def test_create_rejects_source_drift_and_publishes_nothing(
@@ -1284,8 +1701,101 @@ def test_cli_redacts_unexpected_secret_bearing_exception(
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(SOURCE_URL)),
     )
 
-    assert recovery.main(["verify", "--bundle", "unused"]) == 2
+    assert (
+        recovery.main(["verify", "--bundle", "unused", "--pg-restore-path", "/tools/pg_restore"])
+        == 2
+    )
     captured = capsys.readouterr()
     assert "super-secret" not in captured.err
     assert SOURCE_URL not in captured.err
     assert "without exposing sensitive details" in captured.err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["create", "--source-url-env", "URL", "--audit-dir", "audit", "--output", "bundle"],
+        ["verify", "--bundle", "bundle"],
+        [
+            "restore",
+            "--bundle",
+            "bundle",
+            "--target-url-env",
+            "URL",
+            "--target-database-name",
+            "target_drill",
+            "--target-audit-dir",
+            "audit",
+            "--acknowledge-operator-controlled-bundle",
+        ],
+    ],
+)
+def test_cli_requires_operator_selected_tool_paths(argv: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        recovery._parser().parse_args(argv)
+
+
+def test_cli_forwards_operator_selected_tool_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        recovery,
+        "create_recovery_bundle",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    monkeypatch.setattr(
+        recovery,
+        "verify_recovery_bundle",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+    monkeypatch.setattr(
+        recovery,
+        "restore_recovery_bundle",
+        lambda **kwargs: calls.append(kwargs) or {},
+    )
+
+    assert (
+        recovery.main(
+            [
+                "create",
+                "--source-url-env",
+                "URL",
+                "--audit-dir",
+                "audit",
+                "--output",
+                "bundle",
+                "--pg-dump-path",
+                "/tools/pg_dump",
+                "--pg-restore-path",
+                "/tools/pg_restore",
+            ]
+        )
+        == 0
+    )
+    assert (
+        recovery.main(["verify", "--bundle", "bundle", "--pg-restore-path", "/tools/pg_restore"])
+        == 0
+    )
+    assert (
+        recovery.main(
+            [
+                "restore",
+                "--bundle",
+                "bundle",
+                "--target-url-env",
+                "URL",
+                "--target-database-name",
+                "target_drill",
+                "--target-audit-dir",
+                "audit",
+                "--acknowledge-operator-controlled-bundle",
+                "--pg-restore-path",
+                "/tools/pg_restore",
+            ]
+        )
+        == 0
+    )
+
+    assert calls[0]["pg_dump_path"] == Path("/tools/pg_dump")
+    assert calls[0]["pg_restore_path"] == Path("/tools/pg_restore")
+    assert calls[1]["pg_restore_path"] == Path("/tools/pg_restore")
+    assert calls[2]["pg_restore_path"] == Path("/tools/pg_restore")

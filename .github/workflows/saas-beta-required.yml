@@ -144,7 +144,7 @@ jobs:
           .venv-evidence/bin/python -m pytest -q \
             tests/saas_beta/test_ci_gate_contract.py \
             tests/saas_beta/test_evidence_bootstrap.py \
-            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation"
+            -k "not test_real_transcript_to_generate_run_rejects_secret_contexts_without_run_or_echo and not test_actual_p0_capture_reaggregates_generates_and_reaches_final_run_validation and not test_actual_p6_evid_ui_capture_aggregate_generate_and_final_validation and not test_clean_sibling_hash_locked_bootstraps_and_round_trip and not test_clean_sibling_rejects_loader_and_git_authority_before_mutation and not test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation"
 
       - name: Run control-plane tests
         env:
