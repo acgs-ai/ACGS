@@ -6262,6 +6262,7 @@ def test_clean_sibling_cleanup_success_removes_worktree_without_prunable_registr
         check=True,
     ).stdout.rstrip("\n")
     cleanup_root = parent / "acgs-p0-evidence.success"
+    unrelated_worktree = tmp_path / "unrelated-worktree"
     cleanup_command = r"""
 set -u
 source "$1"
@@ -6270,6 +6271,7 @@ TMP_PARENT="$3"
 TMP_ROOT="$4"
 WORKTREES_BEFORE="$5"
 SOURCE_STATUS_BEFORE="$6"
+UNRELATED_WORKTREE="$7"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
 TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
@@ -6277,6 +6279,12 @@ TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
 mkdir -m 700 -- "$TMP_ROOT"
 WORKTREE="$TMP_ROOT/product"
 git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null 2>/dev/null
+git -C "$SOURCE_REPO" worktree add --detach "$UNRELATED_WORKTREE" HEAD >/dev/null 2>/dev/null
+git -C "$UNRELATED_WORKTREE" config user.name "Evidence Test"
+git -C "$UNRELATED_WORKTREE" config user.email "evidence@example.invalid"
+printf 'unrelated\n' >"$UNRELATED_WORKTREE/unrelated"
+git -C "$UNRELATED_WORKTREE" add unrelated
+git -C "$UNRELATED_WORKTREE" commit -qm "unrelated head move"
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
   stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
@@ -6305,6 +6313,7 @@ exit $?
             str(cleanup_root),
             worktrees_before,
             status_before,
+            str(unrelated_worktree),
         ],
         text=True,
         capture_output=True,
@@ -6315,6 +6324,12 @@ exit $?
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
     assert not cleanup_root.exists()
     assert sorted(path.name for path in parent.iterdir()) == []
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(unrelated_worktree)],
+        cwd=source_repo,
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
     assert (
         subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
