@@ -381,10 +381,19 @@ clean_sibling_cleanup() {
     printf 'caller TMPDIR direct entries changed across proof\n' >&2
     cleanup_status=2
   fi
-  [[ "$(git -C "$SOURCE_REPO" worktree list --porcelain)" == "$WORKTREES_BEFORE" ]] || {
-    printf 'worktree registrations changed across proof\n' >&2
-    cleanup_status=2
-  }
+  if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "$WORKTREE" ]]; then
+    if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
+      printf 'cleanup refused because worktree registry query failed: %s\n' "$WORKTREE" >&2
+      cleanup_status=2
+    elif clean_sibling_worktree_list_contains "$worktree_list" "$WORKTREE"; then
+      printf 'cleanup refused to delete still-registered worktree root: %s\n' "$WORKTREE" >&2
+      cleanup_status=2
+    fi
+    [[ ! -e "$WORKTREE" && ! -L "$WORKTREE" ]] || {
+      printf 'owned proof worktree reappeared during cleanup: %s\n' "$WORKTREE" >&2
+      cleanup_status=2
+    }
+  fi
   [[ "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" == \
     "$SOURCE_STATUS_BEFORE" ]] || {
     printf 'source repository status changed across proof\n' >&2
