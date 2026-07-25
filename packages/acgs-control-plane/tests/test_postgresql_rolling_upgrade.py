@@ -62,6 +62,7 @@ _MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 _PROTOCOL_TIMEOUT_SECONDS = 10.0
 _OPERATOR_TIMEOUT_SECONDS = 20.0
 _PROTOCOL_QUEUE_RECORDS = 8
+_G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS = frozenset({"uq_users_org_id_id"})
 
 
 class ArtifactRefusal(RuntimeError):
@@ -73,6 +74,23 @@ class OldArtifact:
     path: Path
     sha256: str
     source_commit: str
+
+
+def _without_allowed_old_table_catalog_additions(
+    rows: tuple[tuple[Any, ...], ...],
+) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        row
+        for row in rows
+        if not (
+            len(row) >= 7
+            and row[1] == "users"
+            and (
+                row[4] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
+                or row[6] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
+            )
+        )
+    )
 
 
 def _decode_json_object(raw: str | bytes) -> tuple[str, dict[str, Any] | None]:
@@ -806,6 +824,27 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
+                # Revision 0003, 0004, and 0005 tables reference environments,
+                # so seeding the partial revision 0001 shape must remove them
+                # first. Dropping environments with CASCADE instead would leave
+                # them in place minus their foreign keys, which is not a shape
+                # any real 0001 database has. One statement drops the whole set
+                # together, so dependencies among the listed tables (the 0005
+                # bootstrap tables all reference platform_bootstrap_invitations)
+                # do not constrain the order.
+                connection.execute(
+                    sa.text(
+                        "DROP TABLE tenant_bootstrap_refusal_events, "
+                        "tenant_bootstrap_pending_outbox, pending_approvals, "
+                        "tenant_bootstrap_policy_artifacts, "
+                        "tenant_bootstrap_idempotency, "
+                        "platform_bootstrap_invitations, organization_memberships, "
+                        "managed_trust_keys, managed_trust_scopes, "
+                        "managed_outbox, managed_governance_events, "
+                        "managed_governance_event_heads, managed_receipt_consumptions, "
+                        "managed_mutation_attempts, managed_decision_receipts"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -916,22 +955,42 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0002",
+            "after": "version_0005",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
-            "target_revision": "0002",
+            "target_revision": HEAD_REVISION,
         }
         assert old_probe.process.poll() is None
         assert old_probe.request("health") == {"body": {"status": "ok"}, "status_code": 200}
 
         migrated = _state(pg_engine)
-        assert migrated["version"] == "0002"
-        assert set(migrated["tables"]) - set(before["tables"]) == {"projects", "environments"}
+        assert migrated["version"] == HEAD_REVISION
+        assert set(migrated["tables"]) - set(before["tables"]) == {
+            "environments",
+            "managed_decision_receipts",
+            "managed_governance_event_heads",
+            "managed_governance_events",
+            "managed_mutation_attempts",
+            "managed_outbox",
+            "managed_receipt_consumptions",
+            "managed_trust_keys",
+            "managed_trust_scopes",
+            "organization_memberships",
+            "pending_approvals",
+            "platform_bootstrap_invitations",
+            "projects",
+            "tenant_bootstrap_idempotency",
+            "tenant_bootstrap_pending_outbox",
+            "tenant_bootstrap_policy_artifacts",
+            "tenant_bootstrap_refusal_events",
+        }
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
             migrated_catalog = tuple(row for row in migrated["catalog"] if row[1] == table)
-            assert migrated_catalog == before_catalog
+            assert _without_allowed_old_table_catalog_additions(
+                migrated_catalog
+            ) == _without_allowed_old_table_catalog_additions(before_catalog)
             if table == "alembic_version":
                 continue
             assert migrated["rows"][table] == before["rows"][table]
@@ -948,7 +1007,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0002.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0005.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -981,6 +1040,12 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert len(after_old_write["rows"]["receipts"]) == len(migrated["rows"]["receipts"]) + 1
         assert after_old_write["rows"]["projects"] == ()
         assert after_old_write["rows"]["environments"] == ()
+        assert after_old_write["rows"]["organization_memberships"] == ()
+        assert after_old_write["rows"]["platform_bootstrap_invitations"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_idempotency"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_pending_outbox"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_policy_artifacts"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_refusal_events"] == ()
         receipt_id = created["body"]["receipt_id"]
         audit_records_after_write = _audit_records(audit_dir, bootstrapped["org_id"])
         assert len(audit_records_after_write) == len(audit_records_before_write) + 1
@@ -1021,5 +1086,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

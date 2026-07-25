@@ -83,12 +83,27 @@ def _seed_version_0001(database_url: str) -> None:
 
 
 def _seed_partial_0001(database_url: str) -> None:
-    upgrade_database(database_url)
+    _seed_version_0001(database_url)
     engine = make_engine(database_url)
     try:
         with engine.begin() as connection:
-            connection.execute(sa.text("DROP TABLE environments"))
-            connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE TABLE projects (
+                        id VARCHAR(64) NOT NULL,
+                        org_id VARCHAR(64) NOT NULL,
+                        slug VARCHAR(128) NOT NULL,
+                        name VARCHAR(200) NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        PRIMARY KEY (id),
+                        FOREIGN KEY(org_id) REFERENCES organizations (id),
+                        CONSTRAINT uq_projects_org_slug UNIQUE (org_id, slug),
+                        CONSTRAINT uq_projects_org_id_id UNIQUE (org_id, id)
+                    )
+                    """
+                )
+            )
     finally:
         engine.dispose()
 
@@ -204,7 +219,7 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
         "POST /orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
     assert not (tmp_path / "audit").exists()
 
 
@@ -225,9 +240,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0002.value,
+            "schema_state": DatabaseSchemaState.VERSION_0005.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0002
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0005
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()

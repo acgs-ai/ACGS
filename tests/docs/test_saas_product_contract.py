@@ -36,8 +36,7 @@ def test_each_product_contract_is_explicitly_target_only_and_tied_to_g006() -> N
 def test_assurance_classes_preserve_provenance_and_cannot_be_promoted() -> None:
     assurance = _normalized(SAAS / "ASSURANCE_CLASSES.md")
     assert (
-        "Observed evidence is post-execution evidence, never pre-execution "
-        "authorization proof."
+        "Observed evidence is post-execution evidence, never pre-execution authorization proof."
     ) in assurance
     assert "must not silently upgrade federated or observed evidence to native" in assurance
     assert "project/environment binding is a target requirement" in assurance
@@ -84,8 +83,7 @@ def test_competitor_language_is_fair_and_target_bound() -> None:
     assert "ACGS does not claim to be the only option that enforces before an action" in comparison
     assert "This repository does not frame it as audit-only" in comparison
     assert (
-        "Adapter profiles for those systems are roadmap work, not shipped "
-        "interoperability claims"
+        "Adapter profiles for those systems are roadmap work, not shipped interoperability claims"
     ) in comparison
     assert "logs *after* the action" not in comparison
     assert "a trail you read after harm" not in comparison
