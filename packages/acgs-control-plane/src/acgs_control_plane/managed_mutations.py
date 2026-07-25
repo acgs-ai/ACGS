@@ -27,10 +27,14 @@ from gove_zone.errors import (
     ReceiptValidationError,
 )
 from gove_zone.executor import execute_with_receipt
-from gove_zone.receipt import DecisionReceipt, safe_result_hash
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    safe_result_hash,
+)
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
-from gove_zone.trust import RECEIPT_V2, ReceiptTrustRegistry
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2, ReceiptTrustRegistry
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -232,6 +236,7 @@ class ManagedMutationUnitOfWork:
         trust_registry: ReceiptTrustRegistry | None = None,
         before_consume: Callable[[Session], None] | None = None,
         revoked_keys: RevocationList | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
     ) -> ManagedMutationResult:
         canonical_boundary = _validated_execution_boundary(context)
         if receipt is None:
@@ -245,6 +250,7 @@ class ManagedMutationUnitOfWork:
             execution_boundary=canonical_boundary,
             trust_registry=trust_registry,
             revoked_keys=revoked_keys,
+            trust_purpose=trust_purpose,
         )
         if context.action == TENANT_BOOTSTRAP_ACTION:
             attempt_id = ""
@@ -268,6 +274,7 @@ class ManagedMutationUnitOfWork:
                 trust_registry=trust_registry,
                 before_consume=before_consume,
                 revoked_keys=revoked_keys,
+                trust_purpose=trust_purpose,
             )
         except Exception as exc:
             if attempt_id:
@@ -303,9 +310,12 @@ class ManagedMutationUnitOfWork:
         trust_registry: ReceiptTrustRegistry | None,
         before_consume: Callable[[Session], None] | None,
         revoked_keys: RevocationList | None,
+        trust_purpose: str,
     ) -> ManagedMutationResult:
         with self._session_factory() as session:
             with session.begin():
+                if session.bind is not None and session.bind.dialect.name == "postgresql":
+                    session.execute(sa.text("SET CONSTRAINTS ALL DEFERRED"))
                 if before_execute is not None:
                     before_execute(session)
                 attempt: ManagedMutationAttempt | None = None
@@ -357,6 +367,8 @@ class ManagedMutationUnitOfWork:
                     trust_registry=trust_registry
                     if trust_registry is not None
                     else SqlReceiptTrustRegistry(session, lock_rows=True),
+                    trust_purpose=trust_purpose,
+                    max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
                     consumption_ledger=ledger,
                 )
 
@@ -423,6 +435,7 @@ class ManagedMutationUnitOfWork:
         execution_boundary: str,
         trust_registry: ReceiptTrustRegistry | None,
         revoked_keys: RevocationList | None,
+        trust_purpose: str,
     ) -> None:
         if receipt.decision != Decision.ALLOW.value:
             raise ReceiptValidationError(
@@ -537,6 +550,8 @@ class ManagedMutationUnitOfWork:
                 require_expiry=self._require_expiry,
                 revoked_keys=effective_revoked_keys,
                 trust_registry=trust_registry,
+                trust_purpose=trust_purpose,
+                max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
             )
             return
         with self._session_factory() as session:
@@ -559,6 +574,8 @@ class ManagedMutationUnitOfWork:
                     require_expiry=self._require_expiry,
                     revoked_keys=effective_revoked_keys,
                     trust_registry=SqlReceiptTrustRegistry(session),
+                    trust_purpose=trust_purpose,
+                    max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
                 )
 
 

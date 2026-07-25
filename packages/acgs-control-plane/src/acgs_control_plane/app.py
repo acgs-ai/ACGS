@@ -153,14 +153,20 @@ PrincipalDep = Annotated[Principal, Depends(_principal_dep)]
 
 
 async def _parse_tenant_bootstrap_body(request: Request) -> TenantBootstrapRequest:
-    body = await request.body()
-    if len(body) > _TENANT_BOOTSTRAP_MAX_BODY_BYTES:
-        raise TenantBootstrapHttpError(
-            413,
-            "REQUEST_TOO_LARGE",
-            "request_too_large",
-            "tenant bootstrap request body exceeds the allowed size",
-        )
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _TENANT_BOOTSTRAP_MAX_BODY_BYTES:
+            raise TenantBootstrapHttpError(
+                413,
+                "REQUEST_TOO_LARGE",
+                "request_too_large",
+                "tenant bootstrap request body exceeds the allowed size",
+                stage="transport",
+            )
+        chunks.append(chunk)
+    body = b"".join(chunks)
     try:
         payload = json.loads(body, object_pairs_hook=_reject_duplicate_json_keys)
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
@@ -169,6 +175,7 @@ async def _parse_tenant_bootstrap_body(request: Request) -> TenantBootstrapReque
             "REQUEST_MALFORMED",
             "request_malformed",
             "tenant bootstrap request body is malformed",
+            stage="transport",
         ) from exc
     try:
         return TenantBootstrapRequest.model_validate(payload)
@@ -178,6 +185,7 @@ async def _parse_tenant_bootstrap_body(request: Request) -> TenantBootstrapReque
             "REQUEST_MALFORMED",
             "request_malformed",
             "tenant bootstrap request body is malformed",
+            stage="transport",
         ) from exc
 
 
@@ -188,6 +196,24 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"duplicate JSON key: {key}")
         payload[key] = value
     return payload
+
+
+def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
+    if request.url.path != "/v1/tenant-bootstrap":
+        return
+    if getattr(request.state, "tenant_bootstrap_refusal_recorded", False):
+        return
+    service = getattr(request.app.state, "tenant_bootstrap_service", None)
+    request_id = getattr(request.state, "tenant_bootstrap_request_id", None)
+    if service is None or not request_id:
+        return
+    request.state.tenant_bootstrap_refusal_recorded = True
+    service.record_refusal(
+        request_id=request_id,
+        error=exc,
+        invitation_secret=request.headers.get(BOOTSTRAP_INVITATION_HEADER),
+        idempotency_key=request.headers.get(BOOTSTRAP_IDEMPOTENCY_HEADER),
+    )
 
 
 def _org_guard(org_id: str, principal: PrincipalDep, session: SessionDep) -> Organization:
@@ -275,7 +301,8 @@ def create_app(
         )
 
     @app.exception_handler(TenantBootstrapHttpError)
-    def _tenant_bootstrap_error(_request: Request, exc: TenantBootstrapHttpError) -> JSONResponse:
+    def _tenant_bootstrap_error(request: Request, exc: TenantBootstrapHttpError) -> JSONResponse:
+        _record_tenant_bootstrap_refusal(request, exc)
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -290,6 +317,16 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         if request.url.path == "/v1/tenant-bootstrap":
+            _record_tenant_bootstrap_refusal(
+                request,
+                TenantBootstrapHttpError(
+                    400,
+                    "REQUEST_MALFORMED",
+                    "request_malformed",
+                    "tenant bootstrap request body is malformed",
+                    stage="transport",
+                ),
+            )
             return JSONResponse(
                 status_code=400,
                 content={
@@ -301,24 +338,31 @@ def create_app(
         return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
     @app.middleware("http")
-    async def _tenant_bootstrap_payload_length_hint(request: Request, call_next: Any) -> Any:
+    async def _tenant_bootstrap_request_id(request: Request, call_next: Any) -> Any:
         if request.url.path == "/v1/tenant-bootstrap":
-            content_length = request.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    length = int(content_length)
-                except ValueError:
-                    length = _TENANT_BOOTSTRAP_MAX_BODY_BYTES + 1
-                if length > _TENANT_BOOTSTRAP_MAX_BODY_BYTES:
-                    return JSONResponse(
-                        status_code=413,
-                        content={
-                            "code": "REQUEST_TOO_LARGE",
-                            "status": "request_too_large",
-                            "detail": "tenant bootstrap request body exceeds the allowed size",
-                        },
-                    )
+            request.state.tenant_bootstrap_request_id = secrets.token_hex(16)
         return await call_next(request)
+
+    @app.exception_handler(Exception)
+    def _tenant_bootstrap_fail_closed_error(request: Request, _exc: Exception) -> JSONResponse:
+        if request.url.path == "/v1/tenant-bootstrap":
+            error = TenantBootstrapHttpError(
+                503,
+                "TX_ABORTED",
+                "tx_aborted",
+                "tenant bootstrap transaction aborted",
+                stage="tx",
+            )
+            _record_tenant_bootstrap_refusal(request, error)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "TX_ABORTED",
+                    "status": "tx_aborted",
+                    "detail": _TENANT_BOOTSTRAP_PUBLIC_DETAILS["TX_ABORTED"],
+                },
+            )
+        raise _exc
 
     _register_routes(app)
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
@@ -398,18 +442,22 @@ def create_app(
     app.state.engine = engine
     app.state.schema_preflight = schema_preflight
     app.state.session_factory = make_session_factory(engine)
-    app.state.platform_bootstrap_issuer = platform_bootstrap_issuer or local_bootstrap_issuer()
-    app.state.platform_bootstrap_authenticator = (
+    bootstrap_issuer = platform_bootstrap_issuer or local_bootstrap_issuer()
+    bootstrap_authenticator = (
         platform_bootstrap_authenticator or local_platform_bootstrap_authenticator()
     )
-    app.state.platform_bootstrap_secret_hasher = (
-        platform_bootstrap_secret_hasher or local_bootstrap_secret_hasher()
+    bootstrap_secret_hasher = platform_bootstrap_secret_hasher or local_bootstrap_secret_hasher()
+    bootstrap_trust_registry = platform_bootstrap_trust_registry or local_platform_trust_registry()
+    bootstrap_receipt_sealer = platform_receipt_sealer or local_receipt_sealer()
+    app.state.tenant_bootstrap_service = TenantBootstrapService(
+        app.state.session_factory,
+        issuer=bootstrap_issuer,
+        receipt_sealer=bootstrap_receipt_sealer,
+        authenticator=bootstrap_authenticator,
+        secret_hasher=bootstrap_secret_hasher,
+        trust_registry=bootstrap_trust_registry,
+        receipt_issuer=platform_bootstrap_receipt_issuer,
     )
-    app.state.platform_bootstrap_trust_registry = (
-        platform_bootstrap_trust_registry or local_platform_trust_registry()
-    )
-    app.state.platform_receipt_sealer = platform_receipt_sealer or local_receipt_sealer()
-    app.state.platform_bootstrap_receipt_issuer = platform_bootstrap_receipt_issuer
 
     async def _dispose_engine() -> None:
         app.state.engine.dispose()
@@ -457,15 +505,7 @@ def _register_routes(app: FastAPI) -> None:
         idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
     ) -> TenantBootstrapResponse:
         body = await _parse_tenant_bootstrap_body(request)
-        service = TenantBootstrapService(
-            request.app.state.session_factory,
-            issuer=request.app.state.platform_bootstrap_issuer,
-            receipt_sealer=request.app.state.platform_receipt_sealer,
-            authenticator=request.app.state.platform_bootstrap_authenticator,
-            secret_hasher=request.app.state.platform_bootstrap_secret_hasher,
-            trust_registry=request.app.state.platform_bootstrap_trust_registry,
-            receipt_issuer=request.app.state.platform_bootstrap_receipt_issuer,
-        )
+        service: TenantBootstrapService = request.app.state.tenant_bootstrap_service
         return service.bootstrap(
             body=body,
             authorization=authorization,

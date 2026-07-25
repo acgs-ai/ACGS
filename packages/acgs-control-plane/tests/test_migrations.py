@@ -437,6 +437,7 @@ try:
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
+        "tenant_bootstrap_refusal_events",
         "users",
     }
 finally:
@@ -488,6 +489,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
         "tenant_bootstrap_idempotency",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_policy_artifacts",
+        "tenant_bootstrap_refusal_events",
         "users",
     }
 

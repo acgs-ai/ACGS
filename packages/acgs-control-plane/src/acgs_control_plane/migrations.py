@@ -458,6 +458,9 @@ _TENANT_BOOTSTRAP_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     ),
     "tenant_bootstrap_pending_outbox": (
         _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
         _ColumnSpec("invitation_id", "string", False, 64),
         _ColumnSpec("policy_artifact_id", "string", False, 64),
         _ColumnSpec("delivery_key", "string", False, 200),
@@ -468,6 +471,20 @@ _TENANT_BOOTSTRAP_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
         _ColumnSpec("available_at", "datetime", False),
         _ColumnSpec("delivered_at", "datetime", True),
+    ),
+    "tenant_bootstrap_refusal_events": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("request_id", "string", False, 64),
+        _ColumnSpec("route", "string", False, 64),
+        _ColumnSpec("method", "string", False, 8),
+        _ColumnSpec("stage", "string", False, 32),
+        _ColumnSpec("code", "string", False, 64),
+        _ColumnSpec("http_status", "integer", False),
+        _ColumnSpec("invitation_id", "string", True, 64),
+        _ColumnSpec("invitation_digest", "string", True, 64),
+        _ColumnSpec("idempotency_digest", "string", True, 64),
+        _ColumnSpec("event_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
     ),
 }
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
@@ -506,6 +523,7 @@ _TENANT_BOOTSTRAP_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "tenant_bootstrap_policy_artifacts": ("id",),
     "pending_approvals": ("id",),
     "tenant_bootstrap_pending_outbox": ("id",),
+    "tenant_bootstrap_refusal_events": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -593,6 +611,9 @@ _MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
+    _MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys()
+)
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
     ("org_id", "project_id", "environment_id", "purpose"),
     None,
@@ -621,27 +642,45 @@ _TENANT_BOOTSTRAP_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         {
             (("org_id",), None, "organizations", ("id",)),
             (("user_id",), None, "users", ("id",)),
+            (("org_id", "user_id"), None, "users", ("org_id", "id")),
         }
     ),
     "platform_bootstrap_invitations": frozenset(),
     "tenant_bootstrap_idempotency": frozenset(
         {
             (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
         }
     ),
     "tenant_bootstrap_policy_artifacts": frozenset(
         {
             (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
+            (
+                ("invitation_id", "org_id", "project_id", "environment_id"),
+                None,
+                "platform_bootstrap_invitations",
+                (
+                    "id",
+                    "prospective_org_id",
+                    "prospective_project_id",
+                    "prospective_environment_id",
+                ),
+            ),
         }
     ),
     "pending_approvals": frozenset(
         {
             (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
             (
-                ("invitation_id", "policy_artifact_id"),
+                ("invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"),
                 None,
                 "tenant_bootstrap_policy_artifacts",
-                ("invitation_id", "id"),
+                ("invitation_id", "id", "org_id", "project_id", "environment_id"),
             ),
         }
     ),
@@ -649,13 +688,14 @@ _TENANT_BOOTSTRAP_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         {
             (("invitation_id",), None, "platform_bootstrap_invitations", ("id",)),
             (
-                ("invitation_id", "policy_artifact_id"),
+                ("invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"),
                 None,
                 "tenant_bootstrap_policy_artifacts",
-                ("invitation_id", "id"),
+                ("invitation_id", "id", "org_id", "project_id", "environment_id"),
             ),
         }
     ),
+    "tenant_bootstrap_refusal_events": frozenset(),
 }
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
@@ -674,6 +714,14 @@ _SCOPED_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": frozenset({("org_id", "slug"), ("org_id", "id")}),
     "environments": frozenset({("org_id", "project_id", "slug")}),
+}
+_LEGACY_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_UNIQUES,
+    "users": _LEGACY_UNIQUES["users"] | frozenset({("org_id", "id")}),
+}
+_SCOPED_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
 }
 _MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_SCOPED_UNIQUES,
@@ -724,6 +772,10 @@ _MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_MANAGED_MUTATION_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_MANAGED_MUTATION_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
+}
 _TRUST_V2_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_MANAGED_MUTATION_UNIQUES,
     "managed_trust_scopes": frozenset({("org_id", "project_id", "environment_id", "purpose")}),
@@ -741,19 +793,31 @@ _TRUST_V2_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
         }
     ),
 }
+_TRUST_V2_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TRUST_V2_UNIQUES,
+    "users": _LEGACY_CREATE_ALL_UNIQUES["users"],
+}
 _TENANT_BOOTSTRAP_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_TRUST_V2_UNIQUES,
+    "users": frozenset({("org_id", "email"), ("api_key_hash",), ("org_id", "id")}),
     "organization_memberships": frozenset({("org_id", "user_id")}),
     "platform_bootstrap_invitations": frozenset(
         {
             ("token_hash",),
             ("prospective_org_id", "prospective_project_id", "prospective_environment_id"),
+            (
+                "id",
+                "prospective_org_id",
+                "prospective_project_id",
+                "prospective_environment_id",
+            ),
         }
     ),
     "tenant_bootstrap_idempotency": frozenset({("idempotency_key",), ("org_id",)}),
     "tenant_bootstrap_policy_artifacts": frozenset(
         {
             ("invitation_id", "id"),
+            ("invitation_id", "id", "org_id", "project_id", "environment_id"),
             ("invitation_id",),
             ("receipt_hash",),
             ("audit_event_hash",),
@@ -763,6 +827,7 @@ _TENANT_BOOTSTRAP_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     "tenant_bootstrap_pending_outbox": frozenset(
         {("policy_artifact_id",), ("delivery_key",), ("payload_digest",)}
     ),
+    "tenant_bootstrap_refusal_events": frozenset({("request_id",)}),
 }
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
@@ -786,11 +851,16 @@ _TENANT_BOOTSTRAP_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] 
             "tenant_bootstrap_policy_artifacts",
             "pending_approvals",
             "tenant_bootstrap_pending_outbox",
+            "tenant_bootstrap_refusal_events",
         )
     },
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
+    "projects": _SCOPED_UNIQUES["projects"],
+}
+_PROJECTS_ONLY_CREATE_ALL_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_LEGACY_CREATE_ALL_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
 }
 
@@ -832,6 +902,7 @@ _TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]
     "tenant_bootstrap_policy_artifacts": frozenset({("invitation_id",)}),
     "pending_approvals": frozenset({("org_id",), ("invitation_id",), ("policy_artifact_id",)}),
     "tenant_bootstrap_pending_outbox": frozenset({("invitation_id",), ("policy_artifact_id",)}),
+    "tenant_bootstrap_refusal_events": frozenset(),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -900,6 +971,17 @@ _TENANT_BOOTSTRAP_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
                 "ck_tenant_bootstrap_pending_status",
                 "status IN ('pending', 'delivered', 'failed')",
             ),
+        }
+    ),
+    "tenant_bootstrap_refusal_events": frozenset(
+        {
+            ("ck_tbr_route", "route = 'POST /v1/tenant-bootstrap'"),
+            ("ck_tbr_method", "method = 'POST'"),
+            (
+                "ck_tbr_stage",
+                "stage IN ('transport', 'authn', 'authz', 'policy', 'issuance', 'executor', 'tx')",
+            ),
+            ("ck_tbr_status", "http_status IN (400, 401, 403, 409, 413, 503)"),
         }
     ),
 }
@@ -988,7 +1070,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             _LEGACY_CREATE_ALL_COLUMNS,
             _LEGACY_PRIMARY_KEYS,
             _LEGACY_FOREIGN_KEYS,
-            _LEGACY_UNIQUES,
+            _LEGACY_CREATE_ALL_UNIQUES,
             _LEGACY_NON_UNIQUE_INDEXES,
         )
         if legacy_create_all_detail is None:
@@ -1023,7 +1105,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             _SCOPED_CREATE_ALL_COLUMNS,
             _SCOPED_PRIMARY_KEYS,
             _SCOPED_FOREIGN_KEYS,
-            _SCOPED_UNIQUES,
+            _SCOPED_CREATE_ALL_UNIQUES,
             _SCOPED_NON_UNIQUE_INDEXES,
         )
         if create_all_detail is None:
@@ -1054,7 +1136,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             _MANAGED_MUTATION_CREATE_ALL_COLUMNS,
             _MANAGED_MUTATION_PRIMARY_KEYS,
             _MANAGED_MUTATION_FOREIGN_KEYS,
-            _MANAGED_MUTATION_UNIQUES,
+            _MANAGED_MUTATION_CREATE_ALL_UNIQUES,
             _MANAGED_MUTATION_NON_UNIQUE_INDEXES,
             _MANAGED_MUTATION_CHECKS,
         )
@@ -1087,7 +1169,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             _TRUST_V2_CREATE_ALL_COLUMNS,
             _TRUST_V2_PRIMARY_KEYS,
             _TRUST_V2_FOREIGN_KEYS,
-            _TRUST_V2_UNIQUES,
+            _TRUST_V2_CREATE_ALL_UNIQUES,
             _TRUST_V2_NON_UNIQUE_INDEXES,
             _TRUST_V2_CHECKS,
             _TRUST_V2_UNIQUE_INDEXES,
@@ -1493,7 +1575,7 @@ def _classify_revision_0001(
         _LEGACY_CREATE_ALL_COLUMNS,
         _LEGACY_PRIMARY_KEYS,
         _LEGACY_FOREIGN_KEYS,
-        _LEGACY_UNIQUES,
+        _LEGACY_CREATE_ALL_UNIQUES,
         _LEGACY_NON_UNIQUE_INDEXES,
     )
     if legacy_create_all_detail is None:
@@ -1525,7 +1607,7 @@ def _classify_revision_0001(
         _PROJECTS_ONLY_CREATE_ALL_COLUMNS,
         _PROJECTS_ONLY_PRIMARY_KEYS,
         _PROJECTS_ONLY_FOREIGN_KEYS,
-        _PROJECTS_ONLY_UNIQUES,
+        _PROJECTS_ONLY_CREATE_ALL_UNIQUES,
         _PROJECTS_ONLY_NON_UNIQUE_INDEXES,
     )
     if projects_create_all_detail is None:
@@ -1560,7 +1642,7 @@ def _classify_revision_0001(
         _SCOPED_CREATE_ALL_COLUMNS,
         _SCOPED_PRIMARY_KEYS,
         _SCOPED_FOREIGN_KEYS,
-        _SCOPED_UNIQUES,
+        _SCOPED_CREATE_ALL_UNIQUES,
         _SCOPED_NON_UNIQUE_INDEXES,
     )
     if scoped_create_all_detail is None:
@@ -1740,6 +1822,27 @@ def _canonical_referred_schema(value: object, dialect_name: str) -> str | None:
     return str(value)
 
 
+def _has_only_expected_foreign_key_options(
+    table_name: str,
+    foreign_key: Mapping[str, Any],
+    dialect_name: str,
+) -> bool:
+    options = foreign_key.get("options") or {}
+    if not options:
+        return True
+    if dialect_name not in {"postgresql", "sqlite"}:
+        return False
+    if table_name not in _DEFERRABLE_MANAGED_MUTATION_FK_TABLES:
+        return False
+
+    normalized = {str(key).lower(): value for key, value in options.items()}
+    return (
+        normalized.get("deferrable") is True
+        and str(normalized.get("initially", "")).upper() == "DEFERRED"
+        and set(normalized) <= {"deferrable", "initially"}
+    )
+
+
 def _schema_detail(
     inspector: Inspector,
     actual_tables: set[str],
@@ -1786,7 +1889,10 @@ def _schema_detail(
             return f"{table_name} has an unexpected primary key"
 
         foreign_keys = inspector.get_foreign_keys(table_name, schema=inspection_schema)
-        if any(foreign_key.get("options") for foreign_key in foreign_keys):
+        if any(
+            not _has_only_expected_foreign_key_options(table_name, foreign_key, dialect_name)
+            for foreign_key in foreign_keys
+        ):
             return f"{table_name} has foreign-key options outside the frozen schema"
         actual_foreign_keys = frozenset(
             (
@@ -1914,6 +2020,24 @@ def _check_constraint_signature(value: object) -> str:
         "decision=any(array['deny','escalate'])",
     }:
         return "decision:deny,escalate"
+    if compact in {
+        "route='post/v1/tenant-bootstrap'",
+    }:
+        return "route:tenant-bootstrap"
+    if compact in {
+        "method='post'",
+    }:
+        return "method:post"
+    if compact in {
+        ("stagein('transport','authn','authz','policy','issuance','executor','tx')"),
+        ("stage=any(array['transport','authn','authz','policy','issuance','executor','tx'])"),
+    }:
+        return "stage:transport,authn,authz,policy,issuance,executor,tx"
+    if compact in {
+        "http_statusin(400,401,403,409,413,503)",
+        "http_status=any(array[400,401,403,409,413,503])",
+    }:
+        return "http_status:400,401,403,409,413,503"
     if compact in {
         (
             "status='retired'andretired_epochisnotnull"

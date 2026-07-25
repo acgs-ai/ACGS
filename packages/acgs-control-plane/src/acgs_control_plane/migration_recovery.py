@@ -76,6 +76,7 @@ EXPECTED_TABLES: Final = (
     "tenant_bootstrap_idempotency",
     "tenant_bootstrap_pending_outbox",
     "tenant_bootstrap_policy_artifacts",
+    "tenant_bootstrap_refusal_events",
     "users",
 )
 _ORG_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")

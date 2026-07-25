@@ -45,9 +45,13 @@ from gove_zone.errors import (
     ProductionProfileError,
     ReceiptValidationError,
 )
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    validate_receipt_clock_skew_seconds,
+)
 from gove_zone.signing import ReceiptSigner
-from gove_zone.trust import RECEIPT_V2
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2
 
 # An execution boundary is an opaque label for *where* an approved action may
 # run (e.g. "local-sandbox", "tenant-A/prod-egress"). It is a string today;
@@ -242,6 +246,8 @@ class ReceiptVerifier:
         require_expiry: bool = False,
         revoked_keys: RevocationList | None = None,
         trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+        max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -260,6 +266,8 @@ class ReceiptVerifier:
         self.require_signature = require_signature
         self.require_expiry = require_expiry
         self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.max_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
         # Revocation config is construction-only (never a per-call arg on
         # verify): a per-call empty/weaker list could silently disable a
         # security control, the same foot-gun authz/ledger avoid.
@@ -274,6 +282,7 @@ class ReceiptVerifier:
         expected_audit_hash: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
+        max_clock_skew_seconds: int | None = None,
     ) -> None:
         """Raise :class:`ReceiptValidationError` unless *receipt* authorizes the action.
 
@@ -299,6 +308,11 @@ class ReceiptVerifier:
             raise ReceiptValidationError(
                 "expected_actor is required for governed verification (fail-closed)"
             )
+        effective_skew = validate_receipt_clock_skew_seconds(
+            max_clock_skew_seconds
+            if max_clock_skew_seconds is not None
+            else self.max_clock_skew_seconds
+        )
         receipt.verify(
             expected_tenant_id=self.expected_tenant_id,
             expected_execution_boundary=self.expected_execution_boundary,
@@ -317,7 +331,9 @@ class ReceiptVerifier:
             require_expiry=self.require_expiry,
             revoked_keys=self.revoked_keys,
             trust_registry=self.trust_registry,
+            trust_purpose=self.trust_purpose,
             now_iso=now_iso,
+            max_clock_skew_seconds=effective_skew,
         )
 
     def is_valid(
@@ -329,6 +345,7 @@ class ReceiptVerifier:
         expected_audit_hash: str | None = None,
         expected_actor: str | None = None,
         now_iso: str | None = None,
+        max_clock_skew_seconds: int | None = None,
     ) -> bool:
         """Boolean form of :meth:`verify` — never raises, returns False on any failure."""
         try:
@@ -339,6 +356,7 @@ class ReceiptVerifier:
                 expected_audit_hash=expected_audit_hash,
                 expected_actor=expected_actor,
                 now_iso=now_iso,
+                max_clock_skew_seconds=max_clock_skew_seconds,
             )
             return True
         except ReceiptValidationError:

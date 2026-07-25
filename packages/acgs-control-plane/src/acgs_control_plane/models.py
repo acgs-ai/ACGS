@@ -126,7 +126,10 @@ class Environment(Base):
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("org_id", "email", name="uq_users_org_email"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_users_org_id_id"),
+        UniqueConstraint("org_id", "email", name="uq_users_org_email"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
@@ -143,6 +146,11 @@ class OrganizationMembership(Base):
 
     __tablename__ = "organization_memberships"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "user_id"],
+            ["users.org_id", "users.id"],
+            name="fk_org_memberships_org_user",
+        ),
         UniqueConstraint("org_id", "user_id", name="uq_org_memberships_org_user"),
         CheckConstraint("role IN ('owner')", name="ck_org_memberships_role"),
         {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
@@ -170,6 +178,13 @@ class PlatformBootstrapInvitation(Base):
             "prospective_project_id",
             "prospective_environment_id",
             name="uq_platform_bootstrap_invitation_scope",
+        ),
+        UniqueConstraint(
+            "id",
+            "prospective_org_id",
+            "prospective_project_id",
+            "prospective_environment_id",
+            name="uq_platform_bootstrap_invitation_id_scope",
         ),
         CheckConstraint(
             "policy_outcome IN ('allow', 'deny', 'escalate')",
@@ -199,6 +214,11 @@ class TenantBootstrapIdempotency(Base):
 
     __tablename__ = "tenant_bootstrap_idempotency"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_tenant_bootstrap_idempotency_environment",
+        ),
         UniqueConstraint("idempotency_key", name="uq_tenant_bootstrap_idempotency_key"),
         UniqueConstraint("org_id", name="uq_tenant_bootstrap_idempotency_org"),
         {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
@@ -220,7 +240,25 @@ class TenantBootstrapPolicyArtifact(Base):
 
     __tablename__ = "tenant_bootstrap_policy_artifacts"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["invitation_id", "org_id", "project_id", "environment_id"],
+            [
+                "platform_bootstrap_invitations.id",
+                "platform_bootstrap_invitations.prospective_org_id",
+                "platform_bootstrap_invitations.prospective_project_id",
+                "platform_bootstrap_invitations.prospective_environment_id",
+            ],
+            name="fk_tenant_bootstrap_policy_invitation_scope",
+        ),
         UniqueConstraint("invitation_id", "id", name="uq_tenant_bootstrap_policy_invitation_id"),
+        UniqueConstraint(
+            "invitation_id",
+            "id",
+            "org_id",
+            "project_id",
+            "environment_id",
+            name="uq_tenant_bootstrap_policy_invitation_id_scope",
+        ),
         UniqueConstraint("invitation_id", name="uq_tenant_bootstrap_policy_invitation"),
         UniqueConstraint("receipt_hash", name="uq_tenant_bootstrap_policy_receipt_hash"),
         UniqueConstraint("audit_event_hash", name="uq_tenant_bootstrap_policy_audit_hash"),
@@ -252,12 +290,15 @@ class PendingApproval(Base):
     __tablename__ = "pending_approvals"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["invitation_id", "policy_artifact_id"],
+            ["invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"],
             [
                 "tenant_bootstrap_policy_artifacts.invitation_id",
                 "tenant_bootstrap_policy_artifacts.id",
+                "tenant_bootstrap_policy_artifacts.org_id",
+                "tenant_bootstrap_policy_artifacts.project_id",
+                "tenant_bootstrap_policy_artifacts.environment_id",
             ],
-            name="fk_pending_approvals_invitation_policy_artifact",
+            name="fk_pending_approvals_policy_artifact_scope",
         ),
         UniqueConstraint("receipt_hash", name="uq_pending_approvals_receipt_hash"),
         UniqueConstraint("audit_event_hash", name="uq_pending_approvals_audit_hash"),
@@ -288,12 +329,15 @@ class TenantBootstrapPendingOutbox(Base):
     __tablename__ = "tenant_bootstrap_pending_outbox"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["invitation_id", "policy_artifact_id"],
+            ["invitation_id", "policy_artifact_id", "org_id", "project_id", "environment_id"],
             [
                 "tenant_bootstrap_policy_artifacts.invitation_id",
                 "tenant_bootstrap_policy_artifacts.id",
+                "tenant_bootstrap_policy_artifacts.org_id",
+                "tenant_bootstrap_policy_artifacts.project_id",
+                "tenant_bootstrap_policy_artifacts.environment_id",
             ],
-            name="fk_tenant_bootstrap_pending_invitation_policy_artifact",
+            name="fk_tenant_bootstrap_pending_policy_artifact_scope",
         ),
         UniqueConstraint("policy_artifact_id", name="uq_tenant_bootstrap_pending_policy_artifact"),
         UniqueConstraint("delivery_key", name="uq_tenant_bootstrap_pending_delivery_key"),
@@ -306,6 +350,9 @@ class TenantBootstrapPendingOutbox(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     invitation_id: Mapped[str] = mapped_column(
         ForeignKey("platform_bootstrap_invitations.id"), nullable=False, index=True
     )
@@ -318,6 +365,38 @@ class TenantBootstrapPendingOutbox(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TenantBootstrapRefusalEvent(Base):
+    """Redacted primary refusal audit for tenant-bootstrap transport/control failures."""
+
+    __tablename__ = "tenant_bootstrap_refusal_events"
+    __table_args__ = (
+        UniqueConstraint("request_id", name="uq_tenant_bootstrap_refusal_request_id"),
+        CheckConstraint("route = 'POST /v1/tenant-bootstrap'", name="ck_tbr_route"),
+        CheckConstraint("method = 'POST'", name="ck_tbr_method"),
+        CheckConstraint(
+            "stage IN ('transport', 'authn', 'authz', 'policy', 'issuance', 'executor', 'tx')",
+            name="ck_tbr_stage",
+        ),
+        CheckConstraint("http_status IN (400, 401, 403, 409, 413, 503)", name="ck_tbr_status"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    route: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="POST /v1/tenant-bootstrap"
+    )
+    method: Mapped[str] = mapped_column(String(8), nullable=False, default="POST")
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    http_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    invitation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invitation_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    idempotency_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AgentRecord(Base):
@@ -394,6 +473,8 @@ class ManagedDecisionReceipt(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_receipts_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_mdr_scope_id"),
         UniqueConstraint(
@@ -425,7 +506,10 @@ class ManagedDecisionReceipt(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -559,6 +643,8 @@ class ManagedMutationAttempt(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_attempts_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("org_id", "receipt_hash", name="uq_mma_org_receipt_hash"),
         UniqueConstraint("org_id", "audit_event_hash", name="uq_mma_org_audit_event_hash"),
@@ -570,7 +656,10 @@ class ManagedMutationAttempt(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -594,6 +683,8 @@ class ManagedReceiptConsumption(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_consumptions_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["org_id", "project_id", "environment_id", "managed_receipt_id"],
@@ -604,6 +695,8 @@ class ManagedReceiptConsumption(Base):
                 "managed_decision_receipts.id",
             ],
             name="fk_managed_consumptions_scope_receipt",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint(
             "org_id",
@@ -632,7 +725,10 @@ class ManagedReceiptConsumption(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -650,11 +746,16 @@ class ManagedGovernanceEventHead(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_event_heads_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
     )
 
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        primary_key=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     environment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     last_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -671,6 +772,8 @@ class ManagedGovernanceEvent(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_events_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["org_id", "project_id", "environment_id", "managed_receipt_id"],
@@ -681,6 +784,8 @@ class ManagedGovernanceEvent(Base):
                 "managed_decision_receipts.id",
             ],
             name="fk_managed_events_scope_receipt",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_mge_scope_id"),
         UniqueConstraint(
@@ -708,7 +813,10 @@ class ManagedGovernanceEvent(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -733,6 +841,8 @@ class ManagedOutboxMessage(Base):
             ["org_id", "project_id", "environment_id"],
             ["environments.org_id", "environments.project_id", "environments.id"],
             name="fk_managed_outbox_scope_environment",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["org_id", "project_id", "environment_id", "managed_receipt_id"],
@@ -743,6 +853,8 @@ class ManagedOutboxMessage(Base):
                 "managed_decision_receipts.id",
             ],
             name="fk_managed_outbox_scope_receipt",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["org_id", "project_id", "environment_id", "managed_event_id"],
@@ -753,6 +865,8 @@ class ManagedOutboxMessage(Base):
                 "managed_governance_events.id",
             ],
             name="fk_managed_outbox_scope_event",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint(
             "org_id",
@@ -772,7 +886,10 @@ class ManagedOutboxMessage(Base):
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
-    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)

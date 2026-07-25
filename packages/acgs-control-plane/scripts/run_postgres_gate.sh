@@ -26,6 +26,7 @@ p2_tenant_bootstrap_selectors=(
   'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix'
   'tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once'
 )
+immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
 if (($# == ${#expected_selectors[@]})); then
@@ -50,8 +51,12 @@ if [[ -z "$selector_mode" && $# == ${#p2_tenant_bootstrap_selectors[@]} ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
+  selector_mode='p2-immutable-0004-upgrade'
+  junit_expected_tests=1
+fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration or P2 tenant-bootstrap selectors are required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in
@@ -310,7 +315,7 @@ export ACP_TEST_RECOVERY_SOURCE_URL="$recovery_source_url"
 export ACP_TEST_RECOVERY_TARGET_URL="$recovery_target_url"
 export ACP_TEST_RECOVERY_BYTEA_URL="$recovery_bytea_url"
 export ACP_TEST_ROLLING_POSTGRES_URL="$rolling_url"
-if [[ "$selector_mode" == 'p1-migration' ]]; then
+if [[ "$selector_mode" == 'p1-migration' || "$selector_mode" == 'p2-immutable-0004-upgrade' ]]; then
   export ACP_TEST_OLD_APP_ARTIFACT="$old_wheel"
   export ACP_TEST_OLD_APP_ARTIFACT_SHA256="$old_digest"
 else

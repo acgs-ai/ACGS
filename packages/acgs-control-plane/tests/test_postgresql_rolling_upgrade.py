@@ -62,6 +62,7 @@ _MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 _PROTOCOL_TIMEOUT_SECONDS = 10.0
 _OPERATOR_TIMEOUT_SECONDS = 20.0
 _PROTOCOL_QUEUE_RECORDS = 8
+_G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS = frozenset({"uq_users_org_id_id"})
 
 
 class ArtifactRefusal(RuntimeError):
@@ -73,6 +74,23 @@ class OldArtifact:
     path: Path
     sha256: str
     source_commit: str
+
+
+def _without_allowed_old_table_catalog_additions(
+    rows: tuple[tuple[Any, ...], ...],
+) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        row
+        for row in rows
+        if not (
+            len(row) >= 7
+            and row[1] == "users"
+            and (
+                row[4] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
+                or row[6] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
+            )
+        )
+    )
 
 
 def _decode_json_object(raw: str | bytes) -> tuple[str, dict[str, Any] | None]:
@@ -944,11 +962,14 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "tenant_bootstrap_idempotency",
             "tenant_bootstrap_pending_outbox",
             "tenant_bootstrap_policy_artifacts",
+            "tenant_bootstrap_refusal_events",
         }
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
             migrated_catalog = tuple(row for row in migrated["catalog"] if row[1] == table)
-            assert migrated_catalog == before_catalog
+            assert _without_allowed_old_table_catalog_additions(
+                migrated_catalog
+            ) == _without_allowed_old_table_catalog_additions(before_catalog)
             if table == "alembic_version":
                 continue
             assert migrated["rows"][table] == before["rows"][table]
@@ -1003,6 +1024,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert after_old_write["rows"]["tenant_bootstrap_idempotency"] == ()
         assert after_old_write["rows"]["tenant_bootstrap_pending_outbox"] == ()
         assert after_old_write["rows"]["tenant_bootstrap_policy_artifacts"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_refusal_events"] == ()
         receipt_id = created["body"]["receipt_id"]
         audit_records_after_write = _audit_records(audit_dir, bootstrapped["org_id"])
         assert len(audit_records_after_write) == len(audit_records_before_write) + 1

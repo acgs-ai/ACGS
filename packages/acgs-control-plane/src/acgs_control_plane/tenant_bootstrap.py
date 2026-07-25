@@ -16,7 +16,6 @@ from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptRejectionReason, Re
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import Ed25519Signer
 from gove_zone.trust import (
-    DECISION_RECEIPT_PURPOSE,
     ReceiptTrustRegistry,
     ReceiptTrustScope,
     StaticReceiptTrustRegistry,
@@ -49,6 +48,7 @@ from acgs_control_plane.models import (
     TenantBootstrapIdempotency,
     TenantBootstrapPendingOutbox,
     TenantBootstrapPolicyArtifact,
+    TenantBootstrapRefusalEvent,
     User,
     new_id,
     utcnow,
@@ -77,6 +77,7 @@ TENANT_BOOTSTRAP_POLICY_HASH = sha256_json(
         "rules": ("valid-one-use-platform-invitation",),
     }
 )
+PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE = "acgs.platform-bootstrap.receipt.v1"
 TENANT_BOOTSTRAP_AUTHORITY = "platform.provisioner/v1"
 TENANT_BOOTSTRAP_VALIDATOR_ROLE = "platform.bootstrap-policy/v1"
 _GENESIS_AUDIT_HASH = "0" * 64
@@ -94,6 +95,70 @@ class TenantBootstrapHttpError(RuntimeError):
     code: str
     status: str
     detail: str
+    stage: str = "policy"
+    invitation_id: str | None = None
+    invitation_digest: str | None = None
+    idempotency_digest: str | None = None
+
+
+@dataclass(frozen=True)
+class BootstrapRefusalError(RuntimeError):
+    code: str
+    reason: str
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+class BootstrapTrustUnavailable(TrustConfigurationError):
+    """Typed bootstrap provider outage; message text is not a routing contract."""
+
+
+class BootstrapKeyUntrusted(TrustConfigurationError):
+    """Typed bootstrap key refusal; message text is not a routing contract."""
+
+
+class BootstrapKeyRevoked(TrustConfigurationError):
+    """Typed bootstrap key revocation; message text is not a routing contract."""
+
+
+_REFUSAL_EVENT_CODES = frozenset(
+    {
+        "REQUEST_TOO_LARGE",
+        "REQUEST_MALFORMED",
+        "AUTHENTICATION_REQUIRED",
+        "AUTHORIZATION_DENIED",
+        "BOOTSTRAP_NOT_AUTHORIZED",
+        "IDEMPOTENCY_KEY_INVALID",
+        "IDEMPOTENCY_CONFLICT",
+        "SIGNER_UNAVAILABLE",
+        "RECEIPT_MISSING",
+        "RECEIPT_MALFORMED",
+        "RECEIPT_VERSION_UNSUPPORTED",
+        "RECEIPT_FIELD_MISSING",
+        "SIGNATURE_INVALID",
+        "KEY_UNTRUSTED",
+        "KEY_REVOKED",
+        "TRUST_PROVIDER_UNAVAILABLE",
+        "EXPIRED",
+        "REPLAYED",
+        "CONSUMED",
+        "DECISION_NOT_ALLOW",
+        "ORG_MISMATCH",
+        "PROJECT_MISMATCH",
+        "ENV_MISMATCH",
+        "EXECUTION_BOUNDARY_MISMATCH",
+        "ACTOR_MISMATCH",
+        "AUTHORITY_MISMATCH",
+        "VALIDATOR_MISMATCH",
+        "ACTION_MISMATCH",
+        "ARGUMENTS_MISMATCH",
+        "POLICY_MISMATCH",
+        "AUDIT_ANCHOR_MISMATCH",
+        "TX_ABORTED",
+    }
+)
+_NON_REFUSAL_OUTCOMES = frozenset({"POLICY_DENIED", "ESCALATE_PENDING"})
 
 
 @dataclass(frozen=True)
@@ -116,6 +181,16 @@ class TenantBootstrapReceiptIssuer(Protocol):
         reason: str,
         request_id: str,
     ) -> tuple[DecisionReceipt | None, str]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class TenantBootstrapProviders:
+    issuer: ManagedPlatformIssuer
+    authenticator: PlatformBootstrapAuthenticator
+    secret_hasher: TenantBootstrapSecretHasher
+    trust_registry: ReceiptTrustRegistry
+    receipt_sealer: AesGcmReceiptArtifactSealer
+    receipt_issuer: TenantBootstrapReceiptIssuer
 
 
 @dataclass(frozen=True)
@@ -176,7 +251,8 @@ def local_bootstrap_issuer() -> InProcessPlatformIssuer:
         Ed25519Signer.from_private_bytes(
             _LOCAL_TEST_SIGNER_SEED,
             key_id="local-platform-tenant-bootstrap",
-        )
+        ),
+        allowed_purposes=frozenset({PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE}),
     )
 
 
@@ -225,7 +301,7 @@ def local_platform_trust_registry() -> StaticReceiptTrustRegistry:
             tenant_id="local-bootstrap-placeholder",
             project_id="local-bootstrap-placeholder",
             environment_id="local-bootstrap-placeholder",
-            purpose=DECISION_RECEIPT_PURPOSE,
+            purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
         ),
         trust_epoch=1,
     )
@@ -268,9 +344,11 @@ class _TenantBootstrapScopeTrustRegistry:
         mode: str = "execution",
     ) -> TrustedReceiptKey:
         if self.unavailable:
-            raise TrustConfigurationError("tenant bootstrap trust provider unavailable")
+            raise BootstrapTrustUnavailable("tenant bootstrap trust provider unavailable")
+        if scope.purpose != PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE:
+            raise BootstrapKeyUntrusted("tenant bootstrap platform key is purpose-bound")
         if key_id != self.key_id or algorithm != self.algorithm:
-            raise TrustConfigurationError("tenant bootstrap platform key is not trusted")
+            raise BootstrapKeyUntrusted("tenant bootstrap platform key is not trusted")
         return TrustedReceiptKey(
             scope=scope,
             key_id=self.key_id,
@@ -324,6 +402,11 @@ def create_platform_bootstrap_invitation(
 
 
 class TenantBootstrapService:
+    _providers: TenantBootstrapProviders
+    _session_factory: sessionmaker[Session]
+
+    __slots__ = ("_providers", "_session_factory")
+
     def __init__(
         self,
         session_factory: sessionmaker[Session],
@@ -335,13 +418,22 @@ class TenantBootstrapService:
         trust_registry: ReceiptTrustRegistry,
         receipt_issuer: TenantBootstrapReceiptIssuer | None = None,
     ) -> None:
-        self._session_factory = session_factory
-        self._issuer = issuer
-        self._receipt_sealer = receipt_sealer
-        self._authenticator = authenticator
-        self._secret_hasher = secret_hasher
-        self._trust_registry = trust_registry
-        self._receipt_issuer = receipt_issuer or DefaultTenantBootstrapReceiptIssuer(issuer)
+        object.__setattr__(self, "_session_factory", session_factory)
+        object.__setattr__(
+            self,
+            "_providers",
+            TenantBootstrapProviders(
+                issuer=issuer,
+                authenticator=authenticator,
+                secret_hasher=secret_hasher,
+                trust_registry=trust_registry,
+                receipt_sealer=receipt_sealer,
+                receipt_issuer=receipt_issuer or DefaultTenantBootstrapReceiptIssuer(issuer),
+            ),
+        )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("tenant bootstrap service is frozen after initialization")
 
     def bootstrap(
         self,
@@ -351,16 +443,18 @@ class TenantBootstrapService:
         invitation_secret: str | None,
         idempotency_key: str | None,
     ) -> TenantBootstrapResponse:
-        principal = _require_authenticated_principal(authorization, self._authenticator)
+        providers = self._providers
+        principal = _require_authenticated_principal(authorization, providers.authenticator)
         _require_platform_permission(principal)
         actor = principal.actor
+        idempotency_key = _require_idempotency_key(idempotency_key)
         invitation_token = _require_invitation_secret(invitation_secret)
 
         with self._session_factory() as session:
             invitation = _locked_invitation(
                 session,
                 token=invitation_token,
-                hasher=self._secret_hasher,
+                hasher=providers.secret_hasher,
             )
             if invitation is None:
                 raise TenantBootstrapHttpError(
@@ -368,6 +462,7 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is not valid",
+                    stage="policy",
                 )
             if invitation.invitee_actor != actor:
                 raise TenantBootstrapHttpError(
@@ -375,14 +470,15 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is not valid",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
             _require_invitation_role(invitation.invitee_role)
-            idempotency_key = _require_idempotency_key(idempotency_key)
             stored_idempotency_key = _idempotency_storage_key(
                 actor=actor,
                 invitation_id=invitation.id,
                 key=idempotency_key,
-                hasher=self._secret_hasher,
+                hasher=providers.secret_hasher,
             )
             request_projection = _request_projection(body, actor=actor)
             existing = _lookup_idempotency(session, idempotency_key=stored_idempotency_key)
@@ -395,6 +491,8 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is no longer executable",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
             if _to_utc(invitation.expires_at) <= utcnow():
                 raise TenantBootstrapHttpError(
@@ -402,6 +500,8 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is expired",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
             if invitation.policy_outcome == Decision.DENY.value:
                 return self._record_non_executable(
@@ -441,6 +541,7 @@ class TenantBootstrapService:
         idempotency_key: str,
         decision: Decision,
     ) -> TenantBootstrapResponse:
+        providers = self._providers
         existing_artifact = session.scalars(
             sa.select(TenantBootstrapPolicyArtifact)
             .where(TenantBootstrapPolicyArtifact.invitation_id == invitation.id)
@@ -461,7 +562,7 @@ class TenantBootstrapService:
                 "tenant bootstrap policy denied the invitation",
             )
         context, args = _context_and_args(invitation, body, actor, idempotency_key)
-        receipt, audit_event_hash = self._receipt_issuer.issue(
+        receipt, audit_event_hash = providers.receipt_issuer.issue(
             context=context,
             args=args,
             decision=decision,
@@ -475,7 +576,7 @@ class TenantBootstrapService:
             receipt=receipt,
             context=context,
             args=args,
-            trust_registry=self._trust_registry,
+            trust_registry=providers.trust_registry,
         )
         artifact = TenantBootstrapPolicyArtifact(
             id=new_id(),
@@ -487,7 +588,7 @@ class TenantBootstrapService:
             receipt_hash=receipt.receipt_hash,
             audit_event_hash=audit_event_hash,
             sealed_receipt=dict(
-                self._receipt_sealer.seal(
+                providers.receipt_sealer.seal(
                     _canonical_json_bytes(receipt.to_dict()),
                     associated_data=_canonical_json_bytes(
                         {
@@ -504,6 +605,12 @@ class TenantBootstrapService:
                 "actor_hash": sha256_json(actor),
                 "argument_hash": receipt.argument_hash,
                 "receipt_hash": receipt.receipt_hash,
+                "policy_bundle_id": context.policy_bundle_id,
+                "policy_version": TENANT_BOOTSTRAP_POLICY_VERSION,
+                "policy_hash": context.policy_hash,
+                "org_id": context.org_id,
+                "project_id": context.project_id,
+                "environment_id": context.environment_id,
                 "assurance_class": ASSURANCE_CLASS_NATIVE,
                 "source_system": "gove-zone",
             },
@@ -535,6 +642,9 @@ class TenantBootstrapService:
                     created_at=utcnow(),
                     available_at=utcnow(),
                     delivered_at=None,
+                    org_id=context.org_id,
+                    project_id=context.project_id,
+                    environment_id=context.environment_id,
                 )
             )
             session.add(
@@ -578,6 +688,8 @@ class TenantBootstrapService:
             "POLICY_DENIED",
             "policy_denied",
             "tenant bootstrap policy denied the invitation",
+            stage="policy",
+            invitation_id=invitation.id,
         )
 
     def _execute_allow(
@@ -590,11 +702,12 @@ class TenantBootstrapService:
         stored_idempotency_key: str,
         request_projection: dict[str, Any],
     ) -> TenantBootstrapResponse:
+        providers = self._providers
         with self._session_factory() as session:
             invitation = _locked_invitation(
                 session,
                 token=invitation_token,
-                hasher=self._secret_hasher,
+                hasher=providers.secret_hasher,
             )
             if invitation is None:
                 existing = _lookup_idempotency(session, idempotency_key=stored_idempotency_key)
@@ -606,9 +719,10 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is not valid for this actor",
+                    stage="policy",
                 )
             context, args = _context_and_args(invitation, body, actor, idempotency_key)
-        receipt, audit_event_hash = self._receipt_issuer.issue(
+        receipt, audit_event_hash = providers.receipt_issuer.issue(
             context=context,
             args=args,
             decision=Decision.ALLOW,
@@ -616,33 +730,39 @@ class TenantBootstrapService:
             request_id=idempotency_key,
         )
         context = replace(context, expected_audit_hash=audit_event_hash)
+        if receipt is None:
+            raise _executor_refusal(
+                "RECEIPT_MISSING",
+                ValueError("tenant bootstrap receipt missing"),
+            )
         try:
-            if receipt is not None:
-                _precheck_bootstrap_trust(
-                    receipt=receipt,
-                    context=context,
-                    trust_registry=self._trust_registry,
-                )
-                _reject_replayed_bootstrap_receipt(
-                    self._session_factory,
-                    receipt=receipt,
-                    context=context,
-                )
+            _verify_bootstrap_receipt(
+                receipt=receipt,
+                context=context,
+                args=args,
+                trust_registry=providers.trust_registry,
+                allow_policy_outcome_refusal=False,
+            )
+            _reject_replayed_bootstrap_receipt(
+                self._session_factory,
+                receipt=receipt,
+                context=context,
+            )
         except ReceiptAlreadyUsedError as exc:
             raise _executor_refusal(_receipt_already_used_code(exc), exc) from exc
-        except AttributeError as exc:
-            raise _executor_refusal("RECEIPT_MALFORMED", exc) from exc
+        except BootstrapRefusalError as exc:
+            raise _map_executor_refusal(exc) from exc
         holder: dict[str, TenantBootstrapResponse] = {}
         uow = ManagedMutationUnitOfWork(
             self._session_factory,
-            receipt_sealer=self._receipt_sealer,
+            receipt_sealer=providers.receipt_sealer,
         )
 
         def before_execute(session: Session) -> None:
             invitation = _locked_invitation(
                 session,
                 token=invitation_token,
-                hasher=self._secret_hasher,
+                hasher=providers.secret_hasher,
             )
             if invitation is None or invitation.policy_outcome != Decision.ALLOW.value:
                 raise TenantBootstrapHttpError(
@@ -650,6 +770,7 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is not executable",
+                    stage="policy",
                 )
             if invitation.invitee_actor != actor:
                 raise TenantBootstrapHttpError(
@@ -657,6 +778,8 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation identity changed",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
             _require_invitation_role(invitation.invitee_role)
             existing = _lookup_idempotency(session, idempotency_key=stored_idempotency_key)
@@ -668,6 +791,8 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is no longer executable",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
             if _to_utc(invitation.expires_at) <= utcnow():
                 raise TenantBootstrapHttpError(
@@ -675,25 +800,9 @@ class TenantBootstrapService:
                     "BOOTSTRAP_NOT_AUTHORIZED",
                     "bootstrap_not_authorized",
                     "platform bootstrap invitation is expired",
+                    stage="policy",
+                    invitation_id=invitation.id,
                 )
-
-        def before_consume(session: Session) -> None:
-            invitation = _locked_invitation(
-                session,
-                token=invitation_token,
-                hasher=self._secret_hasher,
-            )
-            if invitation is None:
-                raise TenantBootstrapHttpError(
-                    403,
-                    "BOOTSTRAP_NOT_AUTHORIZED",
-                    "bootstrap_not_authorized",
-                    "platform bootstrap invitation is not executable",
-                )
-            _insert_domain_rows(session, invitation=invitation, body=body, args=args, actor=actor)
-            invitation.consumed_at = utcnow()
-            invitation.consumed_org_id = context.org_id
-            session.flush()
 
         def after_success(
             session: Session,
@@ -735,8 +844,17 @@ class TenantBootstrapService:
                 args=args,
                 before_execute=before_execute,
                 after_success=after_success,
-                trust_registry=self._trust_registry,
-                before_consume=before_consume,
+                operation_effect=lambda session, verified_args: _execute_bootstrap_effect(
+                    session,
+                    invitation_token=invitation_token,
+                    secret_hasher=providers.secret_hasher,
+                    body=body,
+                    args=cast(dict[str, str], verified_args),
+                    actor=actor,
+                    context=context,
+                ),
+                trust_registry=providers.trust_registry,
+                trust_purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
             )
         except _CommittedIdempotencyRace:
             existing = _lookup_idempotency_new_session(
@@ -760,6 +878,7 @@ class TenantBootstrapService:
                 "TX_ABORTED",
                 "tx_aborted",
                 "tenant bootstrap transaction aborted",
+                stage="tx",
             ) from exc
         except ReceiptAlreadyUsedError as exc:
             existing = _lookup_idempotency_new_session(
@@ -770,10 +889,29 @@ class TenantBootstrapService:
                 _assert_same_request(existing, request_projection)
                 return TenantBootstrapResponse.model_validate(existing.response)
             raise _executor_refusal(_receipt_already_used_code(exc), exc) from exc
-        except (ReceiptValidationError, TrustConfigurationError, ValueError) as exc:
+        except (
+            BootstrapRefusalError,
+            ReceiptValidationError,
+            TrustConfigurationError,
+        ) as exc:
             raise _map_executor_refusal(exc) from exc
-        except AttributeError as exc:
-            raise _executor_refusal("RECEIPT_MALFORMED", exc) from exc
+        except TenantBootstrapHttpError:
+            raise
+        except Exception as exc:
+            existing = _lookup_idempotency_new_session(
+                self._session_factory,
+                idempotency_key=stored_idempotency_key,
+            )
+            if existing is not None:
+                _assert_same_request(existing, request_projection)
+                return TenantBootstrapResponse.model_validate(existing.response)
+            raise TenantBootstrapHttpError(
+                503,
+                "TX_ABORTED",
+                "tx_aborted",
+                "tenant bootstrap transaction aborted",
+                stage="tx",
+            ) from exc
         if "response" not in holder:
             existing = _lookup_idempotency_new_session(
                 self._session_factory,
@@ -784,6 +922,73 @@ class TenantBootstrapService:
                 return TenantBootstrapResponse.model_validate(existing.response)
             raise TenantBootstrapHttpError(503, "TX_ABORTED", "tx_aborted", "commit lost")
         return holder["response"]
+
+    def record_refusal(
+        self,
+        *,
+        request_id: str,
+        error: TenantBootstrapHttpError,
+        invitation_secret: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> None:
+        if error.code in _NON_REFUSAL_OUTCOMES:
+            return
+        code = error.code if error.code in _REFUSAL_EVENT_CODES else "TX_ABORTED"
+        stage = error.stage
+        if stage not in {
+            "transport",
+            "authn",
+            "authz",
+            "policy",
+            "issuance",
+            "executor",
+            "tx",
+        }:
+            stage = "tx"
+        payload = {
+            "schema": "tenant-bootstrap-refusal-event/v1",
+            "request_id": request_id,
+            "route": "POST /v1/tenant-bootstrap",
+            "method": "POST",
+            "stage": stage,
+            "code": code,
+            "http_status": error.status_code,
+            "invitation_id": error.invitation_id,
+            "invitation_digest": error.invitation_digest
+            or _optional_secret_digest(
+                self._providers.secret_hasher, "invitation", invitation_secret
+            ),
+            "idempotency_digest": error.idempotency_digest
+            or _optional_secret_digest(
+                self._providers.secret_hasher, "idempotency", idempotency_key
+            ),
+        }
+        event_hash = sha256_json(payload)
+        with self._session_factory() as session:
+            existing = session.scalars(
+                sa.select(TenantBootstrapRefusalEvent).where(
+                    TenantBootstrapRefusalEvent.request_id == request_id
+                )
+            ).first()
+            if existing is not None:
+                return
+            session.add(
+                TenantBootstrapRefusalEvent(
+                    id=new_id(),
+                    request_id=request_id,
+                    route="POST /v1/tenant-bootstrap",
+                    method="POST",
+                    stage=stage,
+                    code=code,
+                    http_status=error.status_code,
+                    invitation_id=error.invitation_id,
+                    invitation_digest=payload["invitation_digest"],
+                    idempotency_digest=payload["idempotency_digest"],
+                    event_hash=event_hash,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
 
 
 class _CommittedIdempotencyRace(RuntimeError):
@@ -800,6 +1005,7 @@ def _require_authenticated_principal(
             "AUTHENTICATION_REQUIRED",
             "authentication_required",
             "platform bearer credential is required",
+            stage="authn",
         )
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token.strip() or " " in token.strip():
@@ -808,6 +1014,7 @@ def _require_authenticated_principal(
             "AUTHENTICATION_REQUIRED",
             "authentication_required",
             "platform bearer credential is malformed",
+            stage="authn",
         )
     principal = authenticator.authenticate_bearer(token.strip())
     if principal is None or not principal.actor:
@@ -816,6 +1023,7 @@ def _require_authenticated_principal(
             "AUTHENTICATION_REQUIRED",
             "authentication_required",
             "platform bearer credential is not recognized",
+            stage="authn",
         )
     return principal
 
@@ -827,6 +1035,7 @@ def _require_invitation_secret(invitation_secret: str | None) -> str:
             "BOOTSTRAP_NOT_AUTHORIZED",
             "bootstrap_not_authorized",
             "platform bootstrap invitation is not valid",
+            stage="policy",
         )
     token = invitation_secret.strip()
     _require_strong_secret(token, code="BOOTSTRAP_NOT_AUTHORIZED")
@@ -880,6 +1089,7 @@ def _require_platform_permission(principal: PlatformBootstrapPrincipal) -> None:
             "AUTHORIZATION_DENIED",
             "authorization_denied",
             "platform actor is not authorized for tenant bootstrap",
+            stage="authz",
         )
 
 
@@ -890,6 +1100,7 @@ def _require_invitation_role(platform_role: str | None) -> None:
             "BOOTSTRAP_NOT_AUTHORIZED",
             "bootstrap_not_authorized",
             "platform bootstrap invitation is not valid",
+            stage="policy",
         )
 
 
@@ -900,6 +1111,7 @@ def _require_idempotency_key(idempotency_key: str | None) -> str:
             "IDEMPOTENCY_KEY_INVALID",
             "idempotency_key_invalid",
             "idempotency key must be 8-200 safe characters",
+            stage="policy",
         )
     return idempotency_key
 
@@ -930,6 +1142,7 @@ def _assert_same_request(
             "IDEMPOTENCY_CONFLICT",
             "idempotency_conflict",
             "idempotency key was already used for a different tenant bootstrap request",
+            stage="policy",
         )
 
 
@@ -952,7 +1165,13 @@ def _context_and_args(
     actor: str,
     idempotency_key: str,
 ) -> tuple[ManagedMutationContext, dict[str, str]]:
-    owner_user_id = new_id()
+    owner_user_id = sha256_json(
+        {
+            "schema": "tenant-bootstrap-owner-user-id/v1",
+            "invitation_id": invitation.id,
+            "idempotency_key": idempotency_key,
+        }
+    )[:32]
     args = {
         "display_name": body.display_name.strip(),
         "admin_name": body.admin_name.strip(),
@@ -1025,6 +1244,7 @@ def _mint_receipt(
             trust_epoch=1,
             request_id=request_id,
             expires_at=(utcnow() + timedelta(minutes=10)).isoformat(),
+            purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
             constraints={"schema": "tenant-bootstrap-constraints/v1"},
             approval_chain_summary={},
         )
@@ -1034,6 +1254,7 @@ def _mint_receipt(
             "SIGNER_UNAVAILABLE",
             "signer_unavailable",
             "tenant bootstrap signer unavailable",
+            stage="issuance",
         ) from exc
     return receipt, audit_event_hash
 
@@ -1080,6 +1301,58 @@ def _insert_domain_rows(
     session.flush()
 
 
+def _execute_bootstrap_effect(
+    session: Session,
+    *,
+    invitation_token: str,
+    secret_hasher: TenantBootstrapSecretHasher,
+    body: TenantBootstrapRequest,
+    args: dict[str, str],
+    actor: str,
+    context: ManagedMutationContext,
+) -> dict[str, str]:
+    invitation = _locked_invitation(
+        session,
+        token=invitation_token,
+        hasher=secret_hasher,
+    )
+    if invitation is None:
+        raise TenantBootstrapHttpError(
+            403,
+            "BOOTSTRAP_NOT_AUTHORIZED",
+            "bootstrap_not_authorized",
+            "platform bootstrap invitation is not executable",
+        )
+    if invitation.invitee_actor != actor or invitation.policy_outcome != Decision.ALLOW.value:
+        raise TenantBootstrapHttpError(
+            403,
+            "BOOTSTRAP_NOT_AUTHORIZED",
+            "bootstrap_not_authorized",
+            "platform bootstrap invitation changed before execution",
+            invitation_id=invitation.id,
+        )
+    if (
+        invitation.prospective_org_id != context.org_id
+        or invitation.prospective_project_id != context.project_id
+        or invitation.prospective_environment_id != context.environment_id
+    ):
+        raise BootstrapRefusalError(
+            "ORG_MISMATCH",
+            "platform bootstrap invitation scope changed before execution",
+        )
+    _insert_domain_rows(session, invitation=invitation, body=body, args=args, actor=actor)
+    invitation.consumed_at = utcnow()
+    invitation.consumed_org_id = context.org_id
+    session.flush()
+    return {
+        "org_id": context.org_id,
+        "project_id": context.project_id,
+        "environment_id": context.environment_id,
+        "owner_user_id": args["owner_user_id"],
+        "owner_membership_id": args["owner_membership_id"],
+    }
+
+
 def _request_projection(body: TenantBootstrapRequest, *, actor: str) -> dict[str, Any]:
     return {
         "schema": "tenant-bootstrap-request/v1",
@@ -1096,50 +1369,40 @@ def _canonical_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _optional_secret_digest(
+    hasher: TenantBootstrapSecretHasher,
+    label: str,
+    value: str | None,
+) -> str | None:
+    if not value or " " in value:
+        return None
+    try:
+        return hasher.digest(
+            {
+                "schema": f"tenant-bootstrap-{label}-refusal-digest/v1",
+                "value": value,
+            }
+        )
+    except Exception:
+        return None
+
+
 def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
 
 
-def _precheck_bootstrap_trust(
+def _verify_bootstrap_receipt(
     *,
-    receipt: DecisionReceipt,
-    context: ManagedMutationContext,
-    trust_registry: ReceiptTrustRegistry,
-) -> None:
-    try:
-        trusted_key = trust_registry.resolve(
-            scope=ReceiptTrustScope(
-                tenant_id=context.org_id,
-                project_id=context.project_id,
-                environment_id=context.environment_id,
-                purpose=DECISION_RECEIPT_PURPOSE,
-            ),
-            trust_epoch=receipt.trust_epoch,
-            algorithm=receipt.signature_algorithm,
-            key_id=receipt.signing_key_id,
-            now_iso=utcnow().isoformat(),
-            mode="execution",
-        )
-        trusted_key.validate()
-        if trusted_key.status == "revoked":
-            raise TrustConfigurationError("tenant bootstrap platform key revoked")
-        if trusted_key.status != "active":
-            raise TrustConfigurationError("tenant bootstrap platform key is not trusted")
-        if not trusted_key.is_live_at(utcnow().isoformat()):
-            raise TrustConfigurationError("tenant bootstrap platform key is not trusted")
-    except TrustConfigurationError as exc:
-        raise _map_executor_refusal(exc) from exc
-
-
-def _verify_signed_policy_outcome(
-    *,
-    receipt: DecisionReceipt,
+    receipt: object,
     context: ManagedMutationContext,
     args: dict[str, str],
     trust_registry: ReceiptTrustRegistry,
+    allow_policy_outcome_refusal: bool,
 ) -> None:
+    if not isinstance(receipt, DecisionReceipt):
+        raise BootstrapRefusalError("RECEIPT_MALFORMED", "receipt is not a DecisionReceipt")
     try:
         receipt.verify(
             expected_tenant_id=context.org_id,
@@ -1158,16 +1421,76 @@ def _verify_signed_policy_outcome(
             require_signature=True,
             require_expiry=True,
             trust_registry=trust_registry,
+            trust_purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
         )
     except ReceiptValidationError as exc:
-        if exc.reason_code in (
+        if exc.reason_code == ReceiptRejectionReason.SCOPED_TRUST_MISMATCH:
+            if receipt.tenant_id != context.org_id:
+                raise _executor_refusal("ORG_MISMATCH", exc) from exc
+            if receipt.project_id != context.project_id:
+                raise _executor_refusal("PROJECT_MISMATCH", exc) from exc
+            if receipt.environment_id != context.environment_id:
+                raise _executor_refusal("ENV_MISMATCH", exc) from exc
+            _precheck_bootstrap_trust(
+                receipt=receipt,
+                context=context,
+                trust_registry=trust_registry,
+            )
+        if allow_policy_outcome_refusal and exc.reason_code in (
             ReceiptRejectionReason.DENIED_RECEIPT,
             ReceiptRejectionReason.ESCALATED_RECEIPT,
         ):
             return
         raise _map_executor_refusal(exc) from exc
-    except (TrustConfigurationError, ValueError) as exc:
+    except TrustConfigurationError as exc:
         raise _map_executor_refusal(exc) from exc
+
+
+def _precheck_bootstrap_trust(
+    *,
+    receipt: DecisionReceipt,
+    context: ManagedMutationContext,
+    trust_registry: ReceiptTrustRegistry,
+) -> None:
+    try:
+        trusted_key = trust_registry.resolve(
+            scope=ReceiptTrustScope(
+                tenant_id=context.org_id,
+                project_id=context.project_id,
+                environment_id=context.environment_id,
+                purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
+            ),
+            trust_epoch=receipt.trust_epoch,
+            algorithm=receipt.signature_algorithm,
+            key_id=receipt.signing_key_id,
+            now_iso=utcnow().isoformat(),
+            mode="execution",
+        )
+        trusted_key.validate()
+        if trusted_key.status == "revoked":
+            raise BootstrapKeyRevoked("tenant bootstrap platform key revoked")
+        if trusted_key.status != "active":
+            raise BootstrapKeyUntrusted("tenant bootstrap platform key is not trusted")
+        if not trusted_key.is_live_at(utcnow().isoformat()):
+            raise BootstrapKeyUntrusted("tenant bootstrap platform key is not trusted")
+    except TrustConfigurationError as exc:
+        raise _map_executor_refusal(exc) from exc
+
+
+def _verify_signed_policy_outcome(
+    *,
+    receipt: DecisionReceipt,
+    context: ManagedMutationContext,
+    args: dict[str, str],
+    trust_registry: ReceiptTrustRegistry,
+) -> None:
+    _verify_bootstrap_receipt(
+        receipt=receipt,
+        context=context,
+        args=args,
+        trust_registry=trust_registry,
+        allow_policy_outcome_refusal=True,
+    )
 
 
 def _reject_replayed_bootstrap_receipt(
@@ -1224,7 +1547,8 @@ def _executor_refusal(code: str, exc: BaseException) -> TenantBootstrapHttpError
     else:
         status_code = 403
         status = "receipt_refused"
-    return TenantBootstrapHttpError(status_code, code, status, str(exc) or code)
+    stage = "tx" if code == "TX_ABORTED" else "executor"
+    return TenantBootstrapHttpError(status_code, code, status, str(exc) or code, stage=stage)
 
 
 _REJECTION_REASON_TO_CODE = {
@@ -1268,34 +1592,18 @@ _REJECTION_REASON_TO_CODE = {
 
 
 def _map_executor_refusal(exc: BaseException) -> TenantBootstrapHttpError:
-    if isinstance(exc, TrustConfigurationError):
-        message = str(exc).lower()
-        if "unavailable" in message:
-            return _executor_refusal("TRUST_PROVIDER_UNAVAILABLE", exc)
-        if "revoked" in message:
-            return _executor_refusal("KEY_REVOKED", exc)
+    if isinstance(exc, BootstrapRefusalError):
+        return _executor_refusal(exc.code, exc)
+    if isinstance(exc, BootstrapTrustUnavailable):
+        return _executor_refusal("TRUST_PROVIDER_UNAVAILABLE", exc)
+    if isinstance(exc, BootstrapKeyRevoked):
+        return _executor_refusal("KEY_REVOKED", exc)
+    if isinstance(exc, (BootstrapKeyUntrusted, TrustConfigurationError)):
         return _executor_refusal("KEY_UNTRUSTED", exc)
     if isinstance(exc, ReceiptValidationError):
-        if exc.reason_code is ReceiptRejectionReason.SCOPED_TRUST_MISMATCH:
-            message = str(exc).lower()
-            if "project" in message:
-                return _executor_refusal("PROJECT_MISMATCH", exc)
-            if "environment" in message:
-                return _executor_refusal("ENV_MISMATCH", exc)
         mapped = _REJECTION_REASON_TO_CODE.get(exc.reason_code)
         if mapped is not None:
             return _executor_refusal(mapped, exc)
-    message = str(exc).lower()
-    if "requires a decisionreceipt" in message:
-        return _executor_refusal("RECEIPT_MISSING", exc)
-    if "object" in message and "attribute" in message:
-        return _executor_refusal("RECEIPT_MALFORMED", exc)
-    if "schema" in message or "receipt-v2" in message:
-        return _executor_refusal("RECEIPT_VERSION_UNSUPPORTED", exc)
-    if "missing" in message or "required field" in message:
-        return _executor_refusal("RECEIPT_FIELD_MISSING", exc)
-    if "tx_abort" in message:
-        return _executor_refusal("TX_ABORTED", exc)
     return _executor_refusal("RECEIPT_MALFORMED", exc)
 
 

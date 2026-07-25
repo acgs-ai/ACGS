@@ -13,6 +13,7 @@ import shutil
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from threading import Event, Thread
 
@@ -20,9 +21,12 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.script import ScriptDirectory
+from fastapi.testclient import TestClient
 from sqlalchemy.engine import Connection
 
 import acgs_control_plane.migrations as migration_module
+from acgs_control_plane.app import create_app
+from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migration_recovery import (
     RecoveryRefused,
@@ -39,6 +43,14 @@ from acgs_control_plane.migrations import (
     inspect_schema,
     migration_config,
     upgrade_database,
+)
+from acgs_control_plane.models import utcnow
+from acgs_control_plane.tenant_bootstrap import (
+    BOOTSTRAP_AUTHORIZATION_HEADER,
+    BOOTSTRAP_IDEMPOTENCY_HEADER,
+    BOOTSTRAP_INVITATION_HEADER,
+    BOOTSTRAP_INVITEE_ROLE,
+    create_platform_bootstrap_invitation,
 )
 from tests import test_postgresql_migrations as migrations_pg
 from tests import test_postgresql_rolling_upgrade as rolling_pg
@@ -310,6 +322,88 @@ def _head_version(database_url: str) -> str:
         engine.dispose()
 
 
+def _controlled_upgrade_to_revision(database_url: str, revision: str) -> None:
+    config = migration_config(database_url)
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            with connection.begin():
+                before = inspect_schema(database_url)
+                config.attributes["connection"] = connection
+                migration_module._run_controlled_operation(
+                    config,
+                    migration_module._SCOPE_RESUME_TOKEN,
+                    before.state,
+                    lambda: command.upgrade(config, revision),
+                )
+                config.attributes.pop("connection", None)
+    finally:
+        config.attributes.pop("connection", None)
+        engine.dispose()
+
+
+def _constraint_deferrability(
+    database_url: str, constraint_names: tuple[str, ...]
+) -> dict[str, bool]:
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                sa.text(
+                    """
+                    SELECT conname, condeferrable AND condeferred
+                    FROM pg_catalog.pg_constraint
+                    WHERE connamespace = 'public'::regnamespace
+                      AND conname = ANY(:constraint_names)
+                    """
+                ),
+                {"constraint_names": list(constraint_names)},
+            ).all()
+            return {str(name): bool(is_initially_deferred) for name, is_initially_deferred in rows}
+    finally:
+        engine.dispose()
+
+
+def _assert_real_tenant_bootstrap(database_url: str, tmp_path: Path) -> None:
+    token = "tenant_bootstrap_immutable_0004_upgrade_000000000000000000000000000"
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=tmp_path / "audit-immutable-0004",
+            create_tables=False,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    try:
+        with app.state.session_factory() as session:
+            with session.begin():
+                create_platform_bootstrap_invitation(
+                    session,
+                    token=token,
+                    actor="platform:invitee:alice",
+                    expires_at=utcnow() + timedelta(hours=1),
+                    policy_outcome="allow",
+                    role=BOOTSTRAP_INVITEE_ROLE,
+                )
+        response = TestClient(app).post(
+            "/v1/tenant-bootstrap",
+            json={
+                "display_name": "Immutable 0004 Upgrade",
+                "admin_name": "Migration Admin",
+                "admin_email": "migration-admin@example.com",
+            },
+            headers={
+                BOOTSTRAP_AUTHORIZATION_HEADER: "Bearer local-platform-token-alice",
+                BOOTSTRAP_INVITATION_HEADER: token,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: "tenant-bootstrap-key-immutable-0004-upgrade",
+            },
+        )
+        assert response.status_code == 201, response.json()
+        assert response.json()["assurance_class"] == "native"
+    finally:
+        app.state.engine.dispose()
+
+
 def test_empty_and_existing_alpha_upgrade_head() -> None:
     database_url = _required_url(_MAIN_ENV)
     expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
@@ -328,6 +422,35 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
     assert existing_result.after.state is DatabaseSchemaState.VERSION_0005
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
+
+
+def test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps(
+    tmp_path: Path,
+) -> None:
+    database_url = _required_url(_MAIN_ENV)
+    expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
+    _controlled_upgrade_to_revision(database_url, "0004")
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
+    assert _head_version(database_url) == "0004"
+
+    managed_constraints = (
+        "fk_managed_receipts_scope_environment",
+        "fk_managed_consumptions_scope_receipt",
+        "fk_managed_events_scope_receipt",
+        "fk_managed_outbox_scope_receipt",
+        "fk_managed_outbox_scope_event",
+    )
+    before_deferrability = _constraint_deferrability(database_url, managed_constraints)
+    assert set(before_deferrability) == set(managed_constraints)
+    assert not any(before_deferrability.values())
+
+    existing_result = upgrade_database(database_url, expected_database=expected_database)
+    assert existing_result.before.state is DatabaseSchemaState.VERSION_0004
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0005
+    assert _head_version(database_url) == HEAD_REVISION
+    assert all(_constraint_deferrability(database_url, managed_constraints).values())
+
+    _assert_real_tenant_bootstrap(database_url, tmp_path)
 
 
 def test_declared_reversible_round_trip() -> None:
