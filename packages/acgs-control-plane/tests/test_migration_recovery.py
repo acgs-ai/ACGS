@@ -43,6 +43,11 @@ def _state(*, schema: str = ZERO_HASH) -> DatabaseState:
     return DatabaseState(schema_fingerprint=schema, tables=_tables(), audit_anchors={})
 
 
+def test_expected_tables_include_agent_registration_idempotency_in_sorted_order() -> None:
+    assert "agent_registration_idempotency" in EXPECTED_TABLES
+    assert EXPECTED_TABLES == tuple(sorted(EXPECTED_TABLES))
+
+
 def _write_bundle(root: Path, *, archive: bytes = b"PGDMP-test") -> dict[str, Any]:
     root.mkdir(mode=0o700)
     archive_path = root / ARCHIVE_NAME
