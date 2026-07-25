@@ -69,6 +69,7 @@ _G038_ALLOWED_AGENT_CATALOG_CHANGES = frozenset(
         "environment_id",
         "fk_agents_scope_environment",
         "ck_agents_scope_both_null_or_set",
+        "uq_agents_scope_id",
         "uq_agents_org_name",
         "uq_agents_legacy_org_name",
         "uq_agents_scope_name",
