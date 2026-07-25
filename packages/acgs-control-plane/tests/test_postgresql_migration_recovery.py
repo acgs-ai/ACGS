@@ -358,6 +358,7 @@ def test_public_first_function_hijacks_refuse_before_subprocess(
     _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE, public_first=True)
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
+    bundle = tmp_path / "bundle"
     calls: list[list[str]] = []
 
     def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
@@ -367,13 +368,14 @@ def test_public_first_function_hijacks_refuse_before_subprocess(
         create_recovery_bundle(
             source_url_env=SOURCE_ENV,
             audit_dir=audit_source,
-            output=tmp_path / "bundle",
+            output=bundle,
             pg_dump_path=PG_DUMP_PATH,
             pg_restore_path=PG_RESTORE_PATH,
             runner=forbidden_runner,
         )
 
     assert calls == []
+    assert not bundle.exists()
     engine = make_engine(_safe_admin_url(SOURCE_URL))
     try:
         with engine.connect() as connection:
@@ -382,6 +384,18 @@ def test_public_first_function_hijacks_refuse_before_subprocess(
     finally:
         engine.dispose()
     assert not (tmp_path / "bundle").exists()
+
+
+def test_pg_environment_overrides_ambient_pgoptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PGOPTIONS", "-csearch_path=shadow,public")
+    url = sa.engine.make_url(
+        "postgresql+psycopg://recovery:secret@127.0.0.1:5432/acgs_control_plane_recovery"
+    )
+
+    with _pg_environment(url, tmp_path) as environment:
+        assert environment["PGOPTIONS"] == "-csearch_path=public"
 
 
 @pytest.mark.parametrize(
@@ -446,7 +460,7 @@ def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> Non
     )
 
     assert created == verified == restored
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0004
     engine = make_engine(TARGET_URL)
     try:
         with engine.connect() as connection:
@@ -488,7 +502,7 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         )
 
     assert calls == []
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0004
 
 
 def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(

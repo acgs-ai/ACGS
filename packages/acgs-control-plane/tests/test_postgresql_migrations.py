@@ -241,9 +241,9 @@ def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
 def _head_schema_with_unsupported_object_snapshot() -> tuple[tuple[object, ...], ...]:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     before = _catalog_and_data_snapshot()
-    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0004
     return before
 
 
@@ -367,7 +367,7 @@ def test_revision_unowned_public_objects_are_unknown_without_guarded_side_effect
 def test_owned_postgresql_table_sequences_are_not_part_of_current_revisions() -> None:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
     engine = make_engine(test_url)
     try:
@@ -424,12 +424,167 @@ def _seed_exact_legacy_v0_schema() -> None:
         engine.dispose()
 
 
+def _seed_trust_scope_parents(connection: Connection, created_at: str) -> None:
+    """Insert the exact organization/project/environment/scope parents a trust key needs."""
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO organizations (
+                id, name, created_at, audit_anchor_count, audit_anchor_hash
+            ) VALUES ('org-a', 'Organization A', :created_at, 0, '')
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO projects (id, org_id, slug, name, created_at)
+            VALUES ('project-a', 'org-a', 'core', 'Core Project', :created_at)
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO environments (id, org_id, project_id, slug, name, created_at)
+            VALUES (
+                'environment-a', 'org-a', 'project-a', 'production',
+                'Production', :created_at
+            )
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO managed_trust_scopes (
+                id, org_id, project_id, environment_id, purpose, created_at, updated_at
+            ) VALUES (
+                'scope-a', 'org-a', 'project-a', 'environment-a', 'receipt-signing',
+                :created_at, :created_at
+            )
+            """
+        ),
+        {"created_at": created_at},
+    )
+
+
+_INSERT_TRUST_KEY = sa.text(
+    """
+    INSERT INTO managed_trust_keys (
+        id, org_id, project_id, environment_id, purpose, key_id, algorithm,
+        public_key_spki_der, activated_epoch, not_after, status, retired_epoch,
+        created_at, updated_at
+    ) VALUES (
+        :id, 'org-a', 'project-a', 'environment-a', 'receipt-signing', :key_id, 'ed25519',
+        :public_key, :activated_epoch, :not_after, :status, :retired_epoch,
+        :created_at, :created_at
+    )
+    """
+)
+
+
+def test_postgresql_duplicate_active_trust_roots_are_rejected_by_the_partial_index() -> None:
+    """The active-root uniqueness must hold on PostgreSQL, not only on SQLite.
+
+    ``uq_managed_trust_key_active_scope`` carries a ``postgresql_where`` predicate,
+    so its enforcement is dialect-specific: the SQLite suite proves the SQLite
+    branch and the reflection unit test proves the predicate signature, but only a
+    live PostgreSQL insert proves the engine that actually runs in production
+    refuses a second active trust root for one scope.
+    """
+    upgrade_database(_TEST_POSTGRES_URL)
+    created_at = "2026-07-13T00:00:00+00:00"
+    not_after = "2027-07-13T00:00:00+00:00"
+    base = {
+        "public_key": b"\x00" * 32,
+        "not_after": not_after,
+        "created_at": created_at,
+    }
+
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            _seed_trust_scope_parents(connection, created_at)
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-active",
+                    "key_id": "key-1",
+                    "activated_epoch": 1,
+                    "status": "active",
+                    "retired_epoch": None,
+                },
+            )
+
+        # A second *active* root for the same scope is the ambiguity the index exists
+        # to make impossible.
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    _INSERT_TRUST_KEY,
+                    {
+                        **base,
+                        "id": "key-active-duplicate",
+                        "key_id": "key-2",
+                        "activated_epoch": 2,
+                        "status": "active",
+                        "retired_epoch": None,
+                    },
+                )
+
+        # Retired and revoked siblings are outside the partial predicate and must
+        # still be insertable, or historical verification would be impossible.
+        with engine.begin() as connection:
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-retired",
+                    "key_id": "key-3",
+                    "activated_epoch": 2,
+                    "status": "retired",
+                    "retired_epoch": 3,
+                },
+            )
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-revoked",
+                    "key_id": "key-4",
+                    "activated_epoch": 4,
+                    "status": "revoked",
+                    "retired_epoch": None,
+                },
+            )
+
+        with engine.connect() as connection:
+            statuses = dict(
+                connection.execute(
+                    sa.text(
+                        """
+                        SELECT status, count(*) FROM managed_trust_keys
+                        GROUP BY status
+                        """
+                    )
+                ).all()
+            )
+            assert statuses == {"active": 1, "retired": 1, "revoked": 1}
+    finally:
+        engine.dispose()
+
+
 def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0004
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -542,7 +697,7 @@ def test_postgresql_casted_boolean_check_widening_is_unknown(
     weakened_check: str,
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -580,7 +735,7 @@ def test_postgresql_lock_contention_rejects_before_schema_mutation_then_retries(
     finally:
         holder_engine.dispose()
 
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_lock(
@@ -649,7 +804,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
 
     result = upgrade_database(_TEST_POSTGRES_URL)
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
 
 def test_raw_postgresql_alembic_commands_reject_before_schema_or_version_mutation() -> None:
@@ -674,7 +829,7 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -755,7 +910,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -812,7 +967,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
     before = _catalog_and_data_snapshot()
     hostile_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
-    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0004
     session_factory_calls = {"count": 0}
 
     def forbidden_session_factory(_engine: object) -> object:
@@ -856,7 +1011,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
 def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Path) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -1474,7 +1629,7 @@ def _assert_success_event(worker: _MigrationWorker, event: dict[str, object]) ->
         "os_pid": worker.process.pid,
         "backend_pid": event["backend_pid"],
         "before": DatabaseSchemaState.EMPTY.value,
-        "after": DatabaseSchemaState.VERSION_0003.value,
+        "after": DatabaseSchemaState.VERSION_0004.value,
     }
     backend_pid = event["backend_pid"]
     assert isinstance(backend_pid, int)
@@ -1874,7 +2029,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0004
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -1888,7 +2043,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     owner = _launch_migration_worker(migration_workers, "pause-after-upgrade")
     owner_ready = _read_worker_event(owner)
     owner_backend_pid = _assert_ready_event(owner, owner_ready, "after-ddl-before-commit")
-    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0003.value
+    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0004.value
 
     observer_pid, lock_pids = _observe_migration_lock()
     assert lock_pids == {owner_backend_pid}
@@ -1913,7 +2068,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0004
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -1939,16 +2094,6 @@ def test_postgresql_windows_kill_rolls_back_uncommitted_ddl_and_releases_lock(
     )
 
 
-# Revision 0003 tables reference environments, so seeding an exact revision
-# 0001 shape must remove them first.  One statement lets PostgreSQL resolve
-# the foreign keys between the dropped tables themselves.
-_DROP_MANAGED_MUTATION_TABLES = sa.text(
-    "DROP TABLE managed_outbox, managed_governance_events, "
-    "managed_governance_event_heads, managed_receipt_consumptions, "
-    "managed_mutation_attempts, managed_decision_receipts"
-)
-
-
 def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     if state == "empty":
         return DatabaseSchemaState.EMPTY
@@ -1967,14 +2112,14 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     try:
         with engine.begin() as connection:
             if state == "version-0001":
-                connection.execute(_DROP_MANAGED_MUTATION_TABLES)
-                connection.execute(sa.text("DROP TABLE environments"))
+                _drop_post_0001_tables(connection)
+                connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("DROP TABLE projects"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001
             if state == "partial-0001":
-                connection.execute(_DROP_MANAGED_MUTATION_TABLES)
-                connection.execute(sa.text("DROP TABLE environments"))
+                _drop_post_0001_tables(connection)
+                connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
             if state == "future":
@@ -1983,6 +2128,20 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     finally:
         engine.dispose()
     raise AssertionError(f"unknown PostgreSQL startup seed state: {state}")
+
+
+def _drop_post_0001_tables(connection: Connection) -> None:
+    for table_name in (
+        "managed_trust_keys",
+        "managed_trust_scopes",
+        "managed_outbox",
+        "managed_governance_events",
+        "managed_governance_event_heads",
+        "managed_receipt_consumptions",
+        "managed_mutation_attempts",
+        "managed_decision_receipts",
+    ):
+        connection.execute(sa.text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
 
 
 @pytest.mark.parametrize(
@@ -2048,7 +2207,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     before = _catalog_and_data_snapshot()
     audit_dir = tmp_path / "audit"
     calls = {"engine": 0}
@@ -2079,7 +2238,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         )
         == 7
     )
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0004
     assert not audit_dir.exists()
 
     app = create_app(
@@ -2099,7 +2258,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0003.value,
+            "schema_state": DatabaseSchemaState.VERSION_0004.value,
         }
         assert not audit_dir.exists()
     finally:

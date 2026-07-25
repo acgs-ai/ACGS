@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -185,7 +186,7 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upgrade_database(DATABASE_URL)
-    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0004
 
     engine = sa.create_engine(DATABASE_URL, poolclass=NullPool, future=True)
     table = _table()
@@ -288,8 +289,18 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
     probe = sa.create_engine(DATABASE_URL, poolclass=NullPool, future=True)
     try:
         with probe.connect() as connection:
-            assert (
-                connection.scalar(
+            # The owning backend drops its temporary namespace while it shuts
+            # down, so the probe can observe the pg_class entry for a moment
+            # after the client socket closed.  Wait for the backend to vanish
+            # from pg_stat_activity (which happens after temp cleanup commits)
+            # before freezing the fail-closed assertions.
+            deadline = time.monotonic() + 30.0
+            while True:
+                backend_sessions = connection.scalar(
+                    sa.text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": backend_pid},
+                )
+                lingering_temp_tables = connection.scalar(
                     sa.text(
                         """
                     SELECT count(*)
@@ -300,14 +311,14 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
                     ),
                     {"table_name": TEMP_TABLE},
                 )
-                == 0
-            )
-            assert (
-                connection.scalar(
-                    sa.text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid"),
-                    {"pid": backend_pid},
-                )
-                == 0
-            )
+                if backend_sessions == 0 and lingering_temp_tables == 0:
+                    break
+                if time.monotonic() >= deadline:
+                    raise AssertionError(
+                        "temporary fixture state outlived the disconnected backend: "
+                        f"backend_sessions={backend_sessions}, "
+                        f"lingering_temp_tables={lingering_temp_tables}"
+                    )
+                time.sleep(0.05)
     finally:
         probe.dispose()

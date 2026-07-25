@@ -25,6 +25,7 @@ from gove_zone.executor import execute_with_receipt
 from gove_zone.receipt import DecisionReceipt, safe_result_hash
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
+from gove_zone.trust import RECEIPT_V2
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -39,6 +40,7 @@ from acgs_control_plane.models import (
     new_id,
     utcnow,
 )
+from acgs_control_plane.trust import SqlReceiptTrustRegistry
 
 _GENESIS_HASH = "0" * 64
 ASSURANCE_CLASS_NATIVE = "native"
@@ -193,6 +195,8 @@ class ManagedMutationUnitOfWork:
         if receipt_sealer is None:
             raise ValueError("managed mutation UoW requires a receipt artifact sealer")
         self._session_factory = session_factory
+        if verifier is not None:
+            raise ValueError("managed mutation UoW v2 uses SQL trust registry, not verifier maps")
         self._verifier = verifier
         self._receipt_sealer = receipt_sealer
         self._require_signature = require_signature
@@ -207,8 +211,9 @@ class ManagedMutationUnitOfWork:
         args: Mapping[str, Any],
     ) -> ManagedMutationResult:
         canonical_boundary = _validated_execution_boundary(context)
+        if receipt is None:
+            raise ReceiptValidationError("managed mutation requires a DecisionReceipt")
         assurance_class = self._assurance_class(receipt)
-        assert receipt is not None
         execution_args = _validated_operation_args(context.action, args)
         self._prevalidate_native_allow_receipt(
             context=context,
@@ -277,12 +282,15 @@ class ManagedMutationUnitOfWork:
                     expected_audit_hash=context.expected_audit_hash,
                     expected_policy_hash=context.policy_hash,
                     expected_policy_bundle_id=context.policy_bundle_id,
+                    expected_project_id=context.project_id,
+                    expected_environment_id=context.environment_id,
                     expected_validator_role=context.validator_role,
                     expected_authority=context.authority,
-                    verifier=self._verifier,
+                    verifier=None,
                     require_signature=self._require_signature,
                     require_expiry=self._require_expiry,
                     revoked_keys=self._revoked_keys,
+                    trust_registry=SqlReceiptTrustRegistry(session, lock_rows=True),
                     consumption_ledger=ledger,
                 )
 
@@ -321,10 +329,14 @@ class ManagedMutationUnitOfWork:
     def _assurance_class(self, receipt: DecisionReceipt | None) -> str:
         if receipt is None:
             raise ReceiptValidationError("managed mutation requires a DecisionReceipt")
-        if self._verifier is not None and receipt.signature_algorithm != "none":
+        if (
+            receipt.receipt_schema_version == RECEIPT_V2
+            and receipt.signature_algorithm != "none"
+            and receipt.signing_key_id
+        ):
             return ASSURANCE_CLASS_NATIVE
         raise ReceiptValidationError(
-            "managed mutation native assurance requires a signed receipt and trusted verifier"
+            "managed mutation native assurance requires a signed receipt-v2 and SQL trust"
         )
 
     def _prevalidate_native_allow_receipt(
@@ -337,22 +349,64 @@ class ManagedMutationUnitOfWork:
     ) -> None:
         if receipt.decision != Decision.ALLOW.value:
             raise ReceiptValidationError("managed mutation requires an ALLOW receipt")
-        receipt.verify(
-            expected_tenant_id=context.org_id,
-            expected_execution_boundary=execution_boundary,
-            expected_action=context.action,
-            expected_actor=context.actor,
-            expected_audit_hash=context.expected_audit_hash,
-            expected_args=dict(execution_args),
-            expected_policy_hash=context.policy_hash,
-            expected_policy_bundle_id=context.policy_bundle_id,
-            expected_validator_role=context.validator_role,
-            expected_authority=context.authority,
-            verifier=self._verifier,
-            require_signature=self._require_signature,
-            require_expiry=self._require_expiry,
-            revoked_keys=self._revoked_keys,
-        )
+        if receipt.receipt_schema_version != RECEIPT_V2:
+            raise ReceiptValidationError("managed mutation canonical path requires receipt-v2")
+        if (
+            receipt.project_id != context.project_id
+            or receipt.environment_id != context.environment_id
+        ):
+            raise ReceiptValidationError("managed mutation receipt scope does not match context")
+        if receipt.receipt_hash != receipt.compute_hash():
+            raise ReceiptValidationError("managed mutation receipt hash mismatch")
+        if receipt.argument_hash != sha256_json(dict(execution_args)):
+            raise ReceiptValidationError("managed mutation receipt arguments do not match")
+        if receipt.tenant_id != context.org_id:
+            raise ReceiptValidationError("managed mutation receipt tenant does not match context")
+        if receipt.execution_boundary != execution_boundary:
+            raise ReceiptValidationError("managed mutation receipt boundary does not match context")
+        if receipt.proposed_action != context.action:
+            raise ReceiptValidationError("managed mutation receipt action does not match context")
+        if receipt.actor != context.actor:
+            raise ReceiptValidationError("managed mutation receipt actor does not match context")
+        if receipt.policy_hash != context.policy_hash:
+            raise ReceiptValidationError("managed mutation receipt policy hash does not match")
+        if receipt.policy_bundle_id != context.policy_bundle_id:
+            raise ReceiptValidationError("managed mutation receipt policy bundle does not match")
+        if (
+            receipt.validator_role != context.validator_role
+            or receipt.authority != context.authority
+        ):
+            raise ReceiptValidationError("managed mutation receipt authority does not match")
+        if (
+            context.expected_audit_hash is not None
+            and receipt.audit_event_hash != context.expected_audit_hash
+        ):
+            raise ReceiptValidationError("managed mutation receipt audit hash does not match")
+        if self._revoked_keys is not None and self._revoked_keys.is_revoked(receipt.signing_key_id):
+            raise ReceiptValidationError("managed mutation signing key revoked")
+        if not receipt.expires_at:
+            raise ReceiptValidationError("managed mutation receipt-v2 requires expiry")
+        with self._session_factory() as session:
+            with session.begin():
+                receipt.verify(
+                    expected_tenant_id=context.org_id,
+                    expected_execution_boundary=execution_boundary,
+                    expected_action=context.action,
+                    expected_actor=context.actor,
+                    expected_audit_hash=context.expected_audit_hash,
+                    expected_args=dict(execution_args),
+                    expected_policy_hash=context.policy_hash,
+                    expected_policy_bundle_id=context.policy_bundle_id,
+                    expected_project_id=context.project_id,
+                    expected_environment_id=context.environment_id,
+                    expected_validator_role=context.validator_role,
+                    expected_authority=context.authority,
+                    verifier=None,
+                    require_signature=self._require_signature,
+                    require_expiry=self._require_expiry,
+                    revoked_keys=self._revoked_keys,
+                    trust_registry=SqlReceiptTrustRegistry(session),
+                )
 
 
 def _reserve_mutation_attempt(
@@ -593,6 +647,10 @@ def _persist_receipt_projection(
         "constraints_hash": sha256_json(receipt.constraints),
         "approval_chain_hash": sha256_json(receipt.approval_chain_summary),
         "argument_hash": receipt.argument_hash,
+        "receipt_schema_version": receipt.receipt_schema_version,
+        "project_id": receipt.project_id,
+        "environment_id": receipt.environment_id,
+        "trust_epoch": receipt.trust_epoch,
     }
     receipt_row = ManagedDecisionReceipt(
         id=new_id(),
@@ -612,6 +670,8 @@ def _persist_receipt_projection(
         argument_hash=receipt.argument_hash,
         signing_key_id=receipt.signing_key_id,
         signature_algorithm=receipt.signature_algorithm,
+        receipt_schema_version=receipt.receipt_schema_version,
+        trust_epoch=receipt.trust_epoch,
         assurance_class=assurance_class,
         source_system="gove-zone",
         issued_at=_parse_receipt_timestamp(receipt.timestamp, field_name="timestamp"),
@@ -680,6 +740,8 @@ def _append_governance_event(
         "action": receipt.proposed_action,
         "policy_bundle_id": receipt.policy_bundle_id,
         "policy_hash": receipt.policy_hash,
+        "receipt_schema_version": receipt.receipt_schema_version,
+        "trust_epoch": receipt.trust_epoch,
         "scope": {
             "org_id": context.org_id,
             "project_id": context.project_id,

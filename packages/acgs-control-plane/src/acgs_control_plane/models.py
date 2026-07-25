@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -20,7 +21,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -256,12 +259,113 @@ class ManagedDecisionReceipt(Base):
     argument_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     signing_key_id: Mapped[str] = mapped_column(String(200), nullable=False)
     signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    receipt_schema_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trust_epoch: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assurance_class: Mapped[str] = mapped_column(String(32), nullable=False)
     source_system: Mapped[str] = mapped_column(String(64), nullable=False)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     projection: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedTrustScope(Base):
+    """Tenant/project/environment trust namespace for one verifier purpose."""
+
+    __tablename__ = "managed_trust_scopes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_trust_scopes_environment",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "purpose",
+            name="uq_managed_trust_scope_full",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedTrustKey(Base):
+    """Public-only receipt verifier material for one scoped trust epoch."""
+
+    __tablename__ = "managed_trust_keys"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_trust_keys_environment",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "purpose"],
+            [
+                "managed_trust_scopes.org_id",
+                "managed_trust_scopes.project_id",
+                "managed_trust_scopes.environment_id",
+                "managed_trust_scopes.purpose",
+            ],
+            name="fk_managed_trust_keys_scope",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "purpose",
+            "key_id",
+            "algorithm",
+            "activated_epoch",
+            name="uq_managed_trust_key_epoch",
+        ),
+        CheckConstraint(
+            "status IN ('active', 'retired', 'revoked')",
+            name="ck_managed_trust_key_status",
+        ),
+        CheckConstraint("activated_epoch > 0", name="ck_managed_trust_key_epoch_positive"),
+        CheckConstraint(
+            "(status = 'retired' AND retired_epoch IS NOT NULL "
+            "AND retired_epoch > activated_epoch) OR "
+            "(status IN ('active', 'revoked') AND retired_epoch IS NULL)",
+            name="ck_managed_trust_key_retired_epoch",
+        ),
+        Index(
+            "uq_managed_trust_key_active_scope",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "purpose",
+            unique=True,
+            postgresql_where=sa.text("status = 'active'"),
+            sqlite_where=sa.text("status = 'active'"),
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    public_key_spki_der: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    activated_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    not_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    retired_epoch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class ManagedMutationAttempt(Base):

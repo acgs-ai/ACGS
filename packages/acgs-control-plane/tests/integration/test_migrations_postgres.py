@@ -61,7 +61,7 @@ _LEGACY_TABLES = (
     "receipts",
     "users",
 )
-_CURRENT_FORWARD_ONLY_REVISIONS = frozenset({"0001", "0002", "0003"})
+_CURRENT_FORWARD_ONLY_REVISIONS = frozenset({"0001", "0002", "0003", "0004"})
 _CURRENT_REVERSIBLE_REVISIONS: frozenset[str] = frozenset()
 _LARGE_TABLE_ROWS = 10_000
 _MIGRATION_ELAPSED_BUDGET_SECONDS = 20.0
@@ -315,7 +315,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
     expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
     empty_result = upgrade_database(database_url, expected_database=expected_database)
     assert empty_result.before.state is DatabaseSchemaState.EMPTY
-    assert empty_result.after.state is DatabaseSchemaState.VERSION_0003
+    assert empty_result.after.state is DatabaseSchemaState.VERSION_0004
     assert _head_version(database_url) == HEAD_REVISION
 
     _reset_exact_database(database_url, expected_database)
@@ -325,7 +325,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0003
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0004
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -372,7 +372,7 @@ def test_mixed_version_rolling_compatibility(
         rolling_pg.test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             engine, tmp_path
         )
-        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
+        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
         assert _head_version(database_url) == HEAD_REVISION
     finally:
         engine.dispose()
@@ -532,7 +532,7 @@ def test_large_table_online_migration_budget(monkeypatch: pytest.MonkeyPatch) ->
         assert overlapping.started_at <= actual_upgrade_interval["finished_at"]
         assert overlapping.finished_at >= actual_upgrade_interval["started_at"]
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert result.after.state is DatabaseSchemaState.VERSION_0004
     assert elapsed < _MIGRATION_ELAPSED_BUDGET_SECONDS
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -575,11 +575,25 @@ def _seed_recovery_source(database_url: str, expected_database: str) -> None:
         engine.dispose()
 
 
+def _required_gate_client_path(name: str) -> Path:
+    # The real subprocess runner refuses bare tool names, so the gate resolves
+    # the pinned client wrappers that the session fixture already required.
+    resolved = shutil.which(name)
+    if resolved is None:
+        pytest.fail(f"{name} must be resolvable for the live PostgreSQL gate", pytrace=False)
+    selected = Path(resolved)
+    if not selected.is_absolute():
+        selected = Path.cwd() / selected
+    return selected
+
+
 def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
     source_url = _required_url(_SOURCE_ENV)
     target_url = _required_url(_TARGET_ENV)
     source_database = _EXPECTED_DATABASES[_SOURCE_ENV]
     target_database = _EXPECTED_DATABASES[_TARGET_ENV]
+    pg_dump_path = _required_gate_client_path("pg_dump")
+    pg_restore_path = _required_gate_client_path("pg_restore")
     _reset_exact_database(source_url, source_database)
     _reset_exact_database(target_url, target_database)
     try:
@@ -593,14 +607,16 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
             source_url_env=_SOURCE_ENV,
             audit_dir=source_audit,
             output=bundle,
+            pg_dump_path=pg_dump_path,
+            pg_restore_path=pg_restore_path,
         )
-        verified = verify_recovery_bundle(bundle=bundle)
+        verified = verify_recovery_bundle(bundle=bundle, pg_restore_path=pg_restore_path)
         assert created == verified
 
         source_engine = make_engine(source_url)
         try:
             with source_engine.begin() as connection:
-                # CASCADE detaches the revision 0003 foreign keys that now
+                # CASCADE detaches the revision 0003/0004 foreign keys that now
                 # reference environments; the corrupted source still
                 # classifies as UNKNOWN.
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
@@ -614,10 +630,11 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
             target_database_name=target_database,
             target_audit_dir=tmp_path / "target-audit",
             acknowledge_operator_controlled_bundle=True,
+            pg_restore_path=pg_restore_path,
         )
         assert created == verified == restored
         assert _capture_database_state_url(target_url) == expected_state
-        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0003
+        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0004
 
         target_before_refusal = _capture_database_state_url(target_url)
         with pytest.raises(RecoveryRefused, match="must have an exact empty"):
@@ -627,6 +644,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
                 target_database_name=target_database,
                 target_audit_dir=tmp_path / "blocked-target-audit",
                 acknowledge_operator_controlled_bundle=True,
+                pg_restore_path=pg_restore_path,
             )
         assert _capture_database_state_url(target_url) == target_before_refusal
     finally:
@@ -677,6 +695,6 @@ def test_failed_migration_no_later_state(monkeypatch: pytest.MonkeyPatch) -> Non
 
     retried = upgrade_database(database_url, expected_database=_EXPECTED_DATABASES[_MAIN_ENV])
     assert retried.before.state is DatabaseSchemaState.LEGACY_V0
-    assert retried.after.state is DatabaseSchemaState.VERSION_0003
+    assert retried.after.state is DatabaseSchemaState.VERSION_0004
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows

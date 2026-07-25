@@ -8,6 +8,7 @@ import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptValidationError
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import Ed25519Signer
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -40,8 +42,17 @@ from acgs_control_plane.models import (
     ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
+    ManagedTrustKey,
     Organization,
     Project,
+)
+from acgs_control_plane.trust import (
+    InProcessPlatformIssuer,
+    ManagedTrustError,
+    ManagedTrustLifecycleService,
+    SqlReceiptTrustRegistry,
+    mint_managed_decision_receipt_v2,
+    public_spki_der_from_signer,
 )
 
 ORG_ID = "org-uow"
@@ -182,9 +193,13 @@ def test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically(
         receipt_row = session.scalars(sa.select(ManagedDecisionReceipt)).one()
         assert receipt_row.receipt_hash == receipt.receipt_hash
         assert receipt_row.argument_hash == receipt.argument_hash
+        assert receipt_row.receipt_schema_version == receipt.receipt_schema_version
+        assert receipt_row.trust_epoch == receipt.trust_epoch
         assert receipt_row.assurance_class == ASSURANCE_CLASS_NATIVE
         assert receipt_row.projection["assurance_class"] == ASSURANCE_CLASS_NATIVE
         assert receipt_row.projection["argument_hash"] == receipt.argument_hash
+        assert receipt_row.projection["receipt_schema_version"] == receipt.receipt_schema_version
+        assert receipt_row.projection["trust_epoch"] == receipt.trust_epoch
         assert "sealed_receipt" in receipt_row.projection
         assert "receipt" not in receipt_row.projection
         assert "governed-agent" not in str(receipt_row.projection)
@@ -337,21 +352,22 @@ def test_uow_rejects_disabled_signature_or_expiry_posture_without_persisting_row
     with pytest.raises(ValueError, match="signed-only"):
         ManagedMutationUnitOfWork(
             session_factory,
-            verifier={signer.key_id: signer},
             receipt_sealer=receipt_sealer,
             require_signature=False,
         )
     with pytest.raises(ValueError, match="bounded expiry"):
         ManagedMutationUnitOfWork(
             session_factory,
-            verifier={signer.key_id: signer},
             receipt_sealer=receipt_sealer,
             require_expiry=False,
         )
     with pytest.raises(ValueError, match="receipt artifact sealer"):
+        ManagedMutationUnitOfWork(session_factory)
+    with pytest.raises(ValueError, match="SQL trust registry"):
         ManagedMutationUnitOfWork(
             session_factory,
             verifier={signer.key_id: signer},
+            receipt_sealer=receipt_sealer,
         )
 
     with session_factory() as session:
@@ -378,7 +394,7 @@ def test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints
     )
     context = _context(environment_id="missing-environment")
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ReceiptValidationError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=context,
             receipt=receipt,
@@ -401,6 +417,7 @@ def test_receipt_rejection_variants_execute_zero_sql_and_persist_zero_evidence(
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
     base_args = {"name": "blocked-agent"}
+    unknown_signer = Ed25519Signer.generate(key_id="unknown-managed-key")
     cases = [
         (
             "missing-receipt",
@@ -433,15 +450,9 @@ def test_receipt_rejection_variants_execute_zero_sql_and_persist_zero_evidence(
         ),
         (
             "unknown-key",
-            _receipt("unknown-key", args=base_args, signer=signer),
+            _receipt("unknown-key", args=base_args, signer=unknown_signer),
             _context(),
-            ManagedMutationUnitOfWork(
-                session_factory,
-                verifier={},
-                receipt_sealer=receipt_sealer,
-                require_signature=True,
-                require_expiry=True,
-            ),
+            _signed_uow(session_factory, signer, receipt_sealer),
             base_args,
         ),
         (
@@ -549,6 +560,7 @@ def test_concurrent_receipt_consumption_has_single_committed_winner(
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
     receipt = _receipt("concurrent-single-winner", args={"name": "only-winner"}, signer=signer)
+    _bootstrap_trust_root(session_factory, signer)
 
     def run_once() -> str:
         try:
@@ -795,6 +807,80 @@ def test_uow_has_no_caller_supplied_sql_or_result_surface(
         }
 
 
+def test_trust_bootstrap_is_one_time_and_preserves_key_history_on_reject(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+) -> None:
+    duplicate_signer = Ed25519Signer.generate(key_id="managed-native-duplicate")
+    recovery_signer = Ed25519Signer.generate(key_id="managed-native-recovery")
+    _bootstrap_trust_root(session_factory, signer)
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 1, "history": 1}
+
+    with pytest.raises(ManagedTrustError, match="bootstrap is one-time"):
+        with session_factory.begin() as session:
+            ManagedTrustLifecycleService(session).bootstrap(
+                scope=_scope(),
+                key_id=duplicate_signer.key_id,
+                algorithm=duplicate_signer.algorithm,
+                public_key_spki_der=public_spki_der_from_signer(duplicate_signer),
+                not_after=datetime(2099, 1, 1, tzinfo=UTC),
+            )
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 1, "history": 1}
+
+    with session_factory.begin() as session:
+        ManagedTrustLifecycleService(session).revoke(
+            scope=_scope(),
+            key_id=signer.key_id,
+            algorithm=signer.algorithm,
+        )
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 0, "history": 1}
+
+    with pytest.raises(ManagedTrustError, match="bootstrap is one-time"):
+        with session_factory.begin() as session:
+            ManagedTrustLifecycleService(session).bootstrap(
+                scope=_scope(),
+                key_id=recovery_signer.key_id,
+                algorithm=recovery_signer.algorithm,
+                public_key_spki_der=public_spki_der_from_signer(recovery_signer),
+                not_after=datetime(2099, 1, 1, tzinfo=UTC),
+            )
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 0, "history": 1}
+
+
+def test_mint_managed_decision_receipt_v2_rejects_agent_controlled_actor(
+    signer: Ed25519Signer,
+) -> None:
+    record = DecisionRecord(
+        decision=Decision.ALLOW,
+        tool=ACTION,
+        argument_hash=sha256_json({"name": "actor-bound"}),
+        policy_version=POLICY_VERSION,
+        event_id="mint-actor-mismatch",
+        matched_rules=("managed-mint",),
+        reason="test mint actor binding",
+        goal="prove actor binding before mint",
+        actor="agent-controlled-actor",
+        path=("control-plane", "managed-mint"),
+        decision_request_hash=sha256_json({"event_id": "mint-actor-mismatch"}),
+    )
+
+    with pytest.raises(ReceiptValidationError, match="actor does not match"):
+        mint_managed_decision_receipt_v2(
+            issuer=InProcessPlatformIssuer(signer),
+            context=_context(),
+            record=record,
+            audit_hash=sha256_json({"audit": "mint-actor-mismatch"}),
+            previous_audit_hash="0" * 64,
+            trust_epoch=1,
+            request_id="request-mint-actor-mismatch",
+            expires_at="2099-01-01T00:00:00+00:00",
+        )
+
+
 def test_signed_native_receipt_projection_round_trips_for_offline_verification(
     session_factory: sessionmaker[Session],
     signer: Ed25519Signer,
@@ -804,13 +890,7 @@ def test_signed_native_receipt_projection_round_trips_for_offline_verification(
     args = {"name": "signed-native-agent"}
     receipt = _receipt("signed-native", args=args, signer=signer, metadata_sentinel=secret_sentinel)
 
-    ManagedMutationUnitOfWork(
-        session_factory,
-        verifier={signer.key_id: signer},
-        receipt_sealer=receipt_sealer,
-        require_signature=True,
-        require_expiry=True,
-    ).execute(
+    _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
         args=args,
@@ -849,11 +929,13 @@ def test_signed_native_receipt_projection_round_trips_for_offline_verification(
             expected_args=dict(args),
             expected_policy_hash=POLICY_HASH,
             expected_policy_bundle_id=POLICY_BUNDLE_ID,
+            expected_project_id=PROJECT_ID,
+            expected_environment_id=ENVIRONMENT_ID,
             expected_validator_role=VALIDATOR_ROLE,
             expected_authority=AUTHORITY,
-            verifier={signer.key_id: signer},
             require_signature=True,
             require_expiry=True,
+            trust_registry=SqlReceiptTrustRegistry(session),
         )
 
 
@@ -916,7 +998,11 @@ def _receipt(
     expires_at: str = "2099-01-01T00:00:00+00:00",
     signer: Any = None,
     metadata_sentinel: str = "",
+    project_id: str = PROJECT_ID,
+    trust_epoch: int = 1,
 ) -> DecisionReceipt:
+    if signer is None:
+        signer = Ed25519Signer.generate(key_id="managed-native-test")
     goal = "exercise managed mutation UoW"
     if metadata_sentinel:
         goal = f"{goal} {metadata_sentinel}"
@@ -934,11 +1020,14 @@ def _receipt(
         path=("control-plane", "managed-mutation-uow"),
         decision_request_hash=sha256_json({"event_id": event_id, "args": dict(args)}),
     )
-    return DecisionReceipt.from_record(
+    return DecisionReceipt.from_record_v2(
         record,
         audit_hash=sha256_json({"audit": event_id}),
         previous_audit_hash="0" * 64,
         tenant_id=org_id,
+        project_id=project_id,
+        environment_id=environment_id,
+        trust_epoch=trust_epoch,
         execution_boundary=_boundary(org_id=org_id, environment_id=environment_id),
         policy_bundle_id=POLICY_BUNDLE_ID,
         policy_hash=POLICY_HASH,
@@ -961,14 +1050,97 @@ def _signed_uow(
     *,
     revoked_keys: RevocationList | None = None,
 ) -> ManagedMutationUnitOfWork:
+    _bootstrap_trust_root(session_factory, signer)
     return ManagedMutationUnitOfWork(
         session_factory,
-        verifier={signer.key_id: signer},
         receipt_sealer=receipt_sealer,
         require_signature=True,
         require_expiry=True,
         revoked_keys=revoked_keys,
     )
+
+
+def _bootstrap_trust_root(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+    *,
+    org_id: str = ORG_ID,
+    project_id: str = PROJECT_ID,
+    environment_id: str = ENVIRONMENT_ID,
+    not_after: str = "2099-01-01T00:00:00+00:00",
+) -> None:
+    scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
+    try:
+        with session_factory.begin() as session:
+            exists = session.scalar(
+                sa.select(sa.func.count())
+                .select_from(ManagedTrustKey)
+                .where(
+                    ManagedTrustKey.org_id == org_id,
+                    ManagedTrustKey.project_id == project_id,
+                    ManagedTrustKey.environment_id == environment_id,
+                    ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
+                    ManagedTrustKey.key_id == signer.key_id,
+                    ManagedTrustKey.status == "active",
+                )
+            )
+            if exists:
+                return
+            ManagedTrustLifecycleService(session).bootstrap(
+                scope=scope,
+                key_id=signer.key_id,
+                algorithm=signer.algorithm,
+                public_key_spki_der=public_spki_der_from_signer(signer),
+                not_after=datetime.fromisoformat(not_after),
+            )
+    except IntegrityError:
+        with session_factory() as session:
+            exists_after_race = session.scalar(
+                sa.select(sa.func.count())
+                .select_from(ManagedTrustKey)
+                .where(
+                    ManagedTrustKey.org_id == org_id,
+                    ManagedTrustKey.project_id == project_id,
+                    ManagedTrustKey.environment_id == environment_id,
+                    ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
+                    ManagedTrustKey.key_id == signer.key_id,
+                    ManagedTrustKey.status == "active",
+                )
+            )
+        if exists_after_race:
+            return
+        raise
+
+
+def _trust_counts(session: Session) -> dict[str, int]:
+    active = (
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedTrustKey)
+            .where(
+                ManagedTrustKey.org_id == ORG_ID,
+                ManagedTrustKey.project_id == PROJECT_ID,
+                ManagedTrustKey.environment_id == ENVIRONMENT_ID,
+                ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
+                ManagedTrustKey.status == "active",
+            )
+        )
+        or 0
+    )
+    history = (
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedTrustKey)
+            .where(
+                ManagedTrustKey.org_id == ORG_ID,
+                ManagedTrustKey.project_id == PROJECT_ID,
+                ManagedTrustKey.environment_id == ENVIRONMENT_ID,
+                ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
+            )
+        )
+        or 0
+    )
+    return {"active": active, "history": history}
 
 
 def _boundary(
@@ -983,6 +1155,15 @@ def _boundary(
         environment_id=environment_id,
         action=action,
     )
+
+
+def _scope(
+    *,
+    org_id: str = ORG_ID,
+    project_id: str = PROJECT_ID,
+    environment_id: str = ENVIRONMENT_ID,
+) -> ReceiptTrustScope:
+    return ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
 
 
 def _counts(session: Session) -> dict[str, int]:

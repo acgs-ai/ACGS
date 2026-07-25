@@ -64,6 +64,8 @@ EXPECTED_TABLES: Final = (
     "managed_mutation_attempts",
     "managed_outbox",
     "managed_receipt_consumptions",
+    "managed_trust_keys",
+    "managed_trust_scopes",
     "organizations",
     "policy_bundles",
     "projects",
@@ -577,7 +579,7 @@ def _capture_database_state(
     if expected_database is not None:
         _assert_connection_database(connection, expected_database)
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0003:
+    if preflight.state is not DatabaseSchemaState.VERSION_0004:
         raise RecoveryRefused("database is not the exact supported migration head schema")
     inspector = sa.inspect(connection)
     observed = tuple(sorted(inspector.get_table_names(schema="public")))
