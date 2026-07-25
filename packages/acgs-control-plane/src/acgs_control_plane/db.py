@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from sqlalchemy import MetaData, Table, create_engine
+from sqlalchemy import MetaData, Table, create_engine, event
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -159,11 +159,34 @@ class Base(DeclarativeBase):
     metadata = LegacyCreateAllMetaData()
 
 
+def _enable_sqlite_foreign_key_pragma(dbapi_connection: Any) -> None:
+    previous_autocommit = getattr(dbapi_connection, "autocommit", None)
+    if previous_autocommit is not None:
+        dbapi_connection.autocommit = True
+    try:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
+    finally:
+        if previous_autocommit is not None:
+            dbapi_connection.autocommit = previous_autocommit
+
+
 def make_engine(database_url: str) -> Engine:
     connect_args: dict[str, object] = {}
-    if database_url.startswith("sqlite"):
+    sqlite = database_url.startswith("sqlite")
+    if sqlite:
         connect_args["check_same_thread"] = False
-    return create_engine(database_url, connect_args=connect_args, future=True)
+    engine = create_engine(database_url, connect_args=connect_args, future=True)
+    if sqlite:
+
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
+            _enable_sqlite_foreign_key_pragma(dbapi_connection)
+
+    return engine
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
