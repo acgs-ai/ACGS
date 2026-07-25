@@ -4388,14 +4388,22 @@ exit $?
         Path("scripts/evidence"),
         Path("tests/saas_beta"),
     )
-    candidate_files = sorted(
-        relative
-        for root in candidate_roots
-        for path in (ROOT / root).rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-        for relative in (path.relative_to(ROOT),)
+    candidate_extra_files = (
+        Path("packages/acgs-control-plane/pyproject.toml"),
+        Path("packages/gove-zone/pyproject.toml"),
     )
-    assert len(candidate_files) == 26
+    candidate_files = sorted(
+        [
+            relative
+            for root in candidate_roots
+            for path in (ROOT / root).rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+            for relative in (path.relative_to(ROOT),)
+        ]
+        + list(candidate_extra_files)
+    )
+    # Deliberate literal-prover corpus plus renderer-authority package manifests.
+    assert len(candidate_files) == 29
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False

@@ -237,15 +237,6 @@ CLEANUP_HELPER="$SOURCE_REPO/scripts/evidence/clean_sibling_cleanup.sh"
   die 'clean-sibling cleanup helper is missing or noncanonical'
 # shellcheck source=scripts/evidence/clean_sibling_cleanup.sh
 source "$CLEANUP_HELPER"
-git -C "$SOURCE_REPO" cat-file -e "$T^{commit}" || die 'T commit is unavailable'
-git -C "$SOURCE_REPO" cat-file -e "$P^{commit}" || die 'P commit is unavailable'
-git -C "$SOURCE_REPO" merge-base --is-ancestor "$P" "$T" ||
-  die 'P must be an ancestor of exact T'
-[[ -z "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" ]] ||
-  die 'source repository must be clean before proof'
-git -C "$SOURCE_REPO" diff --check "$P..$T" || die 'P..T diff check failed'
-[[ "$(uname -m)" == 'x86_64' ]] || die 'lock platform requires x86_64'
-
 TMP_PARENT_RAW="${TMPDIR:-/tmp}"
 [[ "$TMP_PARENT_RAW" == /* ]] || die 'TMPDIR must be absolute'
 [[ -d "$TMP_PARENT_RAW" && ! -L "$TMP_PARENT_RAW" ]] ||
@@ -309,6 +300,14 @@ TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
   die 'cannot snapshot caller TMPDIR direct entries'
 WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
 SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
+git -C "$SOURCE_REPO" cat-file -e "$T^{commit}" || die 'T commit is unavailable'
+git -C "$SOURCE_REPO" cat-file -e "$P^{commit}" || die 'P commit is unavailable'
+git -C "$SOURCE_REPO" merge-base --is-ancestor "$P" "$T" ||
+  die 'P must be an ancestor of exact T'
+[[ -z "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" ]] ||
+  die 'source repository must be clean before proof'
+git -C "$SOURCE_REPO" diff --check "$P..$T" || die 'P..T diff check failed'
+[[ "$(uname -m)" == 'x86_64' ]] || die 'lock platform requires x86_64'
 export PYTHONDONTWRITEBYTECODE=1
 TMP_ROOT=''
 OWNER_MARKER=''
