@@ -19,7 +19,18 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 ALEMBIC_MANAGED_TABLE_INFO_KEY = "acgs_alembic_managed"
 """Explicit metadata marker for tables that legacy ``create_all`` must not create."""
 
-_ALEMBIC_MANAGED_TABLE_NAMES = frozenset({"projects", "environments"})
+_ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
+    {
+        "projects",
+        "environments",
+        "managed_decision_receipts",
+        "managed_receipt_consumptions",
+        "managed_mutation_attempts",
+        "managed_governance_event_heads",
+        "managed_governance_events",
+        "managed_outbox",
+    }
+)
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(
     {
         "organizations",

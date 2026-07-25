@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -99,6 +100,7 @@ class Environment(Base):
             name="fk_environments_org_project",
         ),
         UniqueConstraint("org_id", "project_id", "slug", name="uq_environments_org_project_slug"),
+        UniqueConstraint("org_id", "project_id", "id", name="uq_environments_org_project_id"),
         {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
     )
 
@@ -196,3 +198,304 @@ class ComplianceExport(Base):
     bundle_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     bundle: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedDecisionReceipt(Base):
+    """Safe indexed and sealed DecisionReceipt projection for managed SQL mutations."""
+
+    __tablename__ = "managed_decision_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_receipts_scope_environment",
+        ),
+        UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_mdr_scope_id"),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "receipt_id",
+            name="uq_mdr_scope_receipt_id",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "receipt_hash",
+            name="uq_mdr_scope_receipt_hash",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "audit_event_hash",
+            name="uq_mdr_scope_audit_event_hash",
+        ),
+        UniqueConstraint("org_id", "receipt_hash", name="uq_mdr_org_receipt_hash"),
+        UniqueConstraint("org_id", "audit_event_hash", name="uq_mdr_org_audit_event_hash"),
+        CheckConstraint("assurance_class = 'native'", name="ck_mdr_assurance_native"),
+        CheckConstraint("source_system = 'gove-zone'", name="ck_mdr_source_gove_zone"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    proposed_action: Mapped[str] = mapped_column(String(200), nullable=False)
+    execution_boundary: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_bundle_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    argument_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    signing_key_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    assurance_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_system: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    projection: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedMutationAttempt(Base):
+    """Terminal reservation for one managed mutation receipt attempt."""
+
+    __tablename__ = "managed_mutation_attempts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_attempts_scope_environment",
+        ),
+        UniqueConstraint("org_id", "receipt_hash", name="uq_mma_org_receipt_hash"),
+        UniqueConstraint("org_id", "audit_event_hash", name="uq_mma_org_audit_event_hash"),
+        CheckConstraint(
+            "status IN ('in_progress', 'succeeded', 'failed')",
+            name="ck_mma_terminal_status",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    argument_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    failure_class_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    failure_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedReceiptConsumption(Base):
+    """SQL transaction-bound single-use burn for a managed DecisionReceipt."""
+
+    __tablename__ = "managed_receipt_consumptions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_consumptions_scope_environment",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "managed_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.id",
+            ],
+            name="fk_managed_consumptions_scope_receipt",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "managed_receipt_id",
+            name="uq_mrc_scope_receipt",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "receipt_hash",
+            name="uq_mrc_scope_receipt_hash",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "audit_event_hash",
+            name="uq_mrc_scope_audit_event_hash",
+        ),
+        UniqueConstraint("org_id", "receipt_hash", name="uq_mrc_org_receipt_hash"),
+        UniqueConstraint("org_id", "audit_event_hash", name="uq_mrc_org_audit_event_hash"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedGovernanceEventHead(Base):
+    """Per-environment SQL event-chain head for managed mutations."""
+
+    __tablename__ = "managed_governance_event_heads"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_event_heads_scope_environment",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    environment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    last_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_event_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="0" * 64)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedGovernanceEvent(Base):
+    """SQL-only governance event linked to the consumed receipt."""
+
+    __tablename__ = "managed_governance_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_events_scope_environment",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "managed_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.id",
+            ],
+            name="fk_managed_events_scope_receipt",
+        ),
+        UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_mge_scope_id"),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "sequence",
+            name="uq_mge_scope_sequence",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "event_hash",
+            name="uq_mge_scope_event_hash",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "managed_receipt_id",
+            name="uq_mge_scope_receipt",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    proposed_action: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedOutboxMessage(Base):
+    """Durable SQL-only work item; delivery is intentionally out of scope."""
+
+    __tablename__ = "managed_outbox"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_managed_outbox_scope_environment",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "managed_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.id",
+            ],
+            name="fk_managed_outbox_scope_receipt",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "managed_event_id"],
+            [
+                "managed_governance_events.org_id",
+                "managed_governance_events.project_id",
+                "managed_governance_events.environment_id",
+                "managed_governance_events.id",
+            ],
+            name="fk_managed_outbox_scope_event",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "delivery_key",
+            name="uq_managed_outbox_scope_delivery_key",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "payload_digest",
+            name="uq_managed_outbox_scope_payload_digest",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    managed_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    managed_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

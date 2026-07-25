@@ -15,6 +15,7 @@ for deployment orchestration or recovery procedures.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -34,7 +35,8 @@ from acgs_control_plane import models as _models  # noqa: F401  # load Base meta
 from acgs_control_plane.db import make_engine
 
 LEGACY_V0_REVISION: Final = "0001"
-HEAD_REVISION: Final = "0002"
+SCOPED_REVISION: Final = "0002"
+HEAD_REVISION: Final = "0003"
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -70,6 +72,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0001_PARTIAL_PROJECTS = "version_0001_partial_projects"
     VERSION_0001_PARTIAL_SCOPE = "version_0001_partial_scope"
     VERSION_0002 = "version_0002"
+    VERSION_0003 = "version_0003"
     UNKNOWN = "unknown"
 
 
@@ -94,7 +97,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0002.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0003.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -221,6 +224,101 @@ _SCOPED_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_MANAGED_MUTATION_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_SCOPED_COLUMNS,
+    "managed_decision_receipts": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("proposed_action", "string", False, 200),
+        _ColumnSpec("execution_boundary", "string", False, 200),
+        _ColumnSpec("policy_bundle_id", "string", False, 200),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("policy_hash", "string", False, 128),
+        _ColumnSpec("argument_hash", "string", False, 128),
+        _ColumnSpec("signing_key_id", "string", False, 200),
+        _ColumnSpec("signature_algorithm", "string", False, 32),
+        _ColumnSpec("assurance_class", "string", False, 32),
+        _ColumnSpec("source_system", "string", False, 64),
+        _ColumnSpec("issued_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+        _ColumnSpec("projection", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "managed_mutation_attempts": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("action", "string", False, 200),
+        _ColumnSpec("actor_hash", "string", False, 64),
+        _ColumnSpec("argument_hash", "string", False, 128),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("failure_class_hash", "string", True, 64),
+        _ColumnSpec("failure_digest", "string", True, 64),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "managed_receipt_consumptions": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("managed_receipt_id", "string", False, 64),
+        _ColumnSpec("receipt_hash", "string", False, 64),
+        _ColumnSpec("audit_event_hash", "string", False, 64),
+        _ColumnSpec("consumed_at", "datetime", False),
+    ),
+    "managed_governance_event_heads": (
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("last_sequence", "integer", False),
+        _ColumnSpec("last_event_hash", "string", False, 64),
+        _ColumnSpec("updated_at", "datetime", False),
+    ),
+    "managed_governance_events": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("managed_receipt_id", "string", False, 64),
+        _ColumnSpec("sequence", "integer", False),
+        _ColumnSpec("previous_hash", "string", False, 64),
+        _ColumnSpec("event_hash", "string", False, 64),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("actor", "string", False, 200),
+        _ColumnSpec("proposed_action", "string", False, 200),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("payload_digest", "string", False, 64),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "managed_outbox": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("managed_receipt_id", "string", False, 64),
+        _ColumnSpec("managed_event_id", "string", False, 64),
+        _ColumnSpec("delivery_key", "string", False, 200),
+        _ColumnSpec("payload_digest", "string", False, 64),
+        _ColumnSpec("payload", "json", False),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("attempts", "integer", False),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("available_at", "datetime", False),
+        _ColumnSpec("delivered_at", "datetime", True),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -231,6 +329,15 @@ _LEGACY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
 }
 _SCOPED_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _SCOPED_COLUMNS
+}
+_MANAGED_MUTATION_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_SCOPED_PRIMARY_KEYS,
+    "managed_decision_receipts": ("id",),
+    "managed_mutation_attempts": ("id",),
+    "managed_receipt_consumptions": ("id",),
+    "managed_governance_event_heads": ("org_id", "project_id", "environment_id"),
+    "managed_governance_events": ("id",),
+    "managed_outbox": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -257,6 +364,66 @@ _SCOPED_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_SCOPE_ENVIRONMENT_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id"),
+    None,
+    "environments",
+    ("org_id", "project_id", "id"),
+)
+_SCOPE_RECEIPT_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "managed_receipt_id"),
+    None,
+    "managed_decision_receipts",
+    ("org_id", "project_id", "environment_id", "id"),
+)
+_MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_SCOPED_FOREIGN_KEYS,
+    "managed_decision_receipts": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+        }
+    ),
+    "managed_receipt_consumptions": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _SCOPE_RECEIPT_FK,
+        }
+    ),
+    "managed_mutation_attempts": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+        }
+    ),
+    "managed_governance_event_heads": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+        }
+    ),
+    "managed_governance_events": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _SCOPE_RECEIPT_FK,
+        }
+    ),
+    "managed_outbox": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            _SCOPE_RECEIPT_FK,
+            (
+                ("org_id", "project_id", "environment_id", "managed_event_id"),
+                None,
+                "managed_governance_events",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -274,6 +441,55 @@ _SCOPED_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": frozenset({("org_id", "slug"), ("org_id", "id")}),
     "environments": frozenset({("org_id", "project_id", "slug")}),
+}
+_MANAGED_MUTATION_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_UNIQUES,
+    "environments": frozenset(
+        {
+            ("org_id", "project_id", "slug"),
+            ("org_id", "project_id", "id"),
+        }
+    ),
+    "managed_decision_receipts": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "id"),
+            ("org_id", "project_id", "environment_id", "receipt_id"),
+            ("org_id", "project_id", "environment_id", "receipt_hash"),
+            ("org_id", "project_id", "environment_id", "audit_event_hash"),
+            ("org_id", "receipt_hash"),
+            ("org_id", "audit_event_hash"),
+        }
+    ),
+    "managed_receipt_consumptions": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "managed_receipt_id"),
+            ("org_id", "project_id", "environment_id", "receipt_hash"),
+            ("org_id", "project_id", "environment_id", "audit_event_hash"),
+            ("org_id", "receipt_hash"),
+            ("org_id", "audit_event_hash"),
+        }
+    ),
+    "managed_mutation_attempts": frozenset(
+        {
+            ("org_id", "receipt_hash"),
+            ("org_id", "audit_event_hash"),
+        }
+    ),
+    "managed_governance_event_heads": frozenset(),
+    "managed_governance_events": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "id"),
+            ("org_id", "project_id", "environment_id", "sequence"),
+            ("org_id", "project_id", "environment_id", "event_hash"),
+            ("org_id", "project_id", "environment_id", "managed_receipt_id"),
+        }
+    ),
+    "managed_outbox": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "delivery_key"),
+            ("org_id", "project_id", "environment_id", "payload_digest"),
+        }
+    ),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -295,6 +511,36 @@ _SCOPED_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     # interruption boundaries on SQLite.
     "projects": frozenset(),
     "environments": frozenset(),
+}
+_MANAGED_MUTATION_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPED_NON_UNIQUE_INDEXES,
+    "managed_decision_receipts": frozenset({("org_id",)}),
+    "managed_mutation_attempts": frozenset({("org_id",)}),
+    "managed_receipt_consumptions": frozenset({("org_id",)}),
+    "managed_governance_event_heads": frozenset(),
+    "managed_governance_events": frozenset({("org_id",)}),
+    "managed_outbox": frozenset({("org_id",)}),
+}
+_MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
+    "managed_decision_receipts": frozenset(
+        {
+            ("ck_mdr_assurance_native", "assurance_class='native'"),
+            ("ck_mdr_source_gove_zone", "source_system='gove-zone'"),
+        }
+    ),
+    "managed_mutation_attempts": frozenset(
+        {
+            (
+                "ck_mma_terminal_status",
+                "status IN ('in_progress', 'succeeded', 'failed')",
+            ),
+        }
+    ),
+    "managed_receipt_consumptions": frozenset(),
+    "managed_governance_event_heads": frozenset(),
+    "managed_governance_events": frozenset(),
+    "managed_outbox": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -381,7 +627,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
     user_tables = table_names - {_VERSION_TABLE}
     if versions == [LEGACY_V0_REVISION]:
         return _classify_revision_0001(connection, inspector, user_tables)
-    if versions == [HEAD_REVISION]:
+    if versions == [SCOPED_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -393,6 +639,20 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0002, "known Alembic revision 0002")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _MANAGED_MUTATION_COLUMNS,
+            _MANAGED_MUTATION_PRIMARY_KEYS,
+            _MANAGED_MUTATION_FOREIGN_KEYS,
+            _MANAGED_MUTATION_UNIQUES,
+            _MANAGED_MUTATION_NON_UNIQUE_INDEXES,
+            _MANAGED_MUTATION_CHECKS,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0003, "known Alembic revision 0003")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -408,7 +668,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0002:
+    if preflight.state is not DatabaseSchemaState.VERSION_0003:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -511,7 +771,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0002:
+    if after.state is not DatabaseSchemaState.VERSION_0003:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -573,7 +833,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0002:
+                    if after.state is not DatabaseSchemaState.VERSION_0003:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -969,6 +1229,7 @@ def _schema_detail(
     expected_foreign_keys: dict[str, frozenset[_ForeignKeySpec]],
     expected_uniques: dict[str, frozenset[tuple[str, ...]]],
     expected_non_unique_indexes: dict[str, frozenset[tuple[str, ...]]],
+    expected_checks: dict[str, frozenset[tuple[str, str]]] | None = None,
 ) -> str | None:
     expected_tables = set(expected_columns)
     if actual_tables != expected_tables:
@@ -978,6 +1239,9 @@ def _schema_detail(
 
     dialect_name = inspector.bind.dialect.name
     inspection_schema = "public" if dialect_name == "postgresql" else None
+    expected_checks_by_table = expected_checks or {
+        table_name: frozenset() for table_name in expected_columns
+    }
 
     for table_name, columns in expected_columns.items():
         actual_columns = inspector.get_columns(table_name, schema=inspection_schema)
@@ -1034,10 +1298,72 @@ def _schema_detail(
         if frozenset(actual_indexes) != expected_non_unique_indexes[table_name]:
             return f"{table_name} has unexpected non-unique indexes"
 
-        if inspector.get_check_constraints(table_name, schema=inspection_schema):
-            return f"{table_name} has check constraints outside the frozen schema"
+        actual_checks = frozenset(
+            (
+                str(constraint.get("name") or ""),
+                _check_constraint_signature(constraint.get("sqltext")),
+            )
+            for constraint in inspector.get_check_constraints(table_name, schema=inspection_schema)
+        )
+        expected_check_signatures = frozenset(
+            (name, _check_constraint_signature(sqltext))
+            for name, sqltext in expected_checks_by_table[table_name]
+        )
+        if actual_checks != expected_check_signatures:
+            return f"{table_name} has unexpected check constraints"
 
     return None
+
+
+def _normalized_constraint_sql(value: object) -> str:
+    return "".join(str(value or "").replace('"', "").split())
+
+
+def _check_constraint_signature(value: object) -> str:
+    raw = str(value or "").lower()
+    compact = _normalized_constraint_sql(
+        re.sub(
+            r"::(?:text|character\s+varying)(?:\[\])?",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
+    ).lower()
+    compact = compact.replace("(assurance_class)", "assurance_class")
+    compact = compact.replace("(source_system)", "source_system")
+    compact = compact.replace("(status)", "status")
+    compact = re.sub(r"\('([^']+)'\)", r"'\1'", compact)
+    compact = _strip_outer_parentheses(compact)
+
+    if compact == "assurance_class='native'":
+        return "assurance_class:native"
+    if compact == "source_system='gove-zone'":
+        return "source_system:gove-zone"
+    if compact in {
+        "statusin('in_progress','succeeded','failed')",
+        "status=any(array['in_progress','succeeded','failed'])",
+    }:
+        return "status:in_progress,succeeded,failed"
+    return compact
+
+
+def _strip_outer_parentheses(value: str) -> str:
+    result = value
+    while result.startswith("(") and result.endswith(")"):
+        depth = 0
+        encloses_entire_expression = True
+        for index, character in enumerate(result):
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+                if depth == 0 and index != len(result) - 1:
+                    encloses_entire_expression = False
+                    break
+        if not encloses_entire_expression:
+            break
+        result = result[1:-1]
+    return result
 
 
 def _reflected_column_tuple(column_names: Sequence[str | None] | None) -> tuple[str, ...] | None:

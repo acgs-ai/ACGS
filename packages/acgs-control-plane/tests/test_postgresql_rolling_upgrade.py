@@ -806,6 +806,15 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
+                # Revision 0003 tables reference environments, so seeding the
+                # partial revision 0001 shape must remove them first.
+                connection.execute(
+                    sa.text(
+                        "DROP TABLE managed_outbox, managed_governance_events, "
+                        "managed_governance_event_heads, managed_receipt_consumptions, "
+                        "managed_mutation_attempts, managed_decision_receipts"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -916,18 +925,27 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0002",
+            "after": "version_0003",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
-            "target_revision": "0002",
+            "target_revision": HEAD_REVISION,
         }
         assert old_probe.process.poll() is None
         assert old_probe.request("health") == {"body": {"status": "ok"}, "status_code": 200}
 
         migrated = _state(pg_engine)
-        assert migrated["version"] == "0002"
-        assert set(migrated["tables"]) - set(before["tables"]) == {"projects", "environments"}
+        assert migrated["version"] == HEAD_REVISION
+        assert set(migrated["tables"]) - set(before["tables"]) == {
+            "environments",
+            "managed_decision_receipts",
+            "managed_governance_event_heads",
+            "managed_governance_events",
+            "managed_mutation_attempts",
+            "managed_outbox",
+            "managed_receipt_consumptions",
+            "projects",
+        }
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
             migrated_catalog = tuple(row for row in migrated["catalog"] if row[1] == table)
@@ -948,7 +966,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0002.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0003.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1021,5 +1039,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"
