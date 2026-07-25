@@ -26,9 +26,7 @@ def _seed_activity(client: TestClient, org_id: str, headers: dict[str, str]) -> 
             == 201
         )
     with client.app.state.session_factory.begin() as session:
-        session.add_all(
-            [AgentRecord(org_id=org_id, name=f"bot-{i}") for i in range(3)]
-        )
+        session.add_all([AgentRecord(org_id=org_id, name=f"bot-{i}") for i in range(3)])
 
 
 def test_receipt_list_filters_and_pagination(

@@ -74,9 +74,7 @@ _G038_ALLOWED_AGENT_CATALOG_CHANGES = frozenset(
         "uq_agents_scope_name",
     }
 )
-_G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset(
-    {"uq_policy_bundles_one_active_per_org"}
-)
+_G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset({"uq_policy_bundles_one_active_per_org"})
 
 
 class ArtifactRefusal(RuntimeError):
@@ -398,9 +396,7 @@ def _catalog(connection: Connection) -> tuple[tuple[str, ...], ...]:
 def _rows(connection: Connection, table: str) -> tuple[tuple[str, ...], ...]:
     quoted = connection.dialect.identifier_preparer.quote(table)
     if table == "agents":
-        select_list = (
-            "id, org_id, name, description, trust_tier, allowed_tools, status, created_at"
-        )
+        select_list = "id, org_id, name, description, trust_tier, allowed_tools, status, created_at"
     else:
         select_list = "*"
     rows = connection.execute(sa.text(f"SELECT {select_list} FROM {quoted} ORDER BY 1")).all()

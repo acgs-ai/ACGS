@@ -2111,10 +2111,7 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "http_status:400,401,403,409,413,503"
     if compact in {
-        (
-            "project_idisnullandenvironment_idisnullor"
-            "project_idisnotnullandenvironment_idisnotnull"
-        ),
+        ("project_idisnullandenvironment_idisnullorproject_idisnotnullandenvironment_idisnotnull"),
         (
             "(project_idisnullandenvironment_idisnull)or"
             "(project_idisnotnullandenvironment_idisnotnull)"

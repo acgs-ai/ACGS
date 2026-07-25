@@ -871,9 +871,9 @@ def _register_routes(app: FastAPI) -> None:
 
         def _do(bundle_id: str, version: str) -> dict[str, str]:
             current = session.execute(
-                select(PolicyBundle).where(
-                    PolicyBundle.org_id == org.id, PolicyBundle.status == "active"
-            ).with_for_update()
+                select(PolicyBundle)
+                .where(PolicyBundle.org_id == org.id, PolicyBundle.status == "active")
+                .with_for_update()
             ).scalar_one_or_none()
             if current is not None:
                 current.status = "retired"

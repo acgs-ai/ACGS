@@ -211,9 +211,7 @@ def test_simulate_previews_without_receipt(
     assert after == before  # simulation is pure: no receipt, no audit event
 
 
-def test_agent_lifecycle_status_change_is_governed(
-    tmp_path: Path, audit_dir: Path
-) -> None:
+def test_agent_lifecycle_status_change_is_governed(tmp_path: Path, audit_dir: Path) -> None:
     client = _migrated_client(tmp_path, audit_dir)
     org = _bootstrap_org(client)
     org_id = org["org_id"]
