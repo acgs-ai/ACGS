@@ -54,6 +54,7 @@ FINGERPRINT_MAX_CANONICAL_BYTES_PER_TABLE: Final = 64 * 1024 * 1024
 FINGERPRINT_MAX_CANONICAL_BYTES_PER_CAPTURE: Final = 128 * 1024 * 1024
 FINGERPRINT_FETCH_BATCH_SIZE: Final = 1
 EXPECTED_TABLES: Final = (
+    "agent_registration_idempotency",
     "agents",
     "alembic_version",
     "compliance_exports",
