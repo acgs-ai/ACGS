@@ -169,6 +169,7 @@ P1_MIGRATION_REVIEWED_BASE='79a3c39f841cfc5a6c79e85973887814caf0e694'
 P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'
 P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'
 P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'
+P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -213,6 +214,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=1
     EXPECTED_TRANSCRIPT_RECORDS=11
     TMP_BASENAME='acgs-p1-trust'
+    ;;
+  P2-TENANT-BOOTSTRAP-000)
+    [[ "$P" == "$P2_TENANT_BOOTSTRAP_REVIEWED_BASE" ]] ||
+      die "P2-TENANT-BOOTSTRAP-000 reviewed parent must be exact $P2_TENANT_BOOTSTRAP_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'
+    INCLUDE_GZ=1
+    EXPECTED_TRANSCRIPT_RECORDS=11
+    TMP_BASENAME='acgs-p2-tenant-bootstrap'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -725,11 +734,92 @@ run_recorded_gate() {
     "$cwd_scope" "$@"
 }
 
+validate_exact_pytest_junit() {
+  local junit_file="$1" expected_tests="$2" selector="$3"
+  "$EVIDENCE_PY" - "$junit_file" "$expected_tests" "$selector" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+junit_file, expected_tests_raw, selector = sys.argv[1:4]
+expected_tests = int(expected_tests_raw)
+try:
+    root = ET.parse(junit_file).getroot()
+except Exception:
+    print(f"RECORDED_GATE=FAIL selector={selector} reason=unreadable-junit", file=sys.stderr)
+    raise SystemExit(2)
+
+if root.tag == "testsuite":
+    suites = [root]
+elif root.tag == "testsuites":
+    suites = list(root.findall("testsuite"))
+else:
+    print(f"RECORDED_GATE=FAIL selector={selector} reason=unexpected-junit-root", file=sys.stderr)
+    raise SystemExit(2)
+
+def count(name: str) -> int:
+    total = 0
+    for suite in suites:
+        raw = suite.attrib.get(name, "0")
+        try:
+            total += int(raw)
+        except ValueError:
+            print(
+                f"RECORDED_GATE=FAIL selector={selector} reason=invalid-junit-{name}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    return total
+
+actual = {
+    "tests": count("tests"),
+    "failures": count("failures"),
+    "errors": count("errors"),
+    "skipped": count("skipped"),
+}
+if actual != {"tests": expected_tests, "failures": 0, "errors": 0, "skipped": 0}:
+    fields = " ".join(f"{key}={value}" for key, value in actual.items())
+    print(
+        f"RECORDED_GATE=FAIL selector={selector} reason=unexpected-pytest-outcome {fields}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+PY
+}
+
+run_recorded_exact_pytest_gate() {
+  local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5" expected_tests="$6"
+  shift 6
+  local started finished stdout_file stderr_file junit_file gate_status stderr_sha256
+  stdout_file="$NODE_EVIDENCE/$basename.stdout"
+  stderr_file="$NODE_EVIDENCE/$basename.stderr"
+  junit_file="$NODE_EVIDENCE/$basename.junit.xml"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if (
+    cd "$cwd"
+    PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"
+  ) >"$stdout_file" 2>"$stderr_file"; then
+    gate_status=0
+  else
+    gate_status=$?
+  fi
+  finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$gate_status" -ne 0 ]]; then
+    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
+    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
+      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    return "$gate_status"
+  fi
+  validate_exact_pytest_junit "$junit_file" "$expected_tests" "$selector"
+  append_record "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" \
+    "$cwd_scope" "$@"
+}
+
 phase B5
 node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
-    P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004)
+    P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
+      P2-TENANT-BOOTSTRAP-000)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -863,6 +953,20 @@ elif [[ "$NODE_ID" == P1-TRUST-004 ]]; then
   run_recorded_gate GZ "$WORKTREE" p1-trust-runtime \
     'packages/gove-zone:P1-TRUST-004-trust-runtime-gate' REPO_ROOT \
     "${P1_TRUST_GZ_GATE[@]}"
+elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
+  P2_TENANT_BOOTSTRAP_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic \
+    tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix \
+    tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once)
+  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+    "$WORKTREE/packages/acgs-control-plane" p2-tenant-bootstrap-postgres \
+    'packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate' CP \
+    "${P2_TENANT_BOOTSTRAP_CP_GATE[@]}"
+  P2_TENANT_BOOTSTRAP_ROOT_GATE=(packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+    tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract)
+  run_recorded_exact_pytest_gate P2 "$WORKTREE" p2-tenant-bootstrap-cross-plane \
+    'root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract' REPO_ROOT 1 \
+    "${P2_TENANT_BOOTSTRAP_ROOT_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

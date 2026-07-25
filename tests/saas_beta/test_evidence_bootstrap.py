@@ -180,6 +180,20 @@ def _reviewed_p1_trust_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p2_tenant_bootstrap_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P2-TENANT-BOOTSTRAP-000"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -213,6 +227,15 @@ def _write_reviewed_p1_trust_transcript(path: Path) -> None:
             path,
             record,
             expected_node="P1-TRUST-004",
+        )
+
+
+def _write_reviewed_p2_tenant_bootstrap_transcript(path: Path) -> None:
+    for record in _reviewed_p2_tenant_bootstrap_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P2-TENANT-BOOTSTRAP-000",
         )
 
 
@@ -2672,6 +2695,332 @@ def test_p1_trust_run_validation_rejects_forged_corpus_metadata_before_output() 
             _common.validate_secret_free_run(forged, expected_node="P1-TRUST-004")
 
 
+def test_p2_tenant_bootstrap_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p2_tenant_bootstrap_records()
+    assert len(records) == 11
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ]
+    assert records[-2]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *_common.P2_TENANT_BOOTSTRAP_CP_SELECTORS,
+    ]
+    assert records[-2]["selectors"] == [
+        "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate"
+    ]
+    assert records[-1]["argv"] == [
+        "packages/acgs-control-plane/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        _common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR,
+    ]
+    assert records[-1]["selectors"] == ["root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract"]
+    assert _common.P2_TENANT_BOOTSTRAP_CP_SELECTORS == (
+        "tests/integration/test_tenant_bootstrap_vertical.py::"
+        "test_real_api_postgres_bootstrap_allow_atomic",
+        "tests/integration/test_tenant_bootstrap_vertical.py::"
+        "test_real_api_postgres_bootstrap_refusal_matrix",
+        "tests/integration/test_tenant_bootstrap_vertical.py::"
+        "test_100_request_multiprocess_bootstrap_once",
+    )
+    assert (
+        _common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR
+        == "tests/saas_beta/test_cross_plane_contracts.py::"
+        "test_tenant_bootstrap_receipt_contract"
+    )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3", "uv"}
+        for record in records[-2:]
+    )
+
+    transcript = tmp_path / "P2-TENANT-BOOTSTRAP-000/transcript.jsonl"
+    _write_reviewed_p2_tenant_bootstrap_transcript(transcript)
+    loaded = generate_run._read_transcript(
+        transcript,
+        expected_node="P2-TENANT-BOOTSTRAP-000",
+    )
+    _common.validate_transcript_sequence(loaded, expected_node="P2-TENANT-BOOTSTRAP-000")
+
+    trust_cp_final = _reviewed_p1_trust_records()[-2]
+    trust_gz_final = _reviewed_p1_trust_records()[-1]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:9], records[-1], records[-2]],
+        [*records[:9], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]],
+        [*records[:10], {**records[-1], "cwd_scope": "CP"}],
+        [
+            *records[:9],
+            {**records[-2], "argv": [*records[-2]["argv"], "-k", "bootstrap"]},
+            records[-1],
+        ],
+        [
+            *records[:9],
+            {
+                **records[-2],
+                "argv": [
+                    records[-2]["argv"][0],
+                    *reversed(_common.P2_TENANT_BOOTSTRAP_CP_SELECTORS),
+                ],
+            },
+            records[-1],
+        ],
+        [
+            *records[:9],
+            {
+                **records[-2],
+                "argv": [
+                    records[-2]["argv"][0],
+                    "tests/integration/test_tenant_bootstrap_vertical.py",
+                ],
+            },
+            records[-1],
+        ],
+        [*records[:9], {**records[-2], "argv": records[-2]["argv"][:1]}, records[-1]],
+        [
+            *records[:9],
+            {
+                **records[-2],
+                "argv": [
+                    "./scripts/run_postgres_gate.sh",
+                    *_common.P1_MIGRATION_SELECTORS[:3],
+                ],
+            },
+            records[-1],
+        ],
+        [
+            *records[:9],
+            {**records[-2], "selectors": ["packages/acgs-control-plane:local-gate"]},
+            records[-1],
+        ],
+        [
+            *records[:10],
+            {
+                **records[-1],
+                "argv": [
+                    "packages/acgs-control-plane/.venv/bin/python",
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "tests/saas_beta/test_cross_plane_contracts.py",
+                ],
+            },
+        ],
+        [
+            *records[:10],
+            {
+                **records[-1],
+                "argv": [
+                    ".venv-evidence/bin/python",
+                    "-m",
+                    "pytest",
+                    "-q",
+                    _common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR,
+                ],
+            },
+        ],
+        [*records[:9], {**trust_cp_final, "cwd_scope": "CP"}, records[-1]],
+        [*records[:10], {**trust_gz_final, "cwd_scope": "REPO_ROOT"}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(
+                unsafe,
+                expected_node="P2-TENANT-BOOTSTRAP-000",
+            )
+
+    forged_transcript = tmp_path / "P2-TENANT-BOOTSTRAP-000/forged-transcript.jsonl"
+    for record in [*records[:10], {**records[-1], "cwd_scope": "CP"}]:
+        forged_transcript.parent.mkdir(parents=True, exist_ok=True)
+        with forged_transcript.open("ab") as handle:
+            handle.write(_common.jcs_bytes(record) + b"\n")
+    with pytest.raises(_common.EvidenceError, match="cwd differs"):
+        generate_run._read_transcript(forged_transcript, expected_node="P2-TENANT-BOOTSTRAP-000")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {**trust_gz_final, "cwd_scope": "REPO_ROOT"},
+            expected_node="P2-TENANT-BOOTSTRAP-000",
+        )
+
+
+def test_p2_tenant_bootstrap_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P2-TENANT-BOOTSTRAP-000",
+            "commands": _reviewed_p2_tenant_bootstrap_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": ["single-process"],
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P2-TENANT-BOOTSTRAP-000")
+
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(
+            run_with(node_id="P1-TRUST-004"),
+            expected_node="P2-TENANT-BOOTSTRAP-000",
+        )
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": ["single-process"]},
+    ):
+        with pytest.raises(_common.EvidenceError, match="run determinism differs"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P2-TENANT-BOOTSTRAP-000",
+            )
+
+    records = _reviewed_p2_tenant_bootstrap_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:9], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]]),
+        run_with(commands=[*records[:10], {**records[-1], "cwd_scope": "CP"}]),
+        run_with(
+            commands=[
+                *records[:9],
+                {
+                    **records[-2],
+                    "argv": [
+                        "bash",
+                        "-c",
+                        "ACGS_TEST_SEED=20260710 ./scripts/run_postgres_gate.sh",
+                    ],
+                },
+                records[-1],
+            ]
+        ),
+        run_with(commands=[*records[:10], {**records[-1], "argv": records[-1]["argv"][:4]}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P2-TENANT-BOOTSTRAP-000")
+
+
+def _shell_function(source: str, name: str) -> str:
+    start_marker = f"\n{name}() {{\n"
+    start = source.index(start_marker) + 1
+    end = source.index("\n}\n\n", start) + 3
+    return source[start:end]
+
+
+def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    validator = _shell_function(source, "validate_exact_pytest_junit")
+    wrapper = _shell_function(source, "run_recorded_exact_pytest_gate")
+    wrapper_source = wrapper
+    assert wrapper_source.index("validate_exact_pytest_junit") < wrapper_source.index(
+        "append_record"
+    )
+    assert 'PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"' in wrapper_source
+    assert "append_record" not in wrapper_source.split("validate_exact_pytest_junit", 1)[0]
+    p2_source = source.split('elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]', 1)[1]
+    p2_source = p2_source.split("else", 1)[0]
+    assert "run_recorded_exact_pytest_gate P2" in p2_source
+    assert "REPO_ROOT 1 \\" in p2_source
+    assert "run_recorded_gate P2" not in p2_source
+    assert "--junitxml" not in " ".join(_reviewed_p2_tenant_bootstrap_records()[-1]["argv"])
+
+    fake_pytest = tmp_path / "fake-pytest"
+    fake_pytest.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "junit=${PYTEST_ADDOPTS#--junitxml=}\n"
+        'printf \'%s\' "$JUNIT_PAYLOAD" >"$junit"\n',
+        encoding="utf-8",
+    )
+    fake_pytest.chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
+        f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        'mkdir -p "$NODE_EVIDENCE"\n'
+        'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        f"{validator}\n"
+        f"{wrapper}\n"
+        'run_recorded_exact_pytest_gate P2 "$PWD" p2-root '
+        "'root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract' REPO_ROOT 1 "
+        f"{json.dumps(str(fake_pytest))} -m pytest -q "
+        f"{json.dumps(_common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR)}\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+
+    def run_case(payload: str) -> subprocess.CompletedProcess[str]:
+        marker = tmp_path / "append-marker"
+        if marker.exists():
+            marker.unlink()
+        env = _evidence_env(tmp_path / "evidence")
+        env["JUNIT_PAYLOAD"] = payload
+        return subprocess.run(
+            [str(harness)],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    exact = run_case('<testsuite tests="1" failures="0" errors="0" skipped="0"/>')
+    assert exact.returncode == 0, (exact.stdout, exact.stderr)
+    appended = (tmp_path / "append-marker").read_text(encoding="utf-8")
+    assert "--junitxml" not in appended
+    assert _common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR in appended
+
+    adversarial_payloads = {
+        "skipped": '<testsuite tests="1" failures="0" errors="0" skipped="1"/>',
+        "zero": '<testsuite tests="0" failures="0" errors="0" skipped="0"/>',
+        "two": '<testsuite tests="2" failures="0" errors="0" skipped="0"/>',
+        "failure": '<testsuite tests="1" failures="1" errors="0" skipped="0"/>',
+        "error": '<testsuite tests="1" failures="0" errors="1" skipped="0"/>',
+        "suite-sum": (
+            '<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0"/>'
+            '<testsuite tests="1" failures="0" errors="0" skipped="0"/></testsuites>'
+        ),
+    }
+    for name, payload in adversarial_payloads.items():
+        result = run_case(payload)
+        assert result.returncode == 2, name
+        assert "unexpected-pytest-outcome" in result.stderr
+        assert not (tmp_path / "append-marker").exists(), name
+
+    malformed = run_case("<not-xml")
+    assert malformed.returncode == 2
+    assert "unreadable-junit" in malformed.stderr
+    assert not (tmp_path / "append-marker").exists()
+
+
 def _json_line(path: Path) -> dict[str, Any]:
     value = _common.strict_json_loads(path.read_bytes().strip())
     assert isinstance(value, dict)
@@ -3991,22 +4340,25 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 8
+    assert source.count("run_recorded_gate CP") == 9
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
     assert "P1-SCOPE-002)" in source
     assert "P1-LEDGER-003)" in source
     assert "P1-TRUST-004)" in source
+    assert "P2-TENANT-BOOTSTRAP-000)" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
+    assert "P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=11" in source
     assert "TMP_BASENAME='acgs-p1-ledger'" in source
     assert "TMP_BASENAME='acgs-p1-trust'" in source
+    assert "TMP_BASENAME='acgs-p2-tenant-bootstrap'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
     for selector in _common.P1_MIGRATION_SELECTORS:
@@ -4027,6 +4379,13 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert selector in source
     for selector in _common.P1_TRUST_GZ_SELECTORS:
         assert selector in source
+    assert "P2_TENANT_BOOTSTRAP_CP_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "P2_TENANT_BOOTSTRAP_ROOT_GATE=(packages/acgs-control-plane/.venv/bin/python" in source
+    assert "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate" in source
+    assert "root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract" in source
+    for selector in _common.P2_TENANT_BOOTSTRAP_CP_SELECTORS:
+        assert selector in source
+    assert _common.P2_TENANT_BOOTSTRAP_ROOT_SELECTOR in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -4760,7 +5119,7 @@ clean_sibling_remove_owned_root "$parent_fd" "$3" "$4" placeholder
     assert (displaced / ".acgs-clean-sibling-owned").is_file()
 
 
-def test_clean_sibling_cleanup_accepts_only_reviewed_p0_p1_temp_basenames(
+def test_clean_sibling_cleanup_accepts_only_reviewed_p0_p1_p2_temp_basenames(
     tmp_path: Path,
 ) -> None:
     helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
@@ -4903,6 +5262,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_trust.exists()
 
+    accepted_bootstrap = parent / "acgs-p2-tenant-bootstrap.accepted"
+    accepted_bootstrap.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_bootstrap),
+            "P2-TENANT-BOOTSTRAP-000",
+            "EVID+CP+GZ",
+            "11",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_bootstrap.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -4936,7 +5319,9 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P1-SCOPE-002)" in pre_b1
     assert "P1-LEDGER-003)" in pre_b1
     assert "P1-TRUST-004)" in pre_b1
+    assert "P2-TENANT-BOOTSTRAP-000)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
+    assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
     preexisting_section = pre_b1.split("PREEXISTING_REJECT_PATHS=(", 1)[1]
     reject_loop_index = preexisting_section.index('reject_lexists "$path"')
@@ -4963,6 +5348,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P1-SCOPE-002", "40781e1200289507fcfbcedf6ab14c120ac6aae8"),
         ("P1-LEDGER-003", "9450db249e4428021c4d98b2f1b81d414693d9af"),
         ("P1-TRUST-004", "f113d9bc7263ba2607ff9800da9881a3ff624441"),
+        ("P2-TENANT-BOOTSTRAP-000", "70b0d39010b46d6aed86d93572dcbda213350883"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
