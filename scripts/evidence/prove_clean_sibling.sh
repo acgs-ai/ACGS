@@ -167,6 +167,7 @@ REQUESTED_NODE_ID="${NODE_ID:-P0-EVIDENCE-000}"
 P0_REVIEWED_BASE='26d11c2c7a8da37937a7c50c642f18edc75c9345'
 P1_MIGRATION_REVIEWED_BASE='79a3c39f841cfc5a6c79e85973887814caf0e694'
 P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'
+P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -195,6 +196,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=0
     EXPECTED_TRANSCRIPT_RECORDS=6
     TMP_BASENAME='acgs-p1-scope'
+    ;;
+  P1-LEDGER-003)
+    [[ "$P" == "$P1_LEDGER_REVIEWED_BASE" ]] ||
+      die "P1-LEDGER-003 reviewed parent must be exact $P1_LEDGER_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP'
+    INCLUDE_GZ=0
+    EXPECTED_TRANSCRIPT_RECORDS=6
+    TMP_BASENAME='acgs-p1-ledger'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -712,7 +721,7 @@ phase B5
 node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
-    P1-MIGRATION-001 | P1-SCOPE-002) printf '%s' "$default_scope" ;;
+    P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003) printf '%s' "$default_scope" ;;
     *) printf __NONE__ ;;
   esac
 }
@@ -810,6 +819,17 @@ elif [[ "$NODE_ID" == P1-SCOPE-002 ]]; then
   run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-scope-posture \
     'packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate' CP \
     "${P1_SCOPE_GATE[@]}"
+elif [[ "$NODE_ID" == P1-LEDGER-003 ]]; then
+  P1_LEDGER_GATE=(.venv/bin/pytest -q \
+    tests/test_managed_mutation_uow.py::test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically \
+    tests/test_managed_mutation_uow.py::test_injected_failure_before_commit_rolls_back_consumption_receipt_event_outbox_and_side_effect \
+    tests/test_managed_mutation_uow.py::test_deny_and_escalate_do_not_consume_or_execute_or_persist_success \
+    tests/test_managed_mutation_uow.py::test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints \
+    tests/test_managed_mutation_uow.py::test_concurrent_receipt_consumption_has_single_committed_winner \
+    tests/test_managed_mutation_uow.py::test_outbox_rows_appear_only_after_sql_commit)
+  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-ledger-uow \
+    'packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate' CP \
+    "${P1_LEDGER_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi
