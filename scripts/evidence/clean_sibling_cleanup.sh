@@ -302,8 +302,9 @@ clean_sibling_cleanup() {
   local path_label=''
   local path_value=''
   local worktree_list=''
+  local current_admin_identity=''
 
-  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE; do
+  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE SOURCE_COMMON_GITDIR WORKTREE_ADMIN_GITDIR; do
     path_value="${!path_label-}"
     if [[ -n "$path_value" ]]; then
       clean_sibling_reject_control_path "$path_label" "$path_value" || return 2
@@ -393,6 +394,28 @@ clean_sibling_cleanup() {
       printf 'owned proof worktree reappeared during cleanup: %s\n' "$WORKTREE" >&2
       cleanup_status=2
     }
+  fi
+  if [[ "$WORKTREE_ADDED" == 1 ]] && [[ -n "${WORKTREE_ADMIN_GITDIR:-}" ]]; then
+    case "$WORKTREE_ADMIN_GITDIR" in
+      "$SOURCE_COMMON_GITDIR"/worktrees/*) ;;
+      *)
+        printf 'cleanup refused because worktree admin gitdir is outside source registry: %s\n' \
+          "$WORKTREE_ADMIN_GITDIR" >&2
+        cleanup_status=2
+        ;;
+    esac
+    if [[ -e "$WORKTREE_ADMIN_GITDIR" || -L "$WORKTREE_ADMIN_GITDIR" ]]; then
+      current_admin_identity="$(stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR" 2>/dev/null || true)"
+      if [[ -n "${WORKTREE_ADMIN_GITDIR_IDENTITY:-}" ]] &&
+        [[ "$current_admin_identity" == "$WORKTREE_ADMIN_GITDIR_IDENTITY" ]]; then
+        printf 'cleanup refused because worktree admin registration remains: %s\n' \
+          "$WORKTREE_ADMIN_GITDIR" >&2
+      else
+        printf 'cleanup refused because worktree admin registration identity changed: %s\n' \
+          "$WORKTREE_ADMIN_GITDIR" >&2
+      fi
+      cleanup_status=2
+    fi
   fi
   [[ "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" == \
     "$SOURCE_STATUS_BEFORE" ]] || {

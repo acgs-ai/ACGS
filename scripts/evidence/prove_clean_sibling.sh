@@ -355,6 +355,9 @@ UV_TOOL_BIN_DIR=''
 UV_PYTHON_CACHE_DIR=''
 UV_CREDENTIALS_DIR=''
 WORKTREE_ADDED=0
+SOURCE_COMMON_GITDIR=''
+WORKTREE_ADMIN_GITDIR=''
+WORKTREE_ADMIN_GITDIR_IDENTITY=''
 PROOF_COMPLETE=0
 TRANSCRIPT_RECORDS=0
 R=''
@@ -449,6 +452,16 @@ export UV_CACHE_DIR
 [[ "$("$UV_BIN" --version | awk '{print $2}')" == '0.11.19' ]] || die 'uv must be exactly 0.11.19'
 WORKTREE_ADDED=1
 git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "$T"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
+case "$WORKTREE_ADMIN_GITDIR" in
+  "$SOURCE_COMMON_GITDIR"/worktrees/*) ;;
+  *) die 'detached sibling admin gitdir is outside source worktree registry' ;;
+esac
+IFS=: read -r WORKTREE_ADMIN_DEVICE WORKTREE_ADMIN_INODE WORKTREE_ADMIN_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR"
+)
+WORKTREE_ADMIN_GITDIR_IDENTITY="$WORKTREE_ADMIN_DEVICE:$WORKTREE_ADMIN_INODE:$WORKTREE_ADMIN_UID"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'detached sibling is dirty before bootstrap'
