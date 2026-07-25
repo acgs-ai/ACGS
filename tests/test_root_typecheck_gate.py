@@ -49,7 +49,7 @@ def test_acgs_swarm_has_strict_core_mypy_gate() -> None:
     pyproject = (ROOT / "packages" / "Acgs-Swarm" / "pyproject.toml").read_text()
 
     assert "[tool.mypy]" in pyproject
-    assert "python_version = \"3.11\"" in pyproject
+    assert 'python_version = "3.11"' in pyproject
     assert "strict = true" in pyproject
     for source_file in [
         "src/constitutional_swarm/artifact.py",

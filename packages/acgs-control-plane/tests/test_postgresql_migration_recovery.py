@@ -348,9 +348,12 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     assert not (tmp_path / "bundle").exists()
 
 
-def test_public_first_function_hijacks_refuse_before_spawned_clients(
+def test_public_first_function_hijacks_refuse_before_subprocess(
     tmp_path: Path,
 ) -> None:
+    # Revision-unowned functions in the public schema are rejected by the
+    # migration head preflight before any client subprocess is spawned, so a
+    # public-first hijack cannot be reached by pg_dump at all.
     _seed_source()
     _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE, public_first=True)
     audit_source = tmp_path / "source-audit"
@@ -380,6 +383,19 @@ def test_public_first_function_hijacks_refuse_before_spawned_clients(
             assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
     finally:
         engine.dispose()
+    assert not (tmp_path / "bundle").exists()
+
+
+def test_pg_environment_overrides_ambient_pgoptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PGOPTIONS", "-csearch_path=shadow,public")
+    url = sa.engine.make_url(
+        "postgresql+psycopg://recovery:secret@127.0.0.1:5432/acgs_control_plane_recovery"
+    )
+
+    with _pg_environment(url, tmp_path) as environment:
+        assert environment["PGOPTIONS"] == "-csearch_path=public"
 
 
 @pytest.mark.parametrize(
@@ -444,7 +460,7 @@ def test_postgresql_bundle_restore_round_trip_equivalence(tmp_path: Path) -> Non
     )
 
     assert created == verified == restored
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0005
     engine = make_engine(TARGET_URL)
     try:
         with engine.connect() as connection:
@@ -486,7 +502,7 @@ def test_postgresql_nonempty_target_invokes_no_mutating_restore(tmp_path: Path) 
         )
 
     assert calls == []
-    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(TARGET_URL).state is DatabaseSchemaState.VERSION_0005
 
 
 def test_postgresql_restore_lock_contention_refuses_before_mutating_restore(

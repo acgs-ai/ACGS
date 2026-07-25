@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from acgs_control_plane.rbac import Role
 
@@ -26,6 +26,29 @@ class OrgCreateResponse(BaseModel):
     admin_user_id: str
     # Shown exactly once; only its hash is stored.
     admin_api_key: str
+
+
+class TenantBootstrapRequest(BaseModel):
+    """Normalized display metadata accepted by the tenant bootstrap API."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=200)
+    admin_name: str = Field(min_length=1, max_length=200)
+    admin_email: EmailStr
+
+
+class TenantBootstrapResponse(BaseModel):
+    org_id: str
+    project_id: str
+    environment_id: str
+    owner_user_id: str
+    owner_membership_id: str
+    receipt_id: str
+    receipt_hash: str
+    event_hash: str
+    idempotency_key: str
+    assurance_class: str
 
 
 class OrgResponse(BaseModel):

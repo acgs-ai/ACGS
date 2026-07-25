@@ -14,6 +14,7 @@ Layering per request:
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Iterator
 from datetime import datetime
@@ -24,6 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from gove_zone.policy import RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -91,10 +93,39 @@ from acgs_control_plane.schemas import (
     ReceiptVerifyResponse,
     SimulateRequest,
     SimulateResponse,
+    TenantBootstrapRequest,
+    TenantBootstrapResponse,
     UserCreateRequest,
     UserCreateResponse,
     UserResponse,
 )
+from acgs_control_plane.tenant_bootstrap import (
+    BOOTSTRAP_AUTHORIZATION_HEADER,
+    BOOTSTRAP_IDEMPOTENCY_HEADER,
+    BOOTSTRAP_INVITATION_HEADER,
+    TenantBootstrapHttpError,
+    TenantBootstrapService,
+    local_bootstrap_issuer,
+    local_bootstrap_secret_hasher,
+    local_platform_bootstrap_authenticator,
+    local_platform_trust_registry,
+    local_receipt_sealer,
+)
+
+_TENANT_BOOTSTRAP_MAX_BODY_BYTES = 16 * 1024
+_TENANT_BOOTSTRAP_PUBLIC_DETAILS = {
+    "REQUEST_TOO_LARGE": "tenant bootstrap request body exceeds the allowed size",
+    "REQUEST_MALFORMED": "tenant bootstrap request body is malformed",
+    "AUTHENTICATION_REQUIRED": "platform bearer credential is required",
+    "AUTHORIZATION_DENIED": "platform actor is not authorized for tenant bootstrap",
+    "BOOTSTRAP_NOT_AUTHORIZED": "platform bootstrap invitation is not valid",
+    "IDEMPOTENCY_KEY_INVALID": "idempotency key is invalid",
+    "IDEMPOTENCY_CONFLICT": "idempotency key was already used for a different request",
+    "SIGNER_UNAVAILABLE": "tenant bootstrap signer unavailable",
+    "POLICY_DENIED": "tenant bootstrap policy denied the invitation",
+    "ESCALATE_PENDING": "tenant bootstrap requires separated approval",
+    "TX_ABORTED": "tenant bootstrap transaction aborted",
+}
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -125,6 +156,90 @@ def _principal_dep(
 
 
 PrincipalDep = Annotated[Principal, Depends(_principal_dep)]
+
+
+async def _parse_tenant_bootstrap_body(request: Request) -> TenantBootstrapRequest:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > _TENANT_BOOTSTRAP_MAX_BODY_BYTES:
+            raise TenantBootstrapHttpError(
+                413,
+                "REQUEST_TOO_LARGE",
+                "request_too_large",
+                "tenant bootstrap request body exceeds the allowed size",
+                stage="transport",
+            )
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    try:
+        payload = json.loads(body, object_pairs_hook=_reject_duplicate_json_keys)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise TenantBootstrapHttpError(
+            400,
+            "REQUEST_MALFORMED",
+            "request_malformed",
+            "tenant bootstrap request body is malformed",
+            stage="transport",
+        ) from exc
+    try:
+        return TenantBootstrapRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise TenantBootstrapHttpError(
+            400,
+            "REQUEST_MALFORMED",
+            "request_malformed",
+            "tenant bootstrap request body is malformed",
+            stage="transport",
+        ) from exc
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON key: {key}")
+        payload[key] = value
+    return payload
+
+
+class _TenantBootstrapRequestIdMiddleware:
+    """Seed the tenant-bootstrap request id as pure ASGI middleware.
+
+    ``@app.middleware("http")`` wraps the whole app in Starlette's
+    ``BaseHTTPMiddleware``, which proxies receive/send through an anyio stream
+    and mishandles a client disconnect mid-request. The bounded-admission tests
+    assert real disconnect semantics, so that wrapper cannot stay on the stack.
+    Pure ASGI middleware seeds the same ``request.state`` value -- ``Request.state``
+    is backed by ``scope["state"]`` -- while leaving the channels untouched.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/v1/tenant-bootstrap":
+            scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
+        await self.app(scope, receive, send)
+
+
+def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
+    if request.url.path != "/v1/tenant-bootstrap":
+        return
+    if getattr(request.state, "tenant_bootstrap_refusal_recorded", False):
+        return
+    service = getattr(request.app.state, "tenant_bootstrap_service", None)
+    request_id = getattr(request.state, "tenant_bootstrap_request_id", None)
+    if service is None or not request_id:
+        return
+    request.state.tenant_bootstrap_refusal_recorded = True
+    service.record_refusal(
+        request_id=request_id,
+        error=exc,
+        invitation_secret=request.headers.get(BOOTSTRAP_INVITATION_HEADER),
+        idempotency_key=request.headers.get(BOOTSTRAP_IDEMPOTENCY_HEADER),
+    )
 
 
 def _org_guard(org_id: str, principal: PrincipalDep, session: SessionDep) -> Organization:
@@ -183,7 +298,15 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
 
 
 def create_app(
-    settings: Settings | None = None, *, production_providers: tuple[Any, ...] = ()
+    settings: Settings | None = None,
+    *,
+    production_providers: tuple[Any, ...] = (),
+    platform_bootstrap_issuer: Any | None = None,
+    platform_bootstrap_authenticator: Any | None = None,
+    platform_bootstrap_secret_hasher: Any | None = None,
+    platform_bootstrap_trust_registry: Any | None = None,
+    platform_receipt_sealer: Any | None = None,
+    platform_bootstrap_receipt_issuer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -238,8 +361,44 @@ def create_app(
             headers=dict(exc.headers or {}),
         )
 
+    @app.exception_handler(TenantBootstrapHttpError)
+    def _tenant_bootstrap_error(request: Request, exc: TenantBootstrapHttpError) -> JSONResponse:
+        _record_tenant_bootstrap_refusal(request, exc)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": exc.code,
+                "status": exc.status,
+                "detail": _TENANT_BOOTSTRAP_PUBLIC_DETAILS.get(
+                    exc.code, "tenant bootstrap request was refused"
+                ),
+            },
+        )
+
+    # One handler per exception type wins in FastAPI, so the tenant-bootstrap
+    # refusal recording (master) and the redacted admission errors (this branch)
+    # have to live in the same function rather than one replacing the other.
     @app.exception_handler(RequestValidationError)
     def _request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        if request.url.path == "/v1/tenant-bootstrap":
+            _record_tenant_bootstrap_refusal(
+                request,
+                TenantBootstrapHttpError(
+                    400,
+                    "REQUEST_MALFORMED",
+                    "request_malformed",
+                    "tenant bootstrap request body is malformed",
+                    stage="transport",
+                ),
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "code": "REQUEST_MALFORMED",
+                    "status": "request_malformed",
+                    "detail": "tenant bootstrap request body is malformed",
+                },
+            )
         errors = exc.errors()
         code = "malformed_json" if has_json_decode_error(errors) else "validation_error"
         status_code = 400 if code == "malformed_json" else 422
@@ -247,6 +406,29 @@ def create_app(
             status_code=status_code,
             content=redacted_error(code, request_id_from_scope(request.scope)),
         )
+
+    app.add_middleware(_TenantBootstrapRequestIdMiddleware)
+
+    @app.exception_handler(Exception)
+    def _tenant_bootstrap_fail_closed_error(request: Request, _exc: Exception) -> JSONResponse:
+        if request.url.path == "/v1/tenant-bootstrap":
+            error = TenantBootstrapHttpError(
+                503,
+                "TX_ABORTED",
+                "tx_aborted",
+                "tenant bootstrap transaction aborted",
+                stage="tx",
+            )
+            _record_tenant_bootstrap_refusal(request, error)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "code": "TX_ABORTED",
+                    "status": "tx_aborted",
+                    "detail": _TENANT_BOOTSTRAP_PUBLIC_DETAILS["TX_ABORTED"],
+                },
+            )
+        raise _exc
 
     _register_routes(app)
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
@@ -326,6 +508,22 @@ def create_app(
     app.state.engine = engine
     app.state.schema_preflight = schema_preflight
     app.state.session_factory = make_session_factory(engine)
+    bootstrap_issuer = platform_bootstrap_issuer or local_bootstrap_issuer()
+    bootstrap_authenticator = (
+        platform_bootstrap_authenticator or local_platform_bootstrap_authenticator()
+    )
+    bootstrap_secret_hasher = platform_bootstrap_secret_hasher or local_bootstrap_secret_hasher()
+    bootstrap_trust_registry = platform_bootstrap_trust_registry or local_platform_trust_registry()
+    bootstrap_receipt_sealer = platform_receipt_sealer or local_receipt_sealer()
+    app.state.tenant_bootstrap_service = TenantBootstrapService(
+        app.state.session_factory,
+        issuer=bootstrap_issuer,
+        receipt_sealer=bootstrap_receipt_sealer,
+        authenticator=bootstrap_authenticator,
+        secret_hasher=bootstrap_secret_hasher,
+        trust_registry=bootstrap_trust_registry,
+        receipt_issuer=platform_bootstrap_receipt_issuer,
+    )
 
     async def _dispose_engine() -> None:
         app.state.engine.dispose()
@@ -344,7 +542,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0002
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0005
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -359,6 +557,27 @@ def _register_routes(app: FastAPI) -> None:
         )
 
     # -- organizations (bootstrap) ------------------------------------------
+
+    @app.post(
+        "/v1/tenant-bootstrap",
+        response_model=TenantBootstrapResponse,
+        status_code=201,
+        tags=["tenant-bootstrap"],
+    )
+    async def tenant_bootstrap(
+        request: Request,
+        authorization: Annotated[str | None, Header(alias=BOOTSTRAP_AUTHORIZATION_HEADER)] = None,
+        invitation_secret: Annotated[str | None, Header(alias=BOOTSTRAP_INVITATION_HEADER)] = None,
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
+    ) -> TenantBootstrapResponse:
+        body = await _parse_tenant_bootstrap_body(request)
+        service: TenantBootstrapService = request.app.state.tenant_bootstrap_service
+        return service.bootstrap(
+            body=body,
+            authorization=authorization,
+            invitation_secret=invitation_secret,
+            idempotency_key=idempotency_key,
+        )
 
     @app.post("/orgs", response_model=OrgCreateResponse, status_code=201, tags=["orgs"])
     def create_org(

@@ -6,6 +6,7 @@
 #   - requirements/saas-beta/locks.toml:CP.pep660_editable_build
 
 alembic>=1.14,<2
+cryptography>=42
 fastapi>=0.110
 pydantic[email]>=2.8
 sqlalchemy>=2.0
