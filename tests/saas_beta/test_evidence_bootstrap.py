@@ -124,6 +124,29 @@ def _write_reviewed_p0_transcript(path: Path) -> None:
         _common.append_safe_transcript_record(path, record)
 
 
+def _reviewed_p1_migration_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P1_MIGRATION_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P1-MIGRATION-001"],
+            strict=True,
+        )
+    ]
+
+
+def _write_reviewed_p1_migration_transcript(path: Path) -> None:
+    for record in _reviewed_p1_migration_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P1-MIGRATION-001",
+        )
+
+
 def _unsafe_command_corpus(sentinel: str) -> tuple[list[str], ...]:
     allowed = list(_common.REVIEWED_P0_TRANSCRIPT[0][1])
     return (
@@ -1949,6 +1972,116 @@ def test_closed_p0_command_corpus_is_exact_ordered_and_contains_no_shell_compoun
             _common.validate_p0_transcript_sequence(mutation)
 
 
+def test_p1_migration_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p1_migration_records()
+    assert len(records) == 6
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+    ]
+    assert records[-1]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *_common.P1_MIGRATION_SELECTORS,
+    ]
+    assert records[-1]["selectors"] == [
+        "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate"
+    ]
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P1-MIGRATION-001/transcript.jsonl"
+    _write_reviewed_p1_migration_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P1-MIGRATION-001")
+    _common.validate_transcript_sequence(loaded, expected_node="P1-MIGRATION-001")
+
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}],
+        [*records[:5], {**records[-1], "argv": [*records[-1]["argv"], "-q"]}],
+        [
+            *records[:5],
+            {**records[-1], "argv": [records[-1]["argv"][0], *reversed(records[-1]["argv"][1:])]},
+        ],
+        [*records[:5], {**records[-1], "selectors": ["packages/acgs-control-plane:local-gate"]}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P1-MIGRATION-001")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {
+                **_transcript_record(list(_common.REVIEWED_P0_TRANSCRIPT[-1][1])),
+                "cwd_scope": "CP",
+            },
+            expected_node="P1-MIGRATION-001",
+        )
+
+
+def test_p1_migration_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P1-MIGRATION-001",
+            "commands": _reviewed_p1_migration_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": ["single-process"],
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P1-MIGRATION-001")
+
+    wrong_assignment = run_with(node_id="P0-EVIDENCE-000")
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(wrong_assignment, expected_node="P1-MIGRATION-001")
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": ["single-process"]},
+    ):
+        with pytest.raises(_common.EvidenceError, match="determinism differs"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P1-MIGRATION-001",
+            )
+
+    records = _reviewed_p1_migration_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}]),
+        run_with(
+            commands=[
+                *records[:5],
+                {**records[-1], "argv": ["bash", "-c", "./scripts/run_postgres_gate.sh"]},
+            ]
+        ),
+        run_with(commands=[*records[:5], {**records[-1], "argv": records[-1]["argv"][1:]}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P1-MIGRATION-001")
+
+
 def _json_line(path: Path) -> dict[str, Any]:
     value = _common.strict_json_loads(path.read_bytes().strip())
     assert isinstance(value, dict)
@@ -3268,9 +3401,16 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 4
+    assert source.count("run_recorded_gate CP") == 5
     assert source.count("run_recorded_gate GZ") == 4
     assert source.count("run_recorded_gate P0") == 1
+    assert "P1-MIGRATION-001)" in source
+    assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
+    assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
+    assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
+    for selector in _common.P1_MIGRATION_SELECTORS:
+        assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -3994,6 +4134,155 @@ clean_sibling_remove_owned_root "$parent_fd" "$3" "$4" placeholder
     assert "root identity changed" in completed.stderr
     assert (victim / "valuable").read_bytes() == b"must-survive"
     assert (displaced / ".acgs-clean-sibling-owned").is_file()
+
+
+def test_clean_sibling_cleanup_accepts_only_reviewed_p0_p1_temp_basenames(
+    tmp_path: Path,
+) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+
+    command = r"""
+set -u
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+NODE_ID="$5"
+ASSIGNED_BOOTSTRAPS="$6"
+TRANSCRIPT_RECORDS="$7"
+PROOF_COMPLETE=0
+WORKTREE_ADDED=0
+WORKTREE=''
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+printf '%s\n' "$$" >"$TMP_ROOT/.acgs-clean-sibling-owned"
+clean_sibling_cleanup 2
+exit $?
+"""
+    accepted = parent / "acgs-p1-migration.accepted"
+    accepted.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted),
+            "P1-MIGRATION-001",
+            "EVID+CP",
+            "6",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted.exists()
+
+    refused = parent / "acgs-p2-unreviewed.refused"
+    refused.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(refused),
+            "P2-UNREVIEWED-999",
+            "EVID+CP",
+            "6",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" in completed.stderr
+    assert refused.exists()
+
+
+def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_output() -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    pre_b1 = source.split("phase B1", 1)[0]
+    assert 'REQUESTED_NODE_ID="${NODE_ID:-P0-EVIDENCE-000}"' in pre_b1
+    assert "P1-MIGRATION-001)" in pre_b1
+    assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
+    assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
+    preexisting_section = pre_b1.split("PREEXISTING_REJECT_PATHS=(", 1)[1]
+    reject_loop_index = preexisting_section.index('reject_lexists "$path"')
+    for retained_runtime in (
+        '"$WORKTREE/.venv-evidence"',
+        '"$WORKTREE/packages/acgs-control-plane/.venv"',
+        '"$WORKTREE/packages/gove-zone/.venv-beta"',
+        '"$WORKTREE/acgi-ai/node_modules"',
+    ):
+        assert retained_runtime in preexisting_section
+        assert preexisting_section.index(retained_runtime) < reject_loop_index
+    assert 'reject_lexists "$NODE_EVIDENCE"' in pre_b1 or '"$NODE_EVIDENCE"' in pre_b1
+    absolute_reject_loop_index = source.index("PREEXISTING_REJECT_PATHS=(") + reject_loop_index
+    assert absolute_reject_loop_index < source.index("phase B1")
+    assert absolute_reject_loop_index < source.index('"$UV_BIN" venv --python 3.11')
+    assert absolute_reject_loop_index < source.index("generate_run.py")
+    assert "INCLUDE_GZ" not in preexisting_section.split("phase B1", 1)[0]
+
+
+def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path: Path) -> None:
+    launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
+    wrong_parent = "1" * 40
+    reviewed_parent = "79a3c39f841cfc5a6c79e85973887814caf0e694"
+    assert wrong_parent != reviewed_parent
+    existing = set(tmp_path.iterdir())
+    env = _evidence_env(tmp_path / "unused-evidence")
+    env.update(
+        {
+            "NODE_ID": "P1-MIGRATION-001",
+            "P": wrong_parent,
+            "TMPDIR": str(tmp_path),
+        }
+    )
+    completed = subprocess.run(
+        [str(launcher), reviewed_parent],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert f"P1-MIGRATION-001 reviewed parent must be exact {reviewed_parent}" in completed.stderr
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
+    assert set(tmp_path.iterdir()) == existing
 
 
 def test_uv_identity_does_not_depend_on_ambient_path() -> None:

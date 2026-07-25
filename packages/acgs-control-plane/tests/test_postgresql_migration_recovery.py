@@ -348,14 +348,16 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     assert not (tmp_path / "bundle").exists()
 
 
-def test_public_first_function_hijacks_refuse_before_spawned_clients(
+def test_public_first_function_hijacks_refuse_before_subprocess(
     tmp_path: Path,
 ) -> None:
+    # Revision-unowned functions in the public schema are rejected by the
+    # migration head preflight before any client subprocess is spawned, so a
+    # public-first hijack cannot be reached by pg_dump at all.
     _seed_source()
     _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE, public_first=True)
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
-    bundle = tmp_path / "bundle"
     calls: list[list[str]] = []
 
     def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
@@ -365,14 +367,13 @@ def test_public_first_function_hijacks_refuse_before_spawned_clients(
         create_recovery_bundle(
             source_url_env=SOURCE_ENV,
             audit_dir=audit_source,
-            output=bundle,
+            output=tmp_path / "bundle",
             pg_dump_path=PG_DUMP_PATH,
             pg_restore_path=PG_RESTORE_PATH,
             runner=forbidden_runner,
         )
 
     assert calls == []
-    assert not bundle.exists()
     engine = make_engine(_safe_admin_url(SOURCE_URL))
     try:
         with engine.connect() as connection:
@@ -380,6 +381,7 @@ def test_public_first_function_hijacks_refuse_before_spawned_clients(
             assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
     finally:
         engine.dispose()
+    assert not (tmp_path / "bundle").exists()
 
 
 @pytest.mark.parametrize(

@@ -33,9 +33,16 @@ ART12_SUBDUTIES = (
 )
 
 # Tokens that count as "this sub-duty is mapped to a field/mechanism".
-FIELD_EVIDENCE_TOKENS = ("receipt.py:", "`audit_event_hash`", "`timestamp`",
-                         "`validator_id`", "`policy_bundle_id`", "`argument_hash`",
-                         "`matched_rules`", "`expires_at`")
+FIELD_EVIDENCE_TOKENS = (
+    "receipt.py:",
+    "`audit_event_hash`",
+    "`timestamp`",
+    "`validator_id`",
+    "`policy_bundle_id`",
+    "`argument_hash`",
+    "`matched_rules`",
+    "`expires_at`",
+)
 
 # Tokens that count as "this sub-duty is an explicit non-coverage statement".
 GAP_TOKENS = ("GAP", "not covered", "PARTIAL")
@@ -65,15 +72,12 @@ def test_every_subduty_is_named_and_addressed() -> None:
     """Each Art 12 sub-duty id appears AND is addressed by a field or a GAP."""
     text = _read()
     for subduty in ART12_SUBDUTIES:
-        assert subduty in text, (
-            f"EU_AI_ACT_MAPPING.md does not mention sub-duty {subduty!r}"
-        )
+        assert subduty in text, f"EU_AI_ACT_MAPPING.md does not mention sub-duty {subduty!r}"
         # Find the lines that name this sub-duty and require evidence-or-gap on one.
         lines = [ln for ln in text.splitlines() if subduty in ln]
         assert lines, subduty
         addressed = any(
-            any(tok in ln for tok in FIELD_EVIDENCE_TOKENS)
-            or any(tok in ln for tok in GAP_TOKENS)
+            any(tok in ln for tok in FIELD_EVIDENCE_TOKENS) or any(tok in ln for tok in GAP_TOKENS)
             for ln in lines
         )
         assert addressed, (
@@ -96,9 +100,7 @@ def test_doc_is_claim_safe() -> None:
         if banned in lowered:
             # Allowed only inside an explicit negation ("not a compliance
             # certification.", "not ... regulator-approved").
-            assert "not" in lowered, (
-                f"overclaim {banned!r} present without negation"
-            )
+            assert "not" in lowered, f"overclaim {banned!r} present without negation"
 
 
 def test_explicit_gap_section_present() -> None:

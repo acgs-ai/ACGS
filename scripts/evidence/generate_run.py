@@ -18,7 +18,6 @@ from _common import (
     JSON_SAFE_INTEGER_MAX,
     NODE_RE,
     REVIEWED_RUN_METADATA_BY_NODE,
-    TRANSCRIPT_RECORD_KEYS,
     EvidenceError,
     assert_evidence_runtime,
     assignment_tokens,
@@ -35,12 +34,13 @@ from _common import (
     validate_schema,
     validate_secret_free_run,
     validate_transcript_record,
+    validate_transcript_sequence,
     verify_git_range,
     write_json_exclusive,
 )
 
 
-def _read_transcript(path: Path) -> list[dict[str, Any]]:
+def _read_transcript(path: Path, *, expected_node: str | None = None) -> list[dict[str, Any]]:
     try:
         raw_lines = path.read_bytes().splitlines()
     except OSError as exc:
@@ -52,14 +52,20 @@ def _read_transcript(path: Path) -> list[dict[str, Any]]:
         if not raw.strip():
             fail(f"blank transcript line {number}", phase="B6")
         value = strict_json_loads(raw)
-        if not isinstance(value, dict) or set(value) != TRANSCRIPT_RECORD_KEYS:
+        if not isinstance(value, dict):
             fail(f"transcript line {number} is not a closed command object", phase="B6")
-        commands.append(validate_transcript_record(value))
+        node_for_record = (
+            expected_node if expected_node in {"P0-EVIDENCE-000", "P1-MIGRATION-001"} else None
+        )
+        commands.append(validate_transcript_record(value, expected_node=node_for_record))
     for earlier, later in pairwise(commands):
         if parse_utc(later["started_at_utc"]) < parse_utc(earlier["started_at_utc"]):
             fail("transcript command ordering is nonmonotonic", phase="B6")
-    if path.parent.name == "P0-EVIDENCE-000":
+    node_id = expected_node if expected_node is not None else path.parent.name
+    if node_id == "P0-EVIDENCE-000":
         validate_p0_transcript_sequence(commands)
+    elif node_id == "P1-MIGRATION-001":
+        validate_transcript_sequence(commands, expected_node=node_id)
     return commands
 
 
@@ -171,7 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         ):
             fail("environment identity bundle does not match node assignment", phase="B6")
 
-        commands = _read_transcript(transcript_path)
+        commands = _read_transcript(
+            transcript_path,
+            expected_node=args.node
+            if args.node in {"P0-EVIDENCE-000", "P1-MIGRATION-001"}
+            else None,
+        )
         selectors: list[str] = []
         for command in commands:
             for selector in command["selectors"]:
