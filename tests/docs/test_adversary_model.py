@@ -58,6 +58,8 @@ EXPECTED_THREATS = {
     "Predecessor substitution",
     "Cross-workflow / cross-plan step lifting",
     "Cross-level collusion (plan/step)",
+    "Scoped trust-purpose confusion",
+    "Non-ALLOW provenance masking",
 }
 
 # Directories an [on-master] adversary row may cite test evidence from.

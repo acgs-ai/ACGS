@@ -126,6 +126,8 @@ the complete-mediation property of the reference monitor.
 | Predecessor substitution | ADV1 | ADV2 |
 | Cross-workflow / cross-plan step lifting | ADV4 | ADV1 |
 | Cross-level collusion (plan/step) | ADV1 | ADV12, ADV5 |
+| Scoped trust-purpose confusion | ADV5 | ADV11, ADV4 |
+| Non-ALLOW provenance masking | ADV1 | ADV7 |
 
 The takeaway the per-actor view makes visible: **thirteen of fourteen adversaries are
 systems-and-cryptography problems**, not model-quality problems. ADV1 is the only adversary
