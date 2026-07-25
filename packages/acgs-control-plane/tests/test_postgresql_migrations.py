@@ -1996,6 +1996,7 @@ def _drop_post_0001_tables(connection: Connection) -> None:
         "managed_outbox",
         "managed_governance_events",
         "managed_governance_event_heads",
+        "agent_registration_idempotency",
         "managed_receipt_consumptions",
         "managed_mutation_attempts",
         "managed_decision_receipts",

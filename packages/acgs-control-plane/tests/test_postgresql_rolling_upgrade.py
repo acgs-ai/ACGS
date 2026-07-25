@@ -964,7 +964,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0006",
+            "after": DatabaseSchemaState.VERSION_0007.value,
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
