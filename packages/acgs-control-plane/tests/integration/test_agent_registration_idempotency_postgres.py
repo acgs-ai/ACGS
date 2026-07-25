@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from acgs_control_plane.agent_registration import (
     DefaultAgentRegistrationReceiptIssuer,
@@ -26,6 +27,7 @@ from acgs_control_plane.models import (
     ManagedGovernanceEvent,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
+    new_id,
 )
 from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from tests.integration.test_agent_registration_postgres import (
@@ -57,6 +59,7 @@ def test_identical_key_and_canonical_request_converges_to_one_terminal_result(
         assert second.status_code == 201, second.text
         assert second.json() == first.json()
         _assert_single_agent_registration_effect(app, org["org_id"], "idempotent-bot")
+        _assert_idempotency_scope_foreign_keys_are_database_enforced(app, client, org)
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
@@ -82,6 +85,20 @@ def test_same_key_different_canonical_request_conflicts_without_additional_side_
         assert first.status_code == 201, first.text
         assert conflict.status_code == 409, conflict.text
         assert conflict.json()["code"] == "IDEMPOTENCY_CONFLICT"
+        with app.state.session_factory() as session:
+            assert _count_agents(session, org["org_id"], "first-conflict-bot") == 1
+            assert _count_agents(session, org["org_id"], "second-conflict-bot") == 0
+            _assert_registration_counts(session, agents=1)
+        with app.state.session_factory.begin() as session:
+            row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
+            row.response = {**row.response, "agent_id": "tampered-agent"}
+        corrupt_replay = client.post(
+            f"/orgs/{org['org_id']}/agents",
+            json=_agent_body("first-conflict-bot"),
+            headers=headers,
+        )
+        assert corrupt_replay.status_code == 503, corrupt_replay.text
+        assert corrupt_replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
         with app.state.session_factory() as session:
             assert _count_agents(session, org["org_id"], "first-conflict-bot") == 1
             assert _count_agents(session, org["org_id"], "second-conflict-bot") == 0
@@ -251,6 +268,94 @@ def _assert_single_agent_registration_effect(app: Any, org_id: str, name: str) -
     with app.state.session_factory() as session:
         assert _count_agents(session, org_id, name) == 1
         _assert_registration_counts(session, agents=1)
+
+
+def _assert_idempotency_scope_foreign_keys_are_database_enforced(
+    app: Any,
+    client: TestClient,
+    org: dict[str, Any],
+) -> None:
+    second_org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, second_org["org_id"])
+    _publish_and_activate_allow_agent_create(client, second_org)
+    second = client.post(
+        f"/orgs/{second_org['org_id']}/agents",
+        json=_agent_body("foreign-scope-bot"),
+        headers=_idempotent_admin_headers(second_org, "agent-register-key-fk-second"),
+    )
+    assert second.status_code == 201, second.text
+
+    with app.state.session_factory() as session:
+        primary_row = session.scalars(
+            sa.select(AgentRegistrationIdempotency).where(
+                AgentRegistrationIdempotency.org_id == org["org_id"]
+            )
+        ).one()
+        secondary_row = session.scalars(
+            sa.select(AgentRegistrationIdempotency).where(
+                AgentRegistrationIdempotency.org_id == second_org["org_id"]
+            )
+        ).one()
+        secondary_agent = session.scalars(
+            sa.select(AgentRecord).where(AgentRecord.org_id == second_org["org_id"])
+        ).one()
+
+    _assert_invalid_idempotency_row_rejected(
+        app,
+        primary_row,
+        agent_id=secondary_agent.id,
+        receipt_id=primary_row.receipt_id,
+        key_suffix="cross-agent",
+    )
+    _assert_invalid_idempotency_row_rejected(
+        app,
+        primary_row,
+        agent_id=None,
+        receipt_id="missing-receipt",
+        key_suffix="missing-receipt",
+    )
+    _assert_invalid_idempotency_row_rejected(
+        app,
+        primary_row,
+        agent_id=None,
+        receipt_id=secondary_row.receipt_id,
+        key_suffix="cross-receipt",
+    )
+
+
+def _assert_invalid_idempotency_row_rejected(
+    app: Any,
+    template: AgentRegistrationIdempotency,
+    *,
+    agent_id: str | None,
+    receipt_id: str,
+    key_suffix: str,
+) -> None:
+    session = app.state.session_factory()
+    try:
+        session.add(
+            AgentRegistrationIdempotency(
+                id=new_id(),
+                idempotency_key_hash=f"{key_suffix}-{new_id()}"[:64],
+                actor_hash=template.actor_hash,
+                request_hash=template.request_hash,
+                org_id=template.org_id,
+                project_id=template.project_id,
+                environment_id=template.environment_id,
+                agent_id=agent_id,
+                receipt_id=receipt_id,
+                response={
+                    **template.response,
+                    "agent_id": agent_id,
+                    "receipt_id": receipt_id,
+                },
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+    finally:
+        session.rollback()
+        session.close()
 
 
 def _assert_registration_counts(session: Any, *, agents: int) -> None:

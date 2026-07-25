@@ -26,6 +26,7 @@ from acgs_control_plane.managed_mutations import (
     ManagedMutationContext,
     ManagedMutationResult,
     ManagedMutationUnitOfWork,
+    ManagedNonExecutableEvidenceResult,
     managed_mutation_execution_boundary,
 )
 from acgs_control_plane.models import (
@@ -226,28 +227,29 @@ class AgentRegistrationService:
             )
             audit_hash = _decision_audit_hash(decision_record)
             context = replace(context, expected_audit_hash=audit_hash)
-            idempotency_record: _AgentRegistrationIdempotencyContext | None = None
-            if idempotency_key is not None:
-                request_projection = _idempotency_request_projection(
+            request_projection = _idempotency_request_projection(
+                context=context,
+                args=args,
+            )
+            idempotency_record = _AgentRegistrationIdempotencyContext(
+                raw_key=idempotency_key,
+                storage_key=_idempotency_storage_key(
                     context=context,
-                    args=args,
-                )
-                idempotency_record = _AgentRegistrationIdempotencyContext(
-                    raw_key=idempotency_key,
-                    storage_key=_idempotency_storage_key(
-                        context=context,
-                        key=idempotency_key,
-                    ),
-                    request_projection=request_projection,
-                    request_hash=sha256_json(request_projection),
-                )
-                existing = _lookup_idempotency(
+                    key=idempotency_key,
+                ),
+                request_projection=request_projection,
+                request_hash=sha256_json(request_projection),
+            )
+            existing = _lookup_idempotency(
+                session,
+                idempotency_key_hash=idempotency_record.storage_key,
+            )
+            if existing is not None:
+                return _replay_idempotency_response(
                     session,
-                    idempotency_key_hash=idempotency_record.storage_key,
+                    existing,
+                    idempotency_record,
                 )
-                if existing is not None:
-                    _assert_same_idempotency_request(existing, idempotency_record)
-                    return _result_from_idempotency_response(existing.response)
             try:
                 trust_epoch = active_trust_epoch_for_scope(
                     session,
@@ -290,20 +292,87 @@ class AgentRegistrationService:
         )
 
         if decision_record.decision in {Decision.DENY, Decision.ESCALATE}:
+
+            def before_record(tx_session: Session) -> None:
+                _revalidate_active_policy_under_lock(
+                    tx_session,
+                    context=context,
+                    args=args,
+                    actor=principal.actor_id,
+                    expected_decision=decision_record.decision,
+                )
+                existing = _lookup_idempotency(
+                    tx_session,
+                    idempotency_key_hash=idempotency_record.storage_key,
+                )
+                if existing is not None:
+                    _assert_same_idempotency_request(existing, idempotency_record)
+                    raise _CommittedAgentRegistrationIdempotencyRace()
+
+            def after_record(
+                session: Session,
+                receipt_row: ManagedDecisionReceipt,
+                _event: ManagedGovernanceEvent,
+                _outbox: ManagedOutboxMessage,
+                _result: ManagedNonExecutableEvidenceResult,
+            ) -> None:
+                terminal = _terminal_http_error_for_decision(decision_record)
+                session.add(
+                    AgentRegistrationIdempotency(
+                        id=new_id(),
+                        idempotency_key_hash=idempotency_record.storage_key,
+                        actor_hash=sha256_json(context.actor),
+                        request_hash=idempotency_record.request_hash,
+                        org_id=context.org_id,
+                        project_id=context.project_id,
+                        environment_id=context.environment_id,
+                        agent_id=None,
+                        receipt_id=receipt_row.receipt_id,
+                        response=_idempotency_error_payload(
+                            terminal,
+                            context=context,
+                            receipt_id=receipt_row.receipt_id,
+                        ),
+                    )
+                )
+
             try:
                 uow.record_non_executable_evidence(
                     context=context,
                     receipt=receipt,
                     args=args,
-                    before_record=lambda tx_session: _revalidate_active_policy_under_lock(
-                        tx_session,
-                        context=context,
-                        args=args,
-                        actor=principal.actor_id,
-                        expected_decision=decision_record.decision,
-                    ),
+                    before_record=before_record,
+                    after_record=after_record,
                 )
+            except _CommittedAgentRegistrationIdempotencyRace:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    raise _replay_idempotency_response_new_session_error(
+                        self._session_factory,
+                        existing,
+                        idempotency_record,
+                    ) from None
+                raise AgentRegistrationHttpError(
+                    503,
+                    "TX_ABORTED",
+                    "tx_aborted",
+                    "agent registration idempotency commit was not observable",
+                    stage="tx",
+                ) from None
             except ReceiptAlreadyUsedError as exc:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    raise _replay_idempotency_response_new_session_error(
+                        self._session_factory,
+                        existing,
+                        idempotency_record,
+                    ) from exc
                 raise AgentRegistrationHttpError(
                     409,
                     "RECEIPT_ALREADY_USED",
@@ -320,6 +389,16 @@ class AgentRegistrationService:
                     stage="executor",
                 ) from exc
             except (SQLAlchemyError, ValueError, RuntimeError) as exc:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    raise _replay_idempotency_response_new_session_error(
+                        self._session_factory,
+                        existing,
+                        idempotency_record,
+                    ) from exc
                 raise AgentRegistrationHttpError(
                     503,
                     "TX_ABORTED",
@@ -327,19 +406,7 @@ class AgentRegistrationService:
                     "agent registration refusal evidence transaction aborted",
                     stage="tx",
                 ) from exc
-            if decision_record.decision is Decision.DENY:
-                raise AgentRegistrationHttpError(
-                    403,
-                    "POLICY_DENIED",
-                    "denied",
-                    decision_record.reason or "agent registration denied by policy",
-                )
-            raise AgentRegistrationHttpError(
-                202,
-                "ESCALATE_PENDING",
-                "pending_approval",
-                decision_record.reason or "agent registration requires approval",
-            )
+            raise _terminal_http_error_for_decision(decision_record)
 
         if decision_record.decision is not Decision.ALLOW:
             raise AgentRegistrationHttpError(
@@ -356,8 +423,6 @@ class AgentRegistrationService:
                 args=args,
                 actor=principal.actor_id,
             )
-            if idempotency_record is None:
-                return
             existing = _lookup_idempotency(
                 tx_session,
                 idempotency_key_hash=idempotency_record.storage_key,
@@ -412,21 +477,20 @@ class AgentRegistrationService:
                 created_at=agent.created_at,
                 receipt_id=receipt_row.receipt_id,
             )
-            if idempotency_record is not None:
-                session.add(
-                    AgentRegistrationIdempotency(
-                        id=new_id(),
-                        idempotency_key_hash=idempotency_record.storage_key,
-                        actor_hash=sha256_json(context.actor),
-                        request_hash=idempotency_record.request_hash,
-                        org_id=context.org_id,
-                        project_id=context.project_id,
-                        environment_id=context.environment_id,
-                        agent_id=agent.id,
-                        receipt_id=receipt_row.receipt_id,
-                        response=_idempotency_response_payload(response),
-                    )
+            session.add(
+                AgentRegistrationIdempotency(
+                    id=new_id(),
+                    idempotency_key_hash=idempotency_record.storage_key,
+                    actor_hash=sha256_json(context.actor),
+                    request_hash=idempotency_record.request_hash,
+                    org_id=context.org_id,
+                    project_id=context.project_id,
+                    environment_id=context.environment_id,
+                    agent_id=agent.id,
+                    receipt_id=receipt_row.receipt_id,
+                    response=_idempotency_response_payload(response, context=context),
                 )
+            )
             holder["response"] = response
 
         try:
@@ -444,7 +508,11 @@ class AgentRegistrationService:
                 idempotency=idempotency_record,
             )
             if existing is not None:
-                return _result_from_idempotency_response(existing.response)
+                return _replay_idempotency_response_new_session_result(
+                    self._session_factory,
+                    existing,
+                    idempotency_record,
+                )
             raise AgentRegistrationHttpError(
                 503,
                 "TX_ABORTED",
@@ -453,13 +521,16 @@ class AgentRegistrationService:
                 stage="tx",
             ) from None
         except IntegrityError as exc:
-            if idempotency_record is not None:
-                existing = _lookup_idempotency_new_session(
+            existing = _lookup_idempotency_new_session(
+                self._session_factory,
+                idempotency=idempotency_record,
+            )
+            if existing is not None:
+                return _replay_idempotency_response_new_session_result(
                     self._session_factory,
-                    idempotency=idempotency_record,
+                    existing,
+                    idempotency_record,
                 )
-                if existing is not None:
-                    return _result_from_idempotency_response(existing.response)
             if _is_agent_name_conflict(exc):
                 raise AgentRegistrationHttpError(
                     409,
@@ -476,13 +547,16 @@ class AgentRegistrationService:
                 stage="tx",
             ) from exc
         except ReceiptAlreadyUsedError as exc:
-            if idempotency_record is not None:
-                existing = _lookup_idempotency_new_session(
+            existing = _lookup_idempotency_new_session(
+                self._session_factory,
+                idempotency=idempotency_record,
+            )
+            if existing is not None:
+                return _replay_idempotency_response_new_session_result(
                     self._session_factory,
-                    idempotency=idempotency_record,
+                    existing,
+                    idempotency_record,
                 )
-                if existing is not None:
-                    return _result_from_idempotency_response(existing.response)
             raise AgentRegistrationHttpError(
                 409,
                 "RECEIPT_ALREADY_USED",
@@ -499,13 +573,16 @@ class AgentRegistrationService:
                 stage="executor",
             ) from exc
         except (SQLAlchemyError, ValueError, RuntimeError) as exc:
-            if idempotency_record is not None:
-                existing = _lookup_idempotency_new_session(
+            existing = _lookup_idempotency_new_session(
+                self._session_factory,
+                idempotency=idempotency_record,
+            )
+            if existing is not None:
+                return _replay_idempotency_response_new_session_result(
                     self._session_factory,
-                    idempotency=idempotency_record,
+                    existing,
+                    idempotency_record,
                 )
-                if existing is not None:
-                    return _result_from_idempotency_response(existing.response)
             raise AgentRegistrationHttpError(
                 503,
                 "TX_ABORTED",
@@ -600,9 +677,15 @@ def _is_agent_name_conflict(exc: IntegrityError) -> bool:
     return "agents.org_id" in text and "agents.name" in text
 
 
-def _normalize_idempotency_key(idempotency_key: str | None) -> str | None:
+def _normalize_idempotency_key(idempotency_key: str | None) -> str:
     if idempotency_key is None:
-        return None
+        raise AgentRegistrationHttpError(
+            400,
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "idempotency_key_required",
+            "idempotency key is required for agent registration",
+            stage="policy",
+        )
     if not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
         raise AgentRegistrationHttpError(
             400,
@@ -686,10 +769,158 @@ def _assert_same_idempotency_request(
         )
 
 
-def _idempotency_response_payload(result: AgentRegistrationResult) -> dict[str, Any]:
+def _replay_idempotency_response(
+    session: Session,
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> AgentRegistrationResult:
+    _assert_idempotency_row_integrity(session, row, idempotency)
+    terminal = str(row.response.get("terminal"))
+    if terminal in {"deny", "escalate"}:
+        raise _replay_idempotency_response_error(row, idempotency)
+    if terminal != "allow":
+        raise _invalid_idempotency_record()
+    return _result_from_idempotency_response(row.response)
+
+
+def _replay_idempotency_response_new_session_result(
+    session_factory: sessionmaker[Session],
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> AgentRegistrationResult:
+    with session_factory() as session:
+        fresh = session.get(AgentRegistrationIdempotency, row.id)
+        if fresh is None:
+            raise _invalid_idempotency_record()
+        return _replay_idempotency_response(session, fresh, idempotency)
+
+
+def _replay_idempotency_response_new_session_error(
+    session_factory: sessionmaker[Session],
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> AgentRegistrationHttpError:
+    with session_factory() as session:
+        fresh = session.get(AgentRegistrationIdempotency, row.id)
+        if fresh is None:
+            return _invalid_idempotency_record()
+        _assert_idempotency_row_integrity(session, fresh, idempotency)
+        return _replay_idempotency_response_error(fresh, idempotency)
+
+
+def _replay_idempotency_response_error(
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> AgentRegistrationHttpError:
+    terminal = str(row.response.get("terminal"))
+    if terminal not in {"deny", "escalate"}:
+        return _invalid_idempotency_record()
+    status_code = row.response.get("http_status")
+    code = row.response.get("code")
+    status = row.response.get("status")
+    detail = row.response.get("detail")
+    if (
+        not isinstance(status_code, int)
+        or not isinstance(code, str)
+        or not isinstance(status, str)
+        or not isinstance(detail, str)
+    ):
+        return _invalid_idempotency_record()
+    _assert_same_idempotency_request(row, idempotency)
+    return AgentRegistrationHttpError(
+        status_code,
+        code,
+        status,
+        detail,
+        stage="policy",
+    )
+
+
+def _assert_idempotency_row_integrity(
+    session: Session,
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> None:
+    _assert_same_idempotency_request(row, idempotency)
+    projection = idempotency.request_projection
+    if (
+        row.actor_hash != sha256_json(projection["actor"])
+        or row.org_id != projection["org_id"]
+        or row.project_id != projection["project_id"]
+        or row.environment_id != projection["environment_id"]
+    ):
+        raise _invalid_idempotency_record()
+
+    response = row.response
+    terminal = str(response.get("terminal"))
+    if response.get("org_id") != row.org_id or response.get("receipt_id") != row.receipt_id:
+        raise _invalid_idempotency_record()
+    if response.get("project_id") != row.project_id:
+        raise _invalid_idempotency_record()
+    if response.get("environment_id") != row.environment_id:
+        raise _invalid_idempotency_record()
+
+    receipt = session.scalars(
+        sa.select(ManagedDecisionReceipt).where(
+            ManagedDecisionReceipt.org_id == row.org_id,
+            ManagedDecisionReceipt.project_id == row.project_id,
+            ManagedDecisionReceipt.environment_id == row.environment_id,
+            ManagedDecisionReceipt.receipt_id == row.receipt_id,
+        )
+    ).one_or_none()
+    if receipt is None:
+        raise _invalid_idempotency_record()
+    if (
+        receipt.actor != projection["actor"]
+        or receipt.proposed_action != projection["action"]
+        or receipt.argument_hash != sha256_json(projection["args"])
+        or receipt.decision != terminal
+    ):
+        raise _invalid_idempotency_record()
+
+    if terminal == "allow":
+        if not isinstance(row.agent_id, str) or response.get("agent_id") != row.agent_id:
+            raise _invalid_idempotency_record()
+        agent = session.scalars(
+            sa.select(AgentRecord).where(
+                AgentRecord.org_id == row.org_id,
+                AgentRecord.project_id == row.project_id,
+                AgentRecord.environment_id == row.environment_id,
+                AgentRecord.id == row.agent_id,
+            )
+        ).one_or_none()
+        if agent is None:
+            raise _invalid_idempotency_record()
+    elif terminal in {"deny", "escalate"}:
+        if row.agent_id is not None or response.get("agent_id") is not None:
+            raise _invalid_idempotency_record()
+    else:
+        raise _invalid_idempotency_record()
+
+
+def _invalid_idempotency_record() -> AgentRegistrationHttpError:
+    return AgentRegistrationHttpError(
+        503,
+        "IDEMPOTENCY_RECORD_INVALID",
+        "idempotency_record_invalid",
+        "agent registration idempotency record failed integrity validation",
+        stage="tx",
+    )
+
+
+def _idempotency_response_payload(
+    result: AgentRegistrationResult,
+    *,
+    context: ManagedMutationContext,
+) -> dict[str, Any]:
     return {
+        "schema": "agent-registration-idempotency-response/v1",
+        "terminal": "allow",
+        "http_status": 201,
         "agent_id": result.agent_id,
         "org_id": result.org_id,
+        "project_id": context.project_id,
+        "environment_id": context.environment_id,
         "name": result.name,
         "description": result.description,
         "trust_tier": result.trust_tier,
@@ -698,6 +929,54 @@ def _idempotency_response_payload(result: AgentRegistrationResult) -> dict[str, 
         "created_at": _to_utc(result.created_at).isoformat(),
         "receipt_id": result.receipt_id,
     }
+
+
+def _idempotency_error_payload(
+    terminal: AgentRegistrationHttpError,
+    *,
+    context: ManagedMutationContext,
+    receipt_id: str,
+) -> dict[str, Any]:
+    decision = "escalate" if terminal.code == "ESCALATE_PENDING" else "deny"
+    return {
+        "schema": "agent-registration-idempotency-response/v1",
+        "terminal": decision,
+        "http_status": terminal.status_code,
+        "code": terminal.code,
+        "status": terminal.status,
+        "detail": terminal.detail,
+        "agent_id": None,
+        "org_id": context.org_id,
+        "project_id": context.project_id,
+        "environment_id": context.environment_id,
+        "receipt_id": receipt_id,
+    }
+
+
+def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrationHttpError:
+    if record.decision is Decision.ESCALATE:
+        return AgentRegistrationHttpError(
+            202,
+            "ESCALATE_PENDING",
+            "escalate_pending",
+            "agent registration requires separated approval",
+            stage="policy",
+        )
+    if record.decision is Decision.DENY:
+        return AgentRegistrationHttpError(
+            403,
+            "POLICY_DENIED",
+            "denied",
+            "agent registration refused by policy",
+            stage="policy",
+        )
+    raise AgentRegistrationHttpError(
+        503,
+        "RECEIPT_REFUSED",
+        "receipt_refused",
+        "agent registration receipt was refused",
+        stage="policy",
+    )
 
 
 def _result_from_idempotency_response(response: Mapping[str, Any]) -> AgentRegistrationResult:

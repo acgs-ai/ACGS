@@ -408,6 +408,14 @@ class AgentRecord(Base):
             name="fk_agents_scope_environment",
             info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
         ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "id",
+            name="uq_agents_scope_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
         CheckConstraint(
             "(project_id IS NULL AND environment_id IS NULL) OR "
             "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
@@ -465,6 +473,27 @@ class AgentRegistrationIdempotency(Base):
             initially="DEFERRED",
             info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
         ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "agent_id"],
+            ["agents.org_id", "agents.project_id", "agents.environment_id", "agents.id"],
+            name="fk_agent_registration_idempotency_agent_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_agent_registration_idempotency_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
         UniqueConstraint(
             "idempotency_key_hash",
             name="uq_agent_registration_idempotency_key_hash",
@@ -491,7 +520,7 @@ class AgentRegistrationIdempotency(Base):
     )
     project_id: Mapped[str] = mapped_column(String(64), nullable=False)
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
     response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

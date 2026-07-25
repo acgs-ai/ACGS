@@ -510,7 +510,7 @@ _AGENT_REGISTRATION_IDEMPOTENCY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]
         _ColumnSpec("org_id", "string", False, 64),
         _ColumnSpec("project_id", "string", False, 64),
         _ColumnSpec("environment_id", "string", False, 64),
-        _ColumnSpec("agent_id", "string", False, 64),
+        _ColumnSpec("agent_id", "string", True, 64),
         _ColumnSpec("receipt_id", "string", False, 200),
         _ColumnSpec("response", "json", False),
         _ColumnSpec("created_at", "datetime", False),
@@ -756,7 +756,18 @@ _AGENT_REGISTRATION_IDEMPOTENCY_FOREIGN_KEYS: Final[dict[str, frozenset[_Foreign
                 "environments",
                 ("org_id", "project_id", "id"),
             ),
-            (("agent_id",), None, "agents", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id", "agent_id"),
+                None,
+                "agents",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+            (
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+                None,
+                "managed_decision_receipts",
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+            ),
         }
     ),
 }
@@ -898,6 +909,7 @@ _AGENT_SCOPE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
 }
 _AGENT_REGISTRATION_IDEMPOTENCY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_AGENT_SCOPE_UNIQUES,
+    "agents": frozenset({("org_id", "project_id", "environment_id", "id")}),
     "agent_registration_idempotency": frozenset(
         {
             ("idempotency_key_hash",),

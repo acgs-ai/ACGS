@@ -311,6 +311,17 @@ class ManagedMutationUnitOfWork:
         receipt: DecisionReceipt | None,
         args: Mapping[str, Any],
         before_record: Callable[[Session], None] | None = None,
+        after_record: Callable[
+            [
+                Session,
+                ManagedDecisionReceipt,
+                ManagedGovernanceEvent,
+                ManagedOutboxMessage,
+                ManagedNonExecutableEvidenceResult,
+            ],
+            None,
+        ]
+        | None = None,
         trust_registry: ReceiptTrustRegistry | None = None,
         revoked_keys: RevocationList | None = None,
         trust_purpose: str = DECISION_RECEIPT_PURPOSE,
@@ -371,8 +382,7 @@ class ManagedMutationUnitOfWork:
                     result_hash=result_hash,
                     assurance_class=assurance_class,
                 )
-                session.flush()
-                return ManagedNonExecutableEvidenceResult(
+                evidence_result = ManagedNonExecutableEvidenceResult(
                     receipt_row_id=receipt_row.id,
                     event_row_id=event.id,
                     outbox_row_id=outbox.id,
@@ -380,6 +390,10 @@ class ManagedMutationUnitOfWork:
                     result_hash=result_hash,
                     decision=receipt.decision,
                 )
+                if after_record is not None:
+                    after_record(session, receipt_row, event, outbox, evidence_result)
+                session.flush()
+                return evidence_result
 
     def _execute_reserved_attempt(
         self,
