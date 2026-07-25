@@ -806,6 +806,15 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
+                # Revision 0003 tables reference environments, so seeding the
+                # partial revision 0001 shape must remove them first.
+                connection.execute(
+                    sa.text(
+                        "DROP TABLE managed_outbox, managed_governance_events, "
+                        "managed_governance_event_heads, managed_receipt_consumptions, "
+                        "managed_mutation_attempts, managed_decision_receipts"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -932,6 +941,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "managed_decision_receipts",
             "managed_governance_event_heads",
             "managed_governance_events",
+            "managed_mutation_attempts",
             "managed_outbox",
             "managed_receipt_consumptions",
             "projects",

@@ -16,6 +16,13 @@ engineering evidence, not production disaster-recovery evidence.
 The drill:
 
 - reads database URLs only from explicitly named environment variables;
+- requires explicit absolute operator-selected `pg_dump` and `pg_restore`
+  executable paths for real subprocess execution; their targets are
+  symlink-canonicalized for validation, must resolve to existing regular
+  executable files, and on POSIX the executable plus both selected and resolved
+  directory chains must not be group-writable or world-writable except for
+  sticky shared ancestors, while the selected absolute invocation path is
+  preserved for basename-dispatch wrappers;
 - builds a minimal child-process environment from the parsed URL, excluding
   ambient libpq controls and unrelated secrets, and uses a temporary `0600`
   passfile rather than placing a password in command arguments;
@@ -34,8 +41,8 @@ The drill:
   fsyncs audit/staging directories and the output parent on platforms exposing
   POSIX directory-fsync support;
 - verifies canonical manifest shape, path containment, artifact hashes, audit
-  chains, and `pg_restore --list` readability before inspecting or mutating a
-  restore target;
+  chains, and `pg_restore --list` readability before staging restore inputs or
+  mutating target contents;
 - enforces retained canonical-buffer limits of 100,000 rows per table, 1 MiB of
   canonical bytes per row, 64 MiB of canonical bytes per table, and 128 MiB of
   canonical bytes processed across the capture; before returning raw rows, a
@@ -52,9 +59,19 @@ The drill:
 - compares post-restore schema, table, organization/audit identity, and anchor
   fingerprints before publishing restored audit files.
 
+Missing, relative, non-existent, non-regular, non-executable, or insecurely
+writable PostgreSQL client tool paths fail closed before the drill creates a
+SQLAlchemy engine, restore staging directory, or target advisory lock. The
+selected executable path is revalidated immediately before each subprocess
+spawn by resolving and checking its target and directory chains again, but the
+subprocess is invoked through the operator-selected absolute path. POSIX sticky
+directories are the only writable-ancestor exception; the drill relies on their
+ownership semantics for shared temporary parents and still requires the selected
+and resolved tool directories themselves to be private or otherwise non-writable
+by group/other.
 Unknown schemas, unexpected files, symlinks, traversal, unsafe organization
 identifiers, missing audit locks, corrupt chains, source drift, non-empty
-targets, archive errors, and post-restore differences fail closed.
+targets, archive errors, and post-restore differences also fail closed.
 
 The canonical manifest includes schema, table, artifact, and audit-chain
 fingerprints. It does **not** include a database URL, password, raw database
@@ -74,20 +91,39 @@ lock:
 ```bash
 export ACP_RECOVERY_SOURCE_URL='postgresql+psycopg://...'
 mkdir -m 0700 ./recovery-output
+PG_DUMP=/usr/lib/postgresql/17/bin/pg_dump
+PG_RESTORE=/usr/lib/postgresql/17/bin/pg_restore
 
 python -m acgs_control_plane.migration_recovery create \
   --source-url-env ACP_RECOVERY_SOURCE_URL \
   --audit-dir ./acp-audit \
-  --output ./recovery-output/pre-migration
+  --output ./recovery-output/pre-migration \
+  --pg-dump-path "$PG_DUMP" \
+  --pg-restore-path "$PG_RESTORE"
 
 python -m acgs_control_plane.migration_recovery verify \
-  --bundle ./recovery-output/pre-migration
+  --bundle ./recovery-output/pre-migration \
+  --pg-restore-path "$PG_RESTORE"
 ```
 
 The output path must not exist. Its parent and the audit source must be real
 directories, not symlinks. A successful create prints the assurance label and
 operation. A refusal exits with status 2 and suppresses subprocess output so a
 connection string or database payload is not echoed.
+
+Do not pass bare tool names such as `pg_dump` or rely on `PATH`. The command
+intentionally requires the operator to select the concrete executable. Symlinks
+are accepted only after their target validates as a regular executable; the
+selected absolute symlink path is still used for subprocess invocation so
+basename-dispatch wrappers continue to receive `argv[0]` as `pg_dump` or
+`pg_restore`.
+
+The Python `runner` injection seam is a trusted test/harness escape hatch, not
+an operator provenance bypass. A custom runner without explicit tool paths may
+receive symbolic names such as `pg_dump` only when it does not spawn real
+commands. Any injected runner that forwards to real subprocess execution must
+provide explicit validated tool paths; otherwise `_run_command` refuses the
+relative symbolic name before spawning.
 
 ## Restore rehearsal
 
@@ -97,12 +133,14 @@ manifest:
 
 ```bash
 export ACP_RECOVERY_TARGET_URL='postgresql+psycopg://.../acgs_recovery_drill'
+PG_RESTORE=/usr/lib/postgresql/17/bin/pg_restore
 
 python -m acgs_control_plane.migration_recovery restore \
   --bundle ./recovery-output/pre-migration \
   --target-url-env ACP_RECOVERY_TARGET_URL \
   --target-database-name acgs_recovery_drill \
   --target-audit-dir ./recovered-audit \
+  --pg-restore-path "$PG_RESTORE" \
   --acknowledge-operator-controlled-bundle
 ```
 
@@ -144,6 +182,12 @@ disposable target only through the operator-approved database lifecycle.
   an unbounded-memory production backup path.
 - PostgreSQL archive portability still depends on supported `pg_dump` and
   `pg_restore` versions and extensions outside this package's scope.
+- Explicit tool paths reduce ambient lookup risk; they are not executable
+  authenticity proof, package provenance proof, ownership enforcement, or
+  TOCTOU prevention. Any process or principal able to replace the selected path
+  or resolved target between validation and spawn remains outside the claim
+  boundary. Use operator-controlled, current-user-owned or root-owned private
+  tool directories and host controls appropriate to the drill environment.
 - Database restoration is transactional, but database restore and audit
   directory publication are not one atomic operation. If audit publication
   fails after a successful database restore, discard the disposable target and
