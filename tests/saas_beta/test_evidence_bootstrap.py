@@ -166,6 +166,20 @@ def _reviewed_p1_ledger_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p1_trust_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P1_TRUST_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P1-TRUST-004"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -190,6 +204,15 @@ def _write_reviewed_p1_ledger_transcript(path: Path) -> None:
             path,
             record,
             expected_node="P1-LEDGER-003",
+        )
+
+
+def _write_reviewed_p1_trust_transcript(path: Path) -> None:
+    for record in _reviewed_p1_trust_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P1-TRUST-004",
         )
 
 
@@ -2441,6 +2464,214 @@ def test_p1_ledger_run_validation_rejects_forged_corpus_metadata_before_output()
             _common.validate_secret_free_run(forged, expected_node="P1-LEDGER-003")
 
 
+def test_p1_trust_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p1_trust_records()
+    assert len(records) == 11
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ]
+    assert records[-2]["argv"] == [
+        ".venv/bin/pytest",
+        "-q",
+        *_common.P1_TRUST_CP_SELECTORS,
+    ]
+    assert records[-2]["selectors"] == [
+        "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate"
+    ]
+    assert records[-1]["argv"] == [
+        "uv",
+        "run",
+        "--active",
+        "--no-sync",
+        "--python",
+        "3.11",
+        "--package",
+        "gove-zone",
+        "python",
+        "-m",
+        "pytest",
+        *_common.P1_TRUST_GZ_SELECTORS,
+        "--import-mode=importlib",
+        "-q",
+    ]
+    assert records[-1]["selectors"] == ["packages/gove-zone:P1-TRUST-004-trust-runtime-gate"]
+    assert _common.P1_TRUST_CP_SELECTORS == (
+        "tests/test_trust_receipt_v2.py::"
+        "test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch",
+        "tests/test_trust_receipt_v2.py::"
+        "test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_new_or_revoked",
+        "tests/test_trust_receipt_v2.py::"
+        "test_trust_readiness_report_requires_active_root_and_rotation_window",
+        "tests/test_trust_receipt_v2.py::"
+        "test_wrong_scope_missing_trust_and_replay_reject_without_side_effect",
+    )
+    assert _common.P1_TRUST_GZ_SELECTORS == (
+        "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+        "test_receipt_v2_scoped_trust_verification_requires_scope_binding",
+        "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+        "test_active_retired_revoked_runtime_rotation_verifies_historical_retired_and_denies_revoked",
+        "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+        "test_trust_readiness_runtime_reports_missing_or_expired_roots",
+        "packages/gove-zone/tests/test_trust_receipt_v2.py::"
+        "test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute",
+    )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P1-TRUST-004/transcript.jsonl"
+    _write_reviewed_p1_trust_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P1-TRUST-004")
+    _common.validate_transcript_sequence(loaded, expected_node="P1-TRUST-004")
+
+    ledger_final = _reviewed_p1_ledger_records()[-1]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:5], {**records[5], "cwd_scope": "CP"}, *records[6:]],
+        [*records[:9], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]],
+        [*records[:10], {**records[-1], "cwd_scope": "CP"}],
+        [*records[:9], records[-1], records[-2]],
+        [*records[:9], {**records[-2], "argv": [*records[-2]["argv"], "-k", "trust"]}, records[-1]],
+        [*records[:10], {**records[-1], "argv": [*records[-1]["argv"], "-k", "trust"]}],
+        [
+            *records[:9],
+            {
+                **records[-2],
+                "argv": [records[-2]["argv"][0], "-q", "tests/test_trust_receipt_v2.py"],
+            },
+            records[-1],
+        ],
+        [
+            *records[:10],
+            {
+                **records[-1],
+                "argv": [
+                    records[-1]["argv"][0],
+                    *records[-1]["argv"][1:11],
+                    "packages/gove-zone/tests/test_trust_receipt_v2.py",
+                    "--import-mode=importlib",
+                    "-q",
+                ],
+            },
+        ],
+        [
+            *records[:9],
+            {
+                **records[-2],
+                "argv": ["python", "-m", "pytest", "-q", *_common.P1_TRUST_CP_SELECTORS],
+            },
+            records[-1],
+        ],
+        [
+            *records[:10],
+            {
+                **records[-1],
+                "argv": ["bash", "-c", "uv run --package gove-zone python -m pytest"],
+            },
+        ],
+        [
+            *records[:9],
+            {**records[-2], "selectors": ["packages/acgs-control-plane:local-gate"]},
+            records[-1],
+        ],
+        [*records[:10], {**records[-1], "selectors": ["packages/gove-zone:local-gate"]}],
+        [*records[:9], {**ledger_final, "cwd_scope": "CP"}, records[-1]],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P1-TRUST-004")
+
+    forged_transcript = tmp_path / "P1-TRUST-004/forged-transcript.jsonl"
+    for record in [*records[:10], {**records[-1], "cwd_scope": "CP"}]:
+        forged_transcript.parent.mkdir(parents=True, exist_ok=True)
+        with forged_transcript.open("ab") as handle:
+            handle.write(_common.jcs_bytes(record) + b"\n")
+    with pytest.raises(_common.EvidenceError, match="cwd differs"):
+        generate_run._read_transcript(forged_transcript, expected_node="P1-TRUST-004")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {**ledger_final, "cwd_scope": "REPO_ROOT"},
+            expected_node="P1-TRUST-004",
+        )
+
+
+def test_p1_trust_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P1-TRUST-004",
+            "commands": _reviewed_p1_trust_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": ["single-process"],
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P1-TRUST-004")
+
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(
+            run_with(node_id="P1-LEDGER-003"),
+            expected_node="P1-TRUST-004",
+        )
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": ["single-process"]},
+    ):
+        with pytest.raises(_common.EvidenceError, match="P1 run determinism differs"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P1-TRUST-004",
+            )
+
+    records = _reviewed_p1_trust_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:9], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]]),
+        run_with(commands=[*records[:10], {**records[-1], "cwd_scope": "CP"}]),
+        run_with(
+            commands=[
+                *records[:9],
+                {
+                    **records[-2],
+                    "argv": ["bash", "-c", ".venv/bin/pytest -q tests/test_trust_receipt_v2.py"],
+                },
+                records[-1],
+            ]
+        ),
+        run_with(commands=[*records[:10], {**records[-1], "argv": records[-1]["argv"][:11]}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P1-TRUST-004")
+
+
 def _json_line(path: Path) -> dict[str, Any]:
     value = _common.strict_json_loads(path.read_bytes().strip())
     assert isinstance(value, dict)
@@ -3760,17 +3991,22 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 7
-    assert source.count("run_recorded_gate GZ") == 4
+    assert source.count("run_recorded_gate CP") == 8
+    assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
     assert "P1-SCOPE-002)" in source
     assert "P1-LEDGER-003)" in source
+    assert "P1-TRUST-004)" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
+    assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
+    assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
+    assert "EXPECTED_TRANSCRIPT_RECORDS=11" in source
     assert "TMP_BASENAME='acgs-p1-ledger'" in source
+    assert "TMP_BASENAME='acgs-p1-trust'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
     for selector in _common.P1_MIGRATION_SELECTORS:
@@ -3782,6 +4018,14 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P1_LEDGER_GATE=(.venv/bin/pytest -q" in source
     assert "packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate" in source
     for selector in _common.P1_LEDGER_SELECTORS:
+        assert selector in source
+    assert "P1_TRUST_CP_GATE=(.venv/bin/pytest -q" in source
+    assert 'P1_TRUST_GZ_GATE=("$UV_BIN" run --active --no-sync' in source
+    assert "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate" in source
+    assert "packages/gove-zone:P1-TRUST-004-trust-runtime-gate" in source
+    for selector in _common.P1_TRUST_CP_SELECTORS:
+        assert selector in source
+    for selector in _common.P1_TRUST_GZ_SELECTORS:
         assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
@@ -4144,14 +4388,22 @@ exit $?
         Path("scripts/evidence"),
         Path("tests/saas_beta"),
     )
-    candidate_files = sorted(
-        relative
-        for root in candidate_roots
-        for path in (ROOT / root).rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
-        for relative in (path.relative_to(ROOT),)
+    candidate_extra_files = (
+        Path("packages/acgs-control-plane/pyproject.toml"),
+        Path("packages/gove-zone/pyproject.toml"),
     )
-    assert len(candidate_files) == 26
+    candidate_files = sorted(
+        [
+            relative
+            for root in candidate_roots
+            for path in (ROOT / root).rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+            for relative in (path.relative_to(ROOT),)
+        ]
+        + list(candidate_extra_files)
+    )
+    # Deliberate literal-prover corpus plus renderer-authority package manifests.
+    assert len(candidate_files) == 29
     candidate = tmp_path / "literal-prover-candidate"
     caller_parents: list[Path] = []
     added = False
@@ -4627,6 +4879,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_ledger.exists()
 
+    accepted_trust = parent / "acgs-p1-trust.accepted"
+    accepted_trust.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_trust),
+            "P1-TRUST-004",
+            "EVID+CP+GZ",
+            "11",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_trust.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -4659,6 +4935,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P1-MIGRATION-001)" in pre_b1
     assert "P1-SCOPE-002)" in pre_b1
     assert "P1-LEDGER-003)" in pre_b1
+    assert "P1-TRUST-004)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
     preexisting_section = pre_b1.split("PREEXISTING_REJECT_PATHS=(", 1)[1]
@@ -4685,6 +4962,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P1-MIGRATION-001", "79a3c39f841cfc5a6c79e85973887814caf0e694"),
         ("P1-SCOPE-002", "40781e1200289507fcfbcedf6ab14c120ac6aae8"),
         ("P1-LEDGER-003", "9450db249e4428021c4d98b2f1b81d414693d9af"),
+        ("P1-TRUST-004", "f113d9bc7263ba2607ff9800da9881a3ff624441"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
