@@ -179,6 +179,7 @@ def _validate_matrix_state(rows: list[dict[str, str]], dag: dict[str, Any]) -> N
             assert row["evidence"] in {"current_local", "independently_reviewed", "external"}
             assert any(node["implementation_state"] == "built" for node in referenced)
             assert any(node["evidence_state"] in VERIFIED_EVIDENCE for node in referenced)
+            assert all(node["status"] == "completed" for node in referenced)
         elif row["state"] == "partial":
             assert any(node["implementation_state"] in {"partial", "built"} for node in referenced)
         elif row["state"] == "missing":
@@ -193,7 +194,7 @@ def test_schema_types_vocabularies_and_portability() -> None:
     assert dag["schema"] == {
         "name": "acgs-saas-delivery-dag",
         "version": 3,
-        "updated": "2026-07-13",
+        "updated": "2026-07-24",
         "source_of_truth": "docs/ROADMAP.md",
         "serialization": "JSON, a strict YAML 1.2 subset",
     }
@@ -373,6 +374,7 @@ def test_external_blockers_are_complete_actionable_and_referenced() -> None:
         "EXT-AUDITOR",
         "EXT-CUSTOMERS",
         "EXT-DEPLOY-APPROVAL",
+        "EXT-GITHUB-BILLING",
     }
     assert {blocker["id"] for blocker in blockers} == expected
     for blocker in blockers:
@@ -417,7 +419,7 @@ def test_acceptance_criteria_and_exact_matrix_rows_are_consistent() -> None:
     except AssertionError:
         pass
     else:
-        raise AssertionError("historical-only evidence promoted a matrix row to built")
+        raise AssertionError("blocked local evidence promoted a matrix row to built")
 
 
 def test_phase_zero_artifact_ownership_is_explicit() -> None:
@@ -452,23 +454,79 @@ def test_disaster_recovery_node_has_executable_evidence_gates() -> None:
 def test_g004_and_frozen_pr_snapshot_preserve_historical_boundary() -> None:
     dag = _load_dag()
     snapshot = dag["program"]["survey_snapshot"]
-    assert snapshot["baseline_commit"] == "1d9c9b21372ebdbd20aefc3ca454a47a3d5d1f96"
-    assert snapshot["github_observed_at"] == "2026-07-13T09:59:25Z"
+    assert snapshot["baseline_commit"] == "ee83e189ec62eddea4a73be79e9bf492a2f6b371"
+    assert snapshot["github_observed_at"] == "2026-07-24T08:52:43Z"
     prs = {item["number"]: item for item in snapshot["pull_requests"]}
-    assert prs[308]["state"] == "OPEN" and prs[308]["merged"] is False
-    assert prs[308]["disposition"] == "active_baseline_candidate"
+    assert prs[308]["state"] == "CLOSED" and prs[308]["merged"] is False
+    assert prs[308]["disposition"] == "closed_unmerged_superseded_by_current_master_rebuild_stack"
+    assert prs[353]["state"] == "OPEN" and prs[353]["draft"] is True and prs[353]["merged"] is False
+    assert prs[353]["base"] == "master"
+    assert prs[354]["base"] == "beta/p0-gates-003-master-rebuild"
+    assert prs[355]["base"] == "beta/p1-migration-001"
     assert prs[267]["state"] == "CLOSED" and prs[267]["merged"] is False
     assert prs[267]["disposition"] == "superseded_closed_unmerged"
+    g030b = next(node for node in dag["nodes"] if node["id"] == "G030B")
+    assert (g030b["status"], g030b["implementation_state"], g030b["evidence_state"]) == (
+        "completed",
+        "built",
+        "local_verified",
+    )
+    assert g030b["pr"] == "#353"
     g004 = next(node for node in dag["nodes"] if node["id"] == "G004")
     assert set(g004["dependencies"]) == {"G005", "G030B", "G031"}
-    assert (g004["implementation_state"], g004["evidence_state"]) == (
-        "conflicting",
-        "historical_only",
-    )
-    assert g004["status"] != "completed"
+    assert (g004["implementation_state"], g004["evidence_state"]) == ("built", "local_verified")
+    assert g004["status"] == "blocked"
+    assert "EXT-GITHUB-BILLING" in g004["blocker"]
     assert g004["historical_evidence"]["disposition"] == "superseded"
     assert g004["historical_evidence"]["usable_as_current_verification"] is False
-    assert "issue 308" not in DAG_PATH.read_text(encoding="utf-8").lower()
+    dag_text = DAG_PATH.read_text(encoding="utf-8").lower()
+    assert "issue 308" not in dag_text
+    assert "pr #308 is open" not in dag_text
+    assert "308 remains open" not in dag_text
+    assert "active_baseline_candidate" not in dag_text
+
+
+def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> None:
+    dag = _load_dag()
+    by_id = {node["id"]: node for node in dag["nodes"]}
+    g101 = by_id["G101"]
+    g102 = by_id["G102"]
+    g603 = by_id["G603"]
+    assert (g101["status"], g101["implementation_state"], g101["evidence_state"]) == (
+        "blocked",
+        "built",
+        "local_verified",
+    )
+    assert g101["pr"] == 355
+    assert "EXT-GITHUB-BILLING" in g101["blocker"]
+    assert g102["status"] == "planned"
+    assert g102["implementation_state"] == "missing"
+    combined_g101 = " ".join(
+        g101["likely_interfaces_files"]
+        + g101["validation_commands"]
+        + [g101["evidence_artifact"], g101["blocker"], g101["next_safe_action"]]
+    )
+    assert ".github/workflows/python-acgs-control-plane.yml" in combined_g101
+    assert ".github/workflows/postgresql-migrations.yml" not in combined_g101
+    assert "ACP_TEST_RECOVERY_SOURCE_URL" in combined_g101
+    assert "ACP_TEST_RECOVERY_TARGET_URL" in combined_g101
+    assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in combined_g101
+    assert "pg_dump/pg_restore" in combined_g101
+    assert "214 passed/32 skipped" in combined_g101
+    assert "8 passed" in combined_g101
+    assert (
+        "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
+    )
+    assert g603["status"] == "planned"
+    assert g603["implementation_state"] == "missing"
+    assert "timestamped-dr-report.json" in g603["evidence_artifact"]
+
+    matrix = MATRIX_PATH.read_text(encoding="utf-8")
+    assert ".github/workflows/python-acgs-control-plane.yml" in matrix
+    assert "ACP_TEST_RECOVERY_SOURCE_URL" in matrix
+    assert "ACP_TEST_RECOVERY_TARGET_URL" in matrix
+    assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in matrix
+    assert "G603 production DR/PITR/object/witness recovery remains separate" in matrix
 
 
 def test_roadmap_links_to_canonical_program_records() -> None:
