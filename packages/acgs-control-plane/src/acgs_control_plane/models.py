@@ -133,9 +133,191 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
-    api_key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OrganizationMembership(Base):
+    """Human membership created by the canonical tenant bootstrap path."""
+
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        UniqueConstraint("org_id", "user_id", name="uq_org_memberships_org_user"),
+        CheckConstraint("role IN ('owner')", name="ck_org_memberships_role"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PlatformBootstrapInvitation(Base):
+    """One-use platform invitation for pre-tenant bootstrap.
+
+    Stores only a token hash and server-owned prospective scope ids. The raw
+    invite secret is never persisted.
+    """
+
+    __tablename__ = "platform_bootstrap_invitations"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_platform_bootstrap_invitation_token_hash"),
+        UniqueConstraint(
+            "prospective_org_id",
+            "prospective_project_id",
+            "prospective_environment_id",
+            name="uq_platform_bootstrap_invitation_scope",
+        ),
+        CheckConstraint(
+            "policy_outcome IN ('allow', 'deny', 'escalate')",
+            name="ck_platform_bootstrap_invitation_policy_outcome",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invitee_actor: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    invitee_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    prospective_org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prospective_project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prospective_environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prospective_membership_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="allow")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_org_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TenantBootstrapIdempotency(Base):
+    """Stable successful response for one tenant.bootstrap idempotency key."""
+
+    __tablename__ = "tenant_bootstrap_idempotency"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_tenant_bootstrap_idempotency_key"),
+        UniqueConstraint("org_id", name="uq_tenant_bootstrap_idempotency_org"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TenantBootstrapPolicyArtifact(Base):
+    """Signed non-executable DENY/ESCALATE outcome for tenant.bootstrap."""
+
+    __tablename__ = "tenant_bootstrap_policy_artifacts"
+    __table_args__ = (
+        UniqueConstraint("invitation_id", "id", name="uq_tenant_bootstrap_policy_invitation_id"),
+        UniqueConstraint("invitation_id", name="uq_tenant_bootstrap_policy_invitation"),
+        UniqueConstraint("receipt_hash", name="uq_tenant_bootstrap_policy_receipt_hash"),
+        UniqueConstraint("audit_event_hash", name="uq_tenant_bootstrap_policy_audit_hash"),
+        CheckConstraint(
+            "decision IN ('deny', 'escalate')",
+            name="ck_tenant_bootstrap_policy_decision",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    invitation_id: Mapped[str] = mapped_column(
+        ForeignKey("platform_bootstrap_invitations.id"), nullable=False, index=True
+    )
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    sealed_receipt: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    event: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PendingApproval(Base):
+    """Durable separated-approval request for non-executable ESCALATE decisions."""
+
+    __tablename__ = "pending_approvals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["invitation_id", "policy_artifact_id"],
+            [
+                "tenant_bootstrap_policy_artifacts.invitation_id",
+                "tenant_bootstrap_policy_artifacts.id",
+            ],
+            name="fk_pending_approvals_invitation_policy_artifact",
+        ),
+        UniqueConstraint("receipt_hash", name="uq_pending_approvals_receipt_hash"),
+        UniqueConstraint("audit_event_hash", name="uq_pending_approvals_audit_hash"),
+        CheckConstraint("status IN ('pending')", name="ck_pending_approvals_status"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    invitation_id: Mapped[str] = mapped_column(
+        ForeignKey("platform_bootstrap_invitations.id"), nullable=False, index=True
+    )
+    policy_artifact_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lineage: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TenantBootstrapPendingOutbox(Base):
+    """Pre-tenant pending notification for non-executable tenant.bootstrap outcomes."""
+
+    __tablename__ = "tenant_bootstrap_pending_outbox"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["invitation_id", "policy_artifact_id"],
+            [
+                "tenant_bootstrap_policy_artifacts.invitation_id",
+                "tenant_bootstrap_policy_artifacts.id",
+            ],
+            name="fk_tenant_bootstrap_pending_invitation_policy_artifact",
+        ),
+        UniqueConstraint("policy_artifact_id", name="uq_tenant_bootstrap_pending_policy_artifact"),
+        UniqueConstraint("delivery_key", name="uq_tenant_bootstrap_pending_delivery_key"),
+        UniqueConstraint("payload_digest", name="uq_tenant_bootstrap_pending_payload_digest"),
+        CheckConstraint(
+            "status IN ('pending', 'delivered', 'failed')",
+            name="ck_tenant_bootstrap_pending_status",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    invitation_id: Mapped[str] = mapped_column(
+        ForeignKey("platform_bootstrap_invitations.id"), nullable=False, index=True
+    )
+    policy_artifact_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    delivery_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AgentRecord(Base):

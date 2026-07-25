@@ -916,7 +916,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0004",
+            "after": "version_0005",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -937,7 +937,13 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "managed_receipt_consumptions",
             "managed_trust_keys",
             "managed_trust_scopes",
+            "organization_memberships",
+            "pending_approvals",
+            "platform_bootstrap_invitations",
             "projects",
+            "tenant_bootstrap_idempotency",
+            "tenant_bootstrap_pending_outbox",
+            "tenant_bootstrap_policy_artifacts",
         }
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
@@ -959,7 +965,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0004.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0005.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -992,6 +998,11 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert len(after_old_write["rows"]["receipts"]) == len(migrated["rows"]["receipts"]) + 1
         assert after_old_write["rows"]["projects"] == ()
         assert after_old_write["rows"]["environments"] == ()
+        assert after_old_write["rows"]["organization_memberships"] == ()
+        assert after_old_write["rows"]["platform_bootstrap_invitations"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_idempotency"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_pending_outbox"] == ()
+        assert after_old_write["rows"]["tenant_bootstrap_policy_artifacts"] == ()
         receipt_id = created["body"]["receipt_id"]
         audit_records_after_write = _audit_records(audit_dir, bootstrapped["org_id"])
         assert len(audit_records_after_write) == len(audit_records_before_write) + 1
@@ -1032,5 +1043,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0004
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

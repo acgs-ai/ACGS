@@ -21,17 +21,39 @@ expected_selectors=(
   'tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal'
   'tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state'
 )
-if (($# != ${#expected_selectors[@]})); then
-  echo 'the exact six ordered PostgreSQL migration selectors are required' >&2
+p2_tenant_bootstrap_selectors=(
+  'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic'
+  'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix'
+  'tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once'
+)
+selector_mode=''
+junit_expected_tests=0
+if (($# == ${#expected_selectors[@]})); then
+  selector_mode='p1-migration'
+  junit_expected_tests=6
+  actual_selectors=("$@")
+  for index in "${!expected_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${expected_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
+if [[ -z "$selector_mode" && $# == ${#p2_tenant_bootstrap_selectors[@]} ]]; then
+  selector_mode='p2-tenant-bootstrap'
+  junit_expected_tests=3
+  actual_selectors=("$@")
+  for index in "${!p2_tenant_bootstrap_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p2_tenant_bootstrap_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
+if [[ -z "$selector_mode" ]]; then
+  echo 'the exact ordered PostgreSQL migration or P2 tenant-bootstrap selectors are required' >&2
   exit 64
 fi
-actual_selectors=("$@")
-for index in "${!expected_selectors[@]}"; do
-  if [[ "${actual_selectors[index]}" != "${expected_selectors[index]}" ]]; then
-    echo 'the PostgreSQL migration selectors were substituted or reordered' >&2
-    exit 64
-  fi
-done
 case "${PYTEST_ADDOPTS:-}" in
   '' | '-p no:cacheprovider') ;;
   *)
@@ -288,9 +310,14 @@ export ACP_TEST_RECOVERY_SOURCE_URL="$recovery_source_url"
 export ACP_TEST_RECOVERY_TARGET_URL="$recovery_target_url"
 export ACP_TEST_RECOVERY_BYTEA_URL="$recovery_bytea_url"
 export ACP_TEST_ROLLING_POSTGRES_URL="$rolling_url"
-export ACP_TEST_OLD_APP_ARTIFACT="$old_wheel"
-export ACP_TEST_OLD_APP_ARTIFACT_SHA256="$old_digest"
+if [[ "$selector_mode" == 'p1-migration' ]]; then
+  export ACP_TEST_OLD_APP_ARTIFACT="$old_wheel"
+  export ACP_TEST_OLD_APP_ARTIFACT_SHA256="$old_digest"
+else
+  unset ACP_TEST_OLD_APP_ARTIFACT ACP_TEST_OLD_APP_ARTIFACT_SHA256
+fi
 export UV_BIN="$uv_bin"
+export ACP_TEST_POSTGRES_SELECTOR_MODE="$selector_mode"
 
 junit_report="$state_dir/junit.xml"
 set +e
@@ -301,7 +328,7 @@ if ((pytest_status != 0)); then
   exit "$pytest_status"
 fi
 
-.venv/bin/python - "$junit_report" <<'PY'
+.venv/bin/python - "$junit_report" "$junit_expected_tests" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -314,6 +341,7 @@ def local_name(tag: str) -> str:
 
 
 report = Path(sys.argv[1])
+expected_tests = int(sys.argv[2])
 try:
     root = ET.parse(report).getroot()
 except (OSError, ET.ParseError) as exc:
@@ -340,8 +368,11 @@ for suite in suites:
             raise SystemExit(f"pytest JUnit report has a negative {field} count")
         totals[field] += value
 
-expected = {"tests": 6, "failures": 0, "errors": 0, "skipped": 0}
+expected = {"tests": expected_tests, "failures": 0, "errors": 0, "skipped": 0}
 if totals != expected:
     raise SystemExit(f"pytest JUnit totals are not the required exact gate totals: {totals}")
-print("pytest JUnit totals verified: 6 tests, 0 failures, 0 errors, 0 skipped")
+print(
+    "pytest JUnit totals verified: "
+    f"{expected_tests} tests, 0 failures, 0 errors, 0 skipped"
+)
 PY

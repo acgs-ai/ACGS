@@ -31,6 +31,12 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "managed_outbox",
         "managed_trust_scopes",
         "managed_trust_keys",
+        "organization_memberships",
+        "platform_bootstrap_invitations",
+        "tenant_bootstrap_idempotency",
+        "tenant_bootstrap_policy_artifacts",
+        "pending_approvals",
+        "tenant_bootstrap_pending_outbox",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(
