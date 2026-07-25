@@ -823,13 +823,10 @@ def _replay_idempotency_response(
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
 ) -> AgentRegistrationResult:
-    _assert_idempotency_row_integrity(session, row, idempotency)
-    terminal = str(row.response.get("terminal"))
-    if terminal in {"deny", "escalate"}:
-        raise _replay_idempotency_response_error(row, idempotency)
-    if terminal != "allow":
-        raise _invalid_idempotency_record()
-    return _result_from_idempotency_response(row.response)
+    replay = _validated_idempotency_replay(session, row, idempotency)
+    if isinstance(replay, AgentRegistrationResult):
+        return replay
+    raise replay
 
 
 def _replay_idempotency_response_new_session_result(
@@ -853,43 +850,17 @@ def _replay_idempotency_response_new_session_error(
         fresh = session.get(AgentRegistrationIdempotency, row.id)
         if fresh is None:
             return _invalid_idempotency_record()
-        _assert_idempotency_row_integrity(session, fresh, idempotency)
-        return _replay_idempotency_response_error(fresh, idempotency)
-
-
-def _replay_idempotency_response_error(
-    row: AgentRegistrationIdempotency,
-    idempotency: _AgentRegistrationIdempotencyContext,
-) -> AgentRegistrationHttpError:
-    terminal = str(row.response.get("terminal"))
-    if terminal not in {"deny", "escalate"}:
+        replay = _validated_idempotency_replay(session, fresh, idempotency)
+        if isinstance(replay, AgentRegistrationHttpError):
+            return replay
         return _invalid_idempotency_record()
-    status_code = row.response.get("http_status")
-    code = row.response.get("code")
-    status = row.response.get("status")
-    detail = row.response.get("detail")
-    if (
-        not isinstance(status_code, int)
-        or not isinstance(code, str)
-        or not isinstance(status, str)
-        or not isinstance(detail, str)
-    ):
-        return _invalid_idempotency_record()
-    _assert_same_idempotency_request(row, idempotency)
-    return AgentRegistrationHttpError(
-        status_code,
-        code,
-        status,
-        detail,
-        stage="policy",
-    )
 
 
-def _assert_idempotency_row_integrity(
+def _validated_idempotency_replay(
     session: Session,
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
-) -> None:
+) -> AgentRegistrationResult | AgentRegistrationHttpError:
     _assert_same_idempotency_request(row, idempotency)
     projection = idempotency.request_projection
     if (
@@ -898,15 +869,6 @@ def _assert_idempotency_row_integrity(
         or row.project_id != projection["project_id"]
         or row.environment_id != projection["environment_id"]
     ):
-        raise _invalid_idempotency_record()
-
-    response = row.response
-    terminal = str(response.get("terminal"))
-    if response.get("org_id") != row.org_id or response.get("receipt_id") != row.receipt_id:
-        raise _invalid_idempotency_record()
-    if response.get("project_id") != row.project_id:
-        raise _invalid_idempotency_record()
-    if response.get("environment_id") != row.environment_id:
         raise _invalid_idempotency_record()
 
     receipt = session.scalars(
@@ -923,12 +885,11 @@ def _assert_idempotency_row_integrity(
         receipt.actor != projection["actor"]
         or receipt.proposed_action != projection["action"]
         or receipt.argument_hash != sha256_json(projection["args"])
-        or receipt.decision != terminal
     ):
         raise _invalid_idempotency_record()
 
-    if terminal == "allow":
-        if not isinstance(row.agent_id, str) or response.get("agent_id") != row.agent_id:
+    if receipt.decision == "allow":
+        if not isinstance(row.agent_id, str):
             raise _invalid_idempotency_record()
         agent = session.scalars(
             sa.select(AgentRecord).where(
@@ -940,11 +901,42 @@ def _assert_idempotency_row_integrity(
         ).one_or_none()
         if agent is None:
             raise _invalid_idempotency_record()
-    elif terminal in {"deny", "escalate"}:
-        if row.agent_id is not None or response.get("agent_id") is not None:
+        result = AgentRegistrationResult(
+            agent_id=agent.id,
+            org_id=agent.org_id,
+            name=agent.name,
+            description=agent.description,
+            trust_tier=agent.trust_tier,
+            allowed_tools=list(agent.allowed_tools or []),
+            status=agent.status,
+            created_at=agent.created_at,
+            receipt_id=receipt.receipt_id,
+        )
+        expected_response = _idempotency_response_payload_for_scope(
+            result,
+            project_id=row.project_id,
+            environment_id=row.environment_id,
+        )
+        if row.response != expected_response:
             raise _invalid_idempotency_record()
-    else:
-        raise _invalid_idempotency_record()
+        return result
+
+    if receipt.decision in {"deny", "escalate"}:
+        if row.agent_id is not None:
+            raise _invalid_idempotency_record()
+        terminal = _terminal_http_error_for_decision_value(Decision(receipt.decision))
+        expected_response = _idempotency_error_payload_for_scope(
+            terminal,
+            org_id=row.org_id,
+            project_id=row.project_id,
+            environment_id=row.environment_id,
+            receipt_id=receipt.receipt_id,
+        )
+        if row.response != expected_response:
+            raise _invalid_idempotency_record()
+        return terminal
+
+    raise _invalid_idempotency_record()
 
 
 def _invalid_idempotency_record() -> AgentRegistrationHttpError:
@@ -962,14 +954,27 @@ def _idempotency_response_payload(
     *,
     context: ManagedMutationContext,
 ) -> dict[str, Any]:
+    return _idempotency_response_payload_for_scope(
+        result,
+        project_id=context.project_id,
+        environment_id=context.environment_id,
+    )
+
+
+def _idempotency_response_payload_for_scope(
+    result: AgentRegistrationResult,
+    *,
+    project_id: str,
+    environment_id: str,
+) -> dict[str, Any]:
     return {
         "schema": "agent-registration-idempotency-response/v1",
         "terminal": "allow",
         "http_status": 201,
         "agent_id": result.agent_id,
         "org_id": result.org_id,
-        "project_id": context.project_id,
-        "environment_id": context.environment_id,
+        "project_id": project_id,
+        "environment_id": environment_id,
         "name": result.name,
         "description": result.description,
         "trust_tier": result.trust_tier,
@@ -986,6 +991,23 @@ def _idempotency_error_payload(
     context: ManagedMutationContext,
     receipt_id: str,
 ) -> dict[str, Any]:
+    return _idempotency_error_payload_for_scope(
+        terminal,
+        org_id=context.org_id,
+        project_id=context.project_id,
+        environment_id=context.environment_id,
+        receipt_id=receipt_id,
+    )
+
+
+def _idempotency_error_payload_for_scope(
+    terminal: AgentRegistrationHttpError,
+    *,
+    org_id: str,
+    project_id: str,
+    environment_id: str,
+    receipt_id: str,
+) -> dict[str, Any]:
     decision = "escalate" if terminal.code == "ESCALATE_PENDING" else "deny"
     return {
         "schema": "agent-registration-idempotency-response/v1",
@@ -995,15 +1017,19 @@ def _idempotency_error_payload(
         "status": terminal.status,
         "detail": terminal.detail,
         "agent_id": None,
-        "org_id": context.org_id,
-        "project_id": context.project_id,
-        "environment_id": context.environment_id,
+        "org_id": org_id,
+        "project_id": project_id,
+        "environment_id": environment_id,
         "receipt_id": receipt_id,
     }
 
 
 def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrationHttpError:
-    if record.decision is Decision.ESCALATE:
+    return _terminal_http_error_for_decision_value(record.decision)
+
+
+def _terminal_http_error_for_decision_value(decision: Decision) -> AgentRegistrationHttpError:
+    if decision is Decision.ESCALATE:
         return AgentRegistrationHttpError(
             202,
             "ESCALATE_PENDING",
@@ -1011,7 +1037,7 @@ def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrati
             "agent registration requires separated approval",
             stage="policy",
         )
-    if record.decision is Decision.DENY:
+    if decision is Decision.DENY:
         return AgentRegistrationHttpError(
             403,
             "POLICY_DENIED",
@@ -1026,25 +1052,6 @@ def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrati
         "agent registration receipt was refused",
         stage="policy",
     )
-
-
-def _result_from_idempotency_response(response: Mapping[str, Any]) -> AgentRegistrationResult:
-    return AgentRegistrationResult(
-        agent_id=str(response["agent_id"]),
-        org_id=str(response["org_id"]),
-        name=str(response["name"]),
-        description=str(response["description"]),
-        trust_tier=str(response["trust_tier"]),
-        allowed_tools=[str(tool) for tool in response["allowed_tools"]],
-        status=str(response["status"]),
-        created_at=_parse_response_datetime(str(response["created_at"])),
-        receipt_id=str(response["receipt_id"]),
-    )
-
-
-def _parse_response_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value)
-    return _to_utc(parsed)
 
 
 def _to_utc(value: Any) -> datetime:

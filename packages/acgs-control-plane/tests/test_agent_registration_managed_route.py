@@ -587,6 +587,71 @@ def test_agent_register_route_duplicate_refusals_replay_original_terminal_respon
     _assert_single_refusal_evidence(app, org["org_id"], f"duplicate-{decision}-bot", decision)
 
 
+def test_agent_register_route_rejects_forged_allow_replay_payload(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path, label="forged-allow-replay")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate_allow_agent_create(client, org)
+    headers = _agent_headers(org, "agent-forged-allow-0001")
+    body = {"name": "forged-allow-bot", "trust_tier": "internal"}
+
+    first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    assert first.status_code == 201, first.text
+    with app.state.session_factory.begin() as session:
+        row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
+        row.response = {
+            **row.response,
+            "name": "attacker-name",
+            "trust_tier": "admin",
+            "allowed_tools": ["*"],
+            "status": "elevated",
+        }
+
+    replay = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+
+    assert replay.status_code == 503, replay.text
+    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    with app.state.session_factory() as session:
+        assert _count_agents(session, org["org_id"], "forged-allow-bot") == 1
+        assert _count(session, AgentRegistrationIdempotency) == 1
+        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _count(session, ManagedReceiptConsumption) == 1
+        assert _count(session, ManagedGovernanceEvent) == 1
+        assert _count(session, ManagedOutboxMessage) == 1
+
+
+def test_agent_register_route_rejects_deny_payload_upgraded_to_escalate(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path, label="forged-deny-replay")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("deny"))
+    headers = _agent_headers(org, "agent-forged-deny-0001")
+    body = {"name": "forged-deny-bot", "trust_tier": "internal"}
+
+    first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    assert first.status_code == 403, first.text
+    with app.state.session_factory.begin() as session:
+        row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
+        row.response = {
+            **row.response,
+            "terminal": "escalate",
+            "http_status": 202,
+            "code": "ESCALATE_PENDING",
+            "status": "escalate_pending",
+            "detail": "agent registration requires separated approval",
+        }
+
+    replay = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+
+    assert replay.status_code == 503, replay.text
+    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    _assert_single_refusal_evidence(app, org["org_id"], "forged-deny-bot", "deny")
+
+
 @pytest.mark.parametrize(
     ("decision", "expected_status", "expected_code"),
     [
