@@ -74,7 +74,8 @@ def test_required_docs_exist_and_carry_core_invariant() -> None:
 def test_readme_opening_and_non_claims() -> None:
     text = _read("README.md")
     assert text.startswith(
-        "ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects."
+        "ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer "
+        "for AI-agent side effects."
     )
     for phrase in (
         "not production-certified",
@@ -109,6 +110,51 @@ def test_neutrality_wording_stays_claim_safe() -> None:
     # Neutrality copy must point readers at the tier/claim evidence, not just assert.
     for rel in ("README.md", "docs/introduction.md"):
         assert "integration_matrix.md" in _read(rel).lower(), rel
+
+
+def _claim_ledger_rows() -> list[list[str]]:
+    """Data rows of the claim-ledger table, as trimmed cell lists."""
+    rows: list[list[str]] = []
+    for line in _read("docs/CLAIMS.md").splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 6 or cells[0] == "Claim" or set(cells[0]) <= {"-"}:
+            continue  # header / separator
+        rows.append(cells)
+    return rows
+
+
+def test_claim_ledger_evidence_exists() -> None:
+    """No dangling citations: evidence a claim names must exist in the tree.
+
+    Mirrors ``test_on_master_evidence_files_exist`` in ``test_adversary_model.py``.
+    A claim whose cited test or example does not exist is an overclaim, and the
+    ledger is the file that is supposed to stop overclaiming. Rows with status
+    ``not claimed`` / ``roadmap`` cite no evidence and are skipped.
+    """
+    test_files = {p.name for p in ROOT.rglob("test_*.py")}
+    test_defs = "\n".join(
+        p.read_text(encoding="utf-8", errors="ignore")
+        for p in (ROOT / "packages" / "gove-zone" / "tests").rglob("test_*.py")
+    )
+    missing: list[str] = []
+    for cells in _claim_ledger_rows():
+        claim, status, evidence, eatest = cells[0], cells[1], cells[2], cells[3]
+        if status in {"not claimed", "roadmap"}:
+            continue
+        cited = f"{evidence} {eatest}"
+        label = claim[:60]
+        for name in set(re.findall(r"`(test_[A-Za-z0-9_]+)`", cited)):
+            # A citation may name a test module or a single test function.
+            if f"{name}.py" not in test_files and f"def {name}(" not in test_defs:
+                missing.append(f"{label} -> {name}")
+        for rel in set(re.findall(r"`((?:packages|examples|docs)/[\w./-]+)`", cited)):
+            if not (ROOT / rel).exists():
+                missing.append(f"{label} -> {rel}")
+    assert not missing, "claim ledger cites evidence not present in the tree:\n  " + "\n  ".join(
+        missing
+    )
 
 
 def test_claim_ledger_has_explicit_non_claims() -> None:

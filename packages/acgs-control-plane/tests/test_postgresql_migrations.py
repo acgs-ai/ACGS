@@ -424,6 +424,161 @@ def _seed_exact_legacy_v0_schema() -> None:
         engine.dispose()
 
 
+def _seed_trust_scope_parents(connection: Connection, created_at: str) -> None:
+    """Insert the exact organization/project/environment/scope parents a trust key needs."""
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO organizations (
+                id, name, created_at, audit_anchor_count, audit_anchor_hash
+            ) VALUES ('org-a', 'Organization A', :created_at, 0, '')
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO projects (id, org_id, slug, name, created_at)
+            VALUES ('project-a', 'org-a', 'core', 'Core Project', :created_at)
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO environments (id, org_id, project_id, slug, name, created_at)
+            VALUES (
+                'environment-a', 'org-a', 'project-a', 'production',
+                'Production', :created_at
+            )
+            """
+        ),
+        {"created_at": created_at},
+    )
+    connection.execute(
+        sa.text(
+            """
+            INSERT INTO managed_trust_scopes (
+                id, org_id, project_id, environment_id, purpose, created_at, updated_at
+            ) VALUES (
+                'scope-a', 'org-a', 'project-a', 'environment-a', 'receipt-signing',
+                :created_at, :created_at
+            )
+            """
+        ),
+        {"created_at": created_at},
+    )
+
+
+_INSERT_TRUST_KEY = sa.text(
+    """
+    INSERT INTO managed_trust_keys (
+        id, org_id, project_id, environment_id, purpose, key_id, algorithm,
+        public_key_spki_der, activated_epoch, not_after, status, retired_epoch,
+        created_at, updated_at
+    ) VALUES (
+        :id, 'org-a', 'project-a', 'environment-a', 'receipt-signing', :key_id, 'ed25519',
+        :public_key, :activated_epoch, :not_after, :status, :retired_epoch,
+        :created_at, :created_at
+    )
+    """
+)
+
+
+def test_postgresql_duplicate_active_trust_roots_are_rejected_by_the_partial_index() -> None:
+    """The active-root uniqueness must hold on PostgreSQL, not only on SQLite.
+
+    ``uq_managed_trust_key_active_scope`` carries a ``postgresql_where`` predicate,
+    so its enforcement is dialect-specific: the SQLite suite proves the SQLite
+    branch and the reflection unit test proves the predicate signature, but only a
+    live PostgreSQL insert proves the engine that actually runs in production
+    refuses a second active trust root for one scope.
+    """
+    upgrade_database(_TEST_POSTGRES_URL)
+    created_at = "2026-07-13T00:00:00+00:00"
+    not_after = "2027-07-13T00:00:00+00:00"
+    base = {
+        "public_key": b"\x00" * 32,
+        "not_after": not_after,
+        "created_at": created_at,
+    }
+
+    engine = make_engine(_TEST_POSTGRES_URL)
+    try:
+        with engine.begin() as connection:
+            _seed_trust_scope_parents(connection, created_at)
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-active",
+                    "key_id": "key-1",
+                    "activated_epoch": 1,
+                    "status": "active",
+                    "retired_epoch": None,
+                },
+            )
+
+        # A second *active* root for the same scope is the ambiguity the index exists
+        # to make impossible.
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    _INSERT_TRUST_KEY,
+                    {
+                        **base,
+                        "id": "key-active-duplicate",
+                        "key_id": "key-2",
+                        "activated_epoch": 2,
+                        "status": "active",
+                        "retired_epoch": None,
+                    },
+                )
+
+        # Retired and revoked siblings are outside the partial predicate and must
+        # still be insertable, or historical verification would be impossible.
+        with engine.begin() as connection:
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-retired",
+                    "key_id": "key-3",
+                    "activated_epoch": 2,
+                    "status": "retired",
+                    "retired_epoch": 3,
+                },
+            )
+            connection.execute(
+                _INSERT_TRUST_KEY,
+                {
+                    **base,
+                    "id": "key-revoked",
+                    "key_id": "key-4",
+                    "activated_epoch": 4,
+                    "status": "revoked",
+                    "retired_epoch": None,
+                },
+            )
+
+        with engine.connect() as connection:
+            statuses = dict(
+                connection.execute(
+                    sa.text(
+                        """
+                        SELECT status, count(*) FROM managed_trust_keys
+                        GROUP BY status
+                        """
+                    )
+                ).all()
+            )
+            assert statuses == {"active": 1, "retired": 1, "revoked": 1}
+    finally:
+        engine.dispose()
+
+
 def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
 

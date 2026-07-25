@@ -698,11 +698,25 @@ def _seed_recovery_source(database_url: str, expected_database: str) -> None:
         engine.dispose()
 
 
+def _required_gate_client_path(name: str) -> Path:
+    # The real subprocess runner refuses bare tool names, so the gate resolves
+    # the pinned client wrappers that the session fixture already required.
+    resolved = shutil.which(name)
+    if resolved is None:
+        pytest.fail(f"{name} must be resolvable for the live PostgreSQL gate", pytrace=False)
+    selected = Path(resolved)
+    if not selected.is_absolute():
+        selected = Path.cwd() / selected
+    return selected
+
+
 def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
     source_url = _required_url(_SOURCE_ENV)
     target_url = _required_url(_TARGET_ENV)
     source_database = _EXPECTED_DATABASES[_SOURCE_ENV]
     target_database = _EXPECTED_DATABASES[_TARGET_ENV]
+    pg_dump_path = _required_gate_client_path("pg_dump")
+    pg_restore_path = _required_gate_client_path("pg_restore")
     _reset_exact_database(source_url, source_database)
     _reset_exact_database(target_url, target_database)
     try:
@@ -716,13 +730,18 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
             source_url_env=_SOURCE_ENV,
             audit_dir=source_audit,
             output=bundle,
+            pg_dump_path=pg_dump_path,
+            pg_restore_path=pg_restore_path,
         )
-        verified = verify_recovery_bundle(bundle=bundle)
+        verified = verify_recovery_bundle(bundle=bundle, pg_restore_path=pg_restore_path)
         assert created == verified
 
         source_engine = make_engine(source_url)
         try:
             with source_engine.begin() as connection:
+                # CASCADE detaches the revision 0003/0004 foreign keys that now
+                # reference environments; the corrupted source still
+                # classifies as UNKNOWN.
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
         finally:
             source_engine.dispose()
@@ -734,6 +753,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
             target_database_name=target_database,
             target_audit_dir=tmp_path / "target-audit",
             acknowledge_operator_controlled_bundle=True,
+            pg_restore_path=pg_restore_path,
         )
         assert created == verified == restored
         assert _capture_database_state_url(target_url) == expected_state
@@ -747,6 +767,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
                 target_database_name=target_database,
                 target_audit_dir=tmp_path / "blocked-target-audit",
                 acknowledge_operator_controlled_bundle=True,
+                pg_restore_path=pg_restore_path,
             )
         assert _capture_database_state_url(target_url) == target_before_refusal
     finally:

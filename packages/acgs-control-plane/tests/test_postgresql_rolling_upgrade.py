@@ -824,7 +824,28 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                connection.execute(sa.text("DROP TABLE environments CASCADE"))
+                # Revision 0003, 0004, and 0005 tables reference environments,
+                # so seeding the partial revision 0001 shape must remove them
+                # first. Dropping environments with CASCADE instead would leave
+                # them in place minus their foreign keys, which is not a shape
+                # any real 0001 database has. One statement drops the whole set
+                # together, so dependencies among the listed tables (the 0005
+                # bootstrap tables all reference platform_bootstrap_invitations)
+                # do not constrain the order.
+                connection.execute(
+                    sa.text(
+                        "DROP TABLE tenant_bootstrap_refusal_events, "
+                        "tenant_bootstrap_pending_outbox, pending_approvals, "
+                        "tenant_bootstrap_policy_artifacts, "
+                        "tenant_bootstrap_idempotency, "
+                        "platform_bootstrap_invitations, organization_memberships, "
+                        "managed_trust_keys, managed_trust_scopes, "
+                        "managed_outbox, managed_governance_events, "
+                        "managed_governance_event_heads, managed_receipt_consumptions, "
+                        "managed_mutation_attempts, managed_decision_receipts"
+                    )
+                )
+                connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
             with pg_engine.begin() as connection:
