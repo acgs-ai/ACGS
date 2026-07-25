@@ -170,6 +170,7 @@ P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'
 P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'
 P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'
 P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'
+P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -222,6 +223,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=1
     EXPECTED_TRANSCRIPT_RECORDS=11
     TMP_BASENAME='acgs-p2-tenant-bootstrap'
+    ;;
+  P2-REGISTER-001)
+    [[ "$P" == "$P2_REGISTER_REVIEWED_BASE" ]] ||
+      die "P2-REGISTER-001 reviewed parent must be exact $P2_REGISTER_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'
+    INCLUDE_GZ=1
+    EXPECTED_TRANSCRIPT_RECORDS=11
+    TMP_BASENAME='acgs-p2-register'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -794,13 +803,25 @@ run_recorded_exact_pytest_gate() {
   stderr_file="$NODE_EVIDENCE/$basename.stderr"
   junit_file="$NODE_EVIDENCE/$basename.junit.xml"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  if (
-    cd "$cwd"
-    PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"
-  ) >"$stdout_file" 2>"$stderr_file"; then
-    gate_status=0
+  if [[ "$scope" == GZ ]]; then
+    if (
+      cd "$cwd"
+      PYTEST_ADDOPTS="--junitxml=$junit_file" \
+        VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" "$@"
+    ) >"$stdout_file" 2>"$stderr_file"; then
+      gate_status=0
+    else
+      gate_status=$?
+    fi
   else
-    gate_status=$?
+    if (
+      cd "$cwd"
+      PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"
+    ) >"$stdout_file" 2>"$stderr_file"; then
+      gate_status=0
+    else
+      gate_status=$?
+    fi
   fi
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$gate_status" -ne 0 ]]; then
@@ -819,7 +840,7 @@ node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
-      P2-TENANT-BOOTSTRAP-000)
+      P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -967,6 +988,25 @@ elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
   run_recorded_exact_pytest_gate P2 "$WORKTREE" p2-tenant-bootstrap-cross-plane \
     'root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract' REPO_ROOT 1 \
     "${P2_TENANT_BOOTSTRAP_ROOT_GATE[@]}"
+elif [[ "$NODE_ID" == P2-REGISTER-001 ]]; then
+  P2_REGISTER_CP_GATE=(.venv/bin/pytest -q \
+    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation \
+    tests/integration/test_production_posture.py::test_inert_stub_has_no_provider_executor_or_persistence_callback_surface \
+    tests/integration/test_production_posture.py::test_managed_contract_hashes_the_exact_canonical_snapshot)
+  run_recorded_exact_pytest_gate CP "$WORKTREE/packages/acgs-control-plane" \
+    p2-register-control-plane \
+    'packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate' CP 3 \
+    "${P2_REGISTER_CP_GATE[@]}"
+  P2_REGISTER_GZ_GATE=("$UV_BIN" run --active --no-sync --python 3.11 --package gove-zone \
+    python -m pytest \
+    packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_allows_registered_principal_through_dispatcher \
+    packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_denies_unregistered_actor_through_dispatcher \
+    packages/gove-zone/tests/test_mcp_binding.py::test_unregistered_tool_cannot_run_and_is_not_audited \
+    packages/gove-zone/tests/test_mcp_binding.py::test_runtime_registered_tool_is_gated_with_zero_binding_changes \
+    --import-mode=importlib -q)
+  run_recorded_exact_pytest_gate GZ "$WORKTREE" p2-register-runtime \
+    'packages/gove-zone:P2-REGISTER-001-runtime-registration-gate' REPO_ROOT 4 \
+    "${P2_REGISTER_GZ_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

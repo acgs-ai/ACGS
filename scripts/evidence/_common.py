@@ -218,6 +218,24 @@ P2_TENANT_BOOTSTRAP_CP_SELECTORS = (
 P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
     "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
 )
+P2_REGISTER_CP_SELECTORS = (
+    "tests/integration/test_production_posture.py::"
+    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+    "tests/integration/test_production_posture.py::"
+    "test_inert_stub_has_no_provider_executor_or_persistence_callback_surface",
+    "tests/integration/test_production_posture.py::"
+    "test_managed_contract_hashes_the_exact_canonical_snapshot",
+)
+P2_REGISTER_GZ_SELECTORS = (
+    "packages/gove-zone/tests/test_authz_enforcement.py::"
+    "test_enforce_allows_registered_principal_through_dispatcher",
+    "packages/gove-zone/tests/test_authz_enforcement.py::"
+    "test_enforce_denies_unregistered_actor_through_dispatcher",
+    "packages/gove-zone/tests/test_mcp_binding.py::"
+    "test_unregistered_tool_cannot_run_and_is_not_audited",
+    "packages/gove-zone/tests/test_mcp_binding.py::"
+    "test_runtime_registered_tool_is_gated_with_zero_binding_changes",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -299,6 +317,37 @@ REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P2_REGISTER_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P2_REGISTER_CP_SELECTORS,
+        ),
+    ),
+    (
+        "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P2_REGISTER_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -306,6 +355,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P1-LEDGER-003": REVIEWED_P1_LEDGER_TRANSCRIPT,
     "P1-TRUST-004": REVIEWED_P1_TRUST_TRANSCRIPT,
     "P2-TENANT-BOOTSTRAP-000": REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
+    "P2-REGISTER-001": REVIEWED_P2_REGISTER_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -325,6 +375,19 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "REPO_ROOT",
     ),
     "P2-TENANT-BOOTSTRAP-000": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
+    "P2-REGISTER-001": (
         "REPO_ROOT",
         "CP",
         "CP",
@@ -778,6 +841,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P1-LEDGER-003",
         "P1-TRUST-004",
         "P2-TENANT-BOOTSTRAP-000",
+        "P2-REGISTER-001",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")
