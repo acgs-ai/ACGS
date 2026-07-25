@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any, NewType
 
 if TYPE_CHECKING:
     from gove_zone.revocation import RevocationList
+    from gove_zone.trust import ReceiptTrustRegistry
 
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
@@ -46,6 +47,7 @@ from gove_zone.errors import (
 )
 from gove_zone.receipt import DecisionReceipt
 from gove_zone.signing import ReceiptSigner
+from gove_zone.trust import RECEIPT_V2
 
 # An execution boundary is an opaque label for *where* an approved action may
 # run (e.g. "local-sandbox", "tenant-A/prod-egress"). It is a string today;
@@ -231,12 +233,15 @@ class ReceiptVerifier:
         expected_actor: str,
         expected_policy_bundle_id: str | None = None,
         expected_policy_hash: str | None = None,
+        expected_project_id: str | None = None,
+        expected_environment_id: str | None = None,
         expected_authority: str | None = None,
         expected_validator_role: str | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
         revoked_keys: RevocationList | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
     ) -> None:
         if not expected_actor or not expected_actor.strip():
             raise ReceiptValidationError(
@@ -247,11 +252,14 @@ class ReceiptVerifier:
         self.expected_actor = expected_actor
         self.expected_policy_bundle_id = expected_policy_bundle_id
         self.expected_policy_hash = expected_policy_hash
+        self.expected_project_id = expected_project_id
+        self.expected_environment_id = expected_environment_id
         self.expected_authority = expected_authority
         self.expected_validator_role = expected_validator_role
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
+        self.trust_registry = trust_registry
         # Revocation config is construction-only (never a per-call arg on
         # verify): a per-call empty/weaker list could silently disable a
         # security control, the same foot-gun authz/ledger avoid.
@@ -279,7 +287,12 @@ class ReceiptVerifier:
         """
         if receipt is None:
             raise ReceiptValidationError("No receipt provided for governed execution")
-        if self.require_signature and self.verifier is None:
+        is_v2 = receipt.receipt_schema_version == RECEIPT_V2
+        if (
+            self.require_signature
+            and self.verifier is None
+            and not (is_v2 and self.trust_registry is not None)
+        ):
             raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
         effective_actor = expected_actor if expected_actor is not None else self.expected_actor
         if not effective_actor or not effective_actor.strip():
@@ -291,6 +304,8 @@ class ReceiptVerifier:
             expected_execution_boundary=self.expected_execution_boundary,
             expected_policy_bundle_id=self.expected_policy_bundle_id,
             expected_policy_hash=self.expected_policy_hash,
+            expected_project_id=self.expected_project_id,
+            expected_environment_id=self.expected_environment_id,
             expected_authority=self.expected_authority,
             expected_validator_role=self.expected_validator_role,
             expected_action=expected_action,
@@ -301,6 +316,7 @@ class ReceiptVerifier:
             require_signature=self.require_signature,
             require_expiry=self.require_expiry,
             revoked_keys=self.revoked_keys,
+            trust_registry=self.trust_registry,
             now_iso=now_iso,
         )
 
