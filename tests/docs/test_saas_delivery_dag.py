@@ -192,8 +192,11 @@ def _validate_matrix_state(rows: list[dict[str, str]], dag: dict[str, Any]) -> N
 def test_schema_types_vocabularies_and_portability() -> None:
     dag = _load_dag()
     assert dag["schema"] == {
-        "name": "acgs-saas-delivery-dag", "version": 3, "updated": "2026-07-24",
-        "source_of_truth": "docs/ROADMAP.md", "serialization": "JSON, a strict YAML 1.2 subset",
+        "name": "acgs-saas-delivery-dag",
+        "version": 3,
+        "updated": "2026-07-24",
+        "source_of_truth": "docs/ROADMAP.md",
+        "serialization": "JSON, a strict YAML 1.2 subset",
     }
     assert all(
         key in dag
@@ -511,7 +514,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert "pg_dump/pg_restore" in combined_g101
     assert "214 passed/32 skipped" in combined_g101
     assert "8 passed" in combined_g101
-    assert "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
+    assert (
+        "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
+    )
     assert g603["status"] == "planned"
     assert g603["implementation_state"] == "missing"
     assert "timestamped-dr-report.json" in g603["evidence_artifact"]
