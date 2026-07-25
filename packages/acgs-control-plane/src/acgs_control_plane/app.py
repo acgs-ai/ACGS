@@ -29,6 +29,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from acgs_control_plane.api_contract import (
+    RequestAdmissionMiddleware,
+    has_json_decode_error,
+    redacted_error,
+    request_id_from_scope,
+)
 from acgs_control_plane.auth import (
     API_KEY_HEADER,
     BOOTSTRAP_HEADER,
@@ -198,6 +204,26 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return payload
 
 
+class _TenantBootstrapRequestIdMiddleware:
+    """Seed the tenant-bootstrap request id as pure ASGI middleware.
+
+    ``@app.middleware("http")`` wraps the whole app in Starlette's
+    ``BaseHTTPMiddleware``, which proxies receive/send through an anyio stream
+    and mishandles a client disconnect mid-request. The bounded-admission tests
+    assert real disconnect semantics, so that wrapper cannot stay on the stack.
+    Pure ASGI middleware seeds the same ``request.state`` value -- ``Request.state``
+    is backed by ``scope["state"]`` -- while leaving the channels untouched.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/v1/tenant-bootstrap":
+            scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
+        await self.app(scope, receive, send)
+
+
 def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
     if request.url.path != "/v1/tenant-bootstrap":
         return
@@ -249,6 +275,7 @@ def _membrane(request: Request, session: Session, org: Organization, principal: 
 def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse:
     receipt = exc.receipt  # type: ignore[attr-defined]
     reason = exc.reason  # type: ignore[attr-defined]
+    request = exc.__dict__.get("request")
     return JSONResponse(
         status_code=status_code,
         content={
@@ -256,6 +283,11 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
             "reason": reason,
             "receipt_id": receipt.id,
             "decision": receipt.decision,
+            **(
+                {"request_id": request_id_from_scope(request.scope)}
+                if isinstance(request, Request)
+                else {}
+            ),
         },
     )
 
@@ -284,20 +316,49 @@ def create_app(
         "No valid Decision Receipt, no side effect.",
     )
     app.state.settings = settings
+    app.add_middleware(
+        RequestAdmissionMiddleware,
+        max_request_body_bytes=settings.max_request_body_bytes,
+    )
 
     @app.exception_handler(PolicyDeniedError)
-    def _denied(_request: Request, exc: PolicyDeniedError) -> JSONResponse:
+    def _denied(request: Request, exc: PolicyDeniedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(403, "denied", exc)
 
     @app.exception_handler(PolicyEscalatedError)
-    def _escalated(_request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+    def _escalated(request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(202, "pending_approval", exc)
 
     @app.exception_handler(AuditReadError)
-    def _audit_read_refused(_request: Request, exc: AuditReadError) -> JSONResponse:
+    def _audit_read_refused(request: Request, exc: AuditReadError) -> JSONResponse:
+        request_id_from_scope(request.scope)
         return JSONResponse(
             status_code=503,
             content={"code": exc.code, "status": "audit-read-refused", "reason": exc.reason},
+        )
+
+    @app.exception_handler(HTTPException)
+    def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        status_code = int(exc.status_code)
+        code = "http_error"
+        if status_code == 401:
+            code = "unauthorized"
+        elif status_code == 403:
+            code = "forbidden"
+        elif status_code == 404:
+            code = "not_found"
+        elif status_code == 409:
+            code = "conflict"
+        elif status_code == 422:
+            code = "validation_error"
+        elif status_code >= 500:
+            code = "service_unavailable"
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
+            headers=dict(exc.headers or {}),
         )
 
     @app.exception_handler(TenantBootstrapHttpError)
@@ -314,8 +375,11 @@ def create_app(
             },
         )
 
+    # One handler per exception type wins in FastAPI, so the tenant-bootstrap
+    # refusal recording (master) and the redacted admission errors (this branch)
+    # have to live in the same function rather than one replacing the other.
     @app.exception_handler(RequestValidationError)
-    def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    def _request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         if request.url.path == "/v1/tenant-bootstrap":
             _record_tenant_bootstrap_refusal(
                 request,
@@ -335,13 +399,15 @@ def create_app(
                     "detail": "tenant bootstrap request body is malformed",
                 },
             )
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        errors = exc.errors()
+        code = "malformed_json" if has_json_decode_error(errors) else "validation_error"
+        status_code = 400 if code == "malformed_json" else 422
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
+        )
 
-    @app.middleware("http")
-    async def _tenant_bootstrap_request_id(request: Request, call_next: Any) -> Any:
-        if request.url.path == "/v1/tenant-bootstrap":
-            request.state.tenant_bootstrap_request_id = secrets.token_hex(16)
-        return await call_next(request)
+    app.add_middleware(_TenantBootstrapRequestIdMiddleware)
 
     @app.exception_handler(Exception)
     def _tenant_bootstrap_fail_closed_error(request: Request, _exc: Exception) -> JSONResponse:
