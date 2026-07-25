@@ -322,7 +322,7 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     assert not (tmp_path / "bundle").exists()
 
 
-def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
+def test_public_first_function_hijacks_refuse_before_subprocess(
     tmp_path: Path,
 ) -> None:
     _seed_source()
@@ -330,41 +330,21 @@ def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
     bundle = tmp_path / "bundle"
-    observed_dump = False
+    calls: list[list[str]] = []
 
-    def probing_runner(command: list[str], environment: dict[str, str]) -> None:
-        nonlocal observed_dump
-        assert environment["PGOPTIONS"] == "-csearch_path=public"
-        if command[0] == "pg_dump":
-            observed_dump = True
-            probe = subprocess.run(
-                [
-                    "psql",
-                    "--no-psqlrc",
-                    "--tuples-only",
-                    "--no-align",
-                    "--set",
-                    "ON_ERROR_STOP=1",
-                    "--command",
-                    "SELECT current_database()",
-                ],
-                check=True,
-                capture_output=True,
-                env=environment,
-                text=True,
-            )
-            assert probe.stdout.strip() == SOURCE_DATABASE
-        _run_command(command, environment)
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
 
-    create_recovery_bundle(
-        source_url_env=SOURCE_ENV,
-        audit_dir=audit_source,
-        output=bundle,
-        runner=probing_runner,
-    )
+    with pytest.raises(RecoveryRefused, match="exact supported migration head schema"):
+        create_recovery_bundle(
+            source_url_env=SOURCE_ENV,
+            audit_dir=audit_source,
+            output=bundle,
+            runner=forbidden_runner,
+        )
 
-    assert observed_dump
-    assert bundle.is_dir()
+    assert calls == []
+    assert not bundle.exists()
     engine = make_engine(_safe_admin_url(SOURCE_URL))
     try:
         with engine.connect() as connection:
@@ -372,6 +352,18 @@ def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
             assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
     finally:
         engine.dispose()
+
+
+def test_pg_environment_overrides_ambient_pgoptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PGOPTIONS", "-csearch_path=shadow,public")
+    url = sa.engine.make_url(
+        "postgresql+psycopg://recovery:secret@127.0.0.1:5432/acgs_control_plane_recovery"
+    )
+
+    with _pg_environment(url, tmp_path) as environment:
+        assert environment["PGOPTIONS"] == "-csearch_path=public"
 
 
 @pytest.mark.parametrize(
