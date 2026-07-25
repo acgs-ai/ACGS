@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
 
 import sqlalchemy as sa
@@ -29,6 +30,7 @@ from acgs_control_plane.managed_mutations import (
 )
 from acgs_control_plane.models import (
     AgentRecord,
+    AgentRegistrationIdempotency,
     Environment,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
@@ -55,6 +57,7 @@ _GENESIS_AUDIT_HASH = "0" * 64
 _LOCAL_AGENT_SIGNER_SEED = bytes.fromhex(
     "55df9db52ff7b9635dd2bbf66fbcb3fb3f70d6071359449f0d9f8ad1a3e8a9c4"
 )
+_IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._:/-]{8,200}$")
 
 
 @dataclass
@@ -187,7 +190,9 @@ class AgentRegistrationService:
         org_id: str,
         principal: Principal,
         body: AgentRegisterRequest,
+        idempotency_key: str | None = None,
     ) -> AgentRegistrationResult:
+        idempotency_key = _normalize_idempotency_key(idempotency_key)
         args = _normalized_agent_args(body)
         with self._session_factory() as session:
             project, environment = _resolve_default_scope(session, org_id=org_id)
@@ -221,6 +226,28 @@ class AgentRegistrationService:
             )
             audit_hash = _decision_audit_hash(decision_record)
             context = replace(context, expected_audit_hash=audit_hash)
+            idempotency_record: _AgentRegistrationIdempotencyContext | None = None
+            if idempotency_key is not None:
+                request_projection = _idempotency_request_projection(
+                    context=context,
+                    args=args,
+                )
+                idempotency_record = _AgentRegistrationIdempotencyContext(
+                    raw_key=idempotency_key,
+                    storage_key=_idempotency_storage_key(
+                        context=context,
+                        key=idempotency_key,
+                    ),
+                    request_projection=request_projection,
+                    request_hash=sha256_json(request_projection),
+                )
+                existing = _lookup_idempotency(
+                    session,
+                    idempotency_key_hash=idempotency_record.storage_key,
+                )
+                if existing is not None:
+                    _assert_same_idempotency_request(existing, idempotency_record)
+                    return _result_from_idempotency_response(existing.response)
             try:
                 trust_epoch = active_trust_epoch_for_scope(
                     session,
@@ -236,7 +263,7 @@ class AgentRegistrationService:
                     args=args,
                     decision_record=decision_record,
                     audit_hash=audit_hash,
-                    request_id=new_id(),
+                    request_id=idempotency_key or new_id(),
                     trust_epoch=trust_epoch,
                 )
             except (TrustConfigurationError, ManagedTrustError) as exc:
@@ -322,6 +349,23 @@ class AgentRegistrationService:
                 "agent registration refused by policy",
             )
 
+        def before_execute(tx_session: Session) -> None:
+            _revalidate_active_policy_under_lock(
+                tx_session,
+                context=context,
+                args=args,
+                actor=principal.actor_id,
+            )
+            if idempotency_record is None:
+                return
+            existing = _lookup_idempotency(
+                tx_session,
+                idempotency_key_hash=idempotency_record.storage_key,
+            )
+            if existing is not None:
+                _assert_same_idempotency_request(existing, idempotency_record)
+                raise _CommittedAgentRegistrationIdempotencyRace()
+
         def operation_effect(session: Session, verified_args: dict[str, Any]) -> dict[str, Any]:
             name = str(verified_args["name"])
             agent = AgentRecord(
@@ -357,7 +401,7 @@ class AgentRegistrationService:
             agent = session.get(AgentRecord, result.result["agent_id"])
             if agent is None:
                 raise RuntimeError("managed agent registration committed without agent row")
-            holder["response"] = AgentRegistrationResult(
+            response = AgentRegistrationResult(
                 agent_id=agent.id,
                 org_id=agent.org_id,
                 name=agent.name,
@@ -368,22 +412,54 @@ class AgentRegistrationService:
                 created_at=agent.created_at,
                 receipt_id=receipt_row.receipt_id,
             )
+            if idempotency_record is not None:
+                session.add(
+                    AgentRegistrationIdempotency(
+                        id=new_id(),
+                        idempotency_key_hash=idempotency_record.storage_key,
+                        actor_hash=sha256_json(context.actor),
+                        request_hash=idempotency_record.request_hash,
+                        org_id=context.org_id,
+                        project_id=context.project_id,
+                        environment_id=context.environment_id,
+                        agent_id=agent.id,
+                        receipt_id=receipt_row.receipt_id,
+                        response=_idempotency_response_payload(response),
+                    )
+                )
+            holder["response"] = response
 
         try:
             uow.execute(
                 context=context,
                 receipt=receipt,
                 args=args,
-                before_execute=lambda tx_session: _revalidate_active_policy_under_lock(
-                    tx_session,
-                    context=context,
-                    args=args,
-                    actor=principal.actor_id,
-                ),
+                before_execute=before_execute,
                 operation_effect=operation_effect,
                 after_success=after_success,
             )
+        except _CommittedAgentRegistrationIdempotencyRace:
+            existing = _lookup_idempotency_new_session(
+                self._session_factory,
+                idempotency=idempotency_record,
+            )
+            if existing is not None:
+                return _result_from_idempotency_response(existing.response)
+            raise AgentRegistrationHttpError(
+                503,
+                "TX_ABORTED",
+                "tx_aborted",
+                "agent registration idempotency commit was not observable",
+                stage="tx",
+            ) from None
         except IntegrityError as exc:
+            if idempotency_record is not None:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    return _result_from_idempotency_response(existing.response)
             if _is_agent_name_conflict(exc):
                 raise AgentRegistrationHttpError(
                     409,
@@ -400,6 +476,13 @@ class AgentRegistrationService:
                 stage="tx",
             ) from exc
         except ReceiptAlreadyUsedError as exc:
+            if idempotency_record is not None:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    return _result_from_idempotency_response(existing.response)
             raise AgentRegistrationHttpError(
                 409,
                 "RECEIPT_ALREADY_USED",
@@ -416,6 +499,13 @@ class AgentRegistrationService:
                 stage="executor",
             ) from exc
         except (SQLAlchemyError, ValueError, RuntimeError) as exc:
+            if idempotency_record is not None:
+                existing = _lookup_idempotency_new_session(
+                    self._session_factory,
+                    idempotency=idempotency_record,
+                )
+                if existing is not None:
+                    return _result_from_idempotency_response(existing.response)
             raise AgentRegistrationHttpError(
                 503,
                 "TX_ABORTED",
@@ -432,6 +522,14 @@ class AgentRegistrationService:
                 stage="tx",
             )
         return holder["response"]
+
+
+@dataclass(frozen=True)
+class _AgentRegistrationIdempotencyContext:
+    raw_key: str
+    storage_key: str
+    request_projection: dict[str, Any]
+    request_hash: str
 
 
 def _resolve_default_scope(
@@ -500,6 +598,137 @@ def _is_agent_name_conflict(exc: IntegrityError) -> bool:
     ):
         return True
     return "agents.org_id" in text and "agents.name" in text
+
+
+def _normalize_idempotency_key(idempotency_key: str | None) -> str | None:
+    if idempotency_key is None:
+        return None
+    if not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
+        raise AgentRegistrationHttpError(
+            400,
+            "IDEMPOTENCY_KEY_INVALID",
+            "idempotency_key_invalid",
+            "idempotency key must be 8-200 safe characters",
+            stage="policy",
+        )
+    return idempotency_key
+
+
+def _idempotency_storage_key(*, context: ManagedMutationContext, key: str) -> str:
+    return sha256_json(
+        {
+            "schema": "agent-registration-idempotency-storage-key/v1",
+            "org_id": context.org_id,
+            "project_id": context.project_id,
+            "environment_id": context.environment_id,
+            "actor": context.actor,
+            "key": key,
+        }
+    )
+
+
+def _idempotency_request_projection(
+    *,
+    context: ManagedMutationContext,
+    args: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema": "agent-registration-idempotency-request/v1",
+        "org_id": context.org_id,
+        "project_id": context.project_id,
+        "environment_id": context.environment_id,
+        "actor": context.actor,
+        "action": context.action,
+        "args": dict(args),
+    }
+
+
+def _lookup_idempotency(
+    session: Session,
+    *,
+    idempotency_key_hash: str,
+) -> AgentRegistrationIdempotency | None:
+    return session.scalars(
+        sa.select(AgentRegistrationIdempotency)
+        .where(AgentRegistrationIdempotency.idempotency_key_hash == idempotency_key_hash)
+        .with_for_update()
+    ).first()
+
+
+def _lookup_idempotency_new_session(
+    session_factory: sessionmaker[Session],
+    *,
+    idempotency: _AgentRegistrationIdempotencyContext | None,
+) -> AgentRegistrationIdempotency | None:
+    if idempotency is None:
+        return None
+    with session_factory() as session:
+        existing = _lookup_idempotency(
+            session,
+            idempotency_key_hash=idempotency.storage_key,
+        )
+        if existing is not None:
+            _assert_same_idempotency_request(existing, idempotency)
+        return existing
+
+
+def _assert_same_idempotency_request(
+    row: AgentRegistrationIdempotency,
+    idempotency: _AgentRegistrationIdempotencyContext,
+) -> None:
+    if row.request_hash != idempotency.request_hash:
+        raise AgentRegistrationHttpError(
+            409,
+            "IDEMPOTENCY_CONFLICT",
+            "idempotency_conflict",
+            "idempotency key was already used for a different agent registration request",
+            stage="policy",
+        )
+
+
+def _idempotency_response_payload(result: AgentRegistrationResult) -> dict[str, Any]:
+    return {
+        "agent_id": result.agent_id,
+        "org_id": result.org_id,
+        "name": result.name,
+        "description": result.description,
+        "trust_tier": result.trust_tier,
+        "allowed_tools": list(result.allowed_tools),
+        "status": result.status,
+        "created_at": _to_utc(result.created_at).isoformat(),
+        "receipt_id": result.receipt_id,
+    }
+
+
+def _result_from_idempotency_response(response: Mapping[str, Any]) -> AgentRegistrationResult:
+    return AgentRegistrationResult(
+        agent_id=str(response["agent_id"]),
+        org_id=str(response["org_id"]),
+        name=str(response["name"]),
+        description=str(response["description"]),
+        trust_tier=str(response["trust_tier"]),
+        allowed_tools=[str(tool) for tool in response["allowed_tools"]],
+        status=str(response["status"]),
+        created_at=_parse_response_datetime(str(response["created_at"])),
+        receipt_id=str(response["receipt_id"]),
+    )
+
+
+def _parse_response_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    return _to_utc(parsed)
+
+
+def _to_utc(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise TypeError("agent registration idempotency response timestamp must be a datetime")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+class _CommittedAgentRegistrationIdempotencyRace(RuntimeError):
+    """Raised inside the SQL UoW after another request commits this key."""
 
 
 def _active_policy_context(

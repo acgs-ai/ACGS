@@ -40,7 +40,8 @@ MANAGED_MUTATION_REVISION: Final = "0003"
 TRUST_V2_REVISION: Final = "0004"
 TENANT_BOOTSTRAP_REVISION: Final = "0005"
 AGENT_SCOPE_REVISION: Final = "0006"
-HEAD_REVISION: Final = AGENT_SCOPE_REVISION
+AGENT_REGISTRATION_IDEMPOTENCY_REVISION: Final = "0007"
+HEAD_REVISION: Final = AGENT_REGISTRATION_IDEMPOTENCY_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -80,6 +81,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0004 = "version_0004"
     VERSION_0005 = "version_0005"
     VERSION_0006 = "version_0006"
+    VERSION_0007 = "version_0007"
     UNKNOWN = "unknown"
 
 
@@ -104,7 +106,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0006.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0007.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -498,6 +500,22 @@ _AGENT_SCOPE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("environment_id", "string", True, 64),
     ),
 }
+_AGENT_REGISTRATION_IDEMPOTENCY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_AGENT_SCOPE_COLUMNS,
+    "agent_registration_idempotency": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("actor_hash", "string", False, 64),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("agent_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("response", "json", False),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -535,6 +553,10 @@ _TENANT_BOOTSTRAP_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "pending_approvals": ("id",),
     "tenant_bootstrap_pending_outbox": ("id",),
     "tenant_bootstrap_refusal_events": ("id",),
+}
+_AGENT_REGISTRATION_IDEMPOTENCY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_TENANT_BOOTSTRAP_PRIMARY_KEYS,
+    "agent_registration_idempotency": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -623,7 +645,8 @@ _MANAGED_MUTATION_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     ),
 }
 _DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
-    _MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys()
+    (_MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys())
+    | {"agent_registration_idempotency"}
 )
 _TRUST_SCOPE_FK: Final[_ForeignKeySpec] = (
     ("org_id", "project_id", "environment_id", "purpose"),
@@ -719,6 +742,21 @@ _AGENT_SCOPE_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
                 "environments",
                 ("org_id", "project_id", "id"),
             ),
+        }
+    ),
+}
+_AGENT_REGISTRATION_IDEMPOTENCY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_AGENT_SCOPE_FOREIGN_KEYS,
+    "agent_registration_idempotency": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+            (("agent_id",), None, "agents", ("id",)),
         }
     ),
 }
@@ -858,6 +896,15 @@ _AGENT_SCOPE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_TENANT_BOOTSTRAP_UNIQUES,
     "agents": frozenset(),
 }
+_AGENT_REGISTRATION_IDEMPOTENCY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_AGENT_SCOPE_UNIQUES,
+    "agent_registration_idempotency": frozenset(
+        {
+            ("idempotency_key_hash",),
+            ("org_id", "project_id", "environment_id", "agent_id"),
+        }
+    ),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -899,6 +946,12 @@ _AGENT_SCOPE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
         }
     ),
     "policy_bundles": frozenset({(("org_id",), "status:active")}),
+}
+_AGENT_REGISTRATION_IDEMPOTENCY_UNIQUE_INDEXES: Final[
+    dict[str, frozenset[_UniqueIndexSpec]]
+] = {
+    **_AGENT_SCOPE_UNIQUE_INDEXES,
+    "agent_registration_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -948,6 +1001,12 @@ _TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]
     "pending_approvals": frozenset({("org_id",), ("invitation_id",), ("policy_artifact_id",)}),
     "tenant_bootstrap_pending_outbox": frozenset({("invitation_id",), ("policy_artifact_id",)}),
     "tenant_bootstrap_refusal_events": frozenset(),
+}
+_AGENT_REGISTRATION_IDEMPOTENCY_NON_UNIQUE_INDEXES: Final[
+    dict[str, frozenset[tuple[str, ...]]]
+] = {
+    **_TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES,
+    "agent_registration_idempotency": frozenset({("org_id",)}),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -1041,6 +1100,10 @@ _AGENT_SCOPE_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
             ),
         }
     ),
+}
+_AGENT_REGISTRATION_IDEMPOTENCY_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_AGENT_SCOPE_CHECKS,
+    "agent_registration_idempotency": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -1255,7 +1318,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0005, "known Alembic revision 0005")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [AGENT_SCOPE_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1269,6 +1332,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0006, "known Alembic revision 0006")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _AGENT_REGISTRATION_IDEMPOTENCY_COLUMNS,
+            _AGENT_REGISTRATION_IDEMPOTENCY_PRIMARY_KEYS,
+            _AGENT_REGISTRATION_IDEMPOTENCY_FOREIGN_KEYS,
+            _AGENT_REGISTRATION_IDEMPOTENCY_UNIQUES,
+            _AGENT_REGISTRATION_IDEMPOTENCY_NON_UNIQUE_INDEXES,
+            _AGENT_REGISTRATION_IDEMPOTENCY_CHECKS,
+            _AGENT_REGISTRATION_IDEMPOTENCY_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0007, "known Alembic revision 0007")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1284,7 +1362,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0006:
+    if preflight.state is not DatabaseSchemaState.VERSION_0007:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1387,7 +1465,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0006:
+    if after.state is not DatabaseSchemaState.VERSION_0007:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1449,7 +1527,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0006:
+                    if after.state is not DatabaseSchemaState.VERSION_0007:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"

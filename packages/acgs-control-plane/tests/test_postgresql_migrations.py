@@ -241,9 +241,9 @@ def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
 def _head_schema_with_unsupported_object_snapshot() -> tuple[tuple[object, ...], ...]:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
     before = _catalog_and_data_snapshot()
-    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0007
     return before
 
 
@@ -367,7 +367,7 @@ def test_revision_unowned_public_objects_are_unknown_without_guarded_side_effect
 def test_owned_postgresql_table_sequences_are_not_part_of_current_revisions() -> None:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
 
     engine = make_engine(test_url)
     try:
@@ -428,8 +428,8 @@ def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() ->
     result = upgrade_database(_TEST_POSTGRES_URL)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0007
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -542,7 +542,7 @@ def test_postgresql_casted_boolean_check_widening_is_unknown(
     weakened_check: str,
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -580,7 +580,7 @@ def test_postgresql_lock_contention_rejects_before_schema_mutation_then_retries(
     finally:
         holder_engine.dispose()
 
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
 
 
 def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_lock(
@@ -649,7 +649,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
 
     result = upgrade_database(_TEST_POSTGRES_URL)
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
 
 
 def test_raw_postgresql_alembic_commands_reject_before_schema_or_version_mutation() -> None:
@@ -674,7 +674,7 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -755,7 +755,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -812,7 +812,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
     before = _catalog_and_data_snapshot()
     hostile_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
-    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0007
     session_factory_calls = {"count": 0}
 
     def forbidden_session_factory(_engine: object) -> object:
@@ -856,7 +856,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
 def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Path) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -1474,7 +1474,7 @@ def _assert_success_event(worker: _MigrationWorker, event: dict[str, object]) ->
         "os_pid": worker.process.pid,
         "backend_pid": event["backend_pid"],
         "before": DatabaseSchemaState.EMPTY.value,
-        "after": DatabaseSchemaState.VERSION_0006.value,
+        "after": DatabaseSchemaState.VERSION_0007.value,
     }
     backend_pid = event["backend_pid"]
     assert isinstance(backend_pid, int)
@@ -1874,7 +1874,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0007
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -1888,7 +1888,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     owner = _launch_migration_worker(migration_workers, "pause-after-upgrade")
     owner_ready = _read_worker_event(owner)
     owner_backend_pid = _assert_ready_event(owner, owner_ready, "after-ddl-before-commit")
-    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0006.value
+    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0007.value
 
     observer_pid, lock_pids = _observe_migration_lock()
     assert lock_pids == {owner_backend_pid}
@@ -1913,7 +1913,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0007
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -2083,7 +2083,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0007
     before = _catalog_and_data_snapshot()
     audit_dir = tmp_path / "audit"
     calls = {"engine": 0}
@@ -2116,7 +2116,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         "POST /orgs/{org_id}/policies/{bundle_id}/activate",
         "POST /orgs/{org_id}/users",
     }
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0007
     assert not audit_dir.exists()
 
     app = create_app(
@@ -2136,7 +2136,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0006.value,
+            "schema_state": DatabaseSchemaState.VERSION_0007.value,
         }
         assert not audit_dir.exists()
     finally:
