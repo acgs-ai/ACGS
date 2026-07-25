@@ -1958,12 +1958,14 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
         with engine.begin() as connection:
             if state == "version-0001":
                 _drop_post_0001_tables(connection)
+                _undo_post_0005_agent_scope(connection)
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("DROP TABLE projects"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001
             if state == "partial-0001":
                 _drop_post_0001_tables(connection)
+                _undo_post_0005_agent_scope(connection)
                 connection.execute(sa.text("DROP TABLE environments CASCADE"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num = '0001'"))
                 return DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
@@ -1999,6 +2001,23 @@ def _drop_post_0001_tables(connection: Connection) -> None:
         "managed_decision_receipts",
     ):
         connection.execute(sa.text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+
+
+def _undo_post_0005_agent_scope(connection: Connection) -> None:
+    connection.execute(sa.text("DROP INDEX IF EXISTS uq_policy_bundles_one_active_per_org"))
+    connection.execute(sa.text("DROP INDEX IF EXISTS uq_agents_scope_name"))
+    connection.execute(sa.text("DROP INDEX IF EXISTS uq_agents_legacy_org_name"))
+    connection.execute(
+        sa.text("ALTER TABLE agents DROP CONSTRAINT IF EXISTS fk_agents_scope_environment")
+    )
+    connection.execute(
+        sa.text("ALTER TABLE agents DROP CONSTRAINT IF EXISTS ck_agents_scope_both_null_or_set")
+    )
+    connection.execute(
+        sa.text("ALTER TABLE agents ADD CONSTRAINT uq_agents_org_name UNIQUE (org_id, name)")
+    )
+    connection.execute(sa.text("ALTER TABLE agents DROP COLUMN IF EXISTS environment_id"))
+    connection.execute(sa.text("ALTER TABLE agents DROP COLUMN IF EXISTS project_id"))
 
 
 @pytest.mark.parametrize(
@@ -2085,16 +2104,18 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
                 )
             )
     assert calls == {"engine": 0}
-    assert (
-        len(
-            [
-                blocker
-                for blocker in stopped.value.blockers
-                if blocker.code == "LEGACY_UNSIGNED_WRITE"
-            ]
-        )
-        == 7
-    )
+    legacy_routes = [
+        blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
+    ]
+    assert len(legacy_routes) == 6
+    assert {blocker.route for blocker in legacy_routes} == {
+        "PATCH /orgs/{org_id}/agents/{agent_id}/status",
+        "POST /orgs",
+        "POST /orgs/{org_id}/exports",
+        "POST /orgs/{org_id}/policies",
+        "POST /orgs/{org_id}/policies/{bundle_id}/activate",
+        "POST /orgs/{org_id}/users",
+    }
     assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0006
     assert not audit_dir.exists()
 
