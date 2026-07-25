@@ -452,6 +452,51 @@ class AgentRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgentRegistrationIdempotency(Base):
+    """Terminal response for one scoped agent-registration idempotency key."""
+
+    __tablename__ = "agent_registration_idempotency"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_agent_registration_idempotency_environment",
+            deferrable=True,
+            initially="DEFERRED",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "idempotency_key_hash",
+            name="uq_agent_registration_idempotency_key_hash",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "agent_id",
+            name="uq_agent_registration_idempotency_agent",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"),
+        index=True,
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PolicyBundle(Base):
     __tablename__ = "policy_bundles"
     __table_args__ = (

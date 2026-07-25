@@ -46,6 +46,7 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "pending_approvals",
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_refusal_events",
+        "agent_registration_idempotency",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

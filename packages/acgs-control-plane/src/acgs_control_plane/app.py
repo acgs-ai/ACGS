@@ -623,7 +623,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0006
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0007
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -832,6 +832,7 @@ def _register_routes(app: FastAPI) -> None:
         request: Request,
         _session: SessionDep,
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
     ) -> AgentResponse:
         service: AgentRegistrationService = request.app.state.agent_registration_service
         result = service.register(
@@ -839,6 +840,7 @@ def _register_routes(app: FastAPI) -> None:
             principal=principal,
             audit_dir=request.app.state.settings.audit_dir,
             body=body,
+            idempotency_key=idempotency_key,
         )
         return AgentResponse(
             agent_id=result.agent_id,
