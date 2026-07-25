@@ -174,6 +174,19 @@ P1_SCOPE_SELECTORS = (
     "tests/integration/test_production_posture.py::"
     "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
 )
+P1_LEDGER_SELECTORS = (
+    "tests/test_managed_mutation_uow.py::"
+    "test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically",
+    "tests/test_managed_mutation_uow.py::"
+    "test_injected_failure_before_commit_rolls_back_consumption_receipt_event_outbox_and_side_effect",
+    "tests/test_managed_mutation_uow.py::"
+    "test_deny_and_escalate_do_not_consume_or_execute_or_persist_success",
+    "tests/test_managed_mutation_uow.py::"
+    "test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints",
+    "tests/test_managed_mutation_uow.py::"
+    "test_concurrent_receipt_consumption_has_single_committed_winner",
+    "tests/test_managed_mutation_uow.py::test_outbox_rows_appear_only_after_sql_commit",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -194,14 +207,28 @@ REVIEWED_P1_SCOPE_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P1_LEDGER_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate",
+        (
+            ".venv/bin/pytest",
+            "-q",
+            *P1_LEDGER_SELECTORS,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
     "P1-SCOPE-002": REVIEWED_P1_SCOPE_TRANSCRIPT,
+    "P1-LEDGER-003": REVIEWED_P1_LEDGER_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-SCOPE-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P1-LEDGER-003": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -637,7 +664,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         or value.get("external") != list(reviewed["external"])
     ):
         fail("run metadata is outside the reviewed closed node contract", phase="B6")
-    if node_id in {"P1-MIGRATION-001", "P1-SCOPE-002"} and (
+    if node_id in {"P1-MIGRATION-001", "P1-SCOPE-002", "P1-LEDGER-003"} and (
         determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"
     ):
         fail("P1 run determinism differs from the reviewed node contract", phase="B6")

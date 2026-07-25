@@ -272,7 +272,7 @@ clean_sibling_cleanup() {
   if [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
     case "$TMP_ROOT" in
       "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.* | \
-        "$TMP_PARENT"/acgs-p1-scope.*)
+        "$TMP_PARENT"/acgs-p1-scope.* | "$TMP_PARENT"/acgs-p1-ledger.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -345,6 +345,10 @@ clean_sibling_cleanup() {
           "$P" "$T" "$R"
         ;;
       P1-SCOPE-002:6:EVID+CP)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P1-LEDGER-003:6:EVID+CP)
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;
