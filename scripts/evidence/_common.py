@@ -207,6 +207,17 @@ P1_TRUST_GZ_SELECTORS = (
     "packages/gove-zone/tests/test_trust_receipt_v2.py::"
     "test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute",
 )
+P2_TENANT_BOOTSTRAP_CP_SELECTORS = (
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_real_api_postgres_bootstrap_allow_atomic",
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_real_api_postgres_bootstrap_refusal_matrix",
+    "tests/integration/test_tenant_bootstrap_vertical.py::"
+    "test_100_request_multiprocess_bootstrap_once",
+)
+P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
+    "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -270,18 +281,50 @@ REVIEWED_P1_TRUST_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate",
+        ("./scripts/run_postgres_gate.sh", *P2_TENANT_BOOTSTRAP_CP_SELECTORS),
+    ),
+    (
+        "root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            P2_TENANT_BOOTSTRAP_ROOT_SELECTOR,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
     "P1-SCOPE-002": REVIEWED_P1_SCOPE_TRANSCRIPT,
     "P1-LEDGER-003": REVIEWED_P1_LEDGER_TRANSCRIPT,
     "P1-TRUST-004": REVIEWED_P1_TRUST_TRANSCRIPT,
+    "P2-TENANT-BOOTSTRAP-000": REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-SCOPE-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-LEDGER-003": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
     "P1-TRUST-004": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+    ),
+    "P2-TENANT-BOOTSTRAP-000": (
         "REPO_ROOT",
         "CP",
         "CP",
@@ -734,8 +777,11 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P1-SCOPE-002",
         "P1-LEDGER-003",
         "P1-TRUST-004",
+        "P2-TENANT-BOOTSTRAP-000",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
-        fail("P1 run determinism differs from the reviewed node contract", phase="B6")
+        if str(node_id).startswith("P1-"):
+            fail("P1 run determinism differs from the reviewed node contract", phase="B6")
+        fail("run determinism differs from the reviewed node contract", phase="B6")
 
 
 def append_safe_transcript_record(
