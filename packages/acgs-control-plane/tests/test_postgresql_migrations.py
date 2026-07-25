@@ -63,6 +63,11 @@ _LOCK_PARAMETERS = {
 }
 
 
+def _postgres_url() -> str:
+    assert _TEST_POSTGRES_URL is not None
+    return _TEST_POSTGRES_URL
+
+
 def _assert_disposable_database(connection: Connection) -> None:
     database_name = connection.scalar(sa.text("SELECT current_database()"))
     if database_name != _DISPOSABLE_DATABASE_NAME:
@@ -137,22 +142,86 @@ def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
             catalog = connection.execute(
                 sa.text(
                     """
-                    SELECT c.relkind, c.relname, a.attnum, a.attname,
-                           pg_catalog.format_type(a.atttypid, a.atttypmod),
-                           a.attnotnull, pg_catalog.pg_get_expr(d.adbin, d.adrelid),
-                           con.conname, pg_catalog.pg_get_constraintdef(con.oid, true),
-                           idx.relname, pg_catalog.pg_get_indexdef(idx.oid)
-                    FROM pg_catalog.pg_class AS c
-                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-                    LEFT JOIN pg_catalog.pg_attribute AS a
-                      ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-                    LEFT JOIN pg_catalog.pg_attrdef AS d
-                      ON d.adrelid = c.oid AND d.adnum = a.attnum
-                    LEFT JOIN pg_catalog.pg_constraint AS con ON con.conrelid = c.oid
-                    LEFT JOIN pg_catalog.pg_index AS ix ON ix.indrelid = c.oid
-                    LEFT JOIN pg_catalog.pg_class AS idx ON idx.oid = ix.indexrelid
-                    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm')
-                    ORDER BY c.relkind, c.relname, a.attnum, con.conname, idx.relname
+                    WITH catalog_objects AS (
+                        SELECT
+                            'relation' AS object_kind,
+                            c.relkind::text AS kind,
+                            c.relname AS name,
+                            a.attnum::text AS detail_1,
+                            a.attname AS detail_2,
+                            pg_catalog.format_type(a.atttypid, a.atttypmod) AS detail_3,
+                            a.attnotnull::text AS detail_4,
+                            pg_catalog.pg_get_expr(d.adbin, d.adrelid) AS detail_5,
+                            con.conname AS detail_6,
+                            pg_catalog.pg_get_constraintdef(con.oid, true) AS detail_7,
+                            idx.relname AS detail_8,
+                            pg_catalog.pg_get_indexdef(idx.oid) AS detail_9
+                        FROM pg_catalog.pg_class AS c
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        LEFT JOIN pg_catalog.pg_attribute AS a
+                          ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                        LEFT JOIN pg_catalog.pg_attrdef AS d
+                          ON d.adrelid = c.oid AND d.adnum = a.attnum
+                        LEFT JOIN pg_catalog.pg_constraint AS con ON con.conrelid = c.oid
+                        LEFT JOIN pg_catalog.pg_index AS ix ON ix.indrelid = c.oid
+                        LEFT JOIN pg_catalog.pg_class AS idx ON idx.oid = ix.indexrelid
+                        WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+                        UNION ALL
+                        SELECT
+                            'routine',
+                            p.prokind::text,
+                            p.proname,
+                            pg_catalog.pg_get_function_identity_arguments(p.oid),
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL
+                        FROM pg_catalog.pg_proc AS p
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                        WHERE n.nspname = 'public'
+                        UNION ALL
+                        SELECT
+                            'type',
+                            t.typtype::text,
+                            t.typname,
+                            c.relkind::text,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL
+                        FROM pg_catalog.pg_type AS t
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
+                        LEFT JOIN pg_catalog.pg_class AS c ON c.oid = t.typrelid
+                        WHERE n.nspname = 'public'
+                        UNION ALL
+                        SELECT
+                            'rewrite_rule',
+                            r.ev_type::text,
+                            c.relname,
+                            r.rulename,
+                            pg_catalog.pg_get_ruledef(r.oid),
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL,
+                            NULL
+                        FROM pg_catalog.pg_rewrite AS r
+                        JOIN pg_catalog.pg_class AS c ON c.oid = r.ev_class
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE n.nspname = 'public'
+                    )
+                    SELECT * FROM catalog_objects
+                    ORDER BY object_kind, kind, name, detail_1, detail_2, detail_6, detail_8
                     """
                 )
             ).all()
@@ -167,6 +236,183 @@ def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
             return tuple(tuple(row) for row in catalog) + tuple(data)
     finally:
         engine.dispose()
+
+
+def _head_schema_with_unsupported_object_snapshot() -> tuple[tuple[object, ...], ...]:
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
+    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    before = _catalog_and_data_snapshot()
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0002
+    return before
+
+
+def _seed_unsupported_public_object(seed_sql: str) -> tuple[tuple[object, ...], ...]:
+    _head_schema_with_unsupported_object_snapshot()
+    engine = make_engine(_postgres_url())
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text(seed_sql))
+    finally:
+        engine.dispose()
+    return _catalog_and_data_snapshot()
+
+
+@pytest.mark.parametrize(
+    ("seed_sql", "detail_fragment"),
+    (
+        (
+            """
+            CREATE FUNCTION public.acgs_unowned_probe()
+            RETURNS integer
+            LANGUAGE sql
+            AS $$ SELECT 1 $$;
+            """,
+            "function:public.acgs_unowned_probe()",
+        ),
+        (
+            """
+            CREATE PROCEDURE public.acgs_unowned_procedure()
+            LANGUAGE sql
+            AS $$ SELECT 1 $$;
+            """,
+            "procedure:public.acgs_unowned_procedure()",
+        ),
+        (
+            "CREATE SEQUENCE public.acgs_unowned_sequence",
+            "sequence:public.acgs_unowned_sequence",
+        ),
+        (
+            """
+            CREATE SEQUENCE public.acgs_owned_late_sequence;
+            ALTER SEQUENCE public.acgs_owned_late_sequence OWNED BY public.organizations.id;
+            """,
+            "sequence:public.acgs_owned_late_sequence",
+        ),
+        (
+            "CREATE TYPE public.acgs_unowned_enum AS ENUM ('one', 'two')",
+            "enum:public.acgs_unowned_enum",
+        ),
+        (
+            "CREATE DOMAIN public.acgs_unowned_domain AS text CHECK (VALUE <> '')",
+            "domain:public.acgs_unowned_domain",
+        ),
+        (
+            "CREATE TYPE public.acgs_unowned_composite AS (value text)",
+            "composite_type:public.acgs_unowned_composite",
+        ),
+        (
+            """
+            CREATE RULE acgs_unowned_rewrite AS
+            ON UPDATE TO public.organizations
+            DO ALSO NOTHING;
+            """,
+            "rewrite_rule:public.organizations.acgs_unowned_rewrite",
+        ),
+    ),
+)
+def test_revision_unowned_public_objects_are_unknown_without_guarded_side_effects(
+    seed_sql: str,
+    detail_fragment: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before_refusal = _seed_unsupported_public_object(seed_sql)
+    test_url = _postgres_url()
+
+    malformed = inspect_schema(test_url)
+    assert malformed.state is DatabaseSchemaState.UNKNOWN
+    assert detail_fragment in malformed.detail
+
+    with pytest.raises(MigrationPreflightError, match="unexpected non-table schema objects"):
+        upgrade_database(test_url)
+    assert _catalog_and_data_snapshot() == before_refusal
+
+    observed_engine = make_engine(test_url)
+    statements: list[str] = []
+
+    @sa.event.listens_for(observed_engine, "before_cursor_execute")
+    def _record_statement(
+        _connection: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: object,
+    ) -> None:
+        statements.append(statement)
+
+    def forbidden_session_factory(_engine: object) -> object:
+        raise AssertionError("startup reached session-factory creation")
+
+    monkeypatch.setattr(app_module, "make_engine", lambda _url: observed_engine)
+    monkeypatch.setattr(app_module, "make_session_factory", forbidden_session_factory)
+    audit_dir = tmp_path / "audit"
+    with pytest.raises(StartupSchemaPreflightError) as stopped:
+        create_app(
+            Settings(
+                database_url=test_url,
+                audit_dir=audit_dir,
+                create_tables=False,
+                runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+            )
+        )
+
+    assert stopped.value.schema_state is DatabaseSchemaState.UNKNOWN
+    assert statements
+    assert _catalog_and_data_snapshot() == before_refusal
+    assert not audit_dir.exists()
+
+
+def test_owned_postgresql_table_sequences_are_not_part_of_current_revisions() -> None:
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
+    assert result.after.state is DatabaseSchemaState.VERSION_0002
+
+    engine = make_engine(test_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    """
+                    CREATE TABLE public.acgs_owned_artifact_probe (
+                        id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                        serial_value serial NOT NULL
+                    )
+                    """
+                )
+            )
+            non_table_detail = migration_module._non_table_object_detail(connection)
+            assert non_table_detail is not None
+            assert "sequence:public.acgs_owned_artifact_probe_id_seq" in non_table_detail
+            assert "sequence:public.acgs_owned_artifact_probe_serial_value_seq" in (
+                non_table_detail
+            )
+    finally:
+        engine.dispose()
+
+    malformed = inspect_schema(test_url)
+    assert malformed.state is DatabaseSchemaState.UNKNOWN
+    assert "sequence:public.acgs_owned_artifact_probe_id_seq" in malformed.detail
+    assert "sequence:public.acgs_owned_artifact_probe_serial_value_seq" in malformed.detail
+
+
+def test_catalog_snapshot_captures_public_non_table_objects_for_side_effect_checks() -> None:
+    before = _seed_unsupported_public_object(
+        """
+        CREATE FUNCTION public.acgs_snapshot_probe()
+        RETURNS integer
+        LANGUAGE sql
+        AS $$ SELECT 1 $$;
+        """
+    )
+    engine = make_engine(_postgres_url())
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("DROP FUNCTION public.acgs_snapshot_probe()"))
+    finally:
+        engine.dispose()
+    assert _catalog_and_data_snapshot() != before
 
 
 def _seed_exact_legacy_v0_schema() -> None:

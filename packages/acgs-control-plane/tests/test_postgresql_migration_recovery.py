@@ -322,49 +322,30 @@ def test_source_shadow_default_and_function_hijacks_refuse_before_subprocess(
     assert not (tmp_path / "bundle").exists()
 
 
-def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
+def test_public_first_function_hijacks_refuse_before_subprocess(
     tmp_path: Path,
 ) -> None:
+    # Revision-unowned functions in the public schema are rejected by the
+    # migration head preflight before any client subprocess is spawned, so a
+    # public-first hijack cannot be reached by pg_dump at all.
     _seed_source()
     _install_shadow_hijacks(SOURCE_URL, SOURCE_DATABASE, public_first=True)
     audit_source = tmp_path / "source-audit"
     audit_source.mkdir()
-    bundle = tmp_path / "bundle"
-    observed_dump = False
+    calls: list[list[str]] = []
 
-    def probing_runner(command: list[str], environment: dict[str, str]) -> None:
-        nonlocal observed_dump
-        assert environment["PGOPTIONS"] == "-csearch_path=public"
-        if command[0] == "pg_dump":
-            observed_dump = True
-            probe = subprocess.run(
-                [
-                    "psql",
-                    "--no-psqlrc",
-                    "--tuples-only",
-                    "--no-align",
-                    "--set",
-                    "ON_ERROR_STOP=1",
-                    "--command",
-                    "SELECT current_database()",
-                ],
-                check=True,
-                capture_output=True,
-                env=environment,
-                text=True,
-            )
-            assert probe.stdout.strip() == SOURCE_DATABASE
-        _run_command(command, environment)
+    def forbidden_runner(command: list[str], _environment: dict[str, str]) -> None:
+        calls.append(list(command))
 
-    create_recovery_bundle(
-        source_url_env=SOURCE_ENV,
-        audit_dir=audit_source,
-        output=bundle,
-        runner=probing_runner,
-    )
+    with pytest.raises(RecoveryRefused, match="exact supported migration head schema"):
+        create_recovery_bundle(
+            source_url_env=SOURCE_ENV,
+            audit_dir=audit_source,
+            output=tmp_path / "bundle",
+            runner=forbidden_runner,
+        )
 
-    assert observed_dump
-    assert bundle.is_dir()
+    assert calls == []
     engine = make_engine(_safe_admin_url(SOURCE_URL))
     try:
         with engine.connect() as connection:
@@ -372,6 +353,7 @@ def test_public_first_function_hijacks_are_neutralized_for_spawned_clients(
             assert connection.scalar(sa.text("SELECT count(*) FROM public.organizations")) == 1
     finally:
         engine.dispose()
+    assert not (tmp_path / "bundle").exists()
 
 
 @pytest.mark.parametrize(
