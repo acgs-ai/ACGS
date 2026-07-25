@@ -138,12 +138,35 @@ def _reviewed_p1_migration_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p1_scope_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P1_SCOPE_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P1-SCOPE-002"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
             path,
             record,
             expected_node="P1-MIGRATION-001",
+        )
+
+
+def _write_reviewed_p1_scope_transcript(path: Path) -> None:
+    for record in _reviewed_p1_scope_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P1-SCOPE-002",
         )
 
 
@@ -2082,6 +2105,166 @@ def test_p1_migration_run_validation_rejects_forged_corpus_metadata_before_outpu
             _common.validate_secret_free_run(forged, expected_node="P1-MIGRATION-001")
 
 
+def test_p1_scope_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p1_scope_records()
+    assert len(records) == 6
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+    ]
+    assert records[-1]["argv"] == [
+        ".venv/bin/pytest",
+        "-q",
+        *_common.P1_SCOPE_SELECTORS,
+    ]
+    assert records[-1]["selectors"] == [
+        "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate"
+    ]
+    assert _common.P1_SCOPE_SELECTORS == (
+        "tests/test_project_environment_scope.py::"
+        "test_environment_cannot_reference_a_project_from_another_org",
+        "tests/test_project_environment_scope.py::"
+        "test_orm_models_use_the_same_composite_parent_join",
+        "tests/test_project_environment_scope.py::"
+        "test_public_api_exposes_no_project_or_environment_mutation_routes",
+        "tests/test_repositories.py::test_prospective_scope_ids_persist_exactly_without_commit",
+        "tests/test_repositories.py::test_cross_tenant_reads_are_non_enumerating",
+        "tests/test_repositories.py::test_cross_tenant_updates_and_deletes_mutate_zero_rows",
+        "tests/test_repositories.py::test_prospective_id_conflicts_fail_atomically",
+        "tests/integration/test_production_posture.py::"
+        "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+    )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P1-SCOPE-002/transcript.jsonl"
+    _write_reviewed_p1_scope_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P1-SCOPE-002")
+    _common.validate_transcript_sequence(loaded, expected_node="P1-SCOPE-002")
+
+    migration_final = _reviewed_p1_migration_records()[-1]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}],
+        [*records[:5], {**records[-1], "argv": [*records[-1]["argv"], "-k", "scope"]}],
+        [
+            *records[:5],
+            {
+                **records[-1],
+                "argv": [
+                    records[-1]["argv"][0],
+                    "-q",
+                    *reversed(_common.P1_SCOPE_SELECTORS),
+                ],
+            },
+        ],
+        [
+            *records[:5],
+            {
+                **records[-1],
+                "argv": [records[-1]["argv"][0], "-q", "tests/test_scope_repositories.py"],
+            },
+        ],
+        [
+            *records[:5],
+            {
+                **records[-1],
+                "argv": [records[-1]["argv"][0], "-q", "tests/test_repositories.py"],
+            },
+        ],
+        [*records[:5], {**records[-1], "argv": records[-1]["argv"][:2]}],
+        [
+            *records[:5],
+            {**records[-1], "argv": ["python", "-m", "pytest", "-q", *_common.P1_SCOPE_SELECTORS]},
+        ],
+        [*records[:5], {**records[-1], "selectors": ["packages/acgs-control-plane:local-gate"]}],
+        [*records[:5], {**migration_final, "cwd_scope": "CP"}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P1-SCOPE-002")
+
+    forged_transcript = tmp_path / "P1-SCOPE-002/forged-transcript.jsonl"
+    for record in [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}]:
+        forged_transcript.parent.mkdir(parents=True, exist_ok=True)
+        with forged_transcript.open("ab") as handle:
+            handle.write(_common.jcs_bytes(record) + b"\n")
+    with pytest.raises(_common.EvidenceError, match="cwd differs"):
+        generate_run._read_transcript(forged_transcript, expected_node="P1-SCOPE-002")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {**migration_final, "cwd_scope": "REPO_ROOT"},
+            expected_node="P1-SCOPE-002",
+        )
+
+
+def test_p1_scope_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P1-SCOPE-002",
+            "commands": _reviewed_p1_scope_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": ["single-process"],
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P1-SCOPE-002")
+
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(
+            run_with(node_id="P1-MIGRATION-001"),
+            expected_node="P1-SCOPE-002",
+        )
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": ["single-process"]},
+    ):
+        with pytest.raises(_common.EvidenceError, match="P1 run determinism differs"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P1-SCOPE-002",
+            )
+
+    records = _reviewed_p1_scope_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}]),
+        run_with(
+            commands=[
+                *records[:5],
+                {**records[-1], "argv": ["bash", "-c", "pytest -q"]},
+            ]
+        ),
+        run_with(commands=[*records[:5], {**records[-1], "argv": records[-1]["argv"][:2]}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P1-SCOPE-002")
+
+
 def _json_line(path: Path) -> dict[str, Any]:
     value = _common.strict_json_loads(path.read_bytes().strip())
     assert isinstance(value, dict)
@@ -3401,15 +3584,21 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 5
+    assert source.count("run_recorded_gate CP") == 6
     assert source.count("run_recorded_gate GZ") == 4
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
+    assert "P1-SCOPE-002)" in source
+    assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
     for selector in _common.P1_MIGRATION_SELECTORS:
+        assert selector in source
+    assert "P1_SCOPE_GATE=(.venv/bin/pytest -q" in source
+    assert "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate" in source
+    for selector in _common.P1_SCOPE_SELECTORS:
         assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
@@ -4207,6 +4396,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted.exists()
 
+    accepted_scope = parent / "acgs-p1-scope.accepted"
+    accepted_scope.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_scope),
+            "P1-SCOPE-002",
+            "EVID+CP",
+            "6",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_scope.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -4237,6 +4450,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     pre_b1 = source.split("phase B1", 1)[0]
     assert 'REQUESTED_NODE_ID="${NODE_ID:-P0-EVIDENCE-000}"' in pre_b1
     assert "P1-MIGRATION-001)" in pre_b1
+    assert "P1-SCOPE-002)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
     preexisting_section = pre_b1.split("PREEXISTING_REJECT_PATHS=(", 1)[1]
@@ -4259,30 +4473,36 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
 
 def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path: Path) -> None:
     launcher = EVIDENCE_SCRIPTS / "prove_clean_sibling"
-    wrong_parent = "1" * 40
-    reviewed_parent = "79a3c39f841cfc5a6c79e85973887814caf0e694"
-    assert wrong_parent != reviewed_parent
-    existing = set(tmp_path.iterdir())
-    env = _evidence_env(tmp_path / "unused-evidence")
-    env.update(
-        {
-            "NODE_ID": "P1-MIGRATION-001",
-            "P": wrong_parent,
-            "TMPDIR": str(tmp_path),
-        }
+    cases = (
+        ("P1-MIGRATION-001", "79a3c39f841cfc5a6c79e85973887814caf0e694"),
+        ("P1-SCOPE-002", "40781e1200289507fcfbcedf6ab14c120ac6aae8"),
     )
-    completed = subprocess.run(
-        [str(launcher), reviewed_parent],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert completed.returncode == 2
-    assert f"P1-MIGRATION-001 reviewed parent must be exact {reviewed_parent}" in completed.stderr
-    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
-    assert set(tmp_path.iterdir()) == existing
+    for node_id, reviewed_parent in cases:
+        wrong_parent = "1" * 40
+        assert wrong_parent != reviewed_parent
+        caller = tmp_path / node_id
+        caller.mkdir(mode=0o700)
+        existing = set(caller.iterdir())
+        env = _evidence_env(tmp_path / f"unused-evidence-{node_id}")
+        env.update(
+            {
+                "NODE_ID": node_id,
+                "P": wrong_parent,
+                "TMPDIR": str(caller),
+            }
+        )
+        completed = subprocess.run(
+            [str(launcher), reviewed_parent],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert f"{node_id} reviewed parent must be exact {reviewed_parent}" in completed.stderr
+        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout
+        assert set(caller.iterdir()) == existing
 
 
 def test_uv_identity_does_not_depend_on_ambient_path() -> None:

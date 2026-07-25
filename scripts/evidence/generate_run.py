@@ -18,6 +18,7 @@ from _common import (
     JSON_SAFE_INTEGER_MAX,
     NODE_RE,
     REVIEWED_RUN_METADATA_BY_NODE,
+    REVIEWED_TRANSCRIPTS_BY_NODE,
     EvidenceError,
     assert_evidence_runtime,
     assignment_tokens,
@@ -54,9 +55,7 @@ def _read_transcript(path: Path, *, expected_node: str | None = None) -> list[di
         value = strict_json_loads(raw)
         if not isinstance(value, dict):
             fail(f"transcript line {number} is not a closed command object", phase="B6")
-        node_for_record = (
-            expected_node if expected_node in {"P0-EVIDENCE-000", "P1-MIGRATION-001"} else None
-        )
+        node_for_record = expected_node if expected_node in REVIEWED_TRANSCRIPTS_BY_NODE else None
         commands.append(validate_transcript_record(value, expected_node=node_for_record))
     for earlier, later in pairwise(commands):
         if parse_utc(later["started_at_utc"]) < parse_utc(earlier["started_at_utc"]):
@@ -64,7 +63,7 @@ def _read_transcript(path: Path, *, expected_node: str | None = None) -> list[di
     node_id = expected_node if expected_node is not None else path.parent.name
     if node_id == "P0-EVIDENCE-000":
         validate_p0_transcript_sequence(commands)
-    elif node_id == "P1-MIGRATION-001":
+    elif node_id in REVIEWED_TRANSCRIPTS_BY_NODE:
         validate_transcript_sequence(commands, expected_node=node_id)
     return commands
 
@@ -179,9 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
         commands = _read_transcript(
             transcript_path,
-            expected_node=args.node
-            if args.node in {"P0-EVIDENCE-000", "P1-MIGRATION-001"}
-            else None,
+            expected_node=args.node if args.node in REVIEWED_TRANSCRIPTS_BY_NODE else None,
         )
         selectors: list[str] = []
         for command in commands:

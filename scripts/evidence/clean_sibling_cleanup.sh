@@ -5,6 +5,7 @@
 # Never inherit caller-selected implementations of filesystem or git tools.
 for variable in ${!LD_@}; do
   printf 'clean-sibling cleanup rejected ambient loader environment: %s\n' "$variable" >&2
+  # shellcheck disable=SC2317
   return 2 2>/dev/null || exit 2
 done
 for variable in ${!GIT_@}; do
@@ -14,8 +15,9 @@ for variable in ${!GIT_@}; do
       GIT_ASKPASS:* | GIT_SSH:* | GIT_SSH_COMMAND:* | GIT_PROXY_COMMAND:* | \
       GIT_ALTERNATE_OBJECT_DIRECTORIES:* | GIT_OBJECT_DIRECTORY:* | \
       GIT_INDEX_FILE:* | GIT_WORK_TREE:* | GIT_DIR:* | GIT_COMMON_DIR:* | \
-      GIT_NAMESPACE:* | GIT_REPLACE_REF_BASE:* | GIT_ATTR_NOSYSTEM:*)
+    GIT_NAMESPACE:* | GIT_REPLACE_REF_BASE:* | GIT_ATTR_NOSYSTEM:*)
       printf 'clean-sibling cleanup rejected ambient Git environment: %s\n' "$variable" >&2
+      # shellcheck disable=SC2317
       return 2 2>/dev/null || exit 2
       ;;
   esac
@@ -62,7 +64,7 @@ clean_sibling_snapshot_direct_entries() {
   # Traverse only through the caller-directory descriptor opened by the prover.
   # Root identity and path-to-fd identity are checked inside the same trusted
   # process before and after traversal. The digest also binds root metadata.
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= "$snapshot_python" - \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX='' "$snapshot_python" - \
     "$root_fd" "$expected_identity" "$directory" <<'PY'
 import hashlib
 import os
@@ -176,7 +178,7 @@ PY
 
 clean_sibling_remove_owned_root() {
   local parent_fd="$1" root="$2" expected="$3" marker_pid="$4"
-  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX= /usr/bin/python3 - \
+  PYTHONDONTWRITEBYTECODE=1 PYTHONPYCACHEPREFIX='' /usr/bin/python3 - \
     "$parent_fd" "$root" "$expected" "$marker_pid" <<'PY'
 import os
 import secrets
@@ -269,7 +271,8 @@ clean_sibling_cleanup() {
   fi
   if [[ -n "$TMP_ROOT" ]] && [[ -n "${TMP_ROOT_INODE:-}" ]]; then
     case "$TMP_ROOT" in
-      "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.*)
+      "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.* | \
+        "$TMP_PARENT"/acgs-p1-scope.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -338,6 +341,10 @@ clean_sibling_cleanup() {
           "$P" "$T" "$R"
         ;;
       P1-MIGRATION-001:6:EVID+CP)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P1-SCOPE-002:6:EVID+CP)
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;
