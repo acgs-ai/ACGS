@@ -23,8 +23,10 @@ from acgs_control_plane.db import Base, make_engine
 from acgs_control_plane.migrations import (
     HEAD_REVISION,
     LEGACY_V0_REVISION,
+    SCOPED_REVISION,
     DatabaseSchemaState,
     MigrationPreflightError,
+    _check_constraint_signature,
     _ColumnSpec,
     _matches_type,
     inspect_schema,
@@ -131,6 +133,111 @@ def _receipt_payload(database_url: str, receipt_id: str) -> tuple[str, str]:
     finally:
         engine.dispose()
     return row.org_id, row.payload
+
+
+def _upgrade_to_exact_0002(database_url: str) -> None:
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._LEGACY_ADOPTION_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.LEGACY_V0,
+        lambda: command.stamp(config, LEGACY_V0_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0001
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.VERSION_0001,
+        lambda: command.upgrade(config, SCOPED_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+
+
+def _insert_scoped_0002_rows(database_url: str) -> None:
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, created_at, audit_anchor_count, audit_anchor_hash
+                    ) VALUES (
+                        :id, :name, :created_at, :audit_anchor_count, :audit_anchor_hash
+                    )
+                    """
+                ),
+                {
+                    "id": "org-prior-0002",
+                    "name": "Prior 0002 Organization",
+                    "created_at": "2026-07-24T00:00:00+00:00",
+                    "audit_anchor_count": 0,
+                    "audit_anchor_hash": "",
+                },
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO projects (id, org_id, slug, name, created_at)
+                    VALUES (:id, :org_id, :slug, :name, :created_at)
+                    """
+                ),
+                {
+                    "id": "project-prior-0002",
+                    "org_id": "org-prior-0002",
+                    "slug": "core",
+                    "name": "Core",
+                    "created_at": "2026-07-24T00:00:00+00:00",
+                },
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO environments (
+                        id, org_id, project_id, slug, name, created_at
+                    ) VALUES (
+                        :id, :org_id, :project_id, :slug, :name, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "environment-prior-0002",
+                    "org_id": "org-prior-0002",
+                    "project_id": "project-prior-0002",
+                    "slug": "production",
+                    "name": "Production",
+                    "created_at": "2026-07-24T00:00:00+00:00",
+                },
+            )
+    finally:
+        engine.dispose()
+
+
+def _scoped_0002_rows(database_url: str) -> tuple[tuple[str, str], tuple[str, str, str]]:
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            project = connection.execute(
+                sa.text("SELECT id, org_id FROM projects WHERE id = :id"),
+                {"id": "project-prior-0002"},
+            ).one()
+            environment = connection.execute(
+                sa.text(
+                    """
+                    SELECT id, org_id, project_id
+                    FROM environments
+                    WHERE id = :id
+                    """
+                ),
+                {"id": "environment-prior-0002"},
+            ).one()
+    finally:
+        engine.dispose()
+    return (project.id, project.org_id), (
+        environment.id,
+        environment.org_id,
+        environment.project_id,
+    )
 
 
 def _interrupt_0002_after_table(
@@ -274,6 +381,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/env.py",
             "acgs_control_plane/migrations/versions/0001_legacy_v0.py",
             "acgs_control_plane/migrations/versions/0002_project_environment.py",
+            "acgs_control_plane/migrations/versions/0003_managed_mutation_uow.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -299,8 +407,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0002
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+assert result.after.state is DatabaseSchemaState.VERSION_0003
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -308,6 +416,12 @@ try:
         "alembic_version",
         "compliance_exports",
         "environments",
+        "managed_decision_receipts",
+        "managed_governance_event_heads",
+        "managed_governance_events",
+        "managed_mutation_attempts",
+        "managed_outbox",
+        "managed_receipt_consumptions",
         "organizations",
         "policy_bundles",
         "projects",
@@ -339,12 +453,18 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
     assert _table_names(database_url) == {
         "agents",
         "alembic_version",
         "compliance_exports",
         "environments",
+        "managed_decision_receipts",
+        "managed_governance_event_heads",
+        "managed_governance_events",
+        "managed_mutation_attempts",
+        "managed_outbox",
+        "managed_receipt_consumptions",
         "organizations",
         "policy_bundles",
         "projects",
@@ -401,7 +521,31 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
+
+
+def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
+    database_url = _database_url(tmp_path)
+    _seed_exact_legacy_v0_schema(database_url)
+    _upgrade_to_exact_0002(database_url)
+    _insert_scoped_0002_rows(database_url)
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert _scoped_0002_rows(database_url) == (
+        ("project-prior-0002", "org-prior-0002"),
+        ("environment-prior-0002", "org-prior-0002", "project-prior-0002"),
+    )
+
+    result = upgrade_database(database_url)
+
+    assert result.before.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
+    assert _version_number(database_url) == HEAD_REVISION
+    assert _scoped_0002_rows(database_url) == (
+        ("project-prior-0002", "org-prior-0002"),
+        ("environment-prior-0002", "org-prior-0002", "project-prior-0002"),
+    )
 
 
 def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: Path) -> None:
@@ -421,7 +565,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -683,7 +827,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0002
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0003
     assert _table_names(database_url) == table_names_before
 
 
@@ -909,15 +1053,75 @@ def test_postgresql_preflight_does_not_accept_naive_timestamps_or_plain_json() -
     assert not _matches_type(postgresql.JSON(), json_column, "postgresql")
 
 
+def test_check_constraint_signature_matches_postgresql_native_reflection_without_widening() -> None:
+    expected = _check_constraint_signature("assurance_class='native'")
+    status_expected = _check_constraint_signature(
+        "status IN ('in_progress', 'succeeded', 'failed')"
+    )
+
+    assert _check_constraint_signature("((assurance_class)::text = 'native'::text)") == expected
+    assert _check_constraint_signature("source_system='gove-zone'") == _check_constraint_signature(
+        "(source_system)::text = 'gove-zone'::text"
+    )
+    assert (
+        _check_constraint_signature(
+            "(status)::text = ANY "
+            "(ARRAY[('in_progress'::character varying)::text, "
+            "('succeeded'::character varying)::text, "
+            "('failed'::character varying)::text])"
+        )
+        == status_expected
+    )
+    assert (
+        _check_constraint_signature("assurance_class IN ('native', 'development-unsigned')")
+        != expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('in_progress', 'succeeded', 'failed', 'retrying')")
+        != status_expected
+    )
+    assert (
+        _check_constraint_signature("status IN ('failed', 'in_progress', 'succeeded')")
+        != status_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "(status IN ('in_progress', 'succeeded', 'failed'))::boolean OR TRUE"
+        )
+        != status_expected
+    )
+    assert (
+        _check_constraint_signature(
+            "(status IN ('in_progress', 'succeeded', 'failed'))::boolean AND FALSE"
+        )
+        != status_expected
+    )
+    assert _check_constraint_signature("status='succeeded' OR TRUE") != status_expected
+    assert _check_constraint_signature("assurance_class='native' OR TRUE") != expected
+    assert _check_constraint_signature("(assurance_class='native')::boolean OR TRUE") != expected
+    assert _check_constraint_signature("(assurance_class='native')::boolean AND FALSE") != expected
+    assert _check_constraint_signature(
+        "(source_system='gove-zone')::boolean OR TRUE"
+    ) != _check_constraint_signature("source_system='gove-zone'")
+    assert _check_constraint_signature(
+        "(source_system='gove-zone')::boolean AND FALSE"
+    ) != _check_constraint_signature("source_system='gove-zone'")
+    assert (
+        _check_constraint_signature("assurance_class='native' AND source_system='gove-zone'")
+        != expected
+    )
+    assert _check_constraint_signature("other_column='native'") != expected
+
+
 def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     database_url = _database_url(tmp_path)
 
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0002
-    assert second.before.state is DatabaseSchemaState.VERSION_0002
-    assert second.after.state is DatabaseSchemaState.VERSION_0002
+    assert first.after.state is DatabaseSchemaState.VERSION_0003
+    assert second.before.state is DatabaseSchemaState.VERSION_0003
+    assert second.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -1001,7 +1205,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -1025,7 +1229,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -1047,7 +1251,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0002
+    assert result.after.state is DatabaseSchemaState.VERSION_0003
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

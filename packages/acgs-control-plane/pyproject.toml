@@ -11,7 +11,7 @@ dependencies = [
     "fastapi>=0.110",
     "pydantic[email]>=2.8",
     "sqlalchemy>=2.0",
-    "gove-zone",
+    "gove-zone[crypto]",
 ]
 
 [project.optional-dependencies]

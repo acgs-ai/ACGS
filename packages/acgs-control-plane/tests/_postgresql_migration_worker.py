@@ -21,6 +21,7 @@ from sqlalchemy.engine import Connection, make_url
 
 import acgs_control_plane.migrations as migration_module
 from acgs_control_plane.migrations import (
+    HEAD_REVISION,
     DatabaseSchemaState,
     MigrationLockUnavailable,
     upgrade_database,
@@ -145,8 +146,10 @@ def _main() -> int:
         original_upgrade(config, revision, **kwargs)
         if mode == "pause-after-upgrade":
             state = migration_module.inspect_connection(connection).state
-            if state is not DatabaseSchemaState.VERSION_0002:
-                raise RuntimeError("migration DDL did not reach revision 0002 inside transaction")
+            if state is not DatabaseSchemaState.VERSION_0003:
+                raise RuntimeError(
+                    f"migration DDL did not reach revision {HEAD_REVISION} inside transaction"
+                )
             _emit(
                 {
                     "event": "ready",
