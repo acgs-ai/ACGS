@@ -105,12 +105,33 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": False,
         "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     },
+    "header:Authorization": {
+        "in": "header",
+        "name": "Authorization",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:X-Bootstrap-Invitation": {
+        "in": "header",
+        "name": "X-Bootstrap-Invitation",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
+    "header:Idempotency-Key": {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": False,
+        "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    },
 }
 
 
 def _expected_params(*names: str) -> list[dict[str, Any]]:
     return [copy.deepcopy(PARAMETER_SCHEMAS[name]) for name in names]
 
+
+PLATFORM_BOOTSTRAP_PATH = "/v1/tenant-bootstrap"
+PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT = "TenantBootstrapResponse"
 
 EXPECTED_V0_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     "/healthz": {
@@ -303,6 +324,21 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
             "tag": "meta",
         }
     },
+    # Platform tenant bootstrap. Served under /v1 but not part of the mirrored
+    # tenant-facing surface below: it is a control-plane provisioning entry point,
+    # so it is pinned explicitly rather than derived from EXPECTED_V0_PATHS.
+    PLATFORM_BOOTSTRAP_PATH: {
+        "post": {
+            "operation_id": "tenant_bootstrap_v1_tenant_bootstrap_post",
+            "parameters": _expected_params(
+                "header:Authorization",
+                "header:X-Bootstrap-Invitation",
+                "header:Idempotency-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "tenant-bootstrap",
+        }
+    },
     **{
         f"/v1{path}": {
             method: _v1_operation_contract(operation) for method, operation in methods.items()
@@ -333,6 +369,7 @@ EXPECTED_COMPONENTS = {
     "Role",
     "SimulateRequest",
     "SimulateResponse",
+    PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT,
     "UserCreateRequest",
     "UserCreateResponse",
     "UserResponse",
@@ -547,8 +584,18 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
 
     assert "/v1" in schema["paths"]
     assert "/v1/orgs" in schema["paths"]
-    assert "Idempotency-Key" not in serialized
-    assert "idempotency_key" not in serialized
+    # The platform tenant-bootstrap route accepts a per-request Idempotency-Key
+    # header. That header is not the durable idempotency persistence the aggregate
+    # G102 contract still owes, so this boundary is scoped to that one route: an
+    # idempotency surface anywhere else in the schema still trips the sentinel.
+    # The exact set of /v1 paths is pinned by EXPECTED_PATHS in the contract test
+    # above, so an unexpected /v1 route is caught there rather than here.
+    outside_bootstrap = copy.deepcopy(schema)
+    del outside_bootstrap["paths"][PLATFORM_BOOTSTRAP_PATH]
+    del outside_bootstrap["components"]["schemas"][PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT]
+    serialized_outside_bootstrap = json.dumps(outside_bootstrap, sort_keys=True)
+    assert "Idempotency-Key" not in serialized_outside_bootstrap
+    assert "idempotency_key" not in serialized_outside_bootstrap
     assert "/jobs" not in serialized
     assert "AsyncExport" not in serialized
     assert "202" not in schema["paths"]["/orgs/{org_id}/exports"]["post"]["responses"]

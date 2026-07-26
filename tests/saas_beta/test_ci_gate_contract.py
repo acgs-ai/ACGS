@@ -3,12 +3,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/saas-beta-required.yml"
-PNPM_SELECTOR = (
-    "pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"
-)
+PNPM_SELECTOR = "pnpm@9.15.4+sha512.b2dc20e2fc72b3e18848459b37359a32064663e5627a51e4c74b2c29dd8e8e0491483c3abb40789cfd578bf362fb6ba8261b05f0387d76792ed6e23ea3b1b6a0"  # noqa: E501
 
 
 def _workflow_text() -> str:
@@ -64,7 +61,8 @@ def test_saas_beta_required_gate_covers_every_master_pr_without_path_filters() -
     assert "    timeout-minutes: 60" in job
     assert re.search(
         r"^concurrency:\n"
-        r"  group: saas-beta-required-\$\{\{ github\.event\.pull_request\.number \|\| github\.sha \}\}\n"
+        r"  group: saas-beta-required-\$\{\{ github\.event\.pull_request\.number"
+        r" \|\| github\.sha \}\}\n"
         r"  cancel-in-progress: true$",
         text,
         re.MULTILINE,
@@ -160,7 +158,7 @@ def test_saas_beta_required_gate_uses_pinned_toolchain_and_locked_inputs() -> No
     assert '[[ "$actual" == "$expected" ]]' in uv_auth
     assert 'sudo install -D -m 0755 "$source_uv" /home/martin/.local/bin/uv' in uv_auth
     assert "[[ ! -L /home/martin/.local/bin/uv ]]" in uv_auth
-    assert 'sha256sum /home/martin/.local/bin/uv' in uv_auth
+    assert "sha256sum /home/martin/.local/bin/uv" in uv_auth
     assert "printf 'UV_BIN=/home/martin/.local/bin/uv\\n' >>\"$GITHUB_ENV\"" in uv_auth
     assert "printf '%s\\n' /home/martin/.local/bin >>\"$GITHUB_PATH\"" in uv_auth
     assert "$RUNNER_TEMP/acgs-bin" not in text
@@ -188,7 +186,7 @@ def test_saas_beta_required_gate_runs_ordered_local_contract_sequence() -> None:
     text = _workflow_text()
     ordered_needles = [
         "ACGS_EVIDENCE_ROOT: ${{ runner.temp }}/acgs-evidence",
-        "node_evidence=\"$ACGS_EVIDENCE_ROOT/P0-EVIDENCE-000\"",
+        'node_evidence="$ACGS_EVIDENCE_ROOT/P0-EVIDENCE-000"',
         'install -d -m 0700 "$ACGS_EVIDENCE_ROOT" "$node_evidence"',
         "scripts/evidence/verify_environment.py",
         "environment-EVID.json",
