@@ -14,19 +14,22 @@ from sqlalchemy import select
 
 import acgs_control_plane.governance as governance
 from acgs_control_plane.auth import Principal
-from acgs_control_plane.db import Base, make_engine, make_session_factory
+from acgs_control_plane.db import make_engine, make_session_factory
 from acgs_control_plane.governance import GovernanceMembrane, _anchor, chain_tip
+from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import Organization, ReceiptRow, User
 from acgs_control_plane.rbac import Role
 
 
 @pytest.fixture()
 def db_session(tmp_path: Path):
-    engine = make_engine(f"sqlite:///{tmp_path / 'unit.sqlite3'}")
-    Base.metadata.create_all(engine)
+    database_url = f"sqlite:///{tmp_path / 'unit.sqlite3'}"
+    upgrade_database(database_url)
+    engine = make_engine(database_url)
     session = make_session_factory(engine)()
     yield session
     session.close()
+    engine.dispose()
 
 
 @pytest.fixture()
@@ -117,7 +120,7 @@ def test_anchor_never_regresses(db_session, org_row: Organization, tmp_path: Pat
         def iter_events(self):
             yield from list(membrane.store.iter_events())[:1]
 
-    _anchor(db_session, org_row.id, StaleStore())  # type: ignore[arg-type]
+    _anchor(db_session, org_row.id, StaleStore())
     db_session.commit()
     db_session.refresh(org_row)
     assert org_row.audit_anchor_count == 2

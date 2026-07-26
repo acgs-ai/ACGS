@@ -50,7 +50,7 @@ from acgs_control_plane.auth import (
     resolve_principal,
 )
 from acgs_control_plane.config import RuntimePosture, Settings
-from acgs_control_plane.db import Base, make_engine, make_session_factory
+from acgs_control_plane.db import make_engine, make_session_factory
 from acgs_control_plane.exports import build_export_bundle
 from acgs_control_plane.governance import (
     AuditReadError,
@@ -66,10 +66,12 @@ from acgs_control_plane.governance import (
 )
 from acgs_control_plane.migrations import (
     DatabaseSchemaState,
+    MigrationPreflightError,
     SchemaPreflight,
     assert_current_startup_schema,
     inspect_connection,
     install_postgresql_application_connection_guard,
+    upgrade_database,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -114,6 +116,7 @@ from acgs_control_plane.schemas import (
     UserResponse,
     V1MetadataResponse,
 )
+from acgs_control_plane.scope_defaults import ensure_legacy_default_scope
 from acgs_control_plane.tenant_bootstrap import (
     BOOTSTRAP_AUTHORIZATION_HEADER,
     BOOTSTRAP_IDEMPOTENCY_HEADER,
@@ -550,9 +553,19 @@ def create_app(
     install_postgresql_application_connection_guard(engine)
     try:
         if settings.create_tables:
-            # Deliberately retained only for disposable legacy development
-            # fixtures. Production is rejected above before engine creation.
-            Base.metadata.create_all(engine)
+            # Deliberately retained only for disposable local development
+            # fixtures. Production is rejected above before engine creation,
+            # and non-empty historical schemas still require the operator CLI.
+            with engine.connect() as connection:
+                local_preflight = inspect_connection(connection)
+            if local_preflight.state is DatabaseSchemaState.EMPTY:
+                upgrade_database(settings.database_url)
+            elif local_preflight.state is not DatabaseSchemaState.VERSION_0010:
+                msg = (
+                    "ACP_CREATE_TABLES=1 can initialize only an empty local database. "
+                    f"Found {local_preflight.state.value}; run the migration CLI."
+                )
+                raise MigrationPreflightError(msg)
         with engine.connect() as connection:
             if settings.create_tables:
                 schema_preflight = inspect_connection(connection)
@@ -623,7 +636,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0009
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0010
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -705,6 +718,7 @@ def _register_routes(app: FastAPI) -> None:
         def _do(name: str, admin_email: str) -> dict[str, str]:
             session.add(Organization(id=org_id, name=name))
             session.flush()
+            ensure_legacy_default_scope(session, org_id)
             session.add(
                 User(
                     id=admin_id,
@@ -930,8 +944,11 @@ def _register_routes(app: FastAPI) -> None:
         holder: dict[str, PolicyBundle] = {}
 
         def _do(policy_id: str, version: str) -> dict[str, str]:
+            project_id, environment_id = ensure_legacy_default_scope(session, org.id)
             row = PolicyBundle(
                 org_id=org.id,
+                project_id=project_id,
+                environment_id=environment_id,
                 policy_id=policy_id,
                 version=version,
                 bundle=bundle_dict,

@@ -93,9 +93,10 @@ export ACP_MAX_REQUEST_BODY_BYTES=1048576                     # optional; defaul
 uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:create_app
 ```
 
-This posture is deliberately non-production: its legacy bootstrap may create only the frozen
-pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0009` at this writing), then set
+This posture is deliberately non-production: its explicit local bootstrap runs the packaged
+operator migration path on an empty database only, and `/readyz` always returns 503. For a
+migration-managed database, run the
+secret-safe operator CLI to the current head (`0010` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -168,10 +169,11 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0009` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0010` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
-  read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
-  available only under the explicit local-development posture above.
+  read-only revision preflight and never migrates. The frozen legacy `create_all` contract remains
+  available only for migration-adoption tests; the app's explicit local-development bootstrap runs
+  the packaged migration path on an empty database only.
 - **Database governance-event tables are groundwork only**: revision `0007` adds DB-primary event,
   head, outbox, and cutover tables plus a caller-owned-session appender, but current routes and read
   paths still use the legacy JSONL authority until a later explicit cutover.
@@ -189,6 +191,13 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   tenant governance-event chain, and refuses native cutover readiness if the marker is missing,
   legacy writes remain active, or legacy receipt rows exist beyond the cutover boundary. No HTTP
   route, mutation cutover, production blocker, or legacy JSONL authority changes in this slice.
+- **Default scope attachment is additive compatibility groundwork**: revision `0010` creates or
+  reuses one canonical legacy default project/environment per organization, backfills still-unscoped
+  legacy agents and policy bundles onto it, and extends the nullable composite
+  project/environment scope model from `agents` to `policy_bundles` with the same
+  both-null-or-both-set check and composite environment foreign key. Scope columns stay nullable at
+  the schema level; legacy write routes attach the default scope at write time. Legacy receipts and
+  native receipt provenance are not backfilled or reclassified.
 - **Production posture remains blocked** while any mutation route uses the legacy unsigned
   governance membrane. A current database schema is necessary startup evidence, not production
   readiness.
