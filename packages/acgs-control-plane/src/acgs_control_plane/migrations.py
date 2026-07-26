@@ -44,7 +44,8 @@ GOVERNANCE_EVENT_REVISION: Final = "0007"
 NATIVE_RECEIPT_LEDGER_REVISION: Final = "0008"
 NATIVE_ARTIFACT_REVISION: Final = "0009"
 SCOPE_ATTACHMENT_REVISION: Final = "0010"
-HEAD_REVISION: Final = SCOPE_ATTACHMENT_REVISION
+MANAGED_IDEMPOTENCY_REVISION: Final = "0011"
+HEAD_REVISION: Final = MANAGED_IDEMPOTENCY_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -93,6 +94,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0009 = "version_0009"
     VERSION_0009_PARTIAL_SCOPE_ATTACHMENT = "version_0009_partial_scope_attachment"
     VERSION_0010 = "version_0010"
+    VERSION_0011 = "version_0011"
     UNKNOWN = "unknown"
 
 
@@ -117,7 +119,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0010.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0011.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -628,6 +630,35 @@ _SCOPE_ATTACHMENT_PROJECT_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]
         _ColumnSpec("project_id", "string", True, 64),
     ),
 }
+_IDEMPOTENCY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_SCOPE_ATTACHMENT_COLUMNS,
+    "managed_idempotency_results": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("principal_id", "string", False, 64),
+        _ColumnSpec("canonical_action", "string", False, 200),
+        _ColumnSpec("key_digest", "string", False, 64),
+        _ColumnSpec("request_digest_version", "string", False, 64),
+        _ColumnSpec("request_digest", "string", False, 64),
+        _ColumnSpec("canonicalizer_version", "string", False, 64),
+        _ColumnSpec("terminal_decision", "string", False, 16),
+        _ColumnSpec("response_status", "integer", False),
+        _ColumnSpec("response_body_hash", "string", False, 64),
+        _ColumnSpec("native_receipt_row_id", "string", False, 64),
+        _ColumnSpec("receipt_id", "string", False, 200),
+        _ColumnSpec("governance_event_id", "string", False, 64),
+        _ColumnSpec("governance_event_hash", "string", False, 64),
+        _ColumnSpec("agent_id", "string", True, 64),
+        _ColumnSpec("result_artifact", "json", False),
+        _ColumnSpec("result_artifact_hash", "string", False, 64),
+        _ColumnSpec("result_signature_algorithm", "string", False, 32),
+        _ColumnSpec("result_signing_key_id", "string", False, 200),
+        _ColumnSpec("result_signature", "string", False, 256),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -684,6 +715,10 @@ _NATIVE_ARTIFACT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
 _SCOPE_ATTACHMENT_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = dict(
     _NATIVE_ARTIFACT_PRIMARY_KEYS
 )
+_IDEMPOTENCY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_SCOPE_ATTACHMENT_PRIMARY_KEYS,
+    "managed_idempotency_results": ("id",),
+}
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
 }
@@ -919,6 +954,33 @@ _SCOPE_ATTACHMENT_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
         }
     ),
 }
+_IDEMPOTENCY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_SCOPE_ATTACHMENT_FOREIGN_KEYS,
+    "managed_idempotency_results": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+            (
+                ("org_id", "native_receipt_row_id"),
+                None,
+                "native_decision_receipts",
+                ("org_id", "id"),
+            ),
+            (
+                ("org_id", "governance_event_id"),
+                None,
+                "governance_events",
+                ("org_id", "id"),
+            ),
+            (("org_id", "agent_id"), None, "agents", ("org_id", "id")),
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1148,6 +1210,17 @@ _SCOPE_ATTACHMENT_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
 _SCOPE_ATTACHMENT_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = dict(
     _NATIVE_ARTIFACT_UNIQUE_INDEXES
 )
+_IDEMPOTENCY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPE_ATTACHMENT_UNIQUES,
+    "agents": frozenset({("org_id", "id")}),
+    "managed_idempotency_results": frozenset(
+        {("org_id", "environment_id", "principal_id", "canonical_action", "key_digest")}
+    ),
+}
+_IDEMPOTENCY_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_SCOPE_ATTACHMENT_UNIQUE_INDEXES,
+    "managed_idempotency_results": frozenset(),
+}
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
     "projects": _SCOPED_UNIQUES["projects"],
@@ -1315,6 +1388,10 @@ _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]
 _SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = dict(
     _NATIVE_ARTIFACT_NON_UNIQUE_INDEXES
 )
+_IDEMPOTENCY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_SCOPE_ATTACHMENT_NON_UNIQUE_INDEXES,
+    "managed_idempotency_results": frozenset({("org_id",)}),
+}
 _NATIVE_RECEIPT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **_GOVERNANCE_EVENT_CHECKS,
     "native_decision_receipts": frozenset(
@@ -1335,6 +1412,18 @@ _SCOPE_ATTACHMENT_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
                 "(project_id IS NULL AND environment_id IS NULL) OR "
                 "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
             ),
+        }
+    ),
+}
+_IDEMPOTENCY_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_SCOPE_ATTACHMENT_CHECKS,
+    "managed_idempotency_results": frozenset(
+        {
+            (
+                "ck_idempotency_terminal_decision",
+                "terminal_decision = 'allow' OR terminal_decision = 'deny' "
+                "OR terminal_decision = 'escalate'",
+            )
         }
     ),
 }
@@ -1619,7 +1708,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if user_tables & _SCOPE_ATTACHMENT_TEMP_TABLES:
             return SchemaPreflight(DatabaseSchemaState.UNKNOWN, partial_detail)
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [SCOPE_ATTACHMENT_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1633,6 +1722,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _IDEMPOTENCY_COLUMNS,
+            _IDEMPOTENCY_PRIMARY_KEYS,
+            _IDEMPOTENCY_FOREIGN_KEYS,
+            _IDEMPOTENCY_UNIQUES,
+            _IDEMPOTENCY_NON_UNIQUE_INDEXES,
+            _IDEMPOTENCY_CHECKS,
+            _IDEMPOTENCY_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0011, "known Alembic revision 0011")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1648,7 +1752,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0010:
+    if preflight.state is not DatabaseSchemaState.VERSION_0011:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1751,7 +1855,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0010:
+    if after.state is not DatabaseSchemaState.VERSION_0011:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1813,7 +1917,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0010:
+                    if after.state is not DatabaseSchemaState.VERSION_0011:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2560,6 +2664,7 @@ def _check_constraint_signature(value: object) -> str:
     compact = compact.replace("(assurance_class)", "assurance_class")
     compact = compact.replace("(source_system)", "source_system")
     compact = compact.replace("(status)", "status")
+    compact = compact.replace("(terminal_decision)", "terminal_decision")
     compact = re.sub(r"\('([^']+)'\)", r"'\1'", compact)
     compact = _strip_outer_parentheses(compact)
 
@@ -2606,6 +2711,11 @@ def _check_constraint_signature(value: object) -> str:
         "policy_outcome=any(array['allow','deny','escalate'])",
     }:
         return "policy_outcome:allow,deny,escalate"
+    if compact in {
+        ("terminal_decision='allow'orterminal_decision='deny'orterminal_decision='escalate'"),
+        ("(terminal_decision='allow')or(terminal_decision='deny')or(terminal_decision='escalate')"),
+    }:
+        return "terminal_decision:allow,deny,escalate"
     if compact in {
         "decisionin('deny','escalate')",
         "decision=any(array['deny','escalate'])",

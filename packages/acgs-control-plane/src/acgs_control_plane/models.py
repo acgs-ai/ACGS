@@ -434,6 +434,12 @@ class AgentRecord(Base):
             postgresql_where=sa.text("project_id IS NOT NULL AND environment_id IS NOT NULL"),
             info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
         ),
+        UniqueConstraint(
+            "org_id",
+            "id",
+            name="uq_agents_org_id_id",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
@@ -1132,3 +1138,76 @@ class NativeReceiptConsumption(Base):
     attestation_signing_key_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     attestation_signature: Mapped[str | None] = mapped_column(String(256), nullable=True)
     consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedIdempotencyResult(Base):
+    """Terminal-only durable idempotency result for a managed mutation.
+
+    Rows are written only after a governance terminal decision has been
+    durably persisted in the same SQL transaction. There is intentionally no
+    pending, lease, takeover, expiry, or purge state in this table.
+    """
+
+    __tablename__ = "managed_idempotency_results"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_idempotency_results_scope_environment",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "native_receipt_row_id"],
+            ["native_decision_receipts.org_id", "native_decision_receipts.id"],
+            name="fk_idempotency_results_org_native_receipt",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "governance_event_id"],
+            ["governance_events.org_id", "governance_events.id"],
+            name="fk_idempotency_results_org_event",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "agent_id"],
+            ["agents.org_id", "agents.id"],
+            name="fk_idempotency_results_org_agent",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "environment_id",
+            "principal_id",
+            "canonical_action",
+            "key_digest",
+            name="uq_idempotency_scope_key",
+        ),
+        CheckConstraint(
+            "terminal_decision = 'allow' "
+            "OR terminal_decision = 'deny' "
+            "OR terminal_decision = 'escalate'",
+            name="ck_idempotency_terminal_decision",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    canonical_action: Mapped[str] = mapped_column(String(200), nullable=False)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    canonicalizer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    terminal_decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    native_receipt_row_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    governance_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    governance_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_artifact: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    result_artifact_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    result_signing_key_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    result_signature: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

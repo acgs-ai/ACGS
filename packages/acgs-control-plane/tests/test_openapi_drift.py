@@ -123,6 +123,12 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": False,
         "schema": {"anyOf": [{"type": "string"}, {"type": "null"}]},
     },
+    "header:Idempotency-Key:required": {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": True,
+        "schema": {"type": "string"},
+    },
 }
 
 
@@ -175,8 +181,10 @@ EXPECTED_V0_PATHS: dict[str, dict[str, dict[str, Any]]] = {
         },
         "post": {
             "operation_id": "register_agent_orgs__org_id__agents_post",
-            "parameters": _expected_params("path:org_id", "header:X-API-Key"),
-            "responses": ["201", "422"],
+            "parameters": _expected_params(
+                "path:org_id", "header:X-API-Key", "header:Idempotency-Key:required"
+            ),
+            "responses": ["201", "409", "422", "428"],
             "tag": "agents",
         },
     },
@@ -586,17 +594,16 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
 
     assert "/v1" in schema["paths"]
     assert "/v1/orgs" in schema["paths"]
-    # The platform tenant-bootstrap route accepts a per-request Idempotency-Key
-    # header. That header is not the durable idempotency persistence the aggregate
-    # G102 contract still owes, so this boundary is scoped to that one route: an
-    # idempotency surface anywhere else in the schema still trips the sentinel.
-    # The exact set of /v1 paths is pinned by EXPECTED_PATHS in the contract test
-    # above, so an unexpected /v1 route is caught there rather than here.
+    assert "Idempotency-Key" in serialized
+    # The platform tenant-bootstrap response component records the consumed
+    # idempotency_key; outside that one route and component no snake_case
+    # idempotency surface may appear in the schema. The exact header
+    # parameters per path are pinned by EXPECTED_PATHS in the contract test
+    # above, so an unexpected Idempotency-Key placement is caught there.
     outside_bootstrap = copy.deepcopy(schema)
     del outside_bootstrap["paths"][PLATFORM_BOOTSTRAP_PATH]
     del outside_bootstrap["components"]["schemas"][PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT]
     serialized_outside_bootstrap = json.dumps(outside_bootstrap, sort_keys=True)
-    assert "Idempotency-Key" not in serialized_outside_bootstrap
     assert "idempotency_key" not in serialized_outside_bootstrap
     assert "/jobs" not in serialized
     assert "AsyncExport" not in serialized

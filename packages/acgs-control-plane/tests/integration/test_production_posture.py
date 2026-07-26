@@ -85,7 +85,7 @@ def test_production_rejects_legacy_unsigned_routes(
         "status": "not-production-ready",
         "blockers": [blocker.to_dict() for blocker in local.state.readiness_blockers],
         "schema_current": True,
-        "schema_state": DatabaseSchemaState.VERSION_0010.value,
+        "schema_state": DatabaseSchemaState.VERSION_0011.value,
     }
     local.state.engine.dispose()
     (tmp_path / "must-not-exist.sqlite3").unlink()

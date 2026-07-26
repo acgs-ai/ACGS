@@ -905,38 +905,10 @@ class DatabaseGovernanceEventAppender:
         return payload
 
     def _sqlite_lock(self) -> threading.RLock | None:
-        bind = self.session.get_bind()
-        if bind.dialect.name != "sqlite":
-            return None
-        with _SQLITE_EVENT_LOCKS_GUARD:
-            lock = _SQLITE_EVENT_LOCKS.get(self.org_id)
-            if lock is None:
-                lock = threading.RLock()
-                _SQLITE_EVENT_LOCKS[self.org_id] = lock
-            return lock
+        return _sqlite_transaction_lock(self.session, self.org_id)
 
     def _acquire_sqlite_transaction_lock(self) -> None:
-        lock = self._sqlite_lock()
-        if lock is None:
-            return
-        if not self.session.info.get(_SQLITE_SESSION_LOCK_LISTENER):
-            sqlalchemy_event.listen(
-                self.session,
-                "after_transaction_end",
-                _release_sqlite_transaction_locks,
-            )
-            self.session.info[_SQLITE_SESSION_LOCK_LISTENER] = True
-        held = cast(
-            dict[str, tuple[threading.RLock, int]],
-            self.session.info.setdefault(_SQLITE_SESSION_LOCK_INFO, {}),
-        )
-        current = held.get(self.org_id)
-        if current is None:
-            lock.acquire()
-            held[self.org_id] = (lock, 1)
-        else:
-            current[0].acquire()
-            held[self.org_id] = (current[0], current[1] + 1)
+        acquire_sqlite_tenant_transaction_lock(self.session, self.org_id)
 
     def _validate_record(self, decision: DecisionRecord) -> None:
         if not decision.path:
@@ -965,6 +937,47 @@ def _release_sqlite_transaction_locks(session: Session, transaction: SessionTran
     for lock, count in held.values():
         for _ in range(count):
             lock.release()
+
+
+def _sqlite_transaction_lock(session: Session, org_id: str) -> threading.RLock | None:
+    bind = session.get_bind()
+    if bind.dialect.name != "sqlite":
+        return None
+    with _SQLITE_EVENT_LOCKS_GUARD:
+        lock = _SQLITE_EVENT_LOCKS.get(org_id)
+        if lock is None:
+            lock = threading.RLock()
+            _SQLITE_EVENT_LOCKS[org_id] = lock
+        return lock
+
+
+def acquire_sqlite_tenant_transaction_lock(session: Session, org_id: str) -> None:
+    """Acquire the existing per-tenant SQLite process lock until tx end.
+
+    This is a same-process SQLite serialization aid only. PostgreSQL callers
+    rely on row-level ``FOR UPDATE`` locks instead.
+    """
+    lock = _sqlite_transaction_lock(session, org_id)
+    if lock is None:
+        return
+    if not session.info.get(_SQLITE_SESSION_LOCK_LISTENER):
+        sqlalchemy_event.listen(
+            session,
+            "after_transaction_end",
+            _release_sqlite_transaction_locks,
+        )
+        session.info[_SQLITE_SESSION_LOCK_LISTENER] = True
+    held = cast(
+        dict[str, tuple[threading.RLock, int]],
+        session.info.setdefault(_SQLITE_SESSION_LOCK_INFO, {}),
+    )
+    current = held.get(org_id)
+    if current is None:
+        lock.acquire()
+        held[org_id] = (lock, 1)
+    else:
+        current[0].acquire()
+        held[org_id] = (current[0], current[1] + 1)
 
 
 class GovernanceMembrane:

@@ -723,6 +723,7 @@
         "packages/acgs-control-plane/src/acgs_control_plane/app.py",
         "packages/acgs-control-plane/src/acgs_control_plane/config.py",
         "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/idempotency.py",
         "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
         "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
         "packages/acgs-control-plane/tests/integration/test_production_posture.py",
@@ -739,6 +740,8 @@
         "packages/acgs-control-plane/src/acgs_control_plane/native_receipts.py",
         "packages/acgs-control-plane/src/acgs_control_plane/scope_defaults.py",
         "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_scope_attachment.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0011_managed_idempotency_results.py",
+        "packages/acgs-control-plane/tests/test_agent_create_idempotency.py",
         "packages/acgs-control-plane/tests/test_exports.py",
         "packages/acgs-control-plane/tests/test_native_agent_transaction_route.py",
         "packages/acgs-control-plane/tests/test_native_evidence_verifier.py",
@@ -748,10 +751,10 @@
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency beyond this native agent-create transaction, and async export jobs."
+        "G102A proves the bounded request-admission and redacted-error slice locally; G102B proves bounded opaque cursor pagination only for the receipt explorer route; G102C proves a current-v0 OpenAPI drift sentinel locally; G102D proves additive legacy-v0 /v1 aliases and a typed /v1 root locally; the PR #369 scope-attachment slice proves project/environment attachment for agents and policy bundles locally; the PR #370 native transaction slice proves the first canonical native agent-create route locally with signed native DecisionReceipts, environment-bound full policy hash, SQL-transaction receipt/event/outbox/head/consumption state, and export/verify/dashboard preservation of native versus legacy assurance; the PR #371 durable idempotency slice proves exactly-one Idempotency-Key admission, digest-only key/request/response storage, terminal-only ALLOW/DENY/ESCALATE result replay, semantic reconstruction from authoritative rows, PostgreSQL tenant-row-lock serialization, and same-process-only SQLite replay safety for the same native agent-create route. The aggregate G102 contract still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs."
       ],
       "forbidden_side_effect_negative_tests": [
-        "Duplicate, oversized, malformed, or unversioned requests cannot create duplicate mutations or silently bypass the versioned API contract; for the native agent-create route, missing providers, same issuer/attestor trust material, DENY, ESCALATE, tampered native receipt/event/consumption evidence, wrong-environment policy, and legacy production posture execute or commit zero forbidden business side effects."
+        "Duplicate, oversized, malformed, unversioned, missing-key, ambiguous-key, same-key/different-digest, tampered replay-result, missing historical trust, and failed-before-terminal-result requests cannot create duplicate mutations or silently bypass the versioned API contract; for the native agent-create route, missing providers, same issuer/attestor trust material, DENY, ESCALATE, tampered native receipt/event/consumption/idempotency evidence, wrong-environment policy, and legacy production posture execute or commit zero forbidden business side effects."
       ],
       "validation_commands": [
         "uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane/tests --import-mode=importlib -q",
@@ -766,17 +769,19 @@
         "git diff --check",
         "cd packages/acgs-control-plane && uv run pytest tests/test_scope_attachment.py -q",
         "cd packages/acgs-control-plane && uv run pytest tests/test_native_agent_transaction_route.py tests/test_native_receipt_ledger.py tests/test_exports.py tests/test_receipts_dashboard.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py -q",
-        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane tests/test_native_agent_transaction_route.py tests/test_exports.py tests/test_scope_attachment.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py"
+        "cd packages/acgs-control-plane && uv run pytest tests/test_agent_create_idempotency.py -q",
+        "cd packages/acgs-control-plane && ACP_TEST_POSTGRES_URL=<ephemeral PG17 URL> ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1 uv run --extra postgres python -m pytest tests/test_postgresql_migrations.py tests/test_postgresql_migration_cli.py tests/test_postgresql_rolling_upgrade.py tests/test_postgresql_migration_recovery.py --import-mode=importlib -q",
+        "cd packages/acgs-control-plane && uv run mypy src/acgs_control_plane tests/test_native_agent_transaction_route.py tests/test_agent_create_idempotency.py tests/test_exports.py tests/test_scope_attachment.py tests/test_v1_api_contract.py tests/integration/test_production_posture.py"
       ],
-      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A local PR #357 evidence exists, G102B local PR #359 evidence covers receipt-only opaque cursor pagination, G102C local PR #361 evidence covers a current-v0 OpenAPI drift sentinel, G102D local PR #363 evidence covers additive legacy-v0 /v1 aliases plus typed /v1 root, the PR #369 scope-attachment slice at commit e4898d7fe250c519f623647cbf7951f7c1f076d4 covers project/environment attachment with full control-plane 391 passed/35 skipped, and the PR #370 native transaction slice at commit feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f covers the first canonical native agent-create route with full control-plane 403 passed/35 skipped, Ruff pass, CI mypy src plus changed tests pass, and independent code/security/verifier PASS. The native route uses explicit distinct trust providers; environment-bound full policy hash; signed native DecisionReceipt for ALLOW/DENY/ESCALATE; DENY/ESCALATE non-executable/no consumption; ALLOW strict execute_with_receipt plus DB consumption in one rollbackable SQL transaction; DB event/outbox/head evidence; typed API list/detail/verify/dashboard/export preserving native versus legacy assurance; and cryptographic verification/export with receipt, event, head, and consumption evidence. Hosted GitHub checks did not start because the account was locked due to a billing issue, and live opt-in PostgreSQL cases were skipped. The accepted aggregate contract still lacks complete all-collections cursor pagination, durable idempotency outside this native agent-create transaction, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, and full native cutover from the 12 legacy unsigned route aliases.",
-      "branch": "beta/p0-g102e5-native-transaction-spine",
+      "evidence_artifact": "Aggregate G102 remains partial/current-local: G102A local PR #357 evidence exists, G102B local PR #359 evidence covers receipt-only opaque cursor pagination, G102C local PR #361 evidence covers a current-v0 OpenAPI drift sentinel, G102D local PR #363 evidence covers additive legacy-v0 /v1 aliases plus typed /v1 root, the PR #369 scope-attachment slice at commit e4898d7fe250c519f623647cbf7951f7c1f076d4 covers project/environment attachment with full control-plane 391 passed/35 skipped, the PR #370 native transaction slice at commit feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f covers the first canonical native agent-create route with full control-plane 403 passed/35 skipped, Ruff pass, CI mypy src plus changed tests pass, and independent code/security/verifier PASS, and the PR #371 durable idempotency slice at commit e0f514f2963987f72827d33ada891abc08677f03 covers the same native agent-create route with local full control-plane 424 passed/36 skipped, live PostgreSQL main bundle 71 passed/1 skipped, independent code/security/verifier PASS, and hosted CI blocked by the account billing lock. The native route uses explicit distinct trust providers; environment-bound full policy hash; signed native DecisionReceipt for ALLOW/DENY/ESCALATE; DENY/ESCALATE non-executable/no consumption; ALLOW strict execute_with_receipt plus DB consumption in one rollbackable SQL transaction; DB event/outbox/head evidence; typed API list/detail/verify/dashboard/export preserving native versus legacy assurance; cryptographic verification/export with receipt, event, head, and consumption evidence; and durable terminal idempotency requiring exactly one Idempotency-Key, digest-only key/request/response storage, terminal-only ALLOW/DENY/ESCALATE result rows, semantic replay from authoritative rows, PostgreSQL tenant row locking, and same-process-only SQLite protection. Hosted GitHub checks did not start because the account was locked due to a billing issue. The accepted aggregate contract still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, async export jobs, production provider wiring, complete tenant isolation, direct receipt project/environment columns, policy signing/distribution, external exactly-once delivery, out-of-band trusted public-key distribution for exports, async export/recovery/rolling-upgrade evidence, and full native cutover from the 12 legacy unsigned route aliases.",
+      "branch": "beta/p1-g102-durable-idempotency",
       "worktree": "saas-beta/p1-g101-tool-provenance",
-      "pr": 370,
+      "pr": 371,
       "status": "in_progress",
       "implementation_state": "partial",
       "evidence_state": "local_verified",
-      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency beyond the first native agent-create transaction, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from 12 legacy unsigned route aliases remain missing; hosted GitHub checks for the current G102 stack did not start due to EXT-GITHUB-BILLING, and live opt-in PostgreSQL cases were skipped.",
-      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #369 and PR #370 hosted checks plus the earlier G102 stack, then complete all-collections cursor pagination, durable idempotency beyond agent-create, async export jobs, provider environment wiring, policy signing/distribution, and native cutover before unlocking G103 as complete.",
+      "blocker": "Aggregate G102 is not complete: complete all-collections cursor pagination beyond the receipt route, durable idempotency for mutating routes beyond native agent-create, async export jobs, production provider wiring, complete tenant isolation, policy signing/distribution, external exactly-once delivery, and full native cutover from 12 legacy unsigned route aliases remain missing; hosted GitHub checks for the current G102 stack did not start due to EXT-GITHUB-BILLING.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, observe PR #369, PR #370, PR #371, and earlier G102 hosted checks, then complete all-collections cursor pagination, cross-route durable idempotency, async export jobs, provider environment wiring, policy signing/distribution, and native cutover before unlocking G103 as complete.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -804,7 +809,7 @@
         "PR #357 on branch beta/p1-g102-request-admission at commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d recorded focused bounded request-admission and redacted-error contract evidence at 14 passed, full control-plane package evidence at 228 passed and 32 skipped, Ruff and mypy pass, independent security/code approve/verifier pass, and hosted Python 3.11/3.12 pass."
       ],
       "forbidden_side_effect_negative_tests": [
-        "The local G102A evidence cannot promote aggregate G102 to completed; G102B separately covers receipt-route cursor pagination, G102C separately covers the current-v0 OpenAPI drift sentinel, G102D separately covers additive legacy-v0 /v1 aliases, and complete all-collections cursor pagination, durable idempotency, async export jobs, hosted PostgreSQL migration, and codex-review evidence remain missing."
+        "The local G102A evidence cannot promote aggregate G102 to completed; G102B separately covers receipt-route cursor pagination, G102C separately covers the current-v0 OpenAPI drift sentinel, G102D separately covers additive legacy-v0 /v1 aliases, PR #371 separately covers durable idempotency for native agent-create only, and complete all-collections cursor pagination, durable idempotency for other mutating routes, async export jobs, hosted PostgreSQL migration, and codex-review evidence remain missing."
       ],
       "validation_commands": [
         "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q",
@@ -815,15 +820,15 @@
         "gh pr view 357 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
         "git diff --check"
       ],
-      "evidence_artifact": "G102A current-local PR #357 evidence: branch beta/p1-g102-request-admission, commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d, focused 14 passed, full control-plane 228 passed/32 skipped, Ruff pass, mypy pass, independent security/code approve/verifier pass, hosted Python 3.11 and Python 3.12 pass. Hosted PostgreSQL migrations and codex-review did not start because of EXT-GITHUB-BILLING. G102B separately covers receipt-route cursor pagination; G102C separately covers the current-v0 OpenAPI drift sentinel; G102D separately covers additive legacy-v0 /v1 aliases; aggregate G102 still lacks complete all-collections cursor pagination, durable idempotency, and async export jobs.",
+      "evidence_artifact": "G102A current-local PR #357 evidence: branch beta/p1-g102-request-admission, commit 4d60fb4a0a16be06a2a9957dea91dc2bf429c57d, focused 14 passed, full control-plane 228 passed/32 skipped, Ruff pass, mypy pass, independent security/code approve/verifier pass, hosted Python 3.11 and Python 3.12 pass. Hosted PostgreSQL migrations and codex-review did not start because of EXT-GITHUB-BILLING. G102B separately covers receipt-route cursor pagination; G102C separately covers the current-v0 OpenAPI drift sentinel; G102D separately covers additive legacy-v0 /v1 aliases; PR #371 separately covers native agent-create durable idempotency only; aggregate G102 still lacks complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs.",
       "branch": "beta/p1-g102-request-admission",
       "worktree": "saas-beta/p1-g101-tool-provenance",
       "pr": 357,
       "status": "blocked",
       "implementation_state": "built",
       "evidence_state": "local_verified",
-      "blocker": "PR #357 G102A local evidence is built, G102B separately covers receipt-route cursor pagination, G102C separately covers the current-v0 OpenAPI drift sentinel, and G102D separately covers additive legacy-v0 /v1 aliases, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until complete all-collections cursor pagination, durable idempotency, and async export jobs are completed.",
-      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #357 hosted PostgreSQL migration and codex-review checks, preserve G102B/G102C/G102D as separate slices, then reconcile the remaining aggregate G102 complete all-collections cursor pagination, durable idempotency, and async export jobs before marking G102 complete.",
+      "blocker": "PR #357 G102A local evidence is built, G102B separately covers receipt-route cursor pagination, G102C separately covers the current-v0 OpenAPI drift sentinel, G102D separately covers additive legacy-v0 /v1 aliases, and PR #371 separately covers native agent-create durable idempotency only, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until complete all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs are completed.",
+      "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #357 hosted PostgreSQL migration and codex-review checks, preserve G102B/G102C/G102D and PR #371 as separate slices, then reconcile the remaining aggregate G102 complete all-collections cursor pagination, cross-route durable idempotency, and async export jobs before marking G102 complete.",
       "mandatory": true,
       "completion_scope": "non_external"
     },
@@ -876,7 +881,7 @@
       "status": "blocked",
       "implementation_state": "built",
       "evidence_state": "local_verified",
-      "blocker": "PR #359 G102B local evidence is built, G102C separately covers the current-v0 OpenAPI drift sentinel, and G102D separately covers additive legacy-v0 /v1 aliases, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency, and async export jobs are completed.",
+      "blocker": "PR #359 G102B local evidence is built, G102C separately covers the current-v0 OpenAPI drift sentinel, G102D separately covers additive legacy-v0 /v1 aliases, and PR #371 separately covers native agent-create durable idempotency only, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs are completed.",
       "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #359 hosted PostgreSQL migration and codex-review checks, then reconcile the remaining aggregate G102 contract gaps before marking G102 complete.",
       "mandatory": true,
       "completion_scope": "non_external"
@@ -920,7 +925,7 @@
       "status": "blocked",
       "implementation_state": "built",
       "evidence_state": "local_verified",
-      "blocker": "PR #361 G102C local evidence is built and G102D separately covers additive legacy-v0 /v1 aliases, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency, and async export jobs are completed.",
+      "blocker": "PR #361 G102C local evidence is built, G102D separately covers additive legacy-v0 /v1 aliases, and PR #371 separately covers native agent-create durable idempotency only, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs are completed.",
       "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #361 hosted PostgreSQL migration and codex-review checks, then keep the current-v0 OpenAPI drift sentinel as one G102 slice while completing the remaining aggregate G102 contract gaps.",
       "mandatory": true,
       "completion_scope": "non_external"
@@ -971,7 +976,7 @@
       "status": "blocked",
       "implementation_state": "built",
       "evidence_state": "local_verified",
-      "blocker": "PR #363 G102D local evidence is built, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency, and async export jobs are completed.",
+      "blocker": "PR #363 G102D local evidence is built and PR #371 separately covers native agent-create durable idempotency only, but hosted PostgreSQL migrations and codex-review did not start due to EXT-GITHUB-BILLING; aggregate G102 remains partial until all-collections cursor pagination, durable idempotency for other mutating routes, and async export jobs are completed.",
       "next_safe_action": "After EXT-GITHUB-BILLING is resolved, re-run PR #363 hosted PostgreSQL migration and codex-review checks, then keep additive /v1 alias evidence as one G102 slice while completing the remaining aggregate G102 contract gaps.",
       "mandatory": true,
       "completion_scope": "non_external"
