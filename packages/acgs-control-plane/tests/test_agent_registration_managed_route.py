@@ -130,7 +130,7 @@ def test_agent_register_mirror_stays_verifiable_on_the_org_audit_chain(
     created = client.post(
         f"/orgs/{org['org_id']}/agents",
         json={"name": "audited-bot"},
-        headers=headers,
+        headers=_agent_headers(org, "agent-audited-mirror-0001"),
     )
     assert created.status_code == 201, created.text
 
@@ -558,17 +558,16 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
 
 
 @pytest.mark.parametrize(
-    ("decision", "expected_status", "expected_code"),
+    ("decision", "expected_status"),
     [
-        ("deny", 403, "POLICY_DENIED"),
-        ("escalate", 202, "ESCALATE_PENDING"),
+        ("deny", 403),
+        ("escalate", 202),
     ],
 )
 def test_agent_register_route_duplicate_refusals_replay_original_terminal_response(
     tmp_path: Path,
     decision: str,
     expected_status: int,
-    expected_code: str,
 ) -> None:
     app, client = _migrated_client(tmp_path, label=f"duplicate-{decision}")
     org = _bootstrap_org(client)
@@ -582,8 +581,18 @@ def test_agent_register_route_duplicate_refusals_replay_original_terminal_respon
 
     assert first.status_code == expected_status, first.text
     assert second.status_code == expected_status, second.text
-    assert first.json() == second.json()
-    assert second.json()["code"] == expected_code
+    # Both answers use the receipted refusal envelope and must converge on the
+    # same terminal decision, reason, and receipt. Only request_id is
+    # per-request; everything else replays byte-for-byte.
+    first_body = first.json()
+    second_body = second.json()
+    assert set(first_body) == {"status", "reason", "receipt_id", "decision", "request_id"}
+    assert set(second_body) == {"status", "reason", "receipt_id", "decision", "request_id"}
+    first_body.pop("request_id")
+    second_body.pop("request_id")
+    assert first_body == second_body
+    assert second_body["decision"] == decision
+    assert second_body["receipt_id"]
     _assert_single_refusal_evidence(app, org["org_id"], f"duplicate-{decision}-bot", decision)
 
 
@@ -653,17 +662,16 @@ def test_agent_register_route_rejects_deny_payload_upgraded_to_escalate(
 
 
 @pytest.mark.parametrize(
-    ("decision", "expected_status", "expected_code"),
+    ("decision", "expected_status"),
     [
-        ("deny", 403, "POLICY_DENIED"),
-        ("escalate", 202, "ESCALATE_PENDING"),
+        ("deny", 403),
+        ("escalate", 202),
     ],
 )
 def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_response(
     tmp_path: Path,
     decision: str,
     expected_status: int,
-    expected_code: str,
 ) -> None:
     app, client = _migrated_client(tmp_path, label=f"concurrent-{decision}")
     org = _bootstrap_org(client)
@@ -674,17 +682,20 @@ def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_respo
 
     def register() -> tuple[int, str | None]:
         resp = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
-        code = (
-            resp.json().get("code")
+        terminal = (
+            resp.json().get("decision")
             if resp.headers.get("content-type", "").startswith("application/json")
             else None
         )
-        return resp.status_code, code
+        return resp.status_code, terminal
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: register(), range(2)))
 
-    assert results == [(expected_status, expected_code), (expected_status, expected_code)]
+    # Both racers answer in the receipted refusal envelope with the same
+    # terminal decision; the refusal evidence below proves only one of them
+    # committed it.
+    assert results == [(expected_status, decision), (expected_status, decision)]
     _assert_single_refusal_evidence(app, org["org_id"], f"concurrent-{decision}-bot", decision)
 
 

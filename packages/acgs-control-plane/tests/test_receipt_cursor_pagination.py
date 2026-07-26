@@ -35,6 +35,7 @@ from acgs_control_plane.pagination import (
     issue_receipt_cursor,
     receipt_filter_digest,
 )
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
     ManagedTrustLifecycleService,
     public_spki_der_from_signer,
@@ -175,7 +176,7 @@ def _seed_receipts(
         resp = client.post(
             f"/orgs/{org_id}/agents",
             json={"name": f"cursor-bot-{i}"},
-            headers=headers,
+            headers={**headers, BOOTSTRAP_IDEMPOTENCY_HEADER: f"cursor-seed-{i:04d}"},
         )
         assert resp.status_code == 201, resp.text
 
@@ -282,7 +283,7 @@ def test_receipt_cursor_is_stable_when_newer_receipt_is_inserted_between_pages(
     create_new = client.post(
         f"/orgs/{org_id}/agents",
         json={"name": "newer-after-first-page"},
-        headers=headers,
+        headers={**headers, BOOTSTRAP_IDEMPOTENCY_HEADER: "cursor-newer-0001"},
     )
     assert create_new.status_code == 201, create_new.text
     with client.app.state.session_factory() as session:

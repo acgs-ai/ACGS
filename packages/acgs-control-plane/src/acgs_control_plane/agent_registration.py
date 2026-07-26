@@ -435,9 +435,9 @@ class AgentRegistrationService:
             # The refusal receipt is committed above, so cite it. Dropping it
             # here would make the refusal path the one place this API produces
             # no citable evidence, which is backwards for a receipt-gated
-            # control plane. Envelope matches the pre-managed v0 contract. The
-            # detail stays the deterministic terminal one so an idempotent
-            # replay can rebuild the identical terminal from the stored row.
+            # control plane. Envelope matches the pre-managed v0 contract, and
+            # the detail matches the stored idempotency row so a replay of this
+            # key answers with the identical terminal.
             terminal = _terminal_http_error_for_decision(decision_record)
             raise AgentRegistrationHttpError(
                 terminal.status_code,
@@ -925,6 +925,16 @@ def _validated_idempotency_replay(
         if row.agent_id is not None:
             raise _invalid_idempotency_record()
         terminal = _terminal_http_error_for_decision_value(Decision(receipt.decision))
+        # The human-readable detail carries the policy reason from decision
+        # time, which is not reconstructible without that policy version. It is
+        # presentation-only: splice the stored detail into the deterministic
+        # terminal skeleton, so every security-relevant field (terminal
+        # decision, status code, code, status, scope, receipt binding) is still
+        # validated strictly below and a forged payload still fails closed.
+        stored_detail = row.response.get("detail") if isinstance(row.response, Mapping) else None
+        if not isinstance(stored_detail, str) or not stored_detail:
+            raise _invalid_idempotency_record()
+        terminal = replace(terminal, detail=stored_detail)
         expected_response = _idempotency_error_payload_for_scope(
             terminal,
             org_id=row.org_id,
@@ -934,7 +944,18 @@ def _validated_idempotency_replay(
         )
         if row.response != expected_response:
             raise _invalid_idempotency_record()
-        return terminal
+        # Cite the committed refusal receipt on the replay too, so a replayed
+        # DENY/ESCALATE answers in the same receipted envelope as the first
+        # request (see the terminal raise in register()).
+        return AgentRegistrationHttpError(
+            terminal.status_code,
+            terminal.code,
+            terminal.status,
+            terminal.detail,
+            stage=terminal.stage,
+            receipt_id=receipt.receipt_id,
+            decision=receipt.decision,
+        )
 
     raise _invalid_idempotency_record()
 
@@ -1025,7 +1046,16 @@ def _idempotency_error_payload_for_scope(
 
 
 def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrationHttpError:
-    return _terminal_http_error_for_decision_value(record.decision)
+    """Terminal error for a live policy decision, carrying the policy reason.
+
+    The reason is presentation detail for the caller; the deterministic
+    skeleton (status code, code, status) comes from the value-based variant so
+    an idempotent replay can rebuild and validate it without the policy.
+    """
+    terminal = _terminal_http_error_for_decision_value(record.decision)
+    if record.reason:
+        return replace(terminal, detail=record.reason)
+    return terminal
 
 
 def _terminal_http_error_for_decision_value(decision: Decision) -> AgentRegistrationHttpError:
@@ -1114,37 +1144,6 @@ def _agent_policy_tool_call(name: str, *, args: Mapping[str, Any], actor: str) -
         goal=AGENT_REGISTRATION_GOAL,
         path=normalize_path_context(["control-plane", "agents"]),
         state={"trust_tier": args.get("trust_tier", "")},
-    )
-
-
-def _record_refusal_evidence(
-    session: Session,
-    *,
-    context: ManagedMutationContext,
-    args: Mapping[str, Any],
-    actor: str,
-    decision_record: DecisionRecord,
-    audit_dir: Path,
-) -> None:
-    """Re-check the policy under lock, then mirror the refusal for auditors.
-
-    Order matters: revalidation may still abort the whole transaction, and a
-    refusal that never became final must leave no trace on the org's evidence
-    surface.
-    """
-    _revalidate_active_policy_under_lock(
-        session,
-        context=context,
-        args=args,
-        actor=actor,
-        expected_decision=decision_record.decision,
-    )
-    mirror_managed_decision(
-        session,
-        org_id=context.org_id,
-        audit_dir=audit_dir,
-        record=decision_record,
-        tool=LEGACY_AGENT_REGISTER_ACTION,
     )
 
 
