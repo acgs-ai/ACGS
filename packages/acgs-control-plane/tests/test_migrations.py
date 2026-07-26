@@ -838,9 +838,9 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "--unshare-all --unshare-user --share-net --die-with-parent --new-session" in script
     assert "--tmpfs /run" in script
     assert "--setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1" in script
-    assert "--setenv ACP_TEST_POSTGRES_SELECTOR_MODE \"$selector_mode\"" in script
+    assert '--setenv ACP_TEST_POSTGRES_SELECTOR_MODE "$selector_mode"' in script
     assert '--setenv PYTEST_ADDOPTS "-p no:cacheprovider"' in script
-    assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET \"$broker_socket\"" in script
+    assert '--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET "$broker_socket"' in script
     assert "PostgreSQL client broker" in script
     assert '"tool": tool, "argv": sys.argv[1:], "env": env' in script
 
