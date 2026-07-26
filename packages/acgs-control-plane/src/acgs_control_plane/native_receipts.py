@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gove_zone.audit import GENESIS_HASH
-from gove_zone.decision import DecisionRecord, sha256_json
+from gove_zone.decision import Decision, DecisionRecord, sha256_json
 from gove_zone.errors import (
     ProductionProfileError,
     ReceiptAlreadyUsedError,
@@ -238,14 +238,14 @@ def _validate_receipt_safe_bindings(receipt: DecisionReceipt) -> None:
 def _safe_projection(receipt: DecisionReceipt) -> dict[str, Any]:
     """Return a deterministic projection that cannot retain freeform values.
 
-    This SQL-only foundation accepts native ALLOW receipts with no subject,
-    declared goal, constraints, or transformations. The approval summary must
-    be exactly the canonical proposer/validator linkage added by
-    ``DecisionReceipt.from_record``. Request IDs and matched-rule identifiers
-    are retained only as hashes.
+    This SQL-only foundation accepts managed native ALLOW, DENY, and ESCALATE
+    receipts with no subject, declared goal, constraints, or transformations.
+    The approval summary must be exactly the canonical proposer/validator
+    linkage added by ``DecisionReceipt.from_record``. Request IDs and
+    matched-rule identifiers are retained only as hashes.
     """
-    if receipt.decision != "allow":
-        raise ReceiptValidationError("native SQL receipt persistence accepts ALLOW only")
+    if receipt.decision not in {"allow", "deny", "escalate"}:
+        raise ReceiptValidationError("native SQL receipt persistence rejects unsupported decision")
     _validate_receipt_safe_bindings(receipt)
     if receipt.subject or receipt.declared_goal:
         raise ReceiptValidationError(
@@ -511,23 +511,79 @@ class ManagedNativeReceiptTrust:
         """Verify durable evidence at issuance time, not at the wall clock now."""
         self._assert_verifier_map_ready()
         issued = self._verify_recorded_lifetime(receipt)
-        receipt.verify(
-            expected_tenant_id=context.org_id,
-            expected_execution_boundary=context.execution_boundary,
-            expected_audit_hash=context.audit_hash,
-            expected_args=context.args,
-            expected_action=context.action,
-            expected_policy_hash=context.policy_hash,
-            expected_policy_bundle_id=context.policy_bundle_id,
-            expected_validator_role=context.validator_role,
-            expected_authority=context.authority,
-            expected_actor=context.actor,
-            verifier=self.verifiers,
-            require_signature=True,
-            require_expiry=True,
-            revoked_keys=self.revoked_keys,
-            now_iso=issued.isoformat(),
-        )
+        required_fields = [
+            "receipt_id",
+            "request_id",
+            "tenant_id",
+            "actor",
+            "proposed_action",
+            "execution_boundary",
+            "policy_bundle_id",
+            "policy_version",
+            "policy_hash",
+            "decision",
+            "timestamp",
+            "previous_audit_hash",
+            "audit_event_hash",
+            "validator_id",
+            "validator_role",
+            "authority",
+            "argument_hash",
+            "receipt_hash",
+            "signature_algorithm",
+            "signing_key_id",
+            "signature",
+        ]
+        for field_name in required_fields:
+            if getattr(receipt, field_name) in (None, ""):
+                raise ReceiptValidationError(f"native receipt missing {field_name}")
+        if receipt.compute_hash() != receipt.receipt_hash:
+            raise ReceiptValidationError("native receipt hash recomputation failed")
+        if receipt.signature_algorithm == "none":
+            raise ReceiptValidationError("managed native receipt requires signature")
+        if self.revoked_keys is not None and self.revoked_keys.is_revoked(receipt.signing_key_id):
+            raise ReceiptValidationError("native receipt signing key is revoked")
+        verifier = self.verifiers.get(receipt.signing_key_id)
+        if verifier is None:
+            raise ReceiptValidationError("native receipt signing key is untrusted")
+        if verifier.algorithm != receipt.signature_algorithm:
+            raise ReceiptValidationError("native receipt signature algorithm mismatch")
+        if not verifier.verify(receipt.receipt_hash.encode("utf-8"), receipt.signature):
+            raise ReceiptValidationError("native receipt signature is invalid")
+        try:
+            Decision(receipt.decision)
+        except ValueError as exc:
+            raise ReceiptValidationError("native receipt decision is unknown") from exc
+        if receipt.tenant_id != context.org_id:
+            raise ReceiptValidationError("native receipt tenant mismatch")
+        if receipt.execution_boundary != context.execution_boundary:
+            raise ReceiptValidationError("native receipt execution boundary mismatch")
+        if receipt.proposed_action != context.action:
+            raise ReceiptValidationError("native receipt action mismatch")
+        if receipt.audit_event_hash != context.audit_hash:
+            raise ReceiptValidationError("native receipt audit hash mismatch")
+        if receipt.policy_hash != context.policy_hash:
+            raise ReceiptValidationError("native receipt policy hash mismatch")
+        if receipt.policy_bundle_id != context.policy_bundle_id:
+            raise ReceiptValidationError("native receipt policy bundle mismatch")
+        if receipt.validator_role != context.validator_role:
+            raise ReceiptValidationError("native receipt validator role mismatch")
+        if receipt.authority != context.authority:
+            raise ReceiptValidationError("native receipt authority mismatch")
+        if receipt.actor != context.actor:
+            raise ReceiptValidationError("native receipt actor mismatch")
+        if receipt.validator_id == receipt.actor:
+            raise ReceiptValidationError("native receipt self-validation")
+        if context.args is not None and receipt.argument_hash != sha256_json(dict(context.args)):
+            raise ReceiptValidationError("native receipt argument hash mismatch")
+        now_iso = issued.isoformat()
+        try:
+            current_dt = datetime.fromisoformat(now_iso)
+            expires_dt = datetime.fromisoformat(receipt.expires_at)
+        except (ValueError, TypeError) as exc:
+            raise ReceiptValidationError("native receipt expiry is malformed") from exc
+        if current_dt.tzinfo is None or expires_dt.tzinfo is None or current_dt > expires_dt:
+            raise ReceiptValidationError("native receipt expiry is invalid")
 
     def _assert_verifier_map_ready(self) -> None:
         if not self.verifiers:
@@ -677,7 +733,8 @@ class DatabaseNativeReceiptStore:
     ) -> NativeDecisionReceiptRow:
         projection = _safe_projection(receipt)
         self.trust.assert_ready()
-        self.trust.verify(receipt, context, now=now)
+        self.trust._verify_lifetime(receipt, now=now)
+        self.trust.verify_historical(receipt, context)
         existing = self.session.scalar(
             select(NativeDecisionReceiptRow).where(
                 NativeDecisionReceiptRow.org_id == context.org_id,
@@ -725,7 +782,8 @@ class DatabaseNativeReceiptStore:
         projection = _safe_projection(receipt)
         artifact, artifact_hash = _safe_receipt_artifact(receipt)
         self.trust.assert_ready()
-        self.trust.verify(receipt, context, now=now)
+        self.trust._verify_lifetime(receipt, now=now)
+        self.trust.verify_historical(receipt, context)
         existing = self.session.scalar(
             select(NativeDecisionReceiptRow).where(
                 NativeDecisionReceiptRow.org_id == context.org_id,
@@ -949,8 +1007,8 @@ def verify_native_evidence_chain(
             select(NativeReceiptConsumption).where(NativeReceiptConsumption.org_id == org_id)
         )
     )
-    executable_hashes = {
-        event.event_hash for event in events if _is_executable_native_allow_event(org_id, event)
+    native_event_hashes = {
+        event.event_hash for event in events if _is_native_managed_receipt_event(org_id, event)
     }
     row_hashes = [row.audit_event_hash for row in rows]
     if len(row_hashes) != len(set(row_hashes)):
@@ -958,13 +1016,13 @@ def verify_native_evidence_chain(
     artifact_hashes = [row.receipt_artifact_hash for row in rows if row.receipt_artifact_hash]
     if len(artifact_hashes) != len(set(artifact_hashes)):
         raise ReceiptValidationError("native evidence contains duplicate receipt artifacts")
-    missing = executable_hashes - set(row_hashes)
-    extra = set(row_hashes) - executable_hashes
+    missing = native_event_hashes - set(row_hashes)
+    extra = set(row_hashes) - native_event_hashes
     if missing:
-        raise ReceiptValidationError("native evidence missing executable ALLOW receipt artifact")
+        raise ReceiptValidationError("native evidence missing governance receipt artifact")
     if extra:
         raise ReceiptValidationError(
-            "native evidence has receipt artifact without executable event"
+            "native evidence has receipt artifact without managed governance event"
         )
     for row in rows:
         _verify_native_row(
@@ -1180,6 +1238,16 @@ def _is_executable_native_allow_event(org_id: str, event: GovernanceEvent) -> bo
     )
 
 
+def _is_native_managed_receipt_event(org_id: str, event: GovernanceEvent) -> bool:
+    return (
+        event.org_id == org_id
+        and event.tool == "database.agent.create"
+        and event.payload.get("tool") == "database.agent.create"
+        and event.decision in {"allow", "deny", "escalate"}
+        and event.payload.get("decision") == event.decision
+    )
+
+
 def _verify_native_row(
     row: NativeDecisionReceiptRow,
     *,
@@ -1222,13 +1290,16 @@ def _verify_native_row(
     if event is None:
         raise ReceiptValidationError("native receipt audit event is missing from governance chain")
     _verify_receipt_event_equivalence(receipt, event)
-    _verify_consumption(
-        row,
-        receipt,
-        consumptions,
-        trust=trust,
-        consumption_trust=consumption_trust,
-    )
+    if _is_executable_native_allow_event(row.org_id, event):
+        _verify_consumption(
+            row,
+            receipt,
+            consumptions,
+            trust=trust,
+            consumption_trust=consumption_trust,
+        )
+    elif _linked_consumptions(row, consumptions):
+        raise ReceiptValidationError("blocked native receipt has consumption evidence")
 
 
 def _verify_receipt_event_equivalence(receipt: DecisionReceipt, event: GovernanceEvent) -> None:
@@ -1264,17 +1335,15 @@ def _verify_consumption(
     trust: ManagedNativeReceiptTrust,
     consumption_trust: ManagedConsumptionAttestationTrust,
 ) -> None:
-    consumption_rows = [
-        consumption
-        for consumption in consumptions
-        if consumption.org_id == row.org_id
-        and consumption.native_receipt_id == row.id
-        and consumption.receipt_hash == receipt.receipt_hash
-        and consumption.audit_event_hash == receipt.audit_event_hash
-    ]
+    consumption_rows = _linked_consumptions(row, consumptions)
     if len(consumption_rows) != 1:
         raise ReceiptValidationError("native receipt lacks exact consumption evidence")
     consumption = consumption_rows[0]
+    if (
+        consumption.receipt_hash != receipt.receipt_hash
+        or consumption.audit_event_hash != receipt.audit_event_hash
+    ):
+        raise ReceiptValidationError("native consumption scalar binding mismatch")
     artifact = consumption.attestation_artifact
     artifact_hash = consumption.attestation_artifact_hash
     algorithm = consumption.attestation_signature_algorithm
@@ -1323,3 +1392,14 @@ def _verify_consumption(
         attestor_key_id=key_id,
         attestor_verifier=consumption_trust.verifiers.get(key_id),
     )
+
+
+def _linked_consumptions(
+    row: NativeDecisionReceiptRow,
+    consumptions: list[NativeReceiptConsumption],
+) -> list[NativeReceiptConsumption]:
+    return [
+        consumption
+        for consumption in consumptions
+        if consumption.org_id == row.org_id and consumption.native_receipt_id == row.id
+    ]

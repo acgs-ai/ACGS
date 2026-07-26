@@ -96,7 +96,7 @@ def _assert_disposable_database(connection: Connection) -> None:
 
 
 def _reset_public_schema() -> None:
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.begin() as connection:
             _assert_disposable_database(connection)
@@ -141,7 +141,7 @@ def _isolated_postgresql_schema(request: pytest.FixtureRequest) -> Iterator[None
 
 
 def _table_names() -> set[str]:
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.connect() as connection:
             return set(sa.inspect(connection).get_table_names(schema="public"))
@@ -155,7 +155,7 @@ def _try_advisory_xact_lock(connection: Connection) -> bool:
 
 def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
     """Capture the disposable public schema and every controlled test row."""
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.connect() as connection:
             catalog = connection.execute(
@@ -436,7 +436,7 @@ def test_catalog_snapshot_captures_public_non_table_objects_for_side_effect_chec
 
 def _seed_exact_legacy_v0_schema() -> None:
     """Create only the frozen legacy tables for an adoption/rollback probe."""
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         Base.metadata.create_all(engine)
     finally:
@@ -524,7 +524,7 @@ def test_postgresql_duplicate_active_trust_roots_are_rejected_by_the_partial_ind
         "created_at": created_at,
     }
 
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.begin() as connection:
             _seed_trust_scope_parents(connection, created_at)
@@ -599,13 +599,14 @@ def test_postgresql_duplicate_active_trust_roots_are_rejected_by_the_partial_ind
 
 
 def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() -> None:
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
     assert result.after.state is DatabaseSchemaState.VERSION_0010
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0010
 
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.connect() as connection:
             inspector = sa.inspect(connection)
@@ -739,10 +740,11 @@ def test_postgresql_casted_boolean_check_widening_is_unknown(
 
 
 def test_postgresql_classifier_rejects_single_column_outbox_event_foreign_key() -> None:
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
 
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -761,15 +763,16 @@ def test_postgresql_classifier_rejects_single_column_outbox_event_foreign_key() 
     finally:
         engine.dispose()
 
-    malformed = inspect_schema(_TEST_POSTGRES_URL)
+    malformed = inspect_schema(test_url)
     assert malformed.state is DatabaseSchemaState.UNKNOWN
     assert malformed.detail == "audit_projection_outbox has unexpected foreign keys"
 
 
 def test_postgresql_classifier_rejects_flattened_native_assurance_check() -> None:
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.begin() as connection:
             connection.execute(
@@ -788,24 +791,25 @@ def test_postgresql_classifier_rejects_flattened_native_assurance_check() -> Non
     finally:
         engine.dispose()
 
-    malformed = inspect_schema(_TEST_POSTGRES_URL)
+    malformed = inspect_schema(test_url)
     assert malformed.state is DatabaseSchemaState.UNKNOWN
     assert malformed.detail == "native_decision_receipts has unexpected check constraints"
 
 
 def test_postgresql_lock_contention_rejects_before_schema_mutation_then_retries() -> None:
-    holder_engine = make_engine(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    holder_engine = make_engine(test_url)
     try:
         with holder_engine.connect() as holder:
             with holder.begin():
                 assert _try_advisory_xact_lock(holder)
                 with pytest.raises(MigrationLockUnavailable, match="migration lock is held"):
-                    upgrade_database(_TEST_POSTGRES_URL)
+                    upgrade_database(test_url)
 
-                assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+                assert inspect_schema(test_url).state is DatabaseSchemaState.EMPTY
                 assert _table_names() == set()
 
-        result = upgrade_database(_TEST_POSTGRES_URL)
+        result = upgrade_database(test_url)
     finally:
         holder_engine.dispose()
 
@@ -815,12 +819,18 @@ def test_postgresql_lock_contention_rejects_before_schema_mutation_then_retries(
 def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    test_url = _postgres_url()
     _seed_exact_legacy_v0_schema()
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.LEGACY_V0
+    assert inspect_schema(test_url).state is DatabaseSchemaState.LEGACY_V0
 
     original_upgrade = migration_module.command.upgrade
 
-    def _run_actual_upgrade_then_fail(config: object, revision: str, **kwargs: object) -> None:
+    def _run_actual_upgrade_then_fail(
+        config: migration_module.Config,
+        revision: str,
+        sql: bool = False,
+        tag: str | None = None,
+    ) -> None:
         assert isinstance(config, migration_module.Config)
         injected_connection = config.attributes["connection"]
         assert isinstance(injected_connection, Connection)
@@ -830,7 +840,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
             == LEGACY_V0_REVISION
         )
 
-        observer_engine = make_engine(_TEST_POSTGRES_URL)
+        observer_engine = make_engine(test_url)
         try:
             with observer_engine.connect() as observer:
                 # The legacy stamp is inside the outer transaction and cannot
@@ -844,7 +854,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
         finally:
             observer_engine.dispose()
 
-        original_upgrade(config, revision, **kwargs)
+        original_upgrade(config, revision, sql=sql, tag=tag)
         assert (
             injected_connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
             == HEAD_REVISION
@@ -856,9 +866,9 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
         with pytest.raises(
             RuntimeError, match="injected failure after actual PostgreSQL Alembic upgrade"
         ):
-            upgrade_database(_TEST_POSTGRES_URL)
+            upgrade_database(test_url)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.LEGACY_V0
+    assert inspect_schema(test_url).state is DatabaseSchemaState.LEGACY_V0
     assert _table_names() == {
         "agents",
         "compliance_exports",
@@ -868,7 +878,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
         "users",
     }
 
-    lock_probe_engine = make_engine(_TEST_POSTGRES_URL)
+    lock_probe_engine = make_engine(test_url)
     try:
         with lock_probe_engine.connect() as connection:
             with connection.begin():
@@ -876,18 +886,19 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
     finally:
         lock_probe_engine.dispose()
 
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    result = upgrade_database(test_url)
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
     assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_raw_postgresql_alembic_commands_reject_before_schema_or_version_mutation() -> None:
+    test_url = _postgres_url()
     with pytest.raises(MigrationPreflightError, match="Refusing a raw Alembic operation"):
-        command.upgrade(migration_config(_TEST_POSTGRES_URL), "head")
+        command.upgrade(migration_config(test_url), "head")
     with pytest.raises(MigrationPreflightError, match="Refusing a raw Alembic operation"):
-        command.stamp(migration_config(_TEST_POSTGRES_URL), LEGACY_V0_REVISION)
+        command.stamp(migration_config(test_url), LEGACY_V0_REVISION)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+    assert inspect_schema(test_url).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
 
 
@@ -895,17 +906,18 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A same-named parent outside ``public`` must never satisfy the frozen contract."""
-    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    cleanup_engine = make_engine(test_url)
     try:
         with cleanup_engine.begin() as connection:
             connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
     finally:
         cleanup_engine.dispose()
 
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
 
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.begin() as connection:
             connection.execute(sa.text("CREATE SCHEMA shadow"))
@@ -922,17 +934,17 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
     finally:
         engine.dispose()
 
-    malformed = inspect_schema(_TEST_POSTGRES_URL)
+    malformed = inspect_schema(test_url)
     assert malformed.state is DatabaseSchemaState.UNKNOWN
     assert malformed.detail == "users has unexpected foreign keys"
     before = _catalog_and_data_snapshot()
 
     with pytest.raises(MigrationPreflightError, match="users has unexpected foreign keys"):
-        upgrade_database(_TEST_POSTGRES_URL)
+        upgrade_database(test_url)
     with pytest.raises(MigrationPreflightError, match="Refusing a raw Alembic operation"):
-        command.stamp(migration_config(_TEST_POSTGRES_URL), HEAD_REVISION)
+        command.stamp(migration_config(test_url), HEAD_REVISION)
 
-    observed_engine = make_engine(_TEST_POSTGRES_URL)
+    observed_engine = make_engine(test_url)
     statements: list[str] = []
 
     @sa.event.listens_for(observed_engine, "before_cursor_execute")
@@ -951,7 +963,7 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
     with pytest.raises(StartupSchemaPreflightError) as stopped:
         create_app(
             Settings(
-                database_url=_TEST_POSTGRES_URL,
+                database_url=test_url,
                 audit_dir=audit_dir,
                 create_tables=False,
                 runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
@@ -961,10 +973,10 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
     assert stopped.value.schema_state is DatabaseSchemaState.UNKNOWN
     assert statements
     assert _catalog_and_data_snapshot() == before
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.UNKNOWN
+    assert inspect_schema(test_url).state is DatabaseSchemaState.UNKNOWN
     assert not audit_dir.exists()
 
-    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    cleanup_engine = make_engine(test_url)
     try:
         with cleanup_engine.begin() as connection:
             connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
@@ -976,16 +988,17 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A complete same-name shadow schema must not become the runtime schema."""
-    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    cleanup_engine = make_engine(test_url)
     try:
         with cleanup_engine.begin() as connection:
             connection.execute(sa.text("DROP SCHEMA IF EXISTS shadow CASCADE"))
     finally:
         cleanup_engine.dispose()
 
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.begin() as connection:
             connection.execute(sa.text("CREATE SCHEMA shadow"))
@@ -1040,7 +1053,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
         engine.dispose()
 
     before = _catalog_and_data_snapshot()
-    hostile_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
+    hostile_url = f"{test_url}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
     assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0010
     session_factory_calls = {"count": 0}
 
@@ -1065,7 +1078,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
         app.state.engine.dispose()
 
     assert _catalog_and_data_snapshot() == before
-    check_engine = make_engine(_TEST_POSTGRES_URL)
+    check_engine = make_engine(test_url)
     try:
         with check_engine.connect() as connection:
             assert connection.scalar(sa.text("SELECT id FROM shadow.sentinel")) == 11
@@ -1075,7 +1088,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
     assert session_factory_calls == {"count": 0}
     assert not (tmp_path / "audit").exists()
 
-    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    cleanup_engine = make_engine(test_url)
     try:
         with cleanup_engine.begin() as connection:
             connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
@@ -1084,16 +1097,17 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
 
 def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Path) -> None:
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(test_url)
     try:
         with engine.begin() as connection:
             connection.execute(sa.text("CREATE SCHEMA shadow"))
     finally:
         engine.dispose()
 
-    public_first_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dpublic%2Cshadow%2Cpg_catalog"
+    public_first_url = f"{test_url}?options=-csearch_path%3Dpublic%2Cshadow%2Cpg_catalog"
     app = create_app(
         Settings(
             database_url=public_first_url,
@@ -1118,7 +1132,7 @@ def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Pat
     finally:
         app.state.engine.dispose()
 
-    cleanup_engine = make_engine(_TEST_POSTGRES_URL)
+    cleanup_engine = make_engine(test_url)
     try:
         with cleanup_engine.begin() as connection:
             connection.execute(sa.text("DROP SCHEMA shadow CASCADE"))
@@ -1413,8 +1427,7 @@ def _start_worker_streams(
 
 def _launch_migration_worker(workers: list[_MigrationWorker], mode: str) -> _MigrationWorker:
     environment = os.environ.copy()
-    assert _TEST_POSTGRES_URL is not None
-    environment["ACP_TEST_POSTGRES_URL"] = _TEST_POSTGRES_URL
+    environment["ACP_TEST_POSTGRES_URL"] = _postgres_url()
     process = subprocess.Popen(
         [sys.executable, str(_WORKER_SCRIPT), mode],
         cwd=_WORKER_SCRIPT.parents[1],
@@ -1624,7 +1637,7 @@ def migration_workers() -> Iterator[list[_MigrationWorker]]:
 
 
 def _observe_migration_lock() -> tuple[int, set[int]]:
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.connect() as connection:
             _assert_disposable_database(connection)
@@ -1657,7 +1670,7 @@ def _observe_migration_lock() -> tuple[int, set[int]]:
 
 
 def _backend_is_active(backend_pid: int) -> bool:
-    engine = make_engine(_TEST_POSTGRES_URL)
+    engine = make_engine(_postgres_url())
     try:
         with engine.connect() as connection:
             _assert_disposable_database(connection)
@@ -2075,7 +2088,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert contender_backend_pid not in {owner_backend_pid, observer_pid}
     assert _wait_worker(contender) == 3
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
     _, lock_pids = _observe_migration_lock()
     assert lock_pids == {owner_backend_pid}
@@ -2088,7 +2101,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert _wait_worker(owner) == 0
     _wait_for_backend_and_lock_release(owner_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
 
     retry = _launch_migration_worker(migration_workers, "ordinary")
@@ -2103,7 +2116,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.VERSION_0010
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -2122,14 +2135,14 @@ def _exercise_forced_termination_rollback_and_lock_release(
     observer_pid, lock_pids = _observe_migration_lock()
     assert lock_pids == {owner_backend_pid}
     assert observer_pid != owner_backend_pid
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
 
     owner.process.kill()
     _assert_forced_termination_return_code(_wait_worker(owner), platform=platform)
     _wait_for_backend_and_lock_release(owner_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.EMPTY
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.EMPTY
     assert _table_names() == set()
     _, lock_pids = _observe_migration_lock()
     assert lock_pids == set()
@@ -2142,7 +2155,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(_postgres_url()).state is DatabaseSchemaState.VERSION_0010
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -2172,7 +2185,7 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
     if state == "empty":
         return DatabaseSchemaState.EMPTY
     if state == "unknown":
-        engine = make_engine(_TEST_POSTGRES_URL)
+        engine = make_engine(_postgres_url())
         try:
             with engine.begin() as connection:
                 connection.execute(sa.text("CREATE TABLE unexpected (id INTEGER PRIMARY KEY)"))
@@ -2181,8 +2194,8 @@ def _seed_postgresql_startup_state(state: str) -> DatabaseSchemaState:
             engine.dispose()
         return DatabaseSchemaState.UNKNOWN
 
-    upgrade_database(_TEST_POSTGRES_URL)
-    engine = make_engine(_TEST_POSTGRES_URL)
+    upgrade_database(_postgres_url())
+    engine = make_engine(_postgres_url())
     try:
         with engine.begin() as connection:
             for table_name in (
@@ -2287,9 +2300,10 @@ def test_postgresql_schema_managed_startup_rejects_noncurrent_schema_without_mut
     seed_state: str,
 ) -> None:
     expected_state = _seed_postgresql_startup_state(seed_state)
-    assert inspect_schema(_TEST_POSTGRES_URL).state is expected_state
+    test_url = _postgres_url()
+    assert inspect_schema(test_url).state is expected_state
     before = _catalog_and_data_snapshot()
-    observed_engine = make_engine(_TEST_POSTGRES_URL)
+    observed_engine = make_engine(test_url)
     statements: list[str] = []
 
     @sa.event.listens_for(observed_engine, "before_cursor_execute")
@@ -2308,7 +2322,7 @@ def test_postgresql_schema_managed_startup_rejects_noncurrent_schema_without_mut
     with pytest.raises(StartupSchemaPreflightError) as stopped:
         create_app(
             Settings(
-                database_url=_TEST_POSTGRES_URL,
+                database_url=test_url,
                 audit_dir=audit_dir,
                 create_tables=False,
                 runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
@@ -2332,14 +2346,15 @@ def test_postgresql_schema_managed_startup_rejects_noncurrent_schema_without_mut
         & mutation_verbs
     )
     assert _catalog_and_data_snapshot() == before
-    assert inspect_schema(_TEST_POSTGRES_URL).state is expected_state
+    assert inspect_schema(test_url).state is expected_state
     assert not audit_dir.exists()
 
 
 def test_postgresql_exact_head_production_is_blocked_before_persistence_and_local_is_not_ready(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    result = upgrade_database(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    result = upgrade_database(test_url)
     assert result.after.state is DatabaseSchemaState.VERSION_0010
     before = _catalog_and_data_snapshot()
     audit_dir = tmp_path / "audit"
@@ -2354,7 +2369,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         with pytest.raises(ProductionPostureBlocked) as stopped:
             create_app(
                 Settings(
-                    database_url=_TEST_POSTGRES_URL,
+                    database_url=test_url,
                     audit_dir=audit_dir,
                     create_tables=False,
                     runtime_posture=RuntimePosture.PRODUCTION,
@@ -2365,7 +2380,8 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
     ]
     # Master aliases every legacy write under /v1, and this branch governs agent
-    # registration with receipt v2, so that route pair leaves the legacy set.
+    # registration with signed native receipts, so that route pair leaves the
+    # legacy set.
     assert len(legacy_routes) == 12
     assert {blocker.route for blocker in legacy_routes} == {
         "PATCH /orgs/{org_id}/agents/{agent_id}/status",
@@ -2381,12 +2397,12 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         "POST /orgs/{org_id}/users",
         "POST /v1/orgs/{org_id}/users",
     }
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0010
     assert not audit_dir.exists()
 
     app = create_app(
         Settings(
-            database_url=_TEST_POSTGRES_URL,
+            database_url=test_url,
             audit_dir=audit_dir,
             create_tables=False,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
@@ -2411,8 +2427,9 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
 
 def test_postgresql_concurrent_native_receipt_executes_at_most_one_committed_effect() -> None:
     """The receipt-row lock serializes consumers before the protected SQL effect."""
-    upgrade_database(_TEST_POSTGRES_URL)
-    engine = make_engine(_TEST_POSTGRES_URL)
+    test_url = _postgres_url()
+    upgrade_database(test_url)
+    engine = make_engine(test_url)
     signer = Ed25519Signer.generate(key_id="postgres-native-key")
     attestor = Ed25519Signer.generate(key_id="postgres-native-consumption-attestor")
     trust = ManagedNativeReceiptTrust(

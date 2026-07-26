@@ -177,6 +177,8 @@ class ReceiptSummary(BaseModel):
     policy_version: str
     audit_hash: str
     created_at: datetime
+    assurance_class: str | None = None
+    source_system: str | None = None
 
 
 class ReceiptDetail(ReceiptSummary):
@@ -184,6 +186,10 @@ class ReceiptDetail(ReceiptSummary):
     result_hash: str | None
     error_class: str | None
     payload: dict[str, Any]
+    execution_boundary: str | None = None
+    policy_hash: str | None = None
+    receipt_hash: str | None = None
+    evidence_profile: str | None = None
 
 
 class ReceiptListResponse(BaseModel):
@@ -201,6 +207,8 @@ class ReceiptVerifyResponse(BaseModel):
     chain_checked: int
     anchor_matched: bool
     failures: list[dict[str, Any]]
+    assurance_class: str | None = None
+    source_system: str | None = None
 
 
 class DashboardResponse(BaseModel):

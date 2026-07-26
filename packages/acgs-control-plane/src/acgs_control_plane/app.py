@@ -14,17 +14,24 @@ Layering per request:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
+from collections import Counter
 from collections.abc import Iterator
-from datetime import datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from gove_zone.decision import Decision, sha256_json
+from gove_zone.errors import ProductionProfileError, ReceiptValidationError
+from gove_zone.executor import execute_with_receipt
 from gove_zone.policy import RuleSetPolicy
+from gove_zone.receipt import Validator
 from gove_zone.tool import ToolCall, normalize_path_context
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -54,11 +61,13 @@ from acgs_control_plane.db import make_engine, make_session_factory
 from acgs_control_plane.exports import build_export_bundle
 from acgs_control_plane.governance import (
     AuditReadError,
+    DatabaseGovernanceEventAppender,
     GovernanceMembrane,
     PolicyDeniedError,
     PolicyEscalatedError,
     PostureBlocker,
     ProductionPostureBlocked,
+    baseline_policy,
     existing_org_audit_store,
     load_active_policy,
     production_blockers,
@@ -76,11 +85,25 @@ from acgs_control_plane.migrations import (
 from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
+    Environment,
+    GovernanceEventHead,
+    NativeDecisionReceiptRow,
     Organization,
     PolicyBundle,
     ReceiptRow,
     User,
     new_id,
+)
+from acgs_control_plane.native_receipts import (
+    DatabaseNativeReceiptStore,
+    DatabaseReceiptConsumptionLedger,
+    ManagedConsumptionAttestationTrust,
+    ManagedNativeReceiptTrust,
+    NativeReceiptContext,
+    TenantPrivacyProvider,
+    native_receipt_pseudonym,
+    native_receipt_reference,
+    verify_native_evidence_chain,
 )
 from acgs_control_plane.pagination import (
     CURSOR_TOKEN_MAX_LENGTH,
@@ -116,7 +139,15 @@ from acgs_control_plane.schemas import (
     UserResponse,
     V1MetadataResponse,
 )
-from acgs_control_plane.scope_defaults import ensure_legacy_default_scope
+from acgs_control_plane.scope_defaults import (
+    LEGACY_DEFAULT_ENVIRONMENT_NAME,
+    LEGACY_DEFAULT_ENVIRONMENT_SLUG,
+    LEGACY_DEFAULT_PROJECT_NAME,
+    LEGACY_DEFAULT_PROJECT_SLUG,
+    ensure_legacy_default_scope,
+    legacy_default_environment_id,
+    legacy_default_project_id,
+)
 from acgs_control_plane.tenant_bootstrap import (
     BOOTSTRAP_AUTHORIZATION_HEADER,
     BOOTSTRAP_IDEMPOTENCY_HEADER,
@@ -290,6 +321,26 @@ def _membrane(request: Request, session: Session, org: Organization, principal: 
     return GovernanceMembrane(session, settings.audit_dir, org.id, principal)
 
 
+def _existing_legacy_default_environment(session: Session, org_id: str) -> Environment | None:
+    project_id = legacy_default_project_id(org_id)
+    environment_id = legacy_default_environment_id(org_id)
+    return session.execute(
+        select(Environment).where(
+            Environment.org_id == org_id,
+            Environment.id == environment_id,
+            Environment.project_id == project_id,
+            Environment.slug == LEGACY_DEFAULT_ENVIRONMENT_SLUG,
+            Environment.name == LEGACY_DEFAULT_ENVIRONMENT_NAME,
+            Environment.project.has(
+                org_id=org_id,
+                id=project_id,
+                slug=LEGACY_DEFAULT_PROJECT_SLUG,
+                name=LEGACY_DEFAULT_PROJECT_NAME,
+            ),
+        )
+    ).scalar_one_or_none()
+
+
 def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse:
     receipt = exc.receipt  # type: ignore[attr-defined]
     reason = exc.reason  # type: ignore[attr-defined]
@@ -315,6 +366,36 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
 # ---------------------------------------------------------------------------
 
 
+class NativeAgentTransactionProviders:
+    """Explicit trust material for the native agent-create SQL transaction path."""
+
+    def __init__(
+        self,
+        *,
+        receipt_trust: ManagedNativeReceiptTrust,
+        consumption_trust: ManagedConsumptionAttestationTrust,
+        privacy: TenantPrivacyProvider,
+    ) -> None:
+        self.receipt_trust = receipt_trust
+        self.consumption_trust = consumption_trust
+        self.privacy = privacy
+
+    def preflight(self) -> object:
+        self.receipt_trust.assert_ready()
+        self.consumption_trust.assert_ready()
+        issuer = self.receipt_trust.signer
+        attestor = self.consumption_trust.signer
+        if issuer is None or attestor is None:
+            raise ProductionProfileError("native agent transaction trust material missing")
+        if issuer.key_id == attestor.key_id:
+            raise ProductionProfileError("native issuer and attestor key ids must differ")
+        issuer_public = issuer.public_bytes()
+        attestor_public = attestor.public_bytes()
+        if issuer_public == attestor_public:
+            raise ProductionProfileError("native issuer and attestor public keys must differ")
+        return {"component": "native-agent-transaction", "ready": True}
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -328,6 +409,7 @@ def create_app(
     agent_registration_issuer: Any | None = None,
     agent_registration_receipt_sealer: Any | None = None,
     agent_registration_receipt_issuer: Any | None = None,
+    native_agent_transaction: NativeAgentTransactionProviders | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -337,6 +419,7 @@ def create_app(
         "No valid Decision Receipt, no side effect.",
     )
     app.state.settings = settings
+    app.state.native_agent_transaction = native_agent_transaction
     app.add_middleware(
         RequestAdmissionMiddleware,
         max_request_body_bytes=settings.max_request_body_bytes,
@@ -545,7 +628,23 @@ def create_app(
                 ),
             )
         )
-    blockers = production_blockers(drift, production_providers)
+    native_provider_blockers: tuple[PostureBlocker, ...]
+    if native_agent_transaction is None:
+        native_provider_blockers = (
+            PostureBlocker("PROVIDER_PREFLIGHT_MISSING", "native-agent-transaction"),
+        )
+    else:
+        try:
+            native_agent_transaction.preflight()
+        except (ProductionProfileError, ReceiptValidationError, ValueError):
+            native_provider_blockers = (
+                PostureBlocker("PROVIDER_PREFLIGHT_FAILED", "native-agent-transaction"),
+            )
+        else:
+            native_provider_blockers = ()
+    blockers = tuple(
+        sorted((*production_blockers(drift, production_providers), *native_provider_blockers))
+    )
     app.state.readiness_blockers = blockers
     if settings.runtime_posture is RuntimePosture.PRODUCTION:
         raise ProductionPostureBlocked(blockers)
@@ -844,27 +943,213 @@ def _register_routes(app: FastAPI) -> None:
         body: AgentRegisterRequest,
         org: OrgDep,
         request: Request,
-        _session: SessionDep,
+        session: SessionDep,
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
     ) -> AgentResponse:
-        service: AgentRegistrationService = request.app.state.agent_registration_service
-        result = service.register(
+        dup = session.execute(
+            select(AgentRecord).where(AgentRecord.org_id == org.id, AgentRecord.name == body.name)
+        ).scalar_one_or_none()
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="agent name already exists in org")
+
+        providers = request.app.state.native_agent_transaction
+        if not isinstance(providers, NativeAgentTransactionProviders):
+            raise HTTPException(
+                status_code=503,
+                detail="native agent transaction providers missing",
+            )
+        try:
+            providers.preflight()
+        except (ProductionProfileError, ReceiptValidationError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="native agent transaction providers refused",
+            ) from exc
+
+        environment = _existing_legacy_default_environment(session, org.id)
+        if environment is None:
+            raise HTTPException(status_code=503, detail="native agent scope unavailable")
+
+        policy_row = session.execute(
+            select(PolicyBundle).where(
+                PolicyBundle.org_id == org.id,
+                PolicyBundle.environment_id == environment.id,
+                PolicyBundle.status == "active",
+            )
+        ).scalar_one_or_none()
+        policy = (
+            RuleSetPolicy.from_dict(policy_row.bundle)
+            if policy_row is not None
+            else baseline_policy()
+        )
+        policy_bundle_value = policy_row.id if policy_row is not None else "baseline-policy"
+        policy_hash = sha256_json(policy_row.bundle if policy_row is not None else policy.to_dict())
+
+        action = "database.agent.create"
+        boundary = "control-plane/sql-transaction"
+        safe_actor = native_receipt_pseudonym(
+            "actor", principal.actor_id, tenant_id=org.id, privacy=providers.privacy
+        )
+        validator_id = native_receipt_pseudonym(
+            "validator_id",
+            f"policy-validator:{principal.org_id}",
+            tenant_id=org.id,
+            privacy=providers.privacy,
+        )
+        validator_role = native_receipt_pseudonym(
+            "validator_role",
+            "control-plane-policy-validator",
+            tenant_id=org.id,
+            privacy=providers.privacy,
+        )
+        authority = native_receipt_pseudonym(
+            "authority", f"execute:{action}", tenant_id=org.id, privacy=providers.privacy
+        )
+        policy_bundle_id = native_receipt_reference(
+            "policy_bundle_id", policy_bundle_value, tenant_id=org.id, privacy=providers.privacy
+        )
+        args = body.model_dump()
+        call = ToolCall(
+            name=action,
+            args=args,
+            actor=safe_actor,
+            goal="register agent in org registry",
+            path=(org.id, environment.project_id, environment.id),
+            state={"principal_role": principal.role.value, "trust_tier": body.trust_tier},
+        )
+        record = policy.evaluate(call)
+        record = replace(
+            record,
+            tool=action,
+            actor=safe_actor,
+            goal="",
+            path=(org.id, environment.project_id, environment.id),
+            state_hash=sha256_json(
+                {
+                    "principal_role": principal.role.value,
+                    "project_id": environment.project_id,
+                    "environment_id": environment.id,
+                    "trust_tier": body.trust_tier,
+                }
+            ),
+            decision_request_hash=sha256_json(
+                {
+                    "action": action,
+                    "argument_hash": record.argument_hash,
+                    "actor": safe_actor,
+                    "boundary": boundary,
+                    "environment_id": environment.id,
+                    "org_id": org.id,
+                    "policy_hash": policy_hash,
+                    "project_id": environment.project_id,
+                }
+            ),
+            matched_rules=tuple(sha256_json(rule) for rule in record.matched_rules),
+        )
+        event_payload = DatabaseGovernanceEventAppender(session, org.id).append(record)
+        if record.decision not in {Decision.ALLOW, Decision.DENY, Decision.ESCALATE}:
+            session.rollback()
+            raise HTTPException(status_code=403, detail="unsupported native governance decision")
+
+        context = NativeReceiptContext(
             org_id=org.id,
-            principal=principal,
-            audit_dir=request.app.state.settings.audit_dir,
-            body=body,
+            execution_boundary=boundary,
+            actor=safe_actor,
+            action=action,
+            policy_bundle_id=policy_bundle_id,
+            policy_hash=policy_hash,
+            audit_hash=str(event_payload["event_hash"]),
+            args=args,
+            validator_role=validator_role,
+            authority=authority,
         )
-        return AgentResponse(
-            agent_id=result.agent_id,
-            org_id=result.org_id,
-            name=result.name,
-            description=result.description,
-            trust_tier=result.trust_tier,
-            allowed_tools=result.allowed_tools,
-            status=result.status,
-            created_at=result.created_at,
-            receipt_id=result.receipt_id,
+        issued = datetime.now(UTC)
+        receipt = providers.receipt_trust.mint(
+            record,
+            audit_hash=str(event_payload["event_hash"]),
+            previous_audit_hash=str(event_payload["previous_hash"]),
+            tenant_id=org.id,
+            execution_boundary=boundary,
+            policy_bundle_id=policy_bundle_id,
+            policy_hash=policy_hash,
+            request_id=hashlib.sha256(request_id_from_scope(request.scope).encode()).hexdigest(),
+            validator=Validator(validator_id, validator_role),
+            authority=authority,
+            expires_at=(issued + timedelta(minutes=2)).isoformat(),
+            now=issued,
         )
+        DatabaseNativeReceiptStore(session, trust=providers.receipt_trust).persist_verifiable(
+            receipt,
+            context,
+            now=issued,
+        )
+        if record.decision is Decision.DENY:
+            session.commit()
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "status": "denied",
+                    "reason": record.reason,
+                    "receipt_id": receipt.receipt_id,
+                    "decision": record.decision.value,
+                    "request_id": request_id_from_scope(request.scope),
+                },
+            )  # type: ignore[return-value]
+        if record.decision is Decision.ESCALATE:
+            session.commit()
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "pending_approval",
+                    "reason": record.reason,
+                    "receipt_id": receipt.receipt_id,
+                    "decision": record.decision.value,
+                    "request_id": request_id_from_scope(request.scope),
+                },
+            )  # type: ignore[return-value]
+
+        def _do(
+            name: str, description: str, trust_tier: str, allowed_tools: list[str]
+        ) -> AgentRecord:
+            rec = AgentRecord(
+                org_id=org.id,
+                project_id=environment.project_id,
+                environment_id=environment.id,
+                name=name,
+                description=description,
+                trust_tier=trust_tier,
+                allowed_tools=allowed_tools,
+            )
+            session.add(rec)
+            session.flush()
+            return rec
+
+        rec = execute_with_receipt(
+            _do,
+            args,
+            receipt,
+            expected_tenant_id=org.id,
+            expected_execution_boundary=boundary,
+            expected_action=action,
+            expected_actor=safe_actor,
+            expected_audit_hash=str(event_payload["event_hash"]),
+            expected_policy_hash=policy_hash,
+            expected_policy_bundle_id=policy_bundle_id,
+            expected_validator_role=validator_role,
+            expected_authority=authority,
+            verifier=providers.receipt_trust.verifiers,
+            require_signature=True,
+            require_expiry=True,
+            revoked_keys=providers.receipt_trust.revoked_keys,
+            consumption_ledger=DatabaseReceiptConsumptionLedger(
+                session,
+                trust=providers.receipt_trust,
+                consumption_trust=providers.consumption_trust,
+                context=context,
+            ),
+        )
+        session.commit()
+        return _agent_response(rec, receipt_id=receipt.receipt_id)
 
     @app.get("/orgs/{org_id}/agents", response_model=list[AgentResponse], tags=["agents"])
     def list_agents(
@@ -1060,7 +1345,11 @@ def _register_routes(app: FastAPI) -> None:
 
     # -- receipt explorer -----------------------------------------------------
 
-    @app.get("/orgs/{org_id}/receipts", response_model=ReceiptListResponse, tags=["receipts"])
+    @app.get(
+        "/orgs/{org_id}/receipts",
+        response_model=ReceiptListResponse,
+        tags=["receipts"],
+    )
     def list_receipts(
         org: OrgDep,
         request: Request,
@@ -1101,18 +1390,16 @@ def _register_routes(app: FastAPI) -> None:
         filter_digest = receipt_filter_digest(
             decision=decision, tool=tool, actor=actor, since=since, until=until
         )
-        query = select(ReceiptRow).where(ReceiptRow.org_id == org.id)
-        if decision:
-            query = query.where(ReceiptRow.decision == decision)
-        if tool:
-            query = query.where(ReceiptRow.tool == tool)
-        if actor:
-            query = query.where(ReceiptRow.actor == actor)
-        if since:
-            query = query.where(ReceiptRow.created_at >= since)
-        if until:
-            query = query.where(ReceiptRow.created_at <= until)
-        total = session.execute(select(func.count()).select_from(query.subquery())).scalar_one()
+        summaries = _receipt_summaries(
+            session,
+            org.id,
+            decision=decision,
+            tool=tool,
+            actor=actor,
+            since=since,
+            until=until,
+        )
+        total = len(summaries)
         if cursor is not None:
             settings: Settings = request.app.state.settings
             keyring = settings.cursor_keyring
@@ -1123,20 +1410,15 @@ def _register_routes(app: FastAPI) -> None:
                 org_id=org.id,
                 filter_digest=filter_digest,
             )
-            query = query.where(
-                (ReceiptRow.created_at < boundary.created_at)
-                | (
-                    (ReceiptRow.created_at == boundary.created_at)
-                    & (ReceiptRow.id < boundary.receipt_id)
+            rows = [
+                row
+                for row in summaries
+                if (_receipt_created_at_utc(row) < boundary.created_at)
+                or (
+                    _receipt_created_at_utc(row) == boundary.created_at
+                    and row.receipt_id < boundary.receipt_id
                 )
-            )
-            rows = list(
-                session.execute(
-                    query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc()).limit(
-                        limit + 1
-                    )
-                ).scalars()
-            )
+            ][: limit + 1]
             page_rows = rows[:limit]
             next_cursor = None
             if len(rows) > limit and page_rows:
@@ -1146,21 +1428,16 @@ def _register_routes(app: FastAPI) -> None:
                     org_id=org.id,
                     filter_digest=filter_digest,
                     boundary_created_at=last.created_at,
-                    boundary_receipt_id=last.id,
+                    boundary_receipt_id=last.receipt_id,
                 )
             return ReceiptListResponse(
-                items=[_receipt_summary(r) for r in page_rows],
+                items=page_rows,
                 total=total,
                 limit=limit,
                 offset=offset,
                 next_cursor=next_cursor,
             )
-        legacy_rows = session.execute(
-            query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())
-            .limit(limit)
-            .offset(offset)
-        ).scalars()
-        page_rows = list(legacy_rows)
+        page_rows = summaries[offset : offset + limit]
         next_cursor = None
         if offset == 0 and page_rows and len(page_rows) == limit and total > limit:
             settings = request.app.state.settings
@@ -1172,10 +1449,10 @@ def _register_routes(app: FastAPI) -> None:
                 org_id=org.id,
                 filter_digest=filter_digest,
                 boundary_created_at=last.created_at,
-                boundary_receipt_id=last.id,
+                boundary_receipt_id=last.receipt_id,
             )
         return ReceiptListResponse(
-            items=[_receipt_summary(r) for r in page_rows],
+            items=page_rows,
             total=total,
             limit=limit,
             offset=offset,
@@ -1183,7 +1460,10 @@ def _register_routes(app: FastAPI) -> None:
         )
 
     @app.get(
-        "/orgs/{org_id}/receipts/{receipt_id}", response_model=ReceiptDetail, tags=["receipts"]
+        "/orgs/{org_id}/receipts/{receipt_id}",
+        response_model=ReceiptDetail,
+        response_model_exclude_none=True,
+        tags=["receipts"],
     )
     def get_receipt(
         receipt_id: str,
@@ -1191,7 +1471,12 @@ def _register_routes(app: FastAPI) -> None:
         session: SessionDep,
         _p: Annotated[Principal, require(Permission.RECEIPT_READ)],
     ) -> ReceiptDetail:
-        row = _get_receipt_or_404(session, org.id, receipt_id)
+        row = _get_receipt(session, org.id, receipt_id)
+        if row is None:
+            native = _get_native_receipt(session, org.id, receipt_id)
+            if native is None:
+                raise HTTPException(status_code=404, detail="receipt not found")
+            return _native_receipt_detail(native)
         return ReceiptDetail(
             **_receipt_summary(row).model_dump(),
             argument_hash=row.argument_hash,
@@ -1203,6 +1488,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.post(
         "/orgs/{org_id}/receipts/{receipt_id}/verify",
         response_model=ReceiptVerifyResponse,
+        response_model_exclude_none=True,
         tags=["receipts"],
     )
     def verify_receipt(
@@ -1212,6 +1498,36 @@ def _register_routes(app: FastAPI) -> None:
         session: SessionDep,
         _p: Annotated[Principal, require(Permission.RECEIPT_READ)],
     ) -> ReceiptVerifyResponse:
+        native = _get_native_receipt(session, org.id, receipt_id)
+        if native is not None:
+            head = session.get(GovernanceEventHead, org.id)
+            providers = request.app.state.native_agent_transaction
+            if not isinstance(providers, NativeAgentTransactionProviders):
+                raise HTTPException(
+                    status_code=503,
+                    detail="native receipt verification providers missing",
+                )
+            failures: list[dict[str, Any]] = []
+            try:
+                providers.preflight()
+                verify_native_evidence_chain(
+                    session,
+                    org.id,
+                    trust=providers.receipt_trust,
+                    consumption_trust=providers.consumption_trust,
+                )
+            except (ProductionProfileError, ReceiptValidationError, ValueError):
+                failures.append({"type": "native_evidence_invalid"})
+            return ReceiptVerifyResponse(
+                receipt_id=receipt_id,
+                receipt_in_chain=not failures,
+                chain_valid=not failures,
+                chain_checked=0 if head is None else head.last_sequence,
+                anchor_matched=not failures,
+                failures=failures,
+                assurance_class=native.assurance_class,
+                source_system=native.source_system,
+            )
         row = _get_receipt_or_404(session, org.id, receipt_id)
         settings: Settings = request.app.state.settings
         store = existing_org_audit_store(settings.audit_dir, org.id)
@@ -1257,23 +1573,15 @@ def _register_routes(app: FastAPI) -> None:
     ) -> DashboardResponse:
         settings: Settings = request.app.state.settings
 
-        def _grouped(column: Any, top: int | None = None) -> list[tuple[str, int]]:
-            q = (
-                select(column, func.count())
-                .where(ReceiptRow.org_id == org.id)
-                .group_by(column)
-                .order_by(func.count().desc())
-            )
-            if top:
-                q = q.limit(top)
-            return [(str(k), int(v)) for k, v in session.execute(q)]
-
-        decisions = dict(_grouped(ReceiptRow.decision))
-        top_tools = [{"tool": k, "count": v} for k, v in _grouped(ReceiptRow.tool, top=10)]
-        top_actors = [{"actor": k, "count": v} for k, v in _grouped(ReceiptRow.actor, top=10)]
-        total = session.execute(
-            select(func.count()).select_from(ReceiptRow).where(ReceiptRow.org_id == org.id)
-        ).scalar_one()
+        summaries = _receipt_summaries(session, org.id)
+        decisions = dict(_receipt_summary_counts(summaries, "decision"))
+        top_tools = [
+            {"tool": k, "count": v} for k, v in _receipt_summary_counts(summaries, "tool")[:10]
+        ]
+        top_actors = [
+            {"actor": k, "count": v} for k, v in _receipt_summary_counts(summaries, "actor")[:10]
+        ]
+        total = len(summaries)
         active = session.execute(
             select(PolicyBundle.version).where(
                 PolicyBundle.org_id == org.id, PolicyBundle.status == "active"
@@ -1301,7 +1609,7 @@ def _register_routes(app: FastAPI) -> None:
             )
         return DashboardResponse(
             org_id=org.id,
-            total_receipts=int(total),
+            total_receipts=total,
             decisions=decisions,
             top_tools=top_tools,
             top_actors=top_actors,
@@ -1332,10 +1640,13 @@ def _register_routes(app: FastAPI) -> None:
 
         def _do(note: str) -> dict[str, str]:
             bundle = build_export_bundle(session, membrane, org, note=note)
+            receipt_count = len(bundle["sections"]["receipts"]) + len(
+                bundle["sections"].get("native_receipts", [])
+            )
             row = ComplianceExport(
                 org_id=org.id,
                 created_by=principal.actor_id,
-                receipt_count=len(bundle["sections"]["receipts"]),
+                receipt_count=receipt_count,
                 bundle_hash=bundle["bundle_hash"],
                 bundle=bundle,
             )
@@ -1405,12 +1716,28 @@ def _get_agent_or_404(session: Session, org_id: str, agent_id: str) -> AgentReco
 
 
 def _get_receipt_or_404(session: Session, org_id: str, receipt_id: str) -> ReceiptRow:
-    row = session.execute(
-        select(ReceiptRow).where(ReceiptRow.org_id == org_id, ReceiptRow.id == receipt_id)
-    ).scalar_one_or_none()
+    row = _get_receipt(session, org_id, receipt_id)
     if row is None:
         raise HTTPException(status_code=404, detail="receipt not found")
     return row
+
+
+def _get_receipt(session: Session, org_id: str, receipt_id: str) -> ReceiptRow | None:
+    row = session.execute(
+        select(ReceiptRow).where(ReceiptRow.org_id == org_id, ReceiptRow.id == receipt_id)
+    ).scalar_one_or_none()
+    return row
+
+
+def _get_native_receipt(
+    session: Session, org_id: str, receipt_id: str
+) -> NativeDecisionReceiptRow | None:
+    return session.execute(
+        select(NativeDecisionReceiptRow).where(
+            NativeDecisionReceiptRow.org_id == org_id,
+            NativeDecisionReceiptRow.receipt_id == receipt_id,
+        )
+    ).scalar_one_or_none()
 
 
 def _agent_response(rec: AgentRecord, receipt_id: str | None = None) -> AgentResponse:
@@ -1451,6 +1778,105 @@ def _receipt_summary(row: ReceiptRow) -> ReceiptSummary:
         policy_version=row.policy_version,
         audit_hash=row.audit_hash,
         created_at=row.created_at,
+        assurance_class="legacy",
+        source_system="legacy-jsonl",
+    )
+
+
+def _native_receipt_summary(row: NativeDecisionReceiptRow) -> ReceiptSummary:
+    return ReceiptSummary(
+        receipt_id=row.receipt_id,
+        tool=row.proposed_action,
+        decision=row.decision,
+        actor=row.actor,
+        goal="",
+        policy_version=row.policy_version,
+        audit_hash=row.audit_event_hash,
+        created_at=row.created_at,
+        assurance_class=row.assurance_class,
+        source_system=row.source_system,
+    )
+
+
+def _receipt_summaries(
+    session: Session,
+    org_id: str,
+    *,
+    decision: str | None = None,
+    tool: str | None = None,
+    actor: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[ReceiptSummary]:
+    legacy_query = select(ReceiptRow).where(ReceiptRow.org_id == org_id)
+    native_query = select(NativeDecisionReceiptRow).where(NativeDecisionReceiptRow.org_id == org_id)
+    if decision:
+        legacy_query = legacy_query.where(ReceiptRow.decision == decision)
+        native_query = native_query.where(NativeDecisionReceiptRow.decision == decision)
+    if tool:
+        legacy_query = legacy_query.where(ReceiptRow.tool == tool)
+        native_query = native_query.where(NativeDecisionReceiptRow.proposed_action == tool)
+    if actor:
+        legacy_query = legacy_query.where(ReceiptRow.actor == actor)
+        native_query = native_query.where(NativeDecisionReceiptRow.actor == actor)
+    if since:
+        legacy_query = legacy_query.where(ReceiptRow.created_at >= since)
+        native_query = native_query.where(NativeDecisionReceiptRow.created_at >= since)
+    if until:
+        legacy_query = legacy_query.where(ReceiptRow.created_at <= until)
+        native_query = native_query.where(NativeDecisionReceiptRow.created_at <= until)
+    rows = [
+        _receipt_summary(row)
+        for row in session.execute(
+            legacy_query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())
+        ).scalars()
+    ]
+    rows.extend(
+        _native_receipt_summary(row)
+        for row in session.execute(
+            native_query.order_by(
+                NativeDecisionReceiptRow.created_at.desc(),
+                NativeDecisionReceiptRow.receipt_id.desc(),
+            )
+        ).scalars()
+    )
+    return sorted(
+        rows, key=lambda row: (_receipt_created_at_utc(row), row.receipt_id), reverse=True
+    )
+
+
+def _receipt_summary_counts(rows: list[ReceiptSummary], field: str) -> list[tuple[str, int]]:
+    counts = Counter(str(getattr(row, field)) for row in rows)
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def _receipt_created_at_utc(row: ReceiptSummary) -> datetime:
+    if row.created_at.tzinfo is None:
+        return row.created_at.replace(tzinfo=UTC)
+    return row.created_at.astimezone(UTC)
+
+
+def _native_receipt_detail(row: NativeDecisionReceiptRow) -> ReceiptDetail:
+    projection = dict(row.projection)
+    return ReceiptDetail(
+        receipt_id=row.receipt_id,
+        tool=row.proposed_action,
+        decision=row.decision,
+        actor=row.actor,
+        goal="",
+        policy_version=row.policy_version,
+        audit_hash=row.audit_event_hash,
+        created_at=row.created_at,
+        assurance_class=row.assurance_class,
+        source_system=row.source_system,
+        argument_hash=str(projection.get("argument_hash", "")),
+        result_hash=None,
+        error_class=None,
+        payload=projection,
+        execution_boundary=row.execution_boundary,
+        policy_hash=row.policy_hash,
+        receipt_hash=row.receipt_hash,
+        evidence_profile=row.evidence_profile,
     )
 
 

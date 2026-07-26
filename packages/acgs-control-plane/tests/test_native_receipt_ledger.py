@@ -387,19 +387,22 @@ def test_authenticity_or_liveness_failure_executes_zero_side_effects(
 
 
 @pytest.mark.parametrize("decision", [Decision.DENY, Decision.ESCALATE])
-def test_non_allow_native_receipt_is_never_persisted_or_executable(
+def test_blocked_native_receipt_persists_but_is_never_executable(
     engine: sa.Engine, signer: Ed25519Signer, attestor: Ed25519Signer, decision: Decision
 ) -> None:
     receipt = _receipt(signer, decision=decision)
     trust = _trust(signer)
     context = _context()
     with Session(engine) as session:
-        with pytest.raises(ReceiptValidationError):
-            DatabaseNativeReceiptStore(session, trust=trust).persist(receipt, context)
+        row = DatabaseNativeReceiptStore(session, trust=trust).persist(receipt, context)
+        assert row.decision == decision.value
+        assert row.projection["decision"] == decision.value
         with pytest.raises(ReceiptValidationError):
             _execute(session, receipt, trust, context, attestor)
-        session.rollback()
-        assert _counts(session) == (0, 0, 0)
+        session.commit()
+
+    with Session(engine) as session:
+        assert _counts(session) == (1, 0, 0)
 
 
 @pytest.mark.parametrize(

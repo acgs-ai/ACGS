@@ -7,37 +7,23 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy import delete, func, select
 
 import acgs_control_plane.pagination as pagination
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
-from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.models import (
-    ComplianceExport,
-    Environment,
-    Organization,
-    PolicyBundle,
-    Project,
-    ReceiptRow,
-    new_id,
-    utcnow,
-)
+from acgs_control_plane.models import ComplianceExport, Organization, PolicyBundle, ReceiptRow
 from acgs_control_plane.pagination import (
     CursorConfigurationError,
     CursorKeyring,
     issue_receipt_cursor,
     receipt_filter_digest,
-)
-from acgs_control_plane.trust import (
-    ManagedTrustLifecycleService,
-    public_spki_der_from_signer,
 )
 
 BOOTSTRAP_TOKEN = "cursor-bootstrap-token"
@@ -64,17 +50,11 @@ def _settings(
     clock_skew_seconds: int = 30,
     database_name: str = "acp.sqlite3",
 ) -> Settings:
-    # Migrate rather than create_tables=True: the latter builds only the frozen
-    # v0 surface, which has no projects/environments tables, so agent
-    # registration cannot resolve its scope. These tests exercise the router as
-    # deployed, which is always a migrated schema.
-    database_url = f"sqlite:///{tmp_path / database_name}"
-    upgrade_database(database_url)
     return Settings(
-        database_url=database_url,
+        database_url=f"sqlite:///{tmp_path / database_name}",
         audit_dir=audit_dir,
         bootstrap_token=BOOTSTRAP_TOKEN,
-        create_tables=False,
+        create_tables=True,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         cursor_keyring=_keyring(key, clock_skew_seconds=clock_skew_seconds),
         cursor_clock_skew_seconds=clock_skew_seconds,
@@ -90,6 +70,10 @@ def _client(
     )
 
 
+def _app(client: TestClient) -> FastAPI:
+    return cast(FastAPI, client.app)
+
+
 def _bootstrap(client: TestClient) -> tuple[str, dict[str, str]]:
     resp = client.post(
         "/orgs",
@@ -102,70 +86,7 @@ def _bootstrap(client: TestClient) -> tuple[str, dict[str, str]]:
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    headers = {"X-API-Key": body["admin_api_key"]}
-    _seed_agent_registration_prerequisites(client, body["org_id"], headers)
-    return body["org_id"], headers
-
-
-def _seed_agent_registration_prerequisites(
-    client: TestClient, org_id: str, headers: dict[str, str]
-) -> None:
-    """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
-
-    Agent registration is a canonical managed mutation: it resolves the
-    org's default project/environment scope, mints a receipt-v2 under a
-    trusted key for that scope, and requires an active policy bundle.
-    These tests use agent creation only to produce receipts to paginate,
-    so they seed the scope and trust directly and publish a permissive
-    bundle, mirroring test_agent_registration_managed_route.py.
-    """
-    app = client.app
-    project_id = f"project-{new_id()}"
-    environment_id = f"environment-{new_id()}"
-    with app.state.session_factory.begin() as session:
-        session.add_all(
-            [
-                Project(id=project_id, org_id=org_id, slug="default", name="Default"),
-                Environment(
-                    id=environment_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                    slug="production",
-                    name="Production",
-                ),
-            ]
-        )
-        session.flush()
-        scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
-        signer = app.state.agent_registration_service.issuer.signer_for_scope(scope, trust_epoch=1)
-        ManagedTrustLifecycleService(session).bootstrap(
-            scope=scope,
-            key_id=signer.key_id,
-            algorithm=signer.algorithm,
-            public_key_spki_der=public_spki_der_from_signer(signer),
-            not_after=utcnow() + timedelta(days=1),
-        )
-    publish = client.post(
-        f"/orgs/{org_id}/policies",
-        json={
-            "policy_id": f"policy-{new_id()}",
-            "rules": [
-                {
-                    "id": "deny-unrelated",
-                    "effect": "deny",
-                    "tools": ["unrelated.tool"],
-                    "reason": "unrelated tools disabled",
-                }
-            ],
-        },
-        headers=headers,
-    )
-    assert publish.status_code == 201, publish.text
-    activate = client.post(
-        f"/orgs/{org_id}/policies/{publish.json()['bundle_id']}/activate",
-        headers=headers,
-    )
-    assert activate.status_code == 200, activate.text
+    return body["org_id"], {"X-API-Key": body["admin_api_key"]}
 
 
 def _seed_receipts(
@@ -173,15 +94,19 @@ def _seed_receipts(
 ) -> None:
     for i in range(count):
         resp = client.post(
-            f"/orgs/{org_id}/agents",
-            json={"name": f"cursor-bot-{i}"},
+            f"/orgs/{org_id}/users",
+            json={
+                "name": f"Cursor User {i}",
+                "email": f"cursor-user-{i}@example.com",
+                "role": "viewer",
+            },
             headers=headers,
         )
         assert resp.status_code == 201, resp.text
 
 
 def _pin_receipt_order(client: TestClient, org_id: str) -> list[str]:
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         rows = list(
             session.execute(
                 select(ReceiptRow).where(ReceiptRow.org_id == org_id).order_by(ReceiptRow.id.asc())
@@ -204,7 +129,7 @@ def _pin_receipt_order(client: TestClient, org_id: str) -> list[str]:
 def _snapshot(client: TestClient, audit_dir: Path, org_id: str) -> dict[str, Any]:
     audit_file = audit_dir / f"{org_id}.audit.jsonl"
     audit_bytes = audit_file.read_bytes() if audit_file.exists() else b""
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         org = session.get(Organization, org_id)
         assert org is not None
         return {
@@ -280,12 +205,16 @@ def test_receipt_cursor_is_stable_when_newer_receipt_is_inserted_between_pages(
     first = client.get(f"/orgs/{org_id}/receipts", params={"limit": 2}, headers=headers).json()
 
     create_new = client.post(
-        f"/orgs/{org_id}/agents",
-        json={"name": "newer-after-first-page"},
+        f"/orgs/{org_id}/users",
+        json={
+            "name": "Newer User",
+            "email": "newer-after-first-page@example.com",
+            "role": "viewer",
+        },
         headers=headers,
     )
     assert create_new.status_code == 201, create_new.text
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         row = session.get(ReceiptRow, create_new.json()["receipt_id"])
         assert row is not None
         row.created_at = datetime(2026, 7, 25, 12, 0, tzinfo=UTC)
@@ -310,7 +239,7 @@ def test_receipt_cursor_boundary_row_can_be_deleted_without_duplication(
     first = client.get(f"/orgs/{org_id}/receipts", params={"limit": 2}, headers=headers).json()
     boundary_id = first["items"][-1]["receipt_id"]
 
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         session.execute(delete(ReceiptRow).where(ReceiptRow.id == boundary_id))
         session.commit()
 
@@ -390,7 +319,7 @@ def test_cursor_rejects_tampered_expired_wrong_scope_wrong_filter_and_wrong_key(
         (tampered, {}),
         (expired, {}),
         (wrong_scope, {}),
-        (wrong_filter, {"tool": "agent.register"}),
+        (wrong_filter, {"tool": "user.create"}),
         (wrong_key, {}),
     ]
     for candidate, extra_params in cases:
@@ -398,7 +327,7 @@ def test_cursor_rejects_tampered_expired_wrong_scope_wrong_filter_and_wrong_key(
         resp = client.get(f"/orgs/{org_id}/receipts", params=params, headers=headers)
         assert resp.status_code == 400, resp.text
         assert resp.json()["code"] == "invalid_cursor"
-        assert "agent.register" not in resp.text
+        assert "user.create" not in resp.text
         assert _snapshot(client, audit_dir, org_id) == before
 
 
@@ -412,7 +341,7 @@ def _manual_cursor(
     ttl_seconds: int = 300,
     clock_skew_seconds: int = 30,
 ) -> str:
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         row = (
             session.execute(
                 select(ReceiptRow).order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())
@@ -439,7 +368,7 @@ def _row_cursor_payload(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    with client.app.state.session_factory() as session:
+    with _app(client).state.session_factory() as session:
         row = (
             session.execute(
                 select(ReceiptRow).order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())

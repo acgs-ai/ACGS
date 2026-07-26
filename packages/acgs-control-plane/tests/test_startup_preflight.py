@@ -208,8 +208,8 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
     legacy_routes = [
         blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
     ]
-    # Master aliases every legacy write under /v1 (14 = 7 routes x 2), and this
-    # branch governs agent registration with receipt v2, so that route pair is
+    # Master aliases every legacy write under /v1, and this branch governs
+    # agent registration with signed native receipts, so that route pair is
     # no longer an unsigned legacy write: 6 remaining routes x 2 aliases.
     assert len(legacy_routes) == 12
     assert {blocker.route for blocker in legacy_routes} == {

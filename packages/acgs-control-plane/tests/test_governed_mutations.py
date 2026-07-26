@@ -59,10 +59,9 @@ def _bootstrap_org(client: TestClient) -> dict[str, Any]:
     return resp.json()
 
 
-def test_agent_register_without_default_scope_fails_closed_before_receipt(
+def test_agent_register_produces_receipt(
     client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
 ) -> None:
-    before = _agent_count(client, org["org_id"])
     org_id = org["org_id"]
     resp = client.post(
         f"/orgs/{org_id}/agents",
@@ -74,9 +73,18 @@ def test_agent_register_without_default_scope_fails_closed_before_receipt(
         },
         headers=admin_headers,
     )
-    assert resp.status_code == 409, resp.text
-    assert resp.json()["code"] == "SCOPE_NOT_READY"
-    assert _agent_count(client, org_id) == before
+    assert resp.status_code == 201, resp.text
+    agent = resp.json()
+    assert agent["receipt_id"]
+
+    receipt = client.get(
+        f"/orgs/{org_id}/receipts/{agent['receipt_id']}", headers=admin_headers
+    ).json()
+    assert receipt["assurance_class"] == "native"
+    assert receipt["tool"] == "database.agent.create"
+    assert receipt["decision"] == "allow"
+    assert receipt["execution_boundary"] == "control-plane/sql-transaction"
+    assert receipt["audit_hash"]
 
 
 def test_agent_register_rbac_denial_has_no_governed_side_effect(
@@ -96,6 +104,56 @@ def test_agent_register_rbac_denial_has_no_governed_side_effect(
 
     # THE invariant: no side effect happened.
     assert _agent_count(client, org_id) == before
+
+
+def test_policy_deny_blocks_side_effect_and_persists_receipt(
+    client: TestClient,
+    org: dict[str, Any],
+    admin_headers: dict[str, str],
+    publish_and_activate: Any,
+) -> None:
+    org_id = org["org_id"]
+    publish_and_activate(
+        org_id,
+        admin_headers,
+        rules=[
+            {
+                "id": "no-untrusted-agents",
+                "effect": "deny",
+                "tools": ["database.agent.create"],
+                "state_equals": {"trust_tier": "untrusted"},
+                "reason": "untrusted agents are not allowed in this org",
+            }
+        ],
+    )
+    resp = client.post(
+        f"/orgs/{org_id}/agents",
+        json={"name": "sketchy-bot", "trust_tier": "untrusted"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert body["status"] == "denied"
+    assert body["decision"] == "deny"
+    assert "untrusted" in body["reason"]
+
+    assert body["receipt_id"]
+    receipt = client.get(f"/orgs/{org_id}/receipts/{body['receipt_id']}", headers=admin_headers)
+    assert receipt.status_code == 200, receipt.text
+    assert receipt.json()["decision"] == "deny"
+    assert receipt.json()["assurance_class"] == "native"
+
+    # THE invariant: no side effect happened.
+    agents = client.get(f"/orgs/{org_id}/agents", headers=admin_headers).json()
+    assert all(a["name"] != "sketchy-bot" for a in agents)
+
+    # A trusted registration still passes under the same policy.
+    ok = client.post(
+        f"/orgs/{org_id}/agents",
+        json={"name": "trusted-bot", "trust_tier": "internal"},
+        headers=admin_headers,
+    )
+    assert ok.status_code == 201
 
 
 def test_policy_escalate_returns_202_and_no_side_effect(
