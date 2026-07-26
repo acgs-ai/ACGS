@@ -50,6 +50,7 @@ REQUIRED_BLOCKER_FIELDS = {
 REQUIRED_GRANULAR_NODES = {
     "G101",
     "G102",
+    "G102A",
     "G103",
     "G104",
     "G105",
@@ -187,6 +188,11 @@ def _validate_matrix_state(rows: list[dict[str, str]], dag: dict[str, Any]) -> N
         elif row["state"] == "conflicting":
             assert any(node["implementation_state"] == "conflicting" for node in referenced)
         assert not (row["evidence"] == "historical_only" and row["state"] == "built")
+
+
+def _assert_repo_files_exist(paths: set[str]) -> None:
+    missing = [path for path in sorted(paths) if not (ROOT / path).is_file()]
+    assert missing == []
 
 
 def test_schema_types_vocabularies_and_portability() -> None:
@@ -491,6 +497,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     by_id = {node["id"]: node for node in dag["nodes"]}
     g101 = by_id["G101"]
     g102 = by_id["G102"]
+    g102a = by_id["G102A"]
     g603 = by_id["G603"]
     assert (g101["status"], g101["implementation_state"], g101["evidence_state"]) == (
         "blocked",
@@ -499,8 +506,67 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     )
     assert g101["pr"] == 355
     assert "EXT-GITHUB-BILLING" in g101["blocker"]
-    assert g102["status"] == "planned"
-    assert g102["implementation_state"] == "missing"
+    assert (g102["status"], g102["implementation_state"], g102["evidence_state"]) == (
+        "in_progress",
+        "partial",
+        "local_verified",
+    )
+    assert "EXT-GITHUB-BILLING" in g102["blocker"]
+    assert (g102a["status"], g102a["implementation_state"], g102a["evidence_state"]) == (
+        "blocked",
+        "built",
+        "local_verified",
+    )
+    assert g102a["branch"] == "beta/p1-g102-request-admission"
+    assert g102a["pr"] == 357
+    assert g102["dependencies"] == ["G101", "G102A"]
+    assert set(g102a["dependencies"]) == {"G101"}
+    assert g102a["consumers"] == ["G102"]
+    assert "EXT-GITHUB-BILLING" in g102a["blocker"]
+    actual_g102a_files = {
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py",
+    }
+    assert actual_g102a_files <= set(g102["likely_interfaces_files"])
+    assert actual_g102a_files <= set(g102a["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102a_files)
+    focused_command = (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+    )
+    assert focused_command in g102["validation_commands"]
+    assert focused_command in g102a["validation_commands"]
+    combined_g102a_contract = " ".join(
+        g102["likely_interfaces_files"]
+        + g102["validation_commands"]
+        + g102a["likely_interfaces_files"]
+        + g102a["validation_commands"]
+    )
+    assert "tests/test_request_admission.py" not in combined_g102a_contract
+    assert "tests/test_api_program_reconcile.py" not in combined_g102a_contract
+    assert "4d60fb4a0a16be06a2a9957dea91dc2bf429c57d" in g102a["evidence_artifact"]
+    assert "focused 14 passed" in g102a["evidence_artifact"]
+    assert "full control-plane 228 passed/32 skipped" in g102a["evidence_artifact"]
+    assert "Ruff pass" in g102a["evidence_artifact"]
+    assert "mypy pass" in g102a["evidence_artifact"]
+    assert "independent security/code approve/verifier pass" in g102a["evidence_artifact"]
+    assert "hosted Python 3.11 and Python 3.12 pass" in g102a["evidence_artifact"]
+    assert (
+        "Hosted PostgreSQL migrations and codex-review did not start" in g102a["evidence_artifact"]
+    )
+    for missing_contract in (
+        "/v1 root",
+        "cursor pagination",
+        "durable idempotency",
+        "async export jobs",
+        "OpenAPI drift",
+    ):
+        assert missing_contract in g102["blocker"]
+        assert (
+            missing_contract in g102a["evidence_artifact"] or missing_contract in g102a["blocker"]
+        )
     combined_g101 = " ".join(
         g101["likely_interfaces_files"]
         + g101["validation_commands"]
@@ -523,6 +589,20 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
 
     matrix = MATRIX_PATH.read_text(encoding="utf-8")
     assert ".github/workflows/python-acgs-control-plane.yml" in matrix
+    assert (
+        "focused `cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q` "
+        "at 14 passed"
+    ) in matrix
+    assert "full control-plane 228 passed/32 skipped" in matrix
+    assert "independent security/code approve/verifier pass" in matrix
+    assert "hosted Python 3.11/3.12 pass" in matrix
+    assert "hosted PostgreSQL migration/codex-review check-start failures" in matrix
+    assert "aggregate G102 remains in_progress/partial/current-local" in matrix
+    assert "completed `/v1` root" in matrix
+    assert "opaque cursor pagination" in matrix
+    assert "durable idempotency" in matrix
+    assert "async export jobs" in matrix
+    assert "OpenAPI drift evidence" in matrix
     assert "ACP_TEST_RECOVERY_SOURCE_URL" in matrix
     assert "ACP_TEST_RECOVERY_TARGET_URL" in matrix
     assert "ACP_TEST_POSTGRES_EXPECT_EMPTY" not in matrix

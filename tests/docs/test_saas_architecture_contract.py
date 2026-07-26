@@ -284,25 +284,40 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         assert retired_gap not in g101["blocker"]
     assert "G103 tenant database isolation remains planned after G101 and G102" in g101["blocker"]
     assert "observe #354/#355 hosted PostgreSQL and review checks" in g101["next_safe_action"]
-    assert "before unlocking G102" in g101["next_safe_action"]
+    assert "before accepting aggregate G102" in g101["next_safe_action"]
     assert "Keep production DR/PITR/object/witness recovery in G603" in g101["next_safe_action"]
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G103, G104, G105, G106 |"
+        "current_local | G101, G102, G102A, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
     for evidence in (
         "214 passed/32 skipped",
+        "bounded request-admission/redacted-error contract evidence",
+        "PR #357 branch `beta/p1-g102-request-admission`",
+        "commit `4d60fb4a0a16be06a2a9957dea91dc2bf429c57d`",
+        "focused `cd packages/acgs-control-plane && uv run pytest "
+        "tests/test_api_contract.py -q` at 14 passed",
+        "full control-plane 228 passed/32 skipped",
+        "Ruff and mypy pass",
+        "independent security/code approve/verifier pass",
+        "hosted Python 3.11/3.12 pass",
         "real disposable PostgreSQL migration recovery at 8 passed",
         "focused migration, CLI, startup, rolling-upgrade, and recovery-tool-provenance tests",
         ".github/workflows/python-acgs-control-plane.yml",
         "ACP_TEST_RECOVERY_SOURCE_URL",
         "ACP_TEST_RECOVERY_TARGET_URL",
         "explicit absolute `pg_dump`/`pg_restore` wrapper paths",
-        "unmerged #353/#354/#355 draft stack",
+        "unmerged #353/#354/#355/#357 draft stack",
         "EXT-GITHUB-BILLING",
-        "G102 is not unlocked",
+        "hosted PostgreSQL migration/codex-review check-start failures",
+        "aggregate G102 remains in_progress/partial/current-local",
+        "completed `/v1` root",
+        "opaque cursor pagination",
+        "durable idempotency",
+        "async export jobs",
+        "OpenAPI drift evidence",
         "G103 tenant isolation remains planned",
         "G603 production DR/PITR/object/witness recovery remains separate",
     ):
@@ -319,17 +334,92 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "No row declares beta code-complete or production-ready" in matrix
     assert "Production launch remains a separate human-authorized decision" in matrix
 
-    for downstream_node_id in ("G102", "G103"):
+    g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
+    assert g102["dependencies"] == ["G101", "G102A"]
+    assert (
+        g102["status"],
+        g102["implementation_state"],
+        g102["evidence_state"],
+    ) == ("in_progress", "partial", "local_verified")
+    assert "EXT-GITHUB-BILLING" in g102["blocker"]
+    for missing_contract in (
+        "/v1 root",
+        "opaque cursor pagination",
+        "durable idempotency",
+        "async export jobs",
+        "OpenAPI drift",
+    ):
+        assert missing_contract in g102["blocker"]
+    actual_g102a_files = {
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/src/acgs_control_plane/api_contract.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/tests/test_api_contract.py",
+    }
+    assert actual_g102a_files <= set(g102["likely_interfaces_files"])
+    assert all((ROOT / path).is_file() for path in actual_g102a_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in g102["validation_commands"]
+    )
+
+    g102a = next(node for node in dag["nodes"] if node["id"] == "G102A")
+    assert g102a["title"] == "Bounded request admission and redacted error contract"
+    assert set(g102a["dependencies"]) == {"G101"}
+    assert g102a["consumers"] == ["G102"]
+    assert (
+        g102a["status"],
+        g102a["implementation_state"],
+        g102a["evidence_state"],
+    ) == ("blocked", "built", "local_verified")
+    assert g102a["branch"] == "beta/p1-g102-request-admission"
+    assert g102a["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102a["pr"] == 357
+    assert actual_g102a_files <= set(g102a["likely_interfaces_files"])
+    combined_g102a = " ".join(
+        [
+            *g102a["likely_interfaces_files"],
+            *g102a["positive_tests"],
+            *g102a["validation_commands"],
+            g102a["evidence_artifact"],
+            g102a["blocker"],
+            g102a["next_safe_action"],
+        ]
+    )
+    for evidence in (
+        "4d60fb4a0a16be06a2a9957dea91dc2bf429c57d",
+        "bounded request-admission and redacted-error contract evidence",
+        "focused 14 passed",
+        "full control-plane package evidence at 228 passed and 32 skipped",
+        "Ruff pass",
+        "mypy pass",
+        "independent security/code approve/verifier pass",
+        "hosted Python 3.11",
+        "Python 3.12 pass",
+        "Hosted PostgreSQL migrations and codex-review did not start",
+        "EXT-GITHUB-BILLING",
+        "/v1 root",
+        "cursor pagination",
+        "durable idempotency",
+        "async export jobs",
+        "OpenAPI drift",
+    ):
+        assert evidence in combined_g102a
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in combined_g102a
+    )
+    assert "tests/test_request_admission.py" not in combined_g102a
+    assert "tests/test_api_program_reconcile.py" not in combined_g102a
+
+    for downstream_node_id in ("G103",):
         downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
         assert (
             downstream_node["status"],
             downstream_node["implementation_state"],
             downstream_node["evidence_state"],
         ) == ("planned", "missing", "unverified")
-
-    g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
-    assert g102["dependencies"] == ["G101"]
-    assert "before implementation" in g102["next_safe_action"]
 
     g103 = next(node for node in dag["nodes"] if node["id"] == "G103")
     assert g103["dependencies"] == ["G101", "G102"]
