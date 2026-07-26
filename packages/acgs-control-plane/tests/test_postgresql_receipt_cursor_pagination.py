@@ -54,6 +54,7 @@ from acgs_control_plane.pagination import (
     decode_receipt_cursor,
     receipt_filter_digest,
 )
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
     ManagedTrustLifecycleService,
     public_spki_der_from_signer,
@@ -208,7 +209,9 @@ def _seed_receipts(client: TestClient, org_id: str, headers: dict[str, str], *, 
         resp = client.post(
             f"/orgs/{org_id}/agents",
             json={"name": f"pg-cursor-bot-{i}"},
-            headers=headers,
+            # A distinct key per seeded agent: these are distinct registrations,
+            # and a shared key would replay the first one instead of seeding.
+            headers={**headers, BOOTSTRAP_IDEMPOTENCY_HEADER: f"pg-cursor-seed-{i}"},
         )
         assert resp.status_code == 201, resp.text
 
