@@ -558,17 +558,17 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
 
 
 @pytest.mark.parametrize(
-    ("decision", "expected_status", "expected_code"),
+    ("decision", "expected_status", "expected_state"),
     [
-        ("deny", 403, "POLICY_DENIED"),
-        ("escalate", 202, "ESCALATE_PENDING"),
+        ("deny", 403, "denied"),
+        ("escalate", 202, "pending_approval"),
     ],
 )
 def test_agent_register_route_duplicate_refusals_replay_original_terminal_response(
     tmp_path: Path,
     decision: str,
     expected_status: int,
-    expected_code: str,
+    expected_state: str,
 ) -> None:
     app, client = _migrated_client(tmp_path, label=f"duplicate-{decision}")
     org = _bootstrap_org(client)
@@ -578,12 +578,24 @@ def test_agent_register_route_duplicate_refusals_replay_original_terminal_respon
     body = {"name": f"duplicate-{decision}-bot", "trust_tier": "internal"}
 
     first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    anchor_after_first = _audit_anchor(app, org["org_id"])
     second = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
 
+    # A replay serves the stored projection; it must not mirror the refusal a
+    # second time, so the org's audit-chain anchor is unchanged by it.
+    assert _audit_anchor(app, org["org_id"]) == anchor_after_first
     assert first.status_code == expected_status, first.text
     assert second.status_code == expected_status, second.text
-    assert first.json() == second.json()
-    assert second.json()["code"] == expected_code
+    # request_id is per-request correlation, not part of the replayed decision:
+    # replaying the first request's correlation id onto the second would be the
+    # bug, not the fix. Everything that describes the refusal itself — the
+    # receipt it cites, the decision, the state — must be identical.
+    first_body, second_body = first.json(), second.json()
+    assert first_body.pop("request_id") != second_body.pop("request_id")
+    assert first_body == second_body
+    assert second_body["decision"] == decision
+    assert second_body["status"] == expected_state
+    assert second_body["receipt_id"]
     _assert_single_refusal_evidence(app, org["org_id"], f"duplicate-{decision}-bot", decision)
 
 
@@ -653,17 +665,17 @@ def test_agent_register_route_rejects_deny_payload_upgraded_to_escalate(
 
 
 @pytest.mark.parametrize(
-    ("decision", "expected_status", "expected_code"),
+    ("decision", "expected_status", "expected_state"),
     [
-        ("deny", 403, "POLICY_DENIED"),
-        ("escalate", 202, "ESCALATE_PENDING"),
+        ("deny", 403, "denied"),
+        ("escalate", 202, "pending_approval"),
     ],
 )
 def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_response(
     tmp_path: Path,
     decision: str,
     expected_status: int,
-    expected_code: str,
+    expected_state: str,
 ) -> None:
     app, client = _migrated_client(tmp_path, label=f"concurrent-{decision}")
     org = _bootstrap_org(client)
@@ -672,19 +684,20 @@ def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_respo
     headers = _agent_headers(org, f"agent-refusal-concurrent-{decision}-0001")
     body = {"name": f"concurrent-{decision}-bot", "trust_tier": "internal"}
 
-    def register() -> tuple[int, str | None]:
+    def register() -> tuple[int, str | None, str | None]:
         resp = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
-        code = (
-            resp.json().get("code")
-            if resp.headers.get("content-type", "").startswith("application/json")
-            else None
-        )
-        return resp.status_code, code
+        if not resp.headers.get("content-type", "").startswith("application/json"):
+            return resp.status_code, None, None
+        payload = resp.json()
+        # The receipted refusal envelope keys off the committed receipt, so it
+        # names the decision and its state rather than carrying an error `code`.
+        return resp.status_code, payload.get("decision"), payload.get("status")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: register(), range(2)))
 
-    assert results == [(expected_status, expected_code), (expected_status, expected_code)]
+    expected = (expected_status, decision, expected_state)
+    assert results == [expected, expected]
     _assert_single_refusal_evidence(app, org["org_id"], f"concurrent-{decision}-bot", decision)
 
 
@@ -1022,6 +1035,13 @@ def _managed_allow_receipts(session: Any) -> int:
         )
         or 0
     )
+
+
+def _audit_anchor(app: Any, org_id: str) -> tuple[int, str]:
+    with app.state.session_factory() as session:
+        row = session.get(Organization, org_id)
+        assert row is not None
+        return row.audit_anchor_count, row.audit_anchor_hash
 
 
 def _assert_single_refusal_evidence(

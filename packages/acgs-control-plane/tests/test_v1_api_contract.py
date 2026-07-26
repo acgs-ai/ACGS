@@ -406,7 +406,20 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
         )
         assert v1_denied.json()["status"] == v0_denied.json()["status"] == "denied"
         assert v1_denied.json()["decision"] == v0_denied.json()["decision"] == "deny"
-        assert "untrusted" in v1_denied.json()["reason"]
+        # The deny reason is a fixed string, not the matching rule's own reason
+        # ("untrusted agents are not allowed in this org"). Agent registration is
+        # now idempotent, so a replay has to reproduce the original response body
+        # byte for byte from the stored projection; the receipt persists the
+        # decision but not the policy reason, so a reason-bearing body would not
+        # be re-derivable and the integrity check over the projection would have
+        # to be narrowed to tolerate it. The rule's reason is still recorded --
+        # on the receipt and the org audit chain -- it is no longer echoed to an
+        # unauthenticated-at-that-point caller.
+        assert (
+            v1_denied.json()["reason"]
+            == v0_denied.json()["reason"]
+            == "agent registration refused by policy"
+        )
         _assert_error_request_id(v1_denied)
         _assert_error_request_id(v0_denied)
 
