@@ -834,7 +834,12 @@ def _register_routes(app: FastAPI) -> None:
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
     ) -> AgentResponse:
         service: AgentRegistrationService = request.app.state.agent_registration_service
-        result = service.register(org_id=org.id, principal=principal, body=body)
+        result = service.register(
+            org_id=org.id,
+            principal=principal,
+            audit_dir=request.app.state.settings.audit_dir,
+            body=body,
+        )
         return AgentResponse(
             agent_id=result.agent_id,
             org_id=result.org_id,

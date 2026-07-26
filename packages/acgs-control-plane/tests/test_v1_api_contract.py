@@ -253,7 +253,12 @@ def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
             item["tool"]
             for item in client.get(f"/v1/orgs/{org_id}/receipts", headers=headers).json()["items"]
         ]
-        assert receipt_tools[:2] == ["agent.register", "org.create"]
+        # Newest first. The seeded policy bundle sits between the org
+        # creation and this write, so assert the registration is the most
+        # recent receipt and the org creation is still on the chain, rather
+        # than pinning two adjacent positions.
+        assert receipt_tools[0] == "agent.register"
+        assert "org.create" in receipt_tools
     finally:
         client.app.state.engine.dispose()
 

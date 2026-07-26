@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import sqlalchemy as sa
@@ -19,6 +20,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from acgs_control_plane.auth import Principal
+from acgs_control_plane.governance import mirror_managed_decision
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
     AesGcmReceiptArtifactSealer,
@@ -196,6 +198,7 @@ class AgentRegistrationService:
         *,
         org_id: str,
         principal: Principal,
+        audit_dir: Path,
         body: AgentRegisterRequest,
     ) -> AgentRegistrationResult:
         args = _normalized_agent_args(body)
@@ -278,12 +281,13 @@ class AgentRegistrationService:
                     context=context,
                     receipt=receipt,
                     args=args,
-                    before_record=lambda tx_session: _revalidate_active_policy_under_lock(
+                    before_record=lambda tx_session: _record_refusal_evidence(
                         tx_session,
                         context=context,
                         args=args,
                         actor=principal.actor_id,
-                        expected_decision=decision_record.decision,
+                        decision_record=decision_record,
+                        audit_dir=audit_dir,
                     ),
                 )
             except ReceiptAlreadyUsedError as exc:
@@ -375,6 +379,14 @@ class AgentRegistrationService:
             agent = session.get(AgentRecord, result.result["agent_id"])
             if agent is None:
                 raise RuntimeError("managed agent registration committed without agent row")
+            mirror_managed_decision(
+                session,
+                org_id=org_id,
+                audit_dir=audit_dir,
+                record=decision_record,
+                result_hash=result.result_hash,
+                tool=LEGACY_AGENT_REGISTER_ACTION,
+            )
             holder["response"] = AgentRegistrationResult(
                 agent_id=agent.id,
                 org_id=agent.org_id,
@@ -568,6 +580,37 @@ def _agent_policy_tool_call(name: str, *, args: Mapping[str, Any], actor: str) -
         goal=AGENT_REGISTRATION_GOAL,
         path=normalize_path_context(["control-plane", "agents"]),
         state={"trust_tier": args.get("trust_tier", "")},
+    )
+
+
+def _record_refusal_evidence(
+    session: Session,
+    *,
+    context: ManagedMutationContext,
+    args: Mapping[str, Any],
+    actor: str,
+    decision_record: DecisionRecord,
+    audit_dir: Path,
+) -> None:
+    """Re-check the policy under lock, then mirror the refusal for auditors.
+
+    Order matters: revalidation may still abort the whole transaction, and a
+    refusal that never became final must leave no trace on the org's evidence
+    surface.
+    """
+    _revalidate_active_policy_under_lock(
+        session,
+        context=context,
+        args=args,
+        actor=actor,
+        expected_decision=decision_record.decision,
+    )
+    mirror_managed_decision(
+        session,
+        org_id=context.org_id,
+        audit_dir=audit_dir,
+        record=decision_record,
+        tool=LEGACY_AGENT_REGISTER_ACTION,
     )
 
 

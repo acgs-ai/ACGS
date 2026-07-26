@@ -101,7 +101,51 @@ def test_agent_register_route_executes_through_managed_receipt_v2_spine(
         assert event.managed_receipt_id == receipt.id
         assert event.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION
         assert outbox.managed_receipt_id == receipt.id
-        assert _count_legacy_agent_receipts(session, org["org_id"]) == 0
+        # The managed spine owns the authoritative receipt, and the legacy
+        # receipts table carries a mirror of it so the explorer, dashboard,
+        # and compliance export still see this registration. Mirrored under
+        # the pre-rename tool name, which is what those consumers query.
+        assert _count_legacy_agent_receipts(session, org["org_id"]) == 1
+
+
+def test_agent_register_mirror_stays_verifiable_on_the_org_audit_chain(
+    tmp_path: Path,
+) -> None:
+    """The mirror must be real evidence, not a decorative row.
+
+    Writing into ``receipts`` without appending to the org's audit chain, or
+    advancing the anchor independently of the chain tip, would leave
+    ``POST /receipts/{id}/verify`` reporting a healthy chain as broken -- or
+    worse, a broken one as healthy. Verify through the API the auditor uses.
+    """
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate_allow_agent_create(client, org)
+    headers = _admin_headers(org)
+
+    created = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "audited-bot"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+
+    listed = client.get(f"/orgs/{org['org_id']}/receipts", headers=headers)
+    assert listed.status_code == 200, listed.text
+    mirrored = [item for item in listed.json()["items"] if item["tool"] == "agent.register"]
+    assert len(mirrored) == 1, listed.text
+
+    verified = client.post(
+        f"/orgs/{org['org_id']}/receipts/{mirrored[0]['receipt_id']}/verify",
+        headers=headers,
+    )
+    assert verified.status_code == 200, verified.text
+    body = verified.json()
+    assert body["receipt_in_chain"] is True, body
+    assert body["chain_valid"] is True, body
+    assert body["anchor_matched"] is True, body
+    assert body["failures"] == [], body
 
 
 def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
@@ -399,6 +443,13 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
             ]
             assert _count(session, ManagedReceiptConsumption) == 0, case["name"]
             assert _managed_allow_receipts(session) == 0, case["name"]
+            # The legacy mirror is written inside the refusal's own
+            # transaction, so a refusal that never became final -- aborted
+            # revalidation, replayed receipt, refused trust -- must leave the
+            # org's evidence surface untouched.
+            assert _count_legacy_agent_receipts(session, org["org_id"]) == (
+                1 if case.get("evidence") else 0
+            ), case["name"]
             if case.get("evidence") is None:
                 assert _count(session, ManagedDecisionReceipt) == 0, case["name"]
                 assert _count(session, ManagedGovernanceEvent) == 0, case["name"]
