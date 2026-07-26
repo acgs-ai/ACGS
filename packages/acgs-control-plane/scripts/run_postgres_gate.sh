@@ -118,6 +118,11 @@ for required_command in bwrap cmp docker git mktemp realpath sha256sum tar; do
     exit 69
   fi
 done
+docker_bin="$(command -v docker)"
+if [[ "$docker_bin" != /* || ! -x "$docker_bin" || -L "$docker_bin" ]]; then
+  echo 'the PostgreSQL evidence gate requires an absolute executable non-symlink docker client' >&2
+  exit 69
+fi
 bwrap_bin="$(command -v bwrap)"
 if [[ "$bwrap_bin" != /usr/bin/bwrap || ! -x "$bwrap_bin" || -L "$bwrap_bin" ]]; then
   echo 'the PostgreSQL evidence gate requires canonical /usr/bin/bwrap' >&2
@@ -196,8 +201,11 @@ docker image inspect --format '{{json .RepoDigests}}' "$postgres_image" \
 
 mkdir -p \
   "$state_dir/broker" "$state_dir/client" "$state_dir/home" "$state_dir/tmp" \
-  "$state_dir/uv-cache" "$state_dir/acp-old" "$state_dir/old-1" "$state_dir/old-2"
-chmod 0700 "$state_dir" "$state_dir/broker" "$state_dir/client" "$state_dir/home" "$state_dir/tmp"
+  "$state_dir/proof-scratch" "$state_dir/uv-cache" "$state_dir/acp-old" \
+  "$state_dir/old-1" "$state_dir/old-2"
+chmod 0700 \
+  "$state_dir" "$state_dir/broker" "$state_dir/client" "$state_dir/home" \
+  "$state_dir/tmp" "$state_dir/proof-scratch"
 chmod 0700 "$state_dir/uv-cache"
 
 container_id="$(
@@ -258,7 +266,9 @@ import sys
 from pathlib import Path
 
 SOCKET_PATH = Path(sys.argv[1])
+STATE_DIR = SOCKET_PATH.parent.parent.resolve(strict=True)
 IMAGE = "postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394"
+DOCKER_BIN = Path(os.environ["ACP_POSTGRES_CLIENT_BROKER_DOCKER"])
 ALLOWED_TOOLS = {"psql", "pg_dump", "pg_restore"}
 ALLOWED_ENV = {
     "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGPASSFILE",
@@ -267,10 +277,24 @@ ALLOWED_ENV = {
 }
 MAX_REQUEST_BYTES = 131_072
 REQUESTS = 0
+ALLOWED_RW_ROOTS = tuple(
+    root.resolve(strict=True)
+    for root in (STATE_DIR / "tmp", STATE_DIR / "proof-scratch")
+)
+ALLOWED_RO_ROOTS = tuple(
+    root.resolve(strict=True)
+    for root in (STATE_DIR, STATE_DIR / "home", STATE_DIR / "tmp", STATE_DIR / "proof-scratch")
+)
 
 
 def fail(message: str, code: int = 64) -> None:
     raise ValueError(f"{code}:{message}")
+
+
+if not DOCKER_BIN.is_absolute() or DOCKER_BIN.is_symlink() or not os.access(DOCKER_BIN, os.X_OK):
+    fail("broker docker client must be an absolute executable non-symlink", 69)
+if DOCKER_BIN.resolve(strict=True) != DOCKER_BIN:
+    fail("broker docker client must already be canonical", 69)
 
 
 def validate_string_list(value: object, label: str) -> list[str]:
@@ -281,18 +305,79 @@ def validate_string_list(value: object, label: str) -> list[str]:
     return value
 
 
-def add_path_parent(paths: dict[str, str], candidate: str, access: str) -> None:
-    path = Path(candidate)
-    parent = path if path.is_dir() else path.parent
+def is_under(path: Path, roots: tuple[Path, ...]) -> bool:
+    return any(path == root or root in path.parents for root in roots)
+
+
+def require_safe_owned_directory(path: Path, roots: tuple[Path, ...], label: str) -> Path:
     try:
-        resolved = str(parent.resolve(strict=False))
+        resolved = path.resolve(strict=True)
     except OSError as exc:
-        fail(f"path resolution failed: {exc}", 65)
-    if not resolved.startswith("/"):
-        fail("path must resolve under an absolute root")
-    current = paths.get(resolved)
+        fail(f"{label} path resolution failed: {exc}", 65)
+    if not resolved.is_dir():
+        fail(f"{label} parent must be a directory")
+    if not is_under(resolved, roots):
+        fail(f"{label} path is outside broker-owned roots")
+    fd = os.open(resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        stat_result = os.fstat(fd)
+        if stat_result.st_uid != os.getuid():
+            fail(f"{label} parent is not owned by the broker user")
+        if stat_result.st_mode & 0o022:
+            fail(f"{label} parent is group/world writable")
+        descriptor_path = Path(f"/proc/self/fd/{fd}").resolve(strict=True)
+        if descriptor_path != resolved:
+            fail(f"{label} parent changed during validation", 65)
+    finally:
+        os.close(fd)
+    return resolved
+
+
+def add_mount(paths: dict[str, str], directory: Path, access: str) -> None:
+    current = paths.get(str(directory))
     if access == "rw" or current is None:
-        paths[resolved] = access
+        paths[str(directory)] = access
+
+
+def add_read_path(paths: dict[str, str], candidate: str, label: str) -> None:
+    path = Path(candidate)
+    if not path.is_absolute():
+        fail(f"{label} path must be absolute")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as exc:
+        fail(f"{label} path resolution failed: {exc}", 65)
+    if not is_under(resolved, ALLOWED_RO_ROOTS):
+        fail(f"{label} path is outside broker-owned roots")
+    if path.is_symlink():
+        fail(f"{label} path must not be a symlink")
+    stat_result = resolved.stat()
+    if stat_result.st_uid != os.getuid():
+        fail(f"{label} path is not owned by the broker user")
+    add_mount(paths, require_safe_owned_directory(resolved.parent, ALLOWED_RO_ROOTS, label), "ro")
+
+
+def add_write_file(paths: dict[str, str], candidate: str) -> None:
+    path = Path(candidate)
+    if not path.is_absolute():
+        fail("--file path must be absolute")
+    parent = require_safe_owned_directory(path.parent, ALLOWED_RW_ROOTS, "--file")
+    try:
+        existing = path.resolve(strict=True)
+    except FileNotFoundError:
+        existing = path
+    except OSError as exc:
+        fail(f"--file path resolution failed: {exc}", 65)
+    else:
+        if not is_under(existing, ALLOWED_RW_ROOTS):
+            fail("--file path is outside broker-owned roots")
+        if path.is_symlink():
+            fail("--file path must not be a symlink")
+        if existing.stat().st_uid != os.getuid():
+            fail("--file path is not owned by the broker user")
+    if not is_under(parent / path.name, ALLOWED_RW_ROOTS):
+        fail("--file path is outside broker-owned roots")
+    add_mount(paths, parent, "rw")
 
 
 def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
@@ -313,16 +398,16 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     paths: dict[str, str] = {}
     for variable in ("PGPASSFILE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"):
         if env.get(variable):
-            add_path_parent(paths, env[variable], "ro")
+            add_read_path(paths, env[variable], variable)
     for argument in args:
         if argument.startswith("--file="):
-            add_path_parent(paths, argument.split("=", 1)[1], "rw")
+            add_write_file(paths, argument.split("=", 1)[1])
         elif argument.startswith("/"):
-            add_path_parent(paths, argument, "ro")
+            add_read_path(paths, argument, "argument")
 
-    docker_args = ["docker", "run", "--rm", "--pull=never", "--network", "host"]
+    docker_args = [str(DOCKER_BIN), "run", "--rm", "--pull=never", "--network", "host"]
     rootless = subprocess.run(
-        ["docker", "info", "--format", "{{json .SecurityOptions}}"],
+        [str(DOCKER_BIN), "info", "--format", "{{json .SecurityOptions}}"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -450,7 +535,8 @@ ln -s postgresql-client "$state_dir/client/pg_dump"
 ln -s postgresql-client "$state_dir/client/pg_restore"
 export PATH="$state_dir/client:$PATH"
 broker_socket="$state_dir/broker/postgresql-client.sock"
-"$package_dir/.venv/bin/python" "$state_dir/broker/postgres_client_broker.py" "$broker_socket" &
+ACP_POSTGRES_CLIENT_BROKER_DOCKER="$docker_bin" \
+  "$package_dir/.venv/bin/python" "$state_dir/broker/postgres_client_broker.py" "$broker_socket" &
 broker_pid=$!
 for _ in {1..50}; do
   [[ -S "$broker_socket" ]] && break
@@ -560,6 +646,7 @@ bwrap_args=(
   --bind "$state_dir" "$state_dir"
   --bind "$state_dir/home" "$state_dir/home"
   --bind "$state_dir/tmp" "$state_dir/tmp"
+  --bind "$state_dir/proof-scratch" "$state_dir/proof-scratch"
   --clearenv
   --setenv ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE 1
   --setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1

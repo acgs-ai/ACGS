@@ -3475,10 +3475,11 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
     tmp_path: Path,
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
-    wrapper = _shell_function(source, "run_recorded_gate")
+    trusted_parent_gate = _shell_function(source, "run_trusted_parent_postgres_gate")
     idempotency_source = source.split('elif [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]', 1)[1]
     idempotency_source = idempotency_source.split("else", 1)[0]
-    assert "run_recorded_gate CP" in idempotency_source
+    assert "run_trusted_parent_postgres_gate CP" in idempotency_source
+    assert "run_recorded_gate CP" not in idempotency_source
     assert "run_recorded_exact_pytest_gate CP" not in idempotency_source
     assert "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP" in (
         idempotency_source
@@ -3487,7 +3488,10 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
     assert "PYTEST_ADDOPTS" not in idempotency_source
     assert "--junitxml" not in " ".join(_reviewed_p2_idempotency_records()[-1]["argv"])
 
-    fake_postgres_gate = tmp_path / "run_postgres_gate.sh"
+    package_dir = tmp_path / "packages/acgs-control-plane"
+    script_dir = package_dir / "scripts"
+    script_dir.mkdir(parents=True)
+    fake_postgres_gate = script_dir / "run_postgres_gate.sh"
     fake_postgres_gate.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
@@ -3509,14 +3513,16 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
         f"WORKTREE={json.dumps(str(tmp_path))}\n"
+        f"UV_BIN={json.dumps(sys.executable)}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
-        'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
-        f"{wrapper}\n"
-        'run_recorded_gate CP "$PWD" p2-idempotency-postgres '
+        'die() { printf \'%s\\n\' "$*" >&2; exit 2; }\n'
+        f"{trusted_parent_gate}\n"
+        'run_trusted_parent_postgres_gate CP "$PWD/packages/acgs-control-plane" '
+        "p2-idempotency-postgres "
         "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "
-        f"{json.dumps(str(fake_postgres_gate))} {selector_args}\n",
+        f"./scripts/run_postgres_gate.sh {selector_args}\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -5132,7 +5138,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 10
+    assert source.count("run_recorded_gate CP") == 7
+    assert source.count("run_trusted_parent_postgres_gate CP") == 3
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
@@ -5158,6 +5165,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p2-register'" in source
     assert "TMP_BASENAME='acgs-p2-idempotency'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
     for selector in _common.P1_MIGRATION_SELECTORS:
         assert selector in source

@@ -922,6 +922,45 @@ run_recorded_gate() {
     "$cwd_scope" "$@"
 }
 
+run_trusted_parent_postgres_gate() {
+  local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5"
+  shift 5
+  local started finished stdout_file stderr_file gate_status stderr_sha256 tmpdir
+  [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
+  [[ "$cwd" == "$WORKTREE/packages/acgs-control-plane" ]] ||
+    die 'trusted parent PostgreSQL gate cwd must be the control-plane package'
+  [[ "${1:-}" == ./scripts/run_postgres_gate.sh ]] ||
+    die 'trusted parent PostgreSQL gate only runs the reviewed wrapper'
+  tmpdir="${TMPDIR:-/tmp}"
+  stdout_file="$NODE_EVIDENCE/$basename.stdout"
+  stderr_file="$NODE_EVIDENCE/$basename.stderr"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if (
+    cd "$cwd"
+    env -i \
+      PATH="$PATH" \
+      HOME="$HOME" \
+      TMPDIR="$tmpdir" \
+      UV_BIN="$UV_BIN" \
+      ACGS_TEST_SEED=20260710 \
+      PYTHONHASHSEED=0 \
+      "$@"
+  ) >"$stdout_file" 2>"$stderr_file"; then
+    gate_status=0
+  else
+    gate_status=$?
+  fi
+  finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$gate_status" -ne 0 ]]; then
+    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
+    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
+      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    return "$gate_status"
+  fi
+  append_record "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" \
+    "$cwd_scope" "$@"
+}
+
 validate_exact_pytest_junit() {
   local junit_file="$1" expected_tests="$2" selector="$3"
   run_contained "$WORKTREE" "$EVIDENCE_PY" - "$junit_file" "$expected_tests" "$selector" <<'PY'
@@ -1116,7 +1155,7 @@ elif [[ "$NODE_ID" == P1-MIGRATION-001 ]]; then
     tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget \
     tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal \
     tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state)
-  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-migration-postgres \
+  run_trusted_parent_postgres_gate CP "$WORKTREE/packages/acgs-control-plane" p1-migration-postgres \
     'packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate' CP \
     "${P1_MIGRATION_GATE[@]}"
 elif [[ "$NODE_ID" == P1-SCOPE-002 ]]; then
@@ -1167,7 +1206,7 @@ elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
     tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic \
     tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix \
     tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once)
-  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+  run_trusted_parent_postgres_gate CP \
     "$WORKTREE/packages/acgs-control-plane" p2-tenant-bootstrap-postgres \
     'packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate' CP \
     "${P2_TENANT_BOOTSTRAP_CP_GATE[@]}"
@@ -1201,7 +1240,7 @@ elif [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]; then
     tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \
     tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating \
     tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution)
-  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+  run_trusted_parent_postgres_gate CP \
     "$WORKTREE/packages/acgs-control-plane" p2-idempotency-postgres \
     'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP \
     "${P2_IDEMPOTENCY_CP_GATE[@]}"

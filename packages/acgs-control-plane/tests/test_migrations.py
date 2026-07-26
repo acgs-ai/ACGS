@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -851,6 +852,151 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert pytest_invocation in script
     assert '.venv/bin/pytest -q --junitxml="$junit_report" "$@"' not in script
     assert script.index(pytest_invocation) > script.index("broker_socket=")
+
+
+def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_archive(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "state"
+    broker_dir = state_dir / "broker"
+    client_dir = state_dir / "client"
+    home_dir = state_dir / "home"
+    allowed_tmp = state_dir / "tmp"
+    proof_scratch = state_dir / "proof-scratch"
+    fake_bin = tmp_path / "fake-bin"
+    outside_dir = tmp_path / "outside"
+    for directory in (
+        broker_dir,
+        client_dir,
+        home_dir,
+        allowed_tmp,
+        proof_scratch,
+        fake_bin,
+        outside_dir,
+    ):
+        directory.mkdir(parents=True)
+        directory.chmod(0o700)
+
+    broker_source, client_source = _postgres_gate_client_sources()
+    broker_path = broker_dir / "postgres_client_broker.py"
+    client_path = client_dir / "postgresql-client"
+    broker_path.write_text(broker_source, encoding="utf-8")
+    client_path.write_text(client_source, encoding="utf-8")
+    client_path.chmod(0o755)
+    (client_dir / "pg_dump").symlink_to("postgresql-client")
+
+    docker_log = tmp_path / "docker-args.jsonl"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, os, sys",
+                "from pathlib import Path",
+                "args = sys.argv[1:]",
+                "if args[:2] == ['info', '--format']:",
+                "    print('[\"name=rootless\"]')",
+                "    raise SystemExit(0)",
+                f"log = Path({str(docker_log)!r})",
+                "with log.open('a', encoding='utf-8') as handle:",
+                "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
+                "if 'pg_dump' in args:",
+                "    file_arg = next(arg for arg in args if arg.startswith('--file='))",
+                "    Path(file_arg.split('=', 1)[1]).write_bytes(b'PGDMP-test')",
+                "raise SystemExit(0)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+    socket_path = broker_dir / "postgresql-client.sock"
+    broker_env = os.environ.copy()
+    broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
+    broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
+    broker = subprocess.Popen(
+        [sys.executable, str(broker_path), str(socket_path)],
+        env=broker_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not socket_path.exists() and time.monotonic() < deadline:
+            if broker.poll() is not None:
+                stdout, stderr = broker.communicate(timeout=1)
+                pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
+            time.sleep(0.05)
+        assert socket_path.exists()
+
+        client_env = {
+            "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+            "PGHOST": "127.0.0.1",
+            "PGPORT": "5432",
+            "PGUSER": "operator",
+            "PGPASSWORD": "secret",
+            "PGDATABASE": "acgs_control_plane_test",
+            "PGCONNECT_TIMEOUT": "5",
+        }
+
+        denied_archive = outside_dir / "escape.dump"
+        denied = subprocess.run(
+            [str(client_dir / "pg_dump"), f"--file={denied_archive}"],
+            env=client_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert denied.returncode == 64
+        assert "outside broker-owned roots" in denied.stderr
+        assert not denied_archive.exists()
+        assert not docker_log.exists()
+
+        allowed_archive = allowed_tmp / "archive.dump"
+        allowed = subprocess.run(
+            [str(client_dir / "pg_dump"), f"--file={allowed_archive}"],
+            env=client_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert allowed.returncode == 0, allowed.stderr
+        assert allowed_archive.read_bytes() == b"PGDMP-test"
+        assert json.loads(docker_log.read_text(encoding="utf-8").splitlines()[-1])[-2:] == [
+            "pg_dump",
+            f"--file={allowed_archive}",
+        ]
+    finally:
+        broker.terminate()
+        try:
+            broker.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            broker.kill()
+            broker.wait(timeout=5)
+
+
+def _postgres_gate_client_sources() -> tuple[str, str]:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    broker_source = _extract_single_quoted_heredoc(
+        script,
+        "cat >\"$state_dir/broker/postgres_client_broker.py\" <<'PY'\n",
+    )
+    client_source = _extract_single_quoted_heredoc(
+        script,
+        "cat >\"$state_dir/client/postgresql-client\" <<'PY'\n",
+    )
+    return broker_source, client_source
+
+
+def _extract_single_quoted_heredoc(script: str, marker: str) -> str:
+    start = script.index(marker) + len(marker)
+    end = script.index("\nPY\n", start)
+    return script[start:end] + "\n"
 
 
 def test_raw_alembic_upgrade_rejects_an_empty_database_before_schema_mutation(
