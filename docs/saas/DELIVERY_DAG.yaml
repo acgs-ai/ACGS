@@ -909,7 +909,7 @@
       ],
       "risk_class": "yellow",
       "positive_tests": [
-        "PR #363 on branch beta/p1-g102d-v1-api-contract at commit d3ce182fc23927b447b211c917ade0a251cfafc2 records focused v1/OpenAPI/startup/production-posture evidence at 42 passed, full control-plane package evidence at 272 passed and 32 skipped, Ruff pass, package-local mypy pass, independent code and security APPROVE, verifier PASS, and hosted Python 3.11/3.12 pass.",
+        "PR #363 on branch beta/p1-g102d-v1-api-contract at commit 047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d records focused v1/OpenAPI/startup/production-posture evidence at 42 passed, full control-plane package evidence at 272 passed and 32 skipped, Ruff pass, package-local mypy pass, independent code and security APPROVE, verifier PASS, and hosted Python 3.11/3.12 pass.",
         "The implementation adds typed GET /v1 metadata and programmatic /v1/orgs aliases over existing legacy-v0 APIRoutes with explicit stable v1 operation IDs while preserving v0 behavior."
       ],
       "forbidden_side_effect_negative_tests": [
@@ -925,7 +925,7 @@
         "gh pr view 363 --repo dislovelhl/ACGS --json number,state,isDraft,mergedAt,url,headRefName,baseRefName,headRefOid",
         "git diff --check"
       ],
-      "evidence_artifact": "G102D current-local PR #363 evidence: branch beta/p1-g102d-v1-api-contract, worktree saas-beta/p1-g101-tool-provenance, commit d3ce182fc23927b447b211c917ade0a251cfafc2, focused v1/OpenAPI/startup/production-posture suite 42 passed, full control-plane 272 passed/32 skipped, Ruff pass, package-local mypy pass, independent code and security APPROVE, verifier PASS, hosted Python 3.11 and Python 3.12 pass. Hosted PostgreSQL migrations and codex-review did not start because of EXT-GITHUB-BILLING. This adds additive legacy-v0 /v1 aliases and typed /v1 root only; v0 is preserved, production remains fail-closed with 14 LEGACY_UNSIGNED_WRITE blockers, and it makes no signed production governance, database schema, migration, generated client, production readiness, beta completion, complete all-collections pagination, durable idempotency, or async export job claim.",
+      "evidence_artifact": "G102D current-local PR #363 evidence: branch beta/p1-g102d-v1-api-contract, worktree saas-beta/p1-g101-tool-provenance, commit 047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d, focused v1/OpenAPI/startup/production-posture suite 42 passed, full control-plane 310 passed/50 skipped, Ruff pass, package-local mypy pass, independent code and security APPROVE, verifier PASS, hosted Python 3.11 and Python 3.12 pass. Hosted PostgreSQL migrations and codex-review did not start because of EXT-GITHUB-BILLING. This adds additive legacy-v0 /v1 aliases and typed /v1 root only; v0 is preserved, production remains fail-closed with 14 LEGACY_UNSIGNED_WRITE blockers, and it makes no signed production governance, database schema, migration, generated client, production readiness, beta completion, complete all-collections pagination, durable idempotency, or async export job claim.",
       "branch": "beta/p1-g102d-v1-api-contract",
       "worktree": "saas-beta/p1-g101-tool-provenance",
       "pr": 363,

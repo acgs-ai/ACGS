@@ -768,7 +768,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         ]
     )
     for evidence in (
-        "d3ce182fc23927b447b211c917ade0a251cfafc2",
+        "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
         "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
         "full control-plane package evidence at 272 passed and 32 skipped",
         "Ruff pass",
