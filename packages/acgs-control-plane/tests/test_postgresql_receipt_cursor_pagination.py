@@ -215,9 +215,8 @@ def test_postgresql_cursor_pages_cover_the_server_ordering_exactly_once(tmp_path
     _tie_timestamps_with_microseconds(client, org_id)
 
     expected = _server_order(client, org_id)
-    # Nine agent registrations, the receipt the org bootstrap itself emits,
-    # and the publish/activate pair from seeding the required policy bundle.
-    assert len(expected) == 12
+    # Nine user creations plus the receipt the org bootstrap itself emits.
+    assert len(expected) == 10
 
     for limit in (1, 2, 4):
         collected = _drain_pages(client, org_id, headers, limit=limit)
