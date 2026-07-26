@@ -6787,6 +6787,160 @@ exit $?
     assert not Path(worktree_admin_gitdir).exists()
 
 
+def test_clean_sibling_cleanup_retained_gitfile_refuses_replacement_after_move(
+    tmp_path: Path,
+) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+    cleanup_root = parent / "acgs-p0-evidence.retained-gitfile"
+    cleanup_root.mkdir(mode=0o700)
+    cleanup_worktree = cleanup_root / "product"
+    moved_worktree = tmp_path / "moved-outside-parent"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(cleanup_worktree), "HEAD"],
+        cwd=source_repo,
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+    original_gitfile_stat = (cleanup_worktree / ".git").stat(follow_symlinks=False)
+    source_common_gitdir = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=source_repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    worktree_admin_gitdir = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=cleanup_worktree,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    copied_admin_gitdir = Path(source_common_gitdir) / "worktrees" / "copied-product"
+    registry_stat = (Path(source_common_gitdir) / "worktrees").stat()
+    registry_identity = f"{registry_stat.st_dev}:{registry_stat.st_ino}:{registry_stat.st_uid}"
+    admin_sentinel = "4" * 64
+    admin_sentinel_path = Path(worktree_admin_gitdir) / "acgs-clean-sibling-owner"
+    admin_sentinel_path.write_text(f"{admin_sentinel}\n", encoding="utf-8")
+    admin_sentinel_path.chmod(0o600)
+    admin_stat = Path(worktree_admin_gitdir).stat()
+    admin_identity = f"{admin_stat.st_dev}:{admin_stat.st_ino}:{admin_stat.st_uid}"
+
+    cleanup_command = r"""
+set -eu
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+WORKTREE="$TMP_ROOT/product"
+MOVED_WORKTREE="$5"
+SOURCE_COMMON_GITDIR="$6"
+WORKTREE_ADMIN_GITDIR="$7"
+COPIED_ADMIN_GITDIR="$8"
+WORKTREE_ADMIN_GITDIR_IDENTITY="$9"
+WORKTREE_REGISTRY_ROOT_IDENTITY="${10}"
+WORKTREE_ADMIN_SENTINEL="${11}"
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
+printf '%s\n' "$$" >"$OWNER_MARKER"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
+IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE \
+  WORKTREE_GITFILE_UID WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS \
+  WORKTREE_GITFILE_SIZE WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(
+  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" "$WORKTREE_GITFILE_PATH"
+)
+WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"
+
+git -C "$SOURCE_REPO" worktree move "$WORKTREE" "$MOVED_WORKTREE"
+cp -a -- "$WORKTREE_ADMIN_GITDIR" "$COPIED_ADMIN_GITDIR"
+rm -- "$COPIED_ADMIN_GITDIR/acgs-clean-sibling-owner"
+gitfile_content="$(cat "$MOVED_WORKTREE/.git")"
+rm -- "$MOVED_WORKTREE/.git"
+printf '%s\n' "$gitfile_content" >"$MOVED_WORKTREE/.git"
+rm -rf -- "$WORKTREE_ADMIN_GITDIR"
+
+WORKTREE_ADDED=1
+PROOF_COMPLETE=1
+TRANSCRIPT_RECORDS=10
+ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
+NODE_ID=P0-EVIDENCE-000
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+clean_sibling_cleanup 0
+exit $?
+"""
+    cleanup_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            cleanup_command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(cleanup_root),
+            str(moved_worktree),
+            source_common_gitdir,
+            worktree_admin_gitdir,
+            str(copied_admin_gitdir),
+            admin_identity,
+            registry_identity,
+            admin_sentinel,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert cleanup_result.returncode == 2
+    assert (
+        "cleanup refused because retained worktree gitfile moved/replaced"
+        in cleanup_result.stderr
+    )
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
+    assert cleanup_root.is_dir()
+    assert (cleanup_root / ".acgs-clean-sibling-owned").is_file()
+    assert moved_worktree.is_dir()
+    assert (moved_worktree / "tracked").is_file()
+    assert (moved_worktree / ".git").stat().st_ino != original_gitfile_stat.st_ino
+    assert copied_admin_gitdir.is_dir()
+    assert not (copied_admin_gitdir / "acgs-clean-sibling-owner").exists()
+    assert not Path(worktree_admin_gitdir).exists()
+
+    copied_admin_gitdir.rename(worktree_admin_gitdir)
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(moved_worktree)],
+        cwd=source_repo,
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+    assert not Path(worktree_admin_gitdir).exists()
+
+
 def test_clean_sibling_cleanup_rejects_fifo_admin_sentinel_without_hang(
     tmp_path: Path,
 ) -> None:
