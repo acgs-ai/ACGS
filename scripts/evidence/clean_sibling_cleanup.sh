@@ -94,13 +94,14 @@ clean_sibling_find_admin_sentinel() {
   local expected_identity="$2"
   local sentinel="$3"
   local registry_fd=''
+  local snapshot_python="${SNAPSHOT_PYTHON:-/usr/bin/python3}"
   local rc=0
 
   [[ "$registry_root" == /* && -d "$registry_root" && ! -L "$registry_root" ]] || return 2
   [[ "$expected_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
   [[ "$sentinel" =~ ^[0-9a-f]{64}$ ]] || return 2
   exec {registry_fd}<"$registry_root" || return 2
-  "$SNAPSHOT_PYTHON" - "$registry_fd" "$expected_identity" "$registry_root" "$sentinel" <<'PY'
+  "$snapshot_python" - "$registry_fd" "$expected_identity" "$registry_root" "$sentinel" <<'PY'
 import errno
 import os
 import stat
@@ -136,7 +137,7 @@ try:
             try:
                 sentinel_fd = os.open(
                     "acgs-clean-sibling-owner",
-                    os.O_RDONLY | os.O_NOFOLLOW,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                     dir_fd=entry_fd,
                 )
             except OSError as exc:
@@ -146,6 +147,9 @@ try:
                 sys.exit(2)
             with os.fdopen(sentinel_fd, "rb") as handle:
                 sentinel_stat = os.fstat(handle.fileno())
+                if not stat.S_ISREG(sentinel_stat.st_mode) or sentinel_stat.st_nlink != 1:
+                    print("cleanup refused because worktree admin sentinel is not a regular file", file=sys.stderr)
+                    sys.exit(2)
                 if stat.S_ISLNK(sentinel_stat.st_mode) or sentinel_stat.st_uid != os.getuid():
                     print("cleanup refused because worktree admin sentinel identity changed", file=sys.stderr)
                     sys.exit(2)
@@ -159,6 +163,107 @@ try:
 except Exception as exc:
     print(f"cleanup refused because worktree registry enumeration failed: {exc}", file=sys.stderr)
     sys.exit(2)
+PY
+  rc=$?
+  exec {registry_fd}<&-
+  return "$rc"
+}
+
+clean_sibling_find_linked_gitfile_registration() {
+  local registry_root="$1"
+  local expected_registry_identity="$2"
+  local expected_gitfile_identity="$3"
+  local registry_fd=''
+  local snapshot_python="${SNAPSHOT_PYTHON:-/usr/bin/python3}"
+  local rc=0
+
+  [[ "$registry_root" == /* && -d "$registry_root" && ! -L "$registry_root" ]] || return 2
+  [[ "$expected_registry_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
+  [[ "$expected_gitfile_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
+  exec {registry_fd}<"$registry_root" || return 2
+  "$snapshot_python" - "$registry_fd" "$expected_registry_identity" \
+    "$registry_root" "$expected_gitfile_identity" <<'PY'
+import errno
+import os
+import stat
+import sys
+
+fd = int(sys.argv[1])
+expected_registry = tuple(int(part) for part in sys.argv[2].split(":"))
+registry_root = sys.argv[3]
+expected_gitfile = tuple(int(part) for part in sys.argv[4].split(":"))
+
+
+def fail(message: str) -> "None":
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def reject_control_text(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
+try:
+    root_stat = os.fstat(fd)
+    if (root_stat.st_dev, root_stat.st_ino, root_stat.st_uid) != expected_registry:
+        fail("cleanup refused because worktree registry identity changed")
+    for name in os.listdir(fd):
+        if reject_control_text(name):
+            fail("cleanup refused control-character worktree registry entry")
+        try:
+            entry_stat = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
+            fail(f"cleanup refused because worktree registry entry is not a directory: {name}")
+        try:
+            entry_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=fd,
+            )
+        except OSError as exc:
+            fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
+        try:
+            try:
+                gitdir_fd = os.open(
+                    "gitdir",
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                    dir_fd=entry_fd,
+                )
+            except OSError as exc:
+                if exc.errno == errno.ENOENT:
+                    continue
+                fail(f"cleanup refused because worktree gitdir read failed: {exc}")
+            try:
+                gitdir_stat = os.fstat(gitdir_fd)
+                if (not stat.S_ISREG(gitdir_stat.st_mode) or
+                        gitdir_stat.st_nlink != 1 or
+                        gitdir_stat.st_uid != os.getuid()):
+                    fail("cleanup refused because worktree gitdir identity changed")
+                data = os.read(gitdir_fd, 4096)
+                if os.read(gitdir_fd, 1):
+                    fail("cleanup refused because worktree gitdir path is too large")
+            finally:
+                os.close(gitdir_fd)
+            if not data.endswith(b"\n") or data.count(b"\n") != 1:
+                fail("cleanup refused because worktree gitdir path is malformed")
+            raw_path = data[:-1]
+            if (not raw_path.startswith(b"/") or b"\0" in raw_path or
+                    any(byte < 32 or byte == 127 for byte in raw_path)):
+                fail("cleanup refused because worktree gitdir path is malformed")
+            try:
+                linked_stat = os.stat(os.fsdecode(raw_path), follow_symlinks=False)
+            except OSError as exc:
+                fail(f"cleanup refused because worktree gitdir target is unreadable: {exc}")
+            if stat.S_ISLNK(linked_stat.st_mode):
+                fail("cleanup refused because worktree gitdir target is a symlink")
+            if (linked_stat.st_dev, linked_stat.st_ino, linked_stat.st_uid) == expected_gitfile:
+                print(os.path.join(registry_root, name))
+        finally:
+            os.close(entry_fd)
+except Exception as exc:
+    fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
 PY
   rc=$?
   exec {registry_fd}<&-
@@ -382,12 +487,13 @@ clean_sibling_cleanup() {
   local current_registry_identity=''
   local admin_registry_entry=''
   local admin_registry_found_path=''
+  local linked_gitfile_found_path=''
   local admin_registry_root=''
   local admin_sentinel_found_path=''
   local dotglob_was_set=0
   local nullglob_was_set=0
 
-  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE SOURCE_COMMON_GITDIR WORKTREE_ADMIN_GITDIR WORKTREE_ADMIN_SENTINEL_PATH; do
+  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE SOURCE_COMMON_GITDIR WORKTREE_ADMIN_GITDIR WORKTREE_GITFILE_PATH WORKTREE_ADMIN_SENTINEL_PATH; do
     path_value="${!path_label-}"
     if [[ -n "$path_value" ]]; then
       clean_sibling_reject_control_path "$path_label" "$path_value" || return 2
@@ -567,6 +673,20 @@ clean_sibling_cleanup() {
             printf 'cleanup refused because worktree admin registration relocated: %s\n' \
               "$admin_sentinel_found_path" >&2
           fi
+          cleanup_status=2
+        fi
+      fi
+      if [[ -n "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}" ]] &&
+        [[ -n "${WORKTREE_GITFILE_IDENTITY:-}" ]]; then
+        if ! linked_gitfile_found_path="$(clean_sibling_find_linked_gitfile_registration \
+          "$admin_registry_root" "$WORKTREE_REGISTRY_ROOT_IDENTITY" \
+          "$WORKTREE_GITFILE_IDENTITY")"; then
+          cleanup_status=2
+          linked_gitfile_found_path=''
+        fi
+        if [[ -n "$linked_gitfile_found_path" ]]; then
+          printf 'cleanup refused because linked worktree registration remains: %s\n' \
+            "$linked_gitfile_found_path" >&2
           cleanup_status=2
         fi
       fi
