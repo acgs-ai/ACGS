@@ -87,7 +87,10 @@ jobs:
           POSTGRES_USER: acgs_control_plane_test
           POSTGRES_PASSWORD: g101-test-password-17
         ports:
-          - 5432/tcp
+          # Fixed host port: the connection-ceiling step below restarts the
+          # container, and Docker reassigns randomly published ports on
+          # restart, which would strand every later step on a dead port.
+          - 15432:5432
         options: >-
           --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
           --health-interval 10s
