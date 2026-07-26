@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -12,8 +13,8 @@ from typing import Any, Protocol, cast
 
 import sqlalchemy as sa
 from gove_zone.decision import Decision, DecisionRecord, sha256_json
-from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptValidationError
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptRejectionReason, ReceiptValidationError
+from gove_zone.receipt import DecisionReceipt, safe_result_hash
 from gove_zone.signing import Ed25519Signer
 from gove_zone.tool import ToolCall, normalize_path_context
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope, TrustConfigurationError
@@ -29,7 +30,9 @@ from acgs_control_plane.managed_mutations import (
     ManagedMutationResult,
     ManagedMutationUnitOfWork,
     ManagedNonExecutableEvidenceResult,
+    _validated_operation_args,
     managed_mutation_execution_boundary,
+    managed_receipt_artifact_aad,
 )
 from acgs_control_plane.models import (
     AgentRecord,
@@ -37,7 +40,10 @@ from acgs_control_plane.models import (
     Environment,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
+    ManagedGovernanceEventHead,
+    ManagedMutationAttempt,
     ManagedOutboxMessage,
+    ManagedReceiptConsumption,
     Organization,
     PolicyBundle,
     Project,
@@ -50,6 +56,7 @@ from acgs_control_plane.trust import (
     ManagedPlatformIssuer,
     ManagedReceiptContext,
     ManagedTrustError,
+    SqlReceiptTrustRegistry,
     active_trust_epoch_for_scope,
     mint_managed_decision_receipt_v2,
 )
@@ -263,6 +270,7 @@ class AgentRegistrationService:
                     session,
                     existing,
                     idempotency_record,
+                    self._providers.receipt_sealer,
                 )
             try:
                 trust_epoch = active_trust_epoch_for_scope(
@@ -381,6 +389,7 @@ class AgentRegistrationService:
                         self._session_factory,
                         existing,
                         idempotency_record,
+                        self._providers.receipt_sealer,
                     ) from None
                 raise AgentRegistrationHttpError(
                     503,
@@ -399,6 +408,7 @@ class AgentRegistrationService:
                         self._session_factory,
                         existing,
                         idempotency_record,
+                        self._providers.receipt_sealer,
                     ) from exc
                 raise AgentRegistrationHttpError(
                     409,
@@ -425,6 +435,7 @@ class AgentRegistrationService:
                         self._session_factory,
                         existing,
                         idempotency_record,
+                        self._providers.receipt_sealer,
                     ) from exc
                 raise AgentRegistrationHttpError(
                     503,
@@ -593,6 +604,7 @@ class AgentRegistrationService:
                     self._session_factory,
                     existing,
                     idempotency_record,
+                    self._providers.receipt_sealer,
                 )
             raise AgentRegistrationHttpError(
                 503,
@@ -611,6 +623,7 @@ class AgentRegistrationService:
                     self._session_factory,
                     existing,
                     idempotency_record,
+                    self._providers.receipt_sealer,
                 )
             if _is_agent_name_conflict(exc):
                 raise AgentRegistrationHttpError(
@@ -637,6 +650,7 @@ class AgentRegistrationService:
                     self._session_factory,
                     existing,
                     idempotency_record,
+                    self._providers.receipt_sealer,
                 )
             raise AgentRegistrationHttpError(
                 409,
@@ -663,6 +677,7 @@ class AgentRegistrationService:
                     self._session_factory,
                     existing,
                     idempotency_record,
+                    self._providers.receipt_sealer,
                 )
             raise AgentRegistrationHttpError(
                 503,
@@ -854,8 +869,9 @@ def _replay_idempotency_response(
     session: Session,
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> AgentRegistrationResult:
-    replay = _validated_idempotency_replay(session, row, idempotency)
+    replay = _validated_idempotency_replay(session, row, idempotency, receipt_sealer)
     if isinstance(replay, AgentRegistrationResult):
         return replay
     raise replay
@@ -865,24 +881,26 @@ def _replay_idempotency_response_new_session_result(
     session_factory: sessionmaker[Session],
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> AgentRegistrationResult:
     with session_factory() as session:
         fresh = session.get(AgentRegistrationIdempotency, row.id)
         if fresh is None:
             raise _invalid_idempotency_record()
-        return _replay_idempotency_response(session, fresh, idempotency)
+        return _replay_idempotency_response(session, fresh, idempotency, receipt_sealer)
 
 
 def _replay_idempotency_response_new_session_error(
     session_factory: sessionmaker[Session],
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> AgentRegistrationHttpError:
     with session_factory() as session:
         fresh = session.get(AgentRegistrationIdempotency, row.id)
         if fresh is None:
             return _invalid_idempotency_record()
-        replay = _validated_idempotency_replay(session, fresh, idempotency)
+        replay = _validated_idempotency_replay(session, fresh, idempotency, receipt_sealer)
         if isinstance(replay, AgentRegistrationHttpError):
             return replay
         return _invalid_idempotency_record()
@@ -892,6 +910,7 @@ def _validated_idempotency_replay(
     session: Session,
     row: AgentRegistrationIdempotency,
     idempotency: _AgentRegistrationIdempotencyContext,
+    receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> AgentRegistrationResult | AgentRegistrationHttpError:
     _assert_same_idempotency_request(row, idempotency)
     projection = idempotency.request_projection
@@ -904,12 +923,14 @@ def _validated_idempotency_replay(
         raise _invalid_idempotency_record()
 
     receipt = session.scalars(
-        sa.select(ManagedDecisionReceipt).where(
+        sa.select(ManagedDecisionReceipt)
+        .where(
             ManagedDecisionReceipt.org_id == row.org_id,
             ManagedDecisionReceipt.project_id == row.project_id,
             ManagedDecisionReceipt.environment_id == row.environment_id,
             ManagedDecisionReceipt.receipt_id == row.receipt_id,
         )
+        .with_for_update()
     ).one_or_none()
     if receipt is None:
         raise _invalid_idempotency_record()
@@ -919,20 +940,38 @@ def _validated_idempotency_replay(
         or receipt.argument_hash != sha256_json(projection["args"])
     ):
         raise _invalid_idempotency_record()
+    _validate_replay_receipt_artifact(
+        session,
+        receipt,
+        projection=projection,
+        receipt_sealer=receipt_sealer,
+    )
+    event = _validated_replay_event(session, receipt, projection=projection)
+    outbox = _validated_replay_outbox(session, receipt, event)
 
     if receipt.decision == "allow":
+        _validated_replay_allow_consumption(session, receipt)
+        _validated_replay_allow_attempt(session, receipt, projection=projection)
         if not isinstance(row.agent_id, str):
             raise _invalid_idempotency_record()
         agent = session.scalars(
-            sa.select(AgentRecord).where(
+            sa.select(AgentRecord)
+            .where(
                 AgentRecord.org_id == row.org_id,
                 AgentRecord.project_id == row.project_id,
                 AgentRecord.environment_id == row.environment_id,
                 AgentRecord.id == row.agent_id,
             )
+            .with_for_update()
         ).one_or_none()
         if agent is None:
             raise _invalid_idempotency_record()
+        _validate_replay_allow_agent_result(
+            agent,
+            projection=projection,
+            event=event,
+            outbox=outbox,
+        )
         result = AgentRegistrationResult(
             agent_id=agent.id,
             org_id=agent.org_id,
@@ -954,6 +993,8 @@ def _validated_idempotency_replay(
         return result
 
     if receipt.decision in {"deny", "escalate"}:
+        _validate_no_allow_consumption(session, receipt)
+        _validate_no_mutation_attempt(session, receipt)
         if row.agent_id is not None:
             raise _invalid_idempotency_record()
         terminal = _terminal_http_error_for_decision_value(Decision(receipt.decision))
@@ -990,6 +1031,350 @@ def _validated_idempotency_replay(
         )
 
     raise _invalid_idempotency_record()
+
+
+def _validate_replay_receipt_artifact(
+    session: Session,
+    receipt_row: ManagedDecisionReceipt,
+    *,
+    projection: Mapping[str, Any],
+    receipt_sealer: AesGcmReceiptArtifactSealer,
+) -> None:
+    try:
+        sealed_receipt = receipt_row.projection["sealed_receipt"]
+        if not isinstance(sealed_receipt, Mapping):
+            raise ValueError("sealed receipt is not an object")
+        plaintext = receipt_sealer.unseal(
+            sealed_receipt,
+            associated_data=managed_receipt_artifact_aad(
+                org_id=receipt_row.org_id,
+                project_id=receipt_row.project_id,
+                environment_id=receipt_row.environment_id,
+                receipt_hash=receipt_row.receipt_hash,
+            ),
+        )
+        sealed = DecisionReceipt.from_dict(json.loads(plaintext.decode("utf-8")))
+        if (
+            sealed.receipt_id != receipt_row.receipt_id
+            or sealed.receipt_hash != receipt_row.receipt_hash
+            or sealed.audit_event_hash != receipt_row.audit_event_hash
+            or sealed.decision != receipt_row.decision
+            or sealed.actor != receipt_row.actor
+            or sealed.proposed_action != receipt_row.proposed_action
+            or sealed.execution_boundary != receipt_row.execution_boundary
+            or sealed.policy_bundle_id != receipt_row.policy_bundle_id
+            or sealed.policy_version != receipt_row.policy_version
+            or sealed.policy_hash != receipt_row.policy_hash
+            or sealed.argument_hash != receipt_row.argument_hash
+            or sealed.signing_key_id != receipt_row.signing_key_id
+            or sealed.signature_algorithm != receipt_row.signature_algorithm
+            or sealed.receipt_schema_version != receipt_row.receipt_schema_version
+            or sealed.project_id != receipt_row.project_id
+            or sealed.environment_id != receipt_row.environment_id
+            or sealed.trust_epoch != receipt_row.trust_epoch
+        ):
+            raise ValueError("sealed receipt does not match indexed projection")
+        if sealed.receipt_hash != sealed.compute_hash():
+            raise ValueError("sealed receipt hash mismatch")
+        try:
+            sealed.verify(
+                expected_tenant_id=receipt_row.org_id,
+                expected_execution_boundary=receipt_row.execution_boundary,
+                expected_action=receipt_row.proposed_action,
+                expected_actor=str(projection["actor"]),
+                expected_audit_hash=receipt_row.audit_event_hash,
+                expected_args=_validated_operation_args(
+                    str(projection["action"]),
+                    cast(Mapping[str, Any], projection["args"]),
+                ),
+                expected_policy_hash=receipt_row.policy_hash,
+                expected_policy_bundle_id=receipt_row.policy_bundle_id,
+                expected_project_id=receipt_row.project_id,
+                expected_environment_id=receipt_row.environment_id,
+                expected_validator_role=receipt_row.projection.get("validator_role"),
+                expected_authority=receipt_row.projection.get("authority"),
+                verifier=None,
+                require_signature=True,
+                require_expiry=False,
+                trust_registry=SqlReceiptTrustRegistry(session),
+                historical_trust_verification=True,
+                trust_purpose=DECISION_RECEIPT_PURPOSE,
+                now_iso=sealed.timestamp,
+            )
+        except ReceiptValidationError as exc:
+            terminal_reasons = {
+                "deny": ReceiptRejectionReason.DENIED_RECEIPT,
+                "escalate": ReceiptRejectionReason.ESCALATED_RECEIPT,
+            }
+            if exc.reason_code != terminal_reasons.get(sealed.decision):
+                raise
+    except Exception as exc:
+        raise _invalid_idempotency_record() from exc
+
+
+def _validated_replay_event(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+    *,
+    projection: Mapping[str, Any],
+) -> ManagedGovernanceEvent:
+    events = list(
+        session.scalars(
+            sa.select(ManagedGovernanceEvent)
+            .where(
+                ManagedGovernanceEvent.org_id == receipt.org_id,
+                ManagedGovernanceEvent.project_id == receipt.project_id,
+                ManagedGovernanceEvent.environment_id == receipt.environment_id,
+                ManagedGovernanceEvent.managed_receipt_id == receipt.id,
+            )
+            .with_for_update()
+        )
+    )
+    if len(events) != 1:
+        raise _invalid_idempotency_record()
+    event = events[0]
+    event_payload = event.payload if isinstance(event.payload, Mapping) else {}
+    if (
+        event.decision != receipt.decision
+        or event.actor != receipt.actor
+        or event.proposed_action != receipt.proposed_action
+        or event.policy_version != receipt.policy_version
+        or event_payload.get("receipt_hash") != receipt.receipt_hash
+        or event_payload.get("audit_event_hash") != receipt.audit_event_hash
+        or event_payload.get("argument_hash") != sha256_json(projection["args"])
+        or event_payload.get("decision") != receipt.decision
+        or event_payload.get("actor_hash") != sha256_json(projection["actor"])
+        or event_payload.get("action") != projection["action"]
+        or event_payload.get("policy_bundle_id") != receipt.policy_bundle_id
+        or event_payload.get("policy_hash") != receipt.policy_hash
+    ):
+        raise _invalid_idempotency_record()
+    if event.payload_digest != sha256_json(event.payload):
+        raise _invalid_idempotency_record()
+    _validate_replay_event_chain(session, event)
+    return event
+
+
+def _validate_replay_event_chain(session: Session, event: ManagedGovernanceEvent) -> None:
+    expected_event_hash = sha256_json(
+        {
+            "schema": "managed-mutation-event-chain/v1",
+            "sequence": event.sequence,
+            "previous_hash": event.previous_hash,
+            "payload_digest": event.payload_digest,
+        }
+    )
+    if event.event_hash != expected_event_hash:
+        raise _invalid_idempotency_record()
+    head = session.get(
+        ManagedGovernanceEventHead,
+        (event.org_id, event.project_id, event.environment_id),
+        with_for_update=True,
+    )
+    if head is None or event.sequence < 1 or event.sequence > head.last_sequence:
+        raise _invalid_idempotency_record()
+    if event.sequence == 1:
+        if event.previous_hash != _GENESIS_AUDIT_HASH:
+            raise _invalid_idempotency_record()
+    else:
+        previous_event = _event_at_sequence(session, event, sequence=event.sequence - 1)
+        if previous_event is None or previous_event.event_hash != event.previous_hash:
+            raise _invalid_idempotency_record()
+    if event.sequence == head.last_sequence:
+        if head.last_event_hash != event.event_hash:
+            raise _invalid_idempotency_record()
+    else:
+        next_event = _event_at_sequence(session, event, sequence=event.sequence + 1)
+        if next_event is None or next_event.previous_hash != event.event_hash:
+            raise _invalid_idempotency_record()
+
+
+def _event_at_sequence(
+    session: Session,
+    event: ManagedGovernanceEvent,
+    *,
+    sequence: int,
+) -> ManagedGovernanceEvent | None:
+    return session.scalars(
+        sa.select(ManagedGovernanceEvent)
+        .where(
+            ManagedGovernanceEvent.org_id == event.org_id,
+            ManagedGovernanceEvent.project_id == event.project_id,
+            ManagedGovernanceEvent.environment_id == event.environment_id,
+            ManagedGovernanceEvent.sequence == sequence,
+        )
+        .with_for_update()
+    ).one_or_none()
+
+
+def _validated_replay_outbox(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+    event: ManagedGovernanceEvent,
+) -> ManagedOutboxMessage:
+    outbox_rows = list(
+        session.scalars(
+            sa.select(ManagedOutboxMessage)
+            .where(
+                ManagedOutboxMessage.org_id == receipt.org_id,
+                ManagedOutboxMessage.project_id == receipt.project_id,
+                ManagedOutboxMessage.environment_id == receipt.environment_id,
+                ManagedOutboxMessage.managed_receipt_id == receipt.id,
+                ManagedOutboxMessage.managed_event_id == event.id,
+            )
+            .with_for_update()
+        )
+    )
+    if len(outbox_rows) != 1:
+        raise _invalid_idempotency_record()
+    outbox = outbox_rows[0]
+    outbox_payload = outbox.payload if isinstance(outbox.payload, Mapping) else {}
+    if (
+        outbox_payload.get("event_hash") != event.event_hash
+        or outbox_payload.get("payload_digest") != event.payload_digest
+        or outbox_payload.get("receipt_hash") != receipt.receipt_hash
+        or outbox_payload.get("audit_event_hash") != receipt.audit_event_hash
+        or outbox_payload.get("result_hash") != event.payload.get("result_hash")
+        or outbox_payload.get("assurance_class") != receipt.assurance_class
+        or outbox.delivery_key != f"managed-mutation-uow/v1:{event.event_hash}"
+        or outbox.payload_digest != sha256_json(outbox.payload)
+    ):
+        raise _invalid_idempotency_record()
+    return outbox
+
+
+def _validate_replay_allow_agent_result(
+    agent: AgentRecord,
+    *,
+    projection: Mapping[str, Any],
+    event: ManagedGovernanceEvent,
+    outbox: ManagedOutboxMessage,
+) -> None:
+    expected_args = _validated_operation_args(
+        str(projection["action"]),
+        cast(Mapping[str, Any], projection["args"]),
+    )
+    if (
+        agent.name != expected_args["name"]
+        or agent.description != expected_args["description"]
+        or agent.trust_tier != expected_args["trust_tier"]
+        or list(agent.allowed_tools or []) != expected_args["allowed_tools"]
+        or agent.status != "active"
+    ):
+        raise _invalid_idempotency_record()
+    expected_result_hash = safe_result_hash(
+        {
+            "agent_id": agent.id,
+            "org_id": agent.org_id,
+            "project_id_hash": sha256_json(agent.project_id or ""),
+            "environment_id_hash": sha256_json(agent.environment_id or ""),
+            "name_hash": sha256_json(expected_args["name"]),
+            "status": "active",
+            "created_at": _to_utc(agent.created_at).isoformat(),
+        }
+    )
+    event_payload = event.payload if isinstance(event.payload, Mapping) else {}
+    outbox_payload = outbox.payload if isinstance(outbox.payload, Mapping) else {}
+    if (
+        event_payload.get("result_hash") != expected_result_hash
+        or outbox_payload.get("result_hash") != expected_result_hash
+    ):
+        raise _invalid_idempotency_record()
+
+
+def _validated_replay_allow_consumption(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+) -> None:
+    consumptions = list(
+        session.scalars(
+            sa.select(ManagedReceiptConsumption)
+            .where(
+                ManagedReceiptConsumption.org_id == receipt.org_id,
+                ManagedReceiptConsumption.project_id == receipt.project_id,
+                ManagedReceiptConsumption.environment_id == receipt.environment_id,
+                ManagedReceiptConsumption.managed_receipt_id == receipt.id,
+            )
+            .with_for_update()
+        )
+    )
+    if len(consumptions) != 1:
+        raise _invalid_idempotency_record()
+    consumption = consumptions[0]
+    if (
+        consumption.receipt_hash != receipt.receipt_hash
+        or consumption.audit_event_hash != receipt.audit_event_hash
+    ):
+        raise _invalid_idempotency_record()
+
+
+def _validated_replay_allow_attempt(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+    *,
+    projection: Mapping[str, Any],
+) -> None:
+    attempts = list(
+        session.scalars(
+            sa.select(ManagedMutationAttempt)
+            .where(
+                ManagedMutationAttempt.org_id == receipt.org_id,
+                ManagedMutationAttempt.receipt_hash == receipt.receipt_hash,
+            )
+            .with_for_update()
+        )
+    )
+    if len(attempts) != 1:
+        raise _invalid_idempotency_record()
+    attempt = attempts[0]
+    if (
+        attempt.project_id != receipt.project_id
+        or attempt.environment_id != receipt.environment_id
+        or attempt.audit_event_hash != receipt.audit_event_hash
+        or attempt.action != receipt.proposed_action
+        or attempt.actor_hash != sha256_json(projection["actor"])
+        or attempt.argument_hash != sha256_json(projection["args"])
+        or attempt.status != "succeeded"
+    ):
+        raise _invalid_idempotency_record()
+
+
+def _validate_no_allow_consumption(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+) -> None:
+    if (
+        session.scalars(
+            sa.select(ManagedReceiptConsumption)
+            .where(
+                ManagedReceiptConsumption.org_id == receipt.org_id,
+                ManagedReceiptConsumption.project_id == receipt.project_id,
+                ManagedReceiptConsumption.environment_id == receipt.environment_id,
+                ManagedReceiptConsumption.managed_receipt_id == receipt.id,
+            )
+            .with_for_update()
+        ).first()
+        is not None
+    ):
+        raise _invalid_idempotency_record()
+
+
+def _validate_no_mutation_attempt(
+    session: Session,
+    receipt: ManagedDecisionReceipt,
+) -> None:
+    if (
+        session.scalars(
+            sa.select(ManagedMutationAttempt)
+            .where(
+                ManagedMutationAttempt.org_id == receipt.org_id,
+                ManagedMutationAttempt.receipt_hash == receipt.receipt_hash,
+            )
+            .with_for_update()
+        ).first()
+        is not None
+    ):
+        raise _invalid_idempotency_record()
 
 
 def _invalid_idempotency_record() -> AgentRegistrationHttpError:
