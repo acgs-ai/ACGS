@@ -43,8 +43,21 @@ the server-owned default project/environment scope from Alembic revision `0006`,
 mints a signed receipt-v2 `DecisionReceipt` before execution, verifies it through
 `execute_with_receipt`, consumes ALLOW receipts once, records DENY/ESCALATE as
 non-executable evidence, and rejects stale policy, trust, binding mismatch, and
-replay cases before the forbidden agent row can be inserted. The general receipt
-explorer and export bundle still target the legacy receipt table; managed
+replay cases before the forbidden agent row can be inserted.
+
+The general receipt explorer and export bundle read the legacy `receipts` table
+only. So that a managed agent decision is not invisible to auditors, each one is
+mirrored onto that table inside its own transaction: the decision is appended to
+the org chain, the row is inserted, and the anchor is advanced from the resulting
+chain tip. The mirror is recorded under the pre-rename tool name `agent.register`
+— the name saved explorer queries and exports already filter on — while the
+managed lineage keeps `control-plane.agent.create`, so the two lineages name the
+same decision differently by design. A refusal that never becomes final leaves no
+trace, because the mirror commits with the decision or not at all.
+
+This mirror covers `POST /orgs/{org}/agents` only. Other managed mutations —
+`tenant.bootstrap` — still write `ManagedDecisionReceipt` with no legacy
+projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 ## Tamper evidence
