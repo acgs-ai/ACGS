@@ -58,10 +58,25 @@ EXPECTED_TABLES: Final = (
     "alembic_version",
     "compliance_exports",
     "environments",
+    "managed_decision_receipts",
+    "managed_governance_event_heads",
+    "managed_governance_events",
+    "managed_mutation_attempts",
+    "managed_outbox",
+    "managed_receipt_consumptions",
+    "managed_trust_keys",
+    "managed_trust_scopes",
+    "organization_memberships",
     "organizations",
+    "pending_approvals",
+    "platform_bootstrap_invitations",
     "policy_bundles",
     "projects",
     "receipts",
+    "tenant_bootstrap_idempotency",
+    "tenant_bootstrap_pending_outbox",
+    "tenant_bootstrap_policy_artifacts",
+    "tenant_bootstrap_refusal_events",
     "users",
 )
 _ORG_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
@@ -571,7 +586,7 @@ def _capture_database_state(
     if expected_database is not None:
         _assert_connection_database(connection, expected_database)
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0002:
+    if preflight.state is not DatabaseSchemaState.VERSION_0005:
         raise RecoveryRefused("database is not the exact supported migration head schema")
     inspector = sa.inspect(connection)
     observed = tuple(sorted(inspector.get_table_names(schema="public")))

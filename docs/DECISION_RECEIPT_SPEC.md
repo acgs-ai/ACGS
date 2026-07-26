@@ -63,9 +63,10 @@ Evidence: `tests/test_decision_receipt.py`, `tests/test_executor_guard.py`.
 
 ## Argument binding
 
-For `ALLOW`, the executor hashes the arguments about to run and compares them to `argument_hash`. For `TRANSFORM`, the executed args must exactly match the approved transformed arguments.
+For `ALLOW`, `DENY`, and `ESCALATE`, the executor hashes the arguments presented at the gate and compares them to `argument_hash`. `DENY` and `ESCALATE` still cannot authorize execution, but malformed or wrongly-bound non-ALLOW receipts are rejected for the first integrity, trust, liveness, or binding failure before the final non-executable decision refusal. For `TRANSFORM`, the executed args must exactly match the approved transformed arguments.
 
-Evidence: `tests/test_argument_binding.py`, `tests/test_executor_guard.py`.
+Evidence: `tests/test_argument_binding.py`, `tests/test_executor_guard.py`,
+`tests/test_trust_receipt_v2.py`.
 
 ## Policy binding
 
@@ -75,9 +76,35 @@ Evidence: `tests/test_policy_bundle_io.py`, `tests/test_tenant_safety.py`.
 
 ## Expiry
 
-`expires_at` is optional. When set, it is bound into `receipt_hash`; expired or unparseable timestamps fail closed.
+`expires_at` is optional for legacy receipts unless a strict profile requires
+expiry. Receipt-v2 requires `expires_at`. When set, `expires_at` is bound into
+`receipt_hash`; expired or unparseable timestamps fail closed.
 
-Evidence: `tests/test_receipt_expiry.py`.
+For signed receipts and receipt-v2, `timestamp` is also part of the liveness
+window. The verifier accepts only:
+
+```text
+timestamp - max_clock_skew_seconds <= verification_time <= expires_at
+```
+
+The default skew is 300 seconds, and the maximum accepted skew is also 300
+seconds. Callers may tighten the bound to any integer from 0 through 300, but
+may not widen it beyond the default. A bool, non-integer, negative value, or
+value greater than 300 fails closed as `EXPIRY_UNPARSEABLE` before receipt
+verification, consumption-ledger burn, or tool execution. A receipt issued
+farther in the verifier's future than the accepted skew, or a receipt whose
+`expires_at` is before `timestamp`, fails as `RECEIPT_EXPIRED` before any
+consumption-ledger burn or side effect. Gate wrappers (`execute_with_receipt`,
+`GovernedExecutor`, and `ReceiptVerifier`) thread the same bounded skew, and
+callers may override it per verifier or per executor only to tighten it.
+
+The managed control plane's tenant-bootstrap canonical managed-mutation unit of
+work pins `DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS`, currently 300 seconds, when it
+verifies the receipt before SQL mutation.
+
+Evidence: `tests/test_receipt_expiry.py`,
+`tests/test_trust_receipt_v2.py`,
+`packages/acgs-control-plane/src/acgs_control_plane/managed_mutations.py`.
 
 ## Validator identity and self-validation
 
@@ -111,6 +138,25 @@ revocation, or coverage for every workflow/plan key population.
 Evidence: `signing.py`, `revocation.py`, `tests/test_receipt_signing.py`,
 `tests/test_revocation.py`.
 
+## Scoped trust purpose
+
+Receipt-v2 trust is scoped by tenant, project, environment, and purpose. The
+default public decision-receipt purpose is `decision-receipt`; callers with a
+separate trust domain may pass `trust_purpose` to `DecisionReceipt.verify`,
+`execute_with_receipt`, `GovernedExecutor`, or `ReceiptVerifier`. Empty purpose
+values fail closed.
+
+A trusted key for one purpose does not verify a receipt for another purpose.
+Purpose mismatch, untrusted key, revoked key, expired trust key, or unavailable
+scoped trust registry fails closed before any consumption-ledger burn or side
+effect. The managed tenant-bootstrap route uses a separate purpose:
+`acgs.platform-bootstrap.receipt.v1`.
+
+Evidence: `receipt.py`, `executor.py`, `contracts.py`,
+`tests/test_trust_receipt_v2.py`,
+`packages/acgs-control-plane/src/acgs_control_plane/tenant_bootstrap.py`,
+`packages/acgs-control-plane/tests/integration/test_tenant_bootstrap_vertical.py`.
+
 ## Hash behavior
 
 `receipt_hash = sha256(canonical_json(receipt_without_receipt_hash_and_signature))`.
@@ -123,25 +169,28 @@ Verifier rejects on the first failure:
 
 1. required fields missing or empty;
 2. missing or mismatched `receipt_hash`;
-3. signed receipt without a configured verifier;
-4. invalid signature;
-5. receipt-signing key ID present in a supplied static revocation list;
-6. unsigned receipt when signature is required;
-7. actor mismatch or self-validation;
-8. approval-chain summary disagreement;
-9. unknown decision;
-10. `deny` or `escalate` decision;
+3. unsupported or improperly scoped receipt-v2 fields;
+4. signed receipt without a configured verifier or scoped trust registry;
+5. invalid signature or scoped trust-key mismatch;
+6. receipt-signing key ID present in a supplied static revocation list;
+7. unsigned receipt when signature is required;
+8. actor mismatch or self-validation;
+9. approval-chain summary disagreement;
+10. unknown decision;
 11. tenant mismatch;
 12. execution-boundary mismatch;
 13. action mismatch;
 14. audit hash mismatch;
 15. malformed transformations;
 16. transform mismatch or extra/missing transformed args;
-17. allow argument mismatch;
+17. allow/deny/escalate argument mismatch;
 18. policy hash mismatch;
 19. policy bundle id mismatch;
 20. validator role or authority mismatch when required;
-21. expired or unparseable expiry.
+21. invalid skew configuration (`bool`, non-integer, negative, or greater than
+    300), missing expiry when required, not-yet-valid issuance beyond bounded
+    skew, expired receipt, expiry-before-issuance, or unparseable expiry;
+22. fully-bound `deny` or `escalate` decision.
 
 ## Invalid receipt cases
 
@@ -150,6 +199,11 @@ Verifier rejects on the first failure:
 - `DENY`/`ESCALATE`: no side effect.
 - Valid receipt for another tenant/action/actor/args/policy: no side effect.
 - Expired receipt: no side effect.
+- Bool, non-integer, negative, or greater-than-300 `max_clock_skew_seconds`: no
+  verification, ledger burn, or side effect.
+- Signed or receipt-v2 receipt issued too far in the verifier's future: no side
+  effect.
+- Receipt whose expiry predates issuance: no side effect.
 - Signed receipt with an unknown, revoked, or invalid key/signature: no side
   effect.
 - Unsigned receipt when `require_signature=True`: no side effect.

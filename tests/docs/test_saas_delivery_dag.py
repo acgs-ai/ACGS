@@ -7,31 +7,86 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DAG_PATH = ROOT / "docs" / "saas" / "DELIVERY_DAG.yaml"
 MATRIX_PATH = ROOT / "docs" / "saas" / "ACCEPTANCE_MATRIX.md"
 ROADMAP_PATH = ROOT / "docs" / "ROADMAP.md"
 
 REQUIRED_NODE_FIELDS = {
-    "id", "phase", "title", "buyer_user_outcome", "repo_owner", "dependencies",
-    "consumers", "likely_interfaces_files", "risk_class", "positive_tests",
-    "forbidden_side_effect_negative_tests", "validation_commands", "evidence_artifact",
-    "branch", "worktree", "pr", "status", "implementation_state", "evidence_state",
-    "blocker", "next_safe_action", "mandatory", "completion_scope",
+    "id",
+    "phase",
+    "title",
+    "buyer_user_outcome",
+    "repo_owner",
+    "dependencies",
+    "consumers",
+    "likely_interfaces_files",
+    "risk_class",
+    "positive_tests",
+    "forbidden_side_effect_negative_tests",
+    "validation_commands",
+    "evidence_artifact",
+    "branch",
+    "worktree",
+    "pr",
+    "status",
+    "implementation_state",
+    "evidence_state",
+    "blocker",
+    "next_safe_action",
+    "mandatory",
+    "completion_scope",
 }
 REQUIRED_BLOCKER_FIELDS = {
-    "id", "title", "owner", "state", "exact_need", "why_not_assumed",
-    "validation_after_unblock", "downstream_nodes",
+    "id",
+    "title",
+    "owner",
+    "state",
+    "exact_need",
+    "why_not_assumed",
+    "validation_after_unblock",
+    "downstream_nodes",
 }
 REQUIRED_GRANULAR_NODES = {
-    "G101", "G102", "G102A", "G103", "G104", "G105", "G106",
-    "G201", "G202", "G203", "G204", "G205", "G206",
-    "G301", "G302", "G303", "G304", "G305", "G306",
-    "G401", "G402", "G403", "G404", "G405", "G406", "G407",
-    "G501", "G502", "G503",
-    "G601", "G602", "G603", "G604", "G605", "G606",
-    "G701", "G702", "G703", "G704",
+    "G101",
+    "G102",
+    "G102A",
+    "G103",
+    "G104",
+    "G105",
+    "G106",
+    "G201",
+    "G202",
+    "G203",
+    "G204",
+    "G205",
+    "G206",
+    "G301",
+    "G302",
+    "G303",
+    "G304",
+    "G305",
+    "G306",
+    "G401",
+    "G402",
+    "G403",
+    "G404",
+    "G405",
+    "G406",
+    "G407",
+    "G501",
+    "G502",
+    "G503",
+    "G601",
+    "G602",
+    "G603",
+    "G604",
+    "G605",
+    "G606",
+    "G701",
+    "G702",
+    "G703",
+    "G704",
 }
 EXPECTED_MATRIX_IDS = {f"AM-{number:03d}" for number in range(1, 16)}
 VERIFIED_EVIDENCE = {"local_verified", "independently_reviewed", "external_verified"}
@@ -76,13 +131,19 @@ def _validate_state_invariants(dag: dict[str, Any]) -> None:
             assert node["implementation_state"] == "built"
             assert node["evidence_state"] in VERIFIED_EVIDENCE
             assert node["blocker"] is None
-            assert all(by_id[dependency]["status"] == "completed" for dependency in node["dependencies"])
+            assert all(
+                by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
+            )
         if node["evidence_state"] in {"independently_reviewed", "external_verified"}:
             assert node["status"] == "completed"
             assert node["implementation_state"] == "built"
-            assert all(by_id[dependency]["status"] == "completed" for dependency in node["dependencies"])
+            assert all(
+                by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
+            )
         if node["status"] == "ready":
-            assert all(by_id[dependency]["status"] == "completed" for dependency in node["dependencies"])
+            assert all(
+                by_id[dependency]["status"] == "completed" for dependency in node["dependencies"]
+            )
         if node["status"] == "blocked":
             assert isinstance(node["blocker"], str) and node["blocker"].strip()
 
@@ -97,8 +158,16 @@ def _matrix_rows() -> list[dict[str, str]]:
     for line in MATRIX_PATH.read_text(encoding="utf-8").splitlines():
         if match := pattern.match(line):
             matrix_id, criterion, state, evidence, refs, artifact = match.groups()
-            rows.append({"id": matrix_id, "criterion": criterion, "state": state,
-                         "evidence": evidence, "refs": refs, "artifact": artifact})
+            rows.append(
+                {
+                    "id": matrix_id,
+                    "criterion": criterion,
+                    "state": state,
+                    "evidence": evidence,
+                    "refs": refs,
+                    "artifact": artifact,
+                }
+            )
     return rows
 
 
@@ -129,10 +198,22 @@ def _assert_repo_files_exist(paths: set[str]) -> None:
 def test_schema_types_vocabularies_and_portability() -> None:
     dag = _load_dag()
     assert dag["schema"] == {
-        "name": "acgs-saas-delivery-dag", "version": 3, "updated": "2026-07-24",
-        "source_of_truth": "docs/ROADMAP.md", "serialization": "JSON, a strict YAML 1.2 subset",
+        "name": "acgs-saas-delivery-dag",
+        "version": 3,
+        "updated": "2026-07-24",
+        "source_of_truth": "docs/ROADMAP.md",
+        "serialization": "JSON, a strict YAML 1.2 subset",
     }
-    assert all(key in dag for key in ("program", "vocabularies", "external_blocker_packets", "acceptance_criteria", "nodes"))
+    assert all(
+        key in dag
+        for key in (
+            "program",
+            "vocabularies",
+            "external_blocker_packets",
+            "acceptance_criteria",
+            "nodes",
+        )
+    )
     assert "/home/" not in DAG_PATH.read_text(encoding="utf-8")
     assert dag["program"]["worktree_locator"] == "git worktree list --porcelain"
     assert dag["vocabularies"]["phases"] == list(range(8))
@@ -146,8 +227,14 @@ def test_schema_types_vocabularies_and_portability() -> None:
         assert isinstance(node["mandatory"], bool)
         assert node["completion_scope"] in dag["vocabularies"]["completion_scopes"]
         assert node["worktree"] is None or not str(node["worktree"]).startswith("/")
-        for field in ("positive_tests", "forbidden_side_effect_negative_tests", "validation_commands"):
-            assert all(isinstance(item, str) and item.strip() for item in _nonempty_list(node[field]))
+        for field in (
+            "positive_tests",
+            "forbidden_side_effect_negative_tests",
+            "validation_commands",
+        ):
+            assert all(
+                isinstance(item, str) and item.strip() for item in _nonempty_list(node[field])
+            )
         for command in node["validation_commands"]:
             parts = shlex.split(command)
             assert parts, f"Node {node['id']} has an empty validation command"
@@ -159,11 +246,15 @@ def test_beta_completion_scope_is_mechanical_and_excludes_external_only() -> Non
     policy = dag["program"]["completion_policy"]["beta_code_complete"]
     assert policy == {
         "required_selector": "mandatory == true and completion_scope == non_external",
-        "satisfied_selector": "status == completed and implementation_state == built and evidence_state in verified evidence states",
+        "satisfied_selector": (
+            "status == completed and implementation_state == built "
+            "and evidence_state in verified evidence states"
+        ),
         "external_only_excluded": True,
     }
     non_external = [
-        node for node in dag["nodes"]
+        node
+        for node in dag["nodes"]
         if node["mandatory"] and node["completion_scope"] == "non_external"
     ]
     external_only = [node for node in dag["nodes"] if node["completion_scope"] == "external_only"]
@@ -173,10 +264,12 @@ def test_beta_completion_scope_is_mechanical_and_excludes_external_only() -> Non
     assert all(node["phase"] <= 6 and node["mandatory"] for node in non_external)
     assert all(
         node["mandatory"] and node["completion_scope"] == "non_external"
-        for node in dag["nodes"] if node["phase"] <= 6
+        for node in dag["nodes"]
+        if node["phase"] <= 6
     )
     pending = {
-        node["id"] for node in non_external
+        node["id"]
+        for node in non_external
         if not (
             node["status"] == "completed"
             and node["implementation_state"] == "built"
@@ -189,10 +282,17 @@ def test_beta_completion_scope_is_mechanical_and_excludes_external_only() -> Non
     externally_completed = copy.deepcopy(dag)
     for node in externally_completed["nodes"]:
         if node["completion_scope"] == "external_only":
-            node.update(status="completed", implementation_state="built", evidence_state="external_verified", blocker=None)
+            node.update(
+                status="completed",
+                implementation_state="built",
+                evidence_state="external_verified",
+                blocker=None,
+            )
     pending_after_external = {
-        node["id"] for node in externally_completed["nodes"]
-        if node["mandatory"] and node["completion_scope"] == "non_external"
+        node["id"]
+        for node in externally_completed["nodes"]
+        if node["mandatory"]
+        and node["completion_scope"] == "non_external"
         and not (
             node["status"] == "completed"
             and node["implementation_state"] == "built"
@@ -214,7 +314,9 @@ def test_unique_references_acyclic_graph_and_all_phases() -> None:
         assert set(node["dependencies"]) <= known
         assert set(node["consumers"]) <= known
         assert node["id"] not in node["dependencies"]
-        assert all(node["id"] in by_id[dependency]["consumers"] for dependency in node["dependencies"])
+        assert all(
+            node["id"] in by_id[dependency]["consumers"] for dependency in node["dependencies"]
+        )
         assert all(node["id"] in by_id[consumer]["dependencies"] for consumer in node["consumers"])
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -294,7 +396,13 @@ def test_acceptance_criteria_and_exact_matrix_rows_are_consistent() -> None:
     dag = _load_dag()
     node_ids = {node["id"] for node in dag["nodes"]}
     criteria = _nonempty_list(dag["acceptance_criteria"])
-    assert {item["id"] for item in criteria} == {"AC-SECURITY", "AC-JOURNEY", "AC-RELIABILITY", "AC-COMMERCIAL", "AC-CLAIMS"}
+    assert {item["id"] for item in criteria} == {
+        "AC-SECURITY",
+        "AC-JOURNEY",
+        "AC-RELIABILITY",
+        "AC-COMMERCIAL",
+        "AC-CLAIMS",
+    }
     assert all(set(_nonempty_list(item["node_refs"])) <= node_ids for item in criteria)
     rows = _matrix_rows()
     assert {row["id"] for row in rows} == EXPECTED_MATRIX_IDS
@@ -328,7 +436,10 @@ def test_phase_zero_artifact_ownership_is_explicit() -> None:
         assert artifacts <= set(node["likely_interfaces_files"])
         combined_acceptance = " ".join(node["positive_tests"] + [node["evidence_artifact"]])
         for artifact in artifacts:
-            assert Path(artifact).name in combined_acceptance or "build-vs-buy ADRs" in combined_acceptance
+            assert (
+                Path(artifact).name in combined_acceptance
+                or "build-vs-buy ADRs" in combined_acceptance
+            )
 
 
 def test_disaster_recovery_node_has_executable_evidence_gates() -> None:
@@ -340,7 +451,10 @@ def test_disaster_recovery_node_has_executable_evidence_gates() -> None:
     assert "pytest" in joined and any(term in joined for term in ("backup", "restore", "pitr"))
     assert "verify_dr_report.py" in joined
     assert "timestamped-dr-report.json" in g603["evidence_artifact"]
-    assert all(term in g603["evidence_artifact"].lower() for term in ("backup", "pitr", "witness", "rollback"))
+    assert all(
+        term in g603["evidence_artifact"].lower()
+        for term in ("backup", "pitr", "witness", "rollback")
+    )
 
 
 def test_g004_and_frozen_pr_snapshot_preserve_historical_boundary() -> None:
@@ -419,7 +533,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert actual_g102a_files <= set(g102["likely_interfaces_files"])
     assert actual_g102a_files <= set(g102a["likely_interfaces_files"])
     _assert_repo_files_exist(actual_g102a_files)
-    focused_command = "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+    focused_command = (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+    )
     assert focused_command in g102["validation_commands"]
     assert focused_command in g102a["validation_commands"]
     combined_g102a_contract = " ".join(
@@ -437,7 +553,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert "mypy pass" in g102a["evidence_artifact"]
     assert "independent security/code approve/verifier pass" in g102a["evidence_artifact"]
     assert "hosted Python 3.11 and Python 3.12 pass" in g102a["evidence_artifact"]
-    assert "Hosted PostgreSQL migrations and codex-review did not start" in g102a["evidence_artifact"]
+    assert (
+        "Hosted PostgreSQL migrations and codex-review did not start" in g102a["evidence_artifact"]
+    )
     for missing_contract in (
         "/v1 root",
         "cursor pagination",
@@ -446,7 +564,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         "OpenAPI drift",
     ):
         assert missing_contract in g102["blocker"]
-        assert missing_contract in g102a["evidence_artifact"] or missing_contract in g102a["blocker"]
+        assert (
+            missing_contract in g102a["evidence_artifact"] or missing_contract in g102a["blocker"]
+        )
     combined_g101 = " ".join(
         g101["likely_interfaces_files"]
         + g101["validation_commands"]
@@ -460,7 +580,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert "pg_dump/pg_restore" in combined_g101
     assert "214 passed/32 skipped" in combined_g101
     assert "8 passed" in combined_g101
-    assert "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
+    assert (
+        "G603 production backup/PITR/object/witness DR remains planned separately" in combined_g101
+    )
     assert g603["status"] == "planned"
     assert g603["implementation_state"] == "missing"
     assert "timestamped-dr-report.json" in g603["evidence_artifact"]
