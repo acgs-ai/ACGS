@@ -860,7 +860,7 @@ clean_sibling_cleanup() {
         "$TMP_PARENT"/acgs-p1-trust.* | \
         "$TMP_PARENT"/acgs-p2-tenant-bootstrap.* | "$TMP_PARENT"/acgs-p2-register.* | \
         "$TMP_PARENT"/acgs-p2-idempotency.* | "$TMP_PARENT"/acgs-p2-vertical-gate.* | \
-        "$TMP_PARENT"/acgs-p3-policy.*)
+        "$TMP_PARENT"/acgs-p3-policy.* | "$TMP_PARENT"/acgs-p3-mutations.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -1127,6 +1127,10 @@ clean_sibling_cleanup() {
           "$P" "$T" "$R"
         ;;
       P3-POLICY-001:7:EVID+CP)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=7 assignments=EVID+CP attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P3-MUTATIONS-002:7:EVID+CP)
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=7 assignments=EVID+CP attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;

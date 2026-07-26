@@ -75,6 +75,12 @@ from acgs_control_plane.models import (
     User,
     new_id,
 )
+from acgs_control_plane.mutation_inventory import (
+    MutationGuardedFastAPI,
+    MutationInventoryDriftError,
+    build_mutation_inventory_seal,
+    mutation_inventory_drift_response,
+)
 from acgs_control_plane.policy_registry import (
     PolicyRegistryHttpError,
     PolicyRegistryResult,
@@ -300,7 +306,7 @@ def create_app(
     policy_registry_receipt_issuer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    app = FastAPI(
+    app = MutationGuardedFastAPI(
         title="ACGS Enterprise Governance Control Plane",
         version="0.1.0",
         description="Multi-tenant, receipt-gated governance management API. "
@@ -322,6 +328,12 @@ def create_app(
             status_code=503,
             content={"code": exc.code, "status": "audit-read-refused", "reason": exc.reason},
         )
+
+    @app.exception_handler(MutationInventoryDriftError)
+    def _mutation_inventory_drift(
+        _request: Request, exc: MutationInventoryDriftError
+    ) -> JSONResponse:
+        return mutation_inventory_drift_response(exc)
 
     @app.exception_handler(TenantBootstrapHttpError)
     def _tenant_bootstrap_error(request: Request, exc: TenantBootstrapHttpError) -> JSONResponse:
@@ -559,6 +571,11 @@ def create_app(
         receipt_sealer=effective_policy_registry_receipt_sealer,
         receipt_issuer=policy_registry_receipt_issuer,
     )
+    try:
+        app.state.mutation_inventory_seal = build_mutation_inventory_seal(app)
+    except BaseException:
+        engine.dispose()
+        raise
 
     async def _dispose_engine() -> None:
         app.state.engine.dispose()
