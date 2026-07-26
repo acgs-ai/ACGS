@@ -27,9 +27,27 @@ PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": True,
         "schema": {"type": "string"},
     },
+    "path:environment_id": {
+        "in": "path",
+        "name": "environment_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
     "path:export_id": {
         "in": "path",
         "name": "export_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "path:policy_version_id": {
+        "in": "path",
+        "name": "policy_version_id",
+        "required": True,
+        "schema": {"type": "string"},
+    },
+    "path:project_id": {
+        "in": "path",
+        "name": "project_id",
         "required": True,
         "schema": {"type": "string"},
     },
@@ -318,8 +336,67 @@ def _v1_operation_contract(operation: dict[str, Any]) -> dict[str, Any]:
     return aliased
 
 
+# Environment-scoped managed policy lifecycle routes. Not part of the frozen
+# v0 surface, but served under /orgs and therefore mirrored under /v1 like
+# every other org route.
+EXPECTED_MANAGED_POLICY_PATHS: dict[str, dict[str, dict[str, Any]]] = {
+    "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies": {
+        "get": {
+            "operation_id": (
+                "list_environment_policies_orgs__org_id__projects__project_id"
+                "__environments__environment_id__policies_get"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "policies",
+        },
+        "post": {
+            "operation_id": (
+                "publish_environment_policy_orgs__org_id__projects__project_id"
+                "__environments__environment_id__policies_post"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["201", "422"],
+            "tag": "policies",
+        },
+    },
+    (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/policies/{policy_version_id}/activate"
+    ): {
+        "post": {
+            "operation_id": (
+                "activate_environment_policy_orgs__org_id__projects__project_id"
+                "__environments__environment_id__policies__policy_version_id__activate_post"
+            ),
+            "parameters": _expected_params(
+                "path:project_id",
+                "path:environment_id",
+                "path:policy_version_id",
+                "path:org_id",
+                "header:Idempotency-Key",
+                "header:X-API-Key",
+            ),
+            "responses": ["200", "422"],
+            "tag": "policies",
+        }
+    },
+}
+
 EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
     **EXPECTED_V0_PATHS,
+    **EXPECTED_MANAGED_POLICY_PATHS,
     "/v1": {
         "get": {
             "operation_id": "get_v1_metadata",
@@ -347,7 +424,7 @@ EXPECTED_PATHS: dict[str, dict[str, dict[str, Any]]] = {
         f"/v1{path}": {
             method: _v1_operation_contract(operation) for method, operation in methods.items()
         }
-        for path, methods in EXPECTED_V0_PATHS.items()
+        for path, methods in {**EXPECTED_V0_PATHS, **EXPECTED_MANAGED_POLICY_PATHS}.items()
         if path == "/orgs" or path.startswith("/orgs/")
     },
 }
@@ -364,6 +441,7 @@ EXPECTED_COMPONENTS = {
     "OrgCreateRequest",
     "OrgCreateResponse",
     "OrgResponse",
+    "PolicyActivateRequest",
     "PolicyPublishRequest",
     "PolicyResponse",
     "ReceiptDetail",
@@ -588,17 +666,27 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
 
     assert "/v1" in schema["paths"]
     assert "/v1/orgs" in schema["paths"]
-    # The platform tenant-bootstrap route and governed agent registration accept
-    # a per-request Idempotency-Key header; agent registration also persists it
-    # durably (migration 0007). Any other idempotency surface in the schema
-    # still trips the sentinel. The exact set of /v1 paths is pinned by
-    # EXPECTED_PATHS in the contract test above, so an unexpected /v1 route is
-    # caught there rather than here.
+    # The platform tenant-bootstrap route, governed agent registration, and the
+    # managed policy publish/activate routes accept a per-request
+    # Idempotency-Key header; agent registration (migration 0007) and the
+    # policy registry (migration 0008) also persist it durably. Any other
+    # idempotency surface in the schema still trips the sentinel. The exact set
+    # of /v1 paths is pinned by EXPECTED_PATHS in the contract test above, so
+    # an unexpected /v1 route is caught there rather than here.
+    managed_policy_publish_path = (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies"
+    )
+    managed_policy_activate_path = (
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
+        "/policies/{policy_version_id}/activate"
+    )
     outside_idempotent_routes = copy.deepcopy(schema)
     del outside_idempotent_routes["paths"][PLATFORM_BOOTSTRAP_PATH]
     del outside_idempotent_routes["components"]["schemas"][PLATFORM_BOOTSTRAP_RESPONSE_COMPONENT]
-    del outside_idempotent_routes["paths"]["/orgs/{org_id}/agents"]["post"]
-    del outside_idempotent_routes["paths"]["/v1/orgs/{org_id}/agents"]["post"]
+    for prefix in ("", "/v1"):
+        del outside_idempotent_routes["paths"][f"{prefix}/orgs/{{org_id}}/agents"]["post"]
+        del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_publish_path}"]["post"]
+        del outside_idempotent_routes["paths"][f"{prefix}{managed_policy_activate_path}"]["post"]
     serialized_outside_idempotent_routes = json.dumps(outside_idempotent_routes, sort_keys=True)
     assert "Idempotency-Key" not in serialized_outside_idempotent_routes
     assert "idempotency_key" not in serialized_outside_idempotent_routes

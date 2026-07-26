@@ -186,17 +186,26 @@ def test_policy_registry_contract_locks_managed_routes_negative_oracles_and_loca
         for route in ROUTE_CONTRACTS
         if route.execution_class is ExecutionClass.CANONICAL_MANAGED_WRITE
     }
-    publish_key = (
-        "POST",
-        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+    publish_keys = tuple(
+        (
+            "POST",
+            f"{prefix}/orgs/{{org_id}}/projects/{{project_id}}"
+            "/environments/{environment_id}/policies",
+        )
+        for prefix in ("", "/v1")
     )
-    activate_key = (
-        "POST",
-        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}"
-        "/policies/{policy_version_id}/activate",
+    activate_keys = tuple(
+        (
+            "POST",
+            f"{prefix}/orgs/{{org_id}}/projects/{{project_id}}"
+            "/environments/{environment_id}/policies/{policy_version_id}/activate",
+        )
+        for prefix in ("", "/v1")
     )
-    assert managed_routes[publish_key].action == CONTROL_PLANE_POLICY_PUBLISH_ACTION
-    assert managed_routes[activate_key].action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION
+    for publish_key in publish_keys:
+        assert managed_routes[publish_key].action == CONTROL_PLANE_POLICY_PUBLISH_ACTION
+    for activate_key in activate_keys:
+        assert managed_routes[activate_key].action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION
     assert {
         (route.method, route.path, route.action)
         for route in managed_routes.values()
@@ -206,8 +215,8 @@ def test_policy_registry_contract_locks_managed_routes_negative_oracles_and_loca
             CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
         }
     } == {
-        (*publish_key, CONTROL_PLANE_POLICY_PUBLISH_ACTION),
-        (*activate_key, CONTROL_PLANE_POLICY_ACTIVATE_ACTION),
+        *[(*key, CONTROL_PLANE_POLICY_PUBLISH_ACTION) for key in publish_keys],
+        *[(*key, CONTROL_PLANE_POLICY_ACTIVATE_ACTION) for key in activate_keys],
     }
 
     app = create_app(
@@ -297,18 +306,24 @@ def test_policy_registry_contract_locks_managed_routes_negative_oracles_and_loca
         for blocker in blockers
         if blocker["code"] == "PROVIDER_PREFLIGHT_SKIPPED"
     } == {
+        "cursor-aead-keyring",
         "durable-consumption-uow",
         "migration-head",
         "signer-issuer",
         "trust-verifier",
     }
+    legacy_unsigned_writes = {
+        ("POST", "/orgs"),
+        ("POST", "/orgs/{org_id}/users"),
+        ("PATCH", "/orgs/{org_id}/agents/{agent_id}/status"),
+        ("POST", "/orgs/{org_id}/policies"),
+        ("POST", "/orgs/{org_id}/policies/{bundle_id}/activate"),
+        ("POST", "/orgs/{org_id}/exports"),
+    }
     assert {
         blocker["route"] for blocker in blockers if blocker["code"] == "LEGACY_UNSIGNED_WRITE"
     } == {
-        "POST /orgs",
-        "POST /orgs/{org_id}/users",
-        "PATCH /orgs/{org_id}/agents/{agent_id}/status",
-        "POST /orgs/{org_id}/policies",
-        "POST /orgs/{org_id}/policies/{bundle_id}/activate",
-        "POST /orgs/{org_id}/exports",
+        f"{method} {prefix}{path}"
+        for method, path in legacy_unsigned_writes
+        for prefix in ("", "/v1")
     }

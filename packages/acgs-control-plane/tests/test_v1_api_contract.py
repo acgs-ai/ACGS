@@ -8,6 +8,8 @@ from typing import Any
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from gove_zone.decision import sha256_json
+from gove_zone.policy import RuleSetPolicy
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy import select
 
@@ -23,11 +25,19 @@ from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
     Environment,
+    EnvironmentPolicyHead,
+    ManagedDecisionReceipt,
     Organization,
+    PolicyVersion,
     Project,
     ReceiptRow,
     new_id,
     utcnow,
+)
+from acgs_control_plane.policy_registry import (
+    POLICY_ENVELOPE_PURPOSE,
+    _signed_envelope,
+    local_policy_registry_issuer,
 )
 from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
@@ -113,6 +123,29 @@ def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, An
             public_key_spki_der=public_spki_der_from_signer(signer),
             not_after=utcnow() + timedelta(days=1),
         )
+        policy_scope = ReceiptTrustScope(
+            org_id, project_id, environment_id, POLICY_ENVELOPE_PURPOSE
+        )
+        policy_signer = local_policy_registry_issuer().signer_for_scope(policy_scope, trust_epoch=1)
+        ManagedTrustLifecycleService(session).bootstrap(
+            scope=policy_scope,
+            key_id=policy_signer.key_id,
+            algorithm=policy_signer.algorithm,
+            public_key_spki_der=public_spki_der_from_signer(policy_signer),
+            not_after=utcnow() + timedelta(days=1),
+        )
+    _activate_managed_policy(
+        client,
+        org_id,
+        rules=[
+            {
+                "id": "deny-unrelated",
+                "effect": "deny",
+                "tools": ["unrelated.tool"],
+                "reason": "unrelated tools disabled",
+            }
+        ],
+    )
     _publish_and_activate(
         client,
         org_id,
@@ -186,6 +219,135 @@ def _publish_and_activate(
         headers=headers,
     )
     assert activated.status_code == 200, activated.text
+
+
+def _activate_managed_policy(
+    client: TestClient, org_id: str, *, rules: list[dict[str, Any]]
+) -> None:
+    """Seed the signed environment policy head that governs agent registration.
+
+    Agent registration fails closed without an active, signature-verifiable
+    ``EnvironmentPolicyHead``. Mirrors test_agent_registration_managed_route.py:
+    the version and head are seeded directly because the managed policy routes
+    mint decision receipts under the policy-registry issuer, while these tests
+    bootstrap the scope's decision-receipt trust with the agent-registration
+    issuer key.
+    """
+    policy_id = f"managed-policy-{new_id()}"
+    parsed = RuleSetPolicy.from_dict({"id": policy_id, "rules": rules})
+    document = {"id": parsed.policy_id, "version": parsed.version, "rules": list(rules)}
+    with client.app.state.session_factory.begin() as session:
+        environment = session.scalars(
+            select(Environment)
+            .where(Environment.org_id == org_id)
+            .order_by(Environment.created_at.desc())
+        ).first()
+        assert environment is not None
+        envelope = _signed_envelope(
+            issuer=local_policy_registry_issuer(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            document=document,
+            trust_epoch=1,
+        )
+        version = PolicyVersion(
+            id=new_id(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            version=document["version"],
+            content_hash=envelope["content_hash"],
+            document=document,
+            rules=list(document["rules"]),
+            canonical_envelope=envelope,
+            purpose=envelope["purpose"],
+            key_id=envelope["key_id"],
+            signature_algorithm=envelope["signature_algorithm"],
+            signature=envelope["signature"],
+            trust_epoch=envelope["trust_epoch"],
+            receipt_id=f"test-policy-receipt-{new_id()}",
+        )
+        session.add(version)
+        session.flush()
+        head_receipt_id = _seed_policy_head_receipt(
+            session,
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+        )
+        existing_head = session.scalars(
+            select(EnvironmentPolicyHead).where(
+                EnvironmentPolicyHead.org_id == org_id,
+                EnvironmentPolicyHead.project_id == environment.project_id,
+                EnvironmentPolicyHead.environment_id == environment.id,
+            )
+        ).one_or_none()
+        if existing_head is None:
+            session.add(
+                EnvironmentPolicyHead(
+                    id=new_id(),
+                    org_id=org_id,
+                    project_id=environment.project_id,
+                    environment_id=environment.id,
+                    active_policy_version_id=version.id,
+                    generation=1,
+                    status="active",
+                    receipt_id=head_receipt_id,
+                    created_at=utcnow(),
+                    updated_at=utcnow(),
+                )
+            )
+        else:
+            existing_head.active_policy_version_id = version.id
+            existing_head.generation += 1
+            existing_head.receipt_id = head_receipt_id
+            existing_head.updated_at = utcnow()
+
+
+def _seed_policy_head_receipt(
+    session: Any,
+    *,
+    org_id: str,
+    project_id: str,
+    environment_id: str,
+) -> str:
+    receipt_id = f"test-policy-head-receipt-{new_id()}"
+    receipt_hash = sha256_json({"schema": "test-policy-head-receipt/v1", "receipt_id": receipt_id})
+    audit_hash = sha256_json({"schema": "test-policy-head-audit/v1", "receipt_id": receipt_id})
+    now = utcnow()
+    session.add(
+        ManagedDecisionReceipt(
+            id=f"test-policy-head-{new_id()}",
+            org_id=org_id,
+            project_id=project_id,
+            environment_id=environment_id,
+            receipt_id=receipt_id,
+            receipt_hash=receipt_hash,
+            audit_event_hash=audit_hash,
+            decision="ALLOW",
+            actor="test-policy-fixture",
+            proposed_action="control-plane.policy.activate",
+            execution_boundary="test-policy-fixture-boundary",
+            policy_bundle_id="test-policy-fixture",
+            policy_version="test-policy-fixture/v1",
+            policy_hash=sha256_json({"schema": "test-policy-fixture/v1"}),
+            argument_hash=sha256_json({"receipt_id": receipt_id}),
+            signing_key_id="test-policy-fixture-key",
+            signature_algorithm="ed25519",
+            receipt_schema_version="receipt/v2",
+            trust_epoch=1,
+            assurance_class="native",
+            source_system="gove-zone",
+            issued_at=now,
+            expires_at=now + timedelta(minutes=10),
+            projection={"schema": "test-policy-head-receipt/v1"},
+            created_at=now,
+        )
+    )
+    return receipt_id
 
 
 def _assert_error_request_id(response: Any) -> None:
@@ -369,6 +531,10 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
             rules=[rule],
             prefix="",
         )
+        # Agent registration is decided by the active environment policy head,
+        # so the deny rule must also land there.
+        _activate_managed_policy(client, v1_org["org_id"], rules=[rule])
+        _activate_managed_policy(client, v0_org["org_id"], rules=[rule])
         v1_before = _snapshot(client, audit_dir, v1_org["org_id"])
         v0_before = _snapshot(client, audit_dir, v0_org["org_id"])
 

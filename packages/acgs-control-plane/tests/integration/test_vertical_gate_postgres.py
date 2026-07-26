@@ -108,7 +108,10 @@ def test_real_postgres_tenant_bootstrap_then_customer_agent_register(
             assert _count(session, ManagedGovernanceEvent) == 2
             assert _count(session, ManagedOutboxMessage) == 2
             assert _count(session, ManagedMutationAttempt) == 2
-            assert _count_legacy_agent_receipts(session, tenant["org_id"]) == 0
+            # The managed spine owns the authoritative receipt; the legacy
+            # receipts table carries exactly one mirror of the successful
+            # registration for the explorer/dashboard/export consumers.
+            assert _count_legacy_agent_receipts(session, tenant["org_id"]) == 1
             receipts = list(
                 session.scalars(
                     sa.select(ManagedDecisionReceipt).order_by(ManagedDecisionReceipt.created_at)
@@ -180,7 +183,10 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
             },
         )
         assert denied_register.status_code == 403, denied_register.text
-        assert denied_register.json()["code"] == "POLICY_DENIED"
+        denied_body = denied_register.json()
+        assert denied_body["status"] == "denied"
+        assert denied_body["decision"] == "deny"
+        assert denied_body["receipt_id"]
 
         with app.state.session_factory() as session:
             assert _count_agents(session, denied["org_id"], "wrong-tenant-agent") == 0
@@ -204,7 +210,8 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
             for contract in ROUTE_CONTRACTS
             if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
         ]
-        assert len(legacy_contracts) == 6
+        # Each legacy unsigned write appears twice: unversioned and /v1 alias.
+        assert len(legacy_contracts) == 12
         with pytest.raises(ProductionPostureBlocked) as blocked:
             create_app(
                 Settings(
@@ -215,7 +222,7 @@ def test_real_postgres_vertical_negative_oracles_and_production_legacy_reachabil
                 ),
                 production_providers=(),
             )
-        assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 6
+        assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 12
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
