@@ -700,9 +700,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         ]
     )
     for evidence in (
-        "9341960c458e30648257926ab499b21bbb66796c",
+        "a6faf49a7b5f947b592f4be8372a85b173251090",
         "current-v0 OpenAPI drift sentinel evidence at 5 passed",
-        "full control-plane 265 passed/32 skipped",
+        "full control-plane 303 passed/50 skipped",
         "Ruff pass",
         "package-local mypy pass",
         "independent review finding repaired then APPROVE",
