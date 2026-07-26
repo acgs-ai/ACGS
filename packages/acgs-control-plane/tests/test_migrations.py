@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import shutil
@@ -839,12 +840,17 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "bwrap preflight failed; refusing to run" in script
     assert 'env -i "$bwrap_bin" "${bwrap_args[@]}" --' in script
     assert "--clearenv" in script
-    assert "--unshare-all --unshare-user --share-net --die-with-parent --new-session" in script
+    assert "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns" in script
+    assert "--share-net" not in script
+    assert "--ro-bind / /" not in script
     assert "--tmpfs /run" in script
     assert "--setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1" in script
     assert '--setenv ACP_TEST_POSTGRES_SELECTOR_MODE "$selector_mode"' in script
     assert '--setenv PYTEST_ADDOPTS "-p no:cacheprovider"' in script
-    assert '--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET "$broker_socket"' in script
+    assert '--ro-bind "$state_dir/pg" /run/acgs-pg' in script
+    assert '--bind "$state_dir/tmp" /run/tmp' in script
+    assert '--bind "$state_dir/proof-scratch" /proof-scratch' in script
+    assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET /run/broker/postgresql-client.sock" in script
     assert "PostgreSQL client broker" in script
     assert '"tool": tool, "argv": sys.argv[1:], "env": env' in script
 
@@ -857,13 +863,16 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert script.index(pytest_invocation) > script.index("broker_socket=")
 
 
-def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_archive(
+def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escape(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
     canonical_tmp = Path(tempfile.gettempdir()).resolve(strict=True)
-    state_dir = Path(tempfile.mkdtemp(prefix="acp-pg-gate-", dir=canonical_tmp))
+    long_parent = canonical_tmp / ("acp-pg-gate-" + ("x" * 80))
+    long_parent.mkdir(exist_ok=True)
+    state_dir = Path(tempfile.mkdtemp(prefix=("nested-" + ("y" * 40) + "-"), dir=long_parent))
     request.addfinalizer(lambda: shutil.rmtree(state_dir, ignore_errors=True))
+    request.addfinalizer(lambda: shutil.rmtree(long_parent, ignore_errors=True))
     state_dir.chmod(0o700)
     state_stat = state_dir.stat()
     assert state_stat.st_uid == os.getuid()
@@ -883,6 +892,7 @@ def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_a
         home_dir,
         allowed_tmp,
         proof_scratch,
+        state_dir / "pg",
         fake_bin,
         outside_dir,
     ):
@@ -911,11 +921,196 @@ def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_a
                 "    print('[\"name=rootless\"]')",
                 "    raise SystemExit(0)",
                 f"log = Path({str(docker_log)!r})",
+                "mounts = {}",
+                "index = 0",
+                "while index < len(args):",
+                "    if args[index] == '--mount':",
+                "        spec = args[index + 1]",
+                "        parts = dict(item.split('=', 1) for item in spec.split(',') "
+                "if '=' in item)",
+                "        mounts[parts['dst']] = Path(parts['src'])",
+                "        index += 2",
+                "        continue",
+                "    if args[index] == '--volume':",
+                "        src, dst, *_mode = args[index + 1].split(':')",
+                "        mounts[dst] = Path(src)",
+                "        index += 2",
+                "        continue",
+                "    index += 1",
                 "with log.open('a', encoding='utf-8') as handle:",
                 "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
                 "if 'pg_dump' in args:",
                 "    file_arg = next(arg for arg in args if arg.startswith('--file='))",
-                "    Path(file_arg.split('=', 1)[1]).write_bytes(b'PGDMP-test')",
+                "    output = Path(file_arg.split('=', 1)[1])",
+                "    matched = next((dst for dst in mounts if output == Path(dst) "
+                "or Path(dst) in output.parents), None)",
+                "    if matched is None:",
+                "        print('output path is not mounted', file=sys.stderr)",
+                "        raise SystemExit(65)",
+                "    host_output = mounts[matched] / output.relative_to(matched)",
+                "    if host_output.parent.is_symlink() or host_output.is_symlink():",
+                "        print('container output path resolves outside mounted roots', "
+                "file=sys.stderr)",
+                "        raise SystemExit(65)",
+                "    host_output.parent.mkdir(parents=True, exist_ok=True)",
+                "    host_output.write_bytes(b'PGDMP-test')",
+                "raise SystemExit(0)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+    socket_path = broker_dir / "postgresql-client.sock"
+    assert len(str(socket_path)) > 108
+    broker_env = os.environ.copy()
+    broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
+    broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
+    broker = subprocess.Popen(
+        [sys.executable, str(broker_path), str(socket_path)],
+        env=broker_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not socket_path.exists() and time.monotonic() < deadline:
+            if broker.poll() is not None:
+                stdout, stderr = broker.communicate(timeout=1)
+                pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
+            time.sleep(0.05)
+        assert socket_path.exists()
+
+        client_env = {
+            "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+            "PGHOST": "/run/acgs-pg",
+            "PGPORT": "5432",
+            "PGUSER": "operator",
+            "PGPASSWORD": "secret",
+            "PGDATABASE": "acgs_control_plane_test",
+            "PGCONNECT_TIMEOUT": "5",
+        }
+
+        denied_archive = outside_dir / "escape.dump"
+        denied = subprocess.run(
+            [str(client_dir / "pg_dump"), f"--file={denied_archive}"],
+            env=client_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert denied.returncode == 64
+        assert "outside broker-owned roots" in denied.stderr
+        assert not denied_archive.exists()
+        assert not docker_log.exists()
+
+        endpoint_escape_env = {**client_env, "PGHOST": "127.0.0.1"}
+        endpoint_escape = subprocess.run(
+            [str(client_dir / "pg_dump"), "--file=/run/tmp/endpoint.dump"],
+            env=endpoint_escape_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert endpoint_escape.returncode == 64
+        assert "endpoint is pinned" in endpoint_escape.stderr
+        assert not docker_log.exists()
+
+        allowed_archive = allowed_tmp / "archive.dump"
+        allowed = subprocess.run(
+            [str(client_dir / "pg_dump"), "--file=/run/tmp/archive.dump"],
+            env=client_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert allowed.returncode == 0, allowed.stderr
+        assert allowed_archive.read_bytes() == b"PGDMP-test"
+        docker_invocation = json.loads(docker_log.read_text(encoding="utf-8").splitlines()[-1])
+        assert "--network" in docker_invocation
+        assert docker_invocation[docker_invocation.index("--network") + 1] == "none"
+        assert "--user" not in docker_invocation
+        assert "label=disable" in docker_invocation
+        assert f"{state_dir / 'pg'}:/run/acgs-pg:ro" in docker_invocation
+        assert f"{allowed_tmp}:/run/tmp:rw" in docker_invocation
+        assert f"{proof_scratch}:/proof-scratch:rw" in docker_invocation
+        assert not any(str(outside_dir) in argument for argument in docker_invocation)
+        assert docker_invocation[-2:] == ["pg_dump", "--file=/run/tmp/archive.dump"]
+    finally:
+        broker.terminate()
+        try:
+            broker.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            broker.kill()
+            broker.wait(timeout=5)
+
+
+def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    canonical_tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+    state_dir = Path(tempfile.mkdtemp(prefix="acp-pg-gate-race-", dir=canonical_tmp))
+    request.addfinalizer(lambda: shutil.rmtree(state_dir, ignore_errors=True))
+    state_dir.chmod(0o700)
+    broker_dir = state_dir / "broker"
+    client_dir = state_dir / "client"
+    allowed_tmp = state_dir / "tmp"
+    proof_scratch = state_dir / "proof-scratch"
+    fake_bin = tmp_path / "fake-bin"
+    external_dir = tmp_path / "external"
+    exchange_dir = allowed_tmp / "slot"
+    for directory in (
+        broker_dir,
+        client_dir,
+        allowed_tmp,
+        proof_scratch,
+        state_dir / "pg",
+        fake_bin,
+        external_dir,
+        exchange_dir,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+
+    broker_source, client_source = _postgres_gate_client_sources()
+    broker_path = broker_dir / "postgres_client_broker.py"
+    client_path = client_dir / "postgresql-client"
+    broker_path.write_text(broker_source, encoding="utf-8")
+    client_path.write_text(client_source, encoding="utf-8")
+    client_path.chmod(0o755)
+    (client_dir / "pg_dump").symlink_to("postgresql-client")
+
+    docker_log = tmp_path / "docker-race-args.jsonl"
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys, time",
+                "from pathlib import Path",
+                "args = sys.argv[1:]",
+                "if args[:2] == ['info', '--format']:",
+                "    print('[\"name=rootless\"]')",
+                "    raise SystemExit(0)",
+                f"log = Path({str(docker_log)!r})",
+                "with log.open('a', encoding='utf-8') as handle:",
+                "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
+                "time.sleep(0.02)",
+                "if 'pg_dump' in args:",
+                "    file_arg = next(arg for arg in args if arg.startswith('--file='))",
+                "    output = Path(file_arg.split('=', 1)[1])",
+                "    mount_spec = next(args[index + 1] for index, value in enumerate(args) "
+                "if value == '--volume' and ':/run/tmp:' in args[index + 1])",
+                "    source = Path(mount_spec.split(':', 2)[0])",
+                "    host_output = source / output.relative_to('/run/tmp')",
+                "    if host_output.parent.is_symlink():",
+                "        print('refused exchanged symlink output parent', file=sys.stderr)",
+                "        raise SystemExit(65)",
+                "    host_output.write_bytes(b'PGDMP-test')",
                 "raise SystemExit(0)",
             ]
         )
@@ -944,43 +1139,29 @@ def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_a
             time.sleep(0.05)
         assert socket_path.exists()
 
-        client_env = {
-            "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
-            "PGHOST": "127.0.0.1",
-            "PGPORT": "5432",
-            "PGUSER": "operator",
-            "PGPASSWORD": "secret",
-            "PGDATABASE": "acgs_control_plane_test",
-            "PGCONNECT_TIMEOUT": "5",
-        }
+        attacker_link = allowed_tmp / "attacker-link"
+        attacker_link.symlink_to(external_dir)
+        _rename_exchange(exchange_dir, attacker_link)
 
-        denied_archive = outside_dir / "escape.dump"
-        denied = subprocess.run(
-            [str(client_dir / "pg_dump"), f"--file={denied_archive}"],
-            env=client_env,
+        external_archive = external_dir / "escape.dump"
+        raced = subprocess.run(
+            [str(client_dir / "pg_dump"), "--file=/run/tmp/slot/escape.dump"],
+            env={
+                "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+                "PGHOST": "/run/acgs-pg",
+                "PGPORT": "5432",
+                "PGUSER": "operator",
+                "PGPASSWORD": "secret",
+                "PGDATABASE": "acgs_control_plane_test",
+            },
             capture_output=True,
             text=True,
             check=False,
         )
-        assert denied.returncode == 64
-        assert "outside broker-owned roots" in denied.stderr
-        assert not denied_archive.exists()
+        assert raced.returncode == 64
+        assert "outside broker-owned roots" in raced.stderr
+        assert not external_archive.exists()
         assert not docker_log.exists()
-
-        allowed_archive = allowed_tmp / "archive.dump"
-        allowed = subprocess.run(
-            [str(client_dir / "pg_dump"), f"--file={allowed_archive}"],
-            env=client_env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert allowed.returncode == 0, allowed.stderr
-        assert allowed_archive.read_bytes() == b"PGDMP-test"
-        assert json.loads(docker_log.read_text(encoding="utf-8").splitlines()[-1])[-2:] == [
-            "pg_dump",
-            f"--file={allowed_archive}",
-        ]
     finally:
         broker.terminate()
         try:
@@ -988,6 +1169,28 @@ def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_a
         except subprocess.TimeoutExpired:
             broker.kill()
             broker.wait(timeout=5)
+
+
+def test_postgres_gate_socket_sources_bind_relative_names() -> None:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    broker_source, client_source = _postgres_gate_client_sources()
+
+    assert "postgres_socket_proxy.py" not in script
+    assert "--publish 127.0.0.1" not in script
+    assert "listen_addresses=" in script
+    assert "unix_socket_directories=/run/acgs-pg" in script
+    assert "--security-opt label=disable" in script
+    assert '"$state_dir/pg:/run/acgs-pg:rw"' in script
+    assert '"$state_dir/pg:/var/run/postgresql:rw"' in script
+    assert "f\"{STATE_DIR / 'pg'}:/run/acgs-pg:ro\"" in broker_source
+    assert "server.bind(str(SOCKET_PATH))" not in broker_source
+    assert "client.connect(socket_path)" not in client_source
+    assert "os.chdir(SOCKET_DIR)" in broker_source
+    assert "server.bind(SOCKET_NAME)" in broker_source
+    assert "os.chdir(socket_dir)" in client_source
+    assert "client.connect(socket_name)" in client_source
 
 
 def _postgres_gate_client_sources() -> tuple[str, str]:
@@ -1003,6 +1206,34 @@ def _postgres_gate_client_sources() -> tuple[str, str]:
         "cat >\"$state_dir/client/postgresql-client\" <<'PY'\n",
     )
     return broker_source, client_source
+
+
+def _rename_exchange(first: Path, second: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    syscall = libc.syscall
+    syscall.argtypes = (
+        ctypes.c_long,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    syscall.restype = ctypes.c_long
+    renameat2_syscall = 316
+    at_fdcwd = -100
+    rename_exchange = 2
+    rc = syscall(
+        renameat2_syscall,
+        at_fdcwd,
+        os.fsencode(first),
+        at_fdcwd,
+        os.fsencode(second),
+        rename_exchange,
+    )
+    if rc != 0:
+        errno = ctypes.get_errno()
+        raise OSError(errno, os.strerror(errno), f"{first} <-> {second}")
 
 
 def _extract_single_quoted_heredoc(script: str, marker: str) -> str:
