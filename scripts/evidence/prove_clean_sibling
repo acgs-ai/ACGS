@@ -48,6 +48,7 @@ set +e
   LC_ALL=C.UTF-8 \
   P="$reviewed_parent" \
   TMPDIR="$caller_tmpdir" \
+  NODE_ID="${NODE_ID-P0-EVIDENCE-000}" \
   GIT_CONFIG_NOSYSTEM=1 \
   GIT_CONFIG_GLOBAL=/dev/null \
   PYTHONDONTWRITEBYTECODE=1 \
