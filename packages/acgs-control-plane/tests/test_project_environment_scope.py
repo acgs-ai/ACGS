@@ -6,9 +6,12 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from fastapi.routing import APIRoute
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
 
+from acgs_control_plane.app import create_app
+from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.db import make_engine
 from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import Environment, Organization, Project
@@ -123,3 +126,26 @@ def test_orm_models_use_the_same_composite_parent_join() -> None:
     assert Project.environments.property.mapper.class_ is Environment
     assert "projects.org_id = environments.org_id" in str(Project.environments.property.primaryjoin)
     assert "projects.id = environments.project_id" in str(Project.environments.property.primaryjoin)
+
+
+def test_public_api_exposes_no_project_or_environment_mutation_routes(tmp_path: Path) -> None:
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'control-plane.sqlite3'}",
+        audit_dir=tmp_path / "audit",
+        bootstrap_token="test-bootstrap-token",
+        create_tables=True,
+        runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+    )
+    app = create_app(settings)
+    try:
+        project_or_environment_routes = [
+            (method, route.path)
+            for route in app.routes
+            if isinstance(route, APIRoute)
+            for method in sorted(route.methods or ())
+            if "/projects" in route.path or "/environments" in route.path
+        ]
+
+        assert project_or_environment_routes == []
+    finally:
+        app.state.engine.dispose()

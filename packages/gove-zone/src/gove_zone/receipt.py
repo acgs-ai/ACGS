@@ -11,14 +11,41 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Literal
 
 from gove_zone.decision import DecisionRecord, sha256_json
 from gove_zone.signing import ReceiptSigner
 
 if TYPE_CHECKING:
     from gove_zone.revocation import RevocationList
+    from gove_zone.trust import ReceiptTrustRegistry
+
+
+DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS = 300
+MAX_RECEIPT_CLOCK_SKEW_SECONDS = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS
+
+
+def validate_receipt_clock_skew_seconds(value: int) -> int:
+    """Return a bounded receipt clock-skew allowance or fail closed.
+
+    The receipt liveness skew is a security boundary. Callers may tighten it,
+    but never widen it beyond the library default.
+    """
+    from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
+
+    if type(value) is not int:
+        raise ReceiptValidationError(
+            "max_clock_skew_seconds must be an integer",
+            reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+        )
+    if value < 0 or value > MAX_RECEIPT_CLOCK_SKEW_SECONDS:
+        raise ReceiptValidationError(
+            "max_clock_skew_seconds must be between 0 and "
+            f"{MAX_RECEIPT_CLOCK_SKEW_SECONDS} seconds",
+            reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
+        )
+    return value
 
 
 def _now_iso() -> str:
@@ -152,6 +179,10 @@ class DecisionReceipt:
     signature_algorithm: str = "none"
     signing_key_id: str = ""
     signature: str = "unsigned_local"
+    receipt_schema_version: str = ""
+    project_id: str = ""
+    environment_id: str = ""
+    trust_epoch: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         transformations_list: Any = []
@@ -164,7 +195,7 @@ class DecisionReceipt:
         else:
             transformations_list = self.transformations
 
-        return {
+        payload: dict[str, Any] = {
             "receipt_id": self.receipt_id,
             "request_id": self.request_id,
             "tenant_id": self.tenant_id,
@@ -200,12 +231,65 @@ class DecisionReceipt:
             "receipt_hash": self.receipt_hash,
             "signature": self.signature,
         }
+        if self.receipt_schema_version:
+            payload["receipt_schema_version"] = self.receipt_schema_version
+            payload["project_id"] = self.project_id
+            payload["environment_id"] = self.environment_id
+            payload["trust_epoch"] = self.trust_epoch
+        return payload
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DecisionReceipt:
+        from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
+        from gove_zone.trust import RECEIPT_V1, RECEIPT_V2
+
+        v2_only = {"project_id", "environment_id", "trust_epoch"}
+        schema_version = d.get("receipt_schema_version", "")
+        if not schema_version:
+            present_v2 = sorted(field for field in v2_only if field in d)
+            if present_v2:
+                raise ReceiptValidationError(
+                    "receipt v1 cannot carry v2-only scoped trust fields: " + ", ".join(present_v2),
+                    reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+                )
+        elif schema_version == RECEIPT_V1:
+            raise ReceiptValidationError(
+                "receipt v1 is represented by an absent receipt_schema_version field",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        elif schema_version != RECEIPT_V2:
+            raise ReceiptValidationError(
+                f"unsupported receipt schema version: {schema_version!r}",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        elif not all(field in d for field in v2_only):
+            missing = sorted(field for field in v2_only if field not in d)
+            raise ReceiptValidationError(
+                "receipt v2 missing scoped trust fields: " + ", ".join(missing),
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        trust_epoch_raw = d.get("trust_epoch", 0)
+        if type(trust_epoch_raw) is not int:
+            raise ReceiptValidationError(
+                "trust_epoch must be a positive integer",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        trust_epoch = trust_epoch_raw
+        if schema_version == RECEIPT_V2:
+            if trust_epoch <= 0:
+                raise ReceiptValidationError(
+                    "trust_epoch must be positive for receipt v2",
+                    reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+                )
+            for field in ("project_id", "environment_id"):
+                if not isinstance(d.get(field), str) or not d[field].strip():
+                    raise ReceiptValidationError(
+                        f"{field} is required for receipt v2",
+                        reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+                    )
         return cls(
             receipt_id=d["receipt_id"],
             request_id=d["request_id"],
@@ -235,6 +319,10 @@ class DecisionReceipt:
             signature_algorithm=d.get("signature_algorithm", "none"),
             signing_key_id=d.get("signing_key_id", ""),
             signature=d.get("signature", "unsigned_local"),
+            receipt_schema_version=schema_version,
+            project_id=d.get("project_id", ""),
+            environment_id=d.get("environment_id", ""),
+            trust_epoch=trust_epoch,
         )
 
     @classmethod
@@ -250,7 +338,7 @@ class DecisionReceipt:
         identically, so referencing the fields directly yields the same
         canonical bytes.
         """
-        return {
+        payload: dict[str, Any] = {
             "receipt_id": self.receipt_id,
             "request_id": self.request_id,
             "tenant_id": self.tenant_id,
@@ -278,6 +366,12 @@ class DecisionReceipt:
             "signature_algorithm": self.signature_algorithm,
             "signing_key_id": self.signing_key_id,
         }
+        if self.receipt_schema_version:
+            payload["receipt_schema_version"] = self.receipt_schema_version
+            payload["project_id"] = self.project_id
+            payload["environment_id"] = self.environment_id
+            payload["trust_epoch"] = self.trust_epoch
+        return payload
 
     def compute_hash(self) -> str:
         return sha256_json(self._hash_payload())
@@ -376,6 +470,84 @@ class DecisionReceipt:
         object.__setattr__(receipt, "signature", signature)
         return receipt
 
+    @classmethod
+    def from_record_v2(
+        cls,
+        record: DecisionRecord,
+        audit_hash: str,
+        previous_audit_hash: str,
+        tenant_id: str,
+        project_id: str,
+        environment_id: str,
+        trust_epoch: int,
+        execution_boundary: str,
+        policy_bundle_id: str,
+        policy_hash: str,
+        request_id: str,
+        *,
+        validator: Validator,
+        authority: str,
+        signer: ReceiptSigner,
+        subject: str = "",
+        constraints: dict[str, Any] | None = None,
+        approval_chain_summary: dict[str, Any] | None = None,
+        expires_at: str = "",
+    ) -> DecisionReceipt:
+        """Mint a receipt-v2 bound to project/environment/trust epoch.
+
+        The caller must provide a signer. There is no unsigned v2 issuance
+        helper because v2 is the production scoped-trust contract.
+        """
+        from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
+        from gove_zone.trust import RECEIPT_V2
+
+        if not project_id or not project_id.strip():
+            raise ReceiptValidationError(
+                "project_id is required for receipt v2",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if not environment_id or not environment_id.strip():
+            raise ReceiptValidationError(
+                "environment_id is required for receipt v2",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if type(trust_epoch) is not int or trust_epoch <= 0:
+            raise ReceiptValidationError(
+                "trust_epoch must be positive for receipt v2",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if not expires_at or not expires_at.strip():
+            raise ReceiptValidationError(
+                "expires_at is required for receipt v2",
+                reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
+            )
+        receipt = cls.from_record(
+            record=record,
+            audit_hash=audit_hash,
+            previous_audit_hash=previous_audit_hash,
+            tenant_id=tenant_id,
+            execution_boundary=execution_boundary,
+            policy_bundle_id=policy_bundle_id,
+            policy_hash=policy_hash,
+            request_id=request_id,
+            validator=validator,
+            authority=authority,
+            subject=subject,
+            constraints=constraints,
+            approval_chain_summary=approval_chain_summary,
+            expires_at=expires_at,
+        )
+        object.__setattr__(receipt, "receipt_schema_version", RECEIPT_V2)
+        object.__setattr__(receipt, "project_id", project_id)
+        object.__setattr__(receipt, "environment_id", environment_id)
+        object.__setattr__(receipt, "trust_epoch", trust_epoch)
+        object.__setattr__(receipt, "signature_algorithm", signer.algorithm)
+        object.__setattr__(receipt, "signing_key_id", signer.key_id)
+        h = receipt.compute_hash()
+        object.__setattr__(receipt, "receipt_hash", h)
+        object.__setattr__(receipt, "signature", signer.sign(h.encode("utf-8")))
+        return receipt
+
     def verify(
         self,
         *,
@@ -386,6 +558,8 @@ class DecisionReceipt:
         expected_action: str | None = None,
         expected_policy_hash: str | None = None,
         expected_policy_bundle_id: str | None = None,
+        expected_project_id: str | None = None,
+        expected_environment_id: str | None = None,
         expected_validator_role: str | None = None,
         expected_authority: str | None = None,
         expected_actor: str | None = None,
@@ -393,7 +567,11 @@ class DecisionReceipt:
         require_signature: bool = False,
         require_expiry: bool = False,
         revoked_keys: RevocationList | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        historical_trust_verification: bool = False,
+        trust_purpose: str = "decision-receipt",
         now_iso: str | None = None,
+        max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
     ) -> None:
         """Low-level receipt verification primitive.
 
@@ -422,9 +600,31 @@ class DecisionReceipt:
         *before* the signature is trusted — independent of whether the key is
         still present in ``verifier``. ``None`` (the default) preserves current
         behavior exactly.
+
+        ``max_clock_skew_seconds`` bounds receipt not-before liveness. A receipt
+        whose signed issuance ``timestamp`` is more than this many seconds in
+        the verifier's future is rejected with
+        :data:`ReceiptRejectionReason.RECEIPT_EXPIRED`, the same liveness class
+        used for expired receipts. The default five-minute skew preserves normal
+        distributed-clock tolerance while preventing correctly signed receipts
+        issued far in the future from becoming bearer authorizations before
+        their issuance time.
         """
         from gove_zone.decision import Decision
         from gove_zone.errors import ReceiptRejectionReason, ReceiptValidationError
+        from gove_zone.trust import (
+            RECEIPT_V2,
+            ReceiptTrustScope,
+            TrustConfigurationError,
+            TrustedReceiptKey,
+        )
+
+        verification_now_iso = now_iso if now_iso is not None else _now_iso()
+        if not isinstance(trust_purpose, str) or not trust_purpose.strip():
+            raise ReceiptValidationError(
+                "trust_purpose is required for scoped receipt verification",
+                reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+            )
 
         # 1. Missing fields
         required_fields = [
@@ -467,6 +667,69 @@ class DecisionReceipt:
                 f"Expected {expected_hash}, got {self.receipt_hash}",
                 reason_code=ReceiptRejectionReason.RECEIPT_HASH_MISMATCH,
             )
+
+        is_v2 = self.receipt_schema_version == RECEIPT_V2
+        if self.receipt_schema_version and not is_v2:
+            raise ReceiptValidationError(
+                f"unsupported receipt schema version: {self.receipt_schema_version!r}",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if not is_v2 and (self.project_id or self.environment_id or self.trust_epoch):
+            raise ReceiptValidationError(
+                "receipt v1 cannot carry v2 scoped trust fields",
+                reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+            )
+        if is_v2:
+            if (
+                not self.project_id
+                or not self.environment_id
+                or type(self.trust_epoch) is not int
+                or self.trust_epoch <= 0
+            ):
+                raise ReceiptValidationError(
+                    "receipt v2 requires project_id, environment_id, and positive trust_epoch",
+                    reason_code=ReceiptRejectionReason.RECEIPT_SCHEMA_MISMATCH,
+                )
+            if not self.expires_at:
+                raise ReceiptValidationError(
+                    "receipt v2 requires expires_at",
+                    reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
+                )
+            if (
+                self.signature_algorithm == "none"
+                or not self.signing_key_id
+                or not self.signature
+                or self.signature == "unsigned_local"
+            ):
+                raise ReceiptValidationError(
+                    "receipt v2 requires a trusted signature",
+                    reason_code=ReceiptRejectionReason.UNSIGNED_REJECTED,
+                )
+            if (
+                expected_tenant_id is None
+                or expected_project_id is None
+                or expected_environment_id is None
+            ):
+                raise ReceiptValidationError(
+                    "receipt v2 requires expected tenant/project/environment scope",
+                    reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+                )
+            if self.project_id != expected_project_id:
+                raise ReceiptValidationError(
+                    f"Project mismatch: expected {expected_project_id}, got {self.project_id}",
+                    reason_code=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+                )
+            if self.environment_id != expected_environment_id:
+                raise ReceiptValidationError(
+                    "Environment mismatch: expected "
+                    f"{expected_environment_id}, got {self.environment_id}",
+                    reason_code=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+                )
+            if trust_registry is None:
+                raise ReceiptValidationError(
+                    "receipt v2 requires a scoped trust registry",
+                    reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+                )
 
         # 2a. Asymmetric signature check. Placed AFTER the receipt_hash check
         # because the signature attests an intact hash: a tampered field is caught
@@ -511,7 +774,55 @@ class DecisionReceipt:
             # Resolve the verifier — a missing verifier is a hard rejection here
             # (the receipt claims a signature; we must check it).
             resolved: ReceiptSigner | None
-            if isinstance(verifier, Mapping):
+            if is_v2:
+                assert expected_tenant_id is not None
+                assert expected_project_id is not None
+                assert expected_environment_id is not None
+                assert trust_registry is not None
+                scope = ReceiptTrustScope(
+                    tenant_id=expected_tenant_id,
+                    project_id=expected_project_id,
+                    environment_id=expected_environment_id,
+                    purpose=trust_purpose,
+                )
+                mode: Literal["execution", "historical"] = (
+                    "historical" if historical_trust_verification else "execution"
+                )
+                try:
+                    trusted_key = trust_registry.resolve(
+                        scope=scope,
+                        trust_epoch=self.trust_epoch,
+                        algorithm=self.signature_algorithm,
+                        key_id=self.signing_key_id,
+                        now_iso=verification_now_iso,
+                        mode=mode,
+                    )
+                    if not isinstance(trusted_key, TrustedReceiptKey):
+                        raise ValueError("trusted key descriptor has wrong type")
+                    trusted_key.validate()
+                    if (
+                        trusted_key.scope != scope
+                        or trusted_key.scope.purpose != trust_purpose
+                        or trusted_key.key_id != self.signing_key_id
+                        or trusted_key.algorithm != self.signature_algorithm
+                        or not trusted_key.verifies_epoch(self.trust_epoch, mode=mode)
+                    ):
+                        raise ValueError("trusted key descriptor mismatch")
+                    if mode == "execution" and trusted_key.status != "active":
+                        raise ValueError("execution trust key must be active")
+                    if mode == "execution" and not trusted_key.is_live_at(verification_now_iso):
+                        raise ValueError("execution trust key expired")
+                    if mode == "historical" and trusted_key.status not in ("active", "retired"):
+                        raise ValueError("historical trust key status rejected")
+                    resolved = trusted_key.verifier
+                    if resolved.key_id != self.signing_key_id:
+                        raise ValueError("verifier key id mismatch")
+                except (Exception, TrustConfigurationError):
+                    raise ReceiptValidationError(
+                        "scoped trust key resolution failed",
+                        reason_code=ReceiptRejectionReason.SCOPED_TRUST_MISMATCH,
+                    ) from None
+            elif isinstance(verifier, Mapping):
                 if self.signing_key_id not in verifier:
                     raise ReceiptValidationError(
                         "unknown signing key",
@@ -600,18 +911,6 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.UNKNOWN_DECISION,
             ) from err
 
-        # 4. Denied and escalated receipts
-        if self.decision == Decision.DENY:
-            raise ReceiptValidationError(
-                "Denied receipt cannot authorize execution",
-                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
-            )
-        if self.decision == Decision.ESCALATE:
-            raise ReceiptValidationError(
-                "Escalated receipt cannot authorize execution",
-                reason_code=ReceiptRejectionReason.ESCALATED_RECEIPT,
-            )
-
         # 5. Wrong tenant
         if expected_tenant_id is not None and self.tenant_id != expected_tenant_id:
             raise ReceiptValidationError(
@@ -699,8 +998,13 @@ class DecisionReceipt:
                     reason_code=ReceiptRejectionReason.TRANSFORM_MISMATCH,
                 )
 
-        # 10b. ALLOW argument binding: for ALLOW decisions, verify that the args
-        # the gate is about to execute were exactly what the receipt authorized.
+        # 10b. Native argument binding: for ALLOW/DENY/ESCALATE decisions, verify
+        # that the args presented at the gate were exactly what the receipt
+        # covers. DENY/ESCALATE still cannot authorize execution, but this check
+        # keeps their refusal diagnostics provenance-preserving: a correctly
+        # signed non-ALLOW receipt with wrong arguments is first rejected as an
+        # argument mismatch rather than being rendered as a fully bound
+        # DENY/ESCALATE artifact.
         # argument_hash is sha256_json(dict(args)) — same canonicalization as
         # ToolCall.argument_hash(). This closes the substitution gap: a valid
         # ALLOW receipt for write_file(path=/tmp/safe) cannot authorize
@@ -709,7 +1013,15 @@ class DecisionReceipt:
         # TRANSFORM because the executed args are the transformed args, which
         # differ from the original proposed args that argument_hash covers;
         # the transform-field check (#10) already binds TRANSFORM execution.
-        if self.decision == Decision.ALLOW.value and expected_args is not None:
+        if (
+            self.decision
+            in (
+                Decision.ALLOW.value,
+                Decision.DENY.value,
+                Decision.ESCALATE.value,
+            )
+            and expected_args is not None
+        ):
             from gove_zone.decision import sha256_json as _sha256_json
 
             computed_arg_hash = _sha256_json(dict(expected_args))
@@ -757,7 +1069,7 @@ class DecisionReceipt:
         # lifetime. When require_expiry is set, an empty expires_at is itself a
         # failure: a long-lived bearer receipt must not authorize indefinitely.
         # Default-off, so non-strict callers are unaffected. Fail-closed.
-        if require_expiry and not self.expires_at:
+        if (require_expiry or is_v2) and not self.expires_at:
             raise ReceiptValidationError(
                 "Receipt has no expires_at but the strict profile requires a "
                 "liveness/TTL bound (a receipt without an expiry can authorize "
@@ -765,11 +1077,20 @@ class DecisionReceipt:
                 reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
             )
 
-        # 13. Expiry (only enforced when expires_at is set). expires_at is bound
-        # into receipt_hash, so a tampered expiry is already caught by check 2;
-        # this rejects a genuinely-issued receipt used past its lifetime. The
-        # clock is injectable so expiry is deterministically testable; in
-        # production it defaults to the real UTC wall clock. Fail-closed.
+        bounded_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
+
+        # 13. Liveness window. ``timestamp`` and ``expires_at`` are both bound
+        # into receipt_hash, so tampering is already caught by check 2. Parse
+        # timezone-aware datetimes and enforce expiry for every expiring receipt.
+        # For signed/v2 receipts, also enforce a closed interval with bounded
+        # future issuance skew:
+        #
+        #   timestamp - skew <= now <= expires_at
+        #
+        # A correctly signed receipt issued too far in the future is not yet
+        # valid. A receipt whose expiry predates issuance has no valid lifetime.
+        # Both reject under RECEIPT_EXPIRED so higher-level contracts can map
+        # the entire liveness class to EXPIRED.
         #
         # OPERATOR TRUST ASSUMPTION: expiry trusts the verifying host's wall
         # clock. A host whose clock is rolled BACK accepts a genuinely-expired
@@ -779,17 +1100,20 @@ class DecisionReceipt:
         # vetted time source via ``now_iso`` rather than relying on the host
         # clock. gove-zone does not (yet) carry its own trusted time source.
         if self.expires_at:
-            current = now_iso if now_iso is not None else _now_iso()
+            current = verification_now_iso
             # Compare timezone-aware datetimes, not strings: a lexicographic
-            # compare is wrong across UTC offsets and would fail OPEN (accept an
-            # expired receipt). Unparseable timestamps are a validation failure.
+            # compare is wrong across UTC offsets and would fail OPEN. Both
+            # timestamp and expires_at participate in liveness; unparseable
+            # timestamps are validation failures.
             try:
                 current_dt = datetime.fromisoformat(current)
+                issued_dt = datetime.fromisoformat(self.timestamp)
                 expires_dt = datetime.fromisoformat(self.expires_at)
             except (ValueError, TypeError) as err:
                 raise ReceiptValidationError(
                     f"Unparseable or mismatched expiry timestamp: "
-                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    f"timestamp={self.timestamp!r}, expires_at={self.expires_at!r}, "
+                    f"now={current!r}",
                     reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 ) from err
             # Reject offset-naive timestamps on either side. Two naive datetimes
@@ -797,16 +1121,47 @@ class DecisionReceipt:
             # ambiguous — a naive comparison can silently fail OPEN across
             # offsets. Demand aware-vs-aware so expiry is unambiguous; a naive
             # input is a validation failure, never silently accepted.
-            if current_dt.tzinfo is None or expires_dt.tzinfo is None:
+            if current_dt.tzinfo is None or issued_dt.tzinfo is None or expires_dt.tzinfo is None:
                 raise ReceiptValidationError(
                     f"Expiry timestamps must be timezone-aware (offset-naive "
                     f"compares are ambiguous and can fail open): "
-                    f"expires_at={self.expires_at!r}, now={current!r}",
+                    f"timestamp={self.timestamp!r}, expires_at={self.expires_at!r}, "
+                    f"now={current!r}",
                     reason_code=ReceiptRejectionReason.EXPIRY_UNPARSEABLE,
                 )
-            is_expired = current_dt > expires_dt
-            if is_expired:
+            authenticated_liveness = is_v2 or self.signature_algorithm != "none"
+            if authenticated_liveness:
+                if expires_dt < issued_dt:
+                    raise ReceiptValidationError(
+                        f"Receipt expired before it was issued: timestamp {self.timestamp}, "
+                        f"expires_at {self.expires_at}",
+                        reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
+                    )
+                skew = timedelta(seconds=bounded_clock_skew_seconds)
+                if issued_dt - current_dt > skew:
+                    raise ReceiptValidationError(
+                        f"Receipt is not yet valid: issued at {self.timestamp} "
+                        f"(now {current}, allowed skew {bounded_clock_skew_seconds}s)",
+                        reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
+                    )
+            if current_dt > expires_dt:
                 raise ReceiptValidationError(
                     f"Receipt expired at {self.expires_at} (now {current})",
                     reason_code=ReceiptRejectionReason.RECEIPT_EXPIRED,
                 )
+
+        # 14. Denied and escalated receipts. Keep this after integrity,
+        # signature/trust, liveness, and all caller-supplied bindings so the
+        # rejection reason reports the first real verifier failure for malformed
+        # DENY/ESCALATE artifacts, while still refusing before any gate can burn
+        # a ledger entry or run the side effect.
+        if self.decision == Decision.DENY:
+            raise ReceiptValidationError(
+                "Denied receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
+            )
+        if self.decision == Decision.ESCALATE:
+            raise ReceiptValidationError(
+                "Escalated receipt cannot authorize execution",
+                reason_code=ReceiptRejectionReason.ESCALATED_RECEIPT,
+            )
