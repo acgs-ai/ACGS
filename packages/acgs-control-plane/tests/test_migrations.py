@@ -826,6 +826,33 @@ def test_postgres_gate_wrapper_exports_exact_reproducibility_environment() -> No
     assert script.index("export PYTHONHASHSEED=0") > script.index(reset_line)
 
 
+def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "required_command in bwrap cmp docker git mktemp realpath sha256sum tar" in script
+    assert "bwrap preflight failed; refusing to run" in script
+    assert 'env -i "$bwrap_bin" "${bwrap_args[@]}" --' in script
+    assert "--clearenv" in script
+    assert "--unshare-all --unshare-user --share-net --die-with-parent --new-session" in script
+    assert "--tmpfs /run" in script
+    assert "--setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1" in script
+    assert "--setenv ACP_TEST_POSTGRES_SELECTOR_MODE \"$selector_mode\"" in script
+    assert '--setenv PYTEST_ADDOPTS "-p no:cacheprovider"' in script
+    assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET \"$broker_socket\"" in script
+    assert "PostgreSQL client broker" in script
+    assert '"tool": tool, "argv": sys.argv[1:], "env": env' in script
+
+    pytest_invocation = (
+        'env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
+        '  "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+    )
+    assert pytest_invocation in script
+    assert '.venv/bin/pytest -q --junitxml="$junit_report" "$@"' not in script
+    assert script.index(pytest_invocation) > script.index("broker_socket=")
+
+
 def test_raw_alembic_upgrade_rejects_an_empty_database_before_schema_mutation(
     tmp_path: Path,
 ) -> None:
