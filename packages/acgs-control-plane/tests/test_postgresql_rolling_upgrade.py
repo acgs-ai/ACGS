@@ -44,6 +44,14 @@ from acgs_control_plane.migrations import (
     inspect_schema,
     upgrade_database,
 )
+from acgs_control_plane.scope_defaults import (
+    LEGACY_DEFAULT_ENVIRONMENT_NAME,
+    LEGACY_DEFAULT_ENVIRONMENT_SLUG,
+    LEGACY_DEFAULT_PROJECT_NAME,
+    LEGACY_DEFAULT_PROJECT_SLUG,
+    legacy_default_environment_id,
+    legacy_default_project_id,
+)
 
 _OLD_CANDIDATE_COMMIT = "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"
 _OLD_CANDIDATE_SHA256 = "40ff7b40f27a2b698d3b607c710f1866f11850a9a2c42a7c0eb51a6fe8be3d93"
@@ -75,6 +83,14 @@ _G038_ALLOWED_AGENT_CATALOG_CHANGES = frozenset(
     }
 )
 _G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset({"uq_policy_bundles_one_active_per_org"})
+_G102E4_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset(
+    {
+        "project_id",
+        "environment_id",
+        "fk_policy_bundles_scope_environment",
+        "ck_policy_bundles_scope_both_null_or_set",
+    }
+)
 
 
 class ArtifactRefusal(RuntimeError):
@@ -114,7 +130,11 @@ def _without_allowed_old_table_catalog_additions(
         and not (
             len(row) >= 7
             and row[1] == "policy_bundles"
-            and row[6] in _G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES
+            and (
+                row[2] in _G102E4_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES
+                or row[4] in _G102E4_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES
+                or row[6] in _G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES
+            )
         )
     )
 
@@ -397,6 +417,8 @@ def _rows(connection: Connection, table: str) -> tuple[tuple[str, ...], ...]:
     quoted = connection.dialect.identifier_preparer.quote(table)
     if table == "agents":
         select_list = "id, org_id, name, description, trust_tier, allowed_tools, status, created_at"
+    elif table == "policy_bundles":
+        select_list = "id, org_id, policy_id, version, bundle, status, created_at, activated_at"
     else:
         select_list = "*"
     rows = connection.execute(sa.text(f"SELECT {select_list} FROM {quoted} ORDER BY 1")).all()
@@ -1048,6 +1070,10 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "tenant_bootstrap_policy_artifacts",
             "tenant_bootstrap_refusal_events",
         }
+        # Revision 0006 attaches agents and revision 0010 attaches
+        # policy_bundles to environment scope; those allowed catalog
+        # additions are filtered out below, and every other pre-existing
+        # table must remain catalog-identical.
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
             migrated_catalog = tuple(row for row in migrated["catalog"] if row[1] == table)
@@ -1057,8 +1083,27 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             if table == "alembic_version":
                 continue
             assert migrated["rows"][table] == before["rows"][table]
-        assert migrated["rows"]["projects"] == ()
-        assert migrated["rows"]["environments"] == ()
+        # Revision 0010 seeds exactly one deterministic default scope for the
+        # pre-existing legacy org; columns are (id, org_id, [project_id,]
+        # slug, name, created_at) and _rows() captures repr() per column.
+        org_id = bootstrapped["org_id"]
+        assert tuple(row[:4] for row in migrated["rows"]["projects"]) == (
+            (
+                repr(legacy_default_project_id(org_id)),
+                repr(org_id),
+                repr(LEGACY_DEFAULT_PROJECT_SLUG),
+                repr(LEGACY_DEFAULT_PROJECT_NAME),
+            ),
+        )
+        assert tuple(row[:5] for row in migrated["rows"]["environments"]) == (
+            (
+                repr(legacy_default_environment_id(org_id)),
+                repr(org_id),
+                repr(legacy_default_project_id(org_id)),
+                repr(LEGACY_DEFAULT_ENVIRONMENT_SLUG),
+                repr(LEGACY_DEFAULT_ENVIRONMENT_NAME),
+            ),
+        )
         assert migrated["rows"]["governance_event_heads"] == ()
         assert migrated["rows"]["governance_events"] == ()
         assert migrated["rows"]["audit_projection_outbox"] == ()
@@ -1107,8 +1152,8 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         after_old_write = _state(pg_engine)
         assert len(after_old_write["rows"]["users"]) == len(migrated["rows"]["users"]) + 1
         assert len(after_old_write["rows"]["receipts"]) == len(migrated["rows"]["receipts"]) + 1
-        assert after_old_write["rows"]["projects"] == ()
-        assert after_old_write["rows"]["environments"] == ()
+        assert after_old_write["rows"]["projects"] == migrated["rows"]["projects"]
+        assert after_old_write["rows"]["environments"] == migrated["rows"]["environments"]
         assert after_old_write["rows"]["organization_memberships"] == ()
         assert after_old_write["rows"]["platform_bootstrap_invitations"] == ()
         assert after_old_write["rows"]["tenant_bootstrap_idempotency"] == ()
