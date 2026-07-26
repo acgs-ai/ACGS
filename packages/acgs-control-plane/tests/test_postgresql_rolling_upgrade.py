@@ -62,7 +62,15 @@ _MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 _PROTOCOL_TIMEOUT_SECONDS = 10.0
 _OPERATOR_TIMEOUT_SECONDS = 20.0
 _PROTOCOL_QUEUE_RECORDS = 8
-_G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS = frozenset({"uq_users_org_id_id"})
+# A revision may add a composite candidate key to a v0 table so a later
+# scope-bound child can target it. The addition is invisible to the old app --
+# it constrains nothing the old app writes -- but it is still a catalog change
+# on a pre-existing table, so each one is declared here per table rather than
+# excluded by a blanket rule.
+_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS: dict[str, frozenset[str]] = {
+    "users": frozenset({"uq_users_org_id_id"}),
+    "agents": frozenset({"uq_agents_org_id_id"}),
+}
 
 
 class ArtifactRefusal(RuntimeError):
@@ -84,11 +92,8 @@ def _without_allowed_old_table_catalog_additions(
         for row in rows
         if not (
             len(row) >= 7
-            and row[1] == "users"
-            and (
-                row[4] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
-                or row[6] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
-            )
+            and (allowed := _ALLOWED_OLD_TABLE_CATALOG_ADDITIONS.get(row[1]))
+            and (row[4] in allowed or row[6] in allowed)
         )
     )
 
@@ -974,6 +979,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         migrated = _state(pg_engine)
         assert migrated["version"] == HEAD_REVISION
         assert set(migrated["tables"]) - set(before["tables"]) == {
+            "agent_environment_scope",
             "environments",
             "managed_decision_receipts",
             "managed_governance_event_heads",
