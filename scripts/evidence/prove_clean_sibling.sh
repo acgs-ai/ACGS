@@ -177,6 +177,7 @@ P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'
 P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'
 P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'
 P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'
+P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -253,6 +254,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=1
     EXPECTED_TRANSCRIPT_RECORDS=12
     TMP_BASENAME='acgs-p2-vertical-gate'
+    ;;
+  P3-POLICY-001)
+    [[ "$P" == "$P3_POLICY_REVIEWED_BASE" ]] ||
+      die "P3-POLICY-001 reviewed parent must be exact $P3_POLICY_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP'
+    INCLUDE_GZ=0
+    EXPECTED_TRANSCRIPT_RECORDS=7
+    TMP_BASENAME='acgs-p3-policy'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -583,6 +592,8 @@ if [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-100-request-multiprocess-agent-registration-idempotency"]'
 elif [[ "$NODE_ID" == P2-VERTICAL-GATE-003 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-vertical-bootstrap-register"]'
+elif [[ "$NODE_ID" == P3-POLICY-001 ]]; then
+  export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-policy-registry-lifecycle"]'
 fi
 unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT
@@ -1332,8 +1343,8 @@ node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
-      P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002 | \
-      P2-VERTICAL-GATE-003)
+    P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002 | \
+      P2-VERTICAL-GATE-003 | P3-POLICY-001)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -1535,6 +1546,23 @@ elif [[ "$NODE_ID" == P2-VERTICAL-GATE-003 ]]; then
   run_recorded_exact_pytest_gate GZ "$WORKTREE" p2-vertical-runtime \
     'packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate' REPO_ROOT 4 \
     "${P2_VERTICAL_GZ_GATE[@]}"
+elif [[ "$NODE_ID" == P3-POLICY-001 ]]; then
+  P3_POLICY_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_immutable_version_without_head \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activate_advances_exactly_one_head \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_concurrent_candidates_have_one_generation_winner \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_idempotent_replay_is_one_terminal_effect \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_idempotency_conflict_has_zero_delta \
+    tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activation_revalidates_trust_and_rolls_back_before_effect)
+  run_trusted_parent_postgres_gate CP \
+    "$WORKTREE/packages/acgs-control-plane" p3-policy-postgres \
+    'packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate' CP \
+    "${P3_POLICY_CP_GATE[@]}"
+  P3_POLICY_ROOT_GATE=(packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+    tests/saas_beta/test_cross_plane_contracts.py::test_policy_registry_contract_locks_managed_routes_negative_oracles_and_local_posture)
+  run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-policy-cross-plane \
+    'root:P3-POLICY-001-cross-plane-contract' REPO_ROOT 1 \
+    "${P3_POLICY_ROOT_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

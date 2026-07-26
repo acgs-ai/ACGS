@@ -29,17 +29,23 @@ from acgs_control_plane.models import (
     AgentRecord,
     AgentRegistrationIdempotency,
     Environment,
+    EnvironmentPolicyHead,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
     ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
     Organization,
-    PolicyBundle,
+    PolicyVersion,
     Project,
     ReceiptRow,
     new_id,
     utcnow,
+)
+from acgs_control_plane.policy_registry import (
+    POLICY_ENVELOPE_PURPOSE,
+    _signed_envelope,
+    local_policy_registry_issuer,
 )
 from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
@@ -83,7 +89,7 @@ def test_agent_register_route_executes_through_managed_receipt_v2_spine(
                 AgentRecord.name == "deploy-bot",
             )
         ).one()
-        receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+        receipt = session.scalars(_managed_agent_receipt_select()).one()
         consumption = session.scalars(sa.select(ManagedReceiptConsumption)).one()
         event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
         outbox = session.scalars(sa.select(ManagedOutboxMessage)).one()
@@ -130,7 +136,7 @@ def test_agent_register_route_requires_idempotency_key_before_issuance_or_persis
     with app.state.session_factory() as session:
         assert _count_agents(session, org["org_id"], "missing-key-bot") == 0
         assert _count(session, AgentRegistrationIdempotency) == 0
-        assert _count(session, ManagedDecisionReceipt) == 0
+        assert _managed_agent_receipts(session) == 0
         assert _count(session, ManagedReceiptConsumption) == 0
         assert _count(session, ManagedGovernanceEvent) == 0
         assert _count(session, ManagedOutboxMessage) == 0
@@ -417,12 +423,12 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
             assert _count(session, ManagedReceiptConsumption) == 0, case["name"]
             assert _managed_allow_receipts(session) == 0, case["name"]
             if case.get("evidence") is None:
-                assert _count(session, ManagedDecisionReceipt) == 0, case["name"]
+                assert _managed_agent_receipts(session) == 0, case["name"]
                 assert _count(session, ManagedGovernanceEvent) == 0, case["name"]
                 assert _count(session, ManagedOutboxMessage) == 0, case["name"]
                 assert _count(session, AgentRegistrationIdempotency) == 0, case["name"]
             else:
-                receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+                receipt = session.scalars(_managed_agent_receipt_select()).one()
                 assert receipt.decision == case["evidence"], case["name"]
                 assert _count(session, ManagedGovernanceEvent) == 1, case["name"]
                 assert _count(session, ManagedOutboxMessage) == 1, case["name"]
@@ -479,7 +485,7 @@ def test_agent_register_route_scope_and_policy_are_server_owned(
                 AgentRecord.name == "scoped-bot",
             )
         ).one()
-        receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+        receipt = session.scalars(_managed_agent_receipt_select()).one()
         assert agent.project_id == project_id
         assert agent.environment_id == environment_id
         assert receipt.project_id == project_id
@@ -546,7 +552,7 @@ def test_agent_register_route_rejects_forged_allow_replay_payload(
     with app.state.session_factory() as session:
         assert _count_agents(session, org["org_id"], "forged-allow-bot") == 1
         assert _count(session, AgentRegistrationIdempotency) == 1
-        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _managed_agent_receipts(session) == 1
         assert _count(session, ManagedReceiptConsumption) == 1
         assert _count(session, ManagedGovernanceEvent) == 1
         assert _count(session, ManagedOutboxMessage) == 1
@@ -612,7 +618,7 @@ def test_agent_register_route_rejects_corrupt_replay_integrity_state_without_new
     assert first.status_code == 201, first.text
     with app.state.session_factory.begin() as session:
         if tamper_case == "sealed_receipt_ciphertext":
-            receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+            receipt = session.scalars(_managed_agent_receipt_select()).one()
             sealed_receipt = dict(receipt.projection["sealed_receipt"])
             sealed_receipt["ciphertext"] = f"{sealed_receipt['ciphertext']}A"
             receipt.projection = {**receipt.projection, "sealed_receipt": sealed_receipt}
@@ -941,6 +947,18 @@ def _seed_default_scope_and_trust(
                 public_key_spki_der=public_spki_der_from_signer(signer),
                 not_after=utcnow() + timedelta(days=1),
             )
+        policy_scope = ReceiptTrustScope(
+            org_id, project_id, environment_id, POLICY_ENVELOPE_PURPOSE
+        )
+        policy_issuer = local_policy_registry_issuer()
+        policy_signer = policy_issuer.signer_for_scope(policy_scope, trust_epoch=1)
+        ManagedTrustLifecycleService(session).bootstrap(
+            scope=policy_scope,
+            key_id=policy_signer.key_id,
+            algorithm=policy_signer.algorithm,
+            public_key_spki_der=public_spki_der_from_signer(policy_signer),
+            not_after=utcnow() + timedelta(days=1),
+        )
     return project_id, environment_id
 
 
@@ -989,17 +1007,80 @@ def _publish_and_activate(
     *,
     rules: list[dict[str, Any]],
 ) -> None:
-    publish = client.post(
-        f"/orgs/{org['org_id']}/policies",
-        json={"policy_id": f"policy-{new_id()}", "rules": rules},
-        headers=_admin_headers(org),
-    )
-    assert publish.status_code == 201, publish.text
-    activate = client.post(
-        f"/orgs/{org['org_id']}/policies/{publish.json()['bundle_id']}/activate",
-        headers=_admin_headers(org),
-    )
-    assert activate.status_code == 200, activate.text
+    org_id = org["org_id"]
+    policy_id = f"policy-{new_id()}"
+    parsed = RuleSetPolicy.from_dict({"id": policy_id, "rules": rules})
+    document = {"id": parsed.policy_id, "version": parsed.version, "rules": list(rules)}
+    with client.app.state.session_factory.begin() as session:
+        environment = session.scalars(
+            sa.select(Environment)
+            .where(Environment.org_id == org_id)
+            .order_by(Environment.created_at.desc())
+        ).first()
+        assert environment is not None
+        envelope = _signed_envelope(
+            issuer=local_policy_registry_issuer(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            document=document,
+            trust_epoch=1,
+        )
+        version = PolicyVersion(
+            id=new_id(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            version=document["version"],
+            content_hash=envelope["content_hash"],
+            document=document,
+            rules=list(document["rules"]),
+            canonical_envelope=envelope,
+            purpose=envelope["purpose"],
+            key_id=envelope["key_id"],
+            signature_algorithm=envelope["signature_algorithm"],
+            signature=envelope["signature"],
+            trust_epoch=envelope["trust_epoch"],
+            receipt_id=f"test-policy-receipt-{new_id()}",
+        )
+        session.add(version)
+        session.flush()
+        head_receipt_id = _seed_policy_head_receipt(
+            session,
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            prefix="test-policy-head",
+        )
+        existing_head = session.scalars(
+            sa.select(EnvironmentPolicyHead).where(
+                EnvironmentPolicyHead.org_id == org_id,
+                EnvironmentPolicyHead.project_id == environment.project_id,
+                EnvironmentPolicyHead.environment_id == environment.id,
+            )
+        ).one_or_none()
+        if existing_head is None:
+            session.add(
+                EnvironmentPolicyHead(
+                    id=new_id(),
+                    org_id=org_id,
+                    project_id=environment.project_id,
+                    environment_id=environment.id,
+                    active_policy_version_id=version.id,
+                    generation=1,
+                    status="active",
+                    receipt_id=head_receipt_id,
+                    created_at=utcnow(),
+                    updated_at=utcnow(),
+                )
+            )
+        else:
+            existing_head.active_policy_version_id = version.id
+            existing_head.generation += 1
+            existing_head.receipt_id = head_receipt_id
+            existing_head.updated_at = utcnow()
 
 
 def _create_user(client: TestClient, org: dict[str, Any], *, role: str) -> dict[str, str]:
@@ -1017,25 +1098,110 @@ def _create_user(client: TestClient, org: dict[str, Any], *, role: str) -> dict[
 
 
 def _replace_active_policy_direct(app: Any, org_id: str, *, rules: list[dict[str, Any]]) -> None:
-    bundle = {"id": f"race-policy-{new_id()}", "rules": rules}
-    parsed = RuleSetPolicy.from_dict(bundle)
+    policy_id = f"race-policy-{new_id()}"
+    parsed = RuleSetPolicy.from_dict({"id": policy_id, "rules": rules})
+    document = {"id": parsed.policy_id, "version": parsed.version, "rules": list(rules)}
     with app.state.session_factory.begin() as session:
-        for row in session.scalars(
-            sa.select(PolicyBundle)
-            .where(PolicyBundle.org_id == org_id, PolicyBundle.status == "active")
+        environment = session.scalars(
+            sa.select(Environment)
+            .where(Environment.org_id == org_id)
+            .order_by(Environment.created_at.desc())
             .with_for_update()
-        ):
-            row.status = "superseded"
-        session.add(
-            PolicyBundle(
-                org_id=org_id,
-                policy_id=bundle["id"],
-                version=parsed.version,
-                bundle=bundle,
-                status="active",
-                activated_at=utcnow(),
-            )
+        ).first()
+        assert environment is not None
+        envelope = _signed_envelope(
+            issuer=local_policy_registry_issuer(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            document=document,
+            trust_epoch=1,
         )
+        version = PolicyVersion(
+            id=new_id(),
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            policy_id=policy_id,
+            version=document["version"],
+            content_hash=envelope["content_hash"],
+            document=document,
+            rules=list(document["rules"]),
+            canonical_envelope=envelope,
+            purpose=envelope["purpose"],
+            key_id=envelope["key_id"],
+            signature_algorithm=envelope["signature_algorithm"],
+            signature=envelope["signature"],
+            trust_epoch=envelope["trust_epoch"],
+            receipt_id=f"test-policy-race-receipt-{new_id()}",
+        )
+        session.add(version)
+        session.flush()
+        head_receipt_id = _seed_policy_head_receipt(
+            session,
+            org_id=org_id,
+            project_id=environment.project_id,
+            environment_id=environment.id,
+            prefix="test-policy-race-head",
+        )
+        head = session.scalars(
+            sa.select(EnvironmentPolicyHead)
+            .where(
+                EnvironmentPolicyHead.org_id == org_id,
+                EnvironmentPolicyHead.project_id == environment.project_id,
+                EnvironmentPolicyHead.environment_id == environment.id,
+            )
+            .with_for_update()
+        ).one()
+        head.active_policy_version_id = version.id
+        head.generation += 1
+        head.receipt_id = head_receipt_id
+        head.updated_at = utcnow()
+
+
+def _seed_policy_head_receipt(
+    session: Any,
+    *,
+    org_id: str,
+    project_id: str,
+    environment_id: str,
+    prefix: str,
+) -> str:
+    receipt_id = f"{prefix}-receipt-{new_id()}"
+    receipt_hash = sha256_json({"schema": "test-policy-head-receipt/v1", "receipt_id": receipt_id})
+    audit_hash = sha256_json({"schema": "test-policy-head-audit/v1", "receipt_id": receipt_id})
+    now = utcnow()
+    session.add(
+        ManagedDecisionReceipt(
+            id=f"{prefix}-{new_id()}",
+            org_id=org_id,
+            project_id=project_id,
+            environment_id=environment_id,
+            receipt_id=receipt_id,
+            receipt_hash=receipt_hash,
+            audit_event_hash=audit_hash,
+            decision="ALLOW",
+            actor="test-policy-fixture",
+            proposed_action="control-plane.policy.activate",
+            execution_boundary="test-policy-fixture-boundary",
+            policy_bundle_id="test-policy-fixture",
+            policy_version="test-policy-fixture/v1",
+            policy_hash=sha256_json({"schema": "test-policy-fixture/v1"}),
+            argument_hash=sha256_json({"receipt_id": receipt_id}),
+            signing_key_id="test-policy-fixture-key",
+            signature_algorithm="ed25519",
+            receipt_schema_version="receipt/v2",
+            trust_epoch=1,
+            assurance_class="native",
+            source_system="gove-zone",
+            issued_at=now,
+            expires_at=now + timedelta(minutes=10),
+            projection={"schema": "test-policy-head-receipt/v1"},
+            created_at=now,
+        )
+    )
+    return receipt_id
 
 
 def _expire_or_revoke_trust(app: Any, org_id: str, *, status: str) -> None:
@@ -1043,7 +1209,12 @@ def _expire_or_revoke_trust(app: Any, org_id: str, *, status: str) -> None:
 
     with app.state.session_factory.begin() as session:
         keys = list(
-            session.scalars(sa.select(ManagedTrustKey).where(ManagedTrustKey.org_id == org_id))
+            session.scalars(
+                sa.select(ManagedTrustKey).where(
+                    ManagedTrustKey.org_id == org_id,
+                    ManagedTrustKey.purpose == DECISION_RECEIPT_PURPOSE,
+                )
+            )
         )
         assert len(keys) == 1
         if status == "expired":
@@ -1089,12 +1260,29 @@ def _managed_allow_receipts(session: Any) -> int:
     )
 
 
+def _managed_agent_receipt_select() -> Any:
+    return sa.select(ManagedDecisionReceipt).where(
+        ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    )
+
+
+def _managed_agent_receipts(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedDecisionReceipt)
+            .where(ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION)
+        )
+        or 0
+    )
+
+
 def _managed_integrity_counts(app: Any) -> dict[str, int]:
     with app.state.session_factory() as session:
         return {
             "agents": _count(session, AgentRecord),
             "idempotency": _count(session, AgentRegistrationIdempotency),
-            "receipts": _count(session, ManagedDecisionReceipt),
+            "receipts": _managed_agent_receipts(session),
             "consumptions": _count(session, ManagedReceiptConsumption),
             "events": _count(session, ManagedGovernanceEvent),
             "outbox": _count(session, ManagedOutboxMessage),
@@ -1112,10 +1300,10 @@ def _assert_single_refusal_evidence(
         assert _count_agents(session, org_id, name) == 0
         assert _count(session, ManagedReceiptConsumption) == 0
         assert _count(session, AgentRegistrationIdempotency) == 1
-        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _managed_agent_receipts(session) == 1
         assert _count(session, ManagedGovernanceEvent) == 1
         assert _count(session, ManagedOutboxMessage) == 1
-        receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+        receipt = session.scalars(_managed_agent_receipt_select()).one()
         assert receipt.decision == decision
 
 
@@ -1145,7 +1333,7 @@ def _assert_replay_case(tmp_path: Path, *, decision: str) -> None:
     with app.state.session_factory() as session:
         expected_agents = 1 if decision == "allow" else 0
         assert _count_agents(session, org["org_id"], "replay-bot") == expected_agents
-        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _managed_agent_receipts(session) == 1
         assert _count(session, ManagedGovernanceEvent) == 1
         assert _count(session, ManagedOutboxMessage) == 1
 
@@ -1185,6 +1373,6 @@ def _assert_concurrent_replay_case(tmp_path: Path) -> None:
     assert results == [(409, "RECEIPT_ALREADY_USED"), (409, "RECEIPT_ALREADY_USED")]
     with app.state.session_factory() as session:
         assert _count_agents(session, org["org_id"], "concurrent-replay-bot") == 0
-        assert _count(session, ManagedDecisionReceipt) == 1
+        assert _managed_agent_receipts(session) == 1
         assert _count(session, ManagedGovernanceEvent) == 1
         assert _count(session, ManagedOutboxMessage) == 1

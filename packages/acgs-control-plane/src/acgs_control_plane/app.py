@@ -67,11 +67,20 @@ from acgs_control_plane.migrations import (
 from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
+    EnvironmentPolicyHead,
     Organization,
     PolicyBundle,
+    PolicyVersion,
     ReceiptRow,
     User,
     new_id,
+)
+from acgs_control_plane.policy_registry import (
+    PolicyRegistryHttpError,
+    PolicyRegistryResult,
+    PolicyRegistryService,
+    local_policy_registry_issuer,
+    local_policy_registry_receipt_sealer,
 )
 from acgs_control_plane.rbac import Permission, Role, role_allows
 from acgs_control_plane.schemas import (
@@ -85,6 +94,7 @@ from acgs_control_plane.schemas import (
     OrgCreateRequest,
     OrgCreateResponse,
     OrgResponse,
+    PolicyActivateRequest,
     PolicyPublishRequest,
     PolicyResponse,
     ReceiptDetail,
@@ -285,6 +295,9 @@ def create_app(
     agent_registration_issuer: Any | None = None,
     agent_registration_receipt_sealer: Any | None = None,
     agent_registration_receipt_issuer: Any | None = None,
+    policy_registry_issuer: Any | None = None,
+    policy_registry_receipt_sealer: Any | None = None,
+    policy_registry_receipt_issuer: Any | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(
@@ -329,6 +342,17 @@ def create_app(
     def _agent_registration_error(
         _request: Request, exc: AgentRegistrationHttpError
     ) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": exc.code,
+                "status": exc.status,
+                "detail": exc.detail,
+            },
+        )
+
+    @app.exception_handler(PolicyRegistryHttpError)
+    def _policy_registry_error(_request: Request, exc: PolicyRegistryHttpError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -512,6 +536,29 @@ def create_app(
         receipt_sealer=effective_agent_registration_receipt_sealer,
         receipt_issuer=agent_registration_receipt_issuer,
     )
+    if settings.runtime_posture is RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED:
+        effective_policy_registry_issuer = policy_registry_issuer or local_policy_registry_issuer()
+        effective_policy_registry_receipt_sealer = (
+            policy_registry_receipt_sealer or local_policy_registry_receipt_sealer()
+        )
+    else:
+        if policy_registry_issuer is None or policy_registry_receipt_sealer is None:
+            raise ProductionPostureBlocked(
+                (
+                    PostureBlocker(
+                        "POLICY_REGISTRY_PROVIDER_REQUIRED",
+                        "policy-registry-provider",
+                    ),
+                )
+            )
+        effective_policy_registry_issuer = policy_registry_issuer
+        effective_policy_registry_receipt_sealer = policy_registry_receipt_sealer
+    app.state.policy_registry_service = PolicyRegistryService(
+        app.state.session_factory,
+        issuer=effective_policy_registry_issuer,
+        receipt_sealer=effective_policy_registry_receipt_sealer,
+        receipt_issuer=policy_registry_receipt_issuer,
+    )
 
     async def _dispose_engine() -> None:
         app.state.engine.dispose()
@@ -530,7 +577,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/readyz", tags=["meta"])
     def readyz(request: Request) -> JSONResponse:
         preflight: SchemaPreflight = request.app.state.schema_preflight
-        schema_current = preflight.state is DatabaseSchemaState.VERSION_0007
+        schema_current = preflight.state is DatabaseSchemaState.VERSION_0008
         blockers: tuple[PostureBlocker, ...] = request.app.state.readiness_blockers
         return JSONResponse(
             status_code=503,
@@ -861,6 +908,72 @@ def _register_routes(app: FastAPI) -> None:
         return [_policy_response(r) for r in rows]
 
     @app.post(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        response_model=PolicyResponse,
+        status_code=201,
+        tags=["policies"],
+    )
+    def publish_environment_policy(
+        project_id: str,
+        environment_id: str,
+        body: PolicyPublishRequest,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.POLICY_PUBLISH)],
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
+    ) -> PolicyResponse:
+        service: PolicyRegistryService = request.app.state.policy_registry_service
+        result = service.publish(
+            org_id=org.id,
+            project_id=project_id,
+            environment_id=environment_id,
+            principal=principal,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+        return _managed_policy_response(result)
+
+    @app.get(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies",
+        response_model=list[PolicyResponse],
+        tags=["policies"],
+    )
+    def list_environment_policies(
+        project_id: str,
+        environment_id: str,
+        org: OrgDep,
+        session: SessionDep,
+        _p: Annotated[Principal, require(Permission.POLICY_READ)],
+    ) -> list[PolicyResponse]:
+        head = session.scalars(
+            select(EnvironmentPolicyHead).where(
+                EnvironmentPolicyHead.org_id == org.id,
+                EnvironmentPolicyHead.project_id == project_id,
+                EnvironmentPolicyHead.environment_id == environment_id,
+            )
+        ).one_or_none()
+        rows = session.execute(
+            select(PolicyVersion)
+            .where(
+                PolicyVersion.org_id == org.id,
+                PolicyVersion.project_id == project_id,
+                PolicyVersion.environment_id == environment_id,
+            )
+            .order_by(PolicyVersion.created_at.asc())
+        ).scalars()
+        return [
+            _policy_version_response(
+                row,
+                generation=head.generation
+                if head is not None and head.active_policy_version_id == row.id
+                else None,
+                receipt_id=None,
+            )
+            for row in rows
+        ]
+
+    @app.post(
         "/orgs/{org_id}/policies/{bundle_id}/activate",
         response_model=PolicyResponse,
         tags=["policies"],
@@ -908,6 +1021,34 @@ def _register_routes(app: FastAPI) -> None:
             path=["control-plane", "policies"],
         )
         return _policy_response(target, receipt_id=outcome.receipt.id)
+
+    @app.post(
+        "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies/{policy_version_id}/activate",
+        response_model=PolicyResponse,
+        tags=["policies"],
+    )
+    def activate_environment_policy(
+        project_id: str,
+        environment_id: str,
+        policy_version_id: str,
+        body: PolicyActivateRequest,
+        org: OrgDep,
+        request: Request,
+        _session: SessionDep,
+        principal: Annotated[Principal, require(Permission.POLICY_ACTIVATE)],
+        idempotency_key: Annotated[str | None, Header(alias=BOOTSTRAP_IDEMPOTENCY_HEADER)] = None,
+    ) -> PolicyResponse:
+        service: PolicyRegistryService = request.app.state.policy_registry_service
+        result = service.activate(
+            org_id=org.id,
+            project_id=project_id,
+            environment_id=environment_id,
+            policy_version_id=policy_version_id,
+            principal=principal,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
+        return _managed_policy_response(result)
 
     @app.post(
         "/orgs/{org_id}/policies/simulate",
@@ -1228,6 +1369,33 @@ def _policy_response(row: PolicyBundle, receipt_id: str | None = None) -> Policy
         created_at=row.created_at,
         activated_at=row.activated_at,
         receipt_id=receipt_id,
+    )
+
+
+def _managed_policy_response(row: PolicyRegistryResult) -> PolicyResponse:
+    return PolicyResponse(**row.__dict__)
+
+
+def _policy_version_response(
+    row: PolicyVersion, *, generation: int | None, receipt_id: str | None
+) -> PolicyResponse:
+    return PolicyResponse(
+        bundle_id=row.id,
+        org_id=row.org_id,
+        project_id=row.project_id,
+        environment_id=row.environment_id,
+        policy_id=row.policy_id,
+        version=row.version,
+        status="active" if generation is not None else "published",
+        rules=list(row.rules),
+        created_at=row.created_at,
+        activated_at=None,
+        receipt_id=receipt_id,
+        generation=generation,
+        content_hash=row.content_hash,
+        key_id=row.key_id,
+        signature_algorithm=row.signature_algorithm,
+        trust_epoch=row.trust_epoch,
     )
 
 

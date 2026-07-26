@@ -17,7 +17,7 @@ from gove_zone.receipt import DecisionReceipt, safe_result_hash
 from gove_zone.signing import Ed25519Signer
 from gove_zone.tool import ToolCall, normalize_path_context
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope, TrustConfigurationError
-from sqlalchemy.exc import IntegrityError, MultipleResultsFound, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from acgs_control_plane.auth import Principal
@@ -36,17 +36,19 @@ from acgs_control_plane.models import (
     AgentRecord,
     AgentRegistrationIdempotency,
     Environment,
+    EnvironmentPolicyHead,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
     ManagedGovernanceEventHead,
     ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
-    PolicyBundle,
+    PolicyVersion,
     Project,
     new_id,
     utcnow,
 )
+from acgs_control_plane.policy_registry import PolicyRegistryHttpError, _verify_envelope
 from acgs_control_plane.schemas import AgentRegisterRequest
 from acgs_control_plane.trust import (
     InProcessPlatformIssuer,
@@ -204,7 +206,12 @@ class AgentRegistrationService:
         args = _normalized_agent_args(body)
         with self._session_factory() as session:
             project, environment = _resolve_default_scope(session, org_id=org_id)
-            policy, policy_bundle_id, policy_hash = _active_policy_context(session, org_id=org_id)
+            policy, policy_bundle_id, policy_hash = _active_policy_context(
+                session,
+                org_id=org_id,
+                project_id=project.id,
+                environment_id=environment.id,
+            )
             context = ManagedMutationContext(
                 org_id=org_id,
                 project_id=project.id,
@@ -1403,34 +1410,65 @@ class _CommittedAgentRegistrationIdempotencyRace(RuntimeError):
 
 
 def _active_policy_context(
-    session: Session, *, org_id: str, lock: bool = False
+    session: Session,
+    *,
+    org_id: str,
+    project_id: str,
+    environment_id: str,
+    lock: bool = False,
 ) -> tuple[Any, str, str]:
+    head_statement = sa.select(EnvironmentPolicyHead).where(
+        EnvironmentPolicyHead.org_id == org_id,
+        EnvironmentPolicyHead.project_id == project_id,
+        EnvironmentPolicyHead.environment_id == environment_id,
+    )
+    if lock:
+        head_statement = head_statement.with_for_update()
+    head = session.scalars(head_statement).one_or_none()
+    if head is None or not head.active_policy_version_id:
+        raise AgentRegistrationHttpError(
+            409,
+            "POLICY_NOT_READY",
+            "policy_not_ready",
+            "active environment policy head is not configured",
+        )
+    version_statement = sa.select(PolicyVersion).where(
+        PolicyVersion.org_id == org_id,
+        PolicyVersion.project_id == project_id,
+        PolicyVersion.environment_id == environment_id,
+        PolicyVersion.id == head.active_policy_version_id,
+    )
+    if lock:
+        version_statement = version_statement.with_for_update()
+    version = session.scalars(version_statement).one_or_none()
+    if version is None:
+        raise AgentRegistrationHttpError(
+            409,
+            "POLICY_NOT_READY",
+            "policy_not_ready",
+            "active environment policy version is missing",
+        )
     try:
-        statement = sa.select(PolicyBundle).where(
-            PolicyBundle.org_id == org_id,
-            PolicyBundle.status == "active",
-        )
-        if lock:
-            statement = statement.with_for_update()
-        row = session.execute(statement).scalar_one_or_none()
-    except MultipleResultsFound as exc:
+        _verify_envelope(session, version.canonical_envelope)
+    except (PolicyRegistryHttpError, TypeError, ValueError) as exc:
         raise AgentRegistrationHttpError(
             409,
             "POLICY_NOT_READY",
             "policy_not_ready",
-            "active policy bundle is not uniquely configured",
+            "active environment policy envelope is invalid",
         ) from exc
-    if row is None:
-        raise AgentRegistrationHttpError(
-            409,
-            "POLICY_NOT_READY",
-            "policy_not_ready",
-            "active policy bundle is not configured",
-        )
     from gove_zone.policy import RuleSetPolicy
 
-    policy = RuleSetPolicy.from_dict(row.bundle)
-    return policy, row.id, sha256_json(row.bundle)
+    try:
+        policy = RuleSetPolicy.from_dict(version.document)
+    except (TypeError, ValueError) as exc:
+        raise AgentRegistrationHttpError(
+            409,
+            "POLICY_NOT_READY",
+            "policy_not_ready",
+            "active environment policy document is invalid",
+        ) from exc
+    return policy, version.id, version.content_hash
 
 
 def _normalized_agent_args(body: AgentRegisterRequest) -> dict[str, Any]:
@@ -1467,7 +1505,11 @@ def _revalidate_active_policy_under_lock(
     if project.id != context.project_id or environment.id != context.environment_id:
         raise ReceiptValidationError("agent registration scope changed before execution")
     policy, bundle_id, policy_hash = _active_policy_context(
-        session, org_id=context.org_id, lock=True
+        session,
+        org_id=context.org_id,
+        project_id=context.project_id,
+        environment_id=context.environment_id,
+        lock=True,
     )
     if bundle_id != context.policy_bundle_id or policy_hash != context.policy_hash:
         raise ReceiptValidationError("agent registration policy changed before execution")

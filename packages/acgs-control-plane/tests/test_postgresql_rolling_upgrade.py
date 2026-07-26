@@ -965,7 +965,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": DatabaseSchemaState.VERSION_0007.value,
+            "after": DatabaseSchemaState.VERSION_0008.value,
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -978,6 +978,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert migrated["version"] == HEAD_REVISION
         assert set(migrated["tables"]) - set(before["tables"]) == {
             "agent_registration_idempotency",
+            "environment_policy_heads",
             "environments",
             "managed_decision_receipts",
             "managed_governance_event_heads",
@@ -990,6 +991,8 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "organization_memberships",
             "pending_approvals",
             "platform_bootstrap_invitations",
+            "policy_registry_idempotency",
+            "policy_versions",
             "projects",
             "tenant_bootstrap_idempotency",
             "tenant_bootstrap_pending_outbox",
@@ -1019,7 +1022,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0007.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0008.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1098,5 +1101,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0007
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0008
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

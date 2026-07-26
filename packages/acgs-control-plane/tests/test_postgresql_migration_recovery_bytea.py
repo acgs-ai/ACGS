@@ -185,7 +185,7 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upgrade_database(DATABASE_URL)
-    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0007
+    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0008
 
     engine = sa.create_engine(DATABASE_URL, poolclass=NullPool, future=True)
     table = _table()

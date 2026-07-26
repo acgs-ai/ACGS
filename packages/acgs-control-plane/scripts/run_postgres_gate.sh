@@ -40,6 +40,14 @@ p2_vertical_gate_selectors=(
   'tests/integration/test_vertical_gate_postgres.py::test_real_postgres_tenant_bootstrap_then_customer_agent_register'
   'tests/integration/test_vertical_gate_postgres.py::test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability'
 )
+p3_policy_selectors=(
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_immutable_version_without_head'
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activate_advances_exactly_one_head'
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_concurrent_candidates_have_one_generation_winner'
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_idempotent_replay_is_one_terminal_effect'
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_idempotency_conflict_has_zero_delta'
+  'tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activation_revalidates_trust_and_rolls_back_before_effect'
+)
 immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
@@ -98,12 +106,23 @@ if [[ -z "$selector_mode" && $# == "${#p2_vertical_gate_selectors[@]}" ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == "${#p3_policy_selectors[@]}" ]]; then
+  selector_mode='p3-policy'
+  junit_expected_tests=6
+  actual_selectors=("$@")
+  for index in "${!p3_policy_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p3_policy_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
 if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
   selector_mode='p2-immutable-0004-upgrade'
   junit_expected_tests=1
 fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, or immutable-0004 selector is required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, P3 policy, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in

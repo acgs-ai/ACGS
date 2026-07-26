@@ -257,6 +257,24 @@ P2_VERTICAL_GATE_CP_SELECTORS = (
     "tests/integration/test_vertical_gate_postgres.py::"
     "test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability",
 )
+P3_POLICY_CP_SELECTORS = (
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_publish_immutable_version_without_head",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_activate_advances_exactly_one_head",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_concurrent_candidates_have_one_generation_winner",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_publish_idempotent_replay_is_one_terminal_effect",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_idempotency_conflict_has_zero_delta",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_activation_revalidates_trust_and_rolls_back_before_effect",
+)
+P3_POLICY_ROOT_SELECTORS = (
+    "tests/saas_beta/test_cross_plane_contracts.py::"
+    "test_policy_registry_contract_locks_managed_routes_negative_oracles_and_local_posture",
+)
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
     *REVIEWED_P0_TRANSCRIPT[1:5],
@@ -414,6 +432,24 @@ REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P3_POLICY_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate",
+        ("./scripts/run_postgres_gate.sh", *P3_POLICY_CP_SELECTORS),
+    ),
+    (
+        "root:P3-POLICY-001-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            *P3_POLICY_ROOT_SELECTORS,
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -424,6 +460,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P2-REGISTER-001": REVIEWED_P2_REGISTER_TRANSCRIPT,
     "P2-IDEMPOTENCY-002": REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT,
     "P2-VERTICAL-GATE-003": REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT,
+    "P3-POLICY-001": REVIEWED_P3_POLICY_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -483,6 +520,7 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "REPO_ROOT",
         "REPO_ROOT",
     ),
+    "P3-POLICY-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP", "REPO_ROOT"),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -545,6 +583,15 @@ REVIEWED_RUN_METADATA_BY_NODE["P2-VERTICAL-GATE-003"] = {
     "process_schedule": (
         "single-process-evidence-and-package-gates",
         "postgres-vertical-bootstrap-register",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
+}
+REVIEWED_RUN_METADATA_BY_NODE["P3-POLICY-001"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-pg6-policy-registry-lifecycle",
     ),
     "clock_source": "system-utc",
     "skipped": (),
@@ -945,6 +992,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P2-REGISTER-001",
         "P2-IDEMPOTENCY-002",
         "P2-VERTICAL-GATE-003",
+        "P3-POLICY-001",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")

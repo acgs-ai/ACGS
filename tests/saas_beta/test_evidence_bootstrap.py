@@ -81,6 +81,24 @@ P2_VERTICAL_GATE_ROOT_SELECTORS = (
     "tests/saas_beta/test_cross_plane_contracts.py::"
     "test_vertical_gate_contract_locks_managed_routes_and_production_blockers",
 )
+P3_POLICY_CP_SELECTORS = (
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_publish_immutable_version_without_head",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_activate_advances_exactly_one_head",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_concurrent_candidates_have_one_generation_winner",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_publish_idempotent_replay_is_one_terminal_effect",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_idempotency_conflict_has_zero_delta",
+    "tests/integration/test_managed_policy_lifecycle_postgres.py::"
+    "test_pg_activation_revalidates_trust_and_rolls_back_before_effect",
+)
+P3_POLICY_ROOT_SELECTORS = (
+    "tests/saas_beta/test_cross_plane_contracts.py::"
+    "test_policy_registry_contract_locks_managed_routes_negative_oracles_and_local_posture",
+)
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -282,6 +300,20 @@ def _reviewed_p2_vertical_gate_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p3_policy_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P3_POLICY_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P3-POLICY-001"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -351,6 +383,15 @@ def _write_reviewed_p2_vertical_gate_transcript(path: Path) -> None:
             path,
             record,
             expected_node="P2-VERTICAL-GATE-003",
+        )
+
+
+def _write_reviewed_p3_policy_transcript(path: Path) -> None:
+    for record in _reviewed_p3_policy_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P3-POLICY-001",
         )
 
 
@@ -3721,6 +3762,164 @@ def test_p2_vertical_gate_run_validation_rejects_forged_corpus_metadata_before_o
             _common.validate_secret_free_run(forged, expected_node="P2-VERTICAL-GATE-003")
 
 
+def test_p3_policy_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p3_policy_records()
+    assert len(records) == 7
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+    ]
+    assert records[-2]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *P3_POLICY_CP_SELECTORS,
+    ]
+    assert records[-2]["selectors"] == [
+        "packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate"
+    ]
+    assert records[-1]["argv"] == [
+        "packages/acgs-control-plane/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        *P3_POLICY_ROOT_SELECTORS,
+    ]
+    assert records[-1]["selectors"] == ["root:P3-POLICY-001-cross-plane-contract"]
+    assert _common.P3_POLICY_CP_SELECTORS == P3_POLICY_CP_SELECTORS
+    assert _common.P3_POLICY_ROOT_SELECTORS == P3_POLICY_ROOT_SELECTORS
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P3-POLICY-001"] == "EVID+CP"
+    assert _common.REVIEWED_RUN_METADATA_BY_NODE["P3-POLICY-001"]["process_schedule"] == (
+        "single-process-evidence-and-package-gates",
+        "postgres-pg6-policy-registry-lifecycle",
+    )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P3-POLICY-001/transcript.jsonl"
+    _write_reviewed_p3_policy_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P3-POLICY-001")
+    _common.validate_transcript_sequence(loaded, expected_node="P3-POLICY-001")
+
+    idempotency_cp_final = _reviewed_p2_idempotency_records()[-1]
+    vertical_cp_final = _reviewed_p2_vertical_gate_records()[-3]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:5], records[-1], records[-2]],
+        [*records[:5], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]],
+        [*records[:6], {**records[-1], "cwd_scope": "CP"}],
+        [
+            *records[:5],
+            {**records[-2], "argv": [*records[-2]["argv"], "-k", "policy"]},
+            records[-1],
+        ],
+        [
+            *records[:5],
+            {
+                **records[-2],
+                "argv": [records[-2]["argv"][0], *reversed(P3_POLICY_CP_SELECTORS)],
+            },
+            records[-1],
+        ],
+        [
+            *records[:5],
+            {
+                **records[-2],
+                "argv": [
+                    records[-2]["argv"][0],
+                    "tests/integration/test_managed_policy_lifecycle_postgres.py",
+                ],
+            },
+            records[-1],
+        ],
+        [*records[:5], idempotency_cp_final, records[-1]],
+        [*records[:5], vertical_cp_final, records[-1]],
+        [*records[:6], {**records[-1], "argv": records[-1]["argv"][:4]}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P3-POLICY-001")
+
+
+def test_p3_policy_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    reviewed_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-pg6-policy-registry-lifecycle",
+    ]
+
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P3-POLICY-001",
+            "commands": _reviewed_p3_policy_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": reviewed_schedule,
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P3-POLICY-001")
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {
+            "seed": 20260710,
+            "python_hash_seed": "0",
+            "process_schedule": [*reversed(reviewed_schedule)],
+        },
+    ):
+        with pytest.raises(_common.EvidenceError, match=r"run .*differs|outside the reviewed"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P3-POLICY-001",
+            )
+
+    records = _reviewed_p3_policy_records()
+    forged_runs = (
+        run_with(node_id="P2-IDEMPOTENCY-002"),
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:5], {**records[-2], "cwd_scope": "REPO_ROOT"}, records[-1]]),
+        run_with(commands=[*records[:6], {**records[-1], "cwd_scope": "CP"}]),
+        run_with(
+            commands=[
+                *records[:5],
+                {
+                    **records[-2],
+                    "argv": [
+                        "bash",
+                        "-c",
+                        "./scripts/run_postgres_gate.sh "
+                        "tests/integration/test_managed_policy_lifecycle_postgres.py",
+                    ],
+                },
+                records[-1],
+            ]
+        ),
+        run_with(skipped=[{"reason": "sync tested elsewhere"}]),
+        run_with(external=[{"system": "production-deployment"}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P3-POLICY-001")
+
+
 def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
     schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
     validator = jsonschema.Draft202012Validator(schema["$defs"]["determinism"])
@@ -3732,8 +3931,17 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
         "single-process-evidence-and-package-gates",
         "postgres-vertical-bootstrap-register",
     ]
+    p3_policy_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-pg6-policy-registry-lifecycle",
+    ]
 
-    for process_schedule in (["single-process"], p2_schedule, vertical_schedule):
+    for process_schedule in (
+        ["single-process"],
+        p2_schedule,
+        vertical_schedule,
+        p3_policy_schedule,
+    ):
         validator.validate(
             {
                 "seed": 20260710,
@@ -3745,8 +3953,10 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
     for process_schedule in (
         [*reversed(p2_schedule)],
         [*reversed(vertical_schedule)],
+        [*reversed(p3_policy_schedule)],
         [*p2_schedule, "unreviewed-extra-process"],
         [*vertical_schedule, "unreviewed-extra-process"],
+        [*p3_policy_schedule, "unreviewed-extra-process"],
         ["unreviewed-process"],
     ):
         with pytest.raises(jsonschema.ValidationError):
@@ -5576,7 +5786,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
     assert source.count("run_recorded_gate CP") == 7
-    assert source.count("run_trusted_parent_postgres_gate CP") == 4
+    assert source.count("run_trusted_parent_postgres_gate CP") == 5
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
@@ -5587,6 +5797,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2-REGISTER-001)" in source
     assert "P2-IDEMPOTENCY-002)" in source
     assert "P2-VERTICAL-GATE-003)" in source
+    assert "P3-POLICY-001)" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
@@ -5594,9 +5805,11 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'" in source
     assert "P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'" in source
     assert "P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'" in source
+    assert "P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
+    assert "EXPECTED_TRANSCRIPT_RECORDS=7" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=11" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=12" in source
     assert "TMP_BASENAME='acgs-p1-ledger'" in source
@@ -5605,6 +5818,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p2-register'" in source
     assert "TMP_BASENAME='acgs-p2-idempotency'" in source
     assert "TMP_BASENAME='acgs-p2-vertical-gate'" in source
+    assert "TMP_BASENAME='acgs-p3-policy'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
@@ -5674,6 +5888,17 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert selector in source
     for selector in P2_VERTICAL_GATE_ROOT_SELECTORS:
         assert selector in source
+    assert "P3_POLICY_CP_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate" in source
+    assert "root:P3-POLICY-001-cross-plane-contract" in source
+    assert "'root:P3-POLICY-001-cross-plane-contract' REPO_ROOT 1" in source
+    assert "p3-policy-postgres" in source
+    assert "p3-policy-cross-plane" in source
+    assert "postgres-pg6-policy-registry-lifecycle" in source
+    for selector in _common.P3_POLICY_CP_SELECTORS:
+        assert selector in source
+    for selector in P3_POLICY_ROOT_SELECTORS:
+        assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
@@ -5682,6 +5907,8 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         "export ACGS_PROCESS_SCHEDULE='[\"single-process\"]'",
         'export ACGS_PROCESS_SCHEDULE=\'["single-process-evidence-and-package-gates",'
         '"postgres-100-request-multiprocess-agent-registration-idempotency"]\'',
+        'export ACGS_PROCESS_SCHEDULE=\'["single-process-evidence-and-package-gates",'
+        '"postgres-pg6-policy-registry-lifecycle"]\'',
         "export ACGS_CLOCK_SOURCE='system-utc'",
         "export ACGS_SKIPPED_JSON='[]'",
         "export ACGS_EXTERNAL_JSON='[]'",
