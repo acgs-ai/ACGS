@@ -115,7 +115,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[TestClient, Any]]:
     expected_database = "acgs_control_plane_test"
     _reset_postgres_schema(database_url, expected_database)
     result = upgrade_database(database_url, expected_database=expected_database)
-    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     app = create_app(
         Settings(
             database_url=database_url,
