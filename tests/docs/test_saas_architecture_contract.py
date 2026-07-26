@@ -297,10 +297,8 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "bounded request-admission/redacted-error contract evidence",
         "PR #357 branch `beta/p1-g102-request-admission`",
         "commit `4d60fb4a0a16be06a2a9957dea91dc2bf429c57d`",
-        (
-            "focused `cd packages/acgs-control-plane && uv run pytest "
-            "tests/test_api_contract.py -q` at 14 passed"
-        ),
+        "focused `cd packages/acgs-control-plane && uv run pytest "
+        "tests/test_api_contract.py -q` at 14 passed",
         "full control-plane 228 passed/32 skipped",
         "Ruff and mypy pass",
         "independent security/code approve/verifier pass",
@@ -320,12 +318,12 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "no PostgreSQL/schema change or capacity claim",
         "current-v0 OpenAPI drift sentinel evidence",
         "PR #361 branch `beta/p1-g102c-openapi-drift`",
-        "commit `9341960c458e30648257926ab499b21bbb66796c`",
+        "commit `a6faf49a7b5f947b592f4be8372a85b173251090`",
         (
             "focused `cd packages/acgs-control-plane && uv run pytest "
             "tests/test_openapi_drift.py -q` at 5 passed"
         ),
-        "full control-plane 265 passed/32 skipped",
+        "full control-plane 303 passed/50 skipped",
         "Ruff and package-local mypy pass",
         "independent review finding repaired then APPROVE",
         "verifier PASS",
@@ -333,14 +331,14 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "no runtime behavior, schema, production readiness, beta completion",
         "additive legacy-v0 `/v1` alias and typed `/v1` root evidence",
         "PR #363 branch `beta/p1-g102d-v1-api-contract`",
-        "commit `d3ce182fc23927b447b211c917ade0a251cfafc2`",
+        "commit `047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d`",
         (
             "focused `cd packages/acgs-control-plane && uv run pytest "
             "tests/test_v1_api_contract.py tests/test_openapi_drift.py "
             "tests/test_startup_preflight.py tests/integration/test_production_posture.py -q` "
             "at 42 passed"
         ),
-        "full control-plane 272 passed/32 skipped",
+        "full control-plane 310 passed/50 skipped",
         "independent code and security APPROVE",
         "production remains fail-closed with 14 LEGACY_UNSIGNED_WRITE blockers",
         "no signed production governance, schema, migration, generated client",
@@ -578,7 +576,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         ]
     )
     for evidence in (
-        "9341960c458e30648257926ab499b21bbb66796c",
+        "a6faf49a7b5f947b592f4be8372a85b173251090",
         "current-v0 OpenAPI drift sentinel evidence at 5 passed",
         "full control-plane package evidence at 265 passed and 32 skipped",
         "Ruff pass",
@@ -629,7 +627,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         ]
     )
     for evidence in (
-        "d3ce182fc23927b447b211c917ade0a251cfafc2",
+        "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
         "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
         "full control-plane package evidence at 272 passed and 32 skipped",
         "Ruff pass",
