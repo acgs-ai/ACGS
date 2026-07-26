@@ -12,6 +12,7 @@ main_database='acgs_control_plane_test'
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_dir="$(cd -- "$script_dir/.." && pwd)"
 workspace_dir="$(cd -- "$package_dir/../.." && pwd)"
+gove_zone_src="$workspace_dir/packages/gove-zone/src"
 
 expected_selectors=(
   'tests/integration/test_migrations_postgres.py::test_empty_and_existing_alpha_upgrade_head'
@@ -129,7 +130,7 @@ if [[ "$bwrap_bin" != /usr/bin/bwrap || ! -x "$bwrap_bin" || -L "$bwrap_bin" ]];
   exit 69
 fi
 if ! "$bwrap_bin" \
-  --unshare-all --unshare-user --share-net --die-with-parent --new-session \
+  --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
   --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
   --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
   --ro-bind-try /lib64 /lib64 --clearenv \
@@ -163,6 +164,20 @@ if [[ "$("$uv_bin" --version)" != 'uv 0.11.19 (x86_64-unknown-linux-gnu)' ]]; th
   echo 'UV_BIN must be uv 0.11.19' >&2
   exit 69
 fi
+realpath -e -- "$package_dir/.venv/bin/python" >/dev/null
+venv_python_target="$(readlink -- "$package_dir/.venv/bin/python")"
+if [[ "$venv_python_target" != /* ]]; then
+  echo 'packages/acgs-control-plane/.venv/bin/python must be an absolute uv-managed symlink' >&2
+  exit 69
+fi
+python_runtime_root="$(dirname -- "$(dirname -- "$venv_python_target")")"
+case "$python_runtime_root" in
+  /home/*/.local/share/uv/python/*) ;;
+  *)
+    echo 'packages/acgs-control-plane/.venv/bin/python must resolve under the uv-managed Python runtime root' >&2
+    exit 69
+    ;;
+esac
 
 umask 077
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/acp-postgres-gate.XXXXXX")"
@@ -179,6 +194,12 @@ cleanup() {
   fi
   if [[ -n "$container_id" ]]; then
     docker rm -f "$container_id" >/dev/null 2>&1 || true
+  fi
+  if [[ -d "$state_dir/pg" ]]; then
+    docker run --rm --pull=never --network none --security-opt label=disable \
+      --volume "$state_dir/pg:/run/acgs-pg:rw" \
+      "$postgres_image" sh -c 'rm -f /run/acgs-pg/.s.PGSQL.5432 /run/acgs-pg/.s.PGSQL.5432.lock' \
+      >/dev/null 2>&1 || true
   fi
   rm -rf "$state_dir"
   exit "$status"
@@ -201,27 +222,33 @@ docker image inspect --format '{{json .RepoDigests}}' "$postgres_image" \
 
 mkdir -p \
   "$state_dir/broker" "$state_dir/client" "$state_dir/home" "$state_dir/tmp" \
-  "$state_dir/proof-scratch" "$state_dir/uv-cache" "$state_dir/acp-old" \
+  "$state_dir/proof-scratch" "$state_dir/uv-cache" "$state_dir/acp-old" "$state_dir/pg" \
   "$state_dir/old-1" "$state_dir/old-2"
 chmod 0700 \
   "$state_dir" "$state_dir/broker" "$state_dir/client" "$state_dir/home" \
   "$state_dir/tmp" "$state_dir/proof-scratch"
+chmod 0777 "$state_dir/pg"
 chmod 0700 "$state_dir/uv-cache"
 
 container_id="$(
   docker run -d \
     --pull=never \
     --name "$container_name" \
-    --publish 127.0.0.1::5432 \
     --env "POSTGRES_DB=$main_database" \
     --env "POSTGRES_USER=$postgres_user" \
     --env "POSTGRES_PASSWORD=$postgres_password" \
-    --health-cmd "pg_isready -U $postgres_user -d $main_database" \
+    --env PGHOST=/run/acgs-pg \
+    --health-cmd "pg_isready -h /run/acgs-pg -U $postgres_user -d $main_database" \
     --health-interval 1s \
     --health-timeout 5s \
     --health-retries 60 \
+    --security-opt label=disable \
+    --volume "$state_dir/pg:/run/acgs-pg:rw" \
+    --volume "$state_dir/pg:/var/run/postgresql:rw" \
     --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev \
-    "$postgres_image"
+    "$postgres_image" \
+    postgres -c listen_addresses= -c unix_socket_directories=/run/acgs-pg \
+      -c unix_socket_permissions=0777
 )"
 
 for _ in {1..90}; do
@@ -245,12 +272,8 @@ if [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container_id")" !=
   exit 70
 fi
 
-pg_port="$(
-  docker port "$container_id" 5432/tcp \
-    | awk -F: '/127[.]0[.]0[.]1/ {print $NF; exit}'
-)"
-if [[ -z "$pg_port" ]]; then
-  echo "failed to discover private PostgreSQL host port" >&2
+if [[ ! -S "$state_dir/pg/.s.PGSQL.5432" ]]; then
+  echo 'timed out waiting for PostgreSQL Unix socket' >&2
   exit 70
 fi
 
@@ -267,9 +290,19 @@ from pathlib import Path
 
 SOCKET_PATH = Path(sys.argv[1])
 STATE_DIR = SOCKET_PATH.parent.parent.resolve(strict=True)
+SOCKET_DIR = SOCKET_PATH.parent.resolve(strict=True)
+SOCKET_NAME = SOCKET_PATH.name
 IMAGE = "postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394"
 DOCKER_BIN = Path(os.environ["ACP_POSTGRES_CLIENT_BROKER_DOCKER"])
 ALLOWED_TOOLS = {"psql", "pg_dump", "pg_restore"}
+PINNED_PGHOST = "/run/acgs-pg"
+PINNED_PGPORT = "5432"
+HOST_TMP = STATE_DIR / "tmp"
+HOST_PROOF_SCRATCH = STATE_DIR / "proof-scratch"
+SANDBOX_RW_ROOTS = {
+    Path("/run/tmp"): HOST_TMP.resolve(strict=True),
+    Path("/proof-scratch"): HOST_PROOF_SCRATCH.resolve(strict=True),
+}
 ALLOWED_ENV = {
     "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGPASSFILE",
     "PGCONNECT_TIMEOUT", "PGOPTIONS", "PGSSLMODE", "PGSSLROOTCERT", "PGSSLCERT",
@@ -277,14 +310,8 @@ ALLOWED_ENV = {
 }
 MAX_REQUEST_BYTES = 131_072
 REQUESTS = 0
-ALLOWED_RW_ROOTS = tuple(
-    root.resolve(strict=True)
-    for root in (STATE_DIR / "tmp", STATE_DIR / "proof-scratch")
-)
-ALLOWED_RO_ROOTS = tuple(
-    root.resolve(strict=True)
-    for root in (STATE_DIR, STATE_DIR / "home", STATE_DIR / "tmp", STATE_DIR / "proof-scratch")
-)
+ALLOWED_RW_ROOTS = tuple(SANDBOX_RW_ROOTS)
+ALLOWED_RO_ROOTS = tuple(SANDBOX_RW_ROOTS)
 
 
 def fail(message: str, code: int = 64) -> None:
@@ -309,14 +336,27 @@ def is_under(path: Path, roots: tuple[Path, ...]) -> bool:
     return any(path == root or root in path.parents for root in roots)
 
 
+def translate_sandbox_path(path: Path, roots: tuple[Path, ...], label: str) -> tuple[Path, Path]:
+    if not path.is_absolute():
+        fail(f"{label} path must be absolute")
+    matching_root = next((root for root in roots if path == root or root in path.parents), None)
+    if matching_root is None:
+        fail(f"{label} path is outside broker-owned roots")
+    relative = path.relative_to(matching_root)
+    host_path = SANDBOX_RW_ROOTS[matching_root] / relative
+    return matching_root, host_path
+
+
 def require_safe_owned_directory(path: Path, roots: tuple[Path, ...], label: str) -> Path:
+    sandbox_root, host_path = translate_sandbox_path(path, roots, label)
     try:
-        resolved = path.resolve(strict=True)
+        resolved = host_path.resolve(strict=True)
     except OSError as exc:
         fail(f"{label} path resolution failed: {exc}", 65)
     if not resolved.is_dir():
         fail(f"{label} parent must be a directory")
-    if not is_under(resolved, roots):
+    host_root = SANDBOX_RW_ROOTS[sandbox_root]
+    if not (resolved == host_root or host_root in resolved.parents):
         fail(f"{label} path is outside broker-owned roots")
     fd = os.open(resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
@@ -330,54 +370,46 @@ def require_safe_owned_directory(path: Path, roots: tuple[Path, ...], label: str
             fail(f"{label} parent changed during validation", 65)
     finally:
         os.close(fd)
-    return resolved
-
-
-def add_mount(paths: dict[str, str], directory: Path, access: str) -> None:
-    current = paths.get(str(directory))
-    if access == "rw" or current is None:
-        paths[str(directory)] = access
+    return sandbox_root
 
 
 def add_read_path(paths: dict[str, str], candidate: str, label: str) -> None:
     path = Path(candidate)
-    if not path.is_absolute():
-        fail(f"{label} path must be absolute")
+    sandbox_root, host_path = translate_sandbox_path(path, ALLOWED_RO_ROOTS, label)
     try:
-        resolved = path.resolve(strict=True)
+        resolved = host_path.resolve(strict=True)
     except OSError as exc:
         fail(f"{label} path resolution failed: {exc}", 65)
-    if not is_under(resolved, ALLOWED_RO_ROOTS):
+    host_root = SANDBOX_RW_ROOTS[sandbox_root]
+    if not (resolved == host_root or host_root in resolved.parents):
         fail(f"{label} path is outside broker-owned roots")
-    if path.is_symlink():
+    if host_path.is_symlink():
         fail(f"{label} path must not be a symlink")
     stat_result = resolved.stat()
     if stat_result.st_uid != os.getuid():
         fail(f"{label} path is not owned by the broker user")
-    add_mount(paths, require_safe_owned_directory(resolved.parent, ALLOWED_RO_ROOTS, label), "ro")
+    paths[str(sandbox_root)] = "ro"
 
 
 def add_write_file(paths: dict[str, str], candidate: str) -> None:
     path = Path(candidate)
-    if not path.is_absolute():
-        fail("--file path must be absolute")
-    parent = require_safe_owned_directory(path.parent, ALLOWED_RW_ROOTS, "--file")
+    sandbox_root, host_path = translate_sandbox_path(path, ALLOWED_RW_ROOTS, "--file")
+    require_safe_owned_directory(path.parent, ALLOWED_RW_ROOTS, "--file")
     try:
-        existing = path.resolve(strict=True)
+        existing = host_path.resolve(strict=True)
     except FileNotFoundError:
-        existing = path
+        existing = host_path
     except OSError as exc:
         fail(f"--file path resolution failed: {exc}", 65)
     else:
-        if not is_under(existing, ALLOWED_RW_ROOTS):
+        host_root = SANDBOX_RW_ROOTS[sandbox_root]
+        if not (existing == host_root or host_root in existing.parents):
             fail("--file path is outside broker-owned roots")
-        if path.is_symlink():
+        if host_path.is_symlink():
             fail("--file path must not be a symlink")
         if existing.stat().st_uid != os.getuid():
             fail("--file path is not owned by the broker user")
-    if not is_under(parent / path.name, ALLOWED_RW_ROOTS):
-        fail("--file path is outside broker-owned roots")
-    add_mount(paths, parent, "rw")
+    paths[str(sandbox_root)] = "rw"
 
 
 def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
@@ -395,6 +427,11 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     unknown_env = set(env) - ALLOWED_ENV
     if unknown_env:
         fail("unsupported PostgreSQL client env: " + ",".join(sorted(unknown_env)))
+    if env.get("PGHOST", PINNED_PGHOST) != PINNED_PGHOST:
+        fail("PostgreSQL client broker endpoint is pinned")
+    if env.get("PGPORT", PINNED_PGPORT) != PINNED_PGPORT:
+        fail("PostgreSQL client broker endpoint is pinned")
+    env = {**env, "PGHOST": PINNED_PGHOST, "PGPORT": PINNED_PGPORT}
     paths: dict[str, str] = {}
     for variable in ("PGPASSFILE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"):
         if env.get(variable):
@@ -405,21 +442,18 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         elif argument.startswith("/"):
             add_read_path(paths, argument, "argument")
 
-    docker_args = [str(DOCKER_BIN), "run", "--rm", "--pull=never", "--network", "host"]
-    rootless = subprocess.run(
-        [str(DOCKER_BIN), "info", "--format", "{{json .SecurityOptions}}"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if "rootless" not in rootless.stdout:
-        docker_args.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+    docker_args = [
+        str(DOCKER_BIN), "run", "--rm", "--pull=never", "--network", "none",
+        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--security-opt", "label=disable", "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777",
+        "--volume", f"{STATE_DIR / 'pg'}:/run/acgs-pg:ro",
+        "--volume", f"{HOST_TMP}:/run/tmp:rw",
+        "--volume", f"{HOST_PROOF_SCRATCH}:/proof-scratch:rw",
+    ]
     for key in sorted(env):
         docker_args.extend(["--env", key])
-    for directory, access in sorted(paths.items()):
-        mode = "rw" if access == "rw" else "ro"
-        docker_args.extend(["--volume", f"{directory}:{directory}:{mode},Z"])
+    del paths
     completed = subprocess.run(
         [*docker_args, IMAGE, tool, *args],
         env={key: env[key] for key in env},
@@ -456,10 +490,11 @@ def main() -> int:
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, terminate)
-    SOCKET_PATH.unlink(missing_ok=True)
+    os.chdir(SOCKET_DIR)
+    Path(SOCKET_NAME).unlink(missing_ok=True)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-        server.bind(str(SOCKET_PATH))
-        SOCKET_PATH.chmod(0o600)
+        server.bind(SOCKET_NAME)
+        Path(SOCKET_NAME).chmod(0o600)
         server.listen(1)
         while True:
             conn, _ = server.accept()
@@ -501,6 +536,9 @@ socket_path = os.environ.get("ACP_POSTGRES_CLIENT_BROKER_SOCKET")
 if not socket_path:
     print("ACP_POSTGRES_CLIENT_BROKER_SOCKET is required", file=sys.stderr)
     raise SystemExit(69)
+socket_path_object = Path(socket_path)
+socket_dir = socket_path_object.parent
+socket_name = socket_path_object.name
 env = {
     key: os.environ[key]
     for key in (
@@ -515,7 +553,8 @@ request = json.dumps(
     separators=(",", ":"),
 ).encode("utf-8")
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-    client.connect(socket_path)
+    os.chdir(socket_dir)
+    client.connect(socket_name)
     client.sendall(request)
     client.shutdown(socket.SHUT_WR)
     chunks = []
@@ -552,8 +591,8 @@ if [[ ! -S "$broker_socket" ]]; then
 fi
 export ACP_POSTGRES_CLIENT_BROKER_SOCKET="$broker_socket"
 
-export PGHOST=127.0.0.1
-export PGPORT="$pg_port"
+export PGHOST=/run/acgs-pg
+export PGPORT=5432
 export PGUSER="$postgres_user"
 export PGPASSWORD="$postgres_password"
 export PGDATABASE="$main_database"
@@ -575,18 +614,26 @@ done
 
 git -C "$workspace_dir" cat-file -e "${old_commit}^{commit}"
 git -C "$workspace_dir" archive "$old_commit" | tar -x -C "$state_dir/acp-old"
+mkdir -p "$state_dir/acp-old/packages/acgs-control-plane/.venv"
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH="$(git -C "$workspace_dir" show -s --format=%ct "$old_commit")"
 run_sandboxed_uv_build() {
   local output_dir="$1"
   env -i "$bwrap_bin" \
     --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
-    --ro-bind / / \
     --proc /proc \
     --dev /dev \
     --tmpfs /tmp \
     --tmpfs /run \
+    --ro-bind /usr /usr \
+    --ro-bind /bin /bin \
+    --ro-bind-try /lib /lib \
+    --ro-bind-try /lib64 /lib64 \
+    --ro-bind "$package_dir" "$package_dir" \
+    --ro-bind "$uv_bin" "$uv_bin" \
+    --ro-bind "$python_runtime_root" "$python_runtime_root" \
     --bind "$state_dir" "$state_dir" \
+    --ro-bind "$package_dir/.venv" "$state_dir/acp-old/packages/acgs-control-plane/.venv" \
     --clearenv \
     --setenv HOME "$state_dir/home" \
     --setenv TMPDIR "$state_dir/tmp" \
@@ -610,11 +657,11 @@ cmp "$old_wheel" "$second_wheel"
 test "$(sha256sum "$old_wheel" | awk '{print $1}')" = "$old_digest"
 test "$(sha256sum "$second_wheel" | awk '{print $1}')" = "$old_digest"
 
-main_url="postgresql+psycopg://${postgres_user}:${postgres_password}@127.0.0.1:${pg_port}/${main_database}"
-recovery_source_url="postgresql+psycopg://${postgres_user}:${postgres_password}@127.0.0.1:${pg_port}/acgs_control_plane_recovery_source_test"
-recovery_target_url="postgresql+psycopg://${postgres_user}:${postgres_password}@127.0.0.1:${pg_port}/acgs_control_plane_recovery_target_test"
-recovery_bytea_url="postgresql+psycopg://${postgres_user}:${postgres_password}@127.0.0.1:${pg_port}/acgs_control_plane_recovery_bytea_test"
-rolling_url="postgresql+psycopg://${postgres_user}:${postgres_password}@127.0.0.1:${pg_port}/acgs_control_plane_rolling_upgrade_test"
+main_url="postgresql+psycopg://${postgres_user}:${postgres_password}@/${main_database}?host=/run/acgs-pg"
+recovery_source_url="postgresql+psycopg://${postgres_user}:${postgres_password}@/acgs_control_plane_recovery_source_test?host=/run/acgs-pg"
+recovery_target_url="postgresql+psycopg://${postgres_user}:${postgres_password}@/acgs_control_plane_recovery_target_test?host=/run/acgs-pg"
+recovery_bytea_url="postgresql+psycopg://${postgres_user}:${postgres_password}@/acgs_control_plane_recovery_bytea_test?host=/run/acgs-pg"
+rolling_url="postgresql+psycopg://${postgres_user}:${postgres_password}@/acgs_control_plane_rolling_upgrade_test?host=/run/acgs-pg"
 
 export ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE=1
 export ACP_TEST_POSTGRES_GATE_ACTIVE=1
@@ -634,19 +681,31 @@ fi
 export UV_BIN="$uv_bin"
 export ACP_TEST_POSTGRES_SELECTOR_MODE="$selector_mode"
 
-junit_report="$state_dir/junit.xml"
-broker_child_path="$state_dir/client:$package_dir/.venv/bin:/usr/bin:/bin"
+junit_report="/run/tmp/junit.xml"
+broker_child_path="/run/client:$package_dir/.venv/bin:/usr/bin:/bin"
 bwrap_args=(
-  --unshare-all --unshare-user --share-net --die-with-parent --new-session --disable-userns
-  --ro-bind / /
+  --unshare-all --unshare-user --die-with-parent --new-session --disable-userns
   --proc /proc
   --dev /dev
   --tmpfs /tmp
   --tmpfs /run
-  --bind "$state_dir" "$state_dir"
-  --bind "$state_dir/home" "$state_dir/home"
-  --bind "$state_dir/tmp" "$state_dir/tmp"
-  --bind "$state_dir/proof-scratch" "$state_dir/proof-scratch"
+  --dir /proof-scratch
+  --ro-bind /usr /usr
+  --ro-bind /bin /bin
+  --ro-bind-try /lib /lib
+  --ro-bind-try /lib64 /lib64
+  --ro-bind "$package_dir" "$package_dir"
+  --ro-bind "$gove_zone_src" "$gove_zone_src"
+  --ro-bind "$uv_bin" "$uv_bin"
+  --ro-bind "$python_runtime_root" "$python_runtime_root"
+  --ro-bind "$state_dir/client" /run/client
+  --ro-bind "$state_dir/broker" /run/broker
+  --ro-bind "$state_dir/pg" /run/acgs-pg
+  --ro-bind "$state_dir/old-1" /old-1
+  --ro-bind "$state_dir/old-2" /old-2
+  --bind "$state_dir/home" /run/home
+  --bind "$state_dir/tmp" /run/tmp
+  --bind "$state_dir/proof-scratch" /proof-scratch
   --clearenv
   --setenv ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE 1
   --setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1
@@ -658,7 +717,7 @@ bwrap_args=(
   --setenv ACP_TEST_RECOVERY_TARGET_URL "$recovery_target_url"
   --setenv ACP_TEST_RECOVERY_BYTEA_URL "$recovery_bytea_url"
   --setenv ACP_TEST_ROLLING_POSTGRES_URL "$rolling_url"
-  --setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET "$broker_socket"
+  --setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET /run/broker/postgresql-client.sock
   --setenv ACGS_TEST_SEED 20260710
   --setenv PYTHONHASHSEED 0
   --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
@@ -667,12 +726,12 @@ bwrap_args=(
   --setenv PYTHONDONTWRITEBYTECODE 1
   --setenv UV_BIN "$uv_bin"
   --setenv PATH "$broker_child_path"
-  --setenv TMPDIR "$state_dir/tmp"
-  --setenv HOME "$state_dir/home"
+  --setenv TMPDIR /run/tmp
+  --setenv HOME /run/home
   --chdir "$package_dir"
 )
 if [[ "$selector_mode" == 'p1-migration' || "$selector_mode" == 'p2-immutable-0004-upgrade' ]]; then
-  bwrap_args+=(--setenv ACP_TEST_OLD_APP_ARTIFACT "$old_wheel")
+  bwrap_args+=(--setenv ACP_TEST_OLD_APP_ARTIFACT "/old-1/${old_wheel##*/}")
   bwrap_args+=(--setenv ACP_TEST_OLD_APP_ARTIFACT_SHA256 "$old_digest")
 fi
 set +e
@@ -684,7 +743,7 @@ if ((pytest_status != 0)); then
   exit "$pytest_status"
 fi
 
-.venv/bin/python - "$junit_report" "$junit_expected_tests" <<'PY'
+.venv/bin/python - "$state_dir/tmp/junit.xml" "$junit_expected_tests" <<'PY'
 from __future__ import annotations
 
 import sys

@@ -17,8 +17,11 @@ if [[ -n "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
   # The guardian is a child exec of the first sanitized Bash. That first Bash
   # remains resident under the static launcher while it waits, so authenticate
   # the complete Bash -> BusyBox ancestry on the descriptor-bearing pass.
-  [[ "$(/usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true)" == \
-    /usr/bin/bash ]] || {
+  ACGS_GUARDIAN_PARENT_EXE="$(
+    /usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true
+  )"
+  [[ "$ACGS_GUARDIAN_PARENT_EXE" == /usr/bin/bash || \
+    "$ACGS_GUARDIAN_PARENT_EXE" == /bin/bash ]] || {
     printf '%s\n' \
       'CLEAN_SIBLING=FAIL phase=B0 reason=sanitized guardian parent identity changed' >&2
     exit 2
@@ -59,7 +62,8 @@ mapfile -d '' -t ACGS_STATIC_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline
     'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent argv changed' >&2
   exit 2
 }
-unset ACGS_GUARDIAN_PARENT_ARGV ACGS_STATIC_PARENT_ARGV ACGS_EXPECTED_LAUNCHER
+unset ACGS_GUARDIAN_PARENT_ARGV ACGS_GUARDIAN_PARENT_EXE \
+  ACGS_STATIC_PARENT_ARGV ACGS_EXPECTED_LAUNCHER
 ACGS_STATIC_LAUNCHED=1
 
 # Proof authority must not be selected by caller-controlled command lookup,
@@ -349,6 +353,7 @@ TMP_ROOT_INODE=''
 TMP_ROOT_UID=''
 TMP_ROOT_MODE=''
 WORKTREE=''
+SOURCE_GIT_COMMON_DIR=''
 EVIDENCE_ROOT=''
 NODE_ID="$REQUESTED_NODE_ID"
 NODE_EVIDENCE=''
@@ -533,6 +538,10 @@ IFS=: read -r WORKTREE_SENTINEL_DEVICE WORKTREE_SENTINEL_INODE WORKTREE_SENTINEL
 )
 WORKTREE_ADMIN_SENTINEL_IDENTITY="$WORKTREE_SENTINEL_DEVICE:$WORKTREE_SENTINEL_INODE:$WORKTREE_SENTINEL_UID"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
+SOURCE_GIT_COMMON_DIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+SOURCE_GIT_COMMON_DIR="$(realpath -e "$SOURCE_GIT_COMMON_DIR")"
+[[ -d "$SOURCE_GIT_COMMON_DIR" && ! -L "$SOURCE_GIT_COMMON_DIR" ]] ||
+  die 'source git common directory is unsafe'
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'detached sibling is dirty before bootstrap'
 git -C "$WORKTREE" cat-file -e "$P^{commit}" || die 'detached sibling cannot resolve P'
@@ -574,6 +583,7 @@ contained_env_args() {
     PATH LANG LC_ALL TZ \
     HOME TMPDIR TMP TEMP XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME \
     PYTEST_DEBUG_TEMPROOT MYPY_CACHE_DIR RUFF_CACHE_DIR COVERAGE_FILE \
+    PIP_CACHE_DIR HATCH_CACHE_DIR \
     UV_BIN UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_PYTHON_BIN_DIR UV_TOOL_DIR \
     UV_TOOL_BIN_DIR UV_PYTHON_CACHE_DIR UV_CREDENTIALS_DIR UV_NO_CONFIG UV_NO_ENV_FILE \
     UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE \
@@ -590,6 +600,7 @@ contained_env_args() {
 contained_mount_args() {
   local path
   printf '%s\0%s\0%s\0' --ro-bind "$WORKTREE" "$WORKTREE"
+  printf '%s\0%s\0%s\0' --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"
   for path in \
     "$EVIDENCE_ROOT" \
     "$SCRATCH_ROOT" \
@@ -598,6 +609,41 @@ contained_mount_args() {
     "$WORKTREE/packages/gove-zone/.venv-beta"; do
     if [[ -d "$path" && ! -L "$path" ]]; then
       printf '%s\0%s\0%s\0' --bind "$path" "$path"
+    fi
+  done
+}
+
+runtime_system_mount_args() {
+  local path
+  for path in \
+    /etc/passwd \
+    /etc/group \
+    /etc/nsswitch.conf; do
+    if [[ -e "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --ro-bind-try "$path" "$path"
+    fi
+  done
+}
+
+runtime_linker_args() {
+  if [[ -x /usr/bin/ld.bfd && -L /usr/bin/ld ]]; then
+    printf '%s\0%s\0' --dir /etc/alternatives
+    printf '%s\0%s\0%s\0' --symlink /usr/bin/ld.bfd /etc/alternatives/ld
+  fi
+}
+
+bootstrap_mount_args() {
+  local path
+  contained_mount_args
+  runtime_system_mount_args
+  for path in \
+    /etc/resolv.conf \
+    /etc/hosts \
+    /etc/nsswitch.conf \
+    /etc/ssl \
+    /etc/pki; do
+    if [[ -e "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --ro-bind-try "$path" "$path"
     fi
   done
 }
@@ -621,15 +667,28 @@ run_contained() {
     done
     mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
     mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(contained_mount_args)
+    mapfile -d '' -t ACGS_CONTAINED_SYSTEM_MOUNTS < <(runtime_system_mount_args)
+    mapfile -d '' -t ACGS_CONTAINED_LINKER_ARGS < <(runtime_linker_args)
     exec "$BWRAP_BIN" \
       --die-with-parent \
-      --unshare-pid \
-      --ro-bind / / \
+      --unshare-all \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-net \
+      --new-session \
+      --disable-userns \
       --proc /proc \
       --dev /dev \
       --tmpfs /tmp \
       --tmpfs /run \
       --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_SYSTEM_MOUNTS[@]}" \
+      "${ACGS_CONTAINED_LINKER_ARGS[@]}" \
       "${ACGS_CONTAINED_MOUNTS[@]}" \
       --chdir "$cwd" \
       /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
@@ -637,9 +696,47 @@ run_contained() {
 }
 
 run_contained_bootstrap() {
+  local cwd="$1"
+  shift
+  [[ "${1:-}" == "$UV_BIN" ]] ||
+    die 'bootstrap containment only runs the pinned uv executable'
+  [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+    die 'containment runner unavailable: /usr/bin/bwrap'
+  [[ "$cwd" == "$WORKTREE" || "$cwd" == "$WORKTREE"/* || \
+    "$cwd" == "$SCRATCH_ROOT" || "$cwd" == "$SCRATCH_ROOT"/* ]] ||
+    die "bootstrap cwd escaped target worktree/scratch: $cwd"
   (
+    local fd fd_path
+    for fd_path in /proc/"$BASHPID"/fd/*; do
+      fd="${fd_path##*/}"
+      case "$fd" in
+        0 | 1 | 2) ;;
+        *) eval "exec $fd<&-" 2>/dev/null || true ;;
+      esac
+    done
     unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
-    run_contained "$@"
+    mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
+    mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(bootstrap_mount_args)
+    exec "$BWRAP_BIN" \
+      --die-with-parent \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-pid \
+      --new-session \
+      --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_MOUNTS[@]}" \
+      --chdir "$cwd" \
+      /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
   )
 }
 
@@ -663,8 +760,8 @@ for relative in "${LOCK_FILES[@]}"; do
   mkdir -p "$LOCK_RENDER_ROOT/$(dirname "$relative")"
   cp -- "$WORKTREE/$relative" "$LOCK_RENDER_ROOT/$relative"
 done
-LC_ALL=C TZ=UTC PYTHONHASHSEED=0 run_contained_bootstrap "$WORKTREE" \
-  "$UV_BIN" run --no-project --python 3.11 python \
+LC_ALL=C TZ=UTC PYTHONHASHSEED=0 run_contained "$WORKTREE" \
+  /usr/bin/python3 \
   scripts/evidence/render_lock_inputs.py \
   --config requirements/saas-beta/locks.toml \
   --output-root "$LOCK_RENDER_ROOT"
