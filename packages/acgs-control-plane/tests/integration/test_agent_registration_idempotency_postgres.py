@@ -160,6 +160,16 @@ def test_100_request_multiprocess_has_at_most_one_authorized_execution(
         with app.state.session_factory() as session:
             assert _count_agents(session, org["org_id"], "multiprocess-idempotent-bot") == 1
             _assert_registration_counts(session, agents=1)
+
+        # One registration, one event on the org's tamper-evident chain. The
+        # mirror's `store.append` writes a JSONL line that no transaction
+        # rollback undoes, so a loser that mirrored before it had exclusively
+        # claimed the idempotency key would leave the chain attesting to a
+        # registration that never committed -- the failure this package exists
+        # to prevent, and one no in-database assertion above can detect.
+        chain = list(Path(audit_dir).glob("*.jsonl"))
+        assert len(chain) == 1, chain
+        assert sum(1 for _ in chain[0].open(encoding="utf-8")) == 1
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)

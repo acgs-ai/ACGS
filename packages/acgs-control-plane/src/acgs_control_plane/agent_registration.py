@@ -38,6 +38,7 @@ from acgs_control_plane.models import (
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
     ManagedOutboxMessage,
+    Organization,
     PolicyBundle,
     Project,
     new_id,
@@ -445,6 +446,27 @@ class AgentRegistrationService:
             )
 
         def before_execute(tx_session: Session) -> None:
+            # Take the org's audit-chain anchor row before the scope and policy
+            # locks below. A successful registration ends by advancing that same
+            # row (`_anchor`, via `mirror_managed_decision`), so every writer
+            # needs it eventually. Acquiring it last let two registrations cycle:
+            # one holds the `environments` row that
+            # `_revalidate_active_policy_under_lock` locks and waits for the
+            # anchor, while the other holds the anchor and waits on that same
+            # `environments` row through the foreign keys its inserts check.
+            # PostgreSQL broke the tie by aborting a victim, which cost ~13% of
+            # concurrent callers the replayed 201 this route promises them.
+            # Taking the anchor first gives registrations one total order.
+            #
+            # Residual, deliberately not closed here: `activate_policy` locks the
+            # policy bundle and then anchors through the membrane, so it takes
+            # these two in the opposite order. A policy activation running
+            # concurrently with a registration on the same org can still
+            # deadlock; the victim aborts and its caller retries. Closing that
+            # means making anchor-first a convention across every writer that
+            # advances the anchor, which is a governance-layer change and not
+            # this route's to make.
+            tx_session.get(Organization, org_id, with_for_update=True)
             _revalidate_active_policy_under_lock(
                 tx_session,
                 context=context,
@@ -494,14 +516,6 @@ class AgentRegistrationService:
             agent = session.get(AgentRecord, result.result["agent_id"])
             if agent is None:
                 raise RuntimeError("managed agent registration committed without agent row")
-            mirror_managed_decision(
-                session,
-                org_id=org_id,
-                audit_dir=audit_dir,
-                record=decision_record,
-                result_hash=result.result_hash,
-                tool=LEGACY_AGENT_REGISTER_ACTION,
-            )
             response = AgentRegistrationResult(
                 agent_id=agent.id,
                 org_id=agent.org_id,
@@ -526,6 +540,24 @@ class AgentRegistrationService:
                     receipt_id=receipt_row.receipt_id,
                     response=_idempotency_response_payload(response, context=context),
                 )
+            )
+            # Mirror last, once every other effect has been issued. `store.append`
+            # writes the org's tamper-evident JSONL, and no transaction rollback
+            # undoes a line already on disk -- so anything that can still abort
+            # this transaction belongs above it, or the chain ends up attesting
+            # to a registration that never committed. The refusal path is
+            # ordered this way for the same reason. The flush is what makes the
+            # ordering real rather than textual: without it the insert above
+            # would not reach the database until commit, which is after the
+            # append.
+            session.flush()
+            mirror_managed_decision(
+                session,
+                org_id=org_id,
+                audit_dir=audit_dir,
+                record=decision_record,
+                result_hash=result.result_hash,
+                tool=LEGACY_AGENT_REGISTER_ACTION,
             )
             holder["response"] = response
 
