@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from gove_zone.policy import RuleSetPolicy
@@ -72,6 +72,13 @@ from acgs_control_plane.models import (
     ReceiptRow,
     User,
     new_id,
+)
+from acgs_control_plane.pagination import (
+    CURSOR_TOKEN_MAX_LENGTH,
+    InvalidCursorError,
+    decode_receipt_cursor,
+    issue_receipt_cursor,
+    receipt_filter_digest,
 )
 from acgs_control_plane.rbac import Permission, Role, role_allows
 from acgs_control_plane.schemas import (
@@ -359,6 +366,15 @@ def create_app(
             status_code=status_code,
             content=redacted_error(code, request_id_from_scope(request.scope)),
             headers=dict(exc.headers or {}),
+        )
+
+    @app.exception_handler(InvalidCursorError)
+    def _invalid_cursor(request: Request, exc: InvalidCursorError) -> JSONResponse:
+        del exc
+        return JSONResponse(
+            status_code=400,
+            content=redacted_error("invalid_cursor", request_id_from_scope(request.scope)),
+            headers={"Cache-Control": "private, no-store"},
         )
 
     @app.exception_handler(TenantBootstrapHttpError)
@@ -965,6 +981,8 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/orgs/{org_id}/receipts", response_model=ReceiptListResponse, tags=["receipts"])
     def list_receipts(
         org: OrgDep,
+        request: Request,
+        response: Response,
         session: SessionDep,
         _p: Annotated[Principal, require(Permission.RECEIPT_READ)],
         decision: str | None = None,
@@ -974,7 +992,33 @@ def _register_routes(app: FastAPI) -> None:
         until: datetime | None = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
+        cursor: str | None = None,
     ) -> ReceiptListResponse:
+        response.headers["Cache-Control"] = "private, no-store"
+        cursor_values = request.query_params.getlist("cursor")
+        if len(cursor_values) > 1:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and len(cursor) > CURSOR_TOKEN_MAX_LENGTH:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and offset != 0:
+            raise InvalidCursorError("invalid cursor")
+        cursor_bound_names = _duplicate_query_params(request, _RECEIPT_CURSOR_QUERY_PARAMS)
+        if "offset" in cursor_bound_names:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and cursor_bound_names:
+            raise InvalidCursorError("invalid cursor")
+        if (
+            cursor is None
+            and offset == 0
+            and any(
+                name in cursor_bound_names
+                for name in ("decision", "tool", "actor", "since", "until", "limit", "offset")
+            )
+        ):
+            raise InvalidCursorError("invalid cursor")
+        filter_digest = receipt_filter_digest(
+            decision=decision, tool=tool, actor=actor, since=since, until=until
+        )
         query = select(ReceiptRow).where(ReceiptRow.org_id == org.id)
         if decision:
             query = query.where(ReceiptRow.decision == decision)
@@ -987,13 +1031,73 @@ def _register_routes(app: FastAPI) -> None:
         if until:
             query = query.where(ReceiptRow.created_at <= until)
         total = session.execute(select(func.count()).select_from(query.subquery())).scalar_one()
-        rows = session.execute(
+        if cursor is not None:
+            settings: Settings = request.app.state.settings
+            keyring = settings.cursor_keyring
+            assert keyring is not None
+            boundary = decode_receipt_cursor(
+                token=cursor,
+                keyring=keyring,
+                org_id=org.id,
+                filter_digest=filter_digest,
+            )
+            query = query.where(
+                (ReceiptRow.created_at < boundary.created_at)
+                | (
+                    (ReceiptRow.created_at == boundary.created_at)
+                    & (ReceiptRow.id < boundary.receipt_id)
+                )
+            )
+            rows = list(
+                session.execute(
+                    query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc()).limit(
+                        limit + 1
+                    )
+                ).scalars()
+            )
+            page_rows = rows[:limit]
+            next_cursor = None
+            if len(rows) > limit and page_rows:
+                last = page_rows[-1]
+                next_cursor = issue_receipt_cursor(
+                    keyring=keyring,
+                    org_id=org.id,
+                    filter_digest=filter_digest,
+                    boundary_created_at=last.created_at,
+                    boundary_receipt_id=last.id,
+                )
+            return ReceiptListResponse(
+                items=[_receipt_summary(r) for r in page_rows],
+                total=total,
+                limit=limit,
+                offset=offset,
+                next_cursor=next_cursor,
+            )
+        legacy_rows = session.execute(
             query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())
             .limit(limit)
             .offset(offset)
         ).scalars()
+        page_rows = list(legacy_rows)
+        next_cursor = None
+        if offset == 0 and page_rows and len(page_rows) == limit and total > limit:
+            settings = request.app.state.settings
+            keyring = settings.cursor_keyring
+            assert keyring is not None
+            last = page_rows[-1]
+            next_cursor = issue_receipt_cursor(
+                keyring=keyring,
+                org_id=org.id,
+                filter_digest=filter_digest,
+                boundary_created_at=last.created_at,
+                boundary_receipt_id=last.id,
+            )
         return ReceiptListResponse(
-            items=[_receipt_summary(r) for r in rows], total=total, limit=limit, offset=offset
+            items=[_receipt_summary(r) for r in page_rows],
+            total=total,
+            limit=limit,
+            offset=offset,
+            next_cursor=next_cursor,
         )
 
     @app.get(
@@ -1268,6 +1372,10 @@ def _receipt_summary(row: ReceiptRow) -> ReceiptSummary:
     )
 
 
+def _duplicate_query_params(request: Request, names: frozenset[str]) -> frozenset[str]:
+    return frozenset(name for name in names if len(request.query_params.getlist(name)) > 1)
+
+
 def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> ExportSummary:
     return ExportSummary(
         export_id=row.id,
@@ -1277,3 +1385,8 @@ def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> Exp
         created_at=row.created_at,
         receipt_id=receipt_id,
     )
+
+
+_RECEIPT_CURSOR_QUERY_PARAMS = frozenset(
+    {"decision", "tool", "actor", "since", "until", "limit", "offset", "cursor"}
+)

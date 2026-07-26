@@ -207,7 +207,13 @@ def production_blockers(
         if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
     blockers.extend(legacy)
-    required = ("durable-consumption-uow", "migration-head", "signer-issuer", "trust-verifier")
+    required = (
+        "cursor-aead-keyring",
+        "durable-consumption-uow",
+        "migration-head",
+        "signer-issuer",
+        "trust-verifier",
+    )
     blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in required)
     return tuple(sorted(blockers))
 

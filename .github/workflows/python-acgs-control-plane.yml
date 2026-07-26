@@ -255,7 +255,8 @@ jobs:
           UV_BIN="$(command -v uv)" .venv/bin/pytest -q \
             tests/test_postgresql_migrations.py \
             tests/test_postgresql_migration_cli.py \
-            tests/test_startup_preflight.py
+            tests/test_startup_preflight.py \
+            tests/test_postgresql_receipt_cursor_pagination.py
 
       - name: Test PostgreSQL migration recovery
         shell: bash
