@@ -99,6 +99,7 @@ _LEGACY_WRITES = (
 ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),
+    RouteContract("GET", "/v1", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract(
         "POST",
         "/v1/tenant-bootstrap",
@@ -117,9 +118,26 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         False,
         False,
     ),
+    # The /v1 alias is served for every org route, so agent creation needs the
+    # same governed contract under both prefixes. Classifying only the unversioned
+    # path would leave the alias unclassified, which the registry refuses.
+    RouteContract(
+        "POST",
+        "/v1/orgs/{org_id}/agents",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_AGENT_CREATE_ACTION,
+        True,
+        False,
+        False,
+    ),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
+    *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(
         RouteContract(m, p, ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
+        for m, p, a in _LEGACY_WRITES
+    ),
+    *(
+        RouteContract(m, f"/v1{p}", ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
         for m, p, a in _LEGACY_WRITES
     ),
 )
@@ -218,7 +236,13 @@ def production_blockers(
         if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
     blockers.extend(legacy)
-    required = ("durable-consumption-uow", "migration-head", "signer-issuer", "trust-verifier")
+    required = (
+        "cursor-aead-keyring",
+        "durable-consumption-uow",
+        "migration-head",
+        "signer-issuer",
+        "trust-verifier",
+    )
     blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in required)
     return tuple(sorted(blockers))
 

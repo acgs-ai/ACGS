@@ -1,4 +1,5 @@
 """Test config — exposes scripts/ to imports as a flat module path."""
+
 from __future__ import annotations
 
 import sys

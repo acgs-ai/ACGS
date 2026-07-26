@@ -55,6 +55,20 @@ invalid, expired, or mismatched receipt is rejected. A valid receipt is
 single-use only when every relevant executor shares a configured
 `ReceiptConsumptionLedger`; receipt verification is otherwise stateless.
 
+### Runtime tool-call shapes
+
+`gove_zone.integration` normalizes dependency-free runtime hook payloads
+before hashing: Claude/Codex-style `{tool_name, tool_input}`, MCP-style
+`{method: "tools/call", params: {name, arguments}}`, function-call-style
+`{type: "function_call", name, arguments}`, OpenAI Responses-style
+`{output: [{type: "function_call", name, arguments}]}`, OpenAI Chat-style
+`{tool_calls: [{function: {name, arguments}}]}`, LangChain-style
+`{tool_calls: [{name, args}]}`, and multi-call batches of those shapes.
+Recognized batches with unparseable child calls fail closed as
+`runtime.malformed_batch` instead of being treated as unknown tools. The
+`gove-zone gate` CLI applies the same normalization behind reviewed
+`--policy-bundle` rules.
+
 ## When to use it
 
 Use gove-zone when you need:

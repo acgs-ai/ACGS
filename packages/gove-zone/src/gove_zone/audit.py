@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 # Re-exported for backward compatibility: the lock implementation lives in
 # ``gove_zone._locking`` and ``from gove_zone.audit import _exclusive_file_lock``
@@ -48,6 +48,18 @@ GENESIS_HASH = "0" * 64
 
 class AuditChainError(AuditError):
     """Raised when the persisted audit chain tail is corrupt or unreadable."""
+
+
+class AuditAppender(Protocol):
+    """Structural audit sink accepted by the kernel.
+
+    The kernel only depends on append semantics: a decision record is persisted
+    and the sink returns the complete appended event mapping, including the
+    append-produced hash fields.
+    """
+
+    def append(self, decision: DecisionRecord) -> Mapping[str, Any]:
+        """Append *decision* and return the complete persisted event mapping."""
 
 
 class ChainHashAuditStore:
