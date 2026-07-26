@@ -77,8 +77,13 @@ def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, An
     """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
 
     Agent registration is a canonical managed mutation: it resolves the org's
-    default project/environment scope and mints a receipt-v2 under a trusted
-    key for that scope. Mirrors test_agent_registration_managed_route.py.
+    default project/environment scope, mints a receipt-v2 under a trusted key
+    for that scope, and requires an active policy bundle. Mirrors
+    test_agent_registration_managed_route.py.
+
+    The permissive bundle seeded here denies only an unrelated tool. Callers
+    that need their own rules publish and activate over the top; activation
+    retires the currently active bundle, so the two never collide.
     """
     org_id = org["org_id"]
     app = client.app
@@ -107,6 +112,20 @@ def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, An
             public_key_spki_der=public_spki_der_from_signer(signer),
             not_after=utcnow() + timedelta(days=1),
         )
+    _publish_and_activate(
+        client,
+        org_id,
+        _headers(org),
+        policy_id=f"policy-{new_id()}",
+        rules=[
+            {
+                "id": "deny-unrelated",
+                "effect": "deny",
+                "tools": ["unrelated.tool"],
+                "reason": "unrelated tools disabled",
+            }
+        ],
+    )
 
 
 def _headers(org: dict[str, Any]) -> dict[str, str]:
