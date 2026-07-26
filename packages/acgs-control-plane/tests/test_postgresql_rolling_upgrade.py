@@ -82,6 +82,7 @@ _G038_ALLOWED_AGENT_CATALOG_CHANGES = frozenset(
         "uq_agents_scope_name",
     }
 )
+_G102_ALLOWED_AGENT_IDENTITY_ADDITIONS = frozenset({"uq_agents_org_id_id"})
 _G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset({"uq_policy_bundles_one_active_per_org"})
 _G102E4_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset(
     {
@@ -125,6 +126,14 @@ def _without_allowed_old_table_catalog_additions(
                 row[2] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
                 or row[4] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
                 or row[6] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
+            )
+        )
+        and not (
+            len(row) >= 7
+            and row[1] == "agents"
+            and (
+                row[4] in _G102_ALLOWED_AGENT_IDENTITY_ADDITIONS
+                or row[6] in _G102_ALLOWED_AGENT_IDENTITY_ADDITIONS
             )
         )
         and not (
@@ -876,17 +885,18 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003, 0004, and 0005 tables reference environments,
-                # so seeding the partial revision 0001 shape must remove them
-                # first. Dropping environments with CASCADE instead would leave
-                # them in place minus their foreign keys, which is not a shape
-                # any real 0001 database has. One statement drops the whole set
-                # together, so dependencies among the listed tables (the 0005
-                # bootstrap tables all reference platform_bootstrap_invitations)
-                # do not constrain the order.
+                # Revision 0003, 0004, 0005, and 0011 tables reference
+                # environments, so seeding the partial revision 0001 shape must
+                # remove them first. Dropping environments with CASCADE instead
+                # would leave them in place minus their foreign keys, which is
+                # not a shape any real 0001 database has. One statement drops
+                # the whole set together, so dependencies among the listed
+                # tables (the 0005 bootstrap tables all reference
+                # platform_bootstrap_invitations) do not constrain the order.
                 connection.execute(
                     sa.text(
-                        "DROP TABLE tenant_bootstrap_refusal_events, "
+                        "DROP TABLE managed_idempotency_results, "
+                        "tenant_bootstrap_refusal_events, "
                         "tenant_bootstrap_pending_outbox, pending_approvals, "
                         "tenant_bootstrap_policy_artifacts, "
                         "tenant_bootstrap_idempotency, "
@@ -903,7 +913,9 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                 # the pre-0006 unique constraint, which is the shape a real 0001
                 # agents table has. Doing it this way rather than CASCADE keeps
                 # the same invariant the comment above relies on: no table is
-                # left behind minus its constraints.
+                # left behind minus its constraints. Revision 0011 also adds the
+                # uq_agents_org_id_id identity constraint that the idempotency
+                # table (dropped above) targets, so it goes here too.
                 connection.execute(sa.text("DROP INDEX uq_agents_scope_name"))
                 connection.execute(sa.text("DROP INDEX uq_agents_legacy_org_name"))
                 connection.execute(sa.text("DROP INDEX uq_policy_bundles_one_active_per_org"))
@@ -911,6 +923,7 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                     sa.text(
                         "ALTER TABLE agents "
                         "DROP COLUMN project_id, DROP COLUMN environment_id, "
+                        "DROP CONSTRAINT uq_agents_org_id_id, "
                         "ADD CONSTRAINT uq_agents_org_name UNIQUE (org_id, name)"
                     )
                 )
@@ -1072,9 +1085,11 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             "tenant_bootstrap_refusal_events",
         }
         # Revision 0006 attaches agents and revision 0010 attaches
-        # policy_bundles to environment scope; those allowed catalog
-        # additions are filtered out below, and every other pre-existing
-        # table must remain catalog-identical.
+        # policy_bundles to environment scope, and revision 0011 adds the
+        # composite (org_id, id) uniqueness on agents so idempotency results
+        # can reference agents without crossing organizations; those allowed
+        # catalog additions are filtered out below, and every other
+        # pre-existing table must remain catalog-identical.
         for table in before["tables"]:
             before_catalog = tuple(row for row in before["catalog"] if row[1] == table)
             migrated_catalog = tuple(row for row in migrated["catalog"] if row[1] == table)
