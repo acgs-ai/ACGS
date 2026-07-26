@@ -89,6 +89,82 @@ clean_sibling_worktree_list_contains() {
   ' "worktree $worktree"
 }
 
+clean_sibling_find_admin_sentinel() {
+  local registry_root="$1"
+  local expected_identity="$2"
+  local sentinel="$3"
+  local registry_fd=''
+  local rc=0
+
+  [[ "$registry_root" == /* && -d "$registry_root" && ! -L "$registry_root" ]] || return 2
+  [[ "$expected_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
+  [[ "$sentinel" =~ ^[0-9a-f]{64}$ ]] || return 2
+  exec {registry_fd}<"$registry_root" || return 2
+  "$SNAPSHOT_PYTHON" - "$registry_fd" "$expected_identity" "$registry_root" "$sentinel" <<'PY'
+import errno
+import os
+import stat
+import sys
+
+fd = int(sys.argv[1])
+expected = tuple(int(part) for part in sys.argv[2].split(":"))
+registry_root = sys.argv[3]
+sentinel = (sys.argv[4] + "\n").encode()
+try:
+    root_stat = os.fstat(fd)
+    if (root_stat.st_dev, root_stat.st_ino, root_stat.st_uid) != expected:
+        print("cleanup refused because worktree registry identity changed", file=sys.stderr)
+        sys.exit(2)
+    for name in os.listdir(fd):
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+            print("cleanup refused control-character worktree registry entry", file=sys.stderr)
+            sys.exit(2)
+        try:
+            entry_stat = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except OSError as exc:
+            print(f"cleanup refused because worktree registry enumeration failed: {exc}", file=sys.stderr)
+            sys.exit(2)
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
+            print(f"cleanup refused because worktree registry entry is not a directory: {name}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            entry_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        except OSError as exc:
+            print(f"cleanup refused because worktree registry enumeration failed: {exc}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            try:
+                sentinel_fd = os.open(
+                    "acgs-clean-sibling-owner",
+                    os.O_RDONLY | os.O_NOFOLLOW,
+                    dir_fd=entry_fd,
+                )
+            except OSError as exc:
+                if exc.errno == errno.ENOENT:
+                    continue
+                print(f"cleanup refused because worktree registry sentinel read failed: {exc}", file=sys.stderr)
+                sys.exit(2)
+            with os.fdopen(sentinel_fd, "rb") as handle:
+                sentinel_stat = os.fstat(handle.fileno())
+                if stat.S_ISLNK(sentinel_stat.st_mode) or sentinel_stat.st_uid != os.getuid():
+                    print("cleanup refused because worktree admin sentinel identity changed", file=sys.stderr)
+                    sys.exit(2)
+                if stat.S_IMODE(sentinel_stat.st_mode) != 0o600:
+                    print("cleanup refused because worktree admin sentinel mode changed", file=sys.stderr)
+                    sys.exit(2)
+                if handle.read(4096) == sentinel:
+                    print(os.path.join(registry_root, name))
+        finally:
+            os.close(entry_fd)
+except Exception as exc:
+    print(f"cleanup refused because worktree registry enumeration failed: {exc}", file=sys.stderr)
+    sys.exit(2)
+PY
+  rc=$?
+  exec {registry_fd}<&-
+  return "$rc"
+}
+
 clean_sibling_snapshot_direct_entries() {
   local root_fd="$1"
   local expected_identity="$2"
@@ -303,8 +379,15 @@ clean_sibling_cleanup() {
   local path_value=''
   local worktree_list=''
   local current_admin_identity=''
+  local current_registry_identity=''
+  local admin_registry_entry=''
+  local admin_registry_found_path=''
+  local admin_registry_root=''
+  local admin_sentinel_found_path=''
+  local dotglob_was_set=0
+  local nullglob_was_set=0
 
-  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE SOURCE_COMMON_GITDIR WORKTREE_ADMIN_GITDIR; do
+  for path_label in SOURCE_REPO TMP_PARENT TMP_ROOT WORKTREE SOURCE_COMMON_GITDIR WORKTREE_ADMIN_GITDIR WORKTREE_ADMIN_SENTINEL_PATH; do
     path_value="${!path_label-}"
     if [[ -n "$path_value" ]]; then
       clean_sibling_reject_control_path "$path_label" "$path_value" || return 2
@@ -415,6 +498,78 @@ clean_sibling_cleanup() {
           "$WORKTREE_ADMIN_GITDIR" >&2
       fi
       cleanup_status=2
+    fi
+    admin_registry_root="$SOURCE_COMMON_GITDIR/worktrees"
+    if [[ ! -d "$admin_registry_root" || -L "$admin_registry_root" ]]; then
+      printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
+        "$admin_registry_root" >&2
+      cleanup_status=2
+    elif [[ -n "${WORKTREE_ADMIN_GITDIR_IDENTITY:-}" ]]; then
+      if [[ -n "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}" ]]; then
+        current_registry_identity="$(stat -c '%d:%i:%u' -- "$admin_registry_root" 2>/dev/null || true)"
+        if [[ "$current_registry_identity" != "$WORKTREE_REGISTRY_ROOT_IDENTITY" ]]; then
+          printf 'cleanup refused because worktree registry identity changed: %s\n' \
+            "$admin_registry_root" >&2
+          cleanup_status=2
+        fi
+      fi
+      shopt -q dotglob && dotglob_was_set=1 || dotglob_was_set=0
+      shopt -q nullglob && nullglob_was_set=1 || nullglob_was_set=0
+      shopt -s dotglob nullglob
+      for admin_registry_entry in "$admin_registry_root"/*; do
+        if ! clean_sibling_reject_control_path \
+          WORKTREE_ADMIN_REGISTRY_ENTRY "$admin_registry_entry"; then
+          cleanup_status=2
+          continue
+        fi
+        if [[ ! -d "$admin_registry_entry" || -L "$admin_registry_entry" ]]; then
+          printf 'cleanup refused because worktree registry entry is not a directory: %s\n' \
+            "$admin_registry_entry" >&2
+          cleanup_status=2
+          continue
+        fi
+        current_admin_identity="$(stat -c '%d:%i:%u' -- "$admin_registry_entry" 2>/dev/null || true)"
+        if [[ -z "$current_admin_identity" ]]; then
+          printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
+            "$admin_registry_entry" >&2
+          cleanup_status=2
+          continue
+        fi
+        if [[ "$current_admin_identity" == "$WORKTREE_ADMIN_GITDIR_IDENTITY" ]]; then
+          admin_registry_found_path="$admin_registry_entry"
+        fi
+      done
+      if [[ "$dotglob_was_set" == 0 ]]; then shopt -u dotglob; fi
+      if [[ "$nullglob_was_set" == 0 ]]; then shopt -u nullglob; fi
+      if [[ -n "$admin_registry_found_path" ]]; then
+        if [[ "$admin_registry_found_path" == "$WORKTREE_ADMIN_GITDIR" ]]; then
+          printf 'cleanup refused because worktree admin registration remains: %s\n' \
+            "$admin_registry_found_path" >&2
+        else
+          printf 'cleanup refused because worktree admin registration relocated: %s\n' \
+            "$admin_registry_found_path" >&2
+        fi
+        cleanup_status=2
+      fi
+      if [[ -n "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}" ]] &&
+        [[ -n "${WORKTREE_ADMIN_SENTINEL:-}" ]]; then
+        if ! admin_sentinel_found_path="$(clean_sibling_find_admin_sentinel \
+          "$admin_registry_root" "$WORKTREE_REGISTRY_ROOT_IDENTITY" \
+          "$WORKTREE_ADMIN_SENTINEL")"; then
+          cleanup_status=2
+          admin_sentinel_found_path=''
+        fi
+        if [[ -n "$admin_sentinel_found_path" ]]; then
+          if [[ "$admin_sentinel_found_path" == "$WORKTREE_ADMIN_GITDIR" ]]; then
+            printf 'cleanup refused because worktree admin registration remains: %s\n' \
+              "$admin_sentinel_found_path" >&2
+          else
+            printf 'cleanup refused because worktree admin registration relocated: %s\n' \
+              "$admin_sentinel_found_path" >&2
+          fi
+          cleanup_status=2
+        fi
+      fi
     fi
   fi
   [[ "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" == \

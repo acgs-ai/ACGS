@@ -356,8 +356,13 @@ UV_PYTHON_CACHE_DIR=''
 UV_CREDENTIALS_DIR=''
 WORKTREE_ADDED=0
 SOURCE_COMMON_GITDIR=''
+WORKTREE_REGISTRY_ROOT=''
+WORKTREE_REGISTRY_ROOT_IDENTITY=''
 WORKTREE_ADMIN_GITDIR=''
 WORKTREE_ADMIN_GITDIR_IDENTITY=''
+WORKTREE_ADMIN_SENTINEL=''
+WORKTREE_ADMIN_SENTINEL_PATH=''
+WORKTREE_ADMIN_SENTINEL_IDENTITY=''
 PROOF_COMPLETE=0
 TRANSCRIPT_RECORDS=0
 R=''
@@ -453,15 +458,35 @@ export UV_CACHE_DIR
 WORKTREE_ADDED=1
 git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "$T"
 SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
 WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
 case "$WORKTREE_ADMIN_GITDIR" in
-  "$SOURCE_COMMON_GITDIR"/worktrees/*) ;;
+  "$WORKTREE_REGISTRY_ROOT"/*) ;;
   *) die 'detached sibling admin gitdir is outside source worktree registry' ;;
 esac
+IFS=: read -r WORKTREE_REGISTRY_DEVICE WORKTREE_REGISTRY_INODE WORKTREE_REGISTRY_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT"
+)
+WORKTREE_REGISTRY_ROOT_IDENTITY="$WORKTREE_REGISTRY_DEVICE:$WORKTREE_REGISTRY_INODE:$WORKTREE_REGISTRY_UID"
 IFS=: read -r WORKTREE_ADMIN_DEVICE WORKTREE_ADMIN_INODE WORKTREE_ADMIN_UID < <(
   stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR"
 )
 WORKTREE_ADMIN_GITDIR_IDENTITY="$WORKTREE_ADMIN_DEVICE:$WORKTREE_ADMIN_INODE:$WORKTREE_ADMIN_UID"
+WORKTREE_ADMIN_SENTINEL="$("$SNAPSHOT_PYTHON" - <<'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+)"
+WORKTREE_ADMIN_SENTINEL_PATH="$WORKTREE_ADMIN_GITDIR/acgs-clean-sibling-owner"
+(set -C; umask 077; printf '%s\n' "$WORKTREE_ADMIN_SENTINEL" >"$WORKTREE_ADMIN_SENTINEL_PATH") ||
+  die 'cannot create detached sibling admin owner sentinel'
+chmod 0600 -- "$WORKTREE_ADMIN_SENTINEL_PATH" ||
+  die 'cannot seal detached sibling admin owner sentinel'
+IFS=: read -r WORKTREE_SENTINEL_DEVICE WORKTREE_SENTINEL_INODE WORKTREE_SENTINEL_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_SENTINEL_PATH"
+)
+WORKTREE_ADMIN_SENTINEL_IDENTITY="$WORKTREE_SENTINEL_DEVICE:$WORKTREE_SENTINEL_INODE:$WORKTREE_SENTINEL_UID"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'detached sibling is dirty before bootstrap'
