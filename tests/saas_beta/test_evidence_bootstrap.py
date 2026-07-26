@@ -6847,6 +6847,164 @@ exit $?
     shutil.rmtree(copied_admin, ignore_errors=True)
 
 
+def test_clean_sibling_cleanup_refuses_baseline_registered_gitfile_hardlink(
+    tmp_path: Path,
+) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+    cleanup_root = parent / "acgs-p0-evidence.gitfile-hardlink"
+    baseline_worktree = tmp_path / "baseline-worktree"
+    external_clone = tmp_path / "external-clone"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(baseline_worktree), "HEAD"],
+        cwd=source_repo,
+        stdout=subprocess.DEVNULL,
+        check=True,
+    )
+    source_common_gitdir = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=source_repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    worktrees_before = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=source_repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.rstrip("\n")
+    status_before = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=source_repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.rstrip("\n")
+    registry_root = Path(source_common_gitdir) / "worktrees"
+    registry_stat = registry_root.stat()
+    registry_identity = f"{registry_stat.st_dev}:{registry_stat.st_ino}:{registry_stat.st_uid}"
+    baseline_registry = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; clean_sibling_snapshot_worktree_registry "$2" "$3"',
+            "_",
+            str(helper),
+            str(registry_root),
+            registry_identity,
+        ],
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+
+    shutil.copytree(baseline_worktree, external_clone, symlinks=True)
+    (external_clone / ".git").unlink()
+    os.link(baseline_worktree / ".git", external_clone / ".git")
+    assert (baseline_worktree / ".git").stat(follow_symlinks=False).st_nlink == 2
+
+    cleanup_command = r"""
+set -u
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+WORKTREES_BEFORE="$5"
+SOURCE_STATUS_BEFORE="$6"
+SOURCE_COMMON_GITDIR="$7"
+WORKTREE_REGISTRY_ROOT="$8"
+WORKTREE_REGISTRY_ROOT_IDENTITY="$9"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="${10}"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+mkdir -m 700 -- "$TMP_ROOT"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
+WORKTREE="$TMP_ROOT/product"
+git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null 2>/dev/null
+WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
+IFS=: read -r WORKTREE_ADMIN_DEVICE WORKTREE_ADMIN_INODE WORKTREE_ADMIN_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR"
+)
+WORKTREE_ADMIN_GITDIR_IDENTITY="$WORKTREE_ADMIN_DEVICE:$WORKTREE_ADMIN_INODE:$WORKTREE_ADMIN_UID"
+WORKTREE_ADMIN_SENTINEL="$(printf '%064d' 6)"
+WORKTREE_ADMIN_SENTINEL_PATH="$WORKTREE_ADMIN_GITDIR/acgs-clean-sibling-owner"
+printf '%s\n' "$WORKTREE_ADMIN_SENTINEL" >"$WORKTREE_ADMIN_SENTINEL_PATH"
+chmod 0600 -- "$WORKTREE_ADMIN_SENTINEL_PATH"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+WORKTREE_ADDED=1
+PROOF_COMPLETE=1
+TRANSCRIPT_RECORDS=10
+ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
+NODE_ID=P0-EVIDENCE-000
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+printf '%s\n' "$$" >"$OWNER_MARKER"
+clean_sibling_cleanup 0
+exit $?
+"""
+    cleanup_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            cleanup_command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(cleanup_root),
+            worktrees_before,
+            status_before,
+            source_common_gitdir,
+            str(registry_root),
+            registry_identity,
+            baseline_registry,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert cleanup_result.returncode == 2
+    assert (
+        "cleanup refused because worktree registry gitdir target identity is unsafe"
+        in cleanup_result.stderr
+    )
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
+    assert external_clone.is_dir()
+    assert (external_clone / ".git").stat(follow_symlinks=False).st_nlink == 2
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(baseline_worktree)],
+        cwd=source_repo,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    shutil.rmtree(external_clone, ignore_errors=True)
+
+
 def test_clean_sibling_cleanup_retained_gitfile_refuses_replacement_after_move(
     tmp_path: Path,
 ) -> None:
