@@ -270,6 +270,121 @@ PY
   return "$rc"
 }
 
+clean_sibling_capture_retained_gitfile() {
+  local gitfile_fd="$1"
+  local gitfile_path="$2"
+  local snapshot_python="${SNAPSHOT_PYTHON:-/usr/bin/python3}"
+  local fd_target=''
+
+  [[ "$gitfile_fd" =~ ^[0-9]+$ ]] || return 2
+  [[ "$gitfile_path" == /* ]] || return 2
+  fd_target="$(/usr/bin/readlink "/proc/$$/fd/$gitfile_fd" 2>/dev/null || true)"
+  [[ "$fd_target" == "$gitfile_path" ]] || {
+    printf 'cleanup refused because retained worktree gitfile moved/replaced: %s\n' \
+      "$gitfile_path" >&2
+    return 2
+  }
+  "$snapshot_python" - "$gitfile_fd" "$gitfile_path" <<'PY'
+import base64
+import hashlib
+import os
+import stat
+import sys
+
+
+def fail(message: str) -> "None":
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+fd = int(sys.argv[1])
+path = sys.argv[2]
+try:
+    fd_stat = os.fstat(fd)
+    path_stat = os.stat(path, follow_symlinks=False)
+    if stat.S_ISLNK(path_stat.st_mode):
+        fail("cleanup refused because worktree gitfile path is a symlink")
+    if (fd_stat.st_dev, fd_stat.st_ino, fd_stat.st_uid) != (
+            path_stat.st_dev, path_stat.st_ino, path_stat.st_uid):
+        fail("cleanup refused because retained worktree gitfile path changed")
+    if not stat.S_ISREG(fd_stat.st_mode):
+        fail("cleanup refused because retained worktree gitfile is not a regular file")
+    if fd_stat.st_uid != os.getuid():
+        fail("cleanup refused because retained worktree gitfile owner changed")
+    if fd_stat.st_mode != path_stat.st_mode:
+        fail("cleanup refused because retained worktree gitfile mode changed")
+    if fd_stat.st_nlink != path_stat.st_nlink:
+        fail("cleanup refused because retained worktree gitfile link count changed")
+    if fd_stat.st_nlink != 1:
+        fail("cleanup refused because retained worktree gitfile link count changed")
+    if fd_stat.st_size > 4096:
+        fail("cleanup refused because retained worktree gitfile content is too large")
+    dup_fd = os.dup(fd)
+    try:
+        os.lseek(dup_fd, 0, os.SEEK_SET)
+        data = os.read(dup_fd, 4097)
+        if len(data) != fd_stat.st_size:
+            fail("cleanup refused because retained worktree gitfile content changed")
+        if os.read(dup_fd, 1):
+            fail("cleanup refused because retained worktree gitfile content is too large")
+    finally:
+        os.close(dup_fd)
+except OSError as exc:
+    fail(f"cleanup refused because retained worktree gitfile is unreadable: {exc}")
+print(":".join((
+    str(fd_stat.st_dev),
+    str(fd_stat.st_ino),
+    str(fd_stat.st_uid),
+    format(stat.S_IMODE(fd_stat.st_mode), "o"),
+    str(fd_stat.st_nlink),
+    str(fd_stat.st_size),
+    hashlib.sha256(data).hexdigest(),
+    base64.b64encode(data).decode("ascii"),
+)))
+PY
+}
+
+clean_sibling_validate_retained_gitfile() {
+  local gitfile_fd="$1"
+  local gitfile_path="$2"
+  local expected_identity="$3"
+  local expected_mode="$4"
+  local expected_links="$5"
+  local expected_size="$6"
+  local expected_sha256="$7"
+  local expected_b64="$8"
+  local current=''
+  local current_device=''
+  local current_inode=''
+  local current_uid=''
+  local current_identity=''
+  local current_mode=''
+  local current_links=''
+  local current_size=''
+  local current_sha256=''
+  local current_b64=''
+
+  [[ "$gitfile_fd" =~ ^[0-9]+$ ]] || return 2
+  [[ "$expected_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
+  [[ "$expected_mode" =~ ^[0-7]+$ && "$expected_links" =~ ^[0-9]+$ &&
+    "$expected_size" =~ ^[0-9]+$ && "$expected_sha256" =~ ^[0-9a-f]{64}$ ]] || return 2
+  current="$(clean_sibling_capture_retained_gitfile "$gitfile_fd" "$gitfile_path")" ||
+    return 2
+  IFS=: read -r current_device current_inode current_uid current_mode current_links \
+    current_size current_sha256 current_b64 <<<"$current"
+  current_identity="$current_device:$current_inode:$current_uid"
+  if [[ "$current_identity" != "$expected_identity" ||
+    "$current_mode" != "$expected_mode" ||
+    "$current_links" != "$expected_links" ||
+    "$current_size" != "$expected_size" ||
+    "$current_sha256" != "$expected_sha256" ||
+    "$current_b64" != "$expected_b64" ]]; then
+    printf 'cleanup refused because retained worktree gitfile identity or content changed: %s\n' \
+      "$gitfile_path" >&2
+    return 2
+  fi
+}
+
 clean_sibling_snapshot_direct_entries() {
   local root_fd="$1"
   local expected_identity="$2"
@@ -499,6 +614,18 @@ clean_sibling_cleanup() {
       clean_sibling_reject_control_path "$path_label" "$path_value" || return 2
     fi
   done
+  if [[ "${WORKTREE_GITFILE_RETENTION_REQUIRED:-0}" == 1 ||
+    -n "${WORKTREE_GITFILE_FD:-}" || -n "${WORKTREE_GITFILE_CONTENT_B64:-}" ]]; then
+    clean_sibling_validate_retained_gitfile \
+      "${WORKTREE_GITFILE_FD:-}" \
+      "$WORKTREE_GITFILE_PATH" \
+      "$WORKTREE_GITFILE_IDENTITY" \
+      "${WORKTREE_GITFILE_MODE:-}" \
+      "${WORKTREE_GITFILE_LINKS:-}" \
+      "${WORKTREE_GITFILE_SIZE:-}" \
+      "${WORKTREE_GITFILE_SHA256:-}" \
+      "${WORKTREE_GITFILE_CONTENT_B64:-}" || return 2
+  fi
 
   if [[ -n "$WORKTREE" ]]; then
     rm -rf --one-file-system -- \
@@ -702,6 +829,10 @@ clean_sibling_cleanup() {
       printf 'owned proof root reappeared during cleanup: %s\n' "$TMP_ROOT" >&2
       cleanup_status=2
     }
+  fi
+  if [[ -n "${WORKTREE_GITFILE_FD:-}" ]]; then
+    exec {WORKTREE_GITFILE_FD}<&- || cleanup_status=2
+    WORKTREE_GITFILE_FD=''
   fi
   local launcher_attested=0
   if [[ "${ACGS_STATIC_LAUNCHED:-}" == 1 ]] &&
