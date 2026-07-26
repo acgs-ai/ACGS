@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import sqlalchemy as sa
@@ -20,6 +21,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from acgs_control_plane.auth import Principal
+from acgs_control_plane.governance import mirror_managed_decision
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
     AesGcmReceiptArtifactSealer,
@@ -54,6 +56,9 @@ from acgs_control_plane.trust import (
 AGENT_REGISTRATION_AUTHORITY = "control-plane.agent-registration/v1"
 AGENT_REGISTRATION_VALIDATOR_ROLE = "control-plane.agent-policy/v1"
 AGENT_REGISTRATION_GOAL = "register managed agent in org registry"
+# The action name this route used before it became a managed mutation. Policy
+# bundles published against it must keep denying; see _evaluate_agent_policy.
+LEGACY_AGENT_REGISTER_ACTION = "agent.register"
 _GENESIS_AUDIT_HASH = "0" * 64
 _LOCAL_AGENT_SIGNER_SEED = bytes.fromhex(
     "55df9db52ff7b9635dd2bbf66fbcb3fb3f70d6071359449f0d9f8ad1a3e8a9c4"
@@ -68,6 +73,13 @@ class AgentRegistrationHttpError(RuntimeError):
     status: str
     detail: str
     stage: str = "policy"
+    # Set only when the refusal is a policy decision about an authenticated
+    # principal and its refusal receipt is already committed. Admission,
+    # scope, trust, and transaction errors leave these None: they cite no
+    # receipt, and several are deliberately redacted. The response handler
+    # keys the envelope off these, not off the status code.
+    receipt_id: str | None = None
+    decision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +202,7 @@ class AgentRegistrationService:
         *,
         org_id: str,
         principal: Principal,
+        audit_dir: Path,
         body: AgentRegisterRequest,
         idempotency_key: str | None = None,
     ) -> AgentRegistrationResult:
@@ -308,6 +321,16 @@ class AgentRegistrationService:
                 if existing is not None:
                     _assert_same_idempotency_request(existing, idempotency_record)
                     raise _CommittedAgentRegistrationIdempotencyRace()
+                # Mirror last: both steps above can still abort this transaction,
+                # and a refusal that never becomes final must leave nothing on the
+                # org's evidence surface or its audit chain.
+                mirror_managed_decision(
+                    tx_session,
+                    org_id=context.org_id,
+                    audit_dir=audit_dir,
+                    record=decision_record,
+                    tool=LEGACY_AGENT_REGISTER_ACTION,
+                )
 
             def after_record(
                 session: Session,
@@ -406,7 +429,27 @@ class AgentRegistrationService:
                     "agent registration refusal evidence transaction aborted",
                     stage="tx",
                 ) from exc
-            raise _terminal_http_error_for_decision(decision_record)
+            # The refusal receipt is committed above, so cite it. Dropping it
+            # here would make the refusal path the one place this API produces
+            # no citable evidence, which is backwards for a receipt-gated
+            # control plane. Envelope matches the pre-managed v0 contract.
+            if decision_record.decision is Decision.DENY:
+                raise AgentRegistrationHttpError(
+                    403,
+                    "POLICY_DENIED",
+                    "denied",
+                    decision_record.reason or "agent registration denied by policy",
+                    receipt_id=receipt.receipt_id,
+                    decision=receipt.decision,
+                )
+            raise AgentRegistrationHttpError(
+                202,
+                "ESCALATE_PENDING",
+                "pending_approval",
+                decision_record.reason or "agent registration requires approval",
+                receipt_id=receipt.receipt_id,
+                decision=receipt.decision,
+            )
 
         if decision_record.decision is not Decision.ALLOW:
             raise AgentRegistrationHttpError(
@@ -466,6 +509,14 @@ class AgentRegistrationService:
             agent = session.get(AgentRecord, result.result["agent_id"])
             if agent is None:
                 raise RuntimeError("managed agent registration committed without agent row")
+            mirror_managed_decision(
+                session,
+                org_id=org_id,
+                audit_dir=audit_dir,
+                record=decision_record,
+                result_hash=result.result_hash,
+                tool=LEGACY_AGENT_REGISTER_ACTION,
+            )
             response = AgentRegistrationResult(
                 agent_id=agent.id,
                 org_id=agent.org_id,
@@ -1057,17 +1108,38 @@ def _normalized_agent_args(body: AgentRegisterRequest) -> dict[str, Any]:
     }
 
 
-def _evaluate_agent_policy(policy: Any, *, args: Mapping[str, Any], actor: str) -> DecisionRecord:
-    return policy.evaluate(
-        ToolCall(
-            name=CONTROL_PLANE_AGENT_CREATE_ACTION,
-            args=dict(args),
-            actor=actor,
-            goal=AGENT_REGISTRATION_GOAL,
-            path=normalize_path_context(["control-plane", "agents"]),
-            state={"trust_tier": args.get("trust_tier", "")},
-        )
+def _agent_policy_tool_call(name: str, *, args: Mapping[str, Any], actor: str) -> ToolCall:
+    return ToolCall(
+        name=name,
+        args=dict(args),
+        actor=actor,
+        goal=AGENT_REGISTRATION_GOAL,
+        path=normalize_path_context(["control-plane", "agents"]),
+        state={"trust_tier": args.get("trust_tier", "")},
     )
+
+
+def _evaluate_agent_policy(policy: Any, *, args: Mapping[str, Any], actor: str) -> DecisionRecord:
+    """Decide agent creation under both the managed and the legacy action name.
+
+    Governing this route renamed the action from ``agent.register`` to
+    ``control-plane.agent.create``. Policy bundles an org already published name
+    the old action, so evaluating only the new name would silently stop
+    enforcing them -- an existing DENY would start returning 201. Both names are
+    evaluated and the restrictive outcome wins, so the rename can only ever
+    keep a refusal, never manufacture an approval.
+    """
+    managed = policy.evaluate(
+        _agent_policy_tool_call(CONTROL_PLANE_AGENT_CREATE_ACTION, args=args, actor=actor)
+    )
+    if managed.decision is not Decision.ALLOW:
+        return managed
+    legacy = policy.evaluate(
+        _agent_policy_tool_call(LEGACY_AGENT_REGISTER_ACTION, args=args, actor=actor)
+    )
+    if legacy.decision is not Decision.ALLOW:
+        return legacy
+    return managed
 
 
 def _revalidate_active_policy_under_lock(

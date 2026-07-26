@@ -26,7 +26,7 @@ import os
 import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -99,6 +99,7 @@ _LEGACY_WRITES = (
 ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
     RouteContract("GET", "/healthz", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract("GET", "/readyz", ExecutionClass.PROTOCOL_OPERATION),
+    RouteContract("GET", "/v1", ExecutionClass.PROTOCOL_OPERATION),
     RouteContract(
         "POST",
         "/v1/tenant-bootstrap",
@@ -117,9 +118,26 @@ ROUTE_CONTRACTS: tuple[RouteContract, ...] = (
         False,
         False,
     ),
+    # The /v1 alias is served for every org route, so agent creation needs the
+    # same governed contract under both prefixes. Classifying only the unversioned
+    # path would leave the alias unclassified, which the registry refuses.
+    RouteContract(
+        "POST",
+        "/v1/orgs/{org_id}/agents",
+        ExecutionClass.CANONICAL_MANAGED_WRITE,
+        CONTROL_PLANE_AGENT_CREATE_ACTION,
+        True,
+        False,
+        False,
+    ),
     *(RouteContract(m, p, ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
+    *(RouteContract(m, f"/v1{p}", ExecutionClass.READ_ONLY_OPERATION) for m, p in _READ_PATHS),
     *(
         RouteContract(m, p, ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
+        for m, p, a in _LEGACY_WRITES
+    ),
+    *(
+        RouteContract(m, f"/v1{p}", ExecutionClass.LEGACY_UNSIGNED_WRITE, a, True, True)
         for m, p, a in _LEGACY_WRITES
     ),
 )
@@ -218,7 +236,13 @@ def production_blockers(
         if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
     blockers.extend(legacy)
-    required = ("durable-consumption-uow", "migration-head", "signer-issuer", "trust-verifier")
+    required = (
+        "cursor-aead-keyring",
+        "durable-consumption-uow",
+        "migration-head",
+        "signer-issuer",
+        "trust-verifier",
+    )
     blockers.extend(PostureBlocker("PROVIDER_PREFLIGHT_SKIPPED", c) for c in required)
     return tuple(sorted(blockers))
 
@@ -730,6 +754,50 @@ def _anchor(session: Session, org_id: str, store: ChainHashAuditStore) -> None:
     if org is not None and count >= org.audit_anchor_count:
         org.audit_anchor_count = count
         org.audit_anchor_hash = last
+
+
+def mirror_managed_decision(
+    session: Session,
+    *,
+    org_id: str,
+    audit_dir: Path,
+    record: DecisionRecord,
+    result_hash: str | None = None,
+    tool: str | None = None,
+) -> ReceiptRow:
+    """Project one managed decision onto the org's legacy evidence surface.
+
+    A managed mutation keeps its own authoritative receipt lineage, but the
+    org's queryable ``receipts`` table and audit-chain anchor are what the
+    receipt explorer, the dashboard, and the compliance export actually read.
+    Without this projection an agent registration -- and, worse, a refusal --
+    leaves no trace on the surface a compliance review inspects.
+
+    The anchor is advanced from the chain tip *after* the append, never set
+    independently of it, so ``verify_chain`` keeps agreeing with the file.
+
+    Call inside the managed mutation's own transaction: the mirror must
+    commit with the decision or not at all.
+
+    ``tool`` records the projection under the name v0 consumers already know,
+    when a managed action renamed the one this route used to publish. The
+    managed lineage keeps the new name; only this legacy view is renamed, so
+    saved queries and exports filtering on the old tool keep matching.
+    """
+    store = org_audit_store(audit_dir, org_id)
+    if tool is not None and tool != record.tool:
+        record = replace(record, tool=tool)
+    event = dict(store.append(record))
+    payload = {
+        **event,
+        "audit_hash": str(event.get("event_hash", "")),
+        "result_hash": result_hash,
+        "error_class": None,
+    }
+    row = _receipt_row_from_payload(org_id, payload)
+    session.add(row)
+    _anchor(session, org_id, store)
+    return row
 
 
 class GovernanceMembrane:

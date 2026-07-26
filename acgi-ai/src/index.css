@@ -154,6 +154,105 @@
 }
 
 /* =========================================================================
+ * Editorial-dark register (DESIGN.md §2.7). The marketing surface register:
+ * neutral near-black ground, achromatic greys, crimson demoted to a signal
+ * mark. Same mechanism as the control-plane register below — override only the
+ * --gz-* aliases and remap the base tokens onto them, so every `.marketing`
+ * rule flips dark with no per-rule change.
+ *
+ * Applied via the `.marketing` wrapper (Marketing, Trust, Security, Privacy,
+ * EvalMvp, NotFound) so the whole editorial surface shares one register; the
+ * attribute selector is the explicit opt-in hook for anything not wrapped.
+ *
+ * Declared BEFORE [data-theme="control-plane"] on purpose: the two selectors
+ * have equal specificity, so source order decides when one element carries
+ * both, and a nested control-plane subtree must win.
+ *
+ * Contrast (measured against --gz-bg #080808 / --gz-surface #111111):
+ *   --gz-fg      #ffffff  20.03 / 18.88
+ *   --gz-fg-2    #a6a6a6   8.23 /  7.76
+ *   --gz-fg-3    #7d7d7d   4.87 /  4.59  (AA floor for the muted register)
+ *   --gz-brand   #e5484d   5.12 /  4.82
+ *   --gz-brand-2 #f0666a   6.50 /  6.13
+ * ========================================================================= */
+.marketing,
+[data-theme="editorial-dark"] {
+  --gz-bg: #080808; /* neutral near-black — no warm or cool tint */
+  --gz-surface: #111111; /* card */
+  --gz-surface-2: #0d0d0d; /* recessed panel */
+  --gz-surface-3: #1a1a1a; /* hover / selected */
+  --gz-line: #1f1f1f; /* hairline border */
+  --gz-line-strong: #2e2e2e; /* strong rule */
+  --gz-fg: #ffffff; /* primary text */
+  --gz-fg-2: #a6a6a6; /* secondary text */
+  --gz-fg-3: #7d7d7d; /* muted / mono labels — AA floor, do not darken */
+  --gz-brand: #e5484d; /* crimson lifted for legibility on near-black */
+  --gz-brand-2: #f0666a;
+
+  /* status — the light-register values measure 3.13:1–4.13:1 on #080808 and
+   * all fail AA, so this register carries the same bright tuning as
+   * control-plane below. */
+  --allow: #3fb950;
+  --deny: #f85149;
+  --review: #e3b341;
+  --transform: #58a6ff;
+  --roadmap: #a371f7;
+  --unverified: #8b949e;
+  --deprecated: #b08c87;
+  --verified: var(--allow);
+  --partial: var(--review);
+  --danger: var(--deny); /* re-resolve against this register's brighter --deny */
+
+  /* Base-token remap — same contract as control-plane: `.marketing` rules use
+   * only these aliases and carry no hardcoded hex. */
+  --paper: var(--gz-bg);
+  --paper-2: var(--gz-surface);
+  --paper-3: var(--gz-surface-2);
+  --card: var(--gz-surface);
+  --ink: var(--gz-fg);
+  --ink-2: var(--gz-fg-2);
+  --ink-3: var(--gz-fg-2);
+  --muted: var(--gz-fg-3);
+  --muted-2: var(--gz-fg-3);
+  --line: var(--gz-line-strong);
+  --line-soft: var(--gz-line);
+  --line-softer: var(--gz-line);
+  --accent: var(--gz-brand);
+  --accent-2: var(--gz-brand-2);
+  --accent-soft: color-mix(in srgb, var(--gz-brand) 18%, transparent);
+  --rust: var(--accent); /* re-resolve per register (see control-plane below) */
+
+  /* DELIBERATE DEVIATION from the :root note that --accent-on "stays light in
+   * BOTH registers". That holds while the accent is dark enough for light text.
+   * This register lifts the crimson to #e5484d for AA as *text* on near-black,
+   * and white on that fill measures 3.91:1 — below AA. Near-black on it
+   * measures 5.06:1. So the fill flips to dark ink HERE ONLY; the override is
+   * scoped, and :root keeps light --accent-on for console and /ask. */
+  --accent-on: #0a0a0a;
+
+  /* gold seal on near-black — the light-register values measure 2.8:1 / 2.9:1
+   * here. Matches the control-plane treatment: one dark-safe gold (8.74:1). */
+  --gold: #c9a75c;
+  --gold-ink: #dcc07f;
+
+  /* Risk pills follow the bright status tuning above. */
+  --risk-lo: var(--allow);
+  --risk-mid: var(--review);
+  --risk-hi: var(--deny);
+
+  /* --boundary* is intentionally NOT remapped, same as control-plane: the
+   * parchment privilege strip stays a warm structural marker on dark
+   * (DESIGN.md §4.3). Its ink measures 7.97:1 on the parchment. */
+
+  /* Softer corner radii for this register. Overriding the tokens rather than
+   * the ~134 call sites means every card, panel, input, and code block adapts
+   * with no per-rule change. The pill value is unchanged. */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+/* =========================================================================
  * Control-plane dark register (DESIGN.md §2.6). Apply
  * data-theme="control-plane" to a subtree (console shell, product surface) to
  * flip --gz-* surfaces dark and brighten status. The editorial landing stays

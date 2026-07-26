@@ -43,8 +43,21 @@ the server-owned default project/environment scope from Alembic revision `0006`,
 mints a signed receipt-v2 `DecisionReceipt` before execution, verifies it through
 `execute_with_receipt`, consumes ALLOW receipts once, records DENY/ESCALATE as
 non-executable evidence, and rejects stale policy, trust, binding mismatch, and
-replay cases before the forbidden agent row can be inserted. The general receipt
-explorer and export bundle still target the legacy receipt table; managed
+replay cases before the forbidden agent row can be inserted.
+
+The general receipt explorer and export bundle read the legacy `receipts` table
+only. So that a managed agent decision is not invisible to auditors, each one is
+mirrored onto that table inside its own transaction: the decision is appended to
+the org chain, the row is inserted, and the anchor is advanced from the resulting
+chain tip. The mirror is recorded under the pre-rename tool name `agent.register`
+— the name saved explorer queries and exports already filter on — while the
+managed lineage keeps `control-plane.agent.create`, so the two lineages name the
+same decision differently by design. A refusal that never becomes final leaves no
+trace, because the mirror commits with the decision or not at all.
+
+This mirror covers `POST /orgs/{org}/agents` only. Other managed mutations —
+`tenant.bootstrap` — still write `ManagedDecisionReceipt` with no legacy
+projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 Agent registration idempotency is part of Alembic revision `0007`, the current
@@ -86,6 +99,7 @@ export ACP_DATABASE_URL="postgresql+psycopg://acgs:acgs@localhost:5432/acgs_cont
 export ACP_AUDIT_DIR="/var/lib/acgs/audit"
 export ACP_BOOTSTRAP_TOKEN="<one-time provisioning secret>"   # unset ⇒ org creation disabled (fail closed)
 export ACP_CREATE_TABLES=1
+export ACP_MAX_REQUEST_BODY_BYTES=1048576                     # optional; default 1 MiB, max 16 MiB
 uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:create_app
 ```
 
@@ -105,6 +119,49 @@ curl -s -X POST localhost:8000/orgs \
 ```
 
 All other endpoints authenticate with `X-API-Key` (SHA-256 stored, never the raw key).
+
+## Request admission and error contract
+
+G102 request admission is partially implemented for the existing v0 route set only; it does not add
+`/v1` aliases, idempotency, async jobs, or new database schema.
+
+- The server ignores inbound `X-Request-ID`, generates a bounded `req_<32 lowercase hex>` request
+  ID for every HTTP request, and returns it in the `X-Request-ID` response header. Redacted error
+  envelopes include the same `request_id`.
+- `ACP_MAX_REQUEST_BODY_BYTES` caps request bodies before FastAPI body parsing or route invocation.
+  The default is `1048576` bytes. Valid values are decimal integers from `1` through `16777216`;
+  invalid environment values fail loudly with a stable configuration error that does not echo the
+  raw environment value.
+- Declared `Content-Length` values above the configured limit are rejected without reading the body.
+  Missing `Content-Length` is handled by bounded pre-read of the incoming stream: the middleware
+  buffers only up to the configured limit, rejects overflow before route execution, then replays the
+  admitted request downstream. Malformed or multiple `Content-Length` headers are rejected without
+  echoing the header value.
+- Request admission failures return stable JSON such as
+  `{"code":"request_body_too_large","status":"error","request_id":"req_..."}` with HTTP 413.
+  Malformed JSON returns a redacted 400 envelope. Validation and ordinary HTTP exceptions use
+  stable redacted 4xx/5xx envelopes; rejected input, exception strings, credentials, and policy
+  bundle contents are not echoed by those handlers.
+- Governance DENY and ESCALATE responses preserve their existing receipt fields and add the
+  server-generated `request_id`. `AuditReadError` preserves its existing body shape; the response
+  header still carries the server-generated request ID.
+
+### Receipt cursor pagination
+
+`GET /orgs/{org_id}/receipts` preserves the legacy `limit`/`offset` response fields and offset
+pagination behavior. It also returns an additive `next_cursor` for the first page when more
+receipt rows are available. Passing `cursor=<next_cursor>` switches that request to receipt-only
+keyset pagination ordered by `created_at DESC, id DESC`; `cursor` cannot be combined with a
+non-zero `offset`.
+
+Cursors are opaque AES-256-GCM tokens scoped to the organization, receipt resource, fixed sort
+order, normalized filter digest, boundary timestamp/id, key id, issue time, and expiry. Cursor
+errors return a generic redacted `invalid_cursor` envelope with `Cache-Control: private, no-store`;
+the token and filters are never echoed. Local development without `ACP_CURSOR_KEY_ID` and
+`ACP_CURSOR_KEY` uses a per-app ephemeral key, so cursors are not portable across process restarts.
+Configured deployments must set both variables, where `ACP_CURSOR_KEY` is a base64-encoded 32-byte
+key. Production posture still refuses startup before persistence because the provider preflight
+contains a `cursor-aead-keyring` blocker alongside the existing legacy governance blockers.
 
 ## Verify
 
