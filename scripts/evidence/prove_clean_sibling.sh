@@ -178,6 +178,7 @@ P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'
 P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'
 P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'
 P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'
+P3_MUTATIONS_REVIEWED_BASE='014fe1806600d52d55f06875a8c30c0b8a5b973b'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -262,6 +263,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=0
     EXPECTED_TRANSCRIPT_RECORDS=7
     TMP_BASENAME='acgs-p3-policy'
+    ;;
+  P3-MUTATIONS-002)
+    [[ "$P" == "$P3_MUTATIONS_REVIEWED_BASE" ]] ||
+      die "P3-MUTATIONS-002 reviewed parent must be exact $P3_MUTATIONS_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP'
+    INCLUDE_GZ=0
+    EXPECTED_TRANSCRIPT_RECORDS=7
+    TMP_BASENAME='acgs-p3-mutations'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -594,6 +603,8 @@ elif [[ "$NODE_ID" == P2-VERTICAL-GATE-003 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-vertical-bootstrap-register"]'
 elif [[ "$NODE_ID" == P3-POLICY-001 ]]; then
   export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-policy-registry-lifecycle"]'
+elif [[ "$NODE_ID" == P3-MUTATIONS-002 ]]; then
+  export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-pg6-mutation-inventory-drift"]'
 fi
 unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT
@@ -1344,7 +1355,7 @@ node_cwd_scope() {
   case "$NODE_ID" in
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
     P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002 | \
-      P2-VERTICAL-GATE-003 | P3-POLICY-001)
+      P2-VERTICAL-GATE-003 | P3-POLICY-001 | P3-MUTATIONS-002)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -1563,6 +1574,21 @@ elif [[ "$NODE_ID" == P3-POLICY-001 ]]; then
   run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-policy-cross-plane \
     'root:P3-POLICY-001-cross-plane-contract' REPO_ROOT 1 \
     "${P3_POLICY_ROOT_GATE[@]}"
+elif [[ "$NODE_ID" == P3-MUTATIONS-002 ]]; then
+  P3_MUTATIONS_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_mutation_inventory_postgres.py::test_pg_agent_register_commits_one_sql_atomic_managed_mutation \
+    tests/integration/test_mutation_inventory_postgres.py::test_pg_route_app_drift_refuses_before_replacement_and_preserves_sql_counts \
+    tests/integration/test_mutation_inventory_postgres.py::test_pg_service_binding_drift_preserves_sql_counts_and_legacy_blockers \
+    tests/integration/test_mutation_inventory_postgres.py::test_pg_legacy_regex_precedence_drift_preserves_sql_counts_before_bootstrap)
+  run_trusted_parent_postgres_gate CP \
+    "$WORKTREE/packages/acgs-control-plane" p3-mutations-postgres \
+    'packages/acgs-control-plane:P3-MUTATIONS-002-postgres-mutation-inventory-gate' CP \
+    "${P3_MUTATIONS_CP_GATE[@]}"
+  P3_MUTATIONS_ROOT_GATE=(packages/acgs-control-plane/.venv/bin/python -m pytest -q \
+    tests/saas_beta/test_cross_plane_contracts.py::test_mutation_inventory_contract_locks_registry_and_actual_routing)
+  run_recorded_exact_pytest_gate P3 "$WORKTREE" p3-mutations-cross-plane \
+    'root:P3-MUTATIONS-002-cross-plane-contract' REPO_ROOT 1 \
+    "${P3_MUTATIONS_ROOT_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

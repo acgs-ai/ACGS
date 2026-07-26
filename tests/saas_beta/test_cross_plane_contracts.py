@@ -18,7 +18,14 @@ from acgs_control_plane.managed_mutations import (
     TENANT_BOOTSTRAP_EXECUTION_BOUNDARY,
     ManagedMutationUnitOfWork,
 )
+from acgs_control_plane.mutation_inventory import (
+    CANONICAL_MUTATION_DEFINITIONS,
+    MutationEffectClass,
+    MutationGuardedFastAPI,
+    verify_static_sql_atomic_safety,
+)
 from acgs_control_plane.policy_registry import PolicyRegistryService
+from acgs_control_plane.rbac import Permission
 from acgs_control_plane.tenant_bootstrap import (
     BOOTSTRAP_AUTHORIZATION_HEADER,
     BOOTSTRAP_IDEMPOTENCY_HEADER,
@@ -327,3 +334,76 @@ def test_policy_registry_contract_locks_managed_routes_negative_oracles_and_loca
         for method, path in legacy_unsigned_writes
         for prefix in ("", "/v1")
     }
+
+
+def test_mutation_inventory_contract_locks_registry_and_actual_routing(tmp_path) -> None:
+    definitions = {
+        definition.operation_id: definition for definition in CANONICAL_MUTATION_DEFINITIONS
+    }
+    assert set(definitions) == {
+        "tenant-bootstrap.create",
+        "agent.register",
+        "agent.register.v1",
+        "environment-policy.publish",
+        "environment-policy.publish.v1",
+        "environment-policy.activate",
+        "environment-policy.activate.v1",
+    }
+    assert all(
+        definition.effect_class is MutationEffectClass.SQL_ATOMIC
+        for definition in definitions.values()
+    )
+    assert not any(
+        definition.effect_class
+        in {MutationEffectClass.DURABLE_JOB_ENQUEUE, MutationEffectClass.EXTERNAL_ATTEMPT}
+        for definition in definitions.values()
+    )
+    assert verify_static_sql_atomic_safety(CANONICAL_MUTATION_DEFINITIONS) == ()
+    assert definitions["agent.register"].action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    assert definitions["agent.register"].permission == Permission.AGENT_REGISTER.value
+    assert definitions["environment-policy.publish"].action == CONTROL_PLANE_POLICY_PUBLISH_ACTION
+    assert definitions["environment-policy.activate"].action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION
+    assert definitions["tenant-bootstrap.create"].action == TENANT_BOOTSTRAP_ACTION
+
+    app = create_app(
+        Settings(
+            database_url="sqlite:///:memory:",
+            audit_dir=tmp_path / "audit",
+            create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    assert isinstance(app, MutationGuardedFastAPI)
+    assert set(app.state.mutation_inventory_seal.definitions) == set(definitions)
+    assert set(app.state.mutation_inventory_seal.route_hashes) == set(definitions)
+    assert len(app.state.mutation_inventory_seal.surface_hash) == 64
+
+    active_http_routes = {
+        (method, route.path): route
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.methods
+        for method in route.methods
+        if method != "HEAD"
+    }
+    for definition in definitions.values():
+        route = active_http_routes[(definition.method, definition.path)]
+        source = inspect.getsource(route.endpoint)
+        assert f"request.app.state.{definition.state_key}" in source
+        assert f"service.{definition.service_method}(" in source
+        assert definition.operation_id in app.state.mutation_inventory_seal.route_hashes
+
+    assert _common.P3_MUTATIONS_CP_SELECTORS == (
+        "tests/integration/test_mutation_inventory_postgres.py::"
+        "test_pg_agent_register_commits_one_sql_atomic_managed_mutation",
+        "tests/integration/test_mutation_inventory_postgres.py::"
+        "test_pg_route_app_drift_refuses_before_replacement_and_preserves_sql_counts",
+        "tests/integration/test_mutation_inventory_postgres.py::"
+        "test_pg_service_binding_drift_preserves_sql_counts_and_legacy_blockers",
+        "tests/integration/test_mutation_inventory_postgres.py::"
+        "test_pg_legacy_regex_precedence_drift_preserves_sql_counts_before_bootstrap",
+    )
+    assert _common.P3_MUTATIONS_ROOT_SELECTORS == (
+        "tests/saas_beta/test_cross_plane_contracts.py::"
+        "test_mutation_inventory_contract_locks_registry_and_actual_routing",
+    )
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P3-MUTATIONS-002"] == "EVID+CP"
