@@ -56,6 +56,21 @@ P2_REGISTER_PRODUCT_CP_SELECTORS = (
     "tests/test_agent_registration_managed_route.py::"
     "test_agent_register_route_scope_and_policy_are_server_owned",
 )
+P2_IDEMPOTENCY_PRODUCT_CP_SELECTORS = (
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_identical_key_and_canonical_request_converges_to_one_terminal_result",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_same_key_different_canonical_request_conflicts_without_additional_side_effects",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_exact_receipt_replay_is_typed_and_nonduplicating",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_100_request_multiprocess_has_at_most_one_authorized_execution",
+)
+P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
+    "tests/integration/test_production_posture.py",
+    "tests/test_agent_registration_managed_route.py",
+    "tests/test_governed_mutations.py",
+)
 
 
 def _evidence_env(evidence_root: Path) -> dict[str, str]:
@@ -224,6 +239,20 @@ def _reviewed_p2_register_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p2_idempotency_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P2-IDEMPOTENCY-002"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -275,6 +304,15 @@ def _write_reviewed_p2_register_transcript(path: Path) -> None:
             path,
             record,
             expected_node="P2-REGISTER-001",
+        )
+
+
+def _write_reviewed_p2_idempotency_transcript(path: Path) -> None:
+    for record in _reviewed_p2_idempotency_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P2-IDEMPOTENCY-002",
         )
 
 
@@ -3201,11 +3239,325 @@ def test_p2_register_run_validation_rejects_forged_corpus_metadata_before_output
             _common.validate_secret_free_run(forged, expected_node="P2-REGISTER-001")
 
 
+def test_p2_idempotency_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p2_idempotency_records()
+    assert len(records) == 6
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+    ]
+    assert records[-1]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *_common.P2_IDEMPOTENCY_CP_SELECTORS,
+    ]
+    assert records[-1]["selectors"] == [
+        "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate"
+    ]
+    assert _common.P2_IDEMPOTENCY_CP_SELECTORS == P2_IDEMPOTENCY_PRODUCT_CP_SELECTORS
+    assert all(
+        selector.startswith("tests/integration/test_agent_registration_idempotency_postgres.py::")
+        for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS
+    )
+    assert any("100_request_multiprocess" in selector for selector in records[-1]["argv"])
+    for retired_pattern in P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS:
+        assert not any(
+            retired_pattern in selector for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS
+        )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P2-IDEMPOTENCY-002/transcript.jsonl"
+    _write_reviewed_p2_idempotency_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P2-IDEMPOTENCY-002")
+    _common.validate_transcript_sequence(loaded, expected_node="P2-IDEMPOTENCY-002")
+
+    register_cp_final = _reviewed_p2_register_records()[-2]
+    tenant_cp_final = _reviewed_p2_tenant_bootstrap_records()[-2]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}],
+        [*records[:5], {**records[-1], "argv": [*records[-1]["argv"], "-k", "idempotency"]}],
+        [
+            *records[:5],
+            {
+                **records[-1],
+                "argv": [
+                    records[-1]["argv"][0],
+                    *reversed(_common.P2_IDEMPOTENCY_CP_SELECTORS),
+                ],
+            },
+        ],
+        [
+            *records[:5],
+            {
+                **records[-1],
+                "argv": [
+                    records[-1]["argv"][0],
+                    "tests/integration/test_agent_registration_idempotency_postgres.py",
+                ],
+            },
+        ],
+        [*records[:5], {**records[-1], "argv": records[-1]["argv"][:2]}],
+        [*records[:5], {**records[-1], "selectors": ["packages/acgs-control-plane:local-gate"]}],
+        [*records[:5], {**register_cp_final, "cwd_scope": "CP"}],
+        [*records[:5], {**tenant_cp_final, "cwd_scope": "CP"}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P2-IDEMPOTENCY-002")
+
+    forged_transcript = tmp_path / "P2-IDEMPOTENCY-002/forged-transcript.jsonl"
+    forged_transcript.parent.mkdir(parents=True, exist_ok=True)
+    for record in [*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}]:
+        with forged_transcript.open("ab") as handle:
+            handle.write(_common.jcs_bytes(record) + b"\n")
+    with pytest.raises(_common.EvidenceError, match="cwd differs"):
+        generate_run._read_transcript(forged_transcript, expected_node="P2-IDEMPOTENCY-002")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {**register_cp_final, "cwd_scope": "CP"},
+            expected_node="P2-IDEMPOTENCY-002",
+        )
+
+
+def test_p2_idempotency_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    reviewed_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-100-request-multiprocess-agent-registration-idempotency",
+    ]
+
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P2-IDEMPOTENCY-002",
+            "commands": _reviewed_p2_idempotency_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": reviewed_schedule,
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P2-IDEMPOTENCY-002")
+
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(
+            run_with(node_id="P2-REGISTER-001"),
+            expected_node="P2-IDEMPOTENCY-002",
+        )
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {
+            "seed": 20260710,
+            "python_hash_seed": "0",
+            "process_schedule": [*reversed(reviewed_schedule)],
+        },
+    ):
+        with pytest.raises(_common.EvidenceError, match=r"run .*differs|outside the reviewed"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P2-IDEMPOTENCY-002",
+            )
+
+    records = _reviewed_p2_idempotency_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:5], {**records[-1], "cwd_scope": "REPO_ROOT"}]),
+        run_with(
+            commands=[
+                *records[:5],
+                {
+                    **records[-1],
+                    "argv": [
+                        "bash",
+                        "-c",
+                        "./scripts/run_postgres_gate.sh "
+                        "tests/integration/test_agent_registration_idempotency_postgres.py",
+                    ],
+                },
+            ]
+        ),
+        run_with(commands=[*records[:5], {**records[-1], "argv": records[-1]["argv"][:2]}]),
+        run_with(skipped=[{"reason": "future product not implemented yet"}]),
+        run_with(external=[{"system": "postgres"}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P2-IDEMPOTENCY-002")
+
+
 def _shell_function(source: str, name: str) -> str:
     start_marker = f"\n{name}() {{\n"
     start = source.index(start_marker) + 1
     end = source.index("\n}\n\n", start) + 3
     return source[start:end]
+
+
+def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    wrapper = _shell_function(source, "run_recorded_gate")
+    idempotency_source = source.split('elif [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]', 1)[1]
+    idempotency_source = idempotency_source.split("else", 1)[0]
+    assert "run_recorded_gate CP" in idempotency_source
+    assert "run_recorded_exact_pytest_gate CP" not in idempotency_source
+    assert "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP" in (
+        idempotency_source
+    )
+    assert "./scripts/run_postgres_gate.sh" in idempotency_source
+    assert "PYTEST_ADDOPTS" not in idempotency_source
+    assert "--junitxml" not in " ".join(_reviewed_p2_idempotency_records()[-1]["argv"])
+
+    fake_postgres_gate = tmp_path / "run_postgres_gate.sh"
+    fake_postgres_gate.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        'if [[ -n "${PYTEST_ADDOPTS:-}" ]]; then\n'
+        "  echo 'outer PYTEST_ADDOPTS rejected' >&2\n"
+        "  exit 64\n"
+        "fi\n"
+        "printf 'wrapper-owned JUnit totals verified\\n'\n",
+        encoding="utf-8",
+    )
+    fake_postgres_gate.chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    selector_args = " ".join(
+        json.dumps(selector) for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS
+    )
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
+        f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        'mkdir -p "$NODE_EVIDENCE"\n'
+        'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        f"{wrapper}\n"
+        'run_recorded_gate CP "$PWD" p2-idempotency-postgres '
+        "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "
+        f"{json.dumps(str(fake_postgres_gate))} {selector_args}\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    env = _evidence_env(tmp_path / "evidence")
+    result = subprocess.run(
+        [str(harness)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    appended = (tmp_path / "append-marker").read_text(encoding="utf-8")
+    assert "--junitxml" not in appended
+    assert "PYTEST_ADDOPTS" not in appended
+    for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS:
+        assert selector in appended
+
+
+def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path: Path) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    validator = _shell_function(source, "validate_exact_pytest_junit")
+    wrapper = _shell_function(source, "run_recorded_exact_pytest_gate")
+    assert "raw = suite.attrib[name]" in validator
+    assert "raw.isdecimal()" in validator
+    assert "missing-junit-" in validator
+    assert "empty-junit-suites" in validator
+    assert wrapper.index("validate_exact_pytest_junit") < wrapper.index("append_record")
+    assert "append_record" not in wrapper.split("validate_exact_pytest_junit", 1)[0]
+
+    fake_pytest = tmp_path / "fake-pytest"
+    fake_pytest.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "junit=${PYTEST_ADDOPTS#--junitxml=}\n"
+        'printf \'%s\' "$JUNIT_PAYLOAD" >"$junit"\n',
+        encoding="utf-8",
+    )
+    fake_pytest.chmod(0o755)
+    harness = tmp_path / "harness.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
+        f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+        'mkdir -p "$NODE_EVIDENCE"\n'
+        'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        f"{validator}\n"
+        f"{wrapper}\n"
+        'run_recorded_exact_pytest_gate CP "$PWD" exact-junit '
+        "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP 4 "
+        f"{json.dumps(str(fake_pytest))} "
+        f"{' '.join(json.dumps(selector) for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS)}\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+
+    def run_case(payload: str) -> subprocess.CompletedProcess[str]:
+        marker = tmp_path / "append-marker"
+        if marker.exists():
+            marker.unlink()
+        env = _evidence_env(tmp_path / "evidence")
+        env["JUNIT_PAYLOAD"] = payload
+        return subprocess.run(
+            [str(harness)],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    exact = run_case('<testsuite tests="4" failures="0" errors="0" skipped="0"/>')
+    assert exact.returncode == 0, (exact.stdout, exact.stderr)
+    assert (tmp_path / "append-marker").exists()
+
+    adversarial_payloads = {
+        "cancellation": (
+            '<testsuites><testsuite tests="5" failures="1" errors="0" skipped="0"/>'
+            '<testsuite tests="-1" failures="-1" errors="0" skipped="0"/></testsuites>'
+        ),
+        "signed": '<testsuite tests="+4" failures="0" errors="0" skipped="0"/>',
+        "whitespace": '<testsuite tests="4 " failures="0" errors="0" skipped="0"/>',
+        "leading-zero": '<testsuite tests="04" failures="0" errors="0" skipped="0"/>',
+        "missing": '<testsuite tests="4" failures="0" errors="0"/>',
+        "empty": "<testsuites/>",
+        "skipped": '<testsuite tests="4" failures="0" errors="0" skipped="1"/>',
+        "three": '<testsuite tests="3" failures="0" errors="0" skipped="0"/>',
+        "five": '<testsuite tests="5" failures="0" errors="0" skipped="0"/>',
+        "failure": '<testsuite tests="4" failures="1" errors="0" skipped="0"/>',
+        "error": '<testsuite tests="4" failures="0" errors="1" skipped="0"/>',
+    }
+    for name, payload in adversarial_payloads.items():
+        result = run_case(payload)
+        assert result.returncode == 2, name
+        assert "RECORDED_GATE=FAIL" in result.stderr
+        assert not (tmp_path / "append-marker").exists(), name
 
 
 def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
@@ -4716,7 +5068,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "attest.py" not in source and "PRIVATE_ROOT" not in source
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
-    assert source.count("run_recorded_gate CP") == 9
+    assert source.count("run_recorded_gate CP") == 10
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
@@ -4725,11 +5077,13 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P1-TRUST-004)" in source
     assert "P2-TENANT-BOOTSTRAP-000)" in source
     assert "P2-REGISTER-001)" in source
+    assert "P2-IDEMPOTENCY-002)" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
     assert "P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'" in source
     assert "P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'" in source
+    assert "P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
@@ -4738,6 +5092,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "TMP_BASENAME='acgs-p1-trust'" in source
     assert "TMP_BASENAME='acgs-p2-tenant-bootstrap'" in source
     assert "TMP_BASENAME='acgs-p2-register'" in source
+    assert "TMP_BASENAME='acgs-p2-idempotency'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
     for selector in _common.P1_MIGRATION_SELECTORS:
@@ -4782,12 +5137,25 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert selector not in p2_register_source
     for selector in _common.P2_REGISTER_GZ_SELECTORS:
         assert selector in source
+    assert "P2_IDEMPOTENCY_CP_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate" in source
+    assert "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP" in source
+    assert (
+        "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP 4"
+        not in source
+    )
+    assert "p2-idempotency-postgres" in source
+    assert "postgres-100-request-multiprocess-agent-registration-idempotency" in source
+    for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS:
+        assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
     assert "RUFF_NO_CACHE=true" in source
     assert "RUFF_NO_CACHE=1" not in source
     for exact_override in (
         "export ACGS_PROCESS_SCHEDULE='[\"single-process\"]'",
+        'export ACGS_PROCESS_SCHEDULE=\'["single-process-evidence-and-package-gates",'
+        '"postgres-100-request-multiprocess-agent-registration-idempotency"]\'',
         "export ACGS_CLOCK_SOURCE='system-utc'",
         "export ACGS_SKIPPED_JSON='[]'",
         "export ACGS_EXTERNAL_JSON='[]'",
@@ -6287,6 +6655,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_register.exists()
 
+    accepted_idempotency = parent / "acgs-p2-idempotency.accepted"
+    accepted_idempotency.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_idempotency),
+            "P2-IDEMPOTENCY-002",
+            "EVID+CP",
+            "6",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_idempotency.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
@@ -6322,6 +6714,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert "P1-TRUST-004)" in pre_b1
     assert "P2-TENANT-BOOTSTRAP-000)" in pre_b1
     assert "P2-REGISTER-001)" in pre_b1
+    assert "P2-IDEMPOTENCY-002)" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in pre_b1
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in pre_b1
     assert "PREEXISTING_REJECT_PATHS=(" in pre_b1
@@ -6352,6 +6745,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P1-TRUST-004", "f113d9bc7263ba2607ff9800da9881a3ff624441"),
         ("P2-TENANT-BOOTSTRAP-000", "70b0d39010b46d6aed86d93572dcbda213350883"),
         ("P2-REGISTER-001", "3f60e812bece9869b57bf32fdfa4f070a464592a"),
+        ("P2-IDEMPOTENCY-002", "3269252010e5cc394abe5ab451debbaa95298f0c"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
