@@ -172,6 +172,45 @@ def validate_single_line_path(data: bytes, label: str, *, must_be_absolute: bool
         fail(f"cleanup refused because worktree registry {label} is malformed")
 
 
+def stat_identity(file_stat: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_uid,
+        stat.S_IMODE(file_stat.st_mode),
+        file_stat.st_nlink,
+        file_stat.st_size,
+    )
+
+
+def read_registered_gitfile(gitfile_path: str, registry_root: str, name: str) -> tuple[os.stat_result, bytes]:
+    try:
+        gitfile_fd = os.open(
+            gitfile_path,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        )
+    except OSError as exc:
+        fail(f"cleanup refused because worktree registry gitdir target is unreadable: {exc}")
+    try:
+        before = os.fstat(gitfile_fd)
+        if not stat.S_ISREG(before.st_mode):
+            fail("cleanup refused because worktree registry gitdir target is unsafe")
+        if before.st_uid != os.getuid() or before.st_nlink != 1:
+            fail("cleanup refused because worktree registry gitdir target identity is unsafe")
+        data = os.read(gitfile_fd, 4096)
+        if os.read(gitfile_fd, 1):
+            fail("cleanup refused because worktree registry gitdir target is too large")
+        expected = b"gitdir: " + os.fsencode(os.path.join(registry_root, name)) + b"\n"
+        if data != expected:
+            fail("cleanup refused because worktree registry gitdir target binding is malformed")
+        after = os.fstat(gitfile_fd)
+        if stat_identity(after) != stat_identity(before):
+            fail("cleanup refused because worktree registry gitdir target changed during snapshot")
+    finally:
+        os.close(gitfile_fd)
+    return before, data
+
+
 root = sys.argv[1]
 expected_identity = sys.argv[2]
 expected = None
@@ -210,12 +249,7 @@ try:
             gitdir = read_safe_file(entry_fd, "gitdir", "gitdir", required=True)
             validate_single_line_path(gitdir, "gitdir", must_be_absolute=True)
             gitfile_path = os.fsdecode(gitdir[:-1])
-            try:
-                gitfile_stat = os.stat(gitfile_path, follow_symlinks=False)
-            except OSError as exc:
-                fail(f"cleanup refused because worktree registry gitdir target is unreadable: {exc}")
-            if stat.S_ISLNK(gitfile_stat.st_mode) or not stat.S_ISREG(gitfile_stat.st_mode):
-                fail("cleanup refused because worktree registry gitdir target is unsafe")
+            gitfile_stat, gitfile_data = read_registered_gitfile(gitfile_path, root, name)
             commondir = read_safe_file(entry_fd, "commondir", "commondir", required=False)
             if commondir:
                 validate_single_line_path(commondir, "commondir", must_be_absolute=False)
@@ -233,7 +267,9 @@ try:
                     gitfile_stat.st_ino,
                     gitfile_stat.st_uid,
                     stat.S_IMODE(gitfile_stat.st_mode),
-                ))),
+                    gitfile_stat.st_nlink,
+                    gitfile_stat.st_size,
+                )) + b":" + hashlib.sha256(gitfile_data).hexdigest().encode()),
                 field(b"C", commondir),
             )))
         finally:
