@@ -57,8 +57,12 @@ EXPECTED_TABLES: Final = (
     "agent_registration_idempotency",
     "agents",
     "alembic_version",
+    "audit_projection_outbox",
     "compliance_exports",
     "environments",
+    "governance_event_cutover",
+    "governance_event_heads",
+    "governance_events",
     "managed_decision_receipts",
     "managed_governance_event_heads",
     "managed_governance_events",
@@ -587,7 +591,7 @@ def _capture_database_state(
     if expected_database is not None:
         _assert_connection_database(connection, expected_database)
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0007:
+    if preflight.state is not DatabaseSchemaState.VERSION_0008:
         raise RecoveryRefused("database is not the exact supported migration head schema")
     inspector = sa.inspect(connection)
     observed = tuple(sorted(inspector.get_table_names(schema="public")))

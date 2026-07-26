@@ -590,7 +590,7 @@ def test_current_openapi_contract_records_missing_beta_contract_boundaries(
     assert "/v1/orgs" in schema["paths"]
     # The platform tenant-bootstrap route and governed agent registration accept
     # a per-request Idempotency-Key header; agent registration also persists it
-    # durably (migration 0007). Any other idempotency surface in the schema
+    # durably (migration 0008). Any other idempotency surface in the schema
     # still trips the sentinel. The exact set of /v1 paths is pinned by
     # EXPECTED_PATHS in the contract test above, so an unexpected /v1 route is
     # caught there rather than here.

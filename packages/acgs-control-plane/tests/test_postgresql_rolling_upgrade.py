@@ -855,14 +855,14 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003, 0004, 0005, and 0007 tables reference
+                # Revision 0003, 0004, 0005, and 0008 tables reference
                 # environments, so seeding the partial revision 0001 shape must
                 # remove them first. Dropping environments with CASCADE instead
                 # would leave them in place minus their foreign keys, which is
                 # not a shape any real 0001 database has. One statement drops
                 # the whole set together, so dependencies among the listed
                 # tables (the 0005 bootstrap tables all reference
-                # platform_bootstrap_invitations, and the 0007 idempotency
+                # platform_bootstrap_invitations, and the 0008 idempotency
                 # table references managed_decision_receipts) do not constrain
                 # the order.
                 connection.execute(
@@ -1006,7 +1006,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": DatabaseSchemaState.VERSION_0007.value,
+            "after": DatabaseSchemaState.VERSION_0008.value,
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1019,7 +1019,11 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert migrated["version"] == HEAD_REVISION
         assert set(migrated["tables"]) - set(before["tables"]) == {
             "agent_registration_idempotency",
+            "audit_projection_outbox",
             "environments",
+            "governance_event_cutover",
+            "governance_event_heads",
+            "governance_events",
             "managed_decision_receipts",
             "managed_governance_event_heads",
             "managed_governance_events",
@@ -1049,6 +1053,10 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         assert migrated["rows"]["agent_registration_idempotency"] == ()
         assert migrated["rows"]["projects"] == ()
         assert migrated["rows"]["environments"] == ()
+        assert migrated["rows"]["governance_event_heads"] == ()
+        assert migrated["rows"]["governance_events"] == ()
+        assert migrated["rows"]["audit_projection_outbox"] == ()
+        assert migrated["rows"]["governance_event_cutover"] == ()
         assert _audit_state(audit_dir) == audit_before
 
         new_probe = ProbeProcess(database_url, audit_dir, _SOURCE)
@@ -1060,7 +1068,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0007.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0008.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1139,5 +1147,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0007
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0008
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

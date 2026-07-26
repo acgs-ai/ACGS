@@ -1,6 +1,6 @@
 """Add scoped idempotency state for managed agent registration.
 
-Revision ``0007`` records terminal ``agent.register`` responses. It is
+Revision ``0008`` records terminal ``agent.register`` responses. It is
 intentionally additive: existing registration rows remain unchanged, while new
 idempotency rows bind the caller-owned key digest to the
 server-authenticated org/project/environment/actor request boundary.
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0007"
-down_revision = "0006"
+revision = "0008"
+down_revision = "0007"
 branch_labels = None
 depends_on = None
 
