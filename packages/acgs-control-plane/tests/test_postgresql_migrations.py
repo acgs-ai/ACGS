@@ -64,8 +64,12 @@ from acgs_control_plane.models import AgentRecord, Organization
 from acgs_control_plane.native_receipts import (
     DatabaseNativeReceiptStore,
     DatabaseReceiptConsumptionLedger,
+    ManagedConsumptionAttestationTrust,
     ManagedNativeReceiptTrust,
     NativeReceiptContext,
+    TenantPrivacyProvider,
+    native_receipt_pseudonym,
+    native_receipt_reference,
 )
 
 _TEST_POSTGRES_URL = os.environ.get("ACP_TEST_POSTGRES_URL")
@@ -256,9 +260,9 @@ def _catalog_and_data_snapshot() -> tuple[tuple[object, ...], ...]:
 def _head_schema_with_unsupported_object_snapshot() -> tuple[tuple[object, ...], ...]:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     before = _catalog_and_data_snapshot()
-    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(test_url).state is DatabaseSchemaState.VERSION_0009
     return before
 
 
@@ -382,7 +386,7 @@ def test_revision_unowned_public_objects_are_unknown_without_guarded_side_effect
 def test_owned_postgresql_table_sequences_are_not_part_of_current_revisions() -> None:
     test_url = _postgres_url()
     result = upgrade_database(test_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
     engine = make_engine(test_url)
     try:
@@ -598,8 +602,8 @@ def test_postgresql_clean_install_has_types_and_cross_org_parent_constraint() ->
     result = upgrade_database(_TEST_POSTGRES_URL)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0009
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -712,7 +716,7 @@ def test_postgresql_casted_boolean_check_widening_is_unknown(
     weakened_check: str,
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -736,7 +740,7 @@ def test_postgresql_casted_boolean_check_widening_is_unknown(
 
 def test_postgresql_classifier_rejects_single_column_outbox_event_foreign_key() -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -764,7 +768,7 @@ def test_postgresql_classifier_rejects_single_column_outbox_event_foreign_key() 
 
 def test_postgresql_classifier_rejects_flattened_native_assurance_check() -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -805,7 +809,7 @@ def test_postgresql_lock_contention_rejects_before_schema_mutation_then_retries(
     finally:
         holder_engine.dispose()
 
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
 
 def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_lock(
@@ -874,7 +878,7 @@ def test_postgresql_injected_stamp_and_upgrade_rollback_atomically_and_release_l
 
     result = upgrade_database(_TEST_POSTGRES_URL)
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
 
 def test_raw_postgresql_alembic_commands_reject_before_schema_or_version_mutation() -> None:
@@ -899,7 +903,7 @@ def test_shadow_schema_foreign_key_is_unknown_and_cannot_stamp_migrate_or_serve(
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -980,7 +984,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
         cleanup_engine.dispose()
 
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -1037,7 +1041,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
     before = _catalog_and_data_snapshot()
     hostile_url = f"{_TEST_POSTGRES_URL}?options=-csearch_path%3Dshadow%2Cpg_catalog%2Cpublic"
-    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(hostile_url).state is DatabaseSchemaState.VERSION_0009
     session_factory_calls = {"count": 0}
 
     def forbidden_session_factory(_engine: object) -> object:
@@ -1081,7 +1085,7 @@ def test_application_refuses_shadow_first_search_path_before_serving_or_mutation
 
 def test_application_pins_every_accepted_pool_connection_to_public(tmp_path: Path) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
         with engine.begin() as connection:
@@ -1699,7 +1703,7 @@ def _assert_success_event(worker: _MigrationWorker, event: dict[str, object]) ->
         "os_pid": worker.process.pid,
         "backend_pid": event["backend_pid"],
         "before": DatabaseSchemaState.EMPTY.value,
-        "after": DatabaseSchemaState.VERSION_0008.value,
+        "after": DatabaseSchemaState.VERSION_0009.value,
     }
     backend_pid = event["backend_pid"]
     assert isinstance(backend_pid, int)
@@ -2099,7 +2103,7 @@ def test_postgresql_independent_process_lock_owner_rejects_contender_then_retrie
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0009
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -2113,7 +2117,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     owner = _launch_migration_worker(migration_workers, "pause-after-upgrade")
     owner_ready = _read_worker_event(owner)
     owner_backend_pid = _assert_ready_event(owner, owner_ready, "after-ddl-before-commit")
-    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0008.value
+    assert owner_ready["transaction_state"] == DatabaseSchemaState.VERSION_0009.value
 
     observer_pid, lock_pids = _observe_migration_lock()
     assert lock_pids == {owner_backend_pid}
@@ -2138,7 +2142,7 @@ def _exercise_forced_termination_rollback_and_lock_release(
     assert _wait_worker(retry) == 0
     _wait_for_backend_and_lock_release(retry_backend_pid)
 
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0009
     assert all(worker.process.poll() is not None for worker in migration_workers)
     for worker in migration_workers:
         _assert_worker_secret_safe(worker)
@@ -2317,7 +2321,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result = upgrade_database(_TEST_POSTGRES_URL)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
     before = _catalog_and_data_snapshot()
     audit_dir = tmp_path / "audit"
     calls = {"engine": 0}
@@ -2358,7 +2362,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
         "POST /orgs/{org_id}/users",
         "POST /v1/orgs/{org_id}/users",
     }
-    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0008
+    assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0009
     assert not audit_dir.exists()
 
     app = create_app(
@@ -2378,7 +2382,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0008.value,
+            "schema_state": DatabaseSchemaState.VERSION_0009.value,
         }
         assert not audit_dir.exists()
     finally:
@@ -2391,13 +2395,45 @@ def test_postgresql_concurrent_native_receipt_executes_at_most_one_committed_eff
     upgrade_database(_TEST_POSTGRES_URL)
     engine = make_engine(_TEST_POSTGRES_URL)
     signer = Ed25519Signer.generate(key_id="postgres-native-key")
+    attestor = Ed25519Signer.generate(key_id="postgres-native-consumption-attestor")
     trust = ManagedNativeReceiptTrust(
         signer=signer,
         verifiers={signer.key_id: signer},
         max_lifetime=timedelta(minutes=5),
     )
+    consumption_trust = ManagedConsumptionAttestationTrust(
+        signer=attestor,
+        verifiers={attestor.key_id: attestor},
+    )
     args = {"name": "concurrent-governed-agent"}
     now = datetime.now(UTC)
+    org_id = "postgres-native-org"
+    privacy = TenantPrivacyProvider(b"postgres-native-privacy-key-32-bytes")
+    actor = native_receipt_pseudonym("actor", "postgres-agent", tenant_id=org_id, privacy=privacy)
+    policy_bundle_id = native_receipt_reference(
+        "policy_bundle_id",
+        "postgres-native-bundle",
+        tenant_id=org_id,
+        privacy=privacy,
+    )
+    validator_id = native_receipt_pseudonym(
+        "validator_id",
+        "postgres-validator",
+        tenant_id=org_id,
+        privacy=privacy,
+    )
+    validator_role = native_receipt_pseudonym(
+        "validator_role",
+        "policy-validator",
+        tenant_id=org_id,
+        privacy=privacy,
+    )
+    authority = native_receipt_pseudonym(
+        "authority",
+        "execute:database.agent.create",
+        tenant_id=org_id,
+        privacy=privacy,
+    )
     receipt = DecisionReceipt.from_record(
         DecisionRecord(
             decision=Decision.ALLOW,
@@ -2405,32 +2441,32 @@ def test_postgresql_concurrent_native_receipt_executes_at_most_one_committed_eff
             argument_hash=sha256_json(args),
             policy_version="policy-v1",
             event_id="postgres-native-event",
-            actor="postgres-agent",
+            actor=actor,
             timestamp_iso=now.isoformat(),
         ),
         audit_hash="d" * 64,
         previous_audit_hash="0" * 64,
-        tenant_id="postgres-native-org",
+        tenant_id=org_id,
         execution_boundary="control-plane/sql-transaction",
-        policy_bundle_id="postgres-native-bundle",
+        policy_bundle_id=policy_bundle_id,
         policy_hash="e" * 64,
         request_id="postgres-native-request",
-        validator=Validator("postgres-validator", "policy-validator"),
-        authority="execute:database.agent.create",
+        validator=Validator(validator_id, validator_role),
+        authority=authority,
         expires_at=(now + timedelta(minutes=2)).isoformat(),
         signer=signer,
     )
     context = NativeReceiptContext(
-        org_id="postgres-native-org",
+        org_id=org_id,
         execution_boundary="control-plane/sql-transaction",
-        actor="postgres-agent",
+        actor=actor,
         action="database.agent.create",
-        policy_bundle_id="postgres-native-bundle",
+        policy_bundle_id=policy_bundle_id,
         policy_hash="e" * 64,
         audit_hash="d" * 64,
         args=args,
-        validator_role="policy-validator",
-        authority="execute:database.agent.create",
+        validator_role=validator_role,
+        authority=authority,
     )
     try:
         with Session(engine) as session, session.begin():
@@ -2445,7 +2481,12 @@ def test_postgresql_concurrent_native_receipt_executes_at_most_one_committed_eff
         def worker(label: str) -> None:
             try:
                 with Session(engine) as session, session.begin():
-                    ledger = DatabaseReceiptConsumptionLedger(session, trust=trust, context=context)
+                    ledger = DatabaseReceiptConsumptionLedger(
+                        session,
+                        trust=trust,
+                        consumption_trust=consumption_trust,
+                        context=context,
+                    )
 
                     def protected_effect(name: str) -> str:
                         session.add(AgentRecord(org_id=context.org_id, name=name))
