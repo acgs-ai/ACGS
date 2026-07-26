@@ -22,8 +22,10 @@ production-certified, compliance-certified, or regulator-approved.
 | [03-customer-onboarding.md](03-customer-onboarding.md) | Customer onboarding flow, from install to auditor-ready proof pack |
 | [04-api-documentation.md](04-api-documentation.md) | API documentation: Python API, CLI, receipt schema, MCP gateway |
 | [05-security-whitepaper-outline.md](05-security-whitepaper-outline.md) | Security whitepaper outline |
-| [06-pricing-model.md](06-pricing-model.md) | Pricing model: Starter, Enterprise, Regulated Industry |
-| [07-investor-brief.md](07-investor-brief.md) | Investor technical brief: problem, moat, market, business model, risks, thesis |
+
+Pricing and investor material are **not kept in this repository**. This repository
+is public, so a directory name cannot make a document private. Those docs live in
+the maintainers' private store.
 
 ## What ACGS is (one paragraph)
 

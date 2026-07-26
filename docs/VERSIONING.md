@@ -61,7 +61,7 @@ DECISION_RECEIPT_SPEC, HUMAN_GUIDE) say `1.0.0rc1`/Beta. Still-stale surfaces:
 
 - `0.1.0.dev0` / "Alpha": `COMPARISON.md:10,24,77`; `docs/EU_AI_ACT_MAPPING.md:89`;
   `docs/blog/*` (7 files); `docs/launch/STAGE3-landing-thesis.md:4,141`;
-  `docs/productization/07-investor-brief.md:10`; `docs/launch/evidence/SUMMARY.md:4`.
+  `docs/launch/evidence/SUMMARY.md:4`.
 - `0.1.0a1`: `docs/performance-report.md:3`; `docs/adr/0009-*.md:33`;
   `ROADMAP-ENFORCEMENT-SUBSTRATE.md:17`; `docs/reconstruction/01-internal-audit.md:64,140`;
   `docs/reconstruction/04-platform-blueprint.md:55,160`.
