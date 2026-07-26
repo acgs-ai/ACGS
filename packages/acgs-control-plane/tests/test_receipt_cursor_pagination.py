@@ -19,7 +19,6 @@ import acgs_control_plane.pagination as pagination
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.models import (
     ComplianceExport,
     Environment,
@@ -36,6 +35,7 @@ from acgs_control_plane.pagination import (
     issue_receipt_cursor,
     receipt_filter_digest,
 )
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
     ManagedTrustLifecycleService,
     public_spki_der_from_signer,

@@ -434,9 +434,7 @@ class AgentRegistrationService:
             # no citable evidence, which is backwards for a receipt-gated
             # control plane. Rendered by the shared helper so a replay of this
             # refusal returns byte-identical content.
-            raise _terminal_http_error_for_decision(
-                decision_record, receipt_id=receipt.receipt_id
-            )
+            raise _terminal_http_error_for_decision(decision_record, receipt_id=receipt.receipt_id)
 
         if decision_record.decision is not Decision.ALLOW:
             raise AgentRegistrationHttpError(

@@ -19,7 +19,6 @@ from acgs_control_plane.governance import (
     ExecutionClass,
 )
 from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.models import (
     AgentRecord,
     ComplianceExport,
@@ -30,6 +29,7 @@ from acgs_control_plane.models import (
     new_id,
     utcnow,
 )
+from acgs_control_plane.tenant_bootstrap import BOOTSTRAP_IDEMPOTENCY_HEADER
 from acgs_control_plane.trust import (
     ManagedTrustLifecycleService,
     public_spki_der_from_signer,
