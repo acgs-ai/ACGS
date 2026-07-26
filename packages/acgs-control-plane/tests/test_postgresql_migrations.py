@@ -2145,6 +2145,9 @@ _MIGRATION_0005_TENANT_BOOTSTRAP_TABLES: tuple[str, ...] = (
 
 def _drop_post_0001_tables(connection: Connection) -> None:
     for table_name in (
+        "policy_registry_idempotency",
+        "environment_policy_heads",
+        "policy_versions",
         *_MIGRATION_0005_TENANT_BOOTSTRAP_TABLES,
         "managed_trust_keys",
         "managed_trust_scopes",
