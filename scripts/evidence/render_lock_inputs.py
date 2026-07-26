@@ -74,6 +74,26 @@ EXPECTED_OUTPUTS = {
     "MAP": Path("requirements/saas-beta/bootstrap-by-scope.json"),
 }
 REQ_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
+REGISTRY_REQUIREMENT_RE = re.compile(
+    r"""
+    ^
+    [A-Za-z0-9][A-Za-z0-9._-]*
+    (?:\[[A-Za-z0-9][A-Za-z0-9._-]*(?:\s*,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*\])?
+    \s*
+    (?:
+      (?:~=|==|!=|<=|>=|<|>|===)
+      \s*
+      [A-Za-z0-9][A-Za-z0-9._!*+~-]*
+      (?:\s*,\s*(?:~=|==|!=|<=|>=|<|>|===)\s*[A-Za-z0-9][A-Za-z0-9._!*+~-]*)*
+    )?
+    (?:\s*;\s*[A-Za-z0-9_.\"' <>=!~(),-]+)?
+    $
+    """,
+    re.VERBOSE,
+)
+UNSAFE_REQUIREMENT_TOKENS = re.compile(
+    r"(?i)(?:^|[^\w.+-])(?:https?|file|ssh|git)://|(?:^|[^\w.+-])(?:git|ssh|file)\+"
+)
 
 
 class ConfigError(ValueError):
@@ -112,6 +132,28 @@ def _canonical_name(requirement: str) -> str:
     if match is None:
         raise ConfigError(f"unsupported or dynamic requirement: {requirement!r}")
     return re.sub(r"[-_.]+", "-", match.group(0)).lower()
+
+
+def _validate_requirement_source(
+    requirement: str,
+    where: str,
+    *,
+    allowed_workspace_names: set[str] | None = None,
+) -> None:
+    candidate = requirement.strip()
+    allowed_workspace_names = allowed_workspace_names or set()
+    if (
+        "@" in candidate
+        or "://" in candidate
+        or candidate.startswith((".", "/", "~"))
+        or UNSAFE_REQUIREMENT_TOKENS.search(candidate)
+    ):
+        raise ConfigError(f"{where}: direct URL/path requirement is not allowed: {requirement!r}")
+    if not REGISTRY_REQUIREMENT_RE.fullmatch(candidate):
+        raise ConfigError(f"{where}: unsupported or ambiguous requirement source: {requirement!r}")
+    name = _canonical_name(candidate)
+    if name in allowed_workspace_names:
+        return
 
 
 def _project_name(manifest: Mapping[str, Any], path: Path) -> str:
@@ -439,6 +481,17 @@ def render(config_path: Path, output_root: Path) -> list[Path]:
         pep660 = _string_list(section["pep660_editable_build"], f"{code}.pep660_editable_build")
         if pep660 != ["editables==0.6"]:
             raise ConfigError(f"{code}: pep660_editable_build must be exactly editables==0.6")
+
+        for requirement in selected:
+            _validate_requirement_source(
+                requirement, f"{manifest_rel}:selected", allowed_workspace_names=editable_names
+            )
+        for requirement in build_requires:
+            _validate_requirement_source(requirement, f"{manifest_rel}:[build-system].requires")
+        for requirement in pep660:
+            _validate_requirement_source(
+                requirement, f"requirements/saas-beta/locks.toml:{code}.pep660_editable_build"
+            )
 
         requirements = _unique_requirements(
             [*selected, *build_requires, *pep660], excluded_names=editable_names

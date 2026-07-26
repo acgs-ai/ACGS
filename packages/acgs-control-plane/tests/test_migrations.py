@@ -853,6 +853,11 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET /run/broker/postgresql-client.sock" in script
     assert "PostgreSQL client broker" in script
     assert '"tool": tool, "argv": sys.argv[1:], "env": env' in script
+    server_launch = script.split('container_id="$(', 1)[1].split(')"\n\nfor _ in {1..90}', 1)[0]
+    assert "docker run -d" in server_launch
+    assert "--network none" in server_launch
+    assert "--publish" not in server_launch
+    assert "listen_addresses=" in server_launch
 
     pytest_invocation = (
         'env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
@@ -861,6 +866,119 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert pytest_invocation in script
     assert '.venv/bin/pytest -q --junitxml="$junit_report" "$@"' not in script
     assert script.index(pytest_invocation) > script.index("broker_socket=")
+
+
+def _postgres_gate_python_runtime_validation_source() -> str:
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    start = script.index('realpath -e -- "$package_dir/.venv/bin/python" >/dev/null\n')
+    end = script.index("\numask 077\n", start)
+    return script[start:end]
+
+
+def _write_control_plane_venv_python(package_dir: Path, target: Path) -> None:
+    (package_dir / ".venv/bin").mkdir(parents=True)
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n", encoding="utf-8")
+    target.chmod(0o755)
+    (package_dir / ".venv/bin/python").symlink_to(target)
+
+
+def _run_postgres_gate_python_runtime_validation(
+    package_dir: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    script = (
+        'package_dir="$1"\n'
+        f"{_postgres_gate_python_runtime_validation_source()}\n"
+        'printf "%s\\n" "$python_runtime_root"\n'
+    )
+    validation_env = {"PATH": os.environ["PATH"]}
+    if env:
+        validation_env.update(env)
+    return subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s", "--", str(package_dir)],
+        input=script,
+        env=validation_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_postgres_gate_python_runtime_accepts_default_and_proof_scratch(
+    tmp_path: Path,
+) -> None:
+    package_dir = Path(__file__).resolve().parents[1]
+    default_result = _run_postgres_gate_python_runtime_validation(package_dir)
+    assert default_result.returncode == 0, default_result.stderr
+    assert "/home/" in default_result.stdout
+    assert "/.local/share/uv/python/" in default_result.stdout
+
+    scratch = tmp_path / "scratch"
+    runtime_tmp = scratch / "runtime-tmp"
+    install_root = scratch / "uv-python"
+    runtime_root = install_root / "cpython-3.13-linux-x86_64-gnu"
+    proof_package = tmp_path / "proof-package"
+    runtime_tmp.mkdir(parents=True)
+    _write_control_plane_venv_python(proof_package, runtime_root / "bin/python3.13")
+
+    proof_result = _run_postgres_gate_python_runtime_validation(
+        proof_package,
+        env={"TMPDIR": str(runtime_tmp), "UV_PYTHON_INSTALL_DIR": str(install_root)},
+    )
+    assert proof_result.returncode == 0, proof_result.stderr
+    assert proof_result.stdout.strip() == str(runtime_root)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "expected_stderr"),
+    (
+        ("relative-install-root", "UV_PYTHON_INSTALL_DIR must be absolute"),
+        ("symlink-install-root", "UV_PYTHON_INSTALL_DIR must be canonical and non-symlinked"),
+        ("traversal-install-root", "UV_PYTHON_INSTALL_DIR must be canonical and non-symlinked"),
+        ("untrusted-root", "UV_PYTHON_INSTALL_DIR must equal the proof scratch uv-python"),
+        ("wrong-runtime-root", "must resolve beneath UV_PYTHON_INSTALL_DIR"),
+    ),
+)
+def test_postgres_gate_python_runtime_rejects_untrusted_proof_roots(
+    tmp_path: Path,
+    case_name: str,
+    expected_stderr: str,
+) -> None:
+    scratch = tmp_path / "scratch"
+    runtime_tmp = scratch / "runtime-tmp"
+    install_root = scratch / "uv-python"
+    runtime_root = install_root / "cpython-3.13-linux-x86_64-gnu"
+    package_dir = tmp_path / "package"
+    runtime_tmp.mkdir(parents=True)
+    install_root.mkdir(parents=True)
+
+    env = {"TMPDIR": str(runtime_tmp), "UV_PYTHON_INSTALL_DIR": str(install_root)}
+    target = runtime_root / "bin/python3.13"
+    if case_name == "relative-install-root":
+        env["UV_PYTHON_INSTALL_DIR"] = "relative/uv-python"
+    elif case_name == "symlink-install-root":
+        linked_install = tmp_path / "linked-uv-python"
+        linked_install.symlink_to(install_root, target_is_directory=True)
+        env["UV_PYTHON_INSTALL_DIR"] = str(linked_install)
+    elif case_name == "traversal-install-root":
+        env["UV_PYTHON_INSTALL_DIR"] = str(install_root / ".." / "uv-python")
+    elif case_name == "untrusted-root":
+        other_scratch = tmp_path / "other-scratch"
+        other_runtime_tmp = other_scratch / "runtime-tmp"
+        other_runtime_tmp.mkdir(parents=True)
+        env["TMPDIR"] = str(other_runtime_tmp)
+    elif case_name == "wrong-runtime-root":
+        other_install = tmp_path / "other-install"
+        target = other_install / "cpython-3.13-linux-x86_64-gnu/bin/python3.13"
+
+    _write_control_plane_venv_python(package_dir, target)
+    result = _run_postgres_gate_python_runtime_validation(package_dir, env=env)
+    assert result.returncode == 69
+    assert expected_stderr in result.stderr
 
 
 def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escape(

@@ -171,13 +171,46 @@ if [[ "$venv_python_target" != /* ]]; then
   exit 69
 fi
 python_runtime_root="$(dirname -- "$(dirname -- "$venv_python_target")")"
-case "$python_runtime_root" in
-  /home/*/.local/share/uv/python/*) ;;
-  *)
-    echo 'packages/acgs-control-plane/.venv/bin/python must resolve under the uv-managed Python runtime root' >&2
+if [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]]; then
+  if [[ "$UV_PYTHON_INSTALL_DIR" != /* ]]; then
+    echo 'UV_PYTHON_INSTALL_DIR must be absolute for the PostgreSQL evidence gate' >&2
     exit 69
-    ;;
-esac
+  fi
+  canonical_uv_python_install_dir="$(realpath -e -- "$UV_PYTHON_INSTALL_DIR")"
+  if [[ "$canonical_uv_python_install_dir" != "$UV_PYTHON_INSTALL_DIR" || -L "$UV_PYTHON_INSTALL_DIR" ]]; then
+    echo 'UV_PYTHON_INSTALL_DIR must be canonical and non-symlinked for the PostgreSQL evidence gate' >&2
+    exit 69
+  fi
+  if [[ "${TMPDIR:-}" != /* ]]; then
+    echo 'TMPDIR must be absolute when UV_PYTHON_INSTALL_DIR is provided' >&2
+    exit 69
+  fi
+  canonical_tmpdir="$(realpath -e -- "$TMPDIR")"
+  if [[ "$canonical_tmpdir" != "$TMPDIR" || -L "$TMPDIR" || "${canonical_tmpdir##*/}" != runtime-tmp ]]; then
+    echo 'TMPDIR must be the canonical proof scratch runtime-tmp directory' >&2
+    exit 69
+  fi
+  proof_scratch_root="$(dirname -- "$canonical_tmpdir")"
+  if [[ "$canonical_uv_python_install_dir" != "$proof_scratch_root/uv-python" ]]; then
+    echo 'UV_PYTHON_INSTALL_DIR must equal the proof scratch uv-python directory' >&2
+    exit 69
+  fi
+  case "$python_runtime_root" in
+    "$canonical_uv_python_install_dir"/*) ;;
+    *)
+      echo 'packages/acgs-control-plane/.venv/bin/python must resolve beneath UV_PYTHON_INSTALL_DIR' >&2
+      exit 69
+      ;;
+  esac
+else
+  case "$python_runtime_root" in
+    /home/*/.local/share/uv/python/*) ;;
+    *)
+      echo 'packages/acgs-control-plane/.venv/bin/python must resolve under the uv-managed Python runtime root' >&2
+      exit 69
+      ;;
+  esac
+fi
 
 umask 077
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/acp-postgres-gate.XXXXXX")"
@@ -233,6 +266,7 @@ chmod 0700 "$state_dir/uv-cache"
 container_id="$(
   docker run -d \
     --pull=never \
+    --network none \
     --name "$container_name" \
     --env "POSTGRES_DB=$main_database" \
     --env "POSTGRES_USER=$postgres_user" \
