@@ -13,11 +13,12 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from gove_zone.decision import sha256_json
 from gove_zone.policy import RuleSetPolicy
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.receipt import DecisionReceipt, safe_result_hash
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 
 from acgs_control_plane.agent_registration import (
     DefaultAgentRegistrationReceiptIssuer,
+    _to_utc,
     local_agent_registration_issuer,
 )
 from acgs_control_plane.app import create_app
@@ -551,6 +552,141 @@ def test_agent_register_route_rejects_forged_allow_replay_payload(
         assert _count(session, ManagedOutboxMessage) == 1
 
 
+def test_agent_register_route_exact_allow_duplicate_replays_without_new_effects(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path, label="exact-allow-replay")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate_allow_agent_create(client, org)
+    headers = _agent_headers(org, "agent-exact-allow-0001")
+    body = {"name": "exact-allow-bot", "trust_tier": "internal"}
+
+    first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    before = _managed_integrity_counts(app)
+    second = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    after = _managed_integrity_counts(app)
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json() == second.json()
+    assert (
+        after
+        == before
+        == {
+            "agents": 1,
+            "idempotency": 1,
+            "receipts": 1,
+            "consumptions": 1,
+            "events": 1,
+            "outbox": 1,
+            "attempts": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper_case",
+    [
+        "sealed_receipt_ciphertext",
+        "missing_allow_consumption",
+        "event_payload",
+        "event_previous_hash",
+        "missing_outbox",
+        "failed_attempt",
+        "coordinated_agent_response",
+    ],
+)
+def test_agent_register_route_rejects_corrupt_replay_integrity_state_without_new_effects(
+    tmp_path: Path,
+    tamper_case: str,
+) -> None:
+    app, client = _migrated_client(tmp_path, label=f"corrupt-replay-{tamper_case}")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate_allow_agent_create(client, org)
+    headers = _agent_headers(org, f"agent-corrupt-replay-{tamper_case}-0001")
+    body = {"name": f"corrupt-replay-{tamper_case}-bot", "trust_tier": "internal"}
+
+    first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    assert first.status_code == 201, first.text
+    with app.state.session_factory.begin() as session:
+        if tamper_case == "sealed_receipt_ciphertext":
+            receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+            sealed_receipt = dict(receipt.projection["sealed_receipt"])
+            sealed_receipt["ciphertext"] = f"{sealed_receipt['ciphertext']}A"
+            receipt.projection = {**receipt.projection, "sealed_receipt": sealed_receipt}
+        elif tamper_case == "missing_allow_consumption":
+            session.delete(session.scalars(sa.select(ManagedReceiptConsumption)).one())
+        elif tamper_case == "event_payload":
+            event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+            event.payload = {**event.payload, "receipt_hash": "f" * 64}
+        elif tamper_case == "event_previous_hash":
+            event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+            event.previous_hash = "f" * 64
+        elif tamper_case == "missing_outbox":
+            session.delete(session.scalars(sa.select(ManagedOutboxMessage)).one())
+        elif tamper_case == "failed_attempt":
+            attempt = session.scalars(sa.select(ManagedMutationAttempt)).one()
+            attempt.status = "failed"
+            attempt.failure_class_hash = sha256_json("test.failure")
+            attempt.failure_digest = sha256_json("test.failure.digest")
+        elif tamper_case == "coordinated_agent_response":
+            _tamper_allow_replay_to_coordinated_agent_response(session)
+        else:  # pragma: no cover - parametrization guard
+            raise AssertionError(f"unsupported replay tamper case: {tamper_case}")
+    before_replay = _managed_integrity_counts(app)
+
+    replay = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+    after_replay = _managed_integrity_counts(app)
+
+    assert replay.status_code == 503, replay.text
+    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    assert after_replay == before_replay
+    with app.state.session_factory() as session:
+        assert _count(session, AgentRecord) == 1
+
+
+def _tamper_allow_replay_to_coordinated_agent_response(session: Any) -> None:
+    agent = session.scalars(sa.select(AgentRecord)).one()
+    row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
+    event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+    outbox = session.scalars(sa.select(ManagedOutboxMessage)).one()
+
+    agent.name = "tampered-agent"
+    agent.description = "tampered description"
+    agent.trust_tier = "admin"
+    agent.allowed_tools = ["*"]
+    agent.status = "active"
+    row.response = {
+        **row.response,
+        "name": agent.name,
+        "description": agent.description,
+        "trust_tier": agent.trust_tier,
+        "allowed_tools": list(agent.allowed_tools),
+        "status": agent.status,
+    }
+    tampered_result_hash = safe_result_hash(
+        {
+            "agent_id": agent.id,
+            "org_id": agent.org_id,
+            "project_id_hash": sha256_json(agent.project_id or ""),
+            "environment_id_hash": sha256_json(agent.environment_id or ""),
+            "name_hash": sha256_json(agent.name),
+            "status": agent.status,
+            "created_at": _to_utc(agent.created_at).isoformat(),
+        }
+    )
+    event.payload = {**event.payload, "result_hash": tampered_result_hash}
+    event.payload_digest = sha256_json(event.payload)
+    outbox.payload = {
+        **outbox.payload,
+        "result_hash": tampered_result_hash,
+        "payload_digest": event.payload_digest,
+    }
+    outbox.payload_digest = sha256_json(outbox.payload)
+
+
 def test_agent_register_route_rejects_deny_payload_upgraded_to_escalate(
     tmp_path: Path,
 ) -> None:
@@ -951,6 +1087,19 @@ def _managed_allow_receipts(session: Any) -> int:
         )
         or 0
     )
+
+
+def _managed_integrity_counts(app: Any) -> dict[str, int]:
+    with app.state.session_factory() as session:
+        return {
+            "agents": _count(session, AgentRecord),
+            "idempotency": _count(session, AgentRegistrationIdempotency),
+            "receipts": _count(session, ManagedDecisionReceipt),
+            "consumptions": _count(session, ManagedReceiptConsumption),
+            "events": _count(session, ManagedGovernanceEvent),
+            "outbox": _count(session, ManagedOutboxMessage),
+            "attempts": _count(session, ManagedMutationAttempt),
+        }
 
 
 def _assert_single_refusal_evidence(

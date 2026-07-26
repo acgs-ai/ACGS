@@ -11,10 +11,13 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from gove_zone.decision import sha256_json
+from gove_zone.receipt import safe_result_hash
 from sqlalchemy.exc import IntegrityError
 
 from acgs_control_plane.agent_registration import (
     DefaultAgentRegistrationReceiptIssuer,
+    _to_utc,
     local_agent_registration_issuer,
 )
 from acgs_control_plane.app import create_app
@@ -25,6 +28,7 @@ from acgs_control_plane.models import (
     AgentRegistrationIdempotency,
     ManagedDecisionReceipt,
     ManagedGovernanceEvent,
+    ManagedMutationAttempt,
     ManagedOutboxMessage,
     ManagedReceiptConsumption,
     new_id,
@@ -63,6 +67,17 @@ def test_identical_key_and_canonical_request_converges_to_one_terminal_result(
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
+
+    for tamper_case in (
+        "sealed_receipt_ciphertext",
+        "missing_allow_consumption",
+        "event_previous_hash",
+        "coordinated_agent_response",
+    ):
+        _assert_corrupt_replay_integrity_state_typed_and_nonduplicating(
+            tmp_path / tamper_case,
+            tamper_case,
+        )
 
 
 def test_same_key_different_canonical_request_conflicts_without_additional_side_effects(
@@ -106,6 +121,86 @@ def test_same_key_different_canonical_request_conflicts_without_additional_side_
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
+
+
+def _assert_corrupt_replay_integrity_state_typed_and_nonduplicating(
+    tmp_path: Path,
+    tamper_case: str,
+) -> None:
+    app, client, org, database_url = _postgres_agent_registration_app(tmp_path)
+    try:
+        body = _agent_body(f"corrupt-{tamper_case}-bot")
+        headers = _idempotent_admin_headers(org, f"agent-register-corrupt-{tamper_case}-0001")
+        first = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+        assert first.status_code == 201, first.text
+        with app.state.session_factory.begin() as session:
+            if tamper_case == "sealed_receipt_ciphertext":
+                receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+                sealed_receipt = dict(receipt.projection["sealed_receipt"])
+                sealed_receipt["ciphertext"] = f"{sealed_receipt['ciphertext']}A"
+                receipt.projection = {**receipt.projection, "sealed_receipt": sealed_receipt}
+            elif tamper_case == "missing_allow_consumption":
+                session.delete(session.scalars(sa.select(ManagedReceiptConsumption)).one())
+            elif tamper_case == "event_previous_hash":
+                event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+                event.previous_hash = "f" * 64
+            elif tamper_case == "coordinated_agent_response":
+                _tamper_allow_replay_to_coordinated_agent_response(session)
+            else:  # pragma: no cover - parametrization guard
+                raise AssertionError(f"unsupported tamper case: {tamper_case}")
+        before_replay = _managed_integrity_counts(app)
+
+        replay = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
+        after_replay = _managed_integrity_counts(app)
+
+        assert replay.status_code == 503, replay.text
+        assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+        assert after_replay == before_replay
+        with app.state.session_factory() as session:
+            assert _count(session, AgentRecord) == 1
+    finally:
+        app.state.engine.dispose()
+        _reset_postgres_schema(database_url)
+
+
+def _tamper_allow_replay_to_coordinated_agent_response(session: Any) -> None:
+    agent = session.scalars(sa.select(AgentRecord)).one()
+    row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
+    event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+    outbox = session.scalars(sa.select(ManagedOutboxMessage)).one()
+
+    agent.name = "tampered-agent"
+    agent.description = "tampered description"
+    agent.trust_tier = "admin"
+    agent.allowed_tools = ["*"]
+    agent.status = "active"
+    row.response = {
+        **row.response,
+        "name": agent.name,
+        "description": agent.description,
+        "trust_tier": agent.trust_tier,
+        "allowed_tools": list(agent.allowed_tools),
+        "status": agent.status,
+    }
+    tampered_result_hash = safe_result_hash(
+        {
+            "agent_id": agent.id,
+            "org_id": agent.org_id,
+            "project_id_hash": sha256_json(agent.project_id or ""),
+            "environment_id_hash": sha256_json(agent.environment_id or ""),
+            "name_hash": sha256_json(agent.name),
+            "status": agent.status,
+            "created_at": _to_utc(agent.created_at).isoformat(),
+        }
+    )
+    event.payload = {**event.payload, "result_hash": tampered_result_hash}
+    event.payload_digest = sha256_json(event.payload)
+    outbox.payload = {
+        **outbox.payload,
+        "result_hash": tampered_result_hash,
+        "payload_digest": event.payload_digest,
+    }
+    outbox.payload_digest = sha256_json(outbox.payload)
 
 
 def test_exact_receipt_replay_is_typed_and_nonduplicating(tmp_path: Path) -> None:
@@ -365,6 +460,19 @@ def _assert_registration_counts(session: Any, *, agents: int) -> None:
     assert _count(session, ManagedReceiptConsumption) == agents
     assert _count(session, ManagedGovernanceEvent) == agents
     assert _count(session, ManagedOutboxMessage) == agents
+
+
+def _managed_integrity_counts(app: Any) -> dict[str, int]:
+    with app.state.session_factory() as session:
+        return {
+            "agents": _count(session, AgentRecord),
+            "idempotency": _count(session, AgentRegistrationIdempotency),
+            "receipts": _count(session, ManagedDecisionReceipt),
+            "consumptions": _count(session, ManagedReceiptConsumption),
+            "events": _count(session, ManagedGovernanceEvent),
+            "outbox": _count(session, ManagedOutboxMessage),
+            "attempts": _count(session, ManagedMutationAttempt),
+        }
 
 
 def _count(session: Any, model: type[Any]) -> int:
