@@ -35,7 +35,7 @@ from gove_zone import (
 from gove_zone.audit import AuditError
 from gove_zone.decision import sha256_json
 from gove_zone.errors import AuditError as ErrorsAuditError
-from gove_zone.kernel import AuditedDecision
+from gove_zone.kernel import AuditedDecision, _freeze_mapping
 from gove_zone.policy import new_event_id
 from gove_zone.tenant import TransformPolicy
 from gove_zone.tool import ToolCall
@@ -92,6 +92,17 @@ class _StaticAuditStore:
         payload.update(self.overrides)
         payload.setdefault("event_hash", sha256_json(payload))
         return payload
+
+
+class _NonMappingAuditStore:
+    """Structural AuditAppender test double returning a non-mapping payload."""
+
+    def __init__(self) -> None:
+        self.appended: list[DecisionRecord] = []
+
+    def append(self, decision: DecisionRecord) -> Any:
+        self.appended.append(decision)
+        return [decision.to_dict()]
 
 
 class _SecondAppendFailsAuditStore(ChainHashAuditStore):
@@ -251,6 +262,24 @@ def test_evaluate_and_append_rejects_malformed_append_hash() -> None:
     assert len(audit.appended) == 1
 
 
+def test_evaluate_and_append_rejects_non_mapping_append_response() -> None:
+    audit = _NonMappingAuditStore()
+    kernel = Kernel(policy=AllowAllPolicy(), audit=audit)
+
+    with pytest.raises(AuditError, match="non-mapping"):
+        kernel.evaluate_and_append(_call())
+    assert len(audit.appended) == 1
+
+
+def test_evaluate_and_append_rejects_malformed_event_hash() -> None:
+    audit = _StaticAuditStore(event_hash="not-a-sha")
+    kernel = Kernel(policy=AllowAllPolicy(), audit=audit)
+
+    with pytest.raises(AuditError, match="invalid event_hash"):
+        kernel.evaluate_and_append(_call())
+    assert len(audit.appended) == 1
+
+
 def test_evaluate_and_append_rejects_mismatched_event_hash() -> None:
     audit = _StaticAuditStore(event_hash="f" * 64)
     kernel = Kernel(policy=AllowAllPolicy(), audit=audit)
@@ -334,6 +363,88 @@ def test_append_execution_failure_rejects_mismatched_call_without_append(tmp_pat
         )
 
     assert len(list(audit.iter_events())) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered"),
+    [
+        ("tool", "other_tool"),
+        ("goal", "other goal"),
+        ("actor", "agent:other"),
+        ("path", ("other", "path")),
+        ("state_hash", "f" * 64),
+        ("decision_request_hash", "f" * 64),
+    ],
+)
+def test_append_execution_failure_rejects_tampered_record_binding_without_append(
+    tmp_path: Path,
+    field: str,
+    tampered: Any,
+) -> None:
+    """Each record/call binding field is enforced individually; nothing appends."""
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    kernel = Kernel(policy=AllowAllPolicy(), audit=audit)
+    call = _call()
+    audited = kernel.evaluate_and_append(call)
+    tampered_audited = AuditedDecision(
+        record=dataclasses.replace(audited.record, **{field: tampered}),
+        append_result=audited.append_result,
+    )
+
+    with pytest.raises(AuditError, match=f"binding mismatch: {field}"):
+        kernel.append_execution_failure(call, tampered_audited, RuntimeError("boom"))
+
+    assert len(list(audit.iter_events())) == 1
+
+
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("tool", {"name": "other_tool"}),
+        ("goal", {"goal": "other goal"}),
+        ("actor", {"actor": "agent:other"}),
+        ("path", {"path": ("other", "path")}),
+        ("state_hash", {"state": {"region": "eu"}}),
+    ],
+)
+def test_append_execution_failure_rejects_diverged_executed_call_context_without_append(
+    tmp_path: Path,
+    label: str,
+    overrides: dict[str, Any],
+) -> None:
+    """An executed_call may only diverge in args; any context drift fails closed."""
+    audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
+    kernel = Kernel(policy=AllowAllPolicy(), audit=audit)
+    call = _call()
+    audited = kernel.evaluate_and_append(call)
+    executed_call = ToolCall(
+        name=overrides.get("name", call.name),
+        args=dict(call.args),
+        goal=overrides.get("goal", call.goal),
+        actor=overrides.get("actor", call.actor),
+        path=overrides.get("path", call.path),
+        state=overrides.get("state", dict(call.state)),
+    )
+
+    with pytest.raises(AuditError, match=f"effective call mismatch: {label}"):
+        kernel.append_execution_failure(
+            call,
+            audited,
+            RuntimeError("boom"),
+            executed_call=executed_call,
+        )
+
+    assert len(list(audit.iter_events())) == 1
+
+
+def test_freeze_mapping_freezes_set_values_into_frozensets() -> None:
+    frozen = _freeze_mapping({"tags": {"a", "b"}, "nested": {"inner": {"c"}}})
+
+    assert frozen["tags"] == frozenset({"a", "b"})
+    assert isinstance(frozen["tags"], frozenset)
+    assert frozen["nested"]["inner"] == frozenset({"c"})
+    with pytest.raises(TypeError):
+        frozen["tags"] = frozenset()  # type: ignore[index]
 
 
 def test_dispatch_rethrows_original_exception_when_failure_audit_fails(tmp_path: Path) -> None:
