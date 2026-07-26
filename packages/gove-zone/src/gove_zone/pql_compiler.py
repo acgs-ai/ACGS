@@ -211,26 +211,28 @@ def compile_pql_to_ruleset(
     transpiler = GraphPreservationTranspiler()
 
     for source in raw_sources:
-        source_type = source.get("type", "").lower()
+        source_type = str(source.get("type", "")).strip().lower()
+        if not source_type:
+            raise IngestionAdapterError("PQL source is missing a supported 'type'")
         if source_type == "celonis":
-            rules_payload.extend(celonis_adapter.ingest_limits(source))
+            source_rules = celonis_adapter.ingest_limits(source)
         elif source_type == "signavio":
-            rules_payload.extend(signavio_adapter.ingest_insights(source))
+            source_rules = signavio_adapter.ingest_insights(source)
+        else:
+            raise IngestionAdapterError(f"Unsupported PQL source type: {source_type}")
+        if not source_rules:
+            raise IngestionAdapterError(f"PQL source {source_type!r} produced zero rules")
+        rules_payload.extend(source_rules)
 
-    if graph_spec:
+    if graph_spec is not None:
         graph_rules = transpiler.transpile(graph_spec)
-        rules_payload.extend(graph_rules.get("rules", []))
+        transpiled_rules = graph_rules.get("rules", [])
+        if not transpiled_rules:
+            raise TranspilationError("PQL graph produced zero rules")
+        rules_payload.extend(transpiled_rules)
 
     if not rules_payload:
-        # Provide a default rule so RuleSetPolicy doesn't fail construction
-        rules_payload.append(
-            {
-                "id": "gpa-default-safe",
-                "effect": "deny",
-                "tools": ["gpa.invalid.tool"],
-                "reason": "Default safety rule",
-            }
-        )
+        raise StaticVerificationError("PQL compiler produced zero governance rules")
 
     compiled_dict = {"id": policy_id, "rules": rules_payload}
 

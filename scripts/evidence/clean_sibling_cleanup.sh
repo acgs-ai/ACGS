@@ -346,7 +346,8 @@ clean_sibling_cleanup() {
       "$TMP_PARENT"/acgs-p0-evidence.* | "$TMP_PARENT"/acgs-p1-migration.* | \
         "$TMP_PARENT"/acgs-p1-scope.* | "$TMP_PARENT"/acgs-p1-ledger.* | \
         "$TMP_PARENT"/acgs-p1-trust.* | \
-        "$TMP_PARENT"/acgs-p2-tenant-bootstrap.* | "$TMP_PARENT"/acgs-p2-register.*)
+        "$TMP_PARENT"/acgs-p2-tenant-bootstrap.* | "$TMP_PARENT"/acgs-p2-register.* | \
+        "$TMP_PARENT"/acgs-p2-idempotency.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;
@@ -436,6 +437,10 @@ clean_sibling_cleanup() {
         ;;
       P2-REGISTER-001:11:EVID+CP+GZ)
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=11 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
+      P2-IDEMPOTENCY-002:6:EVID+CP)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=6 assignments=EVID+CP attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;
       *)
