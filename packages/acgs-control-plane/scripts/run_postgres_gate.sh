@@ -36,6 +36,10 @@ p2_idempotency_selectors=(
   'tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating'
   'tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution'
 )
+p2_vertical_gate_selectors=(
+  'tests/integration/test_vertical_gate_postgres.py::test_real_postgres_tenant_bootstrap_then_customer_agent_register'
+  'tests/integration/test_vertical_gate_postgres.py::test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability'
+)
 immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
@@ -83,12 +87,23 @@ if [[ -z "$selector_mode" && $# == "${#p2_idempotency_selectors[@]}" ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == "${#p2_vertical_gate_selectors[@]}" ]]; then
+  selector_mode='p2-vertical-gate'
+  junit_expected_tests=2
+  actual_selectors=("$@")
+  for index in "${!p2_vertical_gate_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p2_vertical_gate_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
 if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
   selector_mode='p2-immutable-0004-upgrade'
   junit_expected_tests=1
 fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, or immutable-0004 selector is required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in

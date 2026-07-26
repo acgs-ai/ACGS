@@ -218,6 +218,11 @@ P2_TENANT_BOOTSTRAP_CP_SELECTORS = (
 P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
     "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
 )
+P2_VERTICAL_GATE_ROOT_SELECTORS = (
+    "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract",
+    "tests/saas_beta/test_cross_plane_contracts.py::"
+    "test_vertical_gate_contract_locks_managed_routes_and_production_blockers",
+)
 P2_REGISTER_CP_SELECTORS = (
     "tests/test_agent_registration_managed_route.py::"
     "test_agent_register_route_executes_through_managed_receipt_v2_spine",
@@ -245,6 +250,12 @@ P2_IDEMPOTENCY_CP_SELECTORS = (
     "test_exact_receipt_replay_is_typed_and_nonduplicating",
     "tests/integration/test_agent_registration_idempotency_postgres.py::"
     "test_100_request_multiprocess_has_at_most_one_authorized_execution",
+)
+P2_VERTICAL_GATE_CP_SELECTORS = (
+    "tests/integration/test_vertical_gate_postgres.py::"
+    "test_real_postgres_tenant_bootstrap_then_customer_agent_register",
+    "tests/integration/test_vertical_gate_postgres.py::"
+    "test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability",
 )
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
@@ -366,6 +377,43 @@ REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT = (
         ("./scripts/run_postgres_gate.sh", *P2_IDEMPOTENCY_CP_SELECTORS),
     ),
 )
+REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:9],
+    (
+        "packages/acgs-control-plane:P2-VERTICAL-GATE-003-postgres-vertical-gate",
+        ("./scripts/run_postgres_gate.sh", *P2_VERTICAL_GATE_CP_SELECTORS),
+    ),
+    (
+        "root:P2-VERTICAL-GATE-003-cross-plane-contract",
+        (
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            *P2_VERTICAL_GATE_ROOT_SELECTORS,
+        ),
+    ),
+    (
+        "packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate",
+        (
+            "uv",
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *P2_REGISTER_GZ_SELECTORS,
+            "--import-mode=importlib",
+            "-q",
+        ),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -375,6 +423,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P2-TENANT-BOOTSTRAP-000": REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
     "P2-REGISTER-001": REVIEWED_P2_REGISTER_TRANSCRIPT,
     "P2-IDEMPOTENCY-002": REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT,
+    "P2-VERTICAL-GATE-003": REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -420,6 +469,20 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "REPO_ROOT",
     ),
     "P2-IDEMPOTENCY-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
+    "P2-VERTICAL-GATE-003": (
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+    ),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -473,6 +536,15 @@ REVIEWED_RUN_METADATA_BY_NODE["P2-IDEMPOTENCY-002"] = {
     "process_schedule": (
         "single-process-evidence-and-package-gates",
         "postgres-100-request-multiprocess-agent-registration-idempotency",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
+}
+REVIEWED_RUN_METADATA_BY_NODE["P2-VERTICAL-GATE-003"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-vertical-bootstrap-register",
     ),
     "clock_source": "system-utc",
     "skipped": (),
@@ -872,6 +944,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P2-TENANT-BOOTSTRAP-000",
         "P2-REGISTER-001",
         "P2-IDEMPOTENCY-002",
+        "P2-VERTICAL-GATE-003",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")

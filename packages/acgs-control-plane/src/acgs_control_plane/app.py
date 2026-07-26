@@ -126,6 +126,7 @@ _TENANT_BOOTSTRAP_PUBLIC_DETAILS = {
     "ESCALATE_PENDING": "tenant bootstrap requires separated approval",
     "TX_ABORTED": "tenant bootstrap transaction aborted",
 }
+_TENANT_BOOTSTRAP_NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 # ---------------------------------------------------------------------------
 # Dependencies
@@ -314,6 +315,7 @@ def create_app(
         _record_tenant_bootstrap_refusal(request, exc)
         return JSONResponse(
             status_code=exc.status_code,
+            headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
             content={
                 "code": exc.code,
                 "status": exc.status,
@@ -351,6 +353,7 @@ def create_app(
             )
             return JSONResponse(
                 status_code=400,
+                headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
                 content={
                     "code": "REQUEST_MALFORMED",
                     "status": "request_malformed",
@@ -363,7 +366,10 @@ def create_app(
     async def _tenant_bootstrap_request_id(request: Request, call_next: Any) -> Any:
         if request.url.path == "/v1/tenant-bootstrap":
             request.state.tenant_bootstrap_request_id = secrets.token_hex(16)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path == "/v1/tenant-bootstrap":
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.exception_handler(Exception)
     def _tenant_bootstrap_fail_closed_error(request: Request, _exc: Exception) -> JSONResponse:
@@ -378,6 +384,7 @@ def create_app(
             _record_tenant_bootstrap_refusal(request, error)
             return JSONResponse(
                 status_code=503,
+                headers=_TENANT_BOOTSTRAP_NO_STORE_HEADERS,
                 content={
                     "code": "TX_ABORTED",
                     "status": "tx_aborted",

@@ -44,6 +44,9 @@ class TenantBootstrapResponse(BaseModel):
     environment_id: str
     owner_user_id: str
     owner_membership_id: str
+    # Returned exactly once on the initial successful bootstrap response. It is
+    # omitted on idempotent replay so the raw secret is not persisted.
+    owner_api_key: str | None = None
     receipt_id: str
     receipt_hash: str
     event_hash: str
