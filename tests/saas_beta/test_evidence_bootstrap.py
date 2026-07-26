@@ -9104,6 +9104,135 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_p3_mutations.exists()
 
+    accepted_p3_approval = parent / "acgs-p3-approval.accepted"
+    accepted_p3_approval.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_p3_approval),
+            "P3-APPROVAL-003",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_p3_approval.exists()
+
+    refused_p3_approval_prefix = parent / "acgs-p3-approvalish.refused"
+    refused_p3_approval_prefix.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(refused_p3_approval_prefix),
+            "P3-APPROVAL-003",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" in completed.stderr
+    assert refused_p3_approval_prefix.exists()
+
+    refused_p3_approval_no_dot = parent / "acgs-p3-approval"
+    refused_p3_approval_no_dot.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(refused_p3_approval_no_dot),
+            "P3-APPROVAL-003",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" in completed.stderr
+    assert refused_p3_approval_no_dot.exists()
+
+    traversal_anchor = parent / "acgs-p3-approval.traversal"
+    traversal_anchor.mkdir(mode=0o700)
+    traversal_target = parent / "traversal-target"
+    traversal_target.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(traversal_anchor / ".." / traversal_target.name),
+            "P3-APPROVAL-003",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert (
+        "descriptor-safe cleanup refused: root is outside authenticated parent"
+        in completed.stderr
+    )
+    assert traversal_anchor.exists()
+    assert traversal_target.exists()
+
+    symlink_target = parent / "symlink-target"
+    symlink_target.mkdir(mode=0o700)
+    symlink_root = parent / "acgs-p3-approval.symlink"
+    symlink_root.symlink_to(symlink_target, target_is_directory=True)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(symlink_root),
+            "P3-APPROVAL-003",
+            "EVID+CP",
+            "7",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "during cleanup:" in completed.stderr
+    assert symlink_root.is_symlink()
+    assert symlink_target.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
