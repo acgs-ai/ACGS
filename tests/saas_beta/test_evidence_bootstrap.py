@@ -3613,6 +3613,103 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         assert selector in appended
 
 
+def test_p2_idempotency_workflow_prerequisite_loads_bwrap_userns_profile() -> None:
+    workflow_path = ROOT / ".github/workflows/python-acgs-control-plane.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow_lines = workflow_text.splitlines()
+
+    def extract_job(start_marker: str) -> tuple[int, str]:
+        start = next(index for index, line in enumerate(workflow_lines) if line == start_marker)
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(workflow_lines))
+                if workflow_lines[index].startswith("  ")
+                and not workflow_lines[index].startswith("    ")
+                and workflow_lines[index].endswith(":")
+            ),
+            len(workflow_lines),
+        )
+        return start, "\n".join(workflow_lines[start:end])
+
+    job_start, job_text = extract_job("  p2-idempotency-evidence-gate:")
+    assert "    runs-on: ubuntu-24.04" in job_text
+
+    def extract_step(job_block: str, step_name: str) -> tuple[int, str]:
+        job_lines = job_block.splitlines()
+        start = next(
+            index for index, line in enumerate(job_lines) if line == f"      - name: {step_name}"
+        )
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(job_lines))
+                if job_lines[index].startswith("      - ")
+            ),
+            len(job_lines),
+        )
+        return job_start + start, "\n".join(job_lines[start:end])
+
+    prerequisite_index, prerequisite_text = extract_step(
+        job_text, "Install bubblewrap prerequisite"
+    )
+    gate_index = next(
+        index
+        for index, line in enumerate(workflow_lines)
+        if line == "      - name: Run brokered P2 idempotency evidence gate"
+    )
+    assert prerequisite_index < gate_index
+
+    assert "        shell: bash" in prerequisite_text
+    assert "        run: |" in prerequisite_text
+    run = prerequisite_text.split("        run: |", 1)[1]
+    assert "set -euo pipefail" in run
+    assert "sudo apt-get install --yes bubblewrap" in run
+    assert "command -v apparmor_parser" in run
+    assert "sudo apt-get install --yes apparmor" in run
+    assert 'test "$(command -v bwrap)" = /usr/bin/bwrap' in run
+    assert "sudo tee /etc/apparmor.d/acgs-ci-bwrap" in run
+    assert "profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {" in run
+    profile_body = run.split("profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {", 1)[
+        1
+    ].split("APPARMOR", 1)[0]
+    assert any(line.strip() == "userns," for line in profile_body.splitlines())
+    assert "sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap" in run
+    assert run.index("sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap") < run.index(
+        "bwrap \\\n"
+    )
+
+    for required_flag in (
+        "--unshare-all",
+        "--unshare-user",
+        "--die-with-parent",
+        "--new-session",
+        "--disable-userns",
+        "--proc /proc",
+        "--dev /dev",
+        "--tmpfs /tmp",
+        "--tmpfs /run",
+        "--ro-bind /usr /usr",
+        "--ro-bind /bin /bin",
+        "--ro-bind-try /lib /lib",
+        "--ro-bind-try /lib64 /lib64",
+        "--clearenv",
+        "--setenv PATH /usr/bin:/bin",
+    ):
+        assert required_flag in run
+    assert (
+        "/bin/sh -c 'test ! -e /run/docker.sock && test ! -e /var/run/docker.sock "
+        "&& test -r /proc/self/status'"
+    ) in run
+
+    forbidden_workflow_text = workflow_text.lower()
+    assert "apparmor_restrict_unprivileged_userns=0" not in forbidden_workflow_text
+    assert "kernel.apparmor_restrict_unprivileged_userns" not in forbidden_workflow_text
+    assert "sysctl -w" not in forbidden_workflow_text
+    assert "fallback" not in forbidden_workflow_text
+    assert "|| true" not in run
+
+
 def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path: Path) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     validator = _shell_function(source, "validate_exact_pytest_junit")

@@ -302,8 +302,27 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install --yes apparmor
+          fi
           test "$(command -v bwrap)" = /usr/bin/bwrap
           bwrap --version
+          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test ! -e /run/docker.sock && test ! -e /var/run/docker.sock && test -r /proc/self/status'
 
       - name: Install locked migration test environment
         run: |
