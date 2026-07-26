@@ -401,10 +401,49 @@ class TenantBootstrapRefusalEvent(Base):
 
 class AgentRecord(Base):
     __tablename__ = "agents"
-    __table_args__ = (UniqueConstraint("org_id", "name", name="uq_agents_org_name"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_agents_scope_environment",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        CheckConstraint(
+            "(project_id IS NULL AND environment_id IS NULL) OR "
+            "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
+            name="ck_agents_scope_both_null_or_set",
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        Index(
+            "uq_agents_legacy_org_name",
+            "org_id",
+            "name",
+            unique=True,
+            sqlite_where=sa.text("project_id IS NULL AND environment_id IS NULL"),
+            postgresql_where=sa.text("project_id IS NULL AND environment_id IS NULL"),
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+        Index(
+            "uq_agents_scope_name",
+            "org_id",
+            "project_id",
+            "environment_id",
+            "name",
+            unique=True,
+            sqlite_where=sa.text("project_id IS NOT NULL AND environment_id IS NOT NULL"),
+            postgresql_where=sa.text("project_id IS NOT NULL AND environment_id IS NOT NULL"),
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True}
+    )
+    environment_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True}
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
     trust_tier: Mapped[str] = mapped_column(String(32), default="untrusted", nullable=False)
@@ -415,6 +454,16 @@ class AgentRecord(Base):
 
 class PolicyBundle(Base):
     __tablename__ = "policy_bundles"
+    __table_args__ = (
+        Index(
+            "uq_policy_bundles_one_active_per_org",
+            "org_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'active'"),
+            postgresql_where=sa.text("status = 'active'"),
+            info={ALEMBIC_MANAGED_TABLE_INFO_KEY: True},
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
     org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)

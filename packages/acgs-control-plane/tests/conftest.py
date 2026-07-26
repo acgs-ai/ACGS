@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
+from acgs_control_plane.migrations import upgrade_database
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
@@ -32,11 +33,13 @@ def audit_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def client(tmp_path: Path, audit_dir: Path) -> TestClient:
+    database_url = f"sqlite:///{tmp_path / 'acp.sqlite3'}"
+    upgrade_database(database_url)
     settings = Settings(
-        database_url=f"sqlite:///{tmp_path / 'acp.sqlite3'}",
+        database_url=database_url,
         audit_dir=audit_dir,
         bootstrap_token=BOOTSTRAP_TOKEN,
-        create_tables=True,
+        create_tables=False,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
     )
     app = create_app(settings)

@@ -74,7 +74,19 @@ _LEGACY_TABLES = (
     "users",
 )
 _CURRENT_FORWARD_ONLY_REVISIONS = frozenset({"0001", "0002", "0003", "0004", "0005"})
-_CURRENT_REVERSIBLE_REVISIONS: frozenset[str] = frozenset()
+_CURRENT_REVERSIBLE_REVISIONS: frozenset[str] = frozenset({"0006"})
+_LEGACY_ROW_COLUMNS = {
+    "agents": (
+        "id",
+        "org_id",
+        "name",
+        "description",
+        "trust_tier",
+        "allowed_tools",
+        "status",
+        "created_at",
+    ),
+}
 _LARGE_TABLE_ROWS = 10_000
 _MIGRATION_ELAPSED_BUDGET_SECONDS = 20.0
 _MIGRATION_LOCK_WAIT_BUDGET_MS = 5_000
@@ -298,8 +310,15 @@ def _rows(database_url: str, tables: tuple[str, ...]) -> dict[str, tuple[tuple[s
             metadata = sa.MetaData()
             for table_name in tables:
                 table = sa.Table(table_name, metadata, autoload_with=connection)
+                legacy_column_names = _LEGACY_ROW_COLUMNS.get(table_name)
+                if legacy_column_names is not None:
+                    selected_columns = tuple(
+                        table.c[column_name] for column_name in legacy_column_names
+                    )
+                else:
+                    selected_columns = tuple(table.c)
                 primary_key = tuple(table.primary_key.columns)
-                statement = sa.select(table)
+                statement = sa.select(*selected_columns)
                 if primary_key:
                     statement = statement.order_by(*primary_key)
                 rows[table_name] = tuple(
@@ -409,7 +428,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
     expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
     empty_result = upgrade_database(database_url, expected_database=expected_database)
     assert empty_result.before.state is DatabaseSchemaState.EMPTY
-    assert empty_result.after.state is DatabaseSchemaState.VERSION_0005
+    assert empty_result.after.state is DatabaseSchemaState.VERSION_0006
     assert _head_version(database_url) == HEAD_REVISION
 
     _reset_exact_database(database_url, expected_database)
@@ -419,7 +438,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0005
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0006
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -446,7 +465,7 @@ def test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.VERSION_0004
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0005
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0006
     assert _head_version(database_url) == HEAD_REVISION
     assert all(_constraint_deferrability(database_url, managed_constraints).values())
 
@@ -466,7 +485,9 @@ def test_declared_reversible_round_trip() -> None:
     assert set(revisions) == (_CURRENT_FORWARD_ONLY_REVISIONS | _CURRENT_REVERSIBLE_REVISIONS), (
         "every packaged revision must have an explicit rollback classification"
     )
-    assert not _CURRENT_REVERSIBLE_REVISIONS
+    assert _CURRENT_REVERSIBLE_REVISIONS == {"0006"}
+    for revision_id in sorted(_CURRENT_REVERSIBLE_REVISIONS):
+        assert callable(revisions[revision_id].module.downgrade)
 
     for revision_id in sorted(_CURRENT_FORWARD_ONLY_REVISIONS):
         downgrade = revisions[revision_id].module.downgrade
@@ -495,7 +516,7 @@ def test_mixed_version_rolling_compatibility(
         rolling_pg.test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             engine, tmp_path
         )
-        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
         assert _head_version(database_url) == HEAD_REVISION
     finally:
         engine.dispose()
@@ -655,7 +676,7 @@ def test_large_table_online_migration_budget(monkeypatch: pytest.MonkeyPatch) ->
         assert overlapping.started_at <= actual_upgrade_interval["finished_at"]
         assert overlapping.finished_at >= actual_upgrade_interval["started_at"]
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
     assert elapsed < _MIGRATION_ELAPSED_BUDGET_SECONDS
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -757,7 +778,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
         )
         assert created == verified == restored
         assert _capture_database_state_url(target_url) == expected_state
-        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0005
+        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0006
 
         target_before_refusal = _capture_database_state_url(target_url)
         with pytest.raises(RecoveryRefused, match="must have an exact empty"):
@@ -818,6 +839,6 @@ def test_failed_migration_no_later_state(monkeypatch: pytest.MonkeyPatch) -> Non
 
     retried = upgrade_database(database_url, expected_database=_EXPECTED_DATABASES[_MAIN_ENV])
     assert retried.before.state is DatabaseSchemaState.LEGACY_V0
-    assert retried.after.state is DatabaseSchemaState.VERSION_0005
+    assert retried.after.state is DatabaseSchemaState.VERSION_0006
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows

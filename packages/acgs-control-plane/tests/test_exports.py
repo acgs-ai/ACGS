@@ -7,13 +7,25 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from acgs_control_plane.exports import verify_export_bundle
+from acgs_control_plane.models import AgentRecord
 
 
 def test_export_bundle_is_verifiable_and_complete(
     client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
 ) -> None:
     org_id = org["org_id"]
-    client.post(f"/orgs/{org_id}/agents", json={"name": "bot-a"}, headers=admin_headers)
+    with client.app.state.session_factory.begin() as session:
+        session.add(AgentRecord(org_id=org_id, name="bot-a"))
+    user = client.post(
+        f"/orgs/{org_id}/users",
+        json={
+            "name": "Export Reviewer",
+            "email": "export-reviewer@acme.example.com",
+            "role": "auditor",
+        },
+        headers=admin_headers,
+    )
+    assert user.status_code == 201, user.text
     client.post(
         f"/orgs/{org_id}/policies",
         json={"policy_id": "p1", "rules": [{"id": "r1", "effect": "deny", "tools": ["x"]}]},
@@ -26,7 +38,7 @@ def test_export_bundle_is_verifiable_and_complete(
     assert created.status_code == 201, created.text
     summary = created.json()
     assert summary["receipt_id"]  # the export itself was a governed action
-    assert summary["receipt_count"] == 3  # org.create + agent.register + policy.publish
+    assert summary["receipt_count"] == 3  # org.create + user.create + policy.publish
 
     detail = client.get(
         f"/orgs/{org_id}/exports/{summary['export_id']}", headers=admin_headers

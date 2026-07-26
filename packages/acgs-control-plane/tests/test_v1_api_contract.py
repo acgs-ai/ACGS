@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy import select
 
 from acgs_control_plane.api_contract import REQUEST_ID_RE
@@ -16,18 +18,38 @@ from acgs_control_plane.governance import (
     ROUTE_CONTRACTS,
     ExecutionClass,
 )
-from acgs_control_plane.models import AgentRecord, ComplianceExport, Organization, ReceiptRow
+from acgs_control_plane.migrations import upgrade_database
+from acgs_control_plane.models import (
+    AgentRecord,
+    ComplianceExport,
+    Environment,
+    Organization,
+    Project,
+    ReceiptRow,
+    new_id,
+    utcnow,
+)
+from acgs_control_plane.trust import (
+    ManagedTrustLifecycleService,
+    public_spki_der_from_signer,
+)
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
 
 def _client(tmp_path: Path, audit_dir: Path, *, limit: int = 1024) -> TestClient:
+    # Migrate rather than create_tables=True: the latter builds only the frozen
+    # v0 surface, which has no projects/environments tables, so agent
+    # registration cannot resolve its scope. The /v1 alias is served from a
+    # migrated schema in every deployment.
+    database_url = f"sqlite:///{tmp_path / 'v1.sqlite3'}"
+    upgrade_database(database_url)
     app = create_app(
         Settings(
-            database_url=f"sqlite:///{tmp_path / 'v1.sqlite3'}",
+            database_url=database_url,
             audit_dir=audit_dir,
             bootstrap_token=BOOTSTRAP_TOKEN,
-            create_tables=True,
+            create_tables=False,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             max_request_body_bytes=limit,
         )
@@ -46,7 +68,64 @@ def _bootstrap(client: TestClient, name: str) -> dict[str, Any]:
         headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    org = response.json()
+    _seed_agent_registration_prerequisites(client, org)
+    return org
+
+
+def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, Any]) -> None:
+    """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
+
+    Agent registration is a canonical managed mutation: it resolves the org's
+    default project/environment scope, mints a receipt-v2 under a trusted key
+    for that scope, and requires an active policy bundle. Mirrors
+    test_agent_registration_managed_route.py.
+
+    The permissive bundle seeded here denies only an unrelated tool. Callers
+    that need their own rules publish and activate over the top; activation
+    retires the currently active bundle, so the two never collide.
+    """
+    org_id = org["org_id"]
+    app = client.app
+    project_id = f"project-{new_id()}"
+    environment_id = f"environment-{new_id()}"
+    with app.state.session_factory.begin() as session:
+        session.add_all(
+            [
+                Project(id=project_id, org_id=org_id, slug="default", name="Default"),
+                Environment(
+                    id=environment_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                    slug="production",
+                    name="Production",
+                ),
+            ]
+        )
+        session.flush()
+        scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
+        signer = app.state.agent_registration_service.issuer.signer_for_scope(scope, trust_epoch=1)
+        ManagedTrustLifecycleService(session).bootstrap(
+            scope=scope,
+            key_id=signer.key_id,
+            algorithm=signer.algorithm,
+            public_key_spki_der=public_spki_der_from_signer(signer),
+            not_after=utcnow() + timedelta(days=1),
+        )
+    _publish_and_activate(
+        client,
+        org_id,
+        _headers(org),
+        policy_id=f"policy-{new_id()}",
+        rules=[
+            {
+                "id": "deny-unrelated",
+                "effect": "deny",
+                "tools": ["unrelated.tool"],
+                "reason": "unrelated tools disabled",
+            }
+        ],
+    )
 
 
 def _headers(org: dict[str, Any]) -> dict[str, str]:
@@ -174,7 +253,12 @@ def test_v1_positive_write_and_read_paths_preserve_v0_behavior(
             item["tool"]
             for item in client.get(f"/v1/orgs/{org_id}/receipts", headers=headers).json()["items"]
         ]
-        assert receipt_tools[:2] == ["agent.register", "org.create"]
+        # Newest first. The seeded policy bundle sits between the org
+        # creation and this write, so assert the registration is the most
+        # recent receipt and the org creation is still on the chain, rather
+        # than pinning two adjacent positions.
+        assert receipt_tools[0] == "agent.register"
+        assert "org.create" in receipt_tools
     finally:
         client.app.state.engine.dispose()
 
@@ -259,6 +343,9 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
             },
             headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
         ).json()
+        # Created without _bootstrap, so it still needs the governed scope and
+        # trust that agent registration resolves.
+        _seed_agent_registration_prerequisites(client, v0_org)
         rule = {
             "id": "no-untrusted-agents",
             "effect": "deny",
@@ -425,7 +512,10 @@ def test_v1_contract_is_alias_only_not_beta_feature_completion() -> None:
         if contract.path == "/v1/orgs" or contract.path.startswith("/v1/orgs/")
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
-    assert len(v1_writes) == 7
+    # 6, not 7: agent registration is now governed with receipt v2, so
+    # POST /v1/orgs/{org_id}/agents is a CANONICAL_MANAGED_WRITE rather than a
+    # legacy unsigned one. The alias itself is still alias-only.
+    assert len(v1_writes) == 6
     assert all(contract.permits_persistent_effect for contract in v1_writes)
     assert ("GET", "/v1") in contracts
     assert contracts[("GET", "/v1")].execution_class is ExecutionClass.PROTOCOL_OPERATION

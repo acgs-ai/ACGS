@@ -219,12 +219,12 @@ P2_TENANT_BOOTSTRAP_ROOT_SELECTOR = (
     "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
 )
 P2_REGISTER_CP_SELECTORS = (
-    "tests/integration/test_production_posture.py::"
-    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
-    "tests/integration/test_production_posture.py::"
-    "test_inert_stub_has_no_provider_executor_or_persistence_callback_surface",
-    "tests/integration/test_production_posture.py::"
-    "test_managed_contract_hashes_the_exact_canonical_snapshot",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_executes_through_managed_receipt_v2_spine",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_refusal_matrix_has_zero_managed_side_effects",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_scope_and_policy_are_server_owned",
 )
 P2_REGISTER_GZ_SELECTORS = (
     "packages/gove-zone/tests/test_authz_enforcement.py::"
@@ -235,6 +235,16 @@ P2_REGISTER_GZ_SELECTORS = (
     "test_unregistered_tool_cannot_run_and_is_not_audited",
     "packages/gove-zone/tests/test_mcp_binding.py::"
     "test_runtime_registered_tool_is_gated_with_zero_binding_changes",
+)
+P2_IDEMPOTENCY_CP_SELECTORS = (
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_identical_key_and_canonical_request_converges_to_one_terminal_result",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_same_key_different_canonical_request_conflicts_without_additional_side_effects",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_exact_receipt_replay_is_typed_and_nonduplicating",
+    "tests/integration/test_agent_registration_idempotency_postgres.py::"
+    "test_100_request_multiprocess_has_at_most_one_authorized_execution",
 )
 REVIEWED_P1_MIGRATION_TRANSCRIPT = (
     REVIEWED_P0_TRANSCRIPT[0],
@@ -348,6 +358,14 @@ REVIEWED_P2_REGISTER_TRANSCRIPT = (
         ),
     ),
 )
+REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT = (
+    REVIEWED_P0_TRANSCRIPT[0],
+    *REVIEWED_P0_TRANSCRIPT[1:5],
+    (
+        "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate",
+        ("./scripts/run_postgres_gate.sh", *P2_IDEMPOTENCY_CP_SELECTORS),
+    ),
+)
 REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P0-EVIDENCE-000": REVIEWED_P0_TRANSCRIPT,
     "P1-MIGRATION-001": REVIEWED_P1_MIGRATION_TRANSCRIPT,
@@ -356,6 +374,7 @@ REVIEWED_TRANSCRIPTS_BY_NODE = {
     "P1-TRUST-004": REVIEWED_P1_TRUST_TRANSCRIPT,
     "P2-TENANT-BOOTSTRAP-000": REVIEWED_P2_TENANT_BOOTSTRAP_TRANSCRIPT,
     "P2-REGISTER-001": REVIEWED_P2_REGISTER_TRANSCRIPT,
+    "P2-IDEMPOTENCY-002": REVIEWED_P2_IDEMPOTENCY_TRANSCRIPT,
 }
 REVIEWED_CWD_SCOPES_BY_NODE = {
     "P1-MIGRATION-001": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
@@ -400,6 +419,7 @@ REVIEWED_CWD_SCOPES_BY_NODE = {
         "CP",
         "REPO_ROOT",
     ),
+    "P2-IDEMPOTENCY-002": ("REPO_ROOT", "CP", "CP", "CP", "CP", "CP"),
 }
 REVIEWED_COMMAND_SELECTORS = {argv: selector for selector, argv in REVIEWED_P0_TRANSCRIPT}
 ALLOWED_ASSIGNMENTS = {
@@ -448,6 +468,15 @@ REVIEWED_RUN_METADATA_BY_NODE = {
         "external": (),
     }
     for node_id in EXPECTED_BOOTSTRAP_MAP
+}
+REVIEWED_RUN_METADATA_BY_NODE["P2-IDEMPOTENCY-002"] = {
+    "process_schedule": (
+        "single-process-evidence-and-package-gates",
+        "postgres-100-request-multiprocess-agent-registration-idempotency",
+    ),
+    "clock_source": "system-utc",
+    "skipped": (),
+    "external": (),
 }
 ATTESTATION_ROLES = frozenset({"reviewer", "verifier", "claims-reviewer"})
 PUBLIC_DESCRIPTOR_FIELDS = frozenset(
@@ -842,6 +871,7 @@ def validate_secret_free_run(value: Any, *, expected_node: str | None = None) ->
         "P1-TRUST-004",
         "P2-TENANT-BOOTSTRAP-000",
         "P2-REGISTER-001",
+        "P2-IDEMPOTENCY-002",
     } and (determinism.get("seed") != 20260710 or determinism.get("python_hash_seed") != "0"):
         if str(node_id).startswith("P1-"):
             fail("P1 run determinism differs from the reviewed node contract", phase="B6")

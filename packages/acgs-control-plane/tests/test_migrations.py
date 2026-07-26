@@ -34,6 +34,7 @@ from acgs_control_plane.migrations import (
     migration_config,
     upgrade_database,
 )
+from acgs_control_plane.models import AgentRecord
 
 
 def _database_url(tmp_path: Path) -> str:
@@ -66,6 +67,173 @@ def _version_number(database_url: str) -> str:
         engine.dispose()
     assert isinstance(version, str)
     return version
+
+
+def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
+    tmp_path: Path,
+) -> None:
+    database_url = _database_url(tmp_path)
+    result = upgrade_database(database_url)
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
+
+    engine = make_engine(database_url)
+    try:
+        inspector = sa.inspect(engine)
+        agent_columns = {column["name"]: column for column in inspector.get_columns("agents")}
+        assert agent_columns["project_id"]["nullable"] is True
+        assert agent_columns["environment_id"]["nullable"] is True
+        unique_names = {
+            constraint["name"] for constraint in inspector.get_unique_constraints("agents")
+        }
+        assert "uq_agents_org_name" not in unique_names
+        agent_fk_names = {fk["name"] for fk in inspector.get_foreign_keys("agents")}
+        assert "fk_agents_scope_environment" in agent_fk_names
+        index_names = {index["name"] for index in inspector.get_indexes("agents")}
+        assert {"uq_agents_legacy_org_name", "uq_agents_scope_name"} <= index_names
+        metadata_constraint_names = {
+            constraint.name for constraint in AgentRecord.__table__.constraints
+        }
+        assert "uq_agents_org_name" not in metadata_constraint_names
+        assert "fk_agents_scope_environment" in metadata_constraint_names
+        policy_index_names = {index["name"] for index in inspector.get_indexes("policy_bundles")}
+        assert "uq_policy_bundles_one_active_per_org" in policy_index_names
+
+        now = "2026-07-25T00:00:00+00:00"
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, created_at, audit_anchor_count, audit_anchor_hash
+                    ) VALUES ('org-0006', 'Org 0006', :now, 0, '')
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO projects (id, org_id, slug, name, created_at)
+                    VALUES ('project-0006', 'org-0006', 'default', 'Default', :now)
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO environments (id, org_id, project_id, slug, name, created_at)
+                    VALUES
+                        (
+                            'env-0006-a', 'org-0006', 'project-0006',
+                            'production', 'Production', :now
+                        ),
+                        ('env-0006-b', 'org-0006', 'project-0006', 'staging', 'Staging', :now)
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO agents (
+                        id, org_id, name, description, trust_tier, allowed_tools, status, created_at
+                    ) VALUES (
+                        'agent-legacy', 'org-0006', 'same-name', '',
+                        'untrusted', '[]', 'active', :now
+                    )
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO agents (
+                        id, org_id, project_id, environment_id, name, description,
+                        trust_tier, allowed_tools, status, created_at
+                    ) VALUES (
+                        'agent-scoped-a', 'org-0006', 'project-0006', 'env-0006-a',
+                        'same-name', '', 'internal', '[]', 'active', :now
+                    )
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO agents (
+                        id, org_id, project_id, environment_id, name, description,
+                        trust_tier, allowed_tools, status, created_at
+                    ) VALUES (
+                        'agent-scoped-b', 'org-0006', 'project-0006', 'env-0006-b',
+                        'same-name', '', 'internal', '[]', 'active', :now
+                    )
+                    """
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO policy_bundles (
+                        id, org_id, policy_id, version, bundle, status, created_at, activated_at
+                    ) VALUES (
+                        'policy-active-a', 'org-0006', 'policy-a', 'v1', '{}',
+                        'active', :now, :now
+                    )
+                    """
+                ),
+                {"now": now},
+            )
+
+        with engine.connect() as connection:
+            legacy_scope = connection.execute(
+                sa.text(
+                    """
+                    SELECT project_id, environment_id
+                    FROM agents
+                    WHERE id = 'agent-legacy'
+                    """
+                )
+            ).one()
+            assert legacy_scope == (None, None)
+
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO agents (
+                            id, org_id, project_id, environment_id, name, description,
+                            trust_tier, allowed_tools, status, created_at
+                        ) VALUES (
+                            'agent-scoped-dup', 'org-0006', 'project-0006', 'env-0006-a',
+                            'same-name', '', 'internal', '[]', 'active', :now
+                        )
+                        """
+                    ),
+                    {"now": now},
+                )
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    sa.text(
+                        """
+                        INSERT INTO policy_bundles (
+                            id, org_id, policy_id, version, bundle, status, created_at, activated_at
+                        ) VALUES (
+                            'policy-active-b', 'org-0006', 'policy-b', 'v2', '{}',
+                            'active', :now, :now
+                        )
+                        """
+                    ),
+                    {"now": now},
+                )
+    finally:
+        engine.dispose()
 
 
 def _insert_legacy_receipt_evidence(database_url: str, receipt_id: str) -> None:
@@ -385,6 +553,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0003_managed_mutation_uow.py",
             "acgs_control_plane/migrations/versions/0004_managed_trust_v2.py",
             "acgs_control_plane/migrations/versions/0005_tenant_bootstrap.py",
+            "acgs_control_plane/migrations/versions/0006_agent_scope.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -410,8 +579,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0005
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+assert result.after.state is DatabaseSchemaState.VERSION_0006
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -465,7 +634,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
     assert _table_names(database_url) == {
         "agents",
         "alembic_version",
@@ -575,6 +744,72 @@ def test_postgresql_trust_active_root_predicate_reflection_is_normalized() -> No
     )
 
 
+def test_agent_scope_partial_unique_predicate_reflection_is_normalized() -> None:
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "postgresql_where": "((project_id IS NULL) AND (environment_id IS NULL))",
+                }
+            },
+            "postgresql",
+        )
+        == "agent-scope:legacy-unscoped"
+    )
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "sqlite_where": "project_id IS NULL AND environment_id IS NULL",
+                }
+            },
+            "sqlite",
+        )
+        == "agent-scope:legacy-unscoped"
+    )
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "postgresql_where": (
+                        "((project_id IS NOT NULL) AND (environment_id IS NOT NULL))"
+                    ),
+                }
+            },
+            "postgresql",
+        )
+        == "agent-scope:scoped"
+    )
+
+
+def test_agent_scope_check_constraint_reflection_is_normalized() -> None:
+    assert (
+        _check_constraint_signature(
+            "(project_id IS NULL AND environment_id IS NULL) OR "
+            "(project_id IS NOT NULL AND environment_id IS NOT NULL)"
+        )
+        == "agent-scope:both-null-or-set"
+    )
+    assert (
+        _check_constraint_signature(
+            "(((project_id IS NULL) AND (environment_id IS NULL)) OR "
+            "((project_id IS NOT NULL) AND (environment_id IS NOT NULL)))"
+        )
+        == "agent-scope:both-null-or-set"
+    )
+    assert (
+        _index_where_signature(
+            {
+                "dialect_options": {
+                    "sqlite_where": "project_id IS NOT NULL AND environment_id IS NOT NULL",
+                }
+            },
+            "sqlite",
+        )
+        == "agent-scope:scoped"
+    )
+
+
 def test_postgres_gate_wrapper_exports_exact_reproducibility_environment() -> None:
     script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
         encoding="utf-8"
@@ -626,7 +861,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -644,8 +879,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -666,11 +901,19 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     assert "projects" not in _table_names(database_url)
     assert "environments" not in _table_names(database_url)
     assert "alembic_version" not in _table_names(database_url)
+    engine = make_engine(database_url)
+    try:
+        legacy_unique_names = {
+            constraint["name"] for constraint in sa.inspect(engine).get_unique_constraints("agents")
+        }
+    finally:
+        engine.dispose()
+    assert "uq_agents_org_name" in legacy_unique_names
 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -932,7 +1175,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert _table_names(database_url) == table_names_before
 
 
@@ -1261,9 +1504,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0005
-    assert second.before.state is DatabaseSchemaState.VERSION_0005
-    assert second.after.state is DatabaseSchemaState.VERSION_0005
+    assert first.after.state is DatabaseSchemaState.VERSION_0006
+    assert second.before.state is DatabaseSchemaState.VERSION_0006
+    assert second.after.state is DatabaseSchemaState.VERSION_0006
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -1347,7 +1590,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -1371,7 +1614,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -1393,7 +1636,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

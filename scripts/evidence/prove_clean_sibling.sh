@@ -171,6 +171,7 @@ P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'
 P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'
 P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'
 P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'
+P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -231,6 +232,14 @@ case "$REQUESTED_NODE_ID" in
     INCLUDE_GZ=1
     EXPECTED_TRANSCRIPT_RECORDS=11
     TMP_BASENAME='acgs-p2-register'
+    ;;
+  P2-IDEMPOTENCY-002)
+    [[ "$P" == "$P2_IDEMPOTENCY_REVIEWED_BASE" ]] ||
+      die "P2-IDEMPOTENCY-002 reviewed parent must be exact $P2_IDEMPOTENCY_REVIEWED_BASE"
+    ASSIGNED_BOOTSTRAPS='EVID+CP'
+    INCLUDE_GZ=0
+    EXPECTED_TRANSCRIPT_RECORDS=6
+    TMP_BASENAME='acgs-p2-idempotency'
     ;;
   *)
     die "unsupported clean-sibling node: $REQUESTED_NODE_ID"
@@ -459,6 +468,9 @@ export ACGS_PROCESS_SCHEDULE='["single-process"]'
 export ACGS_CLOCK_SOURCE='system-utc'
 export ACGS_SKIPPED_JSON='[]'
 export ACGS_EXTERNAL_JSON='[]'
+if [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]; then
+  export ACGS_PROCESS_SCHEDULE='["single-process-evidence-and-package-gates","postgres-100-request-multiprocess-agent-registration-idempotency"]'
+fi
 unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME UV_PROJECT_ENVIRONMENT
 
@@ -764,19 +776,31 @@ elif root.tag == "testsuites":
 else:
     print(f"RECORDED_GATE=FAIL selector={selector} reason=unexpected-junit-root", file=sys.stderr)
     raise SystemExit(2)
+if not suites:
+    print(f"RECORDED_GATE=FAIL selector={selector} reason=empty-junit-suites", file=sys.stderr)
+    raise SystemExit(2)
 
 def count(name: str) -> int:
     total = 0
     for suite in suites:
-        raw = suite.attrib.get(name, "0")
-        try:
-            total += int(raw)
-        except ValueError:
+        if name not in suite.attrib:
+            print(
+                f"RECORDED_GATE=FAIL selector={selector} reason=missing-junit-{name}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        raw = suite.attrib[name]
+        if raw != "0" and (not raw or raw[0] == "0" or not raw.isdecimal()):
             print(
                 f"RECORDED_GATE=FAIL selector={selector} reason=invalid-junit-{name}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
+        if raw == "0":
+            value = 0
+        else:
+            value = int(raw)
+        total += value
     return total
 
 actual = {
@@ -840,7 +864,7 @@ node_cwd_scope() {
   local default_scope="$1"
   case "$NODE_ID" in
     P1-MIGRATION-001 | P1-SCOPE-002 | P1-LEDGER-003 | P1-TRUST-004 | \
-      P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001)
+      P2-TENANT-BOOTSTRAP-000 | P2-REGISTER-001 | P2-IDEMPOTENCY-002)
       printf '%s' "$default_scope"
       ;;
     *) printf __NONE__ ;;
@@ -990,9 +1014,9 @@ elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
     "${P2_TENANT_BOOTSTRAP_ROOT_GATE[@]}"
 elif [[ "$NODE_ID" == P2-REGISTER-001 ]]; then
   P2_REGISTER_CP_GATE=(.venv/bin/pytest -q \
-    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation \
-    tests/integration/test_production_posture.py::test_inert_stub_has_no_provider_executor_or_persistence_callback_surface \
-    tests/integration/test_production_posture.py::test_managed_contract_hashes_the_exact_canonical_snapshot)
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_executes_through_managed_receipt_v2_spine \
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_refusal_matrix_has_zero_managed_side_effects \
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_scope_and_policy_are_server_owned)
   run_recorded_exact_pytest_gate CP "$WORKTREE/packages/acgs-control-plane" \
     p2-register-control-plane \
     'packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate' CP 3 \
@@ -1007,6 +1031,16 @@ elif [[ "$NODE_ID" == P2-REGISTER-001 ]]; then
   run_recorded_exact_pytest_gate GZ "$WORKTREE" p2-register-runtime \
     'packages/gove-zone:P2-REGISTER-001-runtime-registration-gate' REPO_ROOT 4 \
     "${P2_REGISTER_GZ_GATE[@]}"
+elif [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]; then
+  P2_IDEMPOTENCY_CP_GATE=(./scripts/run_postgres_gate.sh \
+    tests/integration/test_agent_registration_idempotency_postgres.py::test_identical_key_and_canonical_request_converges_to_one_terminal_result \
+    tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \
+    tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating \
+    tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution)
+  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+    "$WORKTREE/packages/acgs-control-plane" p2-idempotency-postgres \
+    'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP \
+    "${P2_IDEMPOTENCY_CP_GATE[@]}"
 else
   die "unsupported clean-sibling node at product gate: $NODE_ID"
 fi

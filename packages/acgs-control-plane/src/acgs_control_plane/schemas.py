@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -89,11 +89,24 @@ class UserResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+AgentToolName = Annotated[
+    str,
+    Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9._:/-]+$"),
+]
+
+
 class AgentRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
-    description: str = ""
-    trust_tier: str = Field(default="untrusted", max_length=32)
-    allowed_tools: list[str] = Field(default_factory=list)
+    description: str = Field(default="", max_length=2000)
+    trust_tier: str = Field(
+        default="untrusted",
+        min_length=1,
+        max_length=32,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    allowed_tools: list[AgentToolName] = Field(default_factory=list, max_length=64)
 
 
 class AgentResponse(BaseModel):

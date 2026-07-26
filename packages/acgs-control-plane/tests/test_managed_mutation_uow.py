@@ -176,13 +176,13 @@ def test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically(
 ) -> None:
     receipt = _receipt(
         "allow-atomic",
-        args={"name": "governed-agent"},
+        args=_agent_args("governed-agent"),
         signer=signer,
     )
     result = _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
-        args={"name": "governed-agent"},
+        args=_agent_args("governed-agent"),
     )
 
     assert result.result["agent_name_hash"] == sha256_json("governed-agent")
@@ -234,7 +234,7 @@ def test_uow_pins_canonical_receipt_clock_skew_at_gate(
 ) -> None:
     receipt = _receipt(
         "explicit-clock-skew-pin",
-        args={"name": "clock-skew-agent"},
+        args=_agent_args("clock-skew-agent"),
         signer=signer,
     )
     observed_gate_kwargs: dict[str, Any] = {}
@@ -253,7 +253,7 @@ def test_uow_pins_canonical_receipt_clock_skew_at_gate(
     _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
-        args={"name": "clock-skew-agent"},
+        args=_agent_args("clock-skew-agent"),
     )
 
     assert (
@@ -269,7 +269,7 @@ def test_injected_failure_before_commit_rolls_back_consumption_receipt_event_out
 ) -> None:
     receipt = _receipt(
         "allow-rollback",
-        args={"name": "rolled-back-agent"},
+        args=_agent_args("rolled-back-agent"),
         signer=signer,
     )
 
@@ -286,7 +286,7 @@ def test_injected_failure_before_commit_rolls_back_consumption_receipt_event_out
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "rolled-back-agent"},
+            args=_agent_args("rolled-back-agent"),
         )
 
     with session_factory() as session:
@@ -316,7 +316,7 @@ def test_injected_failure_before_commit_rolls_back_consumption_receipt_event_out
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "rolled-back-agent"},
+            args=_agent_args("rolled-back-agent"),
         )
     with session_factory() as session:
         assert _counts(session) == {
@@ -337,7 +337,7 @@ def test_deny_and_escalate_do_not_consume_or_execute_or_persist_success(
     for decision in (Decision.DENY, Decision.ESCALATE):
         receipt = _receipt(
             f"{decision.value}-blocked",
-            args={"name": decision.value},
+            args=_agent_args(decision.value),
             decision=decision,
             signer=signer,
         )
@@ -345,7 +345,7 @@ def test_deny_and_escalate_do_not_consume_or_execute_or_persist_success(
             _signed_uow(session_factory, signer, receipt_sealer).execute(
                 context=_context(),
                 receipt=receipt,
-                args={"name": decision.value},
+                args=_agent_args(decision.value),
             )
 
     with session_factory() as session:
@@ -363,13 +363,13 @@ def test_default_uow_rejects_unsigned_receipt_without_verifier_and_persists_zero
     session_factory: sessionmaker[Session],
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("unsigned-default-rejected", args={"name": "unsigned-agent"})
+    receipt = _receipt("unsigned-default-rejected", args=_agent_args("unsigned-agent"))
 
     with pytest.raises(ReceiptValidationError):
         ManagedMutationUnitOfWork(session_factory, receipt_sealer=receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "unsigned-agent"},
+            args=_agent_args("unsigned-agent"),
         )
 
     with session_factory() as session:
@@ -427,7 +427,7 @@ def test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints
 ) -> None:
     receipt = _receipt(
         "wrong-scope-db",
-        args={"name": "wrong-scope-agent"},
+        args=_agent_args("wrong-scope-agent"),
         environment_id="missing-environment",
         signer=signer,
     )
@@ -437,7 +437,7 @@ def test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=context,
             receipt=receipt,
-            args={"name": "wrong-scope-agent"},
+            args=_agent_args("wrong-scope-agent"),
         )
 
     with session_factory() as session:
@@ -455,7 +455,7 @@ def test_receipt_rejection_variants_execute_zero_sql_and_persist_zero_evidence(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    base_args = {"name": "blocked-agent"}
+    base_args = _agent_args("blocked-agent")
     unknown_signer = Ed25519Signer.generate(key_id="unknown-managed-key")
     cases = [
         (
@@ -532,7 +532,7 @@ def test_receipt_rejection_variants_execute_zero_sql_and_persist_zero_evidence(
             _receipt("wrong-arguments", args=base_args, signer=signer),
             _context(),
             _signed_uow(session_factory, signer, receipt_sealer),
-            {"name": "different-args"},
+            _agent_args("different-args"),
         ),
         (
             "unknown-arguments",
@@ -598,7 +598,7 @@ def test_concurrent_receipt_consumption_has_single_committed_winner(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("concurrent-single-winner", args={"name": "only-winner"}, signer=signer)
+    receipt = _receipt("concurrent-single-winner", args=_agent_args("only-winner"), signer=signer)
     _bootstrap_trust_root(session_factory, signer)
 
     def run_once() -> str:
@@ -606,7 +606,7 @@ def test_concurrent_receipt_consumption_has_single_committed_winner(
             _signed_uow(session_factory, signer, receipt_sealer).execute(
                 context=_context(),
                 receipt=receipt,
-                args={"name": "only-winner"},
+                args=_agent_args("only-winner"),
             )
             return "committed"
         except Exception as exc:
@@ -637,7 +637,7 @@ def test_outbox_rows_appear_only_after_sql_commit(
 ) -> None:
     failing_receipt = _receipt(
         "outbox-rolled-back",
-        args={"name": "outbox-fail"},
+        args=_agent_args("outbox-fail"),
         signer=signer,
     )
 
@@ -651,7 +651,7 @@ def test_outbox_rows_appear_only_after_sql_commit(
             _signed_uow(session_factory, signer, receipt_sealer).execute(
                 context=_context(),
                 receipt=failing_receipt,
-                args={"name": "outbox-fail"},
+                args=_agent_args("outbox-fail"),
             )
     with session_factory() as session:
         assert _count(session, ManagedOutboxMessage) == 0
@@ -660,13 +660,13 @@ def test_outbox_rows_appear_only_after_sql_commit(
 
     committed_receipt = _receipt(
         "outbox-commit-boundary",
-        args={"name": "commit-agent"},
+        args=_agent_args("commit-agent"),
         signer=signer,
     )
     _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=committed_receipt,
-        args={"name": "commit-agent"},
+        args=_agent_args("commit-agent"),
     )
 
     with session_factory() as session:
@@ -679,18 +679,18 @@ def test_same_receipt_cannot_replay_across_second_environment(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("cross-env-replay", args={"name": "cross-env-agent"}, signer=signer)
+    receipt = _receipt("cross-env-replay", args=_agent_args("cross-env-agent"), signer=signer)
     _signed_uow(session_factory, signer, receipt_sealer).execute(
         context=_context(),
         receipt=receipt,
-        args={"name": "cross-env-agent"},
+        args=_agent_args("cross-env-agent"),
     )
 
     with pytest.raises(ReceiptValidationError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(environment_id=SECOND_ENVIRONMENT_ID),
             receipt=receipt,
-            args={"name": "cross-env-agent"},
+            args=_agent_args("cross-env-agent"),
         )
 
     with session_factory() as session:
@@ -720,7 +720,7 @@ def test_in_progress_attempt_retry_fails_closed_without_takeover(
     receipt_sealer: AesGcmReceiptArtifactSealer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    receipt = _receipt("stale-in-progress", args={"name": "stale-agent"}, signer=signer)
+    receipt = _receipt("stale-in-progress", args=_agent_args("stale-agent"), signer=signer)
     with session_factory.begin() as session:
         session.add(
             ManagedMutationAttempt(
@@ -751,7 +751,7 @@ def test_in_progress_attempt_retry_fails_closed_without_takeover(
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "stale-agent"},
+            args=_agent_args("stale-agent"),
         )
 
     with session_factory() as session:
@@ -770,7 +770,7 @@ def test_uow_has_no_arbitrary_python_callback_surface(
     session_factory: sessionmaker[Session],
     tmp_path: Path,
 ) -> None:
-    receipt = _receipt("callback-surface-rejected", args={"name": "callback-agent"})
+    receipt = _receipt("callback-surface-rejected", args=_agent_args("callback-agent"))
     marker = tmp_path / "callback-ran"
 
     def former_callback(_session: Session, _args: Mapping[str, Any]) -> None:
@@ -783,7 +783,7 @@ def test_uow_has_no_arbitrary_python_callback_surface(
         ).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "callback-agent"},
+            args=_agent_args("callback-agent"),
             callback=former_callback,  # type: ignore[call-arg]
         )
 
@@ -803,13 +803,13 @@ def test_uow_has_no_caller_supplied_sql_or_result_surface(
     signer: Ed25519Signer,
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
-    receipt = _receipt("caller-sql-rejected", args={"name": "caller-sql"}, signer=signer)
+    receipt = _receipt("caller-sql-rejected", args=_agent_args("caller-sql"), signer=signer)
 
     with pytest.raises(TypeError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "caller-sql"},
+            args=_agent_args("caller-sql"),
             mutation=sa.insert(AgentRecord).values(
                 id="attacker-agent",
                 org_id=SECOND_ORG_ID,
@@ -825,14 +825,14 @@ def test_uow_has_no_caller_supplied_sql_or_result_surface(
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "caller-sql"},
+            args=_agent_args("caller-sql"),
             mutation=sa.update(AgentRecord).values(status="attacker-active"),  # type: ignore[call-arg]
         )
     with pytest.raises(TypeError):
         _signed_uow(session_factory, signer, receipt_sealer).execute(
             context=_context(),
             receipt=receipt,
-            args={"name": "caller-sql"},
+            args=_agent_args("caller-sql"),
             mutation=sa.delete(AgentRecord),  # type: ignore[call-arg]
         )
 
@@ -896,7 +896,7 @@ def test_mint_managed_decision_receipt_v2_rejects_agent_controlled_actor(
     record = DecisionRecord(
         decision=Decision.ALLOW,
         tool=ACTION,
-        argument_hash=sha256_json({"name": "actor-bound"}),
+        argument_hash=sha256_json(_agent_args("actor-bound")),
         policy_version=POLICY_VERSION,
         event_id="mint-actor-mismatch",
         matched_rules=("managed-mint",),
@@ -926,7 +926,7 @@ def test_signed_native_receipt_projection_round_trips_for_offline_verification(
     receipt_sealer: AesGcmReceiptArtifactSealer,
 ) -> None:
     secret_sentinel = "sk-native-secret-never-persist"
-    args = {"name": "signed-native-agent"}
+    args = _agent_args("signed-native-agent")
     receipt = _receipt("signed-native", args=args, signer=signer, metadata_sentinel=secret_sentinel)
 
     _signed_uow(session_factory, signer, receipt_sealer).execute(
@@ -1025,6 +1025,15 @@ def _context(
         validator_role=VALIDATOR_ROLE,
         authority=authority,
     )
+
+
+def _agent_args(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": "",
+        "trust_tier": "internal",
+        "allowed_tools": [],
+    }
 
 
 def _receipt(
