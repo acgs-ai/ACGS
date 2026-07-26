@@ -326,6 +326,12 @@ TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
   "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")" ||
   die 'cannot snapshot caller TMPDIR direct entries'
 WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT"
+)" || die 'cannot snapshot baseline worktree registry'
 SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
 git -C "$SOURCE_REPO" cat-file -e "$T^{commit}" || die 'T commit is unavailable'
 git -C "$SOURCE_REPO" cat-file -e "$P^{commit}" || die 'P commit is unavailable'
@@ -355,9 +361,10 @@ UV_TOOL_BIN_DIR=''
 UV_PYTHON_CACHE_DIR=''
 UV_CREDENTIALS_DIR=''
 WORKTREE_ADDED=0
-SOURCE_COMMON_GITDIR=''
-WORKTREE_REGISTRY_ROOT=''
+SOURCE_COMMON_GITDIR="${SOURCE_COMMON_GITDIR:-}"
+WORKTREE_REGISTRY_ROOT="${WORKTREE_REGISTRY_ROOT:-}"
 WORKTREE_REGISTRY_ROOT_IDENTITY=''
+WORKTREE_REGISTRY_ENTRIES_BEFORE="${WORKTREE_REGISTRY_ENTRIES_BEFORE:-}"
 WORKTREE_ADMIN_GITDIR=''
 WORKTREE_ADMIN_GITDIR_IDENTITY=''
 WORKTREE_GITFILE_RETENTION_REQUIRED=0
@@ -490,8 +497,6 @@ clean_sibling_validate_retained_gitfile \
   "$WORKTREE_GITFILE_SHA256" \
   "$WORKTREE_GITFILE_CONTENT_B64" ||
   die 'detached sibling gitfile descriptor identity is unsafe'
-SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
-WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
 WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
 case "$WORKTREE_ADMIN_GITDIR" in
   "$WORKTREE_REGISTRY_ROOT"/*) ;;

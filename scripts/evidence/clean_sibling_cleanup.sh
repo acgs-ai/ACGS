@@ -89,6 +89,163 @@ clean_sibling_worktree_list_contains() {
   ' "worktree $worktree"
 }
 
+clean_sibling_worktree_paths_digest() {
+  local listing="$1"
+
+  printf '%s\n' "$listing" | awk '
+    /^worktree / {
+      print substr($0, 10)
+    }
+  ' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}'
+}
+
+clean_sibling_snapshot_worktree_registry() {
+  local registry_root="$1"
+  local expected_identity="${2:-}"
+  local snapshot_python="${SNAPSHOT_PYTHON:-/usr/bin/python3}"
+
+  [[ "$registry_root" == /* ]] || return 2
+  if [[ ! -e "$registry_root" && ! -L "$registry_root" ]]; then
+    printf 'empty:%s\n' "$(printf '' | /usr/bin/sha256sum | /usr/bin/awk '{print $1}')"
+    return 0
+  fi
+  [[ -d "$registry_root" && ! -L "$registry_root" ]] || {
+    printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
+      "$registry_root" >&2
+    return 2
+  }
+  if [[ -n "$expected_identity" ]]; then
+    [[ "$expected_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
+  fi
+  "$snapshot_python" - "$registry_root" "$expected_identity" <<'PY'
+import hashlib
+import os
+import stat
+import struct
+import sys
+
+
+def fail(message: str) -> "None":
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def field(tag: bytes, payload: bytes) -> bytes:
+    return tag + struct.pack(">Q", len(payload)) + payload
+
+
+def reject_control_text(value: str) -> bool:
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
+
+def read_safe_file(directory_fd: int, name: str, label: str, required: bool) -> bytes:
+    try:
+        file_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
+    except OSError as exc:
+        if not required and exc.errno == 2:
+            return b""
+        fail(f"cleanup refused because worktree registry {label} read failed: {exc}")
+    try:
+        file_stat = os.fstat(file_fd)
+        if (not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1 or
+                file_stat.st_uid != os.getuid()):
+            fail(f"cleanup refused because worktree registry {label} identity changed")
+        data = os.read(file_fd, 4096)
+        if os.read(file_fd, 1):
+            fail(f"cleanup refused because worktree registry {label} is too large")
+    finally:
+        os.close(file_fd)
+    return data
+
+
+def validate_single_line_path(data: bytes, label: str, *, must_be_absolute: bool) -> None:
+    if not data.endswith(b"\n") or data.count(b"\n") != 1:
+        fail(f"cleanup refused because worktree registry {label} is malformed")
+    raw_path = data[:-1]
+    if b"\0" in raw_path or any(byte < 32 or byte == 127 for byte in raw_path):
+        fail(f"cleanup refused because worktree registry {label} is malformed")
+    if must_be_absolute and not raw_path.startswith(b"/"):
+        fail(f"cleanup refused because worktree registry {label} is malformed")
+
+
+root = sys.argv[1]
+expected_identity = sys.argv[2]
+expected = None
+if expected_identity:
+    expected = tuple(int(part) for part in expected_identity.split(":"))
+
+try:
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+except OSError as exc:
+    fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
+
+try:
+    root_stat = os.fstat(root_fd)
+    if expected is not None and (
+            root_stat.st_dev, root_stat.st_ino, root_stat.st_uid) != expected:
+        fail("cleanup refused because worktree registry identity changed")
+    chunks = []
+    for name in sorted(os.listdir(root_fd), key=os.fsencode):
+        if reject_control_text(name):
+            fail("cleanup refused control-character worktree registry entry")
+        try:
+            entry_stat = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        except OSError as exc:
+            fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
+        if stat.S_ISLNK(entry_stat.st_mode) or not stat.S_ISDIR(entry_stat.st_mode):
+            fail(f"cleanup refused because worktree registry entry is not a directory: {name}")
+        try:
+            entry_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root_fd,
+            )
+        except OSError as exc:
+            fail(f"cleanup refused because worktree registry enumeration failed: {exc}")
+        try:
+            gitdir = read_safe_file(entry_fd, "gitdir", "gitdir", required=True)
+            validate_single_line_path(gitdir, "gitdir", must_be_absolute=True)
+            gitfile_path = os.fsdecode(gitdir[:-1])
+            try:
+                gitfile_stat = os.stat(gitfile_path, follow_symlinks=False)
+            except OSError as exc:
+                fail(f"cleanup refused because worktree registry gitdir target is unreadable: {exc}")
+            if stat.S_ISLNK(gitfile_stat.st_mode) or not stat.S_ISREG(gitfile_stat.st_mode):
+                fail("cleanup refused because worktree registry gitdir target is unsafe")
+            commondir = read_safe_file(entry_fd, "commondir", "commondir", required=False)
+            if commondir:
+                validate_single_line_path(commondir, "commondir", must_be_absolute=False)
+            chunks.append(b"".join((
+                field(b"N", os.fsencode(name)),
+                field(b"E", b":".join(str(value).encode() for value in (
+                    entry_stat.st_dev,
+                    entry_stat.st_ino,
+                    entry_stat.st_uid,
+                    stat.S_IMODE(entry_stat.st_mode),
+                ))),
+                field(b"G", gitdir),
+                field(b"T", b":".join(str(value).encode() for value in (
+                    gitfile_stat.st_dev,
+                    gitfile_stat.st_ino,
+                    gitfile_stat.st_uid,
+                    stat.S_IMODE(gitfile_stat.st_mode),
+                ))),
+                field(b"C", commondir),
+            )))
+        finally:
+            os.close(entry_fd)
+finally:
+    os.close(root_fd)
+
+prefix = "present" if chunks else "empty"
+print(prefix + ":" + hashlib.sha256(b"".join(chunks)).hexdigest())
+PY
+}
+
 clean_sibling_find_admin_sentinel() {
   local registry_root="$1"
   local expected_identity="$2"
@@ -600,6 +757,8 @@ clean_sibling_cleanup() {
   local worktree_list=''
   local current_admin_identity=''
   local current_registry_identity=''
+  local current_registry_entries=''
+  local current_worktree_paths=''
   local admin_registry_entry=''
   local admin_registry_found_path=''
   local linked_gitfile_found_path=''
@@ -732,6 +891,19 @@ clean_sibling_cleanup() {
       fi
       cleanup_status=2
     fi
+    if [[ -n "${WORKTREE_ADMIN_SENTINEL_PATH:-}" ]] &&
+      [[ -e "$WORKTREE_ADMIN_SENTINEL_PATH" || -L "$WORKTREE_ADMIN_SENTINEL_PATH" ]]; then
+      if [[ -z "${WORKTREE_ADMIN_SENTINEL_IDENTITY:-}" ]] ||
+        [[ "$(stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_SENTINEL_PATH" 2>/dev/null || true)" != \
+          "$WORKTREE_ADMIN_SENTINEL_IDENTITY" ]]; then
+        printf 'cleanup refused because worktree admin sentinel identity changed: %s\n' \
+          "$WORKTREE_ADMIN_SENTINEL_PATH" >&2
+      else
+        printf 'cleanup refused because worktree admin sentinel remains: %s\n' \
+          "$WORKTREE_ADMIN_SENTINEL_PATH" >&2
+      fi
+      cleanup_status=2
+    fi
     admin_registry_root="$SOURCE_COMMON_GITDIR/worktrees"
     if [[ ! -d "$admin_registry_root" || -L "$admin_registry_root" ]]; then
       printf 'cleanup refused because worktree registry enumeration failed: %s\n' \
@@ -829,6 +1001,38 @@ clean_sibling_cleanup() {
       printf 'owned proof root reappeared during cleanup: %s\n' "$TMP_ROOT" >&2
       cleanup_status=2
     }
+  fi
+  if [[ "$WORKTREE_ADDED" == 1 ]]; then
+    if ! worktree_list="$(git -C "$SOURCE_REPO" worktree list --porcelain)"; then
+      printf 'cleanup refused because final worktree registry query failed\n' >&2
+      cleanup_status=2
+    else
+      current_worktree_paths="$(clean_sibling_worktree_paths_digest "$worktree_list")"
+      if [[ -z "${WORKTREE_PATHS_BEFORE:-}" ]]; then
+        WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "${WORKTREES_BEFORE:-}")"
+      fi
+      if [[ -z "${WORKTREE_PATHS_BEFORE:-}" ]] ||
+        [[ "$current_worktree_paths" != "$WORKTREE_PATHS_BEFORE" ]]; then
+        printf 'cleanup refused because worktree path registry changed across proof\n' >&2
+        cleanup_status=2
+      fi
+    fi
+    if [[ -z "${WORKTREE_REGISTRY_ENTRIES_BEFORE:-}" ]]; then
+      printf 'cleanup refused because baseline worktree registry snapshot is missing\n' >&2
+      cleanup_status=2
+    elif [[ -n "${WORKTREE_REGISTRY_ROOT:-}" ]]; then
+      if ! current_registry_entries="$(clean_sibling_snapshot_worktree_registry \
+        "$WORKTREE_REGISTRY_ROOT" "${WORKTREE_REGISTRY_ROOT_IDENTITY:-}")"; then
+        cleanup_status=2
+        current_registry_entries=''
+      elif [[ "$current_registry_entries" != "$WORKTREE_REGISTRY_ENTRIES_BEFORE" ]]; then
+        printf 'cleanup refused because worktree registry entries changed across proof\n' >&2
+        cleanup_status=2
+      fi
+    else
+      printf 'cleanup refused because worktree registry root is missing\n' >&2
+      cleanup_status=2
+    fi
   fi
   if [[ -n "${WORKTREE_GITFILE_FD:-}" ]]; then
     exec {WORKTREE_GITFILE_FD}<&- || cleanup_status=2
