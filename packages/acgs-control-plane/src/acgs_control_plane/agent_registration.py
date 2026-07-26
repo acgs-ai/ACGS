@@ -713,7 +713,11 @@ def _resolve_default_scope(
             sa.select(Project).where(Project.org_id == org_id, Project.slug == "default").limit(2)
         )
         if lock:
-            project_statement = project_statement.with_for_update()
+            # FOR NO KEY UPDATE (key_share=True) still blocks concurrent
+            # UPDATE/DELETE of the scope row but stays compatible with the
+            # FOR KEY SHARE locks taken at commit by deferred foreign keys in
+            # the attempt-reservation transaction, avoiding an ABBA deadlock.
+            project_statement = project_statement.with_for_update(key_share=True)
         projects = list(session.scalars(project_statement))
     except SQLAlchemyError as exc:
         raise AgentRegistrationHttpError(
@@ -740,7 +744,9 @@ def _resolve_default_scope(
             .limit(2)
         )
         if lock:
-            environment_statement = environment_statement.with_for_update()
+            # See project lock above: FOR NO KEY UPDATE avoids deadlocking
+            # against deferred-FK KEY SHARE locks while pinning the row.
+            environment_statement = environment_statement.with_for_update(key_share=True)
         environments = list(session.scalars(environment_statement))
     except SQLAlchemyError as exc:
         raise AgentRegistrationHttpError(
