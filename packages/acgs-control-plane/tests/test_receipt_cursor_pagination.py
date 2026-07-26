@@ -29,15 +29,15 @@ from acgs_control_plane.models import (
     new_id,
     utcnow,
 )
-from acgs_control_plane.trust import (
-    ManagedTrustLifecycleService,
-    public_spki_der_from_signer,
-)
 from acgs_control_plane.pagination import (
     CursorConfigurationError,
     CursorKeyring,
     issue_receipt_cursor,
     receipt_filter_digest,
+)
+from acgs_control_plane.trust import (
+    ManagedTrustLifecycleService,
+    public_spki_der_from_signer,
 )
 
 BOOTSTRAP_TOKEN = "cursor-bootstrap-token"

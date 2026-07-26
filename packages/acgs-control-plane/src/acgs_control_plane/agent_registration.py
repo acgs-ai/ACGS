@@ -51,6 +51,9 @@ from acgs_control_plane.trust import (
 AGENT_REGISTRATION_AUTHORITY = "control-plane.agent-registration/v1"
 AGENT_REGISTRATION_VALIDATOR_ROLE = "control-plane.agent-policy/v1"
 AGENT_REGISTRATION_GOAL = "register managed agent in org registry"
+# The action name this route used before it became a managed mutation. Policy
+# bundles published against it must keep denying; see _evaluate_agent_policy.
+LEGACY_AGENT_REGISTER_ACTION = "agent.register"
 _GENESIS_AUDIT_HASH = "0" * 64
 _LOCAL_AGENT_SIGNER_SEED = bytes.fromhex(
     "55df9db52ff7b9635dd2bbf66fbcb3fb3f70d6071359449f0d9f8ad1a3e8a9c4"
@@ -542,17 +545,38 @@ def _normalized_agent_args(body: AgentRegisterRequest) -> dict[str, Any]:
     }
 
 
-def _evaluate_agent_policy(policy: Any, *, args: Mapping[str, Any], actor: str) -> DecisionRecord:
-    return policy.evaluate(
-        ToolCall(
-            name=CONTROL_PLANE_AGENT_CREATE_ACTION,
-            args=dict(args),
-            actor=actor,
-            goal=AGENT_REGISTRATION_GOAL,
-            path=normalize_path_context(["control-plane", "agents"]),
-            state={"trust_tier": args.get("trust_tier", "")},
-        )
+def _agent_policy_tool_call(name: str, *, args: Mapping[str, Any], actor: str) -> ToolCall:
+    return ToolCall(
+        name=name,
+        args=dict(args),
+        actor=actor,
+        goal=AGENT_REGISTRATION_GOAL,
+        path=normalize_path_context(["control-plane", "agents"]),
+        state={"trust_tier": args.get("trust_tier", "")},
     )
+
+
+def _evaluate_agent_policy(policy: Any, *, args: Mapping[str, Any], actor: str) -> DecisionRecord:
+    """Decide agent creation under both the managed and the legacy action name.
+
+    Governing this route renamed the action from ``agent.register`` to
+    ``control-plane.agent.create``. Policy bundles an org already published name
+    the old action, so evaluating only the new name would silently stop
+    enforcing them -- an existing DENY would start returning 201. Both names are
+    evaluated and the restrictive outcome wins, so the rename can only ever
+    keep a refusal, never manufacture an approval.
+    """
+    managed = policy.evaluate(
+        _agent_policy_tool_call(CONTROL_PLANE_AGENT_CREATE_ACTION, args=args, actor=actor)
+    )
+    if managed.decision is not Decision.ALLOW:
+        return managed
+    legacy = policy.evaluate(
+        _agent_policy_tool_call(LEGACY_AGENT_REGISTER_ACTION, args=args, actor=actor)
+    )
+    if legacy.decision is not Decision.ALLOW:
+        return legacy
+    return managed
 
 
 def _revalidate_active_policy_under_lock(

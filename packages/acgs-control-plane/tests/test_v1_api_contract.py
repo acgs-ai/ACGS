@@ -319,6 +319,9 @@ def test_v1_policy_deny_matches_v0_error_semantics_and_blocks_side_effect(
             },
             headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
         ).json()
+        # Created without _bootstrap, so it still needs the governed scope and
+        # trust that agent registration resolves.
+        _seed_agent_registration_prerequisites(client, v0_org)
         rule = {
             "id": "no-untrusted-agents",
             "effect": "deny",

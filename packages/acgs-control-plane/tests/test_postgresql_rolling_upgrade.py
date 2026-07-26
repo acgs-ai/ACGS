@@ -884,9 +884,7 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                 # left behind minus its constraints.
                 connection.execute(sa.text("DROP INDEX uq_agents_scope_name"))
                 connection.execute(sa.text("DROP INDEX uq_agents_legacy_org_name"))
-                connection.execute(
-                    sa.text("DROP INDEX uq_policy_bundles_one_active_per_org")
-                )
+                connection.execute(sa.text("DROP INDEX uq_policy_bundles_one_active_per_org"))
                 connection.execute(
                     sa.text(
                         "ALTER TABLE agents "
