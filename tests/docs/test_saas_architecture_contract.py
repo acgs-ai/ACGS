@@ -297,10 +297,8 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "bounded request-admission/redacted-error contract evidence",
         "PR #357 branch `beta/p1-g102-request-admission`",
         "commit `4d60fb4a0a16be06a2a9957dea91dc2bf429c57d`",
-        (
-            "focused `cd packages/acgs-control-plane && uv run pytest "
-            "tests/test_api_contract.py -q` at 14 passed"
-        ),
+        "focused `cd packages/acgs-control-plane && uv run pytest "
+        "tests/test_api_contract.py -q` at 14 passed",
         "full control-plane 228 passed/32 skipped",
         "Ruff and mypy pass",
         "independent security/code approve/verifier pass",

@@ -249,8 +249,8 @@ def test_beta_completion_scope_is_mechanical_and_excludes_external_only() -> Non
     assert policy == {
         "required_selector": "mandatory == true and completion_scope == non_external",
         "satisfied_selector": (
-            "status == completed and implementation_state == built and evidence_state "
-            "in verified evidence states"
+            "status == completed and implementation_state == built "
+            "and evidence_state in verified evidence states"
         ),
         "external_only_excluded": True,
     }
@@ -673,6 +673,9 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     ):
         assert missing_contract in g102["blocker"]
         assert missing_contract in combined_g102b or missing_contract in g102["evidence_artifact"]
+        assert (
+            missing_contract in g102a["evidence_artifact"] or missing_contract in g102a["blocker"]
+        )
     assert "OpenAPI drift verification remain missing" not in g102["blocker"]
     assert "OpenAPI drift gates are still missing" not in g102["evidence_artifact"]
     assert (

@@ -143,9 +143,11 @@ def test_iii_governance_lab_static_workflow_does_not_run_live_iii_engine():
         ),
         "\n".join(
             [
-                ".venv/bin/python -m py_compile experiments/iii-governance-lab/workers/governance-worker/governance_worker.py",
+                ".venv/bin/python -m py_compile "
+                "experiments/iii-governance-lab/workers/governance-worker/governance_worker.py",
                 "bash -n experiments/iii-governance-lab/scripts/smoke.sh",
-                "npm ci --prefix experiments/iii-governance-lab/workers/caller-worker --ignore-scripts",
+                "npm ci --prefix experiments/iii-governance-lab/workers/caller-worker "
+                "--ignore-scripts",
                 "npm run --prefix experiments/iii-governance-lab/workers/caller-worker typecheck",
             ]
         ),
@@ -158,7 +160,5 @@ def test_iii_governance_lab_static_workflow_does_not_run_live_iii_engine():
         "docker compose",
     ]
     assert not any(
-        command in run_command
-        for run_command in run_commands
-        for command in forbidden_commands
+        command in run_command for run_command in run_commands for command in forbidden_commands
     )
