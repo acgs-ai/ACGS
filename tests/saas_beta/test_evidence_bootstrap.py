@@ -627,6 +627,56 @@ def test_renderer_rejects_missing_changed_or_dynamic_pep660_and_backend(
             render_lock_inputs.render(config, root / "out")
 
 
+def test_renderer_accepts_registry_requirements_and_reviewed_workspace_sources(
+    tmp_path: Path,
+) -> None:
+    config = _copy_config_repo(tmp_path)
+    output = (tmp_path / "out").resolve()
+    written = render_lock_inputs.render(config, output)
+    assert sorted(path.relative_to(output) for path in written) == sorted(
+        render_lock_inputs.EXPECTED_OUTPUTS.values()
+    )
+    cp_input = output / "requirements/saas-beta/cp-test.in"
+    payload = cp_input.read_text(encoding="utf-8")
+    assert "fastapi>=0.110" in payload
+    assert "pydantic[email]>=2.8" in payload
+    assert "gove-zone[crypto]" not in payload
+    assert "editables==0.6" in payload
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    (
+        "directref @ https://127.0.0.1:9/ssrf.tar.gz",
+        "gove-zone @ https://127.0.0.1:9/workspace-bypass.tar.gz",
+        "directref @ file:///etc/passwd",
+        "directref @ git+https://example.invalid/repo.git",
+        "git+ssh://example.invalid/repo.git",
+        "ssh://example.invalid/repo.git",
+        "file:../outside",
+        "../outside",
+        "./local-package",
+        "not a valid requirement",
+    ),
+)
+def test_renderer_rejects_direct_url_vcs_file_path_and_ambiguous_sources_before_write(
+    tmp_path: Path, replacement: str
+) -> None:
+    config = _copy_config_repo(tmp_path / "config")
+    manifest = tmp_path / "config/packages/acgs-control-plane/pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("fastapi>=0.110", replacement, 1),
+        encoding="utf-8",
+    )
+    output = (tmp_path / "out").resolve()
+    with pytest.raises(
+        render_lock_inputs.ConfigError,
+        match=r"direct URL/path requirement|unsupported or ambiguous|unsupported or dynamic",
+    ):
+        render_lock_inputs.render(config, output)
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("name", "input_name"),
     (
@@ -3493,6 +3543,8 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
     script_dir = package_dir / "scripts"
     script_dir.mkdir(parents=True)
     fake_postgres_gate = script_dir / "run_postgres_gate.sh"
+    expected_uv_python_install_dir = tmp_path / "uv-python-install"
+    expected_uv_python_install_dir_json = json.dumps(str(expected_uv_python_install_dir))
     fake_postgres_gate.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
@@ -3500,6 +3552,16 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         "  echo 'outer PYTEST_ADDOPTS rejected' >&2\n"
         "  exit 64\n"
         "fi\n"
+        f'if [[ "${{UV_PYTHON_INSTALL_DIR:-}}" != {expected_uv_python_install_dir_json} ]]; then\n'
+        "  echo 'canonical UV_PYTHON_INSTALL_DIR missing' >&2\n"
+        "  exit 65\n"
+        "fi\n"
+        "for leaked in UV_PYTHON_BIN_DIR UV_TOOL_DIR UV_CACHE_DIR UV_OFFLINE UV_NO_INDEX; do\n"
+        '  if [[ -n "${!leaked:-}" ]]; then\n'
+        '    printf "unexpected env leak: %s\\n" "$leaked" >&2\n'
+        "    exit 66\n"
+        "  fi\n"
+        "done\n"
         "printf 'wrapper-owned JUnit totals verified\\n'\n",
         encoding="utf-8",
     )
@@ -3515,11 +3577,18 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
         f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"UV_BIN={json.dumps(sys.executable)}\n"
+        f"UV_PYTHON_INSTALL_DIR={json.dumps(str(expected_uv_python_install_dir))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
         "die() { printf '%s\\n' \"$*\" >&2; exit 2; }\n"
         f"{trusted_parent_gate}\n"
+        "export PYTEST_ADDOPTS='--junitxml=/tmp/outer.xml'\n"
+        "export UV_PYTHON_BIN_DIR='/tmp/leaked-uv-python-bin'\n"
+        "export UV_TOOL_DIR='/tmp/leaked-uv-tool'\n"
+        "export UV_CACHE_DIR='/tmp/leaked-uv-cache'\n"
+        "export UV_OFFLINE=1\n"
+        "export UV_NO_INDEX=1\n"
         'run_trusted_parent_postgres_gate CP "$PWD/packages/acgs-control-plane" '
         "p2-idempotency-postgres "
         "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "

@@ -1039,6 +1039,7 @@ run_trusted_parent_postgres_gate() {
       HOME="$HOME" \
       TMPDIR="$tmpdir" \
       UV_BIN="$UV_BIN" \
+      UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
       ACGS_TEST_SEED=20260710 \
       PYTHONHASHSEED=0 \
       "$@"
