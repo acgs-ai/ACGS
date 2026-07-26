@@ -130,7 +130,7 @@ def test_agent_register_mirror_stays_verifiable_on_the_org_audit_chain(
     created = client.post(
         f"/orgs/{org['org_id']}/agents",
         json={"name": "audited-bot"},
-        headers=headers,
+        headers=_agent_headers(org, "mirror-audited-bot"),
     )
     assert created.status_code == 201, created.text
 

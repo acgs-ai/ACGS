@@ -432,23 +432,10 @@ class AgentRegistrationService:
             # The refusal receipt is committed above, so cite it. Dropping it
             # here would make the refusal path the one place this API produces
             # no citable evidence, which is backwards for a receipt-gated
-            # control plane. Envelope matches the pre-managed v0 contract.
-            if decision_record.decision is Decision.DENY:
-                raise AgentRegistrationHttpError(
-                    403,
-                    "POLICY_DENIED",
-                    "denied",
-                    decision_record.reason or "agent registration denied by policy",
-                    receipt_id=receipt.receipt_id,
-                    decision=receipt.decision,
-                )
-            raise AgentRegistrationHttpError(
-                202,
-                "ESCALATE_PENDING",
-                "pending_approval",
-                decision_record.reason or "agent registration requires approval",
-                receipt_id=receipt.receipt_id,
-                decision=receipt.decision,
+            # control plane. Rendered by the shared helper so a replay of this
+            # refusal returns byte-identical content.
+            raise _terminal_http_error_for_decision(
+                decision_record, receipt_id=receipt.receipt_id
             )
 
         if decision_record.decision is not Decision.ALLOW:
@@ -926,7 +913,9 @@ def _validated_idempotency_replay(
     if receipt.decision in {"deny", "escalate"}:
         if row.agent_id is not None:
             raise _invalid_idempotency_record()
-        terminal = _terminal_http_error_for_decision_value(Decision(receipt.decision))
+        terminal = _terminal_http_error_for_decision_value(
+            Decision(receipt.decision), receipt_id=receipt.receipt_id
+        )
         expected_response = _idempotency_error_payload_for_scope(
             terminal,
             org_id=row.org_id,
@@ -1026,18 +1015,37 @@ def _idempotency_error_payload_for_scope(
     }
 
 
-def _terminal_http_error_for_decision(record: DecisionRecord) -> AgentRegistrationHttpError:
-    return _terminal_http_error_for_decision_value(record.decision)
+def _terminal_http_error_for_decision(
+    record: DecisionRecord, *, receipt_id: str | None = None
+) -> AgentRegistrationHttpError:
+    return _terminal_http_error_for_decision_value(record.decision, receipt_id=receipt_id)
 
 
-def _terminal_http_error_for_decision_value(decision: Decision) -> AgentRegistrationHttpError:
+def _terminal_http_error_for_decision_value(
+    decision: Decision, *, receipt_id: str | None = None
+) -> AgentRegistrationHttpError:
+    """Render a policy refusal once, for both the live path and its replay.
+
+    Both callers must agree exactly: the live refusal's response is projected
+    into the idempotency row, and the replay re-derives that projection and
+    refuses to serve a record that does not match. Two renderings would make
+    every replayed refusal look like a corrupted record. That is also why the
+    detail is a fixed string rather than the policy's reason — the projection has
+    to be re-derivable from (decision, scope, receipt_id) alone.
+
+    ``receipt_id`` is threaded through so the refusal cites the receipt that was
+    already committed for it; without it the one response most in need of citable
+    evidence would carry none.
+    """
     if decision is Decision.ESCALATE:
         return AgentRegistrationHttpError(
             202,
             "ESCALATE_PENDING",
-            "escalate_pending",
+            "pending_approval",
             "agent registration requires separated approval",
             stage="policy",
+            receipt_id=receipt_id,
+            decision="escalate" if receipt_id is not None else None,
         )
     if decision is Decision.DENY:
         return AgentRegistrationHttpError(
@@ -1046,6 +1054,8 @@ def _terminal_http_error_for_decision_value(decision: Decision) -> AgentRegistra
             "denied",
             "agent registration refused by policy",
             stage="policy",
+            receipt_id=receipt_id,
+            decision="deny" if receipt_id is not None else None,
         )
     raise AgentRegistrationHttpError(
         503,
