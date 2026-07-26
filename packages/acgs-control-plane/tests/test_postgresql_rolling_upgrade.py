@@ -875,6 +875,25 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                         "managed_mutation_attempts, managed_decision_receipts"
                     )
                 )
+                # Revision 0006 puts the scope columns on agents, so agents now
+                # references environments too. Dropping those columns takes the
+                # scope foreign key and check constraint with them and restores
+                # the pre-0006 unique constraint, which is the shape a real 0001
+                # agents table has. Doing it this way rather than CASCADE keeps
+                # the same invariant the comment above relies on: no table is
+                # left behind minus its constraints.
+                connection.execute(sa.text("DROP INDEX uq_agents_scope_name"))
+                connection.execute(sa.text("DROP INDEX uq_agents_legacy_org_name"))
+                connection.execute(
+                    sa.text("DROP INDEX uq_policy_bundles_one_active_per_org")
+                )
+                connection.execute(
+                    sa.text(
+                        "ALTER TABLE agents "
+                        "DROP COLUMN project_id, DROP COLUMN environment_id, "
+                        "ADD CONSTRAINT uq_agents_org_name UNIQUE (org_id, name)"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
