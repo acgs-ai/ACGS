@@ -137,7 +137,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, blacksmith-4vcpu-windows-2025]
         python-version: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4

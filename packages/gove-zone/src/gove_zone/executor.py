@@ -15,12 +15,18 @@ from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
     AuthzDeniedError,
     ProductionProfileError,
+    ReceiptRejectionReason,
     ReceiptValidationError,
 )
 from gove_zone.policy import Policy
-from gove_zone.receipt import DecisionReceipt
+from gove_zone.receipt import (
+    DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
+    DecisionReceipt,
+    validate_receipt_clock_skew_seconds,
+)
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import ReceiptSigner
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, RECEIPT_V2, ReceiptTrustRegistry
 
 
 def execute_with_receipt(
@@ -35,6 +41,8 @@ def execute_with_receipt(
     expected_audit_hash: str | None = None,
     expected_policy_hash: str | None = None,
     expected_policy_bundle_id: str | None = None,
+    expected_project_id: str | None = None,
+    expected_environment_id: str | None = None,
     expected_validator_role: str | None = None,
     expected_authority: str | None = None,
     policy: Policy | None = None,
@@ -42,6 +50,9 @@ def execute_with_receipt(
     require_signature: bool = True,
     require_expiry: bool = False,
     revoked_keys: RevocationList | None = None,
+    trust_registry: ReceiptTrustRegistry | None = None,
+    trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+    max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
     consumption_ledger: ReceiptConsumptionLedger | None = None,
     authz_enforce: bool = False,
     principal_registry: PrincipalRegistry | None = None,
@@ -110,6 +121,11 @@ def execute_with_receipt(
     long-lived bearer receipt cannot authorize indefinitely. Default ``False``
     leaves every existing caller unaffected.
 
+    ``max_clock_skew_seconds`` threads the receipt not-before liveness bound to
+    :meth:`DecisionReceipt.verify`: a signed receipt whose issuance timestamp is
+    farther in the verifier's future is rejected before any ledger burn or side
+    effect. The default is the library's five-minute skew allowance.
+
     ``consumption_ledger`` (opt-in) makes the receipt **single-use**:
     ``verify`` alone is stateless, so without a ledger one valid receipt
     authorizes N executions. When a
@@ -133,6 +149,7 @@ def execute_with_receipt(
     registry is a fail-closed misconfiguration (``ValueError``). Default
     ``False`` leaves every existing caller byte-for-byte unchanged.
     """
+    bounded_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
     if not expected_actor or not expected_actor.strip():
         raise ReceiptValidationError(
             "expected_actor is required for governed execution (fail-closed)"
@@ -147,10 +164,23 @@ def execute_with_receipt(
         denial = principal_registry.authorize(expected_actor, expected_action)
         if denial is not None:
             raise AuthzDeniedError(denial, expected_actor, expected_action)
-    if require_signature and verifier is None:
-        raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
     if receipt is None:
+        if require_signature and verifier is None and trust_registry is None:
+            raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
         raise ReceiptValidationError("No receipt provided for governed execution")
+    is_v2 = receipt.receipt_schema_version == RECEIPT_V2
+    if is_v2 and trust_registry is None:
+        raise ReceiptValidationError(
+            "receipt v2 requires a scoped trust registry",
+            reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+        )
+    if is_v2 and (expected_project_id is None or expected_environment_id is None):
+        raise ReceiptValidationError(
+            "receipt v2 requires expected_project_id and expected_environment_id",
+            reason_code=ReceiptRejectionReason.SCOPED_TRUST_REQUIRED,
+        )
+    if require_signature and verifier is None and not (is_v2 and trust_registry is not None):
+        raise ProductionProfileError(PRODUCTION_NO_VERIFIER_MSG)
 
     # Gate-side policy binding: derive the expected policy hash from the policy
     # this gate is currently enforcing (never from the receipt). An explicit
@@ -179,6 +209,8 @@ def execute_with_receipt(
         expected_action=expected_action,
         expected_policy_hash=expected_policy_hash,
         expected_policy_bundle_id=expected_policy_bundle_id,
+        expected_project_id=expected_project_id,
+        expected_environment_id=expected_environment_id,
         expected_validator_role=expected_validator_role,
         expected_authority=expected_authority,
         expected_actor=expected_actor,
@@ -186,6 +218,9 @@ def execute_with_receipt(
         require_signature=require_signature,
         require_expiry=require_expiry,
         revoked_keys=revoked_keys,
+        trust_registry=trust_registry,
+        trust_purpose=trust_purpose,
+        max_clock_skew_seconds=bounded_clock_skew_seconds,
     )
 
     # Burn-before-execute: consume only after verify passes (a failed
@@ -245,11 +280,16 @@ class GovernedExecutor:
         expected_actor: str,
         expected_authority: str | None = None,
         expected_validator_role: str | None = None,
+        expected_project_id: str | None = None,
+        expected_environment_id: str | None = None,
         policy: Policy | None = None,
         verifier: ReceiptSigner | Mapping[str, ReceiptSigner] | None = None,
         require_signature: bool = True,
         require_expiry: bool = False,
         revoked_keys: RevocationList | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+        max_clock_skew_seconds: int = DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
         authz_enforce: bool = False,
         principal_registry: PrincipalRegistry | None = None,
@@ -269,10 +309,15 @@ class GovernedExecutor:
         self.expected_actor = expected_actor
         self.expected_authority = expected_authority
         self.expected_validator_role = expected_validator_role
+        self.expected_project_id = expected_project_id
+        self.expected_environment_id = expected_environment_id
         self.policy = policy
         self.verifier = verifier
         self.require_signature = require_signature
         self.require_expiry = require_expiry
+        self.trust_registry = trust_registry
+        self.trust_purpose = trust_purpose
+        self.max_clock_skew_seconds = validate_receipt_clock_skew_seconds(max_clock_skew_seconds)
         # Revocation config is constructor-only (never a per-call arg on
         # execute): a per-call empty/weaker list could silently disable a
         # security control — the same foot-gun authz_enforce/ledger avoid. The
@@ -303,6 +348,7 @@ class GovernedExecutor:
         require_signature: bool | None = None,
         require_expiry: bool | None = None,
         consumption_ledger: ReceiptConsumptionLedger | None = None,
+        max_clock_skew_seconds: int | None = None,
     ) -> Any:
         if action not in self.registry:
             raise KeyError(f"Tool {action!r} not registered with executor")
@@ -325,6 +371,12 @@ class GovernedExecutor:
         effective_ledger = (
             consumption_ledger if consumption_ledger is not None else self.consumption_ledger
         )
+        effective_skew = validate_receipt_clock_skew_seconds(
+            max_clock_skew_seconds
+            if max_clock_skew_seconds is not None
+            else self.max_clock_skew_seconds
+        )
+        effective_trust_registry = self.trust_registry
         effective_policy = policy if policy is not None else self.policy
         # Per-call None falls back to the constructor pin, so a per-call argument
         # can never silently *disable* an authority/role bound at construction.
@@ -346,6 +398,8 @@ class GovernedExecutor:
             expected_audit_hash=expected_audit_hash,
             expected_policy_hash=expected_policy_hash,
             expected_policy_bundle_id=expected_policy_bundle_id,
+            expected_project_id=self.expected_project_id,
+            expected_environment_id=self.expected_environment_id,
             expected_validator_role=effective_validator_role,
             expected_authority=effective_authority,
             policy=effective_policy,
@@ -354,6 +408,9 @@ class GovernedExecutor:
             require_signature=effective_require,
             require_expiry=effective_require_expiry,
             revoked_keys=self.revoked_keys,
+            trust_registry=effective_trust_registry,
+            trust_purpose=self.trust_purpose,
+            max_clock_skew_seconds=effective_skew,
             consumption_ledger=effective_ledger,
             authz_enforce=self.authz_enforce,
             principal_registry=self.principal_registry,

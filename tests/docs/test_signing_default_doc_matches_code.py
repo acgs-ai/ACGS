@@ -75,7 +75,7 @@ def test_docs_state_the_true_default_and_no_stale_false_wording() -> None:
     assert executor_default is verifier_default is True  # guarded above; defensive
 
     # The literal default-string the docs must carry, derived from the code.
-    default_str = f"`require_signature` defaults to `{str(executor_default)}`"
+    default_str = f"`require_signature` defaults to `{executor_default!s}`"
 
     for rel in SIGNING_DEFAULT_DOCS:
         text = _read(rel)

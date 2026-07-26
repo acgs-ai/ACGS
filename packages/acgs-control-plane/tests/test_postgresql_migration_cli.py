@@ -305,7 +305,7 @@ def test_rogue_public_schema_fails_without_version_or_table_mutation() -> None:
 def test_public_function_hijack_cannot_mutate_during_status() -> None:
     upgraded, payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert upgraded.returncode == 0
-    assert payload["after"] == "version_0002"
+    assert payload["after"] == "version_0005"
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -469,7 +469,7 @@ def test_lock_contention_is_retryable_and_retry_upgrades_once() -> None:
     assert retried.returncode == 0
     assert retried.stderr == ""
     assert payload == {
-        "after": "version_0002",
+        "after": "version_0005",
         "before": "empty",
         "command": "upgrade",
         "ok": True,
@@ -482,12 +482,12 @@ def test_successful_upgrade_is_forward_only_and_idempotent() -> None:
     first, first_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert first.returncode == 0
     assert first_payload["before"] == "empty"
-    assert first_payload["after"] == "version_0002"
+    assert first_payload["after"] == "version_0005"
 
     second, second_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert second.returncode == 0
-    assert second_payload["before"] == "version_0002"
-    assert second_payload["after"] == "version_0002"
+    assert second_payload["before"] == "version_0005"
+    assert second_payload["after"] == "version_0005"
     assert _version_rows() == [HEAD_REVISION]
 
     downgrade, payload = _invoke_cli("downgrade")
