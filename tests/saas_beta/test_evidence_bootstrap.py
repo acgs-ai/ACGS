@@ -5312,7 +5312,23 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "scripts/evidence/validate_run.py" in b6
     assert "scripts/evidence/hash_run_jcs.py" in b6
     assert 'SCRATCH_ROOT="$TMP_ROOT/scratch"' in source
-    assert 'UV_CACHE_DIR="$SCRATCH_ROOT/uv-cache"' in source
+    assert 'RUNTIME_ROOT="$TMP_ROOT/runtime"' in source
+    assert 'BOOTSTRAP_ROOT="$TMP_ROOT/bootstrap"' in source
+    assert 'BOOTSTRAP_CACHE_ROOT="$BOOTSTRAP_ROOT/cache"' in source
+    assert 'TRUSTED_LOCK_INPUT_ROOT="$BOOTSTRAP_ROOT/trusted-lock-inputs"' in source
+    assert 'UV_CACHE_DIR="$BOOTSTRAP_CACHE_ROOT/uv-cache"' in source
+    trusted_publish_call = (
+        'validate_and_publish_trusted_lock_inputs "$LOCK_RENDER_ROOT" '
+        '"$TRUSTED_LOCK_INPUT_ROOT" "$EXPECTED"'
+    )
+    assert trusted_publish_call in source
+    assert 'run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile' in source
+    assert "--only-binary :all:" in source
+    assert (
+        'run_contained_python_install "$BOOTSTRAP_ROOT" "$UV_BIN" python install --no-config 3.11'
+        in source
+    )
+    assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline' in source
     for scratch_export in (
         'export TMPDIR="$RUNTIME_TMP"',
         'export TMP="$RUNTIME_TMP"',
@@ -5326,12 +5342,12 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         'export MYPY_CACHE_DIR="$SCRATCH_ROOT/mypy-cache"',
         'export RUFF_CACHE_DIR="$SCRATCH_ROOT/ruff-cache"',
         'export COVERAGE_FILE="$SCRATCH_ROOT/coverage/.coverage"',
-        'export UV_PYTHON_INSTALL_DIR="$SCRATCH_ROOT/uv-python"',
-        'export UV_PYTHON_BIN_DIR="$SCRATCH_ROOT/uv-python-bin"',
-        'export UV_TOOL_DIR="$SCRATCH_ROOT/uv-tools"',
-        'export UV_TOOL_BIN_DIR="$SCRATCH_ROOT/uv-tool-bin"',
-        'export UV_PYTHON_CACHE_DIR="$SCRATCH_ROOT/uv-python-cache"',
-        'export UV_CREDENTIALS_DIR="$SCRATCH_ROOT/uv-credentials"',
+        'export UV_PYTHON_INSTALL_DIR="$RUNTIME_ROOT/uv-python"',
+        'export UV_PYTHON_BIN_DIR="$RUNTIME_ROOT/uv-python-bin"',
+        'export UV_TOOL_DIR="$RUNTIME_ROOT/uv-tools"',
+        'export UV_TOOL_BIN_DIR="$RUNTIME_ROOT/uv-tool-bin"',
+        'export UV_PYTHON_CACHE_DIR="$RUNTIME_ROOT/uv-python-cache"',
+        'export UV_CREDENTIALS_DIR="$RUNTIME_ROOT/uv-credentials"',
     ):
         assert scratch_export in source
     assert source.index('export TMPDIR="$RUNTIME_TMP"') < source.index('"$UV_BIN" --version')
@@ -8005,7 +8021,7 @@ def test_p1_clean_sibling_rejects_unassigned_retained_runtime_paths_before_outpu
     assert 'reject_lexists "$NODE_EVIDENCE"' in pre_b1 or '"$NODE_EVIDENCE"' in pre_b1
     absolute_reject_loop_index = source.index("PREEXISTING_REJECT_PATHS=(") + reject_loop_index
     assert absolute_reject_loop_index < source.index("phase B1")
-    assert absolute_reject_loop_index < source.index('"$UV_BIN" venv --python 3.11')
+    assert absolute_reject_loop_index < source.index('"$UV_BIN" venv --no-config --offline')
     assert absolute_reject_loop_index < source.index("generate_run.py")
     assert "INCLUDE_GZ" not in preexisting_section.split("phase B1", 1)[0]
 
@@ -8080,10 +8096,13 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     runner = _shell_function(source, "run_contained")
     bootstrap_runner = _shell_function(source, "run_contained_bootstrap")
+    python_install_runner = _shell_function(source, "run_contained_python_install")
     mounts = _shell_function(source, "contained_mount_args")
     system_mounts = _shell_function(source, "runtime_system_mount_args")
     linker_args = _shell_function(source, "runtime_linker_args")
     bootstrap_mounts = _shell_function(source, "bootstrap_mount_args")
+    python_install_mounts = _shell_function(source, "python_install_bootstrap_mount_args")
+    trusted_lock_validator = _shell_function(source, "validate_and_publish_trusted_lock_inputs")
     assert "BWRAP_BIN=/usr/bin/bwrap" in source
     assert "die 'containment runner unavailable: /usr/bin/bwrap'" in source
     assert "--die-with-parent" in runner
@@ -8113,6 +8132,10 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     assert (
         'printf \'%s\\0%s\\0%s\\0\' --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"'
     ) in mounts
+    assert "ACGS_RUNTIME_WRITABLE:-0" in mounts
+    assert 'printf \'%s\\0%s\\0%s\\0\' --ro-bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"' in mounts
+    assert 'printf \'%s\\0%s\\0%s\\0\' --bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"' not in mounts
+    assert "ACGS_RUNTIME_WRITABLE=1" not in runner
     assert "unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE" in bootstrap_runner
     assert 'run_contained "$@"' not in bootstrap_runner
     assert '[[ "${1:-}" == "$UV_BIN" ]]' in bootstrap_runner
@@ -8120,6 +8143,19 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     assert "--unshare-ipc" in bootstrap_runner
     assert "--disable-userns" in bootstrap_runner
     assert "bootstrap_mount_args" in bootstrap_runner
+    assert '"$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/*' in bootstrap_runner
+    assert '[[ "${1:-}" == "$UV_BIN" && "${2:-}" == python && "${3:-}" == install ]]' in (
+        python_install_runner
+    )
+    assert '[[ "$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/* ]]' in (
+        python_install_runner
+    )
+    assert "ACGS_RUNTIME_WRITABLE=1" in python_install_runner
+    assert "python_install_bootstrap_mount_args" in python_install_runner
+    assert "--unshare-net" not in python_install_runner
+    assert 'printf \'%s\\0%s\\0%s\\0\' --bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"' in (
+        python_install_mounts
+    )
     assert "/etc/passwd" in system_mounts
     assert "/etc/group" in system_mounts
     assert "/etc/nsswitch.conf" in system_mounts
@@ -8128,6 +8164,10 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     assert "--symlink /usr/bin/ld.bfd /etc/alternatives/ld" in linker_args
     assert "/etc/resolv.conf" in bootstrap_mounts
     assert "/etc/pki" in bootstrap_mounts
+    assert '"$BOOTSTRAP_CACHE_ROOT" "$TRUSTED_LOCK_INPUT_ROOT"' in bootstrap_mounts
+    assert "rendered lock input drifted from reviewed bytes" in trusted_lock_validator
+    assert "unsafe lock input requirement" in trusted_lock_validator
+    assert 'open(destination, "xb")' in trusted_lock_validator
     writable_mounts = {
         '"$EVIDENCE_ROOT"',
         '"$SCRATCH_ROOT"',
@@ -8142,8 +8182,22 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
         'run_contained "$WORKTREE" \\\n  /usr/bin/python3 \\\n  '
         "scripts/evidence/render_lock_inputs.py" in source
     )
-    assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" python install 3.11' in source
+    trusted_publish_call = (
+        'validate_and_publish_trusted_lock_inputs "$LOCK_RENDER_ROOT" '
+        '"$TRUSTED_LOCK_INPUT_ROOT" "$EXPECTED"'
+    )
+    assert trusted_publish_call in source
+    assert 'run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile' in source
+    assert "--exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all:" in source
+    assert 'if [[ "$relative" == *.lock ]]; then' in source
+    assert '<(tail -n +3 -- "$EXPECTED/$relative")' in source
+    assert (
+        'run_contained_python_install "$BOOTSTRAP_ROOT" "$UV_BIN" python install --no-config 3.11'
+        in source
+    )
+    assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline' in source
     assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync' in source
+    assert "--require-hashes --only-binary :all:" in source
     assert 'run_contained "$WORKTREE" "$UV_BIN" pip install' in source
     assert 'run_contained "$WORKTREE" "$EVIDENCE_PY" scripts/evidence/generate_run.py' in source
     assert 'scripts/evidence/hash_run_jcs.py "$NODE_EVIDENCE/run.json"' in source
@@ -8155,6 +8209,76 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     )
     for pattern in forbidden_direct_patterns:
         assert pattern not in source
+
+
+def test_clean_sibling_trusted_lock_publisher_rejects_target_localhost_inputs(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    publisher = _shell_function(source, "validate_and_publish_trusted_lock_inputs")
+    expected = tmp_path / "expected"
+    rendered = tmp_path / "rendered"
+    trusted = tmp_path / "trusted"
+    for relative in (
+        "requirements/saas-beta/locks.toml",
+        "requirements/saas-beta/evidence-test.in",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/gz-test.in",
+        "requirements/saas-beta/bootstrap-by-scope.json",
+        "requirements/saas-beta/evidence-test.lock",
+        "requirements/saas-beta/cp-test.lock",
+        "requirements/saas-beta/gz-test.lock",
+    ):
+        source_file = ROOT / relative
+        for root in (expected, rendered):
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_file, target)
+
+    harness = tmp_path / "publish-trusted-locks.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "SNAPSHOT_PYTHON=/usr/bin/python3\n"
+        "die() { printf 'HARNESS_DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+        f"{publisher}\n"
+        'validate_and_publish_trusted_lock_inputs "$1" "$2" "$3"\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+
+    clean = subprocess.run(
+        [str(harness), str(rendered), str(trusted), str(expected)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert clean.returncode == 0, (clean.stdout, clean.stderr)
+    assert (trusted / "requirements/saas-beta/cp-test.in").read_bytes() == (
+        expected / "requirements/saas-beta/cp-test.in"
+    ).read_bytes()
+
+    shutil.rmtree(trusted)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_server:
+        tcp_server.bind(("127.0.0.1", 0))
+        tcp_server.listen(1)
+        tcp_server.settimeout(0.5)
+        port = tcp_server.getsockname()[1]
+        (rendered / "requirements/saas-beta/cp-test.in").write_text(
+            f"malicious @ http://127.0.0.1:{port}/payload.whl\n",
+            encoding="utf-8",
+        )
+        rejected = subprocess.run(
+            [str(harness), str(rendered), str(trusted), str(expected)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert rejected.returncode != 0
+        assert "rendered lock input drifted from reviewed bytes" in rejected.stderr
+        assert not trusted.exists()
+        with pytest.raises(TimeoutError):
+            tcp_server.accept()
 
 
 def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets(
@@ -8187,6 +8311,10 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         f"SOURCE_GIT_COMMON_DIR={json.dumps(str(tmp_path / 'git-common'))}\n"
         f"EVIDENCE_ROOT={json.dumps(str(tmp_path / 'evidence'))}\n"
         f"SCRATCH_ROOT={json.dumps(str(tmp_path / 'scratch'))}\n"
+        f"RUNTIME_ROOT={json.dumps(str(tmp_path / 'runtime'))}\n"
+        f"BOOTSTRAP_ROOT={json.dumps(str(tmp_path / 'bootstrap'))}\n"
+        'BOOTSTRAP_CACHE_ROOT="$BOOTSTRAP_ROOT/cache"\n'
+        'TRUSTED_LOCK_INPUT_ROOT="$BOOTSTRAP_ROOT/trusted-lock-inputs"\n'
         'TMPDIR="$SCRATCH_ROOT/tmp"\n'
         'TMP="$TMPDIR"\n'
         'TEMP="$TMPDIR"\n'
@@ -8195,16 +8323,27 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         'XDG_CONFIG_HOME="$SCRATCH_ROOT/xdg-config"\n'
         'XDG_DATA_HOME="$SCRATCH_ROOT/xdg-data"\n'
         'XDG_STATE_HOME="$SCRATCH_ROOT/xdg-state"\n'
+        'UV_PYTHON_INSTALL_DIR="$RUNTIME_ROOT/uv-python"\n'
+        'UV_PYTHON_BIN_DIR="$RUNTIME_ROOT/uv-python-bin"\n'
+        'UV_TOOL_DIR="$RUNTIME_ROOT/uv-tools"\n'
+        'UV_TOOL_BIN_DIR="$RUNTIME_ROOT/uv-tool-bin"\n'
+        'UV_PYTHON_CACHE_DIR="$RUNTIME_ROOT/uv-python-cache"\n'
+        'UV_CREDENTIALS_DIR="$RUNTIME_ROOT/uv-credentials"\n'
         "PYTHONDONTWRITEBYTECODE=1\n"
         "PYTHONNOUSERSITE=1\n"
         "export PATH LANG LC_ALL UV_BIN WORKTREE SOURCE_GIT_COMMON_DIR EVIDENCE_ROOT "
-        "SCRATCH_ROOT TMPDIR TMP TEMP HOME "
+        "SCRATCH_ROOT RUNTIME_ROOT BOOTSTRAP_ROOT BOOTSTRAP_CACHE_ROOT "
+        "TRUSTED_LOCK_INPUT_ROOT TMPDIR TMP TEMP HOME "
         "XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME "
+        "UV_PYTHON_INSTALL_DIR UV_PYTHON_BIN_DIR UV_TOOL_DIR UV_TOOL_BIN_DIR "
+        "UV_PYTHON_CACHE_DIR UV_CREDENTIALS_DIR "
         "PYTHONDONTWRITEBYTECODE PYTHONNOUSERSITE\n"
         'mkdir -p "$WORKTREE/.venv-evidence" "$SOURCE_GIT_COMMON_DIR" '
-        '"$EVIDENCE_ROOT" "$SCRATCH_ROOT" '
+        '"$EVIDENCE_ROOT" "$SCRATCH_ROOT" "$RUNTIME_ROOT" "$BOOTSTRAP_ROOT" '
+        '"$BOOTSTRAP_CACHE_ROOT" "$TRUSTED_LOCK_INPUT_ROOT" '
         '"$TMPDIR" "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" '
-        '"$XDG_STATE_HOME"\n'
+        '"$XDG_STATE_HOME" "$UV_PYTHON_INSTALL_DIR" "$UV_PYTHON_BIN_DIR" '
+        '"$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$UV_PYTHON_CACHE_DIR" "$UV_CREDENTIALS_DIR"\n'
         f"{functions}\n"
         'case "${1:-}" in\n'
         "  unavailable)\n"
@@ -8270,6 +8409,16 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         + json.dumps("if /usr/bin/unshare -Ur true >/dev/null 2>&1; then exit 85; fi")
         + '; then :; else exit "$?"; fi\n'
         "    ;;\n"
+        "  runtime-replace)\n"
+        '    printf trusted >"$UV_PYTHON_INSTALL_DIR/sentinel"\n'
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps(
+            'if printf bad >"$UV_PYTHON_INSTALL_DIR/sentinel" 2>/dev/null; then exit 86; fi; '
+            'if rm -rf "$UV_PYTHON_INSTALL_DIR" 2>/dev/null; then exit 87; fi; '
+            "exit 0"
+        )
+        + '; then [[ "$(cat "$UV_PYTHON_INSTALL_DIR/sentinel")" == trusted ]]; else exit "$?"; fi\n'
+        "    ;;\n"
         "  *) exit 64 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -8285,7 +8434,14 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
     assert unavailable.returncode == 2
     assert "containment runner unavailable" in unavailable.stderr
 
-    for mode in ("host-write", "inherited-fd", "double-fork", "host-read", "nested-userns"):
+    for mode in (
+        "host-write",
+        "inherited-fd",
+        "double-fork",
+        "host-read",
+        "nested-userns",
+        "runtime-replace",
+    ):
         result = subprocess.run(
             [str(harness), mode],
             text=True,

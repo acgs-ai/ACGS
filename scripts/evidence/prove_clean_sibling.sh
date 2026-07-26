@@ -358,6 +358,10 @@ EVIDENCE_ROOT=''
 NODE_ID="$REQUESTED_NODE_ID"
 NODE_EVIDENCE=''
 SCRATCH_ROOT=''
+RUNTIME_ROOT=''
+BOOTSTRAP_ROOT=''
+BOOTSTRAP_CACHE_ROOT=''
+TRUSTED_LOCK_INPUT_ROOT=''
 RUNTIME_TMP=''
 UV_CACHE_DIR=''
 LOCK_RENDER_ROOT=''
@@ -420,18 +424,21 @@ WORKTREE="$TMP_ROOT/product"
 EVIDENCE_ROOT="$TMP_ROOT/evidence"
 NODE_EVIDENCE="$EVIDENCE_ROOT/$NODE_ID"
 SCRATCH_ROOT="$TMP_ROOT/scratch"
+RUNTIME_ROOT="$TMP_ROOT/runtime"
+BOOTSTRAP_ROOT="$TMP_ROOT/bootstrap"
+BOOTSTRAP_CACHE_ROOT="$BOOTSTRAP_ROOT/cache"
+TRUSTED_LOCK_INPUT_ROOT="$BOOTSTRAP_ROOT/trusted-lock-inputs"
 RUNTIME_TMP="$SCRATCH_ROOT/tmp"
-UV_CACHE_DIR="$SCRATCH_ROOT/uv-cache"
 LOCK_RENDER_ROOT="$SCRATCH_ROOT/lock-render"
+UV_CACHE_DIR="$BOOTSTRAP_CACHE_ROOT/uv-cache"
 
 phase B0
-for path in "$WORKTREE" "$EVIDENCE_ROOT" "$SCRATCH_ROOT"; do
+for path in "$WORKTREE" "$EVIDENCE_ROOT" "$SCRATCH_ROOT" "$RUNTIME_ROOT" "$BOOTSTRAP_ROOT"; do
   reject_lexists "$path"
 done
-mkdir -m 700 "$SCRATCH_ROOT"
+mkdir -m 700 "$SCRATCH_ROOT" "$RUNTIME_ROOT" "$BOOTSTRAP_ROOT"
 mkdir -m 700 \
   "$RUNTIME_TMP" \
-  "$UV_CACHE_DIR" \
   "$SCRATCH_ROOT/home" \
   "$SCRATCH_ROOT/xdg-cache" \
   "$SCRATCH_ROOT/xdg-config" \
@@ -441,16 +448,19 @@ mkdir -m 700 \
   "$SCRATCH_ROOT/mypy-cache" \
   "$SCRATCH_ROOT/ruff-cache" \
   "$SCRATCH_ROOT/coverage" \
-  "$SCRATCH_ROOT/uv-python" \
-  "$SCRATCH_ROOT/uv-python-bin" \
-  "$SCRATCH_ROOT/uv-tools" \
-  "$SCRATCH_ROOT/uv-tool-bin" \
-  "$SCRATCH_ROOT/uv-python-cache" \
-  "$SCRATCH_ROOT/uv-credentials" \
   "$SCRATCH_ROOT/python-user" \
   "$SCRATCH_ROOT/pycache" \
   "$SCRATCH_ROOT/pip-cache" \
   "$SCRATCH_ROOT/hatch-cache"
+mkdir -m 700 \
+  "$BOOTSTRAP_CACHE_ROOT" \
+  "$UV_CACHE_DIR" \
+  "$RUNTIME_ROOT/uv-python" \
+  "$RUNTIME_ROOT/uv-python-bin" \
+  "$RUNTIME_ROOT/uv-tools" \
+  "$RUNTIME_ROOT/uv-tool-bin" \
+  "$RUNTIME_ROOT/uv-python-cache" \
+  "$RUNTIME_ROOT/uv-credentials"
 [[ -z "$(find "$UV_CACHE_DIR" -mindepth 1 -print -quit)" ]] || die 'UV cache must begin empty'
 export TMPDIR="$RUNTIME_TMP"
 export TMP="$RUNTIME_TMP"
@@ -464,12 +474,12 @@ export PYTEST_DEBUG_TEMPROOT="$SCRATCH_ROOT/pytest-temp"
 export MYPY_CACHE_DIR="$SCRATCH_ROOT/mypy-cache"
 export RUFF_CACHE_DIR="$SCRATCH_ROOT/ruff-cache"
 export COVERAGE_FILE="$SCRATCH_ROOT/coverage/.coverage"
-export UV_PYTHON_INSTALL_DIR="$SCRATCH_ROOT/uv-python"
-export UV_PYTHON_BIN_DIR="$SCRATCH_ROOT/uv-python-bin"
-export UV_TOOL_DIR="$SCRATCH_ROOT/uv-tools"
-export UV_TOOL_BIN_DIR="$SCRATCH_ROOT/uv-tool-bin"
-export UV_PYTHON_CACHE_DIR="$SCRATCH_ROOT/uv-python-cache"
-export UV_CREDENTIALS_DIR="$SCRATCH_ROOT/uv-credentials"
+export UV_PYTHON_INSTALL_DIR="$RUNTIME_ROOT/uv-python"
+export UV_PYTHON_BIN_DIR="$RUNTIME_ROOT/uv-python-bin"
+export UV_TOOL_DIR="$RUNTIME_ROOT/uv-tools"
+export UV_TOOL_BIN_DIR="$RUNTIME_ROOT/uv-tool-bin"
+export UV_PYTHON_CACHE_DIR="$RUNTIME_ROOT/uv-python-cache"
+export UV_CREDENTIALS_DIR="$RUNTIME_ROOT/uv-credentials"
 export UV_NO_CONFIG=1
 export UV_NO_ENV_FILE=1
 export PYTHONUSERBASE="$SCRATCH_ROOT/python-user"
@@ -601,6 +611,9 @@ contained_mount_args() {
   local path
   printf '%s\0%s\0%s\0' --ro-bind "$WORKTREE" "$WORKTREE"
   printf '%s\0%s\0%s\0' --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"
+  if [[ "${ACGS_RUNTIME_WRITABLE:-0}" != 1 && -d "$RUNTIME_ROOT" && ! -L "$RUNTIME_ROOT" ]]; then
+    printf '%s\0%s\0%s\0' --ro-bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"
+  fi
   for path in \
     "$EVIDENCE_ROOT" \
     "$SCRATCH_ROOT" \
@@ -636,6 +649,11 @@ bootstrap_mount_args() {
   local path
   contained_mount_args
   runtime_system_mount_args
+  for path in "$BOOTSTRAP_CACHE_ROOT" "$TRUSTED_LOCK_INPUT_ROOT"; do
+    if [[ -d "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --bind "$path" "$path"
+    fi
+  done
   for path in \
     /etc/resolv.conf \
     /etc/hosts \
@@ -646,6 +664,13 @@ bootstrap_mount_args() {
       printf '%s\0%s\0%s\0' --ro-bind-try "$path" "$path"
     fi
   done
+}
+
+python_install_bootstrap_mount_args() {
+  bootstrap_mount_args
+  if [[ -d "$RUNTIME_ROOT" && ! -L "$RUNTIME_ROOT" ]]; then
+    printf '%s\0%s\0%s\0' --bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"
+  fi
 }
 
 run_contained() {
@@ -703,8 +728,9 @@ run_contained_bootstrap() {
   [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
     die 'containment runner unavailable: /usr/bin/bwrap'
   [[ "$cwd" == "$WORKTREE" || "$cwd" == "$WORKTREE"/* || \
-    "$cwd" == "$SCRATCH_ROOT" || "$cwd" == "$SCRATCH_ROOT"/* ]] ||
-    die "bootstrap cwd escaped target worktree/scratch: $cwd"
+    "$cwd" == "$SCRATCH_ROOT" || "$cwd" == "$SCRATCH_ROOT"/* || \
+    "$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/* ]] ||
+    die "bootstrap cwd escaped target worktree/scratch/bootstrap: $cwd"
   (
     local fd fd_path
     for fd_path in /proc/"$BASHPID"/fd/*; do
@@ -740,6 +766,121 @@ run_contained_bootstrap() {
   )
 }
 
+run_contained_python_install() {
+  local cwd="$1"
+  shift
+  [[ "${1:-}" == "$UV_BIN" && "${2:-}" == python && "${3:-}" == install ]] ||
+    die 'python install bootstrap only runs pinned uv python install'
+  [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+    die 'containment runner unavailable: /usr/bin/bwrap'
+  [[ "$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/* ]] ||
+    die "python install bootstrap cwd escaped bootstrap root: $cwd"
+  (
+    local fd fd_path
+    for fd_path in /proc/"$BASHPID"/fd/*; do
+      fd="${fd_path##*/}"
+      case "$fd" in
+        0 | 1 | 2) ;;
+        *) eval "exec $fd<&-" 2>/dev/null || true ;;
+      esac
+    done
+    unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
+    ACGS_RUNTIME_WRITABLE=1
+    mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
+    mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(python_install_bootstrap_mount_args)
+    exec "$BWRAP_BIN" \
+      --die-with-parent \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-pid \
+      --new-session \
+      --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_MOUNTS[@]}" \
+      --chdir "$cwd" \
+      /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
+  )
+}
+
+validate_and_publish_trusted_lock_inputs() {
+  local rendered_root="$1" trusted_root="$2" expected_root="$3"
+  "$SNAPSHOT_PYTHON" - "$rendered_root" "$trusted_root" "$expected_root" <<'PY'
+import re
+import shutil
+import sys
+from pathlib import Path
+
+rendered_root = Path(sys.argv[1]).resolve(strict=True)
+trusted_root = Path(sys.argv[2]).resolve(strict=False)
+expected_root = Path(sys.argv[3]).resolve(strict=True)
+expected_relatives = (
+    Path("requirements/saas-beta/locks.toml"),
+    Path("requirements/saas-beta/evidence-test.in"),
+    Path("requirements/saas-beta/cp-test.in"),
+    Path("requirements/saas-beta/gz-test.in"),
+    Path("requirements/saas-beta/bootstrap-by-scope.json"),
+    Path("requirements/saas-beta/evidence-test.lock"),
+    Path("requirements/saas-beta/cp-test.lock"),
+    Path("requirements/saas-beta/gz-test.lock"),
+)
+registry_requirement = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:\[[A-Za-z0-9][A-Za-z0-9._-]*(?:\s*,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*\])?"
+    r"\s*(?:(?:~=|==|!=|<=|>=|<|>|===)\s*[A-Za-z0-9][A-Za-z0-9._!*+~-]*"
+    r"(?:\s*,\s*(?:~=|==|!=|<=|>=|<|>|===)\s*[A-Za-z0-9][A-Za-z0-9._!*+~-]*)*)?"
+    r"(?:\s*;\s*[A-Za-z0-9_.\"' <>=!~(),-]+)?$"
+)
+unsafe = re.compile(
+    r"(?i)(?:^|[^\w.+-])(?:https?|file|ssh|git)://|(?:^|[^\w.+-])(?:git|ssh|file)\+"
+)
+if trusted_root.exists():
+    raise SystemExit(f"trusted lock input root already exists: {trusted_root}")
+trusted_root.mkdir(mode=0o700, parents=True)
+try:
+    for relative in expected_relatives:
+        source = (rendered_root / relative).resolve(strict=True)
+        expected = (expected_root / relative).resolve(strict=True)
+        if not source.is_relative_to(rendered_root):
+            raise SystemExit(f"rendered lock input escaped root: {relative}")
+        if source.is_symlink() or not source.is_file():
+            raise SystemExit(f"rendered lock input is not a regular file: {relative}")
+        payload = source.read_bytes()
+        if payload != expected.read_bytes():
+            raise SystemExit(f"rendered lock input drifted from reviewed bytes: {relative}")
+        if relative.suffix == ".in":
+            for number, line in enumerate(payload.decode("utf-8").splitlines(), start=1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if (
+                    stripped.startswith(("-", ".", "/", "~"))
+                    or "@" in stripped
+                    or "://" in stripped
+                    or unsafe.search(stripped)
+                    or not registry_requirement.fullmatch(stripped)
+                ):
+                    raise SystemExit(
+                        f"unsafe lock input requirement in {relative}:{number}: {stripped!r}"
+                    )
+        destination = trusted_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with open(destination, "xb") as handle:
+            handle.write(payload)
+except BaseException:
+    shutil.rmtree(trusted_root, ignore_errors=True)
+    raise
+PY
+}
+
 phase B1
 EXPECTED="$TMP_ROOT/expected-locks"
 mkdir "$EXPECTED"
@@ -765,35 +906,47 @@ LC_ALL=C TZ=UTC PYTHONHASHSEED=0 run_contained "$WORKTREE" \
   scripts/evidence/render_lock_inputs.py \
   --config requirements/saas-beta/locks.toml \
   --output-root "$LOCK_RENDER_ROOT"
-LC_ALL=C TZ=UTC run_contained_bootstrap "$LOCK_RENDER_ROOT" "$UV_BIN" pip compile --python-version 3.11 \
+validate_and_publish_trusted_lock_inputs "$LOCK_RENDER_ROOT" "$TRUSTED_LOCK_INPUT_ROOT" "$EXPECTED"
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
   --python-platform x86_64-manylinux_2_28 \
-  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
   requirements/saas-beta/evidence-test.in \
   --output-file requirements/saas-beta/evidence-test.lock
-LC_ALL=C TZ=UTC run_contained_bootstrap "$LOCK_RENDER_ROOT" "$UV_BIN" pip compile --python-version 3.11 \
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
   --python-platform x86_64-manylinux_2_28 \
-  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
   requirements/saas-beta/cp-test.in \
   --output-file requirements/saas-beta/cp-test.lock
-LC_ALL=C TZ=UTC run_contained_bootstrap "$LOCK_RENDER_ROOT" "$UV_BIN" pip compile --python-version 3.11 \
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
   --python-platform x86_64-manylinux_2_28 \
-  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
   requirements/saas-beta/gz-test.in \
   --output-file requirements/saas-beta/gz-test.lock
 for relative in "${LOCK_FILES[@]}"; do
-  cmp --silent "$EXPECTED/$relative" "$LOCK_RENDER_ROOT/$relative" ||
-    die "deterministic render/compile drift: $relative"
+  if [[ "$relative" == *.lock ]]; then
+    cmp --silent \
+      <(tail -n +3 -- "$EXPECTED/$relative") \
+      <(tail -n +3 -- "$TRUSTED_LOCK_INPUT_ROOT/$relative") ||
+      die "deterministic render/compile drift: $relative"
+  else
+    cmp --silent "$EXPECTED/$relative" "$TRUSTED_LOCK_INPUT_ROOT/$relative" ||
+      die "deterministic render/compile drift: $relative"
+  fi
 done
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'lock regeneration left product-tree drift'
 
 phase B2
-run_contained_bootstrap "$WORKTREE" "$UV_BIN" python install 3.11
+run_contained_python_install "$BOOTSTRAP_ROOT" "$UV_BIN" python install --no-config 3.11
 mkdir -m 700 "$WORKTREE/.venv-evidence"
-run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --python 3.11 "$WORKTREE/.venv-evidence"
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+  --python 3.11 "$WORKTREE/.venv-evidence"
 mkdir -p "$NODE_EVIDENCE"
 run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
-  --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes \
+  --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes --only-binary :all: \
   "$WORKTREE/requirements/saas-beta/evidence-test.lock"
 export UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1
 export RUFF_NO_CACHE=true PYTHONDONTWRITEBYTECODE=1
@@ -873,9 +1026,11 @@ PY
 
 phase B3
 mkdir -m 700 "$WORKTREE/packages/acgs-control-plane/.venv"
-run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+  --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
 run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
   --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" --require-hashes \
+  --only-binary :all: \
   "$WORKTREE/requirements/saas-beta/cp-test.lock"
 precheck_product CP \
   "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
@@ -887,9 +1042,11 @@ run_contained "$WORKTREE" "$UV_BIN" pip freeze \
 
 if [[ "$INCLUDE_GZ" == 1 ]]; then
   mkdir -m 700 "$WORKTREE/packages/gove-zone/.venv-beta"
-  run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
+  run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+    --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
   run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
     --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" --require-hashes \
+    --only-binary :all: \
     "$WORKTREE/requirements/saas-beta/gz-test.lock"
   precheck_product GZ \
     "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \

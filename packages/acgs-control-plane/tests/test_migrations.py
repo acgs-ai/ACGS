@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -836,7 +837,7 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
         encoding="utf-8"
     )
 
-    assert "required_command in bwrap cmp docker git mktemp realpath sha256sum tar" in script
+    assert "required_command in bwrap cmp docker git mktemp realpath sha256sum stat tar" in script
     assert "bwrap preflight failed; refusing to run" in script
     assert 'env -i "$bwrap_bin" "${bwrap_args[@]}" --' in script
     assert "--clearenv" in script
@@ -872,7 +873,9 @@ def _postgres_gate_python_runtime_validation_source() -> str:
     script = (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
         encoding="utf-8"
     )
-    start = script.index('realpath -e -- "$package_dir/.venv/bin/python" >/dev/null\n')
+    start = script.index(
+        'canonical_venv_python="$(realpath -e -- "$package_dir/.venv/bin/python")"\n'
+    )
     end = script.index("\numask 077\n", start)
     return script[start:end]
 
@@ -883,6 +886,11 @@ def _write_control_plane_venv_python(package_dir: Path, target: Path) -> None:
     target.write_text("#!/bin/sh\n", encoding="utf-8")
     target.chmod(0o755)
     (package_dir / ".venv/bin/python").symlink_to(target)
+
+
+def _mkdir_private(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(0o700)
 
 
 def _run_postgres_gate_python_runtime_validation(
@@ -923,12 +931,19 @@ def test_postgres_gate_python_runtime_accepts_default_and_proof_scratch(
         assert "/home/" in default_result.stdout
         assert "/.local/share/uv/python/" in default_result.stdout
 
-    scratch = tmp_path / "scratch"
-    runtime_tmp = scratch / "runtime-tmp"
-    install_root = scratch / "uv-python"
+    proof_root = tmp_path / "proof-root"
+    runtime_tmp = proof_root / "scratch/tmp"
+    install_root = proof_root / "runtime/uv-python"
     runtime_root = install_root / "cpython-3.13-linux-x86_64-gnu"
     proof_package = tmp_path / "proof-package"
-    runtime_tmp.mkdir(parents=True)
+    for directory in (
+        proof_root,
+        proof_root / "scratch",
+        runtime_tmp,
+        proof_root / "runtime",
+        install_root,
+    ):
+        _mkdir_private(directory)
     _write_control_plane_venv_python(proof_package, runtime_root / "bin/python3.13")
 
     proof_result = _run_postgres_gate_python_runtime_validation(
@@ -945,7 +960,11 @@ def test_postgres_gate_python_runtime_accepts_default_and_proof_scratch(
         ("relative-install-root", "UV_PYTHON_INSTALL_DIR must be absolute"),
         ("symlink-install-root", "UV_PYTHON_INSTALL_DIR must be canonical and non-symlinked"),
         ("traversal-install-root", "UV_PYTHON_INSTALL_DIR must be canonical and non-symlinked"),
-        ("untrusted-root", "UV_PYTHON_INSTALL_DIR must equal the proof scratch uv-python"),
+        ("untrusted-root", "UV_PYTHON_INSTALL_DIR must equal the proof runtime uv-python"),
+        ("scratch-install-root", "UV_PYTHON_INSTALL_DIR must equal the proof runtime uv-python"),
+        ("bad-tmp-parent", "TMPDIR must be nested under the proof scratch/tmp directory"),
+        ("world-writable-proof-root", "must be owned by the current user with mode 700"),
+        ("raw-target-traversal", "must resolve beneath UV_PYTHON_INSTALL_DIR"),
         ("wrong-runtime-root", "must resolve beneath UV_PYTHON_INSTALL_DIR"),
     ),
 )
@@ -954,13 +973,19 @@ def test_postgres_gate_python_runtime_rejects_untrusted_proof_roots(
     case_name: str,
     expected_stderr: str,
 ) -> None:
-    scratch = tmp_path / "scratch"
-    runtime_tmp = scratch / "runtime-tmp"
-    install_root = scratch / "uv-python"
+    proof_root = tmp_path / "proof-root"
+    runtime_tmp = proof_root / "scratch/tmp"
+    install_root = proof_root / "runtime/uv-python"
     runtime_root = install_root / "cpython-3.13-linux-x86_64-gnu"
     package_dir = tmp_path / "package"
-    runtime_tmp.mkdir(parents=True)
-    install_root.mkdir(parents=True)
+    for directory in (
+        proof_root,
+        proof_root / "scratch",
+        runtime_tmp,
+        proof_root / "runtime",
+        install_root,
+    ):
+        _mkdir_private(directory)
 
     env = {"TMPDIR": str(runtime_tmp), "UV_PYTHON_INSTALL_DIR": str(install_root)}
     target = runtime_root / "bin/python3.13"
@@ -973,10 +998,26 @@ def test_postgres_gate_python_runtime_rejects_untrusted_proof_roots(
     elif case_name == "traversal-install-root":
         env["UV_PYTHON_INSTALL_DIR"] = str(install_root / ".." / "uv-python")
     elif case_name == "untrusted-root":
-        other_scratch = tmp_path / "other-scratch"
-        other_runtime_tmp = other_scratch / "runtime-tmp"
-        other_runtime_tmp.mkdir(parents=True)
+        other_runtime_tmp = tmp_path / "other-proof-root/scratch/tmp"
+        for directory in (
+            tmp_path / "other-proof-root",
+            tmp_path / "other-proof-root/scratch",
+            other_runtime_tmp,
+        ):
+            _mkdir_private(directory)
         env["TMPDIR"] = str(other_runtime_tmp)
+    elif case_name == "scratch-install-root":
+        scratch_install = proof_root / "scratch/uv-python"
+        _mkdir_private(scratch_install)
+        env["UV_PYTHON_INSTALL_DIR"] = str(scratch_install)
+    elif case_name == "bad-tmp-parent":
+        bad_runtime_tmp = proof_root / "tmp"
+        _mkdir_private(bad_runtime_tmp)
+        env["TMPDIR"] = str(bad_runtime_tmp)
+    elif case_name == "world-writable-proof-root":
+        proof_root.chmod(0o777)
+    elif case_name == "raw-target-traversal":
+        target = install_root / "../evil/bin/python3.13"
     elif case_name == "wrong-runtime-root":
         other_install = tmp_path / "other-install"
         target = other_install / "cpython-3.13-linux-x86_64-gnu/bin/python3.13"
@@ -1142,6 +1183,34 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         assert "endpoint is pinned" in endpoint_escape.stderr
         assert not docker_log.exists()
 
+        original_cwd = Path.cwd()
+        raw_broker_env = {
+            key: value
+            for key, value in client_env.items()
+            if key != "ACP_POSTGRES_CLIENT_BROKER_SOCKET"
+        }
+        try:
+            os.chdir(socket_path.parent)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as broker_client:
+                broker_client.connect(socket_path.name)
+                broker_client.sendall(
+                    json.dumps(
+                        {
+                            "tool": "pg_dump",
+                            "argv": ["--file=/run/tmp/caller-user.dump"],
+                            "env": {**raw_broker_env, "USER": "0:0"},
+                        },
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+                broker_client.shutdown(socket.SHUT_WR)
+                response = json.loads(broker_client.recv(65536).decode("utf-8"))
+        finally:
+            os.chdir(original_cwd)
+        assert response["returncode"] == 64
+        assert "unsupported PostgreSQL client env: USER" in response["stderr"]
+        assert not docker_log.exists()
+
         allowed_archive = allowed_tmp / "archive.dump"
         allowed = subprocess.run(
             [str(client_dir / "pg_dump"), "--file=/run/tmp/archive.dump"],
@@ -1155,7 +1224,10 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         docker_invocation = json.loads(docker_log.read_text(encoding="utf-8").splitlines()[-1])
         assert "--network" in docker_invocation
         assert docker_invocation[docker_invocation.index("--network") + 1] == "none"
-        assert "--user" not in docker_invocation
+        assert "--user" in docker_invocation
+        assert docker_invocation[docker_invocation.index("--user") + 1] == (
+            f"{os.getuid()}:{os.getgid()}"
+        )
         assert "label=disable" in docker_invocation
         assert f"{state_dir / 'pg'}:/run/acgs-pg:ro" in docker_invocation
         assert f"{allowed_tmp}:/run/tmp:rw" in docker_invocation

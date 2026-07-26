@@ -115,6 +115,8 @@ _PG_QUERY_ENV: Final = {
     "sslkey": "PGSSLKEY",
     "application_name": "PGAPPNAME",
 }
+_PG_QUERY_HOST: Final = "host"
+_CANONICAL_POSTGRES_SOCKET: Final = "/run/acgs-pg"
 _CHILD_ENV_ALLOWLIST: Final = (
     "PATH",
     "LANG",
@@ -122,6 +124,7 @@ _CHILD_ENV_ALLOWLIST: Final = (
     "LC_CTYPE",
     "SYSTEMROOT",
     "WINDIR",
+    "ACP_POSTGRES_CLIENT_BROKER_SOCKET",
 )
 _CANONICAL_PGOPTIONS: Final = "-csearch_path=public"
 
@@ -130,6 +133,12 @@ CommandRunner = Callable[[Sequence[str], Mapping[str, str]], None]
 
 class RecoveryRefused(RuntimeError):
     """A safe, operator-correctable fail-closed refusal."""
+
+
+@dataclass(frozen=True)
+class _PostgresEndpoint:
+    host: str
+    port: int
 
 
 @dataclass(frozen=True)
@@ -330,31 +339,56 @@ def _url_from_named_environment(name: str) -> tuple[str, URL]:
         url = make_url(raw)
     except Exception as exc:
         raise RecoveryRefused("named database URL is invalid") from exc
-    if (
-        url.get_backend_name() != "postgresql"
-        or not url.database
-        or not url.host
-        or not url.username
-    ):
+    if url.get_backend_name() != "postgresql" or not url.database or not url.username:
         raise RecoveryRefused(
-            "named database URL must explicitly identify a PostgreSQL host, user, and database"
+            "named database URL must explicitly identify a PostgreSQL endpoint, user, and database"
         )
     if not _DATABASE_NAME.fullmatch(url.database):
         raise RecoveryRefused("database name is outside the supported safe character set")
-    unknown = set(url.query) - set(_PG_QUERY_ENV)
+    _postgres_endpoint(url)
+    unknown = set(url.query) - (set(_PG_QUERY_ENV) | {_PG_QUERY_HOST})
     if unknown:
         raise RecoveryRefused("named database URL contains unsupported connection options")
     return raw, url
 
 
+def _single_query_value(url: URL, key: str) -> str | None:
+    value = url.query.get(key)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    raise RecoveryRefused("named database URL contains ambiguous connection options")
+
+
+def _postgres_endpoint(url: URL) -> _PostgresEndpoint:
+    query_host = _single_query_value(url, _PG_QUERY_HOST)
+    if query_host is None:
+        if not url.host:
+            raise RecoveryRefused(
+                "named database URL must explicitly identify a PostgreSQL endpoint, "
+                "user, and database"
+            )
+        return _PostgresEndpoint(host=str(url.host), port=int(url.port or 5432))
+
+    if url.host is not None:
+        raise RecoveryRefused("named database URL contains ambiguous PostgreSQL endpoints")
+    if url.port is not None:
+        raise RecoveryRefused("Unix-socket database URL must not include a TCP port")
+    if query_host != _CANONICAL_POSTGRES_SOCKET:
+        raise RecoveryRefused("Unix-socket database URL must use the pinned PostgreSQL socket")
+    return _PostgresEndpoint(host=query_host, port=5432)
+
+
 @contextmanager
 def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, str]]:
     """Yield a minimal libpq environment with an ephemeral private passfile."""
+    endpoint = _postgres_endpoint(url)
     env = _minimal_child_environment()
     env["PGDATABASE"] = str(url.database)
     env["PGUSER"] = str(url.username)
-    env["PGHOST"] = str(url.host)
-    env["PGPORT"] = str(url.port or 5432)
+    env["PGHOST"] = endpoint.host
+    env["PGPORT"] = str(endpoint.port)
     env["PGCONNECT_TIMEOUT"] = "10"
     for key, destination in _PG_QUERY_ENV.items():
         value = url.query.get(key)
@@ -371,8 +405,8 @@ def _pg_environment(url: URL, credential_directory: Path) -> Iterator[dict[str, 
             line = ":".join(
                 escape(value)
                 for value in (
-                    str(url.host),
-                    str(url.port or 5432),
+                    endpoint.host,
+                    str(endpoint.port),
                     str(url.database),
                     str(url.username),
                     url.password,

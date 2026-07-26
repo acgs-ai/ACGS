@@ -113,7 +113,7 @@ if [[ ! -x "$package_dir/.venv/bin/python" || ! -x "$package_dir/.venv/bin/pytes
   echo 'packages/acgs-control-plane/.venv/bin/python and .venv/bin/pytest are required' >&2
   exit 66
 fi
-for required_command in bwrap cmp docker git mktemp realpath sha256sum tar; do
+for required_command in bwrap cmp docker git mktemp realpath sha256sum stat tar; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
     printf 'required command is unavailable: %s\n' "$required_command" >&2
     exit 69
@@ -164,14 +164,25 @@ if [[ "$("$uv_bin" --version)" != 'uv 0.11.19 (x86_64-unknown-linux-gnu)' ]]; th
   echo 'UV_BIN must be uv 0.11.19' >&2
   exit 69
 fi
-realpath -e -- "$package_dir/.venv/bin/python" >/dev/null
+canonical_venv_python="$(realpath -e -- "$package_dir/.venv/bin/python")"
 venv_python_target="$(readlink -- "$package_dir/.venv/bin/python")"
 if [[ "$venv_python_target" != /* ]]; then
   echo 'packages/acgs-control-plane/.venv/bin/python must be an absolute uv-managed symlink' >&2
   exit 69
 fi
-python_runtime_root="$(dirname -- "$(dirname -- "$venv_python_target")")"
+python_runtime_bind_root="$(dirname -- "$(dirname -- "$venv_python_target")")"
+python_runtime_root="$(dirname -- "$(dirname -- "$canonical_venv_python")")"
 if [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]]; then
+  require_private_dir() {
+    local directory=$1
+    local owner mode
+    owner="$(stat -c '%u' -- "$directory")"
+    mode="$(stat -c '%a' -- "$directory")"
+    if [[ "$owner" != "$(id -u)" || "$mode" != '700' ]]; then
+      printf '%s must be owned by the current user with mode 700\n' "$directory" >&2
+      exit 69
+    fi
+  }
   if [[ "$UV_PYTHON_INSTALL_DIR" != /* ]]; then
     echo 'UV_PYTHON_INSTALL_DIR must be absolute for the PostgreSQL evidence gate' >&2
     exit 69
@@ -186,15 +197,26 @@ if [[ -n "${UV_PYTHON_INSTALL_DIR:-}" ]]; then
     exit 69
   fi
   canonical_tmpdir="$(realpath -e -- "$TMPDIR")"
-  if [[ "$canonical_tmpdir" != "$TMPDIR" || -L "$TMPDIR" || "${canonical_tmpdir##*/}" != runtime-tmp ]]; then
-    echo 'TMPDIR must be the canonical proof scratch runtime-tmp directory' >&2
+  if [[ "$canonical_tmpdir" != "$TMPDIR" || -L "$TMPDIR" || "${canonical_tmpdir##*/}" != tmp ]]; then
+    echo 'TMPDIR must be the canonical proof scratch tmp directory' >&2
     exit 69
   fi
-  proof_scratch_root="$(dirname -- "$canonical_tmpdir")"
-  if [[ "$canonical_uv_python_install_dir" != "$proof_scratch_root/uv-python" ]]; then
-    echo 'UV_PYTHON_INSTALL_DIR must equal the proof scratch uv-python directory' >&2
+  canonical_proof_scratch_root="$(dirname -- "$canonical_tmpdir")"
+  canonical_proof_root="$(dirname -- "$canonical_proof_scratch_root")"
+  canonical_proof_runtime_root="$canonical_proof_root/runtime"
+  if [[ "$canonical_proof_scratch_root" != "$canonical_proof_root/scratch" ]]; then
+    echo 'TMPDIR must be nested under the proof scratch/tmp directory' >&2
     exit 69
   fi
+  if [[ "$canonical_uv_python_install_dir" != "$canonical_proof_runtime_root/uv-python" ]]; then
+    echo 'UV_PYTHON_INSTALL_DIR must equal the proof runtime uv-python directory' >&2
+    exit 69
+  fi
+  require_private_dir "$canonical_proof_root"
+  require_private_dir "$canonical_proof_scratch_root"
+  require_private_dir "$canonical_tmpdir"
+  require_private_dir "$canonical_proof_runtime_root"
+  require_private_dir "$canonical_uv_python_install_dir"
   case "$python_runtime_root" in
     "$canonical_uv_python_install_dir"/*) ;;
     *)
@@ -479,7 +501,8 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     docker_args = [
         str(DOCKER_BIN), "run", "--rm", "--pull=never", "--network", "none",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        "--security-opt", "label=disable", "--read-only",
+        "--security-opt", "label=disable", "--user", f"{os.getuid()}:{os.getgid()}",
+        "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777",
         "--volume", f"{STATE_DIR / 'pg'}:/run/acgs-pg:ro",
         "--volume", f"{HOST_TMP}:/run/tmp:rw",
@@ -665,7 +688,7 @@ run_sandboxed_uv_build() {
     --ro-bind-try /lib64 /lib64 \
     --ro-bind "$package_dir" "$package_dir" \
     --ro-bind "$uv_bin" "$uv_bin" \
-    --ro-bind "$python_runtime_root" "$python_runtime_root" \
+    --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root" \
     --bind "$state_dir" "$state_dir" \
     --ro-bind "$package_dir/.venv" "$state_dir/acp-old/packages/acgs-control-plane/.venv" \
     --clearenv \
@@ -731,7 +754,7 @@ bwrap_args=(
   --ro-bind "$package_dir" "$package_dir"
   --ro-bind "$gove_zone_src" "$gove_zone_src"
   --ro-bind "$uv_bin" "$uv_bin"
-  --ro-bind "$python_runtime_root" "$python_runtime_root"
+  --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root"
   --ro-bind "$state_dir/client" /run/client
   --ro-bind "$state_dir/broker" /run/broker
   --ro-bind "$state_dir/pg" /run/acgs-pg
