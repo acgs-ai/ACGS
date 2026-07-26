@@ -196,6 +196,38 @@ jobs:
           test "$(pg_dump --version | awk '{print $3}')" = '17.10'
           test "$(pg_restore --version | awk '{print $3}')" = '17.10'
 
+      # The tenant-bootstrap vertical spawns 100 client processes that each hold a
+      # PostgreSQL connection while racing the single-winner bootstrap, on top of the
+      # parent fixture's pooled connections. The image default max_connections=100 is
+      # below that concurrent demand, so raise it before any suite connects.
+      # GitHub Actions service containers cannot override the container command, so
+      # apply the setting via ALTER SYSTEM and restart the server to load it.
+      - name: Raise PostgreSQL max_connections for the multiprocess vertical
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id='${{ job.services.postgres.id }}'
+          docker exec "$container_id" psql \
+            --username acgs_control_plane_test \
+            --dbname acgs_control_plane_test \
+            --set ON_ERROR_STOP=1 \
+            --command 'ALTER SYSTEM SET max_connections = 400'
+          docker restart "$container_id" >/dev/null
+          for _ in {1..60}; do
+            if docker exec "$container_id" pg_isready \
+              --username acgs_control_plane_test \
+              --dbname acgs_control_plane_test >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$container_id" psql \
+            --username acgs_control_plane_test \
+            --dbname acgs_control_plane_test \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only --no-align \
+            --command 'SHOW max_connections' | grep -qx '400'
+
       - name: Create fixed disposable databases
         shell: bash
         env:
