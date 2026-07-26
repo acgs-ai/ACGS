@@ -74,11 +74,10 @@ DECISION_RECEIPT_SPEC, HUMAN_GUIDE) say `1.0.0rc1`/Beta. Still-stale surfaces:
 
 `MONOREPO.md:53` / `CLAUDE.md:11` say **v2.10.1** (correct — matches the recent
 `docs-version-pin-fix` PR #349). Stale `v2.10.0` references remain in
-`docs/reconstruction/01-internal-audit.md:29`,
-`docs/reconstruction/04-platform-blueprint.md:87`,
-`docs/reconstruction/00-EXECUTIVE-SUMMARY.md:30`. These `docs/reconstruction/*`
-files are Phase-4 relocation candidates, so fixing them and relocating them
-resolve together.
+`docs/reconstruction/01-internal-audit.md` and
+`docs/reconstruction/04-platform-blueprint.md` (search for the literal string
+`v2.10.0` — do not cite these by line number; see
+[`DOC_REFERENCE_POLICY.md`](DOC_REFERENCE_POLICY.md)).
 
 ### Stray version a `grep` will surface
 

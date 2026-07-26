@@ -9,7 +9,7 @@ receipt-gated governance layer is packaged, deployed, sold, and onboarded.
 
 **Status: internal product draft.** Nothing here is a certification, a shipped
 managed service, or a public price list. Every technical claim inherits the
-claim discipline of [`docs/CLAIMS.md`](../CLAIMS.md); anything beyond current
+claim discipline of [`docs/CLAIMS.md`](../../CLAIMS.md); anything beyond current
 code and tests is explicitly labeled *proposed* or *roadmap*. ACGS is not
 production-certified, compliance-certified, or regulator-approved.
 
@@ -43,10 +43,10 @@ below it.
 
 Product docs here summarize; these govern:
 
-- [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — runtime architecture
-- [`docs/DECISION_RECEIPT_SPEC.md`](../DECISION_RECEIPT_SPEC.md) — receipt format
-- [`docs/SECURITY_MODEL.md`](../SECURITY_MODEL.md) — threat table + adversary model (ADV1–ADV14)
-- [`docs/CLAIMS.md`](../CLAIMS.md) — the claim ledger (public wording rule)
-- [`docs/INTEGRATION_MATRIX.md`](../INTEGRATION_MATRIX.md) — per-runtime support tiers
-- [`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment)
-- [`docs/PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md) — strategy canvas
+- [`docs/ARCHITECTURE.md`](../../ARCHITECTURE.md) — runtime architecture
+- [`docs/DECISION_RECEIPT_SPEC.md`](../../DECISION_RECEIPT_SPEC.md) — receipt format
+- [`docs/SECURITY_MODEL.md`](../../SECURITY_MODEL.md) — threat table + adversary model (ADV1–ADV14)
+- [`docs/CLAIMS.md`](../../CLAIMS.md) — the claim ledger (public wording rule)
+- [`docs/INTEGRATION_MATRIX.md`](../../INTEGRATION_MATRIX.md) — per-runtime support tiers
+- [`docs/COMPLIANCE_CROSSWALK.md`](../../COMPLIANCE_CROSSWALK.md) — NIST AI RMF / CSF 2.0 / ATLAS / OWASP mapping (self-assessment)
+- [`docs/PRODUCT_STRATEGY.md`](../../PRODUCT_STRATEGY.md) — strategy canvas

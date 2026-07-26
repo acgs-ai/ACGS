@@ -1,13 +1,13 @@
-# Platform Reconstruction — §7 Decision Record
+# Platform Reconstruction — Decision Record
 
 > Platform-reconstruction program, document 6 of 6. Resolves the five open
-> decisions in `00-EXECUTIVE-SUMMARY.md` §7. Decisions were prepared by the
-> maintainer's agent under an explicit "do it for me" delegation (2026-07-06)
-> and are **reversible until the PRs they unblock merge** — rejecting this PR
-> rejects the calls. Each call follows the direction already settled in
-> `04-platform-blueprint.md` §2 where one exists.
+> decisions left open by the reconstruction program's synthesis document (held
+> privately). Each call is restated in full below so this record stands alone.
+> Decisions are **reversible until the PRs they unblock merge** — rejecting this
+> PR rejects the calls. Each follows the direction already settled in
+> [`04-platform-blueprint.md`](04-platform-blueprint.md) §2 where one exists.
 
-## D1 — L0 receipt-schema ownership (§7:1)
+## D1 — L0 receipt-schema ownership
 
 **Call: the gove-zone lineage owns the L0 receipt schema.** The extracted
 `acgs-evidence` L0 library derives its schema from the gove-zone kernel's
@@ -17,12 +17,12 @@ cross-lineage contract test (roadmap item `cross-lineage-contract-test`).
 
 *Why:* blueprint §2 already designates gove-zone as kernel of record; the
 kernel format is the one with 634+ tests, replay, signing, and single-use
-enforcement behind it. *Residual:* §7:1 notes an acgs-lite source checkout is
+enforcement behind it. *Residual:* an acgs-lite source checkout is
 needed to confirm every acgs-lite receipt field is representable — the
 contract test is the enforcement point; if a field cannot be represented,
 that surfaces there, not silently.
 
-## D2 — Standards timing (§7:2)
+## D2 — Standards timing
 
 **Call: align at L0 design time, now.** The `acgs-evidence` schema carries the
 Agent Receipts attachment points (Ed25519 signatures, W3C-VC envelope
@@ -30,12 +30,12 @@ compatibility) from its first version, with the internal format explicitly
 versioned so alignment work stays additive. IETF AER / SCITT are tracked as
 targets, not blockers.
 
-*Why:* doc-00 §1/§3 — the 12–18-month window rewards the standard-aligned,
+*Why:* the 12–18-month standards window rewards the standard-aligned,
 offline-verifiable receipt as *the* differentiator; retrofitting standards
 onto a stabilized internal format is strictly more work than versioning from
 day one.
 
-## D3 — Defaults-flip rollout (§7:3)
+## D3 — Defaults-flip rollout
 
 **Call: direct flip with an explicit dev-mode escape, in the next release.**
 Signing + single-use receipts become default-ON; unsigned/dev operation
@@ -44,22 +44,24 @@ one-cycle deprecation profile.
 
 *Why:* gove-zone is `0.1.0a1` — a pre-1.0 alpha with minimal external
 surface. A deprecation cycle protects almost nobody while prolonging a
-known-weak default (doc-00 §2 lists opt-in integrity as a top defect). The
+known-weak default (opt-in integrity is a top defect in the internal audit,
+[`01-internal-audit.md`](01-internal-audit.md)). The
 flip lands as a clearly-labeled breaking change in release notes.
 
-## D4 — L2 control plane shape (§7:4)
+## D4 — L2 control plane shape
 
 **Call: embedded library first; deployed service deferred.** The
 receipt-verification / control-plane capability ships as an importable
 library surface; standing up a deployed service waits until staging exists
 and the runner SPOF is mitigated.
 
-*Why:* doc-00 §1 — the production gap is operational, not architectural.
+*Why:* the production gap is operational, not architectural
+([`05-production-deployment.md`](05-production-deployment.md)).
 Adding a deployed surface before a staging environment exists inverts the
 risk order. doc-05 scope shrinks accordingly; the roadmap item
 `receipt-verification-control-plane-api` is re-scoped to the library shape.
 
-## D5 — Constitutional-hash gate (§7:5)
+## D5 — Constitutional-hash gate
 
 **Call: populate (activate).** Inventory the genuinely sealed files (the hash
 lock and offline verifier already exist) so the parent gate checks a real
@@ -67,8 +69,8 @@ inventory. Descope only if population proves the inventory is empty by
 nature — in which case remove the gate rather than leave a no-op that reads
 as a control.
 
-*Why:* §7:5's own framing — "a no-op that reads as a control is the worst
-option." Populating is the honest activation; the roadmap item
+*Why:* a no-op that reads as a control is the worst option.
+Populating is the honest activation; the roadmap item
 `populate-or-descope-constitutional-hash-gate` implements it with populate
 as the primary path.
 
