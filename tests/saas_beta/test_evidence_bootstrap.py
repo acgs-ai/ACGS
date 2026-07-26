@@ -3452,9 +3452,11 @@ def test_p2_idempotency_postgres_gate_uses_wrapper_owned_result_validation(
         "set -Eeuo pipefail\n"
         f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{wrapper}\n"
         'run_recorded_gate CP "$PWD" p2-idempotency-postgres '
         "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "
@@ -3505,9 +3507,11 @@ def test_exact_pytest_junit_rejects_counter_cancellation_before_append(tmp_path:
         "set -Eeuo pipefail\n"
         f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate CP "$PWD" exact-junit '
@@ -3570,7 +3574,8 @@ def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
     assert wrapper_source.index("validate_exact_pytest_junit") < wrapper_source.index(
         "append_record"
     )
-    assert 'PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"' in wrapper_source
+    assert 'PYTEST_ADDOPTS="--junitxml=$junit_file"' in wrapper_source
+    assert 'run_contained "$cwd" "$@"' in wrapper_source
     assert "append_record" not in wrapper_source.split("validate_exact_pytest_junit", 1)[0]
     p2_source = source.split('elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]', 1)[1]
     p2_source = p2_source.split("else", 1)[0]
@@ -3594,9 +3599,11 @@ def test_p2_root_pytest_gate_requires_exact_one_unskipped_result_before_append(
         "set -Eeuo pipefail\n"
         f"EVIDENCE_PY={json.dumps(sys.executable)}\n"
         f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+        f"WORKTREE={json.dumps(str(tmp_path))}\n"
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate P2 "$PWD" p2-root '
@@ -3695,6 +3702,7 @@ def test_p2_register_gz_pytest_gate_requires_exact_four_unskipped_results_before
         f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
         'mkdir -p "$NODE_EVIDENCE"\n'
         'append_record() { printf \'%s\\n\' "$*" >"$APPEND_MARKER"; }\n'
+        'run_contained() { local cwd="$1"; shift; ( cd "$cwd"; "$@" ); }\n'
         f"{validator}\n"
         f"{wrapper}\n"
         'run_recorded_exact_pytest_gate GZ "$PWD" p2-register-runtime '
@@ -5162,7 +5170,11 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     ):
         assert exact_override in source
     b6 = source.split("phase B6", 1)[1]
-    assert b6.count('cd "$WORKTREE"') == 3
+    assert 'TRANSCRIPT_RECORDS="$(run_contained "$WORKTREE" \\' in b6
+    assert b6.count('run_contained "$WORKTREE" "$EVIDENCE_PY"') == 3
+    assert "scripts/evidence/generate_run.py" in b6
+    assert "scripts/evidence/validate_run.py" in b6
+    assert "scripts/evidence/hash_run_jcs.py" in b6
     assert 'SCRATCH_ROOT="$TMP_ROOT/scratch"' in source
     assert 'UV_CACHE_DIR="$SCRATCH_ROOT/uv-cache"' in source
     for scratch_export in (
@@ -5303,7 +5315,10 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         check=False,
     )
     assert wrong_cwd.returncode == 2
-    assert "cwd must be the product repository root" in wrong_cwd.stderr
+    assert (
+        "cwd must be the product repository root" in wrong_cwd.stderr
+        or "evidence CLI must run through" in wrong_cwd.stderr
+    )
     root_reset = subprocess.run(
         [sys.executable, str(EVIDENCE_SCRIPTS / "generate_run.py"), *bad_args],
         cwd=ROOT,
@@ -5313,7 +5328,10 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         check=False,
     )
     assert root_reset.returncode == 2
-    assert "invalid NODE_ID" in root_reset.stderr
+    assert (
+        "invalid NODE_ID" in root_reset.stderr
+        or "evidence CLI must run through" in root_reset.stderr
+    )
     assert "cwd must be" not in root_reset.stderr
 
     head = subprocess.run(
@@ -7921,3 +7939,142 @@ def test_pinned_uv_execution_is_normalized_only_for_transcript_metadata() -> Non
     assert _common.validate_safe_argv(reviewed) == reviewed
     with pytest.raises(_common.EvidenceError):
         _common.validate_safe_argv(["/home/martin/.local/bin/uv", *reviewed[1:]])
+
+
+def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    runner = _shell_function(source, "run_contained")
+    bootstrap_runner = _shell_function(source, "run_contained_bootstrap")
+    mounts = _shell_function(source, "contained_mount_args")
+    assert "BWRAP_BIN=/usr/bin/bwrap" in source
+    assert "die 'containment runner unavailable: /usr/bin/bwrap'" in source
+    assert "--die-with-parent" in runner
+    assert "--unshare-pid" in runner
+    assert 'for fd_path in /proc/"$BASHPID"/fd/*' in runner
+    assert "--ro-bind / /" in runner
+    assert "--tmpfs /tmp" in runner
+    assert "--tmpfs /run" in runner
+    assert "--dir /run/service" in runner
+    assert 'printf \'%s\\0%s\\0%s\\0\' --ro-bind "$WORKTREE" "$WORKTREE"' in mounts
+    assert "unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE" in bootstrap_runner
+    assert 'run_contained "$@"' in bootstrap_runner
+    writable_mounts = {
+        '"$EVIDENCE_ROOT"',
+        '"$SCRATCH_ROOT"',
+        '"$WORKTREE/.venv-evidence"',
+        '"$WORKTREE/packages/acgs-control-plane/.venv"',
+        '"$WORKTREE/packages/gove-zone/.venv-beta"',
+    }
+    for path in writable_mounts:
+        assert path in mounts
+    assert mounts.count('printf \'%s\\0%s\\0%s\\0\' --bind "$path" "$path"') == 1
+    assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" python install 3.11' in source
+    assert 'run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync' in source
+    assert 'run_contained "$WORKTREE" "$UV_BIN" pip install' in source
+    assert 'run_contained "$WORKTREE" "$EVIDENCE_PY" scripts/evidence/generate_run.py' in source
+    assert 'scripts/evidence/hash_run_jcs.py "$NODE_EVIDENCE/run.json"' in source
+    forbidden_direct_patterns = (
+        '(\n  cd "$WORKTREE"\n  "$EVIDENCE_PY" scripts/evidence/generate_run.py',
+        '(\n  cd "$WORKTREE"\n  "$EVIDENCE_PY" scripts/evidence/validate_run.py',
+        '(\n  cd "$cwd"\n  "$@"',
+        'env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN"',
+    )
+    for pattern in forbidden_direct_patterns:
+        assert pattern not in source
+
+
+def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    functions = "\n".join(
+        (
+            _shell_function(source, "contained_env_args"),
+            _shell_function(source, "contained_mount_args"),
+            _shell_function(source, "run_contained"),
+        )
+    )
+    harness = tmp_path / "containment-harness.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "die() { printf 'HARNESS_DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+        "BWRAP_BIN=/usr/bin/bwrap\n"
+        "PATH=/usr/bin:/bin\n"
+        "LANG=C.UTF-8\n"
+        "LC_ALL=C.UTF-8\n"
+        f"WORKTREE={json.dumps(str(tmp_path / 'product'))}\n"
+        f"EVIDENCE_ROOT={json.dumps(str(tmp_path / 'evidence'))}\n"
+        f"SCRATCH_ROOT={json.dumps(str(tmp_path / 'scratch'))}\n"
+        'TMPDIR="$SCRATCH_ROOT/tmp"\n'
+        'TMP="$TMPDIR"\n'
+        'TEMP="$TMPDIR"\n'
+        'HOME="$SCRATCH_ROOT/home"\n'
+        'XDG_CACHE_HOME="$SCRATCH_ROOT/xdg-cache"\n'
+        'XDG_CONFIG_HOME="$SCRATCH_ROOT/xdg-config"\n'
+        'XDG_DATA_HOME="$SCRATCH_ROOT/xdg-data"\n'
+        'XDG_STATE_HOME="$SCRATCH_ROOT/xdg-state"\n'
+        'PYTHONDONTWRITEBYTECODE=1\n'
+        'PYTHONNOUSERSITE=1\n'
+        'export PATH LANG LC_ALL WORKTREE EVIDENCE_ROOT SCRATCH_ROOT TMPDIR TMP TEMP HOME '
+        'XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME '
+        'PYTHONDONTWRITEBYTECODE PYTHONNOUSERSITE\n'
+        'mkdir -p "$WORKTREE/.venv-evidence" "$EVIDENCE_ROOT" "$SCRATCH_ROOT" '
+        '"$TMPDIR" "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" '
+        '"$XDG_STATE_HOME"\n'
+        f"{functions}\n"
+        'case "${1:-}" in\n'
+        '  unavailable)\n'
+        '    BWRAP_BIN="$SCRATCH_ROOT/missing-bwrap"\n'
+        '    run_contained "$WORKTREE" /usr/bin/true\n'
+        '    ;;\n'
+        '  host-write)\n'
+        '    if run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps(
+            'set -u; '
+            'if printf bad >"$WORKTREE/host-write" 2>/dev/null; then exit 80; fi; '
+            'printf ok >"$SCRATCH_ROOT/scratch-ok"; '
+            'printf ok >"$EVIDENCE_ROOT/evidence-ok"; '
+            'printf ok >"$WORKTREE/.venv-evidence/venv-ok"; '
+            'test ! -e /run/docker.sock; '
+            'test ! -e /run/service/docker.sock'
+        )
+        + '; then test ! -e "$WORKTREE/host-write"; else exit "$?"; fi\n'
+        '    ;;\n'
+        '  inherited-fd)\n'
+        '    exec 9>"$SCRATCH_ROOT/host-fd-target"\n'
+        '    run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps('if printf leak >&9 2>/dev/null; then exit 81; fi; exit 0')
+        + '\n'
+        '    [[ ! -s "$SCRATCH_ROOT/host-fd-target" ]]\n'
+        '    ;;\n'
+        '  double-fork)\n'
+        '    run_contained "$WORKTREE" /usr/bin/bash --noprofile --norc -c '
+        + json.dumps('( ( sleep 1; printf late >"$SCRATCH_ROOT/late" ) & ); exit 0')
+        + '\n'
+        '    sleep 2\n'
+        '    [[ ! -e "$SCRATCH_ROOT/late" ]]\n'
+        '    ;;\n'
+        '  *) exit 64 ;;\n'
+        'esac\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+
+    unavailable = subprocess.run(
+        [str(harness), "unavailable"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert unavailable.returncode == 2
+    assert "containment runner unavailable" in unavailable.stderr
+
+    for mode in ("host-write", "inherited-fd", "double-fork"):
+        result = subprocess.run(
+            [str(harness), mode],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, (mode, result.stdout, result.stderr)
