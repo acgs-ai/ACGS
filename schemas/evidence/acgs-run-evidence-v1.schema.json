@@ -895,6 +895,12 @@
                 "single-process-evidence-and-package-gates",
                 "postgres-vertical-bootstrap-register"
               ]
+            },
+            {
+              "const": [
+                "single-process-evidence-and-package-gates",
+                "postgres-pg6-policy-registry-lifecycle"
+              ]
             }
           ]
         }

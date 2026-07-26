@@ -306,7 +306,7 @@ def test_rogue_public_schema_fails_without_version_or_table_mutation() -> None:
 def test_public_function_hijack_cannot_mutate_during_status() -> None:
     upgraded, payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert upgraded.returncode == 0
-    assert payload["after"] == DatabaseSchemaState.VERSION_0007.value
+    assert payload["after"] == DatabaseSchemaState.VERSION_0008.value
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -470,7 +470,7 @@ def test_lock_contention_is_retryable_and_retry_upgrades_once() -> None:
     assert retried.returncode == 0
     assert retried.stderr == ""
     assert payload == {
-        "after": DatabaseSchemaState.VERSION_0007.value,
+        "after": DatabaseSchemaState.VERSION_0008.value,
         "before": "empty",
         "command": "upgrade",
         "ok": True,
@@ -483,12 +483,12 @@ def test_successful_upgrade_is_forward_only_and_idempotent() -> None:
     first, first_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert first.returncode == 0
     assert first_payload["before"] == "empty"
-    assert first_payload["after"] == DatabaseSchemaState.VERSION_0007.value
+    assert first_payload["after"] == DatabaseSchemaState.VERSION_0008.value
 
     second, second_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert second.returncode == 0
-    assert second_payload["before"] == DatabaseSchemaState.VERSION_0007.value
-    assert second_payload["after"] == DatabaseSchemaState.VERSION_0007.value
+    assert second_payload["before"] == DatabaseSchemaState.VERSION_0008.value
+    assert second_payload["after"] == DatabaseSchemaState.VERSION_0008.value
     assert _version_rows() == [HEAD_REVISION]
 
     downgrade, payload = _invoke_cli("downgrade")

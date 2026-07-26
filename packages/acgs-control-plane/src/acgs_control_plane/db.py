@@ -47,6 +47,9 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "tenant_bootstrap_pending_outbox",
         "tenant_bootstrap_refusal_events",
         "agent_registration_idempotency",
+        "policy_versions",
+        "environment_policy_heads",
+        "policy_registry_idempotency",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(
