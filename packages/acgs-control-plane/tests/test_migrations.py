@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -856,8 +859,16 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
 
 def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_archive(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
-    state_dir = tmp_path / "state"
+    canonical_tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+    state_dir = Path(tempfile.mkdtemp(prefix="acp-pg-gate-", dir=canonical_tmp))
+    request.addfinalizer(lambda: shutil.rmtree(state_dir, ignore_errors=True))
+    state_dir.chmod(0o700)
+    state_stat = state_dir.stat()
+    assert state_stat.st_uid == os.getuid()
+    assert stat.S_IMODE(state_stat.st_mode) == 0o700
+
     broker_dir = state_dir / "broker"
     client_dir = state_dir / "client"
     home_dir = state_dir / "home"
@@ -865,6 +876,7 @@ def test_postgres_gate_client_broker_rejects_host_file_escape_and_allows_state_a
     proof_scratch = state_dir / "proof-scratch"
     fake_bin = tmp_path / "fake-bin"
     outside_dir = tmp_path / "outside"
+
     for directory in (
         broker_dir,
         client_dir,
