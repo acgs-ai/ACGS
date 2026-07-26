@@ -20,9 +20,10 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from gove_zone.policy import RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
 from pydantic import ValidationError
@@ -34,6 +35,12 @@ from acgs_control_plane.agent_registration import (
     AgentRegistrationService,
     local_agent_registration_issuer,
     local_agent_registration_receipt_sealer,
+)
+from acgs_control_plane.api_contract import (
+    RequestAdmissionMiddleware,
+    has_json_decode_error,
+    redacted_error,
+    request_id_from_scope,
 )
 from acgs_control_plane.auth import (
     API_KEY_HEADER,
@@ -73,6 +80,13 @@ from acgs_control_plane.models import (
     User,
     new_id,
 )
+from acgs_control_plane.pagination import (
+    CURSOR_TOKEN_MAX_LENGTH,
+    InvalidCursorError,
+    decode_receipt_cursor,
+    issue_receipt_cursor,
+    receipt_filter_digest,
+)
 from acgs_control_plane.rbac import Permission, Role, role_allows
 from acgs_control_plane.schemas import (
     AgentRegisterRequest,
@@ -98,6 +112,7 @@ from acgs_control_plane.schemas import (
     UserCreateRequest,
     UserCreateResponse,
     UserResponse,
+    V1MetadataResponse,
 )
 from acgs_control_plane.tenant_bootstrap import (
     BOOTSTRAP_AUTHORIZATION_HEADER,
@@ -204,6 +219,26 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return payload
 
 
+class _TenantBootstrapRequestIdMiddleware:
+    """Seed the tenant-bootstrap request id as pure ASGI middleware.
+
+    ``@app.middleware("http")`` wraps the whole app in Starlette's
+    ``BaseHTTPMiddleware``, which proxies receive/send through an anyio stream
+    and mishandles a client disconnect mid-request. The bounded-admission tests
+    assert real disconnect semantics, so that wrapper cannot stay on the stack.
+    Pure ASGI middleware seeds the same ``request.state`` value -- ``Request.state``
+    is backed by ``scope["state"]`` -- while leaving the channels untouched.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope.get("path") == "/v1/tenant-bootstrap":
+            scope.setdefault("state", {})["tenant_bootstrap_request_id"] = secrets.token_hex(16)
+        await self.app(scope, receive, send)
+
+
 def _record_tenant_bootstrap_refusal(request: Request, exc: TenantBootstrapHttpError) -> None:
     if request.url.path != "/v1/tenant-bootstrap":
         return
@@ -255,6 +290,7 @@ def _membrane(request: Request, session: Session, org: Organization, principal: 
 def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse:
     receipt = exc.receipt  # type: ignore[attr-defined]
     reason = exc.reason  # type: ignore[attr-defined]
+    request = exc.__dict__.get("request")
     return JSONResponse(
         status_code=status_code,
         content={
@@ -262,6 +298,11 @@ def _blocked_json(status_code: int, status: str, exc: Exception) -> JSONResponse
             "reason": reason,
             "receipt_id": receipt.id,
             "decision": receipt.decision,
+            **(
+                {"request_id": request_id_from_scope(request.scope)}
+                if isinstance(request, Request)
+                else {}
+            ),
         },
     )
 
@@ -293,20 +334,58 @@ def create_app(
         "No valid Decision Receipt, no side effect.",
     )
     app.state.settings = settings
+    app.add_middleware(
+        RequestAdmissionMiddleware,
+        max_request_body_bytes=settings.max_request_body_bytes,
+    )
 
     @app.exception_handler(PolicyDeniedError)
-    def _denied(_request: Request, exc: PolicyDeniedError) -> JSONResponse:
+    def _denied(request: Request, exc: PolicyDeniedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(403, "denied", exc)
 
     @app.exception_handler(PolicyEscalatedError)
-    def _escalated(_request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+    def _escalated(request: Request, exc: PolicyEscalatedError) -> JSONResponse:
+        exc.__dict__["request"] = request
         return _blocked_json(202, "pending_approval", exc)
 
     @app.exception_handler(AuditReadError)
-    def _audit_read_refused(_request: Request, exc: AuditReadError) -> JSONResponse:
+    def _audit_read_refused(request: Request, exc: AuditReadError) -> JSONResponse:
+        request_id_from_scope(request.scope)
         return JSONResponse(
             status_code=503,
             content={"code": exc.code, "status": "audit-read-refused", "reason": exc.reason},
+        )
+
+    @app.exception_handler(HTTPException)
+    def _http_error(request: Request, exc: HTTPException) -> JSONResponse:
+        status_code = int(exc.status_code)
+        code = "http_error"
+        if status_code == 401:
+            code = "unauthorized"
+        elif status_code == 403:
+            code = "forbidden"
+        elif status_code == 404:
+            code = "not_found"
+        elif status_code == 409:
+            code = "conflict"
+        elif status_code == 422:
+            code = "validation_error"
+        elif status_code >= 500:
+            code = "service_unavailable"
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
+            headers=dict(exc.headers or {}),
+        )
+
+    @app.exception_handler(InvalidCursorError)
+    def _invalid_cursor(request: Request, exc: InvalidCursorError) -> JSONResponse:
+        del exc
+        return JSONResponse(
+            status_code=400,
+            content=redacted_error("invalid_cursor", request_id_from_scope(request.scope)),
+            headers={"Cache-Control": "private, no-store"},
         )
 
     @app.exception_handler(TenantBootstrapHttpError)
@@ -325,8 +404,24 @@ def create_app(
 
     @app.exception_handler(AgentRegistrationHttpError)
     def _agent_registration_error(
-        _request: Request, exc: AgentRegistrationHttpError
+        request: Request, exc: AgentRegistrationHttpError
     ) -> JSONResponse:
+        # A policy DENY/ESCALATE carries its committed refusal receipt, so it
+        # answers in the same receipted envelope the route used before agent
+        # registration became a managed mutation. Every other refusal (bad
+        # scope, untrusted key, aborted transaction, cross-tenant admission)
+        # has no receipt to cite and stays redacted and flat.
+        if exc.receipt_id is not None and exc.decision is not None:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "status": exc.status,
+                    "reason": exc.detail,
+                    "receipt_id": exc.receipt_id,
+                    "decision": exc.decision,
+                    "request_id": request_id_from_scope(request.scope),
+                },
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -336,8 +431,11 @@ def create_app(
             },
         )
 
+    # One handler per exception type wins in FastAPI, so the tenant-bootstrap
+    # refusal recording (master) and the redacted admission errors (this branch)
+    # have to live in the same function rather than one replacing the other.
     @app.exception_handler(RequestValidationError)
-    def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    def _request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         if request.url.path == "/v1/tenant-bootstrap":
             _record_tenant_bootstrap_refusal(
                 request,
@@ -357,13 +455,15 @@ def create_app(
                     "detail": "tenant bootstrap request body is malformed",
                 },
             )
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        errors = exc.errors()
+        code = "malformed_json" if has_json_decode_error(errors) else "validation_error"
+        status_code = 400 if code == "malformed_json" else 422
+        return JSONResponse(
+            status_code=status_code,
+            content=redacted_error(code, request_id_from_scope(request.scope)),
+        )
 
-    @app.middleware("http")
-    async def _tenant_bootstrap_request_id(request: Request, call_next: Any) -> Any:
-        if request.url.path == "/v1/tenant-bootstrap":
-            request.state.tenant_bootstrap_request_id = secrets.token_hex(16)
-        return await call_next(request)
+    app.add_middleware(_TenantBootstrapRequestIdMiddleware)
 
     @app.exception_handler(Exception)
     def _tenant_bootstrap_fail_closed_error(request: Request, _exc: Exception) -> JSONResponse:
@@ -387,9 +487,9 @@ def create_app(
         raise _exc
 
     _register_routes(app)
+    _install_v1_aliases(app)
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
     # protocol Route types are intentionally outside this HTTP contract.
-    from fastapi.routing import APIRoute
     from starlette.routing import Route
 
     actual = tuple(
@@ -535,6 +635,19 @@ def _register_routes(app: FastAPI) -> None:
                 "schema_current": schema_current,
                 "schema_state": preflight.state.value,
             },
+        )
+
+    @app.get(
+        "/v1",
+        response_model=V1MetadataResponse,
+        tags=["meta"],
+        operation_id="get_v1_metadata",
+    )
+    def v1_metadata() -> V1MetadataResponse:
+        return V1MetadataResponse(
+            api_version="v1",
+            status="local-dev-legacy-alias",
+            aliased_from="/orgs",
         )
 
     # -- organizations (bootstrap) ------------------------------------------
@@ -721,7 +834,12 @@ def _register_routes(app: FastAPI) -> None:
         principal: Annotated[Principal, require(Permission.AGENT_REGISTER)],
     ) -> AgentResponse:
         service: AgentRegistrationService = request.app.state.agent_registration_service
-        result = service.register(org_id=org.id, principal=principal, body=body)
+        result = service.register(
+            org_id=org.id,
+            principal=principal,
+            audit_dir=request.app.state.settings.audit_dir,
+            body=body,
+        )
         return AgentResponse(
             agent_id=result.agent_id,
             org_id=result.org_id,
@@ -928,6 +1046,8 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/orgs/{org_id}/receipts", response_model=ReceiptListResponse, tags=["receipts"])
     def list_receipts(
         org: OrgDep,
+        request: Request,
+        response: Response,
         session: SessionDep,
         _p: Annotated[Principal, require(Permission.RECEIPT_READ)],
         decision: str | None = None,
@@ -937,7 +1057,33 @@ def _register_routes(app: FastAPI) -> None:
         until: datetime | None = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,
+        cursor: str | None = None,
     ) -> ReceiptListResponse:
+        response.headers["Cache-Control"] = "private, no-store"
+        cursor_values = request.query_params.getlist("cursor")
+        if len(cursor_values) > 1:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and len(cursor) > CURSOR_TOKEN_MAX_LENGTH:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and offset != 0:
+            raise InvalidCursorError("invalid cursor")
+        cursor_bound_names = _duplicate_query_params(request, _RECEIPT_CURSOR_QUERY_PARAMS)
+        if "offset" in cursor_bound_names:
+            raise InvalidCursorError("invalid cursor")
+        if cursor is not None and cursor_bound_names:
+            raise InvalidCursorError("invalid cursor")
+        if (
+            cursor is None
+            and offset == 0
+            and any(
+                name in cursor_bound_names
+                for name in ("decision", "tool", "actor", "since", "until", "limit", "offset")
+            )
+        ):
+            raise InvalidCursorError("invalid cursor")
+        filter_digest = receipt_filter_digest(
+            decision=decision, tool=tool, actor=actor, since=since, until=until
+        )
         query = select(ReceiptRow).where(ReceiptRow.org_id == org.id)
         if decision:
             query = query.where(ReceiptRow.decision == decision)
@@ -950,13 +1096,73 @@ def _register_routes(app: FastAPI) -> None:
         if until:
             query = query.where(ReceiptRow.created_at <= until)
         total = session.execute(select(func.count()).select_from(query.subquery())).scalar_one()
-        rows = session.execute(
+        if cursor is not None:
+            settings: Settings = request.app.state.settings
+            keyring = settings.cursor_keyring
+            assert keyring is not None
+            boundary = decode_receipt_cursor(
+                token=cursor,
+                keyring=keyring,
+                org_id=org.id,
+                filter_digest=filter_digest,
+            )
+            query = query.where(
+                (ReceiptRow.created_at < boundary.created_at)
+                | (
+                    (ReceiptRow.created_at == boundary.created_at)
+                    & (ReceiptRow.id < boundary.receipt_id)
+                )
+            )
+            rows = list(
+                session.execute(
+                    query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc()).limit(
+                        limit + 1
+                    )
+                ).scalars()
+            )
+            page_rows = rows[:limit]
+            next_cursor = None
+            if len(rows) > limit and page_rows:
+                last = page_rows[-1]
+                next_cursor = issue_receipt_cursor(
+                    keyring=keyring,
+                    org_id=org.id,
+                    filter_digest=filter_digest,
+                    boundary_created_at=last.created_at,
+                    boundary_receipt_id=last.id,
+                )
+            return ReceiptListResponse(
+                items=[_receipt_summary(r) for r in page_rows],
+                total=total,
+                limit=limit,
+                offset=offset,
+                next_cursor=next_cursor,
+            )
+        legacy_rows = session.execute(
             query.order_by(ReceiptRow.created_at.desc(), ReceiptRow.id.desc())
             .limit(limit)
             .offset(offset)
         ).scalars()
+        page_rows = list(legacy_rows)
+        next_cursor = None
+        if offset == 0 and page_rows and len(page_rows) == limit and total > limit:
+            settings = request.app.state.settings
+            keyring = settings.cursor_keyring
+            assert keyring is not None
+            last = page_rows[-1]
+            next_cursor = issue_receipt_cursor(
+                keyring=keyring,
+                org_id=org.id,
+                filter_digest=filter_digest,
+                boundary_created_at=last.created_at,
+                boundary_receipt_id=last.id,
+            )
         return ReceiptListResponse(
-            items=[_receipt_summary(r) for r in rows], total=total, limit=limit, offset=offset
+            items=[_receipt_summary(r) for r in page_rows],
+            total=total,
+            limit=limit,
+            offset=offset,
+            next_cursor=next_cursor,
         )
 
     @app.get(
@@ -1231,6 +1437,10 @@ def _receipt_summary(row: ReceiptRow) -> ReceiptSummary:
     )
 
 
+def _duplicate_query_params(request: Request, names: frozenset[str]) -> frozenset[str]:
+    return frozenset(name for name in names if len(request.query_params.getlist(name)) > 1)
+
+
 def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> ExportSummary:
     return ExportSummary(
         export_id=row.id,
@@ -1240,3 +1450,46 @@ def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> Exp
         created_at=row.created_at,
         receipt_id=receipt_id,
     )
+
+
+_RECEIPT_CURSOR_QUERY_PARAMS = frozenset(
+    {"decision", "tool", "actor", "since", "until", "limit", "offset", "cursor"}
+)
+
+
+def _install_v1_aliases(app: FastAPI) -> None:
+    source_routes = [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and (route.path == "/orgs" or route.path.startswith("/orgs/"))
+    ]
+    for route in source_routes:
+        alias = APIRoute(
+            path=f"/v1{route.path}",
+            endpoint=route.endpoint,
+            response_model=route.response_model,
+            status_code=route.status_code,
+            tags=list(route.tags),
+            dependencies=list(route.dependencies),
+            summary=route.summary,
+            description=route.description,
+            response_description=route.response_description,
+            responses=route.responses,
+            deprecated=route.deprecated,
+            name=f"v1_{route.name}",
+            methods=route.methods,
+            operation_id=f"v1_{route.unique_id}",
+            response_model_include=route.response_model_include,
+            response_model_exclude=route.response_model_exclude,
+            response_model_by_alias=route.response_model_by_alias,
+            response_model_exclude_unset=route.response_model_exclude_unset,
+            response_model_exclude_defaults=route.response_model_exclude_defaults,
+            response_model_exclude_none=route.response_model_exclude_none,
+            include_in_schema=route.include_in_schema,
+            response_class=route.response_class,
+            dependency_overrides_provider=app,
+            callbacks=route.callbacks,
+            openapi_extra=route.openapi_extra,
+        )
+        app.router.routes.append(alias)

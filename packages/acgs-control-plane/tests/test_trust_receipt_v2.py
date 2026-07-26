@@ -15,7 +15,11 @@ from gove_zone.errors import ReceiptAlreadyUsedError, ReceiptValidationError
 from gove_zone.receipt import DecisionReceipt, Validator
 from gove_zone.revocation import RevocationList
 from gove_zone.signing import Ed25519Signer
-from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
+from gove_zone.trust import (
+    DECISION_RECEIPT_PURPOSE,
+    ReceiptTrustScope,
+    TrustConfigurationError,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -555,3 +559,62 @@ def _counts(session: Session) -> dict[str, int]:
 
 def _count(session: Session, model: Any) -> int:
     return session.scalar(sa.select(sa.func.count()).select_from(model)) or 0
+
+
+def test_duplicate_active_trust_roots_are_blocked_by_index_then_registry(
+    session_factory: sessionmaker[Session],
+    signer: Ed25519Signer,
+) -> None:
+    """Two active roots for one scope are refused at the database, then at resolve().
+
+    Layer one is the partial unique index created by revision 0004. Layer two is
+    the registry's own count check, which only becomes reachable once that index
+    is gone, so it is exercised here against a deliberately tampered schema.
+    """
+    _bootstrap_trust_root(session_factory, signer)
+    second = Ed25519Signer.generate(key_id="managed-native-duplicate")
+
+    def add_second_active(session: Session) -> None:
+        session.add(
+            ManagedTrustKey(
+                id="managed-trust-key-duplicate-active",
+                org_id=ORG_ID,
+                project_id=PROJECT_ID,
+                environment_id=ENVIRONMENT_ID,
+                purpose=DECISION_RECEIPT_PURPOSE,
+                key_id=second.key_id,
+                algorithm=second.algorithm,
+                public_key_spki_der=public_spki_der_from_signer(second),
+                activated_epoch=2,
+                not_after=datetime(2099, 1, 1, tzinfo=UTC),
+                status="active",
+                retired_epoch=None,
+                created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+
+    # Layer one: the partial unique index refuses the second active row.
+    with pytest.raises(IntegrityError):
+        with session_factory.begin() as session:
+            add_second_active(session)
+
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 1, "history": 1}
+
+    # Layer two: drop the index, force the ambiguity, and confirm resolve()
+    # refuses rather than picking a winner.
+    with session_factory.begin() as session:
+        session.execute(sa.text("DROP INDEX uq_managed_trust_key_active_scope"))
+        add_second_active(session)
+
+    with session_factory() as session:
+        assert _trust_counts(session) == {"active": 2, "history": 2}
+        with pytest.raises(TrustConfigurationError, match="multiple active trust roots"):
+            SqlReceiptTrustRegistry(session).resolve(
+                scope=_scope(),
+                trust_epoch=1,
+                algorithm=signer.algorithm,
+                key_id=signer.key_id,
+                now_iso="2026-07-25T00:00:00+00:00",
+            )

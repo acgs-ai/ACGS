@@ -94,7 +94,8 @@
       "sourceFiles": [
         "src/routes/Marketing.tsx",
         "src/routes/ProductSurfaces.tsx",
-        "src/mocks/data/overview.ts"
+        "src/mocks/data/overview.ts",
+        "src/lib/governance-domains.ts"
       ],
       "allowedWording": "Regulatory references describe mappings, citations, and evidence workflows; they do not state that the product satisfies a regulation or third-party standard.",
       "evidenceState": "stubbed",

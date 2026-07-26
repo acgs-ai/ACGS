@@ -191,6 +191,7 @@ class ReceiptListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    next_cursor: str | None = None
 
 
 class ReceiptVerifyResponse(BaseModel):
@@ -239,3 +240,11 @@ class BlockedResponse(BaseModel):
     reason: str
     receipt_id: str
     decision: str
+
+
+class V1MetadataResponse(BaseModel):
+    """Minimal version metadata for the additive v1 alias surface."""
+
+    api_version: str
+    status: str
+    aliased_from: str

@@ -101,21 +101,25 @@
   text-underline-offset: 4px;
 }
 
+/* Nav CTA matches the primary control shape: raised dark pill with a hairline
+ * ring, not a solid white block. */
 .m-nav-cta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   white-space: nowrap;
-  padding: 10px 18px;
-  background: var(--ink);
-  color: var(--paper);
+  padding: 10px 20px;
+  background: var(--gz-surface-3);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
   font-size: 14px;
   font-weight: 500;
   letter-spacing: -0.005em;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
 }
 .m-nav-cta:hover {
-  background: var(--ink-2);
+  background: color-mix(in srgb, var(--ink) 12%, var(--paper));
 }
 
 /* F-A1b — hamburger toggle. Hidden at desktop; shown only at <=720
@@ -146,15 +150,22 @@
   align-items: start;
 }
 
+/* Eyebrow reads as a pill badge in the editorial-dark register: hairline ring,
+ * barely-there fill, sentence case. Colors come from the register tokens, so it
+ * follows whichever register it renders inside. */
 .m-eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
   font-variant-numeric: tabular-nums;
 }
 
@@ -175,24 +186,48 @@
   margin-top: 32px;
   color: var(--ink);
   max-width: 18ch;
-  /* Keep the italic-rust word from orphaning on its own line as the
+  /* Keep the italic word from orphaning on its own line as the
      viewport flexes between the 56px and 96px clamp endpoints. Same
      reasoning as F6 on .login-h1. */
   text-wrap: balance;
+  /* Vertical ink→muted gradient fill. `color` above stays as the fallback: any
+     engine without background-clip:text renders solid --ink instead of
+     invisible text. Stops are token-derived so the gradient follows the
+     register. */
+  background-image: linear-gradient(
+    180deg,
+    var(--ink) 12%,
+    color-mix(in srgb, var(--ink) 56%, var(--paper)) 96%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
+/* Forced-colors / high-contrast: a transparent text fill would erase the
+ * headline, so drop the gradient and restore system colors. */
+@media (forced-colors: active) {
+  .m-hero h1 {
+    background-image: none;
+    -webkit-text-fill-color: currentcolor;
+    color: CanvasText;
+  }
+}
+
+/* The italic word inherits the headline gradient rather than carrying the
+ * accent: this register keeps the hero achromatic and spends crimson only on
+ * signal marks (asterism, status tags, fail_closed). */
 .m-hero h1 em {
   font-style: italic;
-  color: var(--accent);
 }
 
 .m-hero-lede {
-  font-family: var(--font-serif);
-  font-size: 20px;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: 16.5px;
+  line-height: 1.6;
   color: var(--ink-3);
-  max-width: 56ch;
-  margin-top: 28px;
+  max-width: 52ch;
+  margin-top: 26px;
 }
 
 .m-hero-actions {
@@ -243,6 +278,40 @@
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* -------------------------------------------------------------------------
+ * Editorial-dark control shape. Scoped to `.marketing` so the console keeps
+ * the square-cornered control set.
+ *
+ * The default `.btn-primary` (background: --ink) would render a full-white pill
+ * on near-black — far too loud for this register. It becomes a raised dark
+ * surface with a hairline ring and a top inner highlight, and the secondary
+ * action drops to bare text. All values are token-derived via color-mix.
+ * ------------------------------------------------------------------------- */
+.marketing .btn {
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  padding: 12px 24px;
+}
+.marketing .btn-primary {
+  /* --gz-surface-3 is the raised/hover surface (#1a1a1a here). --paper-3 would
+   * be #0d0d0d, effectively invisible against the #080808 ground. */
+  background: var(--gz-surface-3);
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.marketing .btn-primary:hover {
+  background: color-mix(in srgb, var(--ink) 12%, var(--paper));
+}
+.marketing .btn-secondary {
+  border-color: transparent;
+  color: var(--ink-3);
+}
+.marketing .btn-secondary:hover {
+  background: transparent;
+  color: var(--ink);
 }
 .btn-rust {
   background: var(--accent);
@@ -5533,21 +5602,26 @@
 /* ─────────────────────────────────────────────────────────────────────────
  * §5.1.A AI Agent Governance Hub
  * ───────────────────────────────────────────────────────────────────────── */
+/* Hub-hero secondary action. In the editorial-dark register it drops to bare
+ * text beside the primary pill (§2.7), matching .btn-secondary — a second
+ * outlined box next to the pill reads as two competing primaries. Padding and
+ * min-height stay so the 46px hit target is preserved. */
 .m-hub-hero .m-hero-actions > a:not(.btn) {
   display: inline-flex;
   align-items: center;
   min-height: 46px;
   padding: 12px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--ink-3);
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 .m-hub-hero .m-hero-actions > a:not(.btn):hover {
-  background: var(--paper-2);
+  background: transparent;
+  color: var(--ink);
 }
 
 .m-hub-cockpit .m-code pre {

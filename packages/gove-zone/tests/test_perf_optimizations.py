@@ -117,10 +117,8 @@ class TestToolCallMemoization:
         assert call.state_hash() is None
 
     def test_mid_flight_mutation_still_diverges_in_failure_record(self, tmp_path: Path) -> None:
-        """The audit trail's mutation-divergence signal survives memoization:
-        a tool that mutates a shared nested arg value and then raises must
-        produce an EXEC_FAILURE record whose argument_hash differs from the
-        pre-execution decision record's (the failure path recomputes fresh)."""
+        """Execution-failure audit binds original request metadata while marking
+        current-arg divergence without exposing argument values."""
         audit = ChainHashAuditStore(tmp_path / "audit.jsonl")
         kernel = Kernel(policy=POLICY, audit=audit, actor="a")
 
@@ -136,12 +134,17 @@ class TestToolCallMemoization:
         assert len(events) == 2, "expected decision record + EXEC_FAILURE record"
         decision_event, failure_event = events
         assert failure_event["event_id"].endswith(":failure")
-        assert failure_event["argument_hash"] != decision_event["argument_hash"], (
-            "EXEC_FAILURE must hash post-mutation args so divergence is visible"
-        )
+        assert failure_event["argument_hash"] != decision_event["argument_hash"]
         assert failure_event["argument_hash"] == sha256_json(
             {"payload": {"x": "tampered-mid-flight"}}
         )
+        assert failure_event["decision_request_hash"] == decision_event["decision_request_hash"]
+        assert failure_event["matched_rules"] == [
+            "EXEC_FAILURE:RuntimeError",
+            "EXEC_ARGS_DIVERGED",
+        ]
+        assert failure_event["reason"] == "execution raised: RuntimeError"
+        assert "tampered-mid-flight" not in str(failure_event)
 
 
 class TestReplaySideStoreDurability:
