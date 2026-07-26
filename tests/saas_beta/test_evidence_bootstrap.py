@@ -40,6 +40,22 @@ EXPECTED_DIRECT = (
     "jsonschema>=4.23,<5",
     "pytest>=8.3,<9",
 )
+P2_REGISTER_RETIRED_CP_STUB_SELECTORS = (
+    "tests/integration/test_production_posture.py::"
+    "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+    "tests/integration/test_production_posture.py::"
+    "test_inert_stub_has_no_provider_executor_or_persistence_callback_surface",
+    "tests/integration/test_production_posture.py::"
+    "test_managed_contract_hashes_the_exact_canonical_snapshot",
+)
+P2_REGISTER_PRODUCT_CP_SELECTORS = (
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_executes_through_managed_receipt_v2_spine",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_refusal_matrix_has_zero_managed_side_effects",
+    "tests/test_agent_registration_managed_route.py::"
+    "test_agent_register_route_scope_and_policy_are_server_owned",
+)
 
 
 def _evidence_env(evidence_root: Path) -> dict[str, str]:
@@ -2991,13 +3007,20 @@ def test_p2_register_command_corpus_is_node_cwd_bound_and_exact_ordered(
     assert records[-1]["selectors"] == [
         "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate"
     ]
-    assert _common.P2_REGISTER_CP_SELECTORS == (
-        "tests/integration/test_production_posture.py::"
-        "test_tenant_bootstrap_and_register_contract_stub_no_mutation",
-        "tests/integration/test_production_posture.py::"
-        "test_inert_stub_has_no_provider_executor_or_persistence_callback_surface",
-        "tests/integration/test_production_posture.py::"
-        "test_managed_contract_hashes_the_exact_canonical_snapshot",
+    assert _common.P2_REGISTER_CP_SELECTORS == P2_REGISTER_PRODUCT_CP_SELECTORS
+    assert not set(_common.P2_REGISTER_CP_SELECTORS).intersection(
+        P2_REGISTER_RETIRED_CP_STUB_SELECTORS
+    )
+    assert not any(
+        "test_agent_registration_managed_route.py" in selector
+        for selector in P2_REGISTER_RETIRED_CP_STUB_SELECTORS
+    )
+    assert all(
+        "test_agent_registration_managed_route.py" in selector
+        for selector in _common.P2_REGISTER_CP_SELECTORS
+    )
+    assert not any(
+        "test_production_posture.py" in selector for selector in _common.P2_REGISTER_CP_SELECTORS
     )
     assert not any(
         "test_governed_mutations.py" in selector for selector in _common.P2_REGISTER_CP_SELECTORS
@@ -3056,7 +3079,7 @@ def test_p2_register_command_corpus_is_node_cwd_bound_and_exact_ordered(
                 "argv": [
                     records[-2]["argv"][0],
                     "-q",
-                    "tests/integration/test_production_posture.py",
+                    "tests/test_agent_registration_managed_route.py",
                 ],
             },
             records[-1],
@@ -3165,7 +3188,7 @@ def test_p2_register_run_validation_rejects_forged_corpus_metadata_before_output
                     "argv": [
                         "bash",
                         "-c",
-                        ".venv/bin/pytest -q tests/integration/test_production_posture.py",
+                        ".venv/bin/pytest -q tests/test_agent_registration_managed_route.py",
                     ],
                 },
                 records[-1],
@@ -4752,6 +4775,11 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate" in source
     for selector in _common.P2_REGISTER_CP_SELECTORS:
         assert selector in source
+    p2_register_source = source.split("P2_REGISTER_CP_GATE=(.venv/bin/pytest -q", 1)[1].split(
+        "P2_REGISTER_GZ_GATE=", 1
+    )[0]
+    for selector in P2_REGISTER_RETIRED_CP_STUB_SELECTORS:
+        assert selector not in p2_register_source
     for selector in _common.P2_REGISTER_GZ_SELECTORS:
         assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source

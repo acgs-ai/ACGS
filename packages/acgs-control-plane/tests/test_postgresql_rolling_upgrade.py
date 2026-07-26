@@ -63,6 +63,18 @@ _PROTOCOL_TIMEOUT_SECONDS = 10.0
 _OPERATOR_TIMEOUT_SECONDS = 20.0
 _PROTOCOL_QUEUE_RECORDS = 8
 _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS = frozenset({"uq_users_org_id_id"})
+_G038_ALLOWED_AGENT_CATALOG_CHANGES = frozenset(
+    {
+        "project_id",
+        "environment_id",
+        "fk_agents_scope_environment",
+        "ck_agents_scope_both_null_or_set",
+        "uq_agents_org_name",
+        "uq_agents_legacy_org_name",
+        "uq_agents_scope_name",
+    }
+)
+_G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES = frozenset({"uq_policy_bundles_one_active_per_org"})
 
 
 class ArtifactRefusal(RuntimeError):
@@ -89,6 +101,20 @@ def _without_allowed_old_table_catalog_additions(
                 row[4] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
                 or row[6] in _G009_ALLOWED_OLD_TABLE_CATALOG_ADDITIONS
             )
+        )
+        and not (
+            len(row) >= 7
+            and row[1] == "agents"
+            and (
+                row[2] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
+                or row[4] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
+                or row[6] in _G038_ALLOWED_AGENT_CATALOG_CHANGES
+            )
+        )
+        and not (
+            len(row) >= 7
+            and row[1] == "policy_bundles"
+            and row[6] in _G038_ALLOWED_POLICY_BUNDLE_CATALOG_CHANGES
         )
     )
 
@@ -369,7 +395,11 @@ def _catalog(connection: Connection) -> tuple[tuple[str, ...], ...]:
 
 def _rows(connection: Connection, table: str) -> tuple[tuple[str, ...], ...]:
     quoted = connection.dialect.identifier_preparer.quote(table)
-    rows = connection.execute(sa.text(f"SELECT * FROM {quoted} ORDER BY 1")).all()
+    if table == "agents":
+        select_list = "id, org_id, name, description, trust_tier, allowed_tools, status, created_at"
+    else:
+        select_list = "*"
+    rows = connection.execute(sa.text(f"SELECT {select_list} FROM {quoted} ORDER BY 1")).all()
     return tuple(tuple(repr(value) for value in row) for row in rows)
 
 
@@ -845,6 +875,23 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                         "managed_mutation_attempts, managed_decision_receipts"
                     )
                 )
+                # Revision 0006 puts the scope columns on agents, so agents now
+                # references environments too. Dropping those columns takes the
+                # scope foreign key and check constraint with them and restores
+                # the pre-0006 unique constraint, which is the shape a real 0001
+                # agents table has. Doing it this way rather than CASCADE keeps
+                # the same invariant the comment above relies on: no table is
+                # left behind minus its constraints.
+                connection.execute(sa.text("DROP INDEX uq_agents_scope_name"))
+                connection.execute(sa.text("DROP INDEX uq_agents_legacy_org_name"))
+                connection.execute(sa.text("DROP INDEX uq_policy_bundles_one_active_per_org"))
+                connection.execute(
+                    sa.text(
+                        "ALTER TABLE agents "
+                        "DROP COLUMN project_id, DROP COLUMN environment_id, "
+                        "ADD CONSTRAINT uq_agents_org_name UNIQUE (org_id, name)"
+                    )
+                )
                 connection.execute(sa.text("DROP TABLE environments"))
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
@@ -955,7 +1002,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0005",
+            "after": "version_0006",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1007,7 +1054,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0005.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0006.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1086,5 +1133,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

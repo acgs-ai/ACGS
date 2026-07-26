@@ -161,6 +161,18 @@ class ManagedMutationResult:
     result: Any
 
 
+@dataclass(frozen=True)
+class ManagedNonExecutableEvidenceResult:
+    """Committed row identifiers for one signed DENY/ESCALATE decision."""
+
+    receipt_row_id: str
+    event_row_id: str
+    outbox_row_id: str
+    event_hash: str
+    result_hash: str
+    decision: str
+
+
 def managed_mutation_execution_boundary(
     *,
     org_id: str,
@@ -243,11 +255,18 @@ class ManagedMutationUnitOfWork:
             raise ReceiptValidationError("managed mutation requires a DecisionReceipt")
         assurance_class = self._assurance_class(receipt)
         execution_args = _validated_operation_args(context.action, args)
-        self._prevalidate_native_allow_receipt(
+        if context.action != TENANT_BOOTSTRAP_ACTION and _mutation_attempt_exists(
+            self._session_factory,
+            context=context,
+            receipt=receipt,
+        ):
+            raise ReceiptAlreadyUsedError(receipt.audit_event_hash, "managed-mutation-attempt")
+        self._prevalidate_native_receipt(
             context=context,
             receipt=receipt,
             execution_args=execution_args,
             execution_boundary=canonical_boundary,
+            allowed_decisions=frozenset({Decision.ALLOW.value}),
             trust_registry=trust_registry,
             revoked_keys=revoked_keys,
             trust_purpose=trust_purpose,
@@ -284,6 +303,83 @@ class ManagedMutationUnitOfWork:
                     exc=exc,
                 )
             raise
+
+    def record_non_executable_evidence(
+        self,
+        *,
+        context: ManagedMutationContext,
+        receipt: DecisionReceipt | None,
+        args: Mapping[str, Any],
+        before_record: Callable[[Session], None] | None = None,
+        trust_registry: ReceiptTrustRegistry | None = None,
+        revoked_keys: RevocationList | None = None,
+        trust_purpose: str = DECISION_RECEIPT_PURPOSE,
+    ) -> ManagedNonExecutableEvidenceResult:
+        canonical_boundary = _validated_execution_boundary(context)
+        if receipt is None:
+            raise ReceiptValidationError("managed mutation requires a DecisionReceipt")
+        assurance_class = self._assurance_class(receipt)
+        execution_args = _validated_operation_args(context.action, args)
+        if _receipt_projection_exists(
+            self._session_factory,
+            context=context,
+            receipt=receipt,
+        ):
+            raise ReceiptAlreadyUsedError(receipt.audit_event_hash, "managed-receipt-evidence")
+        self._prevalidate_native_receipt(
+            context=context,
+            receipt=receipt,
+            execution_args=execution_args,
+            execution_boundary=canonical_boundary,
+            allowed_decisions=frozenset({Decision.DENY.value, Decision.ESCALATE.value}),
+            trust_registry=trust_registry,
+            revoked_keys=revoked_keys,
+            trust_purpose=trust_purpose,
+        )
+        with self._session_factory() as session:
+            with session.begin():
+                if session.bind is not None and session.bind.dialect.name == "postgresql":
+                    session.execute(sa.text("SET CONSTRAINTS ALL DEFERRED"))
+                if before_record is not None:
+                    before_record(session)
+                receipt_row = _persist_receipt_projection(
+                    session,
+                    context=context,
+                    receipt=receipt,
+                    execution_boundary=canonical_boundary,
+                    assurance_class=assurance_class,
+                    receipt_sealer=self._receipt_sealer,
+                    allow_existing_projection=False,
+                )
+                result_hash = safe_result_hash(
+                    {"status": "non_executable", "decision": receipt.decision}
+                )
+                event = _append_governance_event(
+                    session,
+                    context=context,
+                    receipt_row=receipt_row,
+                    receipt=receipt,
+                    result_hash=result_hash,
+                    execution_boundary=canonical_boundary,
+                    assurance_class=assurance_class,
+                )
+                outbox = _enqueue_outbox(
+                    session,
+                    context=context,
+                    receipt_row=receipt_row,
+                    event=event,
+                    result_hash=result_hash,
+                    assurance_class=assurance_class,
+                )
+                session.flush()
+                return ManagedNonExecutableEvidenceResult(
+                    receipt_row_id=receipt_row.id,
+                    event_row_id=event.id,
+                    outbox_row_id=outbox.id,
+                    event_hash=event.event_hash,
+                    result_hash=result_hash,
+                    decision=receipt.decision,
+                )
 
     def _execute_reserved_attempt(
         self,
@@ -426,20 +522,21 @@ class ManagedMutationUnitOfWork:
             "managed mutation native assurance requires a signed receipt-v2 and SQL trust"
         )
 
-    def _prevalidate_native_allow_receipt(
+    def _prevalidate_native_receipt(
         self,
         *,
         context: ManagedMutationContext,
         receipt: DecisionReceipt,
         execution_args: Mapping[str, Any],
         execution_boundary: str,
+        allowed_decisions: frozenset[str],
         trust_registry: ReceiptTrustRegistry | None,
         revoked_keys: RevocationList | None,
         trust_purpose: str,
     ) -> None:
-        if receipt.decision != Decision.ALLOW.value:
+        if receipt.decision not in allowed_decisions:
             raise ReceiptValidationError(
-                "managed mutation requires an ALLOW receipt",
+                "managed mutation receipt decision is not allowed for this path",
                 reason_code=ReceiptRejectionReason.DENIED_RECEIPT,
             )
         if receipt.receipt_schema_version != RECEIPT_V2:
@@ -531,31 +628,13 @@ class ManagedMutationUnitOfWork:
                 "managed mutation receipt-v2 requires expiry",
                 reason_code=ReceiptRejectionReason.EXPIRY_REQUIRED,
             )
-        if context.action == TENANT_BOOTSTRAP_ACTION:
-            receipt.verify(
-                expected_tenant_id=context.org_id,
-                expected_execution_boundary=execution_boundary,
-                expected_action=context.action,
-                expected_actor=context.actor,
-                expected_audit_hash=context.expected_audit_hash,
-                expected_args=dict(execution_args),
-                expected_policy_hash=context.policy_hash,
-                expected_policy_bundle_id=context.policy_bundle_id,
-                expected_project_id=context.project_id,
-                expected_environment_id=context.environment_id,
-                expected_validator_role=context.validator_role,
-                expected_authority=context.authority,
-                verifier=None,
-                require_signature=self._require_signature,
-                require_expiry=self._require_expiry,
-                revoked_keys=effective_revoked_keys,
-                trust_registry=trust_registry,
-                trust_purpose=trust_purpose,
-                max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
-            )
-            return
-        with self._session_factory() as session:
-            with session.begin():
+        terminal_non_executable_reasons = {
+            Decision.DENY.value: ReceiptRejectionReason.DENIED_RECEIPT,
+            Decision.ESCALATE.value: ReceiptRejectionReason.ESCALATED_RECEIPT,
+        }
+
+        def verify_bindings(*, trust_registry: ReceiptTrustRegistry | None) -> None:
+            try:
                 receipt.verify(
                     expected_tenant_id=context.org_id,
                     expected_execution_boundary=execution_boundary,
@@ -573,10 +652,24 @@ class ManagedMutationUnitOfWork:
                     require_signature=self._require_signature,
                     require_expiry=self._require_expiry,
                     revoked_keys=effective_revoked_keys,
-                    trust_registry=SqlReceiptTrustRegistry(session),
+                    trust_registry=trust_registry,
                     trust_purpose=trust_purpose,
                     max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
                 )
+            except ReceiptValidationError as exc:
+                if (
+                    receipt.decision in terminal_non_executable_reasons
+                    and exc.reason_code == terminal_non_executable_reasons[receipt.decision]
+                ):
+                    return
+                raise
+
+        if context.action == TENANT_BOOTSTRAP_ACTION:
+            verify_bindings(trust_registry=trust_registry)
+            return
+        with self._session_factory() as session:
+            with session.begin():
+                verify_bindings(trust_registry=SqlReceiptTrustRegistry(session))
 
 
 def _reserve_mutation_attempt(
@@ -681,6 +774,29 @@ def _mutation_attempt_exists(
 ) -> bool:
     with session_factory() as session:
         return _existing_mutation_attempt(session, context=context, receipt=receipt) is not None
+
+
+def _receipt_projection_exists(
+    session_factory: sessionmaker[Session],
+    *,
+    context: ManagedMutationContext,
+    receipt: DecisionReceipt,
+) -> bool:
+    with session_factory() as session:
+        return (
+            session.scalars(
+                sa.select(ManagedDecisionReceipt)
+                .where(
+                    ManagedDecisionReceipt.org_id == context.org_id,
+                    sa.or_(
+                        ManagedDecisionReceipt.receipt_hash == receipt.receipt_hash,
+                        ManagedDecisionReceipt.audit_event_hash == receipt.audit_event_hash,
+                    ),
+                )
+                .with_for_update()
+            ).first()
+            is not None
+        )
 
 
 def _locked_in_progress_attempt(session: Session, attempt_id: str) -> ManagedMutationAttempt:
@@ -803,6 +919,7 @@ def _persist_receipt_projection(
     execution_boundary: str,
     assurance_class: str,
     receipt_sealer: ReceiptArtifactSealer,
+    allow_existing_projection: bool = True,
 ) -> ManagedDecisionReceipt:
     existing_for_environment = session.scalars(
         sa.select(ManagedDecisionReceipt)
@@ -815,6 +932,8 @@ def _persist_receipt_projection(
         .with_for_update()
     ).first()
     if existing_for_environment is not None:
+        if not allow_existing_projection:
+            raise ReceiptAlreadyUsedError(receipt.audit_event_hash, "managed-receipt-evidence")
         _assert_receipt_projection_matches(existing_for_environment, receipt)
         return existing_for_environment
 
@@ -1071,14 +1190,32 @@ def _validated_operation_args(action: str, args: Mapping[str, Any]) -> dict[str,
         return _validated_tenant_bootstrap_args(args)
     if action != CONTROL_PLANE_AGENT_CREATE_ACTION:
         raise ReceiptValidationError(f"unsupported managed mutation action: {action}")
-    allowed_fields = {"name"}
+    allowed_fields = {"name", "description", "trust_tier", "allowed_tools"}
     actual_fields = set(args)
     if actual_fields != allowed_fields:
-        raise ReceiptValidationError("agent.create requires exactly the name argument")
+        raise ReceiptValidationError(
+            "agent.create requires exactly the canonical agent registration arguments"
+        )
     name = args.get("name")
     if not isinstance(name, str) or not name.strip():
         raise ReceiptValidationError("agent.create name must be a non-empty string")
-    return {"name": name}
+    description = args.get("description")
+    if not isinstance(description, str):
+        raise ReceiptValidationError("agent.create description must be text")
+    trust_tier = args.get("trust_tier")
+    if not isinstance(trust_tier, str) or not trust_tier.strip():
+        raise ReceiptValidationError("agent.create trust_tier must be non-empty text")
+    allowed_tools = args.get("allowed_tools")
+    if not isinstance(allowed_tools, list) or not all(
+        isinstance(tool, str) and tool.strip() for tool in allowed_tools
+    ):
+        raise ReceiptValidationError("agent.create allowed_tools must be a text list")
+    return {
+        "name": name,
+        "description": description,
+        "trust_tier": trust_tier,
+        "allowed_tools": list(allowed_tools),
+    }
 
 
 def _validated_tenant_bootstrap_args(args: Mapping[str, Any]) -> dict[str, Any]:
@@ -1125,10 +1262,12 @@ def _execute_verified_operation(
     agent = AgentRecord(
         id=new_id(),
         org_id=context.org_id,
+        project_id=context.project_id,
+        environment_id=context.environment_id,
         name=name,
-        description="",
-        trust_tier="managed",
-        allowed_tools=[],
+        description=str(verified_args["description"]),
+        trust_tier=str(verified_args["trust_tier"]),
+        allowed_tools=list(verified_args["allowed_tools"]),
         status="active",
     )
     session.add(agent)

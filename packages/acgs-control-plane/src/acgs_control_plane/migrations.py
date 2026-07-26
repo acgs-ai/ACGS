@@ -38,7 +38,9 @@ LEGACY_V0_REVISION: Final = "0001"
 SCOPED_REVISION: Final = "0002"
 MANAGED_MUTATION_REVISION: Final = "0003"
 TRUST_V2_REVISION: Final = "0004"
-HEAD_REVISION: Final = "0005"
+TENANT_BOOTSTRAP_REVISION: Final = "0005"
+AGENT_SCOPE_REVISION: Final = "0006"
+HEAD_REVISION: Final = AGENT_SCOPE_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -77,6 +79,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0003 = "version_0003"
     VERSION_0004 = "version_0004"
     VERSION_0005 = "version_0005"
+    VERSION_0006 = "version_0006"
     UNKNOWN = "unknown"
 
 
@@ -101,7 +104,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0005.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0006.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -487,6 +490,14 @@ _TENANT_BOOTSTRAP_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_AGENT_SCOPE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_TENANT_BOOTSTRAP_COLUMNS,
+    "agents": (
+        *_TENANT_BOOTSTRAP_COLUMNS["agents"],
+        _ColumnSpec("project_id", "string", True, 64),
+        _ColumnSpec("environment_id", "string", True, 64),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -697,6 +708,20 @@ _TENANT_BOOTSTRAP_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     ),
     "tenant_bootstrap_refusal_events": frozenset(),
 }
+_AGENT_SCOPE_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_TENANT_BOOTSTRAP_FOREIGN_KEYS,
+    "agents": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+        }
+    ),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -829,6 +854,10 @@ _TENANT_BOOTSTRAP_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     ),
     "tenant_bootstrap_refusal_events": frozenset({("request_id",)}),
 }
+_AGENT_SCOPE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TENANT_BOOTSTRAP_UNIQUES,
+    "agents": frozenset(),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -854,6 +883,22 @@ _TENANT_BOOTSTRAP_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] 
             "tenant_bootstrap_refusal_events",
         )
     },
+}
+_AGENT_SCOPE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_TENANT_BOOTSTRAP_UNIQUE_INDEXES,
+    "agents": frozenset(
+        {
+            (
+                ("org_id", "name"),
+                "agent-scope:legacy-unscoped",
+            ),
+            (
+                ("org_id", "project_id", "environment_id", "name"),
+                "agent-scope:scoped",
+            ),
+        }
+    ),
+    "policy_bundles": frozenset({(("org_id",), "status:active")}),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -982,6 +1027,18 @@ _TENANT_BOOTSTRAP_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
                 "stage IN ('transport', 'authn', 'authz', 'policy', 'issuance', 'executor', 'tx')",
             ),
             ("ck_tbr_status", "http_status IN (400, 401, 403, 409, 413, 503)"),
+        }
+    ),
+}
+_AGENT_SCOPE_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_TENANT_BOOTSTRAP_CHECKS,
+    "agents": frozenset(
+        {
+            (
+                "ck_agents_scope_both_null_or_set",
+                "(project_id IS NULL AND environment_id IS NULL) OR "
+                "(project_id IS NOT NULL AND environment_id IS NOT NULL)",
+            ),
         }
     ),
 }
@@ -1183,7 +1240,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             DatabaseSchemaState.UNKNOWN,
             _detail_after_nullable_user_fallback(detail, create_all_detail),
         )
-    if versions == [HEAD_REVISION]:
+    if versions == [TENANT_BOOTSTRAP_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1197,6 +1254,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0005, "known Alembic revision 0005")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _AGENT_SCOPE_COLUMNS,
+            _TENANT_BOOTSTRAP_PRIMARY_KEYS,
+            _AGENT_SCOPE_FOREIGN_KEYS,
+            _AGENT_SCOPE_UNIQUES,
+            _TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES,
+            _AGENT_SCOPE_CHECKS,
+            _AGENT_SCOPE_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0006, "known Alembic revision 0006")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1212,7 +1284,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0005:
+    if preflight.state is not DatabaseSchemaState.VERSION_0006:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1315,7 +1387,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0005:
+    if after.state is not DatabaseSchemaState.VERSION_0006:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1377,7 +1449,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0005:
+                    if after.state is not DatabaseSchemaState.VERSION_0006:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2039,6 +2111,18 @@ def _check_constraint_signature(value: object) -> str:
     }:
         return "http_status:400,401,403,409,413,503"
     if compact in {
+        ("project_idisnullandenvironment_idisnullorproject_idisnotnullandenvironment_idisnotnull"),
+        (
+            "(project_idisnullandenvironment_idisnull)or"
+            "(project_idisnotnullandenvironment_idisnotnull)"
+        ),
+        (
+            "((project_idisnull)and(environment_idisnull))or"
+            "((project_idisnotnull)and(environment_idisnotnull))"
+        ),
+    }:
+        return "agent-scope:both-null-or-set"
+    if compact in {
         (
             "status='retired'andretired_epochisnotnull"
             "andretired_epoch>activated_epochor"
@@ -2084,6 +2168,16 @@ def _where_predicate_signature(value: object) -> str:
     compact = _strip_outer_parentheses(compact)
     if compact == "status='active'":
         return "status:active"
+    if compact in {
+        "project_idisnullandenvironment_idisnull",
+        "(project_idisnull)and(environment_idisnull)",
+    }:
+        return "agent-scope:legacy-unscoped"
+    if compact in {
+        "project_idisnotnullandenvironment_idisnotnull",
+        "(project_idisnotnull)and(environment_idisnotnull)",
+    }:
+        return "agent-scope:scoped"
     return compact
 
 

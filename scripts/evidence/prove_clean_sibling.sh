@@ -990,9 +990,9 @@ elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
     "${P2_TENANT_BOOTSTRAP_ROOT_GATE[@]}"
 elif [[ "$NODE_ID" == P2-REGISTER-001 ]]; then
   P2_REGISTER_CP_GATE=(.venv/bin/pytest -q \
-    tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation \
-    tests/integration/test_production_posture.py::test_inert_stub_has_no_provider_executor_or_persistence_callback_surface \
-    tests/integration/test_production_posture.py::test_managed_contract_hashes_the_exact_canonical_snapshot)
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_executes_through_managed_receipt_v2_spine \
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_refusal_matrix_has_zero_managed_side_effects \
+    tests/test_agent_registration_managed_route.py::test_agent_register_route_scope_and_policy_are_server_owned)
   run_recorded_exact_pytest_gate CP "$WORKTREE/packages/acgs-control-plane" \
     p2-register-control-plane \
     'packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate' CP 3 \

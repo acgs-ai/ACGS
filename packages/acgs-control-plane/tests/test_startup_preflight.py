@@ -208,14 +208,15 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
     legacy_routes = [
         blocker for blocker in stopped.value.blockers if blocker.code == "LEGACY_UNSIGNED_WRITE"
     ]
-    assert len(legacy_routes) == 14
+    # Master aliases every legacy write under /v1 (14 = 7 routes x 2), and this
+    # branch governs agent registration with receipt v2, so that route pair is
+    # no longer an unsigned legacy write: 6 remaining routes x 2 aliases.
+    assert len(legacy_routes) == 12
     assert {blocker.route for blocker in legacy_routes} == {
         "PATCH /orgs/{org_id}/agents/{agent_id}/status",
         "PATCH /v1/orgs/{org_id}/agents/{agent_id}/status",
         "POST /orgs",
         "POST /v1/orgs",
-        "POST /orgs/{org_id}/agents",
-        "POST /v1/orgs/{org_id}/agents",
         "POST /orgs/{org_id}/exports",
         "POST /v1/orgs/{org_id}/exports",
         "POST /orgs/{org_id}/policies",
@@ -226,7 +227,7 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
         "POST /v1/orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert not (tmp_path / "audit").exists()
 
 
@@ -247,9 +248,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0005.value,
+            "schema_state": DatabaseSchemaState.VERSION_0006.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0005
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0006
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()

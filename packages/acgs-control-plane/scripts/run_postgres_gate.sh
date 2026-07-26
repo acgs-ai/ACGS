@@ -26,6 +26,9 @@ p2_tenant_bootstrap_selectors=(
   'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix'
   'tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once'
 )
+p2_register_selectors=(
+  'tests/integration/test_agent_registration_postgres.py::test_real_postgres_concurrent_policy_activation_preserves_single_active'
+)
 immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
@@ -51,12 +54,23 @@ if [[ -z "$selector_mode" && $# == ${#p2_tenant_bootstrap_selectors[@]} ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == ${#p2_register_selectors[@]} ]]; then
+  selector_mode='p2-register'
+  junit_expected_tests=1
+  actual_selectors=("$@")
+  for index in "${!p2_register_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p2_register_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
 if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
   selector_mode='p2-immutable-0004-upgrade'
   junit_expected_tests=1
 fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, or immutable-0004 selector is required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in
