@@ -855,17 +855,20 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003, 0004, and 0005 tables reference environments,
-                # so seeding the partial revision 0001 shape must remove them
-                # first. Dropping environments with CASCADE instead would leave
-                # them in place minus their foreign keys, which is not a shape
-                # any real 0001 database has. One statement drops the whole set
-                # together, so dependencies among the listed tables (the 0005
-                # bootstrap tables all reference platform_bootstrap_invitations)
-                # do not constrain the order.
+                # Revision 0003, 0004, 0005, and 0007 tables reference
+                # environments, so seeding the partial revision 0001 shape must
+                # remove them first. Dropping environments with CASCADE instead
+                # would leave them in place minus their foreign keys, which is
+                # not a shape any real 0001 database has. One statement drops
+                # the whole set together, so dependencies among the listed
+                # tables (the 0005 bootstrap tables all reference
+                # platform_bootstrap_invitations; 0007's idempotency table
+                # references managed_decision_receipts and the 0006 agents
+                # scope columns) do not constrain the order.
                 connection.execute(
                     sa.text(
-                        "DROP TABLE tenant_bootstrap_refusal_events, "
+                        "DROP TABLE agent_registration_idempotency, "
+                        "tenant_bootstrap_refusal_events, "
                         "tenant_bootstrap_pending_outbox, pending_approvals, "
                         "tenant_bootstrap_policy_artifacts, "
                         "tenant_bootstrap_idempotency, "
