@@ -54,6 +54,17 @@ p3_mutations_selectors=(
   'tests/integration/test_mutation_inventory_postgres.py::test_pg_service_binding_drift_preserves_sql_counts_and_legacy_blockers'
   'tests/integration/test_mutation_inventory_postgres.py::test_pg_legacy_regex_precedence_drift_preserves_sql_counts_before_bootstrap'
 )
+p3_approval_selectors=(
+  'tests/integration/test_approval_resume_postgres.py::test_pg_escalate_creates_scoped_pending_without_agent_or_consumption'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_self_and_wrong_role_approval_are_non_executable'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_resume_before_required_vote_is_non_executable'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_approved_resume_executes_once_and_replay_is_stable'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_rejected_and_expired_requests_resume_zero_side_effects'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_stale_policy_trust_and_requester_resume_zero_side_effects'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_tampered_sealed_payload_resume_zero_side_effects'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent'
+  'tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows'
+)
 immutable_0004_selector='tests/integration/test_migrations_postgres.py::test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps'
 selector_mode=''
 junit_expected_tests=0
@@ -134,12 +145,23 @@ if [[ -z "$selector_mode" && $# == "${#p3_mutations_selectors[@]}" ]]; then
     fi
   done
 fi
+if [[ -z "$selector_mode" && $# == "${#p3_approval_selectors[@]}" ]]; then
+  selector_mode='p3-approval'
+  junit_expected_tests=9
+  actual_selectors=("$@")
+  for index in "${!p3_approval_selectors[@]}"; do
+    if [[ "${actual_selectors[index]}" != "${p3_approval_selectors[index]}" ]]; then
+      selector_mode=''
+      break
+    fi
+  done
+fi
 if [[ -z "$selector_mode" && $# == 1 && "$1" == "$immutable_0004_selector" ]]; then
   selector_mode='p2-immutable-0004-upgrade'
   junit_expected_tests=1
 fi
 if [[ -z "$selector_mode" ]]; then
-  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, P3 policy, P3 mutations, or immutable-0004 selector is required' >&2
+  echo 'the exact ordered PostgreSQL migration, P2 tenant-bootstrap, P2 register, P2 idempotency, P2 vertical-gate, P3 policy, P3 mutations, P3 approval, or immutable-0004 selector is required' >&2
   exit 64
 fi
 case "${PYTEST_ADDOPTS:-}" in

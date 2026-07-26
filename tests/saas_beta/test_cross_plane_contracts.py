@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 
+import acgs_control_plane.approvals as approvals_module
 import pytest
 from acgs_control_plane.app import create_app
+from acgs_control_plane.approvals import ApprovalService
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.governance import (
     ROUTE_CONTRACTS,
@@ -12,6 +14,7 @@ from acgs_control_plane.governance import (
 )
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
+    CONTROL_PLANE_APPROVAL_VOTE_ACTION,
     CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
     CONTROL_PLANE_POLICY_PUBLISH_ACTION,
     TENANT_BOOTSTRAP_ACTION,
@@ -90,6 +93,10 @@ def test_vertical_gate_contract_locks_managed_routes_and_production_blockers(
         ("POST", "/v1/tenant-bootstrap"),
         ("POST", "/orgs/{org_id}/agents"),
         ("POST", "/v1/orgs/{org_id}/agents"),
+        ("POST", "/orgs/{org_id}/approvals/{approval_request_id}/votes"),
+        ("POST", "/v1/orgs/{org_id}/approvals/{approval_request_id}/votes"),
+        ("POST", "/orgs/{org_id}/approvals/{approval_request_id}/resume"),
+        ("POST", "/v1/orgs/{org_id}/approvals/{approval_request_id}/resume"),
         ("POST", "/orgs/{org_id}/projects/{project_id}/environments/{environment_id}/policies"),
         (
             "POST",
@@ -109,6 +116,22 @@ def test_vertical_gate_contract_locks_managed_routes_and_production_blockers(
     assert managed[("POST", "/v1/tenant-bootstrap")].action == TENANT_BOOTSTRAP_ACTION
     assert managed[("POST", "/orgs/{org_id}/agents")].action == CONTROL_PLANE_AGENT_CREATE_ACTION
     assert managed[("POST", "/v1/orgs/{org_id}/agents")].action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    assert (
+        managed[("POST", "/orgs/{org_id}/approvals/{approval_request_id}/votes")].action
+        == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+    )
+    assert (
+        managed[("POST", "/v1/orgs/{org_id}/approvals/{approval_request_id}/votes")].action
+        == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+    )
+    assert (
+        managed[("POST", "/orgs/{org_id}/approvals/{approval_request_id}/resume")].action
+        == CONTROL_PLANE_AGENT_CREATE_ACTION
+    )
+    assert (
+        managed[("POST", "/v1/orgs/{org_id}/approvals/{approval_request_id}/resume")].action
+        == CONTROL_PLANE_AGENT_CREATE_ACTION
+    )
     for prefix in ("", "/v1"):
         assert (
             managed[
@@ -344,6 +367,10 @@ def test_mutation_inventory_contract_locks_registry_and_actual_routing(tmp_path)
         "tenant-bootstrap.create",
         "agent.register",
         "agent.register.v1",
+        "approval.vote",
+        "approval.vote.v1",
+        "approval.resume",
+        "approval.resume.v1",
         "environment-policy.publish",
         "environment-policy.publish.v1",
         "environment-policy.activate",
@@ -361,6 +388,10 @@ def test_mutation_inventory_contract_locks_registry_and_actual_routing(tmp_path)
     assert verify_static_sql_atomic_safety(CANONICAL_MUTATION_DEFINITIONS) == ()
     assert definitions["agent.register"].action == CONTROL_PLANE_AGENT_CREATE_ACTION
     assert definitions["agent.register"].permission == Permission.AGENT_REGISTER.value
+    assert definitions["approval.vote"].action == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+    assert definitions["approval.vote"].permission == Permission.APPROVAL_VOTE.value
+    assert definitions["approval.resume"].action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    assert definitions["approval.resume"].permission == Permission.APPROVAL_RESUME.value
     assert definitions["environment-policy.publish"].action == CONTROL_PLANE_POLICY_PUBLISH_ACTION
     assert definitions["environment-policy.activate"].action == CONTROL_PLANE_POLICY_ACTIVATE_ACTION
     assert definitions["tenant-bootstrap.create"].action == TENANT_BOOTSTRAP_ACTION
@@ -407,3 +438,96 @@ def test_mutation_inventory_contract_locks_registry_and_actual_routing(tmp_path)
         "test_mutation_inventory_contract_locks_registry_and_actual_routing",
     )
     assert _common.EXPECTED_BOOTSTRAP_MAP["P3-MUTATIONS-002"] == "EVID+CP"
+
+
+def test_approval_contract_locks_vote_and_resume_assurance(tmp_path) -> None:
+    managed = {
+        (route.method, route.path): route
+        for route in ROUTE_CONTRACTS
+        if route.execution_class is ExecutionClass.CANONICAL_MANAGED_WRITE
+    }
+    vote_key = ("POST", "/orgs/{org_id}/approvals/{approval_request_id}/votes")
+    resume_key = ("POST", "/orgs/{org_id}/approvals/{approval_request_id}/resume")
+    assert managed[vote_key].action == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+    assert managed[resume_key].action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    assert managed[vote_key].permits_persistent_effect is True
+    assert managed[resume_key].permits_persistent_effect is True
+    assert managed[vote_key].permits_external_effect is False
+    assert managed[resume_key].permits_external_effect is False
+
+    definitions = {
+        definition.operation_id: definition for definition in CANONICAL_MUTATION_DEFINITIONS
+    }
+    assert definitions["approval.vote"].action == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+    assert definitions["approval.resume"].action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    assert definitions["approval.vote"].permission == Permission.APPROVAL_VOTE.value
+    assert definitions["approval.resume"].permission == Permission.APPROVAL_RESUME.value
+
+    app = create_app(
+        Settings(
+            database_url="sqlite:///:memory:",
+            audit_dir=tmp_path / "approval-audit",
+            create_tables=True,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        )
+    )
+    active_http_routes = {
+        (method, route.path): route.endpoint
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.methods
+        for method in route.methods
+        if method != "HEAD"
+    }
+    for key, method_name in ((vote_key, ".vote("), (resume_key, ".resume(")):
+        source = inspect.getsource(active_http_routes[key])
+        assert "request.app.state.approval_service" in source
+        assert f"service{method_name}" in source
+    assert isinstance(app.state.approval_service, ApprovalService)
+
+    approval_source = inspect.getsource(approvals_module)
+    service_source = inspect.getsource(ApprovalService)
+    uow_source = inspect.getsource(ManagedMutationUnitOfWork)
+    assert "ManagedMutationUnitOfWork(" in service_source
+    assert "approval_chain_hash=sha256_json(receipt.approval_chain_summary)" in approval_source
+    assert "CONTROL_PLANE_APPROVAL_VOTE_ACTION" in service_source
+    assert "CONTROL_PLANE_AGENT_CREATE_ACTION" in approval_source
+    assert "execute_with_receipt(" in uow_source
+    assert "ASSURANCE_CLASS_NATIVE" in uow_source
+    assert "expected_action=context.action" in uow_source
+    assert "expected_project_id=context.project_id" in uow_source
+    assert "expected_environment_id=context.environment_id" in uow_source
+
+    assert _common.P3_APPROVAL_CP_SELECTORS == (
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_escalate_creates_scoped_pending_without_agent_or_consumption",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_self_and_wrong_role_approval_are_non_executable",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_resume_before_required_vote_is_non_executable",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_approved_resume_executes_once_and_replay_is_stable",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_rejected_and_expired_requests_resume_zero_side_effects",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_tampered_sealed_payload_resume_zero_side_effects",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_multiprocess_resume_race_authorizes_one_agent",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_approval_composite_constraints_reject_cross_scope_rows",
+    )
+    assert _common.P3_APPROVAL_GZ_SELECTORS == (
+        "packages/gove-zone/tests/test_mcp_gateway_conformance.py::"
+        "test_escalate_approve_resume_single_use",
+        "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse",
+        "packages/gove-zone/tests/test_receipt_consumption.py::"
+        "test_resume_replay_blocked_with_ledger",
+        "packages/gove-zone/tests/test_receipt_consumption.py::"
+        "test_concurrent_consumers_single_winner",
+    )
+    assert _common.P3_APPROVAL_ROOT_SELECTORS == (
+        "tests/saas_beta/test_cross_plane_contracts.py::"
+        "test_approval_contract_locks_vote_and_resume_assurance",
+    )
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P3-APPROVAL-003"] == "EVID+CP+GZ"

@@ -717,6 +717,247 @@ class PolicyRegistryIdempotency(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ApprovalRequest(Base):
+    """Immutable approval request created for a non-executable managed ESCALATE."""
+
+    __tablename__ = "approval_requests"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_approval_requests_environment",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "escalate_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_approval_requests_escalate_receipt",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint("org_id", "project_id", "environment_id", "id", name="uq_ar_scope_id"),
+        UniqueConstraint("org_id", "request_hash", name="uq_ar_org_request_hash"),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "escalate_receipt_hash",
+            name="uq_ar_scope_escalate_receipt_hash",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "escalate_audit_event_hash",
+            name="uq_ar_scope_escalate_audit_event_hash",
+        ),
+        CheckConstraint("status = 'pending'", name="ck_approval_requests_status_pending"),
+        CheckConstraint("quorum_threshold > 0", name="ck_approval_requests_quorum_positive"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    action: Mapped[str] = mapped_column(String(200), nullable=False)
+    requester_actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    validator_role: Mapped[str] = mapped_column(String(200), nullable=False)
+    authority: Mapped[str] = mapped_column(String(200), nullable=False)
+    approver_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    argument_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_bundle_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    policy_head_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    trust_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_boundary: Mapped[str] = mapped_column(String(200), nullable=False)
+    escalate_receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    escalate_receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    escalate_audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    quorum_threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    sealed_arguments: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    aad: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ApprovalVote(Base):
+    """Append-only approval vote; votes are never executable receipts."""
+
+    __tablename__ = "approval_votes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "approval_request_id"],
+            [
+                "approval_requests.org_id",
+                "approval_requests.project_id",
+                "approval_requests.environment_id",
+                "approval_requests.id",
+            ],
+            name="fk_approval_votes_request_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "approval_request_id",
+            "approver_actor_hash",
+            name="uq_av_scope_request_actor",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "approval_request_id",
+            "idempotency_key_hash",
+            name="uq_av_org_request_idempotency",
+        ),
+        CheckConstraint("decision IN ('approve', 'reject')", name="ck_approval_votes_decision"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approver_actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approver_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    vote_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApprovalOutcome(Base):
+    """Terminal approval outcome; at most one exists per request."""
+
+    __tablename__ = "approval_outcomes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "approval_request_id"],
+            [
+                "approval_requests.org_id",
+                "approval_requests.project_id",
+                "approval_requests.environment_id",
+                "approval_requests.id",
+            ],
+            name="fk_approval_outcomes_request_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "approval_request_id",
+            name="uq_ao_scope_request",
+        ),
+        CheckConstraint(
+            "outcome IN ('approved', 'rejected', 'expired', 'canceled')",
+            name="ck_approval_outcomes_outcome",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    quorum_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    approver_set_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApprovalResumeAuthorization(Base):
+    """At-most-one fresh resume receipt authorization for an approved request."""
+
+    __tablename__ = "approval_resume_authorizations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "approval_request_id"],
+            [
+                "approval_requests.org_id",
+                "approval_requests.project_id",
+                "approval_requests.environment_id",
+                "approval_requests.id",
+            ],
+            name="fk_approval_resume_auth_request_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "resume_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_approval_resume_auth_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "resumed_agent_id"],
+            ["agents.org_id", "agents.project_id", "agents.environment_id", "agents.id"],
+            name="fk_approval_resume_auth_agent_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "approval_request_id",
+            name="uq_ara_scope_request",
+        ),
+        UniqueConstraint("org_id", "resume_receipt_hash", name="uq_ara_org_resume_receipt_hash"),
+        UniqueConstraint(
+            "org_id", "resume_audit_event_hash", name="uq_ara_org_resume_audit_event_hash"
+        ),
+        UniqueConstraint(
+            "org_id",
+            "approval_request_id",
+            "idempotency_key_hash",
+            name="uq_ara_org_request_idempotency",
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id", deferrable=True, initially="DEFERRED"), index=True
+    )
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    resumed_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resume_receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    resume_receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resume_audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_chain_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ReceiptRow(Base):
     __tablename__ = "receipts"
 

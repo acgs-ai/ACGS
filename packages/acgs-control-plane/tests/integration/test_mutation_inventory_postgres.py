@@ -82,8 +82,8 @@ def test_pg_agent_register_commits_one_sql_atomic_managed_mutation(
             "all_managed_outbox": before["all_managed_outbox"] + 1,
             "all_managed_attempts": before["all_managed_attempts"] + 1,
             "all_agent_idempotency": before["all_agent_idempotency"] + 1,
-            "all_legacy_receipts": before["all_legacy_receipts"],
-            "legacy_agent_receipts": before["legacy_agent_receipts"],
+            "all_legacy_receipts": before["all_legacy_receipts"] + 1,
+            "legacy_agent_receipts": before["legacy_agent_receipts"] + 1,
         }
         with app.state.session_factory() as session:
             agent = session.scalars(
@@ -112,7 +112,7 @@ def test_pg_agent_register_commits_one_sql_atomic_managed_mutation(
             assert event.managed_receipt_id == receipt.id
             assert event.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION
             assert outbox.managed_receipt_id == receipt.id
-            assert _count_legacy_agent_receipts(session, org["org_id"]) == 0
+            assert _count_legacy_agent_receipts(session, org["org_id"]) == 1
 
         replay = client.post(
             f"/orgs/{org['org_id']}/agents",
@@ -253,7 +253,7 @@ def _postgres_mutation_inventory_app(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0008
+    assert result.after.state is DatabaseSchemaState.VERSION_0009
 
     issuer = local_agent_registration_issuer()
     app = create_app(

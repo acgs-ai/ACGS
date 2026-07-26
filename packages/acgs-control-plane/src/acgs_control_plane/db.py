@@ -50,6 +50,10 @@ _ALEMBIC_MANAGED_TABLE_NAMES = frozenset(
         "policy_versions",
         "environment_policy_heads",
         "policy_registry_idempotency",
+        "approval_requests",
+        "approval_votes",
+        "approval_outcomes",
+        "approval_resume_authorizations",
     }
 )
 _LEGACY_CREATE_ALL_TABLE_NAMES = frozenset(

@@ -42,7 +42,8 @@ TENANT_BOOTSTRAP_REVISION: Final = "0005"
 AGENT_SCOPE_REVISION: Final = "0006"
 AGENT_REGISTRATION_IDEMPOTENCY_REVISION: Final = "0007"
 POLICY_REGISTRY_REVISION: Final = "0008"
-HEAD_REVISION: Final = POLICY_REGISTRY_REVISION
+APPROVAL_SUBSTRATE_REVISION: Final = "0009"
+HEAD_REVISION: Final = APPROVAL_SUBSTRATE_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -84,6 +85,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0006 = "version_0006"
     VERSION_0007 = "version_0007"
     VERSION_0008 = "version_0008"
+    VERSION_0009 = "version_0009"
     UNKNOWN = "unknown"
 
 
@@ -108,7 +110,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0008.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0009.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -565,6 +567,75 @@ _POLICY_REGISTRY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("created_at", "datetime", False),
     ),
 }
+_APPROVAL_SUBSTRATE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_POLICY_REGISTRY_COLUMNS,
+    "approval_requests": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("action", "string", False, 200),
+        _ColumnSpec("requester_actor_hash", "string", False, 64),
+        _ColumnSpec("validator_role", "string", False, 200),
+        _ColumnSpec("authority", "string", False, 200),
+        _ColumnSpec("approver_role", "string", False, 32),
+        _ColumnSpec("argument_hash", "string", False, 128),
+        _ColumnSpec("request_hash", "string", False, 64),
+        _ColumnSpec("policy_bundle_id", "string", False, 200),
+        _ColumnSpec("policy_version", "string", False, 200),
+        _ColumnSpec("policy_hash", "string", False, 128),
+        _ColumnSpec("policy_head_generation", "integer", False),
+        _ColumnSpec("trust_epoch", "integer", False),
+        _ColumnSpec("execution_boundary", "string", False, 200),
+        _ColumnSpec("escalate_receipt_id", "string", False, 200),
+        _ColumnSpec("escalate_receipt_hash", "string", False, 64),
+        _ColumnSpec("escalate_audit_event_hash", "string", False, 64),
+        _ColumnSpec("quorum_threshold", "integer", False),
+        _ColumnSpec("sealed_arguments", "json", False),
+        _ColumnSpec("aad", "json", False),
+        _ColumnSpec("status", "string", False, 32),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("expires_at", "datetime", False),
+    ),
+    "approval_votes": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("approver_actor_hash", "string", False, 64),
+        _ColumnSpec("approver_role", "string", False, 32),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("vote_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "approval_outcomes": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("outcome", "string", False, 16),
+        _ColumnSpec("quorum_digest", "string", False, 64),
+        _ColumnSpec("approver_set_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "approval_resume_authorizations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("resumed_agent_id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("resume_receipt_id", "string", False, 200),
+        _ColumnSpec("resume_receipt_hash", "string", False, 64),
+        _ColumnSpec("resume_audit_event_hash", "string", False, 64),
+        _ColumnSpec("approval_chain_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
     **_LEGACY_COLUMNS,
     "projects": _SCOPED_COLUMNS["projects"],
@@ -612,6 +683,13 @@ _POLICY_REGISTRY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "policy_versions": ("id",),
     "environment_policy_heads": ("id",),
     "policy_registry_idempotency": ("id",),
+}
+_APPROVAL_SUBSTRATE_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_POLICY_REGISTRY_PRIMARY_KEYS,
+    "approval_requests": ("id",),
+    "approval_votes": ("id",),
+    "approval_outcomes": ("id",),
+    "approval_resume_authorizations": ("id",),
 }
 _PROJECTS_ONLY_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     table_name: ("id",) for table_name in _PROJECTS_ONLY_COLUMNS
@@ -703,6 +781,10 @@ _DEFERRABLE_MANAGED_MUTATION_FK_TABLES: Final = frozenset(
     (_MANAGED_MUTATION_FOREIGN_KEYS.keys() - _SCOPED_FOREIGN_KEYS.keys())
     | {
         "agent_registration_idempotency",
+        "approval_outcomes",
+        "approval_requests",
+        "approval_resume_authorizations",
+        "approval_votes",
         "policy_versions",
         "environment_policy_heads",
         "policy_registry_idempotency",
@@ -862,6 +944,51 @@ _POLICY_REGISTRY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
             _SCOPE_ENVIRONMENT_FK,
             (
                 ("org_id", "project_id", "environment_id", "receipt_id"),
+                None,
+                "managed_decision_receipts",
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+            ),
+        }
+    ),
+}
+_APPROVAL_REQUEST_SCOPE_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "approval_request_id"),
+    None,
+    "approval_requests",
+    ("org_id", "project_id", "environment_id", "id"),
+)
+_APPROVAL_SUBSTRATE_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_POLICY_REGISTRY_FOREIGN_KEYS,
+    "approval_requests": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _SCOPE_ENVIRONMENT_FK,
+            (
+                ("org_id", "project_id", "environment_id", "escalate_receipt_id"),
+                None,
+                "managed_decision_receipts",
+                ("org_id", "project_id", "environment_id", "receipt_id"),
+            ),
+        }
+    ),
+    "approval_votes": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _APPROVAL_REQUEST_SCOPE_FK}
+    ),
+    "approval_outcomes": frozenset(
+        {(("org_id",), None, "organizations", ("id",)), _APPROVAL_REQUEST_SCOPE_FK}
+    ),
+    "approval_resume_authorizations": frozenset(
+        {
+            (("org_id",), None, "organizations", ("id",)),
+            _APPROVAL_REQUEST_SCOPE_FK,
+            (
+                ("org_id", "project_id", "environment_id", "resumed_agent_id"),
+                None,
+                "agents",
+                ("org_id", "project_id", "environment_id", "id"),
+            ),
+            (
+                ("org_id", "project_id", "environment_id", "resume_receipt_id"),
                 None,
                 "managed_decision_receipts",
                 ("org_id", "project_id", "environment_id", "receipt_id"),
@@ -1032,6 +1159,40 @@ _POLICY_REGISTRY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     ),
     "policy_registry_idempotency": frozenset({("idempotency_key_hash",)}),
 }
+_APPROVAL_SUBSTRATE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_POLICY_REGISTRY_UNIQUES,
+    "approval_requests": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "id"),
+            ("org_id", "request_hash"),
+            ("org_id", "project_id", "environment_id", "escalate_receipt_hash"),
+            ("org_id", "project_id", "environment_id", "escalate_audit_event_hash"),
+        }
+    ),
+    "approval_votes": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "approval_request_id",
+                "approver_actor_hash",
+            ),
+            ("org_id", "approval_request_id", "idempotency_key_hash"),
+        }
+    ),
+    "approval_outcomes": frozenset(
+        {("org_id", "project_id", "environment_id", "approval_request_id")}
+    ),
+    "approval_resume_authorizations": frozenset(
+        {
+            ("org_id", "project_id", "environment_id", "approval_request_id"),
+            ("org_id", "resume_receipt_hash"),
+            ("org_id", "resume_audit_event_hash"),
+            ("org_id", "approval_request_id", "idempotency_key_hash"),
+        }
+    ),
+}
 _TRUST_V2_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
     **{table_name: frozenset() for table_name in _TRUST_V2_COLUMNS},
     "managed_trust_keys": frozenset(
@@ -1083,6 +1244,13 @@ _POLICY_REGISTRY_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] =
     "policy_versions": frozenset(),
     "environment_policy_heads": frozenset(),
     "policy_registry_idempotency": frozenset(),
+}
+_APPROVAL_SUBSTRATE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_POLICY_REGISTRY_UNIQUE_INDEXES,
+    "approval_requests": frozenset(),
+    "approval_votes": frozenset(),
+    "approval_outcomes": frozenset(),
+    "approval_resume_authorizations": frozenset(),
 }
 _PROJECTS_ONLY_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_UNIQUES,
@@ -1142,6 +1310,13 @@ _POLICY_REGISTRY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]
     "policy_versions": frozenset({("org_id",)}),
     "environment_policy_heads": frozenset({("org_id",)}),
     "policy_registry_idempotency": frozenset({("org_id",)}),
+}
+_APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_POLICY_REGISTRY_NON_UNIQUE_INDEXES,
+    "approval_requests": frozenset({("org_id",)}),
+    "approval_votes": frozenset({("org_id",)}),
+    "approval_outcomes": frozenset({("org_id",)}),
+    "approval_resume_authorizations": frozenset({("org_id",)}),
 }
 _MANAGED_MUTATION_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
     **{table_name: frozenset() for table_name in _SCOPED_COLUMNS},
@@ -1256,6 +1431,27 @@ _POLICY_REGISTRY_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
         }
     ),
     "policy_registry_idempotency": frozenset(),
+}
+_APPROVAL_SUBSTRATE_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_POLICY_REGISTRY_CHECKS,
+    "approval_requests": frozenset(
+        {
+            ("ck_approval_requests_status_pending", "status = 'pending'"),
+            ("ck_approval_requests_quorum_positive", "quorum_threshold > 0"),
+        }
+    ),
+    "approval_votes": frozenset(
+        {("ck_approval_votes_decision", "decision IN ('approve', 'reject')")}
+    ),
+    "approval_outcomes": frozenset(
+        {
+            (
+                "ck_approval_outcomes_outcome",
+                "outcome IN ('approved', 'rejected', 'expired', 'canceled')",
+            )
+        }
+    ),
+    "approval_resume_authorizations": frozenset(),
 }
 _PROJECTS_ONLY_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
     **_LEGACY_NON_UNIQUE_INDEXES,
@@ -1500,7 +1696,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0007, "known Alembic revision 0007")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [POLICY_REGISTRY_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1514,6 +1710,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0008, "known Alembic revision 0008")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _APPROVAL_SUBSTRATE_COLUMNS,
+            _APPROVAL_SUBSTRATE_PRIMARY_KEYS,
+            _APPROVAL_SUBSTRATE_FOREIGN_KEYS,
+            _APPROVAL_SUBSTRATE_UNIQUES,
+            _APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES,
+            _APPROVAL_SUBSTRATE_CHECKS,
+            _APPROVAL_SUBSTRATE_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0009, "known Alembic revision 0009")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1529,7 +1740,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0008:
+    if preflight.state is not DatabaseSchemaState.VERSION_0009:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1632,7 +1843,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0008:
+    if after.state is not DatabaseSchemaState.VERSION_0009:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1694,7 +1905,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0008:
+                    if after.state is not DatabaseSchemaState.VERSION_0009:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -2372,6 +2583,22 @@ def _check_constraint_signature(value: object) -> str:
         "decision=any(array['deny','escalate'])",
     }:
         return "decision:deny,escalate"
+    if compact in {
+        "decisionin('approve','reject')",
+        "decision=any(array['approve','reject'])",
+        "decision=any((array['approve','reject']))",
+    }:
+        return "decision:approve,reject"
+    if compact in {
+        "outcomein('approved','rejected','expired','canceled')",
+        "outcome=any(array['approved','rejected','expired','canceled'])",
+        "outcome=any((array['approved','rejected','expired','canceled']))",
+    }:
+        return "outcome:approved,rejected,expired,canceled"
+    if compact in {
+        "quorum_threshold>0",
+    }:
+        return "quorum_threshold:positive"
     if compact in {
         "route='post/v1/tenant-bootstrap'",
     }:

@@ -29,9 +29,9 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
 
-    # 4 unversioned canonical writes plus the 3 /v1 aliases (tenant bootstrap
+    # 6 unversioned canonical writes plus the 5 /v1 aliases (tenant bootstrap
     # is already served under /v1), and 6 legacy writes plus their /v1 aliases.
-    assert len(canonical_contracts) == 7
+    assert len(canonical_contracts) == 11
     assert len(legacy_contracts) == 12
     assert {
         (definition.method, definition.path, definition.action, definition.effect_class)
@@ -44,6 +44,19 @@ def test_mutation_inventory_preserves_canonical_and_legacy_truth(client: TestCli
         definition.effect_class is MutationEffectClass.SQL_ATOMIC
         for definition in CANONICAL_MUTATION_DEFINITIONS
     )
+    assert {
+        "agent.register",
+        "agent.register.v1",
+        "approval.vote",
+        "approval.vote.v1",
+        "approval.resume",
+        "approval.resume.v1",
+        "environment-policy.publish",
+        "environment-policy.publish.v1",
+        "environment-policy.activate",
+        "environment-policy.activate.v1",
+        "tenant-bootstrap.create",
+    } == {definition.operation_id for definition in CANONICAL_MUTATION_DEFINITIONS}
     assert not [
         definition
         for definition in CANONICAL_MUTATION_DEFINITIONS
@@ -368,6 +381,9 @@ def test_static_guard_scans_registered_real_callback_surface() -> None:
     assert "acgs_control_plane.tenant_bootstrap.TenantBootstrapService.bootstrap" in symbols
     assert "acgs_control_plane.tenant_bootstrap._execute_bootstrap_effect" in symbols
     assert "acgs_control_plane.agent_registration.AgentRegistrationService.register" in symbols
+    assert "acgs_control_plane.approvals.create_agent_registration_approval_request" in symbols
+    assert "acgs_control_plane.approvals.ApprovalService.vote" in symbols
+    assert "acgs_control_plane.approvals.ApprovalService.resume" in symbols
     assert "acgs_control_plane.policy_registry.PolicyRegistryService.publish" in symbols
     assert "acgs_control_plane.policy_registry.PolicyRegistryService.activate" in symbols
     assert "acgs_control_plane.managed_mutations._execute_verified_operation" in symbols

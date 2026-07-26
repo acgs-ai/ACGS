@@ -907,6 +907,12 @@
                 "single-process-evidence-and-package-gates",
                 "postgres-pg6-mutation-inventory-drift"
               ]
+            },
+            {
+              "const": [
+                "single-process-evidence-and-package-gates",
+                "postgres-pg9-approval-resume-multiprocess"
+              ]
             }
           ]
         }
