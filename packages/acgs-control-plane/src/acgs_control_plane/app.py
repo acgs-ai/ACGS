@@ -465,7 +465,7 @@ def create_app(
         # scope, untrusted key, aborted transaction, cross-tenant admission)
         # has no receipt to cite and stays redacted and flat.
         if exc.receipt_id is not None and exc.decision is not None:
-            content: dict[str, Any] = {
+            receipt_content: dict[str, Any] = {
                 "status": exc.status,
                 "reason": exc.detail,
                 "receipt_id": exc.receipt_id,
@@ -473,21 +473,21 @@ def create_app(
                 "request_id": request_id_from_scope(request.scope),
             }
             if exc.extra:
-                content.update(exc.extra)
+                receipt_content.update(exc.extra)
             return JSONResponse(
                 status_code=exc.status_code,
-                content=content,
+                content=receipt_content,
             )
-        content: dict[str, Any] = {
+        error_content: dict[str, Any] = {
             "code": exc.code,
             "status": exc.status,
             "detail": exc.detail,
         }
         if exc.extra:
-            content.update(exc.extra)
+            error_content.update(exc.extra)
         return JSONResponse(
             status_code=exc.status_code,
-            content=content,
+            content=error_content,
         )
 
     @app.exception_handler(ApprovalHttpError)

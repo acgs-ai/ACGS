@@ -478,15 +478,7 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
             # Matches the envelope the route served before agent registration
             # became a managed mutation (see test_v1_api_contract.py).
             body = resp.json()
-            assert set(body) == {
-                "status",
-                "reason",
-                "receipt_id",
-                "decision",
-                "request_id",
-            }, (case["name"], resp.text)
-            assert body["receipt_id"], case["name"]
-            assert body["decision"] == case["evidence"], case["name"]
+            _assert_refusal_response_contract(body, str(case["evidence"]))
         else:
             # No policy decision was reached, so there is no receipt to cite.
             assert "receipt_id" not in resp.json(), (case["name"], resp.text)
@@ -1893,13 +1885,9 @@ def test_agent_register_route_duplicate_refusals_replay_original_terminal_respon
     # per-request; everything else replays byte-for-byte.
     first_body = first.json()
     second_body = second.json()
-    assert set(first_body) == {"status", "reason", "receipt_id", "decision", "request_id"}
-    assert set(second_body) == {"status", "reason", "receipt_id", "decision", "request_id"}
-    first_body.pop("request_id")
-    second_body.pop("request_id")
-    assert first_body == second_body
-    assert second_body["decision"] == decision
-    assert second_body["receipt_id"]
+    _assert_refusal_response_contract(first_body, decision)
+    _assert_refusal_response_contract(second_body, decision)
+    assert _without_request_id(first_body) == _without_request_id(second_body)
     _assert_single_refusal_evidence(app, org["org_id"], f"duplicate-{decision}-bot", decision)
 
 
@@ -2123,14 +2111,14 @@ def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_respo
     headers = _agent_headers(org, f"agent-refusal-concurrent-{decision}-0001")
     body = {"name": f"concurrent-{decision}-bot", "trust_tier": "internal"}
 
-    def register() -> tuple[int, str | None]:
+    def register() -> tuple[int, dict[str, Any] | None]:
         resp = client.post(f"/orgs/{org['org_id']}/agents", json=body, headers=headers)
-        terminal = (
-            resp.json().get("decision")
+        response_body = (
+            resp.json()
             if resp.headers.get("content-type", "").startswith("application/json")
             else None
         )
-        return resp.status_code, terminal
+        return resp.status_code, response_body
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: register(), range(2)))
@@ -2138,7 +2126,15 @@ def test_agent_register_route_concurrent_refusals_converge_to_one_terminal_respo
     # Both racers answer in the receipted refusal envelope with the same
     # terminal decision; the refusal evidence below proves only one of them
     # committed it.
-    assert results == [(expected_status, decision), (expected_status, decision)]
+    assert [status for status, _body in results] == [expected_status, expected_status]
+    response_bodies = [body for _status, body in results]
+    assert all(body is not None for body in response_bodies)
+    first_body, second_body = response_bodies
+    assert first_body is not None
+    assert second_body is not None
+    _assert_refusal_response_contract(first_body, decision)
+    _assert_refusal_response_contract(second_body, decision)
+    assert _without_request_id(first_body) == _without_request_id(second_body)
     _assert_single_refusal_evidence(app, org["org_id"], f"concurrent-{decision}-bot", decision)
 
 
@@ -3081,6 +3077,24 @@ def _assert_single_refusal_evidence(
         assert receipt.decision == decision
         expected_approvals = 1 if decision == "escalate" else 0
         assert _count(session, ApprovalRequest) == expected_approvals
+
+
+def _assert_refusal_response_contract(body: dict[str, Any], decision: str) -> None:
+    base_fields = {"status", "reason", "receipt_id", "decision", "request_id"}
+    if decision == "escalate":
+        assert set(body) == base_fields | {"approval_request_id", "approval_request_hash"}
+        assert body["approval_request_id"]
+        assert body["approval_request_hash"]
+    else:
+        assert set(body) == base_fields
+        assert "approval_request_id" not in body
+        assert "approval_request_hash" not in body
+    assert body["decision"] == decision
+    assert body["receipt_id"]
+
+
+def _without_request_id(body: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in body.items() if key != "request_id"}
 
 
 def _assert_replay_case(tmp_path: Path, *, decision: str) -> None:

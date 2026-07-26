@@ -6227,7 +6227,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'" in source
     assert "P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'" in source
     assert "P3_MUTATIONS_REVIEWED_BASE='014fe1806600d52d55f06875a8c30c0b8a5b973b'" in source
-    assert "P3_APPROVAL_REVIEWED_BASE='14efc17bdef87305f36a63c9bb8ef7ae4c961cac'" in source
+    assert "P3_APPROVAL_REVIEWED_BASE='58a8a2397eec717c08ff20efc287d8af788030d0'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
@@ -9177,7 +9177,7 @@ def test_p1_clean_sibling_rejects_wrong_reviewed_parent_before_mutation(tmp_path
         ("P2-VERTICAL-GATE-003", "7d81e853b56352822286eb08d592d9e87256868e"),
         ("P3-POLICY-001", "647385084d974322b0f8b9b82738d7b820044ece"),
         ("P3-MUTATIONS-002", "014fe1806600d52d55f06875a8c30c0b8a5b973b"),
-        ("P3-APPROVAL-003", "14efc17bdef87305f36a63c9bb8ef7ae4c961cac"),
+        ("P3-APPROVAL-003", "58a8a2397eec717c08ff20efc287d8af788030d0"),
     )
     for node_id, reviewed_parent in cases:
         wrong_parent = "1" * 40
