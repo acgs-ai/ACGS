@@ -404,8 +404,24 @@ def create_app(
 
     @app.exception_handler(AgentRegistrationHttpError)
     def _agent_registration_error(
-        _request: Request, exc: AgentRegistrationHttpError
+        request: Request, exc: AgentRegistrationHttpError
     ) -> JSONResponse:
+        # A policy DENY/ESCALATE carries its committed refusal receipt, so it
+        # answers in the same receipted envelope the route used before agent
+        # registration became a managed mutation. Every other refusal (bad
+        # scope, untrusted key, aborted transaction, cross-tenant admission)
+        # has no receipt to cite and stays redacted and flat.
+        if exc.receipt_id is not None and exc.decision is not None:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "status": exc.status,
+                    "reason": exc.detail,
+                    "receipt_id": exc.receipt_id,
+                    "decision": exc.decision,
+                    "request_id": request_id_from_scope(request.scope),
+                },
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={

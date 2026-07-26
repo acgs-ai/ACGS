@@ -119,10 +119,13 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
         },
         {"name": "missing_scope", "status": 409, "code": "SCOPE_NOT_READY", "scope": False},
         {"name": "missing_policy", "status": 409, "code": "POLICY_NOT_READY", "scope": True},
+        # A policy refusal answers in the receipted envelope, not the flat
+        # {code,status,detail} one, so it carries no "code" to assert. The
+        # envelope itself is asserted below, keyed off "evidence".
         {
             "name": "deny",
             "status": 403,
-            "code": "POLICY_DENIED",
+            "code": None,
             "scope": True,
             "policy": "deny",
             "evidence": "deny",
@@ -130,7 +133,7 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
         {
             "name": "escalate",
             "status": 202,
-            "code": "ESCALATE_PENDING",
+            "code": None,
             "scope": True,
             "policy": "escalate",
             "evidence": "escalate",
@@ -372,6 +375,23 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
         assert resp.status_code == case["status"], (case["name"], resp.text)
         if case.get("code") is not None:
             assert resp.json()["code"] == case["code"], case["name"]
+        if case.get("evidence") is not None:
+            # The refusal receipt is committed, so the response must cite it.
+            # Matches the envelope the route served before agent registration
+            # became a managed mutation (see test_v1_api_contract.py).
+            body = resp.json()
+            assert set(body) == {
+                "status",
+                "reason",
+                "receipt_id",
+                "decision",
+                "request_id",
+            }, (case["name"], resp.text)
+            assert body["receipt_id"], case["name"]
+            assert body["decision"] == case["evidence"], case["name"]
+        else:
+            # No policy decision was reached, so there is no receipt to cite.
+            assert "receipt_id" not in resp.json(), (case["name"], resp.text)
         with app.state.session_factory() as session:
             expected_agents = 1 if case.get("preexisting_agent") else 0
             assert _count_agents(session, org["org_id"], "blocked-bot") == expected_agents, case[

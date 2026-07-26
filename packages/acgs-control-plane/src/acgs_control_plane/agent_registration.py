@@ -67,6 +67,13 @@ class AgentRegistrationHttpError(RuntimeError):
     status: str
     detail: str
     stage: str = "policy"
+    # Set only when the refusal is a policy decision about an authenticated
+    # principal and its refusal receipt is already committed. Admission,
+    # scope, trust, and transaction errors leave these None: they cite no
+    # receipt, and several are deliberately redacted. The response handler
+    # keys the envelope off these, not off the status code.
+    receipt_id: str | None = None
+    decision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -303,18 +310,26 @@ class AgentRegistrationService:
                     "agent registration refusal evidence transaction aborted",
                     stage="tx",
                 ) from exc
+            # The refusal receipt is committed above, so cite it. Dropping it
+            # here would make the refusal path the one place this API produces
+            # no citable evidence, which is backwards for a receipt-gated
+            # control plane. Envelope matches the pre-managed v0 contract.
             if decision_record.decision is Decision.DENY:
                 raise AgentRegistrationHttpError(
                     403,
                     "POLICY_DENIED",
                     "denied",
                     decision_record.reason or "agent registration denied by policy",
+                    receipt_id=receipt.receipt_id,
+                    decision=receipt.decision,
                 )
             raise AgentRegistrationHttpError(
                 202,
                 "ESCALATE_PENDING",
                 "pending_approval",
                 decision_record.reason or "agent registration requires approval",
+                receipt_id=receipt.receipt_id,
+                decision=receipt.decision,
             )
 
         if decision_record.decision is not Decision.ALLOW:
