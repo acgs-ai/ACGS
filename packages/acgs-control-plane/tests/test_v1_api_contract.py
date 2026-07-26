@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy import select
 
 from acgs_control_plane.api_contract import REQUEST_ID_RE
@@ -17,7 +19,20 @@ from acgs_control_plane.governance import (
     ExecutionClass,
 )
 from acgs_control_plane.migrations import upgrade_database
-from acgs_control_plane.models import AgentRecord, ComplianceExport, Organization, ReceiptRow
+from acgs_control_plane.models import (
+    AgentRecord,
+    ComplianceExport,
+    Environment,
+    Organization,
+    Project,
+    ReceiptRow,
+    new_id,
+    utcnow,
+)
+from acgs_control_plane.trust import (
+    ManagedTrustLifecycleService,
+    public_spki_der_from_signer,
+)
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
@@ -53,7 +68,45 @@ def _bootstrap(client: TestClient, name: str) -> dict[str, Any]:
         headers={"X-Bootstrap-Token": BOOTSTRAP_TOKEN},
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    org = response.json()
+    _seed_agent_registration_prerequisites(client, org)
+    return org
+
+
+def _seed_agent_registration_prerequisites(client: TestClient, org: dict[str, Any]) -> None:
+    """Satisfy the governed preconditions for ``POST /orgs/{org}/agents``.
+
+    Agent registration is a canonical managed mutation: it resolves the org's
+    default project/environment scope and mints a receipt-v2 under a trusted
+    key for that scope. Mirrors test_agent_registration_managed_route.py.
+    """
+    org_id = org["org_id"]
+    app = client.app
+    project_id = f"project-{new_id()}"
+    environment_id = f"environment-{new_id()}"
+    with app.state.session_factory.begin() as session:
+        session.add_all(
+            [
+                Project(id=project_id, org_id=org_id, slug="default", name="Default"),
+                Environment(
+                    id=environment_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                    slug="production",
+                    name="Production",
+                ),
+            ]
+        )
+        session.flush()
+        scope = ReceiptTrustScope(org_id, project_id, environment_id, DECISION_RECEIPT_PURPOSE)
+        signer = app.state.agent_registration_service.issuer.signer_for_scope(scope, trust_epoch=1)
+        ManagedTrustLifecycleService(session).bootstrap(
+            scope=scope,
+            key_id=signer.key_id,
+            algorithm=signer.algorithm,
+            public_key_spki_der=public_spki_der_from_signer(signer),
+            not_after=utcnow() + timedelta(days=1),
+        )
 
 
 def _headers(org: dict[str, Any]) -> dict[str, str]:
