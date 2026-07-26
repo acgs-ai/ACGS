@@ -1,7 +1,9 @@
 # Agent-Run AI Questionnaire Response Pack — Design Specification
 
 - **Date:** 2026-07-25
-- **Status:** Approved design, pre-implementation
+- **Status:** Revision 2 — corrections applied after independent adversarial review
+- **Baseline reviewed:** `2bb08ab` (revision 1). Review verdict: BLOCK, 6 P0 + 5 P1 + 3 P2,
+  zero false positives on re-verification against source. All findings addressed here.
 - **Author:** Martin (with Claude Code)
 - **Target:** Build with Gemini XPRIZE submission (deadline 2026-08-17 13:00 PDT) + standalone product
 - **Category:** Professional Services Access
@@ -171,7 +173,7 @@ Explicitly excluded from the MVP:
 | `control_id` | str | Source-native identifier, e.g. `AIS-01`; `UNMAPPED-<n>` if absent |
 | `question_text` | str | Verbatim from source. Never paraphrased. |
 | `evidence_requirements` | list[str] | Derived evidence types sought, e.g. `code`, `config`, `policy_doc`, `test`, `process` |
-| `framework_refs` | list[str] | Optional crosswalk refs (EU AI Act article, NIST AI RMF function, ISO 42001 clause) |
+| `framework_refs` | list[str] | **Empty in the MVP.** Populated only when the *source questionnaire itself* states the mapping, and then reproduced verbatim as descriptive provenance. |
 | `order_index` | int | Preserves source ordering for output fidelity |
 
 ### 2.3 Evidence
@@ -189,6 +191,7 @@ Explicitly excluded from the MVP:
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` that authorized the mining call producing this citation |
 | `verified_by_receipt_id` | str \| None | The `DecisionReceipt` for the QA pass that adjudicated it |
+| `contradicts_locator` | Evidence \| None | A *different* artifact found to contradict the assertion this citation was offered for (§5.4.1). Non-null forces `CONTRADICTED`. |
 
 A citation without `commit_sha` and `artifact_hash` is not a citation. It cannot be
 reproduced by the customer, and reproducibility is the entire value (§6).
@@ -206,12 +209,28 @@ them, lineage stops at `Response` and individual citations are unattributable.
 | `state` | enum | See below |
 | `answer_text` | str | Draft, for customer review and editing |
 | `evidence` | list[Evidence] | Empty iff state is `NOT_EVIDENCED` or `ESCALATED` |
-| `qa_verdict` | enum | `PASS`, `REFUTED`, `INSUFFICIENT` (§5) |
+| `qa_verdict` | enum | `PASS`, `REFUTED`, `INSUFFICIENT`, `CONTRADICTED` (§5.4) |
 | `qa_rationale` | str | Why the QA agent reached its verdict |
-| `confidence` | enum | `HIGH`, `MEDIUM`, `LOW` |
+| `verification_state` | enum | **Deterministic function** of citation count and QA verdict — see below. Never model-authored. |
 | `job_id` | str | Owning job — required for lineage |
 | `produced_by_receipt_id` | str | The `DecisionReceipt` authorizing the mining call that produced this response |
 | `verified_by_receipt_id` | str \| None | The `DecisionReceipt` for the QA pass that adjudicated it. Null means **unadjudicated**, which may never be delivered as `SUPPORTED`. |
+
+**`verification_state` replaces the former `confidence` field, which is deleted.** A
+`HIGH | MEDIUM | LOW` label with no derivation rule re-imports model self-assessment as if
+it were evidence quality, contradicting §6.1's declaration that LLM output is untrusted — and
+it would ship that self-report to a customer inside an evidence artifact. The replacement is
+computed in code, never authored by a model:
+
+```
+CONTRADICTED_BY_OTHER_ARTIFACT  any citation has contradicts_locator != None
+VERIFIED_MULTI                  >=2 citations passed check 0 and QA PASS
+VERIFIED_SINGLE                 exactly 1 citation passed check 0 and QA PASS
+UNVERIFIED                      no citation passed check 0
+```
+
+Nothing labelled "confidence" appears in the delivered pack. The customer is told what was
+*checked*, not how sure a model felt.
 
 Lineage is carried at both levels: on `Response` (which action produced and adjudicated the
 answer) and on each `Evidence` (which action produced and adjudicated that citation). A
@@ -244,7 +263,7 @@ without a fresh evidence-mining pass and a fresh QA pass, each with its own rece
 | `missing_evidence` | str | What was sought and not found. Specific, not generic. |
 | `search_performed` | list[str] | Queries/paths actually searched — proves the absence is a finding, not a skip |
 | `remediation_suggestion` | str | Concrete next action for the customer |
-| `severity` | enum | `HIGH`, `MEDIUM`, `LOW` — relative to the questionnaire's own weighting, never to legal risk |
+| `severity` | enum \| `UNAVAILABLE` | Only from a deterministic mapping the **source** supplies. `UNAVAILABLE` whenever it does not — never inferred by a model, never legal risk |
 
 **`owner` and `status` are deliberately absent.** Tracking remediation ownership and
 lifecycle state (`OPEN` → `REMEDIATED` → `ACCEPTED_RISK`) is customer lifecycle management —
@@ -293,6 +312,37 @@ after-the-fact authorization.
 > `signature = "unsigned_local"`. Production MUST set `require_signature=True` and install
 > the `crypto` extra (`gove-zone[crypto]`). Until that is configured and verified, no
 > customer-facing or XPRIZE-facing material may describe the pack as *signed*. See §12 R1.
+
+### 2.6.1 Validator identity — required, or no receipt can be minted
+
+Receipt issuance is impossible without a named validating principal distinct from the
+proposer. This is enforced in three places:
+
+- `receipt.py:303-307` — `from_record` raises `ReceiptValidationError`
+  ("self-validation forbidden") when `validator.validator_id == proposer`.
+- `receipt.py:481-490` — `verify(expected_actor=…)` rejects a receipt whose `validator_id`
+  is the invoking principal.
+- `receipt.py:503-506` — a residual defence-in-depth check rejects `validator_id == actor`.
+
+Every step in §3.3 names an agent as proposer. Each step MUST therefore also declare:
+
+| Field | Requirement |
+|---|---|
+| `validator_id` | Service identity of the validating principal, distinct from the proposing agent's actor string |
+| `validator_role` | `validator` |
+| `authority` | The authority grant under which this step may be validated |
+| `policy_bundle_id` / `policy_version` / `policy_hash` | The bundle each step is issued against |
+
+**Honest statement of the boundary's strength.** In the MVP, proposer and validator are two
+objects inside a single Cloud Run container. `validator != proposer` is therefore a
+**type/interface boundary, not a privilege boundary**. It prevents an agent from
+accidentally or straightforwardly self-authorizing; it does **not** withstand a compromised
+worker process, which can construct either object.
+
+The spec does not claim stronger isolation than the deployment provides. Achieving a
+privilege boundary would require the validator to run as a separate process or service with
+its own identity and no shared memory — out of MVP scope, and named here so that no reader
+mistakes the current design for it.
 
 ### 2.7 Job
 
@@ -355,18 +405,42 @@ Agent proposal
     ->  Outcome record append              (result_hash / error_class)
 ```
 
-**There are two appends, and the first one precedes execution.** `kernel.py:472` describes
-`dispatch` as the path "which then appends and executes"; the decision is anchored in the
-audit chain first, which is why `DecisionReceipt` already carries `previous_audit_hash` and
-`audit_event_hash` at authorization time. The outcome is appended after execution
-(`kernel.py:601` appends a failure record when the tool raises). An implementation that
-appends only after execution would destroy the pre-execution anchor and permit
-after-the-fact authorization.
+**There are two appends, and the first one precedes execution.** The decision is anchored in
+the audit chain before execution — which is why `DecisionReceipt` already carries
+`previous_audit_hash` and `audit_event_hash` at authorization time — and the outcome is
+appended after.
 
-**`evaluate()` output is not authorization.** `kernel.py:306-309`: an evaluate-only result
-"is a prediction, not a receipt, and must never be presented as authorization to execute."
-Implementation MUST NOT gate execution on `evaluate()`; only a dispatched, appended
-`DecisionReceipt` authorizes.
+**The invariant holds only on the side-effect seam, and this product runs entirely on it.**
+This correction matters: the legacy pure-tool path does **not** provide the guarantee.
+`kernel.py:251-285` (`_dispatch_legacy_pure`) appends the decision, executes, then
+constructs a `Receipt` **in memory** with `result_hash` and returns it — no outcome append
+occurs. Its only post-execution append is `_record_execution_failure` (`kernel.py:595-606`),
+documented "Best-effort… re-raises the original exception regardless of whether this append
+succeeds." Citing that seam for the two-append property would be false.
+
+The property is provided by `side_effect_kernel.py`, which appends via `append_committed`
+at `side_effect_kernel.py:1039`, `:1600`, and `:2034`.
+
+**Required executor configuration (§3.5).** Every commit-tier step in §3.3 — payment,
+Gemini call, assembly, delivery — is a side effect. `kernel.py:189-201` DENIES with
+`SIDE_EFFECT_RECEIPT_REQUIRED` and reason "side-effect execution requires a configured
+receipt-gated dispatcher" when no dispatcher is configured. The product MUST therefore run:
+
+| Component | Symbol |
+|---|---|
+| Authorization kernel | `gove_zone.side_effect_kernel.SideEffectAuthorizationKernel` (`:497`) |
+| Receipt-gated executor | `gove_zone.side_effect_kernel.ReceiptGatedSideEffectExecutor` (`:1058`) |
+| Managed dispatch route | `gove_zone.managed_execution.ManagedExecutionDispatcher` (`:226`) |
+
+This configuration is the trace target for §8.4's dispatcher-level integration proof. An
+unconfigured dispatcher is not a degraded mode — it is a hard DENY, which is the correct
+fail-closed behavior.
+
+**`Kernel.simulate()` output is not authorization.** `kernel.py:303-309` (the docstring of
+`Kernel.simulate()`, `kernel.py:287` — **not** `evaluate()`, which is a different symbol on
+the policy object): a simulate-only result "is a prediction, not a receipt, and must never
+be presented as authorization to execute." Implementation MUST NOT gate execution on
+`simulate()`; only a dispatched, appended `DecisionReceipt` authorizes.
 
 **No valid ALLOW receipt: no execution.** `DENY` and `ESCALATE` are not executable. This
 is existing gove-zone behavior and MUST NOT be weakened, bypassed, or reordered so that
@@ -382,12 +456,21 @@ execution precedes receipt validation.
 | 4 | Evidence mining | Per-question repo search + reasoning | `ALLOW`; Gemini failure → retry → `ESCALATE` |
 | 5 | Adversarial QA | Refute each citation | `ALLOW`; verdict drives response state |
 | 6 | Assembly | Build + seal pack via `proof_pack` | `ALLOW`; refuses to emit a pack described as signed while `signature == "unsigned_local"` |
-| 7 | Delivery | Email pack + receipts | `ALLOW` |
+| 7 | Delivery | Email pack + receipts | `ALLOW`; **the pack root digest MUST be recorded in the delivery receipt and published alongside the download** (§3.3.3) |
 | 8 | Follow-up | Day-7 check-in | `ALLOW` |
 
 `action_tier` (already present on `DecisionReceipt`) distinguishes read-only `explore`
 steps from side-effecting `commit` steps. Steps 1 and 2 are `explore`. Steps 3, 6, 7, 8
 are `commit`.
+
+**Explore-tier steps require a tool-tier registry or they fail closed.** `receipt.py:541-551`
+rejects an `explore` receipt unless the gate is given a `tool_tier_registry` that explicitly
+marks the tool explore-capable — verbatim: "Omitting the registry therefore fails closed for
+explore receipts." It also refuses a downgrade: a commit-only tool claiming `explore` is
+rejected. Steps 1 and 2 therefore MUST be provisioned with a registry naming exactly the
+intake and scoping tools as explore-capable; that registry is named in §3.5. This is correct
+fail-closed behavior, not an obstacle — but an unprovisioned registry means step 1 never
+runs, which is a startup failure, not a runtime one.
 
 **Steps 4 and 5 are `commit`, not `explore`.** They read no customer state, but each
 invocation spends money against the Gemini API, and a spend is an irreversible external
@@ -400,8 +483,29 @@ A single job fans out across up to ~320 questions in step 4, then again in step 
 a bound, one malformed job can consume an unbounded amount of API spend, and a job's cost
 can exceed its quote.
 
-Implementation MUST wire the existing `gove-zone` spend modules — `spend_guard.py`,
-`spend_store.py`, `spend_adapter.py` — rather than adding an ad-hoc counter:
+**The existing gove-zone spend modules are local fixtures and MUST NOT be relied on as the
+production ceiling.** `spend_store.py:1-5` describes itself verbatim as "Fail-closed durable
+**local-fixture** state for Spend Guard B1 and B2… It deliberately has no payment provider
+call, payment execution adapter, or **production deployment claim**," implemented over
+`sqlite3` plus `flock` and directory file descriptors. `spend_adapter.py:1` is a "Strict
+**local-fixture** Spend Guard route." On multi-instance Cloud Run with an ephemeral
+filesystem there is no shared `flock` domain: two instances would each reserve against their
+own SQLite file, and the ceiling would not bind.
+
+| Layer | Use |
+|---|---|
+| `spend_guard` / `spend_store` / `spend_adapter` | **Schema and decision types only** — development helper, local fixture |
+| Production reservation ledger | **Authoritative** — a transaction on the job document in Firestore, or serialization through a single-consumer queue |
+
+The production ledger MUST provide:
+
+- **Atomic reservation** — read-modify-write of the remaining ceiling in one transaction.
+- **Concurrency safety** — two workers cannot jointly exceed the ceiling. Tested (§8.3.4).
+- **Release semantics** — reservations released on failure or reconciliation, never leaked.
+- **Bounded retries** — retry attempts reserve like first attempts (below).
+- **Auditable cost decisions** — every reservation and reconciliation carries a receipt.
+
+Gemini calls remain **commit-tier** actions regardless of which ledger implements the bound.
 
 - A per-job spend ceiling is reserved at quote time (step 2) and bound to the `job_id`.
 - Each Gemini call reserves against that ceiling before dispatch and reconciles actual
@@ -419,6 +523,57 @@ Implementation MUST wire the existing `gove-zone` spend modules — `spend_guard
 
 This mirrors a known prior failure in this workspace, where a controller spent ~$16
 against a $5 ceiling because reservation was never wired into the batch loop.
+
+### 3.3.2 Cost model — the ceiling must be derived, not chosen
+
+A ceiling picked by intuition is not a control. It must be computed, because everything
+downstream depends on it:
+
+```
+expected_cost_per_job =
+      question_count
+    × calls_per_question        (>=2: mining + QA; more with contradiction lens)
+    × (avg_input_tokens × input_rate + avg_output_tokens × output_rate)
+    × (1 + expected_retry_rate)
+```
+
+At the §1.1 scale of 320 questions this is **≥640 model calls per job** before retries,
+multi-citation QA, or context expansion — a figure large enough that guessing the ceiling
+is guessing the business.
+
+Derived from that single figure:
+
+| Derived value | Rule |
+|---|---|
+| Spend ceiling | `expected_cost_per_job × safety_factor` |
+| Retry budget (§13 Q2) | Largest value keeping worst-case cost under the ceiling |
+| Max calls per job | Ceiling ÷ marginal call cost |
+| Quote band (§13 Q3) | Must exceed `expected_cost_per_job` by the target gross-margin floor |
+
+**Two failure modes this closes.** A ceiling set above cost-of-goods makes the entry tier
+loss-making per job; set below, jobs `ESCALATE` routinely and the automation claim collapses.
+Both are silent until they are expensive.
+
+**This computation is a prerequisite to publishing any price.** The figures in R3 are
+hypotheses; the cost model must be computed against current published Gemini rates, and the
+quote band derived from it — not the reverse. Do not invent market pricing to fit a ceiling.
+
+### 3.3.3 Binding the sealed pack to the delivered artifact
+
+`proof_pack.PinnedOutputRoot` (`proof_pack.py:189`) seals a **local directory** against path
+substitution during write. It says nothing about the object that reaches the customer. §3.5
+stores artifacts in GCS and §1.5 delivers by email — two transports the seal does not cover.
+
+Without a binding, the customer verifies a pack whose *transport* is unverified: the sealed
+directory and the received attachment are not provably the same bytes.
+
+Required:
+
+- The pack root digest is computed at seal time and **recorded in the delivery-step
+  `DecisionReceipt`**.
+- The same digest is published alongside the download and included in the delivery email.
+- The offline verifier compares the received artifact's recomputed digest against the digest
+  in the receipt. A mismatch is a verification failure, reported as such.
 
 ### 3.4 Human-only decisions
 
@@ -443,7 +598,13 @@ predictable failure mode of this business, and it is closed structurally, not by
 | Artifacts | GCS | |
 | Payments | Stripe Checkout + webhook | |
 | Reasoning | **Gemini API** | §4 |
-| Governance | `gove-zone` kernel, receipts, audit, signing | |
+| Authorization kernel | `side_effect_kernel.SideEffectAuthorizationKernel` (`:497`) | §3.2 — required; the legacy pure path does not provide the two-append property |
+| Receipt-gated executor | `side_effect_kernel.ReceiptGatedSideEffectExecutor` (`:1058`) | §8.4 trace target |
+| Managed dispatch | `managed_execution.ManagedExecutionDispatcher` (`:226`) | Unconfigured → hard DENY `SIDE_EFFECT_RECEIPT_REQUIRED` |
+| Tool-tier registry | Explore-capable set = {intake, scope} only | §3.3 — omitting it fails closed for explore receipts |
+| Reservation + consumption ledger | Firestore transaction on the job document | §3.3.1, §7 — authoritative; gove-zone spend/consumption modules are local fixtures |
+| Signing key | Cloud KMS, sign-only grant (§6.3) | Key holder MUST NOT have write access to the audit store |
+| Governance | `gove-zone` receipts, audit, signing types | |
 | Pack sealing | `gove_zone.proof_pack` | Use `PinnedOutputRoot` / `AttestedDirectory` for artifact assembly. Do **not** hand-roll directory hashing — the module already pins the output root against path substitution during write. |
 | Spend control | `gove_zone.spend_guard` / `spend_store` / `spend_adapter` | §3.3.1 |
 | Classification | `acgs-lite` EU AI Act risk-tier classifier | Existing, tested |
@@ -539,7 +700,20 @@ untrusted output.
 Deterministic precondition (code, not model):
 
 0. `commit_sha` resolves; `file_path` exists at that commit; line range is within the file;
-   recomputed `artifact_hash` matches. Any failure → `REFUTED`, no model call made.
+   recomputed `artifact_hash` matches; **and `excerpt` byte-equals the file's actual content
+   at `line_start`–`line_end`.** Any failure → `REFUTED`, no model call made.
+
+**Excerpt verification is not optional, and omitting it would falsify §5.2.** `excerpt` is
+the field the customer and their prospect actually read in the delivered pack. Without a
+byte comparison, a mining agent can cite a real file at a real range with a correct file
+hash and supply a fabricated or subtly edited excerpt — every arithmetic check passes, and
+the only thing between the fabrication and the artifact is model judgment. That is exactly
+the circularity §6.1 and R13 exist to close.
+
+The excerpt in the delivered pack MUST be deterministically derived from the referenced
+artifact. **No model-generated summary, paraphrase, or reconstruction may substitute for
+it.** If a summary is ever shown alongside a citation, it must be visibly labelled as
+commentary and must never occupy the evidence field.
 
 Model-judgment checks (QA agent, on citations that passed check 0):
 
@@ -562,9 +736,37 @@ but is not wired into the execution path does not evidence a control.
 | `PASS` | Citation genuinely supports the specific assertion | Response stays `SUPPORTED` |
 | `REFUTED` | Citation does not support it, or contradicts it | → `NOT_EVIDENCED` + Gap |
 | `INSUFFICIENT` | Citation is related but does not establish the assertion | → `NOT_EVIDENCED` + Gap (or `PARTIALLY_SUPPORTED` if other citations survive) |
+| `CONTRADICTED` | A *different* artifact in the repository contradicts the assertion | **Dominates `PASS`.** → `PARTIALLY_SUPPORTED` or `NOT_EVIDENCED` + Gap, with the contradicting locator recorded |
 
-Both `REFUTED` and `INSUFFICIENT` force gap creation. There is no verdict that permits an
-uncited assertion to be delivered as supported.
+`REFUTED`, `INSUFFICIENT`, and `CONTRADICTED` all force gap creation. There is no verdict
+that permits an uncited assertion to be delivered as supported.
+
+### 5.4.1 Contradiction detection
+
+`PASS` alone is unsafe: the first four checks only adjudicate *the citation that was
+offered*. They never ask whether the repository contains something that refutes the answer.
+
+**Failure this closes.** A repository holds a policy document asserting model-input logging
+and a config file disabling it. The mining agent cites the policy doc; check 0 passes; QA
+sustains `PASS`; the response ships `SUPPORTED` to the customer's prospect with the refuting
+artifact unmentioned. For a product whose whole claim is evidence *location*, silently
+omitting the disconfirming artifact is the worst available failure — worse than finding
+nothing, because it manufactures false confidence in a representation the customer signs.
+
+**Contradiction lens.** A QA lens MUST search for artifacts that contradict the assertion,
+not merely adjudicate the one offered. Any contradicting artifact found is recorded on the
+response and reported to the customer.
+
+`CONTRADICTED` **dominates** `PASS`: conflicting evidence can never yield a supported
+answer. Precedence, most to least dominant:
+
+```
+CONTRADICTED  >  REFUTED  >  INSUFFICIENT  >  PASS
+```
+
+The contradicting artifact is recorded in `Evidence.contradicts_locator` (§2.3) so the
+customer can open it themselves. Reporting it is the product working correctly, not a
+defect.
 
 ### 5.5 Multi-vote option (post-MVP)
 
@@ -645,6 +847,31 @@ actor can recompute the chain. Only with `require_signature=True` and a key held
 that store does tamper-evidence hold against a privileged local actor. Copy must not
 describe the chain as tamper-evident until signing is enabled and verified.
 
+### 6.3 Signing key custody — a signature is not authenticity without an anchor
+
+§6.1 lists "configured signing material — held outside the audit store" as trusted. That
+trust must be *provisioned*, and `signing.py:16-22` explicitly disclaims doing it: the module
+provides no key custody, distribution, or revocation, and its verifier map is static with no
+PKI. The spec must therefore state the custody model itself.
+
+| Concern | Requirement |
+|---|---|
+| Ownership | Key generated and held in Cloud KMS. Never in the repository, image, or environment. |
+| Storage boundary | The signing identity has a **sign-only** grant. It MUST NOT have write access to the audit store. |
+| Rotation | Named owner; documented rotation procedure; `signing_key_id` on every receipt so past receipts remain verifiable across rotations. |
+| Revocation | Named owner; revocation list distributed with the verifier. Absent a PKI, revocation is operational, not cryptographic — state this rather than implying otherwise. |
+
+**Why the separation matters.** If the signer and the audit-store writer share one identity,
+§8.7 can pass while a single compromised principal can both rewrite the chain and re-sign it.
+That is integrity plus self-attestation — not authenticity against a privileged local actor,
+which is precisely the boundary §6.2 claims signing closes.
+
+**Limit to state plainly, including in §9.** Without an external anchor — an offsite key, a
+third-party timestamp, or a WORM bucket — the receipt chain is **self-consistent, not
+independently authenticated**. §9.1 offers our own operating log as evidence of our own
+operations; that is legitimate and useful, but it is self-attestation, and the submission
+narrative must not present it as third-party verification.
+
 ---
 
 ## 7. Failure handling
@@ -659,7 +886,7 @@ All defaults fail closed.
 | Gemini call fails | Retry to budget, then `ESCALATE` | §4.3 — never silently degrade |
 | Gemini returns malformed output | Retry once, then `ESCALATE` | |
 | Payment missing or unverified | Executor **refuses** to run step 4 onward | Payment receipt gates job release |
-| Stripe webhook replay | Single-use receipt ledger rejects the duplicate | `ReceiptConsumptionLedger` already on master (#114) |
+| Stripe webhook replay | Single-use receipt store rejects the duplicate | `gove_zone.consumption.ReceiptConsumptionStore` (`consumption.py:154`). **It is SQLite-backed and gives no cross-instance protection** — on multi-instance Cloud Run the authoritative consumption record MUST be the same shared transactional store as the spend ledger (§3.3.1), or a duplicate webhook hitting a second instance releases the job twice. |
 | Receipt expired (`expires_at`) | Refuse; re-mint | Existing kernel behavior |
 | Refund / discount request | `ESCALATE` — human only | §3.4 |
 | Art. 5 prohibited-practice classification | `ESCALATE` — human only | Beyond automated competence |
@@ -730,6 +957,29 @@ authorization to execute (§3.2, `kernel.py:306-309`).
 
 Configure a ceiling below the cost of a full fan-out. Assert the job `ESCALATE`s, that no
 partial pack is delivered, and that retries decrement the ceiling.
+
+### 8.3.5 Excerpt fabrication
+
+Cite a real file, real range, correct `artifact_hash`, but supply an `excerpt` that differs
+from the file's bytes at that range. Assert check 0 returns `REFUTED` **before any model
+call is made** (assert the Gemini client was not invoked).
+
+### 8.3.6 Contradicting artifact
+
+Fixture repository containing a policy document asserting a control and a config file
+disabling it. Assert the response does **not** ship `SUPPORTED`: verdict is `CONTRADICTED`,
+`contradicts_locator` points at the config file, and a Gap exists.
+
+### 8.3.7 Two-worker spend concurrency
+
+Run two workers against one job with a ceiling permitting N calls. Assert their combined
+spend never exceeds the ceiling — the failure this catches is per-instance reservation,
+which passes a single-worker test and fails in production.
+
+### 8.3.8 Cross-instance webhook replay
+
+Deliver the same Stripe webhook to two separate processes. Assert the job is released
+exactly once. A single-process test cannot detect the SQLite-locality defect.
 
 ### 8.4 Dispatcher-level integration proof
 
@@ -994,7 +1244,28 @@ controls supported is realistic. **Mitigation:** §6.2 — delimited quoting, sc
 output, and the structural property that support requires a deterministic check the model
 does not control. Tested by §8.3.2.
 
-**R15 — Scope creep into the portal/dashboard.** The excluded list in §11 exists because
+**R15 — Validator/proposer separation is a type boundary, not a privilege boundary.** In a
+single Cloud Run container a compromised worker can construct both objects, so "no ALLOW, no
+execute" holds against accident and ordinary bugs but not against a compromised process.
+**Mitigation:** stated explicitly in §2.6.1 rather than papered over; a real privilege
+boundary requires a separately-identified validator service, out of MVP scope. Do not claim
+stronger isolation than the deployment provides.
+
+**R16 — The receipt chain is self-attested absent an external anchor.** §9.1 offers our own
+operating log as evidence of our own operations. Legitimate, but it is not third-party
+verification, and without an offsite key, third-party timestamp, or WORM bucket the chain is
+self-consistent rather than independently authenticated. **Mitigation:** §6.3; the XPRIZE
+narrative must not present self-attestation as external verification.
+
+**R17 — Prior revision mis-cited the enforcement seam.** Revision 1 asserted the two-append
+property from `kernel.py:472`, the legacy pure-tool path, where it does **not** hold — that
+path returns an in-memory `Receipt` and never appends an outcome. The property holds only on
+`side_effect_kernel.py`. A verbatim quotation was mistaken for architectural accuracy.
+**Mitigation:** §3.2/§3.5 now name the executor configuration; §8.4 has a concrete trace
+target. Generalized lesson: quoting a real line proves the line exists, not that it governs
+the path the product runs on.
+
+**R18 — Scope creep into the portal/dashboard.** The excluded list in §11 exists because
 23 days is the real constraint. **Mitigation:** treat §11 exclusions as frozen for the
 competition window.
 
@@ -1002,9 +1273,26 @@ competition window.
 
 ## 13. Open questions
 
-1. Repository input: zip upload or PAT? PAT gives commit pinning for free; zip requires
-   synthesizing a `commit_sha` substitute. Resolve before implementation — `Evidence`
-   depends on it.
+1. **Repository input: zip upload or PAT? Still open — not decided in this revision.** It is
+   the first blocking decision, because check 0 (§5.3) now requires `commit_sha` to resolve
+   and `excerpt` to byte-match the artifact at that commit.
+
+   The consequence must be explicit before choosing. §6 sells reproducibility as "the
+   customer, their prospect, **or a third party** can independently open that location and
+   see the same content." A real commit SHA satisfies that against an authority neither
+   party controls. A ZIP does not: `commit_sha` becomes a synthetic digest of an archive
+   only we hold, so "the commit resolves" degrades to "it resolves inside our own snapshot" —
+   we vouch for our own copy of the evidence. Independent review recommended PAT
+   (Option B) on provenance, citation quality, and — counter-intuitively — implementation
+   complexity, since git supplies commit pinning and per-file hashing for free while the ZIP
+   path requires synthesizing commit semantics plus retention and deletion policy for a
+   customer's entire source tree in our bucket.
+
+   If ZIP ships at all, it MUST emit a **visibly degraded** provenance label
+   (`commit_sha = "zip:<sha256-of-archive>"`) and an artifact statement that third-party
+   reproduction requires the customer to supply the archive. The two modes MUST NOT emit the
+   same provenance claim — doing so would make §6's strongest sentence false for half of all
+   jobs.
 2. Retry budget for Gemini calls before `ESCALATE`.
 3. Quote band bounds that trigger `ESCALATE`.
 4. Whether the free Art. 50 check ships as a separate endpoint or a mode of the main
