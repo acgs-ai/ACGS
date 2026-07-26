@@ -87,7 +87,10 @@ jobs:
           POSTGRES_USER: acgs_control_plane_test
           POSTGRES_PASSWORD: g101-test-password-17
         ports:
-          - 5432/tcp
+          # Static host port: the max_connections step below restarts the container,
+          # and Docker re-allocates dynamically published ports on restart, which
+          # would invalidate the job-start ports['5432'] mapping every later step uses.
+          - '15432:5432'
         options: >-
           --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
           --health-interval 10s
@@ -213,12 +216,13 @@ jobs:
             --dbname acgs_control_plane_test \
             --set ON_ERROR_STOP=1 \
             --command 'ALTER SYSTEM SET max_connections = 400'
-          # Restart the server process, NOT the container. The service is published
-          # on a dynamic host port (-p 5432/tcp), so `docker restart` reallocates it
-          # while ${{ job.services.postgres.ports['5432'] }} still resolves to the
-          # port captured at service start -- every later step would dial a dead port.
-          docker exec --user postgres "$container_id" \
-            pg_ctl --pgdata /var/lib/postgresql/data --mode fast restart >/dev/null
+          # Restart the whole container, NOT the server process in place. In the
+          # official postgres image the postmaster is the container's PID 1, so an
+          # in-place `pg_ctl restart` shuts down PID 1 and kills the container (and
+          # this exec) with exit 137 before the new postmaster can start. A container
+          # restart is safe here because the host port is statically pinned above,
+          # so the job-start ports['5432'] mapping stays valid across the restart.
+          docker restart "$container_id" >/dev/null
           for _ in {1..60}; do
             if docker exec "$container_id" pg_isready \
               --username acgs_control_plane_test \
