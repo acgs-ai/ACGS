@@ -74,7 +74,7 @@ def test_production_rejects_legacy_unsigned_routes(
     legacy = [
         r for r in ROUTE_CONTRACTS if r.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
-    assert len(legacy) == 7
+    assert len(legacy) == 14
     assert TestClient(local).get("/healthz").status_code == 200
     ready = TestClient(local).get("/readyz")
     assert ready.status_code == 503
@@ -113,7 +113,7 @@ def test_production_rejects_legacy_unsigned_routes(
             production_providers=providers,
         )
     assert calls == {"engine": 0}
-    assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 7
+    assert len([b for b in blocked.value.blockers if b.code == "LEGACY_UNSIGNED_WRITE"]) == 14
     assert not (tmp_path / "must-not-exist.sqlite3").exists()
     assert not (tmp_path / "audit").exists()
 

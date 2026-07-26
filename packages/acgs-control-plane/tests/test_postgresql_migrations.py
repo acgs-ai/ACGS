@@ -2248,7 +2248,7 @@ def test_postgresql_exact_head_production_is_blocked_before_persistence_and_loca
                 if blocker.code == "LEGACY_UNSIGNED_WRITE"
             ]
         )
-        == 7
+        == 14
     )
     assert inspect_schema(_TEST_POSTGRES_URL).state is DatabaseSchemaState.VERSION_0005
     assert not audit_dir.exists()

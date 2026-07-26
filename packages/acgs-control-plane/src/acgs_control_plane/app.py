@@ -23,6 +23,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from gove_zone.policy import RuleSetPolicy
 from gove_zone.tool import ToolCall, normalize_path_context
 from pydantic import ValidationError
@@ -105,6 +106,7 @@ from acgs_control_plane.schemas import (
     UserCreateRequest,
     UserCreateResponse,
     UserResponse,
+    V1MetadataResponse,
 )
 from acgs_control_plane.tenant_bootstrap import (
     BOOTSTRAP_AUTHORIZATION_HEADER,
@@ -447,9 +449,9 @@ def create_app(
         raise _exc
 
     _register_routes(app)
+    _install_v1_aliases(app)
     # Reconcile the concrete Starlette APIRoute surface. WebSockets and other
     # protocol Route types are intentionally outside this HTTP contract.
-    from fastapi.routing import APIRoute
     from starlette.routing import Route
 
     actual = tuple(
@@ -570,6 +572,19 @@ def _register_routes(app: FastAPI) -> None:
                 "schema_current": schema_current,
                 "schema_state": preflight.state.value,
             },
+        )
+
+    @app.get(
+        "/v1",
+        response_model=V1MetadataResponse,
+        tags=["meta"],
+        operation_id="get_v1_metadata",
+    )
+    def v1_metadata() -> V1MetadataResponse:
+        return V1MetadataResponse(
+            api_version="v1",
+            status="local-dev-legacy-alias",
+            aliased_from="/orgs",
         )
 
     # -- organizations (bootstrap) ------------------------------------------
@@ -1390,3 +1405,41 @@ def _export_summary(row: ComplianceExport, receipt_id: str | None = None) -> Exp
 _RECEIPT_CURSOR_QUERY_PARAMS = frozenset(
     {"decision", "tool", "actor", "since", "until", "limit", "offset", "cursor"}
 )
+
+
+def _install_v1_aliases(app: FastAPI) -> None:
+    source_routes = [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and (route.path == "/orgs" or route.path.startswith("/orgs/"))
+    ]
+    for route in source_routes:
+        alias = APIRoute(
+            path=f"/v1{route.path}",
+            endpoint=route.endpoint,
+            response_model=route.response_model,
+            status_code=route.status_code,
+            tags=list(route.tags),
+            dependencies=list(route.dependencies),
+            summary=route.summary,
+            description=route.description,
+            response_description=route.response_description,
+            responses=route.responses,
+            deprecated=route.deprecated,
+            name=f"v1_{route.name}",
+            methods=route.methods,
+            operation_id=f"v1_{route.unique_id}",
+            response_model_include=route.response_model_include,
+            response_model_exclude=route.response_model_exclude,
+            response_model_by_alias=route.response_model_by_alias,
+            response_model_exclude_unset=route.response_model_exclude_unset,
+            response_model_exclude_defaults=route.response_model_exclude_defaults,
+            response_model_exclude_none=route.response_model_exclude_none,
+            include_in_schema=route.include_in_schema,
+            response_class=route.response_class,
+            dependency_overrides_provider=app,
+            callbacks=route.callbacks,
+            openapi_extra=route.openapi_extra,
+        )
+        app.router.routes.append(alias)
