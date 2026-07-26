@@ -6195,6 +6195,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         assert required in source
     assert "CLEAN_SIBLING_TECHNICAL=PASS" in cleanup_source
     assert "attestations=pending-independent-lanes" in cleanup_source
+    assert "P3-APPROVAL-003:12:EVID+CP+GZ)" in cleanup_source
     assert '  exit "$?"\nfi' in source
     assert "  exit 2\nfi" not in source
     assert '"$ACGS_GUARDIAN_PARENT_EXE" == /usr/bin/bash' in source
@@ -8815,6 +8816,95 @@ exit $?
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
     assert sentinel.read_text(encoding="utf-8") == "unchanged\n"
     assert sorted(path.name for path in parent.iterdir()) == ["sentinel"]
+
+
+def test_clean_sibling_cleanup_attests_only_exact_p3_approval_tuple(tmp_path: Path) -> None:
+    helper = EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(source_repo)], check=True)
+    subprocess.run(["git", "config", "user.name", "Evidence Test"], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "evidence@example.invalid"],
+        cwd=source_repo,
+        check=True,
+    )
+    (source_repo / "tracked").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked"], cwd=source_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=source_repo, check=True)
+    parent = tmp_path / "caller"
+    parent.mkdir(mode=0o700)
+
+    command = r"""
+set -u
+source "$1"
+SOURCE_REPO="$2"
+TMP_PARENT="$3"
+NODE_ID="$4"
+TRANSCRIPT_RECORDS="$5"
+ASSIGNED_BOOTSTRAPS="$6"
+TMP_ROOT=''
+WORKTREE_ADDED=0
+WORKTREE=''
+PROOF_COMPLETE=1
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+ACGS_STATIC_LAUNCHED=1
+ACGS_STATIC_PARENT_PID="$PPID"
+ACGS_CLEAN_SIBLING_STATIC_LAUNCHER=98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc
+clean_sibling_cleanup 0
+exit $?
+"""
+
+    def run_tuple(
+        *,
+        node_id: str = "P3-APPROVAL-003",
+        records: str = "12",
+        assignments: str = "EVID+CP+GZ",
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "/usr/bin/busybox",
+                "ash",
+                "-c",
+                '/usr/bin/bash -c "$1" _ "$2" "$3" "$4" "$5" "$6" "$7"; status=$?; exit "$status"',
+                "ash",
+                command,
+                str(helper),
+                str(source_repo),
+                str(parent),
+                node_id,
+                records,
+                assignments,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    accepted = run_tuple()
+    assert accepted.returncode == 0, accepted.stderr
+    assert (
+        "CLEAN_SIBLING_TECHNICAL=PASS "
+        "P=1111111111111111111111111111111111111111 "
+        "T=2222222222222222222222222222222222222222 "
+        "R=3333333333333333333333333333333333333333333333333333333333333333 "
+        "records=12 assignments=EVID+CP+GZ attestations=pending-independent-lanes"
+    ) in accepted.stdout
+
+    for refused in (
+        run_tuple(records="7"),
+        run_tuple(assignments="EVID+CP"),
+        run_tuple(node_id="P3-MUTATIONS-002"),
+    ):
+        assert refused.returncode == 2
+        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in refused.stdout
 
 
 def test_clean_sibling_cleanup_accepts_only_reviewed_temp_basenames(

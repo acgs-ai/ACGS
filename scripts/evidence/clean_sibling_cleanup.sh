@@ -1135,6 +1135,10 @@ clean_sibling_cleanup() {
         printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=7 assignments=EVID+CP attestations=pending-independent-lanes\n' \
           "$P" "$T" "$R"
         ;;
+      P3-APPROVAL-003:12:EVID+CP+GZ)
+        printf 'CLEAN_SIBLING_TECHNICAL=PASS P=%s T=%s R=%s records=12 assignments=EVID+CP+GZ attestations=pending-independent-lanes\n' \
+          "$P" "$T" "$R"
+        ;;
       *)
         cleanup_status=2
         ;;
