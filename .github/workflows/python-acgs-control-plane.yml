@@ -87,7 +87,10 @@ jobs:
           POSTGRES_USER: acgs_control_plane_test
           POSTGRES_PASSWORD: g101-test-password-17
         ports:
-          - 5432/tcp
+          # Static host port: the max_connections step below restarts the container,
+          # and Docker re-allocates dynamically published ports on restart, which
+          # would invalidate the job-start ports['5432'] mapping every later step uses.
+          - '15432:5432'
         options: >-
           --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
           --health-interval 10s
@@ -227,6 +230,14 @@ jobs:
             --set ON_ERROR_STOP=1 \
             --tuples-only --no-align \
             --command 'SHOW max_connections' | grep -qx '400'
+          host_port='${{ job.services.postgres.ports['5432'] }}'
+          for _ in {1..30}; do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$host_port") 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          (exec 3<>"/dev/tcp/127.0.0.1/$host_port")
 
       - name: Create fixed disposable databases
         shell: bash
