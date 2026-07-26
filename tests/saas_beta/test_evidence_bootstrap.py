@@ -67,6 +67,20 @@ P2_IDEMPOTENCY_PRODUCT_CP_SELECTORS = (
     "tests/integration/test_agent_registration_idempotency_postgres.py::"
     "test_100_request_multiprocess_has_at_most_one_authorized_execution",
 )
+P2_VERTICAL_GATE_CP_SELECTORS = (
+    "tests/integration/test_vertical_gate_postgres.py::"
+    "test_real_postgres_tenant_bootstrap_then_customer_agent_register",
+    "tests/integration/test_vertical_gate_postgres.py::"
+    "test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability",
+)
+P2_VERTICAL_GATE_ROOT_SELECTOR = (
+    "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract"
+)
+P2_VERTICAL_GATE_ROOT_SELECTORS = (
+    P2_VERTICAL_GATE_ROOT_SELECTOR,
+    "tests/saas_beta/test_cross_plane_contracts.py::"
+    "test_vertical_gate_contract_locks_managed_routes_and_production_blockers",
+)
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
     "tests/test_agent_registration_managed_route.py",
@@ -254,6 +268,20 @@ def _reviewed_p2_idempotency_records() -> list[dict[str, Any]]:
     ]
 
 
+def _reviewed_p2_vertical_gate_records() -> list[dict[str, Any]]:
+    return [
+        {
+            **_transcript_record(list(argv), selector),
+            "cwd_scope": cwd_scope,
+        }
+        for (selector, argv), cwd_scope in zip(
+            _common.REVIEWED_P2_VERTICAL_GATE_TRANSCRIPT,
+            _common.REVIEWED_CWD_SCOPES_BY_NODE["P2-VERTICAL-GATE-003"],
+            strict=True,
+        )
+    ]
+
+
 def _write_reviewed_p1_migration_transcript(path: Path) -> None:
     for record in _reviewed_p1_migration_records():
         _common.append_safe_transcript_record(
@@ -314,6 +342,15 @@ def _write_reviewed_p2_idempotency_transcript(path: Path) -> None:
             path,
             record,
             expected_node="P2-IDEMPOTENCY-002",
+        )
+
+
+def _write_reviewed_p2_vertical_gate_transcript(path: Path) -> None:
+    for record in _reviewed_p2_vertical_gate_records():
+        _common.append_safe_transcript_record(
+            path,
+            record,
+            expected_node="P2-VERTICAL-GATE-003",
         )
 
 
@@ -3459,6 +3496,231 @@ def test_p2_idempotency_run_validation_rejects_forged_corpus_metadata_before_out
             _common.validate_secret_free_run(forged, expected_node="P2-IDEMPOTENCY-002")
 
 
+def test_p2_vertical_gate_command_corpus_is_node_cwd_bound_and_exact_ordered(
+    tmp_path: Path,
+) -> None:
+    records = _reviewed_p2_vertical_gate_records()
+    assert len(records) == 12
+    assert [record["cwd_scope"] for record in records] == [
+        "REPO_ROOT",
+        "CP",
+        "CP",
+        "CP",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "REPO_ROOT",
+        "CP",
+        "REPO_ROOT",
+        "REPO_ROOT",
+    ]
+    assert records[-3]["argv"] == [
+        "./scripts/run_postgres_gate.sh",
+        *_common.P2_VERTICAL_GATE_CP_SELECTORS,
+    ]
+    assert records[-3]["selectors"] == [
+        "packages/acgs-control-plane:P2-VERTICAL-GATE-003-postgres-vertical-gate"
+    ]
+    assert records[-2]["argv"] == [
+        "packages/acgs-control-plane/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        *P2_VERTICAL_GATE_ROOT_SELECTORS,
+    ]
+    assert records[-2]["selectors"] == ["root:P2-VERTICAL-GATE-003-cross-plane-contract"]
+    assert records[-1]["argv"] == [
+        "uv",
+        "run",
+        "--active",
+        "--no-sync",
+        "--python",
+        "3.11",
+        "--package",
+        "gove-zone",
+        "python",
+        "-m",
+        "pytest",
+        *_common.P2_REGISTER_GZ_SELECTORS,
+        "--import-mode=importlib",
+        "-q",
+    ]
+    assert records[-1]["selectors"] == [
+        "packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate"
+    ]
+    assert _common.P2_VERTICAL_GATE_CP_SELECTORS == P2_VERTICAL_GATE_CP_SELECTORS
+    assert _common.EXPECTED_BOOTSTRAP_MAP["P2-VERTICAL-GATE-003"] == "EVID+CP+GZ"
+    assert _common.REVIEWED_RUN_METADATA_BY_NODE["P2-VERTICAL-GATE-003"]["process_schedule"] == (
+        "single-process-evidence-and-package-gates",
+        "postgres-vertical-bootstrap-register",
+    )
+    assert all(
+        "-c" not in record["argv"]
+        and record["argv"][0] not in {"bash", "sh", "zsh", "python", "python3"}
+        for record in records
+    )
+
+    transcript = tmp_path / "P2-VERTICAL-GATE-003/transcript.jsonl"
+    _write_reviewed_p2_vertical_gate_transcript(transcript)
+    loaded = generate_run._read_transcript(transcript, expected_node="P2-VERTICAL-GATE-003")
+    _common.validate_transcript_sequence(loaded, expected_node="P2-VERTICAL-GATE-003")
+
+    idempotency_cp_final = _reviewed_p2_idempotency_records()[-1]
+    tenant_cp_final = _reviewed_p2_tenant_bootstrap_records()[-2]
+    register_gz_final = _reviewed_p2_register_records()[-1]
+    unsafe_cases: list[list[dict[str, Any]]] = [
+        records[:-1],
+        [*records, records[-1]],
+        [records[1], records[0], *records[2:]],
+        [*records[:9], records[-2], records[-3], records[-1]],
+        [*records[:9], records[-3], records[-1], records[-2]],
+        [*records[:9], {**records[-3], "cwd_scope": "REPO_ROOT"}, records[-2], records[-1]],
+        [*records[:10], {**records[-2], "cwd_scope": "CP"}, records[-1]],
+        [*records[:11], {**records[-1], "cwd_scope": "CP"}],
+        [
+            *records[:9],
+            {**records[-3], "argv": [*records[-3]["argv"], "-k", "vertical"]},
+            records[-2],
+            records[-1],
+        ],
+        [
+            *records[:9],
+            {
+                **records[-3],
+                "argv": [
+                    records[-3]["argv"][0],
+                    *reversed(_common.P2_VERTICAL_GATE_CP_SELECTORS),
+                ],
+            },
+            records[-2],
+            records[-1],
+        ],
+        [
+            *records[:9],
+            {
+                **records[-3],
+                "argv": [
+                    records[-3]["argv"][0],
+                    "tests/integration/test_vertical_gate_postgres.py",
+                ],
+            },
+            records[-2],
+            records[-1],
+        ],
+        [*records[:9], idempotency_cp_final, records[-2], records[-1]],
+        [*records[:9], tenant_cp_final, records[-2], records[-1]],
+        [*records[:11], register_gz_final],
+        [*records[:10], {**records[-2], "argv": records[-2]["argv"][:5]}, records[-1]],
+        [*records[:11], {**records[-1], "argv": records[-1]["argv"][:11]}],
+    ]
+    for unsafe in unsafe_cases:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_transcript_sequence(unsafe, expected_node="P2-VERTICAL-GATE-003")
+
+    forged_transcript = tmp_path / "P2-VERTICAL-GATE-003/forged-transcript.jsonl"
+    forged_transcript.parent.mkdir(parents=True, exist_ok=True)
+    for record in [
+        *records[:9],
+        {**records[-3], "cwd_scope": "REPO_ROOT"},
+        records[-2],
+        records[-1],
+    ]:
+        with forged_transcript.open("ab") as handle:
+            handle.write(_common.jcs_bytes(record) + b"\n")
+    with pytest.raises(_common.EvidenceError, match="cwd differs"):
+        generate_run._read_transcript(forged_transcript, expected_node="P2-VERTICAL-GATE-003")
+
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed closed contract"):
+        _common.append_safe_transcript_record(transcript, records[-1])
+    with pytest.raises(_common.EvidenceError, match="outside the reviewed node contract"):
+        _common.append_safe_transcript_record(
+            transcript,
+            {**idempotency_cp_final, "cwd_scope": "CP"},
+            expected_node="P2-VERTICAL-GATE-003",
+        )
+
+
+def test_p2_vertical_gate_run_validation_rejects_forged_corpus_metadata_before_output() -> None:
+    reviewed_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-vertical-bootstrap-register",
+    ]
+
+    def run_with(**overrides: Any) -> dict[str, Any]:
+        run = {
+            "node_id": "P2-VERTICAL-GATE-003",
+            "commands": _reviewed_p2_vertical_gate_records(),
+            "determinism": {
+                "seed": 20260710,
+                "python_hash_seed": "0",
+                "process_schedule": reviewed_schedule,
+            },
+            "clock": {"source": "system-utc", "skew_ms": 0},
+            "skipped": [],
+            "external": [],
+        }
+        run.update(overrides)
+        return run
+
+    _common.validate_secret_free_run(run_with(), expected_node="P2-VERTICAL-GATE-003")
+
+    with pytest.raises(_common.EvidenceError, match="node identity"):
+        _common.validate_secret_free_run(
+            run_with(node_id="P2-IDEMPOTENCY-002"),
+            expected_node="P2-VERTICAL-GATE-003",
+        )
+
+    for determinism in (
+        {"seed": 20260711, "python_hash_seed": "0", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "1", "process_schedule": reviewed_schedule},
+        {"seed": 20260710, "python_hash_seed": "0", "process_schedule": ["single-process"]},
+        {
+            "seed": 20260710,
+            "python_hash_seed": "0",
+            "process_schedule": [*reversed(reviewed_schedule)],
+        },
+    ):
+        with pytest.raises(_common.EvidenceError, match=r"run .*differs|outside the reviewed"):
+            _common.validate_secret_free_run(
+                run_with(determinism=determinism),
+                expected_node="P2-VERTICAL-GATE-003",
+            )
+
+    records = _reviewed_p2_vertical_gate_records()
+    forged_runs = (
+        run_with(commands=records[:-1]),
+        run_with(commands=[*records[:9], {**records[-3], "cwd_scope": "REPO_ROOT"}, *records[-2:]]),
+        run_with(commands=[*records[:10], {**records[-2], "cwd_scope": "CP"}, records[-1]]),
+        run_with(commands=[*records[:11], {**records[-1], "cwd_scope": "CP"}]),
+        run_with(
+            commands=[
+                *records[:9],
+                {
+                    **records[-3],
+                    "argv": [
+                        "bash",
+                        "-c",
+                        "./scripts/run_postgres_gate.sh "
+                        "tests/integration/test_vertical_gate_postgres.py",
+                    ],
+                },
+                records[-2],
+                records[-1],
+            ]
+        ),
+        run_with(
+            commands=[*records[:10], {**records[-2], "argv": records[-2]["argv"][:5]}, records[-1]]
+        ),
+        run_with(commands=[*records[:11], {**records[-1], "argv": records[-1]["argv"][:11]}]),
+        run_with(skipped=[{"reason": "legacy routes migrated later"}]),
+        run_with(external=[{"system": "production-deployment"}]),
+    )
+    for forged in forged_runs:
+        with pytest.raises(_common.EvidenceError):
+            _common.validate_secret_free_run(forged, expected_node="P2-VERTICAL-GATE-003")
+
+
 def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
     schema = _json(SCHEMA_ROOT / "acgs-run-evidence-v1.schema.json")
     validator = jsonschema.Draft202012Validator(schema["$defs"]["determinism"])
@@ -3466,8 +3728,12 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
         "single-process-evidence-and-package-gates",
         "postgres-100-request-multiprocess-agent-registration-idempotency",
     ]
+    vertical_schedule = [
+        "single-process-evidence-and-package-gates",
+        "postgres-vertical-bootstrap-register",
+    ]
 
-    for process_schedule in (["single-process"], p2_schedule):
+    for process_schedule in (["single-process"], p2_schedule, vertical_schedule):
         validator.validate(
             {
                 "seed": 20260710,
@@ -3478,7 +3744,9 @@ def test_run_evidence_schema_closes_reviewed_process_schedules() -> None:
 
     for process_schedule in (
         [*reversed(p2_schedule)],
+        [*reversed(vertical_schedule)],
         [*p2_schedule, "unreviewed-extra-process"],
+        [*vertical_schedule, "unreviewed-extra-process"],
         ["unreviewed-process"],
     ):
         with pytest.raises(jsonschema.ValidationError):
@@ -5308,7 +5576,7 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "bash -c" not in source and "sh -c" not in source and "python -c" not in source
     assert "'root:EVID-gate'" in source
     assert source.count("run_recorded_gate CP") == 7
-    assert source.count("run_trusted_parent_postgres_gate CP") == 3
+    assert source.count("run_trusted_parent_postgres_gate CP") == 4
     assert source.count("run_recorded_gate GZ") == 5
     assert source.count("run_recorded_gate P0") == 1
     assert "P1-MIGRATION-001)" in source
@@ -5318,21 +5586,25 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "P2-TENANT-BOOTSTRAP-000)" in source
     assert "P2-REGISTER-001)" in source
     assert "P2-IDEMPOTENCY-002)" in source
+    assert "P2-VERTICAL-GATE-003)" in source
     assert "P1_SCOPE_REVIEWED_BASE='40781e1200289507fcfbcedf6ab14c120ac6aae8'" in source
     assert "P1_LEDGER_REVIEWED_BASE='9450db249e4428021c4d98b2f1b81d414693d9af'" in source
     assert "P1_TRUST_REVIEWED_BASE='f113d9bc7263ba2607ff9800da9881a3ff624441'" in source
     assert "P2_TENANT_BOOTSTRAP_REVIEWED_BASE='70b0d39010b46d6aed86d93572dcbda213350883'" in source
     assert "P2_REGISTER_REVIEWED_BASE='3f60e812bece9869b57bf32fdfa4f070a464592a'" in source
     assert "P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'" in source
+    assert "P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP'" in source
     assert "ASSIGNED_BOOTSTRAPS='EVID+CP+GZ'" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=6" in source
     assert "EXPECTED_TRANSCRIPT_RECORDS=11" in source
+    assert "EXPECTED_TRANSCRIPT_RECORDS=12" in source
     assert "TMP_BASENAME='acgs-p1-ledger'" in source
     assert "TMP_BASENAME='acgs-p1-trust'" in source
     assert "TMP_BASENAME='acgs-p2-tenant-bootstrap'" in source
     assert "TMP_BASENAME='acgs-p2-register'" in source
     assert "TMP_BASENAME='acgs-p2-idempotency'" in source
+    assert "TMP_BASENAME='acgs-p2-vertical-gate'" in source
     assert "P1_MIGRATION_GATE=(./scripts/run_postgres_gate.sh" in source
     assert "run_trusted_parent_postgres_gate CP" in source
     assert "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate" in source
@@ -5388,6 +5660,19 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "p2-idempotency-postgres" in source
     assert "postgres-100-request-multiprocess-agent-registration-idempotency" in source
     for selector in _common.P2_IDEMPOTENCY_CP_SELECTORS:
+        assert selector in source
+    assert "P2_VERTICAL_GATE_CP_GATE=(./scripts/run_postgres_gate.sh" in source
+    assert "packages/acgs-control-plane:P2-VERTICAL-GATE-003-postgres-vertical-gate" in source
+    assert "root:P2-VERTICAL-GATE-003-cross-plane-contract" in source
+    assert "'root:P2-VERTICAL-GATE-003-cross-plane-contract' REPO_ROOT 2" in source
+    assert "packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate" in source
+    assert "p2-vertical-postgres" in source
+    assert "p2-vertical-cross-plane" in source
+    assert "p2-vertical-runtime" in source
+    assert "postgres-vertical-bootstrap-register" in source
+    for selector in _common.P2_VERTICAL_GATE_CP_SELECTORS:
+        assert selector in source
+    for selector in P2_VERTICAL_GATE_ROOT_SELECTORS:
         assert selector in source
     assert "IFS=: read -r TMP_ROOT_DEVICE" in source
     assert "stat -c '%d:%i:%u:%a' --" in source
