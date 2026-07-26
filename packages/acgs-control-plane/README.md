@@ -95,7 +95,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0007` at this writing), then set
+secret-safe operator CLI to the current head (`0008` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -168,13 +168,21 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0007` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0008` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.
 - **Database governance-event tables are groundwork only**: revision `0007` adds DB-primary event,
   head, outbox, and cutover tables plus a caller-owned-session appender, but current routes and read
   paths still use the legacy JSONL authority until a later explicit cutover.
+- **Native receipt persistence is a transaction provider, not a route cutover**: revision `0008`
+  adds tenant-bound verified, minimized signed-receipt projections and single-use consumption
+  burns. It rejects TRANSFORM and freeform subject, goal, constraint, transformation, or extra
+  approval metadata; request IDs and matched-rule identifiers are stored only as hashes. Providers
+  flush but never commit or roll back; callers must keep receipt, burn, and protected SQL effect in
+  one transaction. A rollback removes all three. The database fixes `assurance_class` to `native`
+  and `source_system` to `gove-zone`; federated and observed evidence require distinct provenance.
+  Non-transactional external effects still require a separate durable execution protocol.
 - **Production posture remains blocked** while any mutation route uses the legacy unsigned
   governance membrane. A current database schema is necessary startup evidence, not production
   readiness.

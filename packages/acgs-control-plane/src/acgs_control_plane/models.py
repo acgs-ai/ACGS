@@ -1035,3 +1035,72 @@ class GovernanceEventCutover(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     cutover_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NativeDecisionReceiptRow(Base):
+    """Verified, tenant-bound, minimized native receipt projection.
+
+    ``projection`` contains only required bindings, signature evidence, and
+    deterministic hashes. Raw arguments and freeform receipt metadata are not
+    stored by this foundation.
+    """
+
+    __tablename__ = "native_decision_receipts"
+    __table_args__ = (
+        UniqueConstraint("org_id", "id", name="uq_native_receipts_org_id_id"),
+        UniqueConstraint("org_id", "receipt_id", name="uq_native_receipts_org_receipt_id"),
+        UniqueConstraint("org_id", "receipt_hash", name="uq_native_receipts_org_receipt_hash"),
+        UniqueConstraint(
+            "org_id", "audit_event_hash", name="uq_native_receipts_org_audit_event_hash"
+        ),
+        CheckConstraint("assurance_class = 'native'", name="ck_native_receipts_assurance_class"),
+        CheckConstraint("source_system = 'gove-zone'", name="ck_native_receipts_source_system"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    assurance_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_system: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor: Mapped[str] = mapped_column(String(200), nullable=False)
+    execution_boundary: Mapped[str] = mapped_column(String(200), nullable=False)
+    proposed_action: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_bundle_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    signing_key_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    signature_algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
+    projection: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class NativeReceiptConsumption(Base):
+    """Transactional single-use burn for a persisted native receipt."""
+
+    __tablename__ = "native_receipt_consumptions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "native_receipt_id"],
+            ["native_decision_receipts.org_id", "native_decision_receipts.id"],
+            name="fk_native_consumptions_org_receipt",
+        ),
+        UniqueConstraint("org_id", "native_receipt_id", name="uq_native_consumptions_org_receipt"),
+        UniqueConstraint("org_id", "receipt_hash", name="uq_native_consumptions_org_receipt_hash"),
+        UniqueConstraint(
+            "org_id", "audit_event_hash", name="uq_native_consumptions_org_audit_event_hash"
+        ),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
+    org_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    native_receipt_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

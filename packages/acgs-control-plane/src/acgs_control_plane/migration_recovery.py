@@ -70,6 +70,8 @@ EXPECTED_TABLES: Final = (
     "managed_receipt_consumptions",
     "managed_trust_keys",
     "managed_trust_scopes",
+    "native_decision_receipts",
+    "native_receipt_consumptions",
     "organization_memberships",
     "organizations",
     "pending_approvals",
@@ -590,7 +592,7 @@ def _capture_database_state(
     if expected_database is not None:
         _assert_connection_database(connection, expected_database)
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0007:
+    if preflight.state is not DatabaseSchemaState.VERSION_0008:
         raise RecoveryRefused("database is not the exact supported migration head schema")
     inspector = sa.inspect(connection)
     observed = tuple(sorted(inspector.get_table_names(schema="public")))
