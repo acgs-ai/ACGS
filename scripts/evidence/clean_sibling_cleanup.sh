@@ -859,7 +859,7 @@ clean_sibling_cleanup() {
         "$TMP_PARENT"/acgs-p1-scope.* | "$TMP_PARENT"/acgs-p1-ledger.* | \
         "$TMP_PARENT"/acgs-p1-trust.* | \
         "$TMP_PARENT"/acgs-p2-tenant-bootstrap.* | "$TMP_PARENT"/acgs-p2-register.* | \
-        "$TMP_PARENT"/acgs-p2-idempotency.*)
+        "$TMP_PARENT"/acgs-p2-idempotency.* | "$TMP_PARENT"/acgs-p2-vertical-gate.*)
         clean_sibling_remove_owned_root "$TMP_PARENT_FD" "$TMP_ROOT" \
           "$TMP_ROOT_DEVICE:$TMP_ROOT_INODE:$TMP_ROOT_UID:700" "$$" || cleanup_status=2
         ;;

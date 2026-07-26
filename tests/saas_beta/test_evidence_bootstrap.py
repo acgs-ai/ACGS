@@ -7818,6 +7818,30 @@ exit $?
     assert "cleanup refused for unowned path" not in completed.stderr
     assert not accepted_idempotency.exists()
 
+    accepted_vertical_gate = parent / "acgs-p2-vertical-gate.accepted"
+    accepted_vertical_gate.mkdir(mode=0o700)
+    completed = subprocess.run(
+        [
+            "bash",
+            "-c",
+            command,
+            "_",
+            str(helper),
+            str(source_repo),
+            str(parent),
+            str(accepted_vertical_gate),
+            "P2-VERTICAL-GATE-003",
+            "EVID+CP+GZ",
+            "12",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "cleanup refused for unowned path" not in completed.stderr
+    assert not accepted_vertical_gate.exists()
+
     refused = parent / "acgs-p2-unreviewed.refused"
     refused.mkdir(mode=0o700)
     completed = subprocess.run(
