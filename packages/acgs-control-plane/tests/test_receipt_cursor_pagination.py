@@ -17,6 +17,7 @@ from sqlalchemy import delete, func, select
 import acgs_control_plane.pagination as pagination
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
+from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import ComplianceExport, Organization, PolicyBundle, ReceiptRow
 from acgs_control_plane.pagination import (
     CursorConfigurationError,
@@ -49,11 +50,17 @@ def _settings(
     clock_skew_seconds: int = 30,
     database_name: str = "acp.sqlite3",
 ) -> Settings:
+    # Migrate rather than create_tables=True: the latter builds only the frozen
+    # v0 surface, which has no projects/environments tables, so agent
+    # registration cannot resolve its scope. These tests exercise the router as
+    # deployed, which is always a migrated schema.
+    database_url = f"sqlite:///{tmp_path / database_name}"
+    upgrade_database(database_url)
     return Settings(
-        database_url=f"sqlite:///{tmp_path / database_name}",
+        database_url=database_url,
         audit_dir=audit_dir,
         bootstrap_token=BOOTSTRAP_TOKEN,
-        create_tables=True,
+        create_tables=False,
         runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
         cursor_keyring=_keyring(key, clock_skew_seconds=clock_skew_seconds),
         cursor_clock_skew_seconds=clock_skew_seconds,

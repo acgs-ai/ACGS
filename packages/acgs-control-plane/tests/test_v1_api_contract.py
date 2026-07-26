@@ -16,18 +16,25 @@ from acgs_control_plane.governance import (
     ROUTE_CONTRACTS,
     ExecutionClass,
 )
+from acgs_control_plane.migrations import upgrade_database
 from acgs_control_plane.models import AgentRecord, ComplianceExport, Organization, ReceiptRow
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token"
 
 
 def _client(tmp_path: Path, audit_dir: Path, *, limit: int = 1024) -> TestClient:
+    # Migrate rather than create_tables=True: the latter builds only the frozen
+    # v0 surface, which has no projects/environments tables, so agent
+    # registration cannot resolve its scope. The /v1 alias is served from a
+    # migrated schema in every deployment.
+    database_url = f"sqlite:///{tmp_path / 'v1.sqlite3'}"
+    upgrade_database(database_url)
     app = create_app(
         Settings(
-            database_url=f"sqlite:///{tmp_path / 'v1.sqlite3'}",
+            database_url=database_url,
             audit_dir=audit_dir,
             bootstrap_token=BOOTSTRAP_TOKEN,
-            create_tables=True,
+            create_tables=False,
             runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
             max_request_body_bytes=limit,
         )
@@ -425,7 +432,10 @@ def test_v1_contract_is_alias_only_not_beta_feature_completion() -> None:
         if contract.path == "/v1/orgs" or contract.path.startswith("/v1/orgs/")
         if contract.execution_class is ExecutionClass.LEGACY_UNSIGNED_WRITE
     ]
-    assert len(v1_writes) == 7
+    # 6, not 7: agent registration is now governed with receipt v2, so
+    # POST /v1/orgs/{org_id}/agents is a CANONICAL_MANAGED_WRITE rather than a
+    # legacy unsigned one. The alias itself is still alias-only.
+    assert len(v1_writes) == 6
     assert all(contract.permits_persistent_effect for contract in v1_writes)
     assert ("GET", "/v1") in contracts
     assert contracts[("GET", "/v1")].execution_class is ExecutionClass.PROTOCOL_OPERATION
