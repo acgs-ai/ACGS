@@ -22,6 +22,7 @@ from acgs_control_plane.agent_registration import (
 )
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
+from acgs_control_plane.managed_mutations import CONTROL_PLANE_AGENT_CREATE_ACTION
 from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import (
     AgentRecord,
@@ -135,14 +136,14 @@ def _assert_corrupt_replay_integrity_state_typed_and_nonduplicating(
         assert first.status_code == 201, first.text
         with app.state.session_factory.begin() as session:
             if tamper_case == "sealed_receipt_ciphertext":
-                receipt = session.scalars(sa.select(ManagedDecisionReceipt)).one()
+                receipt = session.scalars(_agent_registration_receipt_select()).one()
                 sealed_receipt = dict(receipt.projection["sealed_receipt"])
                 sealed_receipt["ciphertext"] = f"{sealed_receipt['ciphertext']}A"
                 receipt.projection = {**receipt.projection, "sealed_receipt": sealed_receipt}
             elif tamper_case == "missing_allow_consumption":
-                session.delete(session.scalars(sa.select(ManagedReceiptConsumption)).one())
+                session.delete(session.scalars(_agent_registration_consumption_select()).one())
             elif tamper_case == "event_previous_hash":
-                event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
+                event = session.scalars(_agent_registration_event_select()).one()
                 event.previous_hash = "f" * 64
             elif tamper_case == "coordinated_agent_response":
                 _tamper_allow_replay_to_coordinated_agent_response(session)
@@ -166,8 +167,8 @@ def _assert_corrupt_replay_integrity_state_typed_and_nonduplicating(
 def _tamper_allow_replay_to_coordinated_agent_response(session: Any) -> None:
     agent = session.scalars(sa.select(AgentRecord)).one()
     row = session.scalars(sa.select(AgentRegistrationIdempotency)).one()
-    event = session.scalars(sa.select(ManagedGovernanceEvent)).one()
-    outbox = session.scalars(sa.select(ManagedOutboxMessage)).one()
+    event = session.scalars(_agent_registration_event_select()).one()
+    outbox = session.scalars(_agent_registration_outbox_select()).one()
 
     agent.name = "tampered-agent"
     agent.description = "tampered description"
@@ -304,6 +305,7 @@ def _postgres_agent_registration_app(
     org = _bootstrap_org(client)
     _seed_default_scope_and_trust(app, org["org_id"])
     _publish_and_activate_allow_agent_create(client, org)
+    _assert_policy_fixture_evidence_is_distinct_from_agent_registration(app)
     return app, client, org, database_url
 
 
@@ -456,10 +458,107 @@ def _assert_invalid_idempotency_row_rejected(
 def _assert_registration_counts(session: Any, *, agents: int) -> None:
     assert _count(session, AgentRecord) == agents
     assert _count(session, AgentRegistrationIdempotency) == agents
-    assert _count(session, ManagedDecisionReceipt) == agents
-    assert _count(session, ManagedReceiptConsumption) == agents
-    assert _count(session, ManagedGovernanceEvent) == agents
-    assert _count(session, ManagedOutboxMessage) == agents
+    assert _agent_registration_receipts(session) == agents
+    assert _agent_registration_consumptions(session) == agents
+    assert _agent_registration_events(session) == agents
+    assert _agent_registration_outbox_messages(session) == agents
+
+
+def _assert_policy_fixture_evidence_is_distinct_from_agent_registration(app: Any) -> None:
+    with app.state.session_factory() as session:
+        assert _agent_registration_receipts(session) == 0
+        assert _non_agent_registration_receipts(session) >= 1
+
+
+def _agent_registration_receipt_select() -> Any:
+    return sa.select(ManagedDecisionReceipt).where(
+        ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION
+    )
+
+
+def _agent_registration_receipt_ids() -> Any:
+    return (
+        sa.select(ManagedDecisionReceipt.id)
+        .where(ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION)
+        .scalar_subquery()
+    )
+
+
+def _agent_registration_consumption_select() -> Any:
+    return sa.select(ManagedReceiptConsumption).where(
+        ManagedReceiptConsumption.managed_receipt_id.in_(_agent_registration_receipt_ids())
+    )
+
+
+def _agent_registration_event_select() -> Any:
+    return sa.select(ManagedGovernanceEvent).where(
+        ManagedGovernanceEvent.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION,
+        ManagedGovernanceEvent.managed_receipt_id.in_(_agent_registration_receipt_ids()),
+    )
+
+
+def _agent_registration_outbox_select() -> Any:
+    return sa.select(ManagedOutboxMessage).where(
+        ManagedOutboxMessage.managed_receipt_id.in_(_agent_registration_receipt_ids())
+    )
+
+
+def _agent_registration_receipts(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count()).select_from(_agent_registration_receipt_select().subquery())
+        )
+        or 0
+    )
+
+
+def _non_agent_registration_receipts(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedDecisionReceipt)
+            .where(ManagedDecisionReceipt.proposed_action != CONTROL_PLANE_AGENT_CREATE_ACTION)
+        )
+        or 0
+    )
+
+
+def _agent_registration_consumptions(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedReceiptConsumption)
+            .where(
+                ManagedReceiptConsumption.managed_receipt_id.in_(_agent_registration_receipt_ids())
+            )
+        )
+        or 0
+    )
+
+
+def _agent_registration_events(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedGovernanceEvent)
+            .where(
+                ManagedGovernanceEvent.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION,
+                ManagedGovernanceEvent.managed_receipt_id.in_(_agent_registration_receipt_ids()),
+            )
+        )
+        or 0
+    )
+
+
+def _agent_registration_outbox_messages(session: Any) -> int:
+    return int(
+        session.scalar(
+            sa.select(sa.func.count())
+            .select_from(ManagedOutboxMessage)
+            .where(ManagedOutboxMessage.managed_receipt_id.in_(_agent_registration_receipt_ids()))
+        )
+        or 0
+    )
 
 
 def _managed_integrity_counts(app: Any) -> dict[str, int]:
