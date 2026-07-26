@@ -601,7 +601,7 @@ def test_existing_unbound_sqlite_upgrade_remains_compatible_but_identity_bound_r
     compatible_url = f"sqlite:///{tmp_path / 'compatible.sqlite3'}"
     result = upgrade_database(compatible_url)
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0005
+    assert result.after.state is DatabaseSchemaState.VERSION_0006
 
     rejected_url = f"sqlite:///{tmp_path / 'rejected.sqlite3'}"
     with pytest.raises(UnsupportedMigrationDialect):

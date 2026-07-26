@@ -38,7 +38,8 @@ LEGACY_V0_REVISION: Final = "0001"
 SCOPED_REVISION: Final = "0002"
 MANAGED_MUTATION_REVISION: Final = "0003"
 TRUST_V2_REVISION: Final = "0004"
-HEAD_REVISION: Final = "0005"
+TENANT_BOOTSTRAP_REVISION: Final = "0005"
+HEAD_REVISION: Final = "0006"
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -77,6 +78,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0003 = "version_0003"
     VERSION_0004 = "version_0004"
     VERSION_0005 = "version_0005"
+    VERSION_0006 = "version_0006"
     UNKNOWN = "unknown"
 
 
@@ -101,7 +103,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0005.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0006.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -1183,7 +1185,7 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
             DatabaseSchemaState.UNKNOWN,
             _detail_after_nullable_user_fallback(detail, create_all_detail),
         )
-    if versions == [HEAD_REVISION]:
+    if versions == [TENANT_BOOTSTRAP_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
@@ -1197,6 +1199,21 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0005, "known Alembic revision 0005")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _AGENT_SCOPE_COLUMNS,
+            _AGENT_SCOPE_PRIMARY_KEYS,
+            _AGENT_SCOPE_FOREIGN_KEYS,
+            _AGENT_SCOPE_UNIQUES,
+            _AGENT_SCOPE_NON_UNIQUE_INDEXES,
+            _AGENT_SCOPE_CHECKS,
+            _AGENT_SCOPE_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0006, "known Alembic revision 0006")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1212,7 +1229,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0005:
+    if preflight.state is not DatabaseSchemaState.VERSION_0006:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1315,7 +1332,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0005:
+    if after.state is not DatabaseSchemaState.VERSION_0006:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1377,7 +1394,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0005:
+                    if after.state is not DatabaseSchemaState.VERSION_0006:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
@@ -1841,6 +1858,57 @@ def _has_only_expected_foreign_key_options(
         and str(normalized.get("initially", "")).upper() == "DEFERRED"
         and set(normalized) <= {"deferrable", "initially"}
     )
+
+
+# Revision 0006 attaches agents to project/environment scope through a new
+# Alembic-managed table.  ``agents`` itself gains only the composite candidate
+# key the attachment references -- no column and no row changes.
+_AGENT_SCOPE_TABLE: Final = "agent_environment_scope"
+_AGENT_SCOPE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_TENANT_BOOTSTRAP_COLUMNS,
+    _AGENT_SCOPE_TABLE: (
+        _ColumnSpec("agent_id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
+_AGENT_SCOPE_PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
+    **_TENANT_BOOTSTRAP_PRIMARY_KEYS,
+    _AGENT_SCOPE_TABLE: ("agent_id",),
+}
+_AGENT_SCOPE_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_TENANT_BOOTSTRAP_FOREIGN_KEYS,
+    _AGENT_SCOPE_TABLE: frozenset(
+        {
+            (("org_id", "agent_id"), None, "agents", ("org_id", "id")),
+            (
+                ("org_id", "project_id", "environment_id"),
+                None,
+                "environments",
+                ("org_id", "project_id", "id"),
+            ),
+        }
+    ),
+}
+_AGENT_SCOPE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TENANT_BOOTSTRAP_UNIQUES,
+    "agents": _TENANT_BOOTSTRAP_UNIQUES["agents"] | frozenset({("org_id", "id")}),
+    _AGENT_SCOPE_TABLE: frozenset({("org_id", "project_id", "environment_id", "agent_id")}),
+}
+_AGENT_SCOPE_UNIQUE_INDEXES: Final[dict[str, frozenset[_UniqueIndexSpec]]] = {
+    **_TENANT_BOOTSTRAP_UNIQUE_INDEXES,
+    _AGENT_SCOPE_TABLE: frozenset(),
+}
+_AGENT_SCOPE_NON_UNIQUE_INDEXES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_TENANT_BOOTSTRAP_NON_UNIQUE_INDEXES,
+    _AGENT_SCOPE_TABLE: frozenset({("org_id", "project_id", "environment_id")}),
+}
+_AGENT_SCOPE_CHECKS: Final[dict[str, frozenset[tuple[str, str]]]] = {
+    **_TENANT_BOOTSTRAP_CHECKS,
+    _AGENT_SCOPE_TABLE: frozenset(),
+}
 
 
 def _schema_detail(

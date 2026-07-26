@@ -413,6 +413,52 @@ class AgentRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgentEnvironmentScope(Base):
+    """Binds an agent to exactly one project/environment.
+
+    Attachment lives outside ``agents`` on purpose. ``agents`` is a frozen
+    revision-0001 table that ``metadata.create_all`` still reproduces verbatim
+    so a fresh database can be stamped at 0001 and migrated forward; adding
+    columns to it would break that adoption path. Post-v0 concepts get their
+    own Alembic-managed table, and this follows that rule.
+
+    Attachment is optional: an agent that predates revision 0006 has no row
+    here, and none is invented for it. The primary key on ``agent_id`` makes a
+    second environment for the same agent unrepresentable, and the composite
+    foreign keys make a cross-organization or cross-project attachment a
+    database error rather than a convention.
+    """
+
+    __tablename__ = "agent_environment_scope"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["org_id", "agent_id"],
+            ["agents.org_id", "agents.id"],
+            name="fk_agent_environment_scope_agent",
+        ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id"],
+            ["environments.org_id", "environments.project_id", "environments.id"],
+            name="fk_agent_environment_scope_environment",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "agent_id",
+            name="uq_agent_environment_scope_scope_agent",
+        ),
+        Index("ix_agent_environment_scope_scope", "org_id", "project_id", "environment_id"),
+        {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
+    )
+
+    agent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class PolicyBundle(Base):
     __tablename__ = "policy_bundles"
 

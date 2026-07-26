@@ -824,7 +824,7 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003, 0004, and 0005 tables reference environments,
+                # Revision 0003 through 0006 tables reference environments,
                 # so seeding the partial revision 0001 shape must remove them
                 # first. Dropping environments with CASCADE instead would leave
                 # them in place minus their foreign keys, which is not a shape
@@ -834,7 +834,8 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                 # do not constrain the order.
                 connection.execute(
                     sa.text(
-                        "DROP TABLE tenant_bootstrap_refusal_events, "
+                        "DROP TABLE agent_environment_scope, "
+                        "tenant_bootstrap_refusal_events, "
                         "tenant_bootstrap_pending_outbox, pending_approvals, "
                         "tenant_bootstrap_policy_artifacts, "
                         "tenant_bootstrap_idempotency, "
@@ -846,6 +847,12 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
                     )
                 )
                 connection.execute(sa.text("DROP TABLE environments"))
+                # Revision 0006 also constrains a v0 table, which dropping
+                # tables cannot undo; leaving it behind seeds a v0 schema with
+                # an unexpected unique constraint rather than revision 0001.
+                connection.execute(
+                    sa.text("ALTER TABLE agents DROP CONSTRAINT uq_agents_org_id_id")
+                )
                 connection.execute(sa.text("UPDATE alembic_version SET version_num='0001'"))
         elif case == "future":
             with pg_engine.begin() as connection:
@@ -955,7 +962,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         operator_status, operator_payload = _decode_json_object(operator_stdout)
         assert operator_status == "object"
         assert operator_payload == {
-            "after": "version_0005",
+            "after": "version_0006",
             "before": "version_0001",
             "command": "upgrade",
             "ok": True,
@@ -1007,7 +1014,7 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         ready = new_probe.request("ready")
         assert ready["status_code"] == 503
         assert ready["body"]["schema_current"] is True
-        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0005.value
+        assert ready["body"]["schema_state"] == DatabaseSchemaState.VERSION_0006.value
         assert old_probe.request("get_org")["status_code"] == 200
         assert new_probe.request("get_org")["status_code"] == 200
 
@@ -1086,5 +1093,5 @@ def test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
         _close_upgrade_processes(operator, new_probe, old_probe)
 
     _assert_no_connections(pg_engine)
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert _OLD_CANDIDATE_COMMIT == "4f0c685b5d2ffac0e6a71810b77c6357b8d56a94"

@@ -226,7 +226,7 @@ def test_exact_head_production_still_refuses_legacy_unsigned_routes_before_persi
         "POST /v1/orgs/{org_id}/users",
     }
     assert _sha256(database_path) == before
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0005
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0006
     assert not (tmp_path / "audit").exists()
 
 
@@ -247,9 +247,9 @@ def test_exact_head_schema_evidence_is_nonproduction_and_never_ready(tmp_path: P
             "status": "not-production-ready",
             "blockers": [blocker.to_dict() for blocker in app.state.readiness_blockers],
             "schema_current": True,
-            "schema_state": DatabaseSchemaState.VERSION_0005.value,
+            "schema_state": DatabaseSchemaState.VERSION_0006.value,
         }
-        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0005
+        assert app.state.schema_preflight.state is DatabaseSchemaState.VERSION_0006
         assert not (tmp_path / "audit").exists()
     finally:
         app.state.engine.dispose()
