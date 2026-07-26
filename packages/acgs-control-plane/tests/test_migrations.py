@@ -896,6 +896,9 @@ def _run_postgres_gate_python_runtime_validation(
         'printf "%s\\n" "$python_runtime_root"\n'
     )
     validation_env = {"PATH": os.environ["PATH"]}
+    for name in ("TMPDIR", "UV_PYTHON_INSTALL_DIR"):
+        if name in os.environ:
+            validation_env[name] = os.environ[name]
     if env:
         validation_env.update(env)
     return subprocess.run(
@@ -914,8 +917,11 @@ def test_postgres_gate_python_runtime_accepts_default_and_proof_scratch(
     package_dir = Path(__file__).resolve().parents[1]
     default_result = _run_postgres_gate_python_runtime_validation(package_dir)
     assert default_result.returncode == 0, default_result.stderr
-    assert "/home/" in default_result.stdout
-    assert "/.local/share/uv/python/" in default_result.stdout
+    if os.environ.get("UV_PYTHON_INSTALL_DIR"):
+        assert default_result.stdout.strip().startswith(f"{os.environ['UV_PYTHON_INSTALL_DIR']}/")
+    else:
+        assert "/home/" in default_result.stdout
+        assert "/.local/share/uv/python/" in default_result.stdout
 
     scratch = tmp_path / "scratch"
     runtime_tmp = scratch / "runtime-tmp"
