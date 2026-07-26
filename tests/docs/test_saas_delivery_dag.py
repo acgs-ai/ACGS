@@ -53,6 +53,7 @@ REQUIRED_GRANULAR_NODES = {
     "G102A",
     "G102B",
     "G102C",
+    "G102D",
     "G103",
     "G104",
     "G105",
@@ -502,6 +503,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     g102a = by_id["G102A"]
     g102b = by_id["G102B"]
     g102c = by_id["G102C"]
+    g102d = by_id["G102D"]
     g603 = by_id["G603"]
     assert (g101["status"], g101["implementation_state"], g101["evidence_state"]) == (
         "blocked",
@@ -523,7 +525,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     )
     assert g102a["branch"] == "beta/p1-g102-request-admission"
     assert g102a["pr"] == 357
-    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C"]
+    assert g102["dependencies"] == ["G101", "G102A", "G102B", "G102C", "G102D"]
     assert set(g102a["dependencies"]) == {"G101"}
     assert g102a["consumers"] == ["G102"]
     assert "EXT-GITHUB-BILLING" in g102a["blocker"]
@@ -582,6 +584,25 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     )
     assert focused_openapi_command in g102["validation_commands"]
     assert focused_openapi_command in g102c["validation_commands"]
+    actual_g102d_files = {
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/integration/test_production_posture.py",
+        "packages/acgs-control-plane/tests/test_openapi_drift.py",
+        "packages/acgs-control-plane/tests/test_startup_preflight.py",
+        "packages/acgs-control-plane/tests/test_v1_api_contract.py",
+    }
+    assert actual_g102d_files <= set(g102["likely_interfaces_files"])
+    assert actual_g102d_files <= set(g102d["likely_interfaces_files"])
+    _assert_repo_files_exist(actual_g102d_files)
+    focused_v1_command = (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_v1_api_contract.py "
+        "tests/test_openapi_drift.py tests/test_startup_preflight.py "
+        "tests/integration/test_production_posture.py -q"
+    )
+    assert focused_v1_command in g102["validation_commands"]
+    assert focused_v1_command in g102d["validation_commands"]
     combined_g102a_contract = " ".join(
         g102["likely_interfaces_files"]
         + g102["validation_commands"]
@@ -610,6 +631,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     )
     assert "G102B separately covers receipt-route cursor pagination" in combined_g102a_status
     assert "G102C separately covers the current-v0 OpenAPI drift sentinel" in combined_g102a_status
+    assert "G102D separately covers additive legacy-v0 /v1 aliases" in combined_g102a_status
     assert "complete all-collections cursor pagination" in combined_g102a_status
     assert "OpenAPI drift acceptance evidence" not in combined_g102a_status
     assert "OpenAPI drift gates are completed" not in combined_g102a_status
@@ -657,7 +679,7 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     for forbidden_promotion in (
         "aggregate G102",
         "all-collections pagination",
-        "/v1 root",
+        "G102D /v1 alias evidence",
         "durable idempotency",
         "async export jobs",
         "PostgreSQL/schema change",
@@ -666,7 +688,6 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     ):
         assert forbidden_promotion in combined_g102b
     for missing_contract in (
-        "/v1 root",
         "all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
@@ -719,12 +740,63 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
         "database schema",
         "production readiness",
         "beta completion",
-        "/v1 root",
+        "G102D /v1 alias",
         "durable idempotency",
         "async export job",
         "all-collections pagination",
     ):
         assert forbidden_promotion in combined_g102c
+    assert (
+        g102d["status"],
+        g102d["implementation_state"],
+        g102d["evidence_state"],
+    ) == ("blocked", "built", "local_verified")
+    assert set(g102d["dependencies"]) == {"G101"}
+    assert g102d["consumers"] == ["G102"]
+    assert g102d["branch"] == "beta/p1-g102d-v1-api-contract"
+    assert g102d["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102d["pr"] == 363
+    combined_g102d = " ".join(
+        [
+            *g102d["likely_interfaces_files"],
+            *g102d["positive_tests"],
+            *g102d["forbidden_side_effect_negative_tests"],
+            *g102d["validation_commands"],
+            g102d["evidence_artifact"],
+            g102d["blocker"],
+            g102d["next_safe_action"],
+        ]
+    )
+    for evidence in (
+        "047ddcf89530dc488ab6a2f4dd3bc00fe0211c5d",
+        "focused v1/OpenAPI/startup/production-posture evidence at 42 passed",
+        "full control-plane package evidence at 272 passed and 32 skipped",
+        "Ruff pass",
+        "package-local mypy pass",
+        "independent code and security APPROVE",
+        "verifier PASS",
+        "hosted Python 3.11",
+        "Python 3.12 pass",
+        "Hosted PostgreSQL migrations and codex-review did not start",
+        "EXT-GITHUB-BILLING",
+        "typed /v1 root",
+        "additive legacy-v0 /v1 aliases",
+        "v0 is preserved",
+        "14 LEGACY_UNSIGNED_WRITE blockers",
+    ):
+        assert evidence in combined_g102d
+    for forbidden_promotion in (
+        "signed production governance",
+        "database schema",
+        "migration",
+        "generated client",
+        "production readiness",
+        "beta completion",
+        "complete all-collections pagination",
+        "durable idempotency",
+        "async export job",
+    ):
+        assert forbidden_promotion in combined_g102d
     combined_g101 = " ".join(
         g101["likely_interfaces_files"]
         + g101["validation_commands"]
@@ -756,15 +828,16 @@ def test_g101_reconciliation_keeps_local_evidence_blocked_and_dr_separate() -> N
     assert "hosted Python 3.11/3.12 pass" in matrix
     assert "hosted PostgreSQL migration/codex-review check-start failures" in matrix
     assert "aggregate G102 remains in_progress/partial/current-local" in matrix
-    assert "completed `/v1` root" in matrix
+    assert "additive legacy-v0 `/v1` alias" in matrix
+    assert "completed `/v1` root" not in matrix
     assert "opaque cursor pagination" in matrix
     assert "durable idempotency" in matrix
     assert "async export jobs" in matrix
     assert "current-v0 OpenAPI drift sentinel evidence" in matrix
     assert "OpenAPI drift evidence" not in matrix
     assert (
-        "still lacks completed `/v1` root, complete all-collections cursor pagination, "
-        "durable idempotency, and async export jobs" in matrix
+        "still lacks complete all-collections cursor pagination, durable idempotency, "
+        "and async export jobs" in matrix
     )
     assert "ACP_TEST_RECOVERY_SOURCE_URL" in matrix
     assert "ACP_TEST_RECOVERY_TARGET_URL" in matrix
