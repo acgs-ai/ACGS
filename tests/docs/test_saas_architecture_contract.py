@@ -289,7 +289,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
 
     assert (
         "| AM-005 | Tenant-scoped managed control-plane foundation | partial | "
-        "current_local | G101, G102, G102A, G103, G104, G105, G106 |"
+        "current_local | G101, G102, G102A, G102B, G103, G104, G105, G106 |"
     ) in matrix
     am_005 = next(line for line in matrix.splitlines() if line.startswith("| AM-005 |"))
     for evidence in (
@@ -303,18 +303,31 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "Ruff and mypy pass",
         "independent security/code approve/verifier pass",
         "hosted Python 3.11/3.12 pass",
+        "receipt-only bounded opaque cursor pagination",
+        "PR #359 branch `beta/p1-g102b-receipt-cursors`",
+        "commit `262c7bd8f408cef81333ae53591113960d78a32a`",
+        (
+            "focused `cd packages/acgs-control-plane && uv run pytest "
+            "tests/test_receipt_cursor_pagination.py -q` at 32 passed"
+        ),
+        "full control-plane 260 passed/32 skipped",
+        "deterministic generated CP lock",
+        "Python 3.11 hash-locked offline import pass",
+        "receipt-route pagination only",
+        "not complete all-collections pagination",
+        "no PostgreSQL/schema change or capacity claim",
         "real disposable PostgreSQL migration recovery at 8 passed",
         "focused migration, CLI, startup, rolling-upgrade, and recovery-tool-provenance tests",
         ".github/workflows/python-acgs-control-plane.yml",
         "ACP_TEST_RECOVERY_SOURCE_URL",
         "ACP_TEST_RECOVERY_TARGET_URL",
         "explicit absolute `pg_dump`/`pg_restore` wrapper paths",
-        "unmerged #353/#354/#355/#357 draft stack",
+        "unmerged #353/#354/#355/#357/#359 draft stack",
         "EXT-GITHUB-BILLING",
         "hosted PostgreSQL migration/codex-review check-start failures",
         "aggregate G102 remains in_progress/partial/current-local",
         "completed `/v1` root",
-        "opaque cursor pagination",
+        "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
         "OpenAPI drift evidence",
@@ -335,7 +348,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "Production launch remains a separate human-authorized decision" in matrix
 
     g102 = next(node for node in dag["nodes"] if node["id"] == "G102")
-    assert g102["dependencies"] == ["G101", "G102A"]
+    assert g102["dependencies"] == ["G101", "G102A", "G102B"]
     assert (
         g102["status"],
         g102["implementation_state"],
@@ -344,7 +357,7 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert "EXT-GITHUB-BILLING" in g102["blocker"]
     for missing_contract in (
         "/v1 root",
-        "opaque cursor pagination",
+        "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
         "OpenAPI drift",
@@ -361,6 +374,24 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
     assert all((ROOT / path).is_file() for path in actual_g102a_files)
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
+        in g102["validation_commands"]
+    )
+    actual_g102b_files = {
+        "packages/acgs-control-plane/README.md",
+        "packages/acgs-control-plane/pyproject.toml",
+        "packages/acgs-control-plane/src/acgs_control_plane/app.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/config.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/governance.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/pagination.py",
+        "packages/acgs-control-plane/src/acgs_control_plane/schemas.py",
+        "packages/acgs-control-plane/tests/test_receipt_cursor_pagination.py",
+        "requirements/saas-beta/cp-test.in",
+        "requirements/saas-beta/cp-test.lock",
+    }
+    assert actual_g102b_files <= set(g102["likely_interfaces_files"])
+    assert all((ROOT / path).is_file() for path in actual_g102b_files)
+    assert (
+        "cd packages/acgs-control-plane && uv run pytest tests/test_receipt_cursor_pagination.py -q"
         in g102["validation_commands"]
     )
 
@@ -400,18 +431,75 @@ def test_g008_remains_tied_to_the_conservative_program_record() -> None:
         "Hosted PostgreSQL migrations and codex-review did not start",
         "EXT-GITHUB-BILLING",
         "/v1 root",
-        "cursor pagination",
+        "G102B separately covers receipt-route cursor pagination",
+        "complete all-collections cursor pagination",
         "durable idempotency",
         "async export jobs",
         "OpenAPI drift",
     ):
         assert evidence in combined_g102a
+    assert "until /v1, cursor pagination," not in combined_g102a
+    assert "lacks /v1 root, cursor pagination," not in combined_g102a
+    assert "partial until /v1 root, cursor pagination," not in combined_g102a
     assert (
         "cd packages/acgs-control-plane && uv run pytest tests/test_api_contract.py -q"
         in combined_g102a
     )
     assert "tests/test_request_admission.py" not in combined_g102a
     assert "tests/test_api_program_reconcile.py" not in combined_g102a
+
+    g102b = next(node for node in dag["nodes"] if node["id"] == "G102B")
+    assert g102b["title"] == "Bounded opaque receipt cursor pagination"
+    assert set(g102b["dependencies"]) == {"G101"}
+    assert g102b["consumers"] == ["G102"]
+    assert (
+        g102b["status"],
+        g102b["implementation_state"],
+        g102b["evidence_state"],
+    ) == ("blocked", "built", "local_verified")
+    assert g102b["branch"] == "beta/p1-g102b-receipt-cursors"
+    assert g102b["worktree"] == "saas-beta/p1-g101-tool-provenance"
+    assert g102b["pr"] == 359
+    assert actual_g102b_files <= set(g102b["likely_interfaces_files"])
+    combined_g102b = " ".join(
+        [
+            *g102b["likely_interfaces_files"],
+            *g102b["positive_tests"],
+            *g102b["forbidden_side_effect_negative_tests"],
+            *g102b["validation_commands"],
+            g102b["evidence_artifact"],
+            g102b["blocker"],
+            g102b["next_safe_action"],
+        ]
+    )
+    for evidence in (
+        "262c7bd8f408cef81333ae53591113960d78a32a",
+        "receipt cursor pagination evidence at 32 passed",
+        "full control-plane package evidence at 260 passed and 32 skipped",
+        "Ruff pass",
+        "mypy pass",
+        "deterministic generated CP lock",
+        "Python 3.11 hash-locked offline import pass",
+        "independent security/code approve/verifier pass",
+        "hosted Python 3.11",
+        "Python 3.12 pass",
+        "Hosted PostgreSQL migrations and codex-review did not start",
+        "EXT-GITHUB-BILLING",
+        "receipt-route cursor pagination only",
+        "no PostgreSQL/schema change or capacity claim",
+    ):
+        assert evidence in combined_g102b
+    for forbidden_promotion in (
+        "aggregate G102",
+        "all-collections pagination",
+        "/v1 root",
+        "durable idempotency",
+        "async export jobs",
+        "OpenAPI drift",
+        "PostgreSQL/schema change",
+        "capacity claims",
+    ):
+        assert forbidden_promotion in combined_g102b
 
     for downstream_node_id in ("G103",):
         downstream_node = next(node for node in dag["nodes"] if node["id"] == downstream_node_id)
