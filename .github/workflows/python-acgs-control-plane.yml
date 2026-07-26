@@ -87,7 +87,11 @@ jobs:
           POSTGRES_USER: acgs_control_plane_test
           POSTGRES_PASSWORD: g101-test-password-17
         ports:
-          - 5432/tcp
+          # Fixed, not dynamic: the max_connections step below restarts this
+          # container, and Docker reallocates a dynamically published port on
+          # restart while ${{ job.services.postgres.ports['5432'] }} keeps
+          # resolving to the port captured at service start.
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U acgs_control_plane_test -d acgs_control_plane_test"
           --health-interval 10s
@@ -196,6 +200,58 @@ jobs:
           test "$(pg_dump --version | awk '{print $3}')" = '17.10'
           test "$(pg_restore --version | awk '{print $3}')" = '17.10'
 
+      # The tenant-bootstrap vertical spawns 100 client processes that each hold a
+      # PostgreSQL connection while racing the single-winner bootstrap, on top of the
+      # parent fixture's pooled connections. The image default max_connections=100 is
+      # below that concurrent demand, so raise it before any suite connects.
+      # GitHub Actions service containers cannot override the container command, so
+      # apply the setting via ALTER SYSTEM and restart the server to load it.
+      - name: Raise PostgreSQL max_connections for the multiprocess vertical
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id='${{ job.services.postgres.id }}'
+          host_port='${{ job.services.postgres.ports['5432'] }}'
+          docker exec "$container_id" psql \
+            --username acgs_control_plane_test \
+            --dbname acgs_control_plane_test \
+            --set ON_ERROR_STOP=1 \
+            --command 'ALTER SYSTEM SET max_connections = 400'
+          # Restart the container, not the server process: postgres is PID 1 here,
+          # so `pg_ctl restart` stops the container out from under `docker exec`
+          # (SIGKILL, exit 137). The published port is pinned above, so the
+          # host-side mapping survives this restart.
+          docker restart "$container_id" >/dev/null
+          for _ in {1..60}; do
+            if docker exec "$container_id" pg_isready \
+              --username acgs_control_plane_test \
+              --dbname acgs_control_plane_test >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          # In-container readiness does not prove the published port still works.
+          # Probe the exact endpoint later steps use, with the pinned client.
+          for _ in {1..60}; do
+            if PGHOST=127.0.0.1 PGPORT="$host_port" \
+              PGUSER=acgs_control_plane_test PGPASSWORD=g101-test-password-17 \
+              PGDATABASE=acgs_control_plane_test \
+              psql --set ON_ERROR_STOP=1 --command 'SELECT 1' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          PGHOST=127.0.0.1 PGPORT="$host_port" \
+            PGUSER=acgs_control_plane_test PGPASSWORD=g101-test-password-17 \
+            PGDATABASE=acgs_control_plane_test \
+            psql --set ON_ERROR_STOP=1 --command 'SELECT 1' >/dev/null
+          docker exec "$container_id" psql \
+            --username acgs_control_plane_test \
+            --dbname acgs_control_plane_test \
+            --set ON_ERROR_STOP=1 \
+            --tuples-only --no-align \
+            --command 'SHOW max_connections' | grep -qx '400'
+
       - name: Create fixed disposable databases
         shell: bash
         env:
@@ -281,3 +337,40 @@ jobs:
           ACP_TEST_OLD_APP_ARTIFACT: ${{ steps.old-candidate.outputs.wheel }}
           ACP_TEST_OLD_APP_ARTIFACT_SHA256: ${{ steps.old-candidate.outputs.digest }}
         run: .venv/bin/pytest -q tests/test_postgresql_rolling_upgrade.py
+
+      # Dispatcher-level proof that POST /v1/tenant-bootstrap enforces scoped receipt-v2
+      # trust and fails closed with zero side effects. Runs last: the fixture resets the
+      # main disposable schema on setup and teardown.
+      # Selector list is the P2 set in scripts/run_postgres_gate.sh; the step below asserts
+      # they stay in sync so a rename cannot silently drop the gate.
+      - name: Test PostgreSQL tenant-bootstrap vertical (scoped trust enforcement)
+        shell: bash
+        env:
+          ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE: '1'
+          ACP_TEST_POSTGRES_GATE_ACTIVE: '1'
+          ACP_TEST_POSTGRES_SELECTOR_MODE: p2-tenant-bootstrap
+          ACP_TEST_POSTGRES_URL: postgresql+psycopg://acgs_control_plane_test:g101-test-password-17@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/acgs_control_plane_test
+        run: |
+          set -euo pipefail
+          selectors=(
+            'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic'
+            'tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix'
+            'tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once'
+          )
+          for selector in "${selectors[@]}"; do
+            grep -qF "'${selector}'" scripts/run_postgres_gate.sh \
+              || { echo "selector drifted from scripts/run_postgres_gate.sh: ${selector}" >&2; exit 1; }
+          done
+          junit="${RUNNER_TEMP}/tenant-bootstrap-vertical.xml"
+          .venv/bin/pytest -q --junitxml="$junit" "${selectors[@]}"
+          ACP_JUNIT="$junit" .venv/bin/python - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          suite = ET.parse(os.environ["ACP_JUNIT"]).getroot().find("testsuite")
+          totals = {k: int(suite.get(k, 0)) for k in ("tests", "failures", "errors", "skipped")}
+          print(f"tenant-bootstrap vertical JUnit totals: {totals}")
+          if totals != {"tests": 3, "failures": 0, "errors": 0, "skipped": 0}:
+              sys.exit("the P2 tenant-bootstrap gate must run all 3 tests with zero skips")
+          PY
