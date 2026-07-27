@@ -1,6 +1,6 @@
 # Decision Receipt specification
 
-This is the public contract for integrators that want to place ACGS / gove-zone before side-effectful execution.
+This is the public contract for integrators that want to place ACGS before side-effectful execution.
 
 The Decision Receipt is the **vendor-neutral evidence artifact** at the center of ACGS: a single record that binds actor, action, arguments, policy, authority, and audit anchor for one decision. Its fields carry no framework- or model-specific shape (see the schema below and `receipt.py`), so the same record format describes a governed action whether the call came from a hook host, an MCP gateway, a function-call bridge, or a custom executor — and it is the artifact a team keeps regardless of which runtime it later switches to.
 

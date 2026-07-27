@@ -1,4 +1,4 @@
-<!-- Thanks for contributing to ACGS / gove-zone. Keep PRs scoped and verifiable. -->
+<!-- Thanks for contributing to ACGS. Keep PRs scoped and verifiable. -->
 
 ## What changed
 

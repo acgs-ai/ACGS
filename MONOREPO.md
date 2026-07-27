@@ -1,6 +1,10 @@
-# govern-zone monorepo registry
+# ACGS monorepo registry
 
 Single source of truth for "what's in this monorepo and how it's gated."
+
+ACGS is the project and the monorepo. `packages/gove-zone` contains the runtime
+enforcement kernel; the other packages are separate components with their own
+maturity levels and gates, and are not covered by the kernel's guarantees.
 Companion to `docs/PLAN-MONOREPO.md` (the execution plan) and the hardening
 report at `artifacts/hardening_reports/` (the most recent verification run).
 

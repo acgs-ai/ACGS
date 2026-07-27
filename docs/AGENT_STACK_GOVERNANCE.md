@@ -1,6 +1,6 @@
 # The Agent Stack Governance Map
 
-Where ACGS / gove-zone sits in the modern agent-builder stack, and how it
+Where ACGS sits in the modern agent-builder stack, and how it
 differs from the alternatives. Companion to [COMPARISON.md](COMPARISON.md).
 
 ## The stack, and the line everyone skips

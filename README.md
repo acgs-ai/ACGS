@@ -1,4 +1,4 @@
-ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer for AI-agent side effects.
+ACGS is a governed agent infrastructure project. Its core enforcement kernel is gove-zone, a vendor-neutral, receipt-gated governance layer for AI-agent side effects.
 
 # ACGS
 
