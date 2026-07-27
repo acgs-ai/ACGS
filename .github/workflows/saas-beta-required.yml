@@ -132,6 +132,42 @@ jobs:
         working-directory: acgi-ai
         run: pnpm install --frozen-lockfile --ignore-workspace
 
+      - name: Install bubblewrap prerequisite
+        # Same requirement as the hosted-contract job in saas-beta-p0-evidence.yml:
+        # test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets
+        # can only prove containment if bwrap can actually unshare, and Ubuntu 24.04
+        # restricts unprivileged user namespaces through AppArmor. Without this the
+        # test fails "containment runner unavailable" — untestable, not satisfied.
+        # Scoped to /usr/bin/bwrap alone on the ephemeral runner. Adds no credential
+        # surface and no outbound mutation, so it stays inside the side-effect contract
+        # asserted by test_saas_beta_required_gate_has_no_privileged_or_external_side_effect_surface.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install --yes apparmor
+          fi
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          bwrap --version
+          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test -r /proc/self/status'
+
       - name: Run SaaS-beta evidence tests
         env:
           ACGS_EVIDENCE_ROOT: ${{ runner.temp }}/acgs-evidence
