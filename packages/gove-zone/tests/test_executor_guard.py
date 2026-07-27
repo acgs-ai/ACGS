@@ -146,6 +146,8 @@ def make_test_receipt(
     action: str = "runtime.file.write",
     args: dict[str, Any] | None = None,
     constraints: dict[str, Any] | None = None,
+    policy_version: str = "v1",
+    policy_hash: str = "policy-hash",
 ) -> DecisionReceipt:
     from gove_zone.decision import sha256_json
 
@@ -154,7 +156,7 @@ def make_test_receipt(
         decision=Decision(decision),
         tool=action,
         argument_hash=sha256_json(effective_args),
-        policy_version="v1",
+        policy_version=policy_version,
         event_id="ev_abc",
         transformed_args={"path": "transformed.txt"} if decision == "transform" else None,
     )
@@ -165,7 +167,7 @@ def make_test_receipt(
         tenant_id=tenant_id,
         execution_boundary=execution_boundary,
         policy_bundle_id="policy-bundle",
-        policy_hash="policy-hash",
+        policy_hash=policy_hash,
         request_id="req-123",
         validator=Validator("validator-1"),
         authority="tenant-A/write-grant",
@@ -330,6 +332,83 @@ def test_executor_refuses_wrong_tenant(replay_dependencies: dict[str, Any]) -> N
             **replay_dependencies,
         )
     assert "Tenant mismatch" in str(exc_info.value)
+    assert not tracker.called
+
+
+def test_executor_refuses_receipt_from_a_different_policy(
+    replay_dependencies: dict[str, Any],
+) -> None:
+    """A receipt issued under policy A cannot authorize execution pinned to
+    policy B: the mismatch is raised during receipt verification, before the
+    adapter is ever called, so the side-effect count is zero."""
+    from gove_zone import RuleSetPolicy
+
+    policy_a = RuleSetPolicy.from_dict(
+        {"id": "policy-A", "rules": [{"id": "R1", "effect": "deny", "tools": ["fs.delete"]}]}
+    )
+    policy_b = RuleSetPolicy.from_dict(
+        {"id": "policy-B", "rules": [{"id": "R2", "effect": "deny", "tools": ["fs.delete"]}]}
+    )
+    assert policy_a.version != policy_b.version
+
+    tracker = SideEffectTracker()
+    receipt = make_test_receipt(
+        policy_version=policy_a.version,
+        policy_hash=policy_a.version,
+    )
+
+    with pytest.raises(ReceiptValidationError) as exc_info:
+        execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tracker.run_tool),
+            tool_fn=tracker.run_tool,
+            args={"path": "safe.txt"},
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="runtime.file.write",
+            expected_actor="anonymous",
+            expected_policy_hash=policy_b.version,
+            expected_policy_version=policy_b.version,
+            require_signature=True,
+            **replay_dependencies,
+        )
+    assert "Policy hash mismatch" in str(exc_info.value)
+    assert not tracker.called
+    assert tracker.called_with is None
+    _assert_last_denial(replay_dependencies, "receipt.execution.receipt_invalid")
+
+
+def test_executor_refuses_a_truncated_policy_identity(
+    replay_dependencies: dict[str, Any],
+) -> None:
+    """The pre-hardening 16-hex identity is not accepted alongside the full
+    digest — there is no dual-acceptance fallback."""
+    from gove_zone import RuleSetPolicy
+
+    policy = RuleSetPolicy.from_dict(
+        {"id": "policy-A", "rules": [{"id": "R1", "effect": "deny", "tools": ["fs.delete"]}]}
+    )
+    truncated = policy.version[: policy.version.rindex("/") + 17]
+    assert truncated != policy.version
+
+    tracker = SideEffectTracker()
+    receipt = make_test_receipt(policy_version=truncated, policy_hash=truncated)
+
+    with pytest.raises(ReceiptValidationError):
+        execute_with_receipt(
+            expected_adapter_artifact_digest=adapter_artifact_digest(tracker.run_tool),
+            tool_fn=tracker.run_tool,
+            args={"path": "safe.txt"},
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="runtime.file.write",
+            expected_actor="anonymous",
+            expected_policy_hash=policy.version,
+            expected_policy_version=policy.version,
+            require_signature=True,
+            **replay_dependencies,
+        )
     assert not tracker.called
 
 

@@ -92,7 +92,7 @@ class ToolTierRegistry:
     def version_hash(self) -> str:
         """Content hash of the registry, for folding into a policy version."""
         payload = {name: self.tiers[name].value for name in sorted(self.tiers)}
-        return hashlib.sha256(canonical_json(payload).encode()).hexdigest()[:16]
+        return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
 def effective_action_tier(call: ToolCall, registry: ToolTierRegistry | None) -> ActionTier:
