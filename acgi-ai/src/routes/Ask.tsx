@@ -52,7 +52,8 @@ const KNOWLEDGE: Entry[] = [
         <>
           <p>
             <strong>
-              ACGS / gove-zone is a local receipt-gated governance layer for AI-agent side effects.
+              ACGS is a governed agent infrastructure project; its core enforcement kernel,
+              gove-zone, is a local receipt-gated governance layer for AI-agent side effects.
             </strong>{' '}
             It sits below agent reasoning and above side-effectful tools: the agent may plan or
             request an action, but the governed executor decides whether it actually runs.{cite(1)}

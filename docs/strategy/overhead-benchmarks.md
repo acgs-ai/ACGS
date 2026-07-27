@@ -1,7 +1,7 @@
 # Membrane Overhead Benchmarks — gove-zone
 
-> Answers SWOT weakness W6 ("latency/complexity tax unquantified") from
-> [swot-gove-zone.md](swot-gove-zone.md), recommendation 4.
+> Quantifies the membrane's latency tax — the "overhead is measured, but on one
+> machine" entry in [`../research/limitations.md`](../research/limitations.md) §2.
 >
 > **Status: alpha measurements on a single local dev box, not a controlled
 > environment.** These numbers characterize the order of magnitude of the

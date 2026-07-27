@@ -1,8 +1,8 @@
 # Decision Receipt Spec as a Standards Candidate — Publication Plan
 
-> Executes SWOT recommendation 5 ([swot-gove-zone.md](swot-gove-zone.md)): "Open the receipt spec
-> as a standards candidate. Versioned, standalone spec repo + solicit public auditor/vendor
-> comment." Companion strategy context: [startup-canvas-gove-zone.md](startup-canvas-gove-zone.md).
+> Plan for opening the Decision Receipt format as a vendor-neutral standards candidate:
+> a versioned, standalone spec repo plus a public auditor/vendor comment process.
+> Context on what remains externally unvalidated: [`../research/limitations.md`](../research/limitations.md).
 >
 > Status of the underlying artifact: **alpha** (`0.1.0a1`). Nothing in this plan is a
 > compliance certification, production-readiness claim, or endorsement by any standards body.
@@ -21,10 +21,10 @@ plus its canonical-hash and validation semantics. Source of truth today:
   (`DecisionReceipt`, `Validator`, `from_record`, `verify`).
 
 The standard candidate is the *format and validation semantics*, not the gove-zone kernel.
-The kernel becomes "a reference implementation of the spec," which is exactly the neutrality
-position the canvas claims (S2) and the defense against spec commoditization (T3): a copied
-spec with our adoption is a win; a copied idea with a rival spec is the loss this plan
-pre-empts.
+The kernel becomes "a reference implementation of the spec," which is exactly the
+vendor-neutral position this project claims, and the defense against a rival format: a
+copied spec with our adoption is a win; a copied idea with a rival spec is the loss this
+plan pre-empts.
 
 ## 2. Spec-vs-implementation conformance statement
 
@@ -167,13 +167,12 @@ gove-zone mints, gates, and stores them."**
   to standards-track people later), then `draft-02` or graduation.
 - **Announcement surfaces** (each requires a human decision to publish): the gove-zone
   README/docs, the security-community channels already used for the VulnClaw/OSINT wedge
-  content, direct outreach to the auditor(s) engaged in SWOT recommendation 1, and direct
+  content, direct outreach to the auditor(s) engaged in the auditor-validation track, and direct
   invitations to potential implementers (MCP gateway authors, agent-framework maintainers).
 
-## 6. Success metrics (from the SWOT, verbatim target)
+## 6. Success metrics
 
-SWOT recommendation 5 metric: **"≥2 external implementations or formal comments."**
-Operationalized:
+Target: **≥2 external implementations or formal comments.** Operationalized:
 
 1. **External implementations (target ≥2):** an implementation counts only if it is (a)
    written by people outside this project, (b) mints *or* verifies Decision Receipts against
@@ -191,33 +190,33 @@ parties, and citations of the spec in third-party governance documentation.
 
 | Venue | What it looks like | Pros | Cons |
 |---|---|---|---|
-| **Standalone GitHub spec repo with versioned releases** | Public repo, draft series, JSON Schema + fixtures, disposition-of-comments docs | Ships in days, not quarters; full control of cadence; PLG-compatible (implementers arrive via GitHub anyway); conformance fixtures are first-class; zero membership cost; honest about alpha status | No institutional imprimatur; "standard" is reputational only; discoverability depends on our own distribution (W5) |
-| **IETF Internet-Draft** | Individual I-D submission (no WG required to start); possible BoF → WG if interest materializes | Real institutional weight; I-Ds are free and individual-submittable; IETF security review culture is exactly the scrutiny this format needs; a datatracker document is citable by regulators | Slow (WG adoption typically 1–2+ years); an expired I-D with no WG signals *less* credibility than a maintained repo; IETF fit is imperfect — this is an evidence/artifact format, not a wire protocol; heavy process cost against a bus-factor-1 team (W2) |
-| **OASIS** | Form or join a Technical Committee; committee-specification track | Natural home for XML/JSON evidence and security vocabularies (SAML, ODRL heritage); auditor/GRC audiences recognize OASIS; TC process yields formal statements of use | Membership fees + minimum-participant requirements a single-maintainer project cannot credibly sustain; committee formation before external adoption exists inverts the correct order; risk of the spec being reshaped by whoever shows up to the TC (T3 realized *inside* the venue) |
+| **Standalone GitHub spec repo with versioned releases** | Public repo, draft series, JSON Schema + fixtures, disposition-of-comments docs | Ships in days, not quarters; full control of cadence; PLG-compatible (implementers arrive via GitHub anyway); conformance fixtures are first-class; zero membership cost; honest about alpha status | No institutional imprimatur; "standard" is reputational only; discoverability depends on our own distribution reach |
+| **IETF Internet-Draft** | Individual I-D submission (no WG required to start); possible BoF → WG if interest materializes | Real institutional weight; I-Ds are free and individual-submittable; IETF security review culture is exactly the scrutiny this format needs; a datatracker document is citable by regulators | Slow (WG adoption typically 1–2+ years); an expired I-D with no WG signals *less* credibility than a maintained repo; IETF fit is imperfect — this is an evidence/artifact format, not a wire protocol; heavy process cost against a single-maintainer team |
+| **OASIS** | Form or join a Technical Committee; committee-specification track | Natural home for XML/JSON evidence and security vocabularies (SAML, ODRL heritage); auditor/GRC audiences recognize OASIS; TC process yields formal statements of use | Membership fees + minimum-participant requirements a single-maintainer project cannot credibly sustain; committee formation before external adoption exists inverts the correct order; risk of the spec being reshaped by whoever shows up to the TC — the rival-format risk realized *inside* the venue |
 
 **Recommendation: standalone GitHub spec repo now, deliberately structured as an
 IETF-ready draft series later.**
 
 Rationale:
 
-- The SWOT is explicit that the model is **validation-starved**: the binding constraint is
-  external evidence (W1), and the two existential threats (T1 bundling, T3 spec copy) are
-  *time-bound*. A GitHub spec repo is the only venue that can exist within weeks and start
+- The project is **validation-starved**: the binding constraint is external evidence (see
+  [`../research/limitations.md`](../research/limitations.md) §2), and the two existential
+  threats — platform vendors bundling governance, and a rival format — are *time-bound*. A GitHub spec repo is the only venue that can exist within weeks and start
   accumulating the actual metric (implementations + formal comments). Both formal venues
-  measure success in years and consume exactly the maintainer capacity (W2) the SWOT says to
-  protect.
+  measure success in years and consume exactly the single-maintainer capacity this project
+  must protect.
 - Standards bodies reward *incoming adoption*, not incoming proposals. Two external
   implementations plus a disposition-of-comments track record is the strongest possible
   opening position for a later IETF individual draft (the natural second step — free,
   individual-submittable, and the security-review culture fits) — or for OASIS if the
-  auditor/GRC pull (recommendation 1's output) turns out to be the dominant audience.
+  auditor/GRC pull turns out to be the dominant audience.
 - To keep the upgrade path cheap: write the spec repo's normative text in RFC-2119/8174
   keyword style (MUST/SHOULD/MAY) from `draft-01`, keep normative format text separate from
   implementation guidance, and maintain the fixture corpus as the interop test — these are
   the pieces an I-D conversion reuses directly.
 - Decision trigger for escalating venue: **after** the ≥2 external implementations/formal
   comments metric is met, or if a credible competing format appears in a formal venue
-  (T3 defense), whichever comes first.
+  (rival-format defense), whichever comes first.
 
 ## 8. Execution order (agent-executable vs. human-gated)
 

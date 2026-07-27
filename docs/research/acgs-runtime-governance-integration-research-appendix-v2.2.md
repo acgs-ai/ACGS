@@ -3,7 +3,7 @@
 Status: research appendix only.
 
 This appendix preserves ecosystem analysis from the Agent Runtime Governance
-Integration Report while aligning it with the current ACGS / gove-zone security
+Integration Report while aligning it with the current ACGS security
 model and claim ledger. It does **not** replace the v2.1/W0 execution roadmap,
 does **not** authorize implementation work, and does **not** propose a new core
 platform namespace.

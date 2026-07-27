@@ -6,7 +6,7 @@
 > Architecture for AI-Agent Actions"**
 
 Status: outline for a public whitepaper. Ground rules for the eventual draft:
-every claim must trace to [`docs/CLAIMS.md`](../CLAIMS.md); residual gaps are
+every claim must trace to [`docs/CLAIMS.md`](../../CLAIMS.md); residual gaps are
 stated in the body, not a footnote; no certification, regulator-approval, or
 production-readiness language anywhere.
 

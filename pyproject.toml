@@ -12,7 +12,7 @@
 [project]
 name = "govern-zone"
 version = "0.0.0"
-description = "ACGS GovernZone monorepo workspace root (not published)"
+description = "ACGS monorepo workspace root (not published)"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "ACGS Team", email = "hello@acgs.dev" }]

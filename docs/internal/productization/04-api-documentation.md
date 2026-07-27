@@ -6,7 +6,7 @@
 
 Four integrator surfaces: the Python library API, the `gove-zone` CLI, the
 Decision Receipt wire format, and the governed-MCP gateway (alpha). The
-normative contracts are [`docs/DECISION_RECEIPT_SPEC.md`](../DECISION_RECEIPT_SPEC.md)
+normative contracts are [`docs/DECISION_RECEIPT_SPEC.md`](../../DECISION_RECEIPT_SPEC.md)
 and the code + tests in `packages/gove-zone/`; this page is the integrator-facing
 summary. There is **no hosted REST API today** — the HTTP shape in §5 is an
 illustrative self-hosted pattern.
@@ -74,7 +74,7 @@ Any failure — missing/malformed/tampered receipt, DENY/ESCALATE, actor/action/
 argument/tenant/boundary/policy/audit mismatch, expiry, unsigned-when-required —
 raises `ReceiptValidationError` **before** `tool_fn` runs. The verifier's full
 20-step rejection order is in the
-[receipt spec](../DECISION_RECEIPT_SPEC.md#validation-algorithm).
+[receipt spec](../../DECISION_RECEIPT_SPEC.md#validation-algorithm).
 
 `GovernedExecutor` is the reusable object form of the same gate; `ReceiptVerifier`
 exposes verification without execution.
@@ -112,7 +112,7 @@ ledger = ReceiptConsumptionLedger("consumed.jsonl", checkpoint=True)
 `emit_receipt_for_hook` and the payload normalizer accept Claude/Codex hook
 payloads, MCP `tools/call`, OpenAI-style function calls, and generic tool
 events, producing governance-shaped calls. Runtime coverage is tiered — see
-[`docs/INTEGRATION_MATRIX.md`](../INTEGRATION_MATRIX.md).
+[`docs/INTEGRATION_MATRIX.md`](../../INTEGRATION_MATRIX.md).
 
 ## 2. CLI (`gove-zone`)
 
@@ -132,7 +132,7 @@ events, producing governance-shaped calls. Runtime coverage is tiered — see
 ## 3. Decision Receipt wire format
 
 Full schema (28 fields), validation order, and JSON examples:
-[`docs/DECISION_RECEIPT_SPEC.md`](../DECISION_RECEIPT_SPEC.md). The essentials:
+[`docs/DECISION_RECEIPT_SPEC.md`](../../DECISION_RECEIPT_SPEC.md). The essentials:
 
 - vendor-neutral JSON; no framework- or model-specific shape;
 - `receipt_hash = sha256(canonical_json(receipt minus receipt_hash and signature))`;
