@@ -108,12 +108,14 @@ Rule 0 + submodule-boundary rules).
    submodule uv.sources gap (see Verification results above and the follow-up
    issue below). Pre-existing, not owned by this branch. `make review` (the
    bare-clone reviewer gate) passes.
-2. **Test/script-pinned internal docs stay public** — `docs/saas/`,
-   `docs/strategy/`, `docs/reconstruction/`, `docs/readiness-*`,
-   `docs/research/`, `docs/codex-goals/`, `docs/audits/`, `docs/handoffs/`,
-   `docs/refactor/`, `docs/plans/`, and a few index files are referenced by a
-   test, script, or the `lint-docs` governance-stack check. Making them private
-   needs a dedicated PR that also edits the pinning `.py`/scripts — out of scope
+2. **Superseded — the "cannot move, they are pinned" claim was never verified.**
+   A repo-wide sweep found `docs/strategy/` had no test/script pin at all, and
+   `docs/codex-goals/` had exactly two code references (a benchmark docstring and
+   a test docstring), both re-anchored in the same commit that moved it. The
+   commercial material has since been relocated to the private store; `docs/saas/`
+   and `docs/research/` are deliberately public. Remaining directories referenced by
+   a test, script, or the `lint-docs` governance-stack check still need a PR that
+   also edits the pinning `.py`/scripts — out of scope
    for a docs-only pass.
 3. **Residual `0.1.0a1` / ALPHA strings in internal/strategy/blog docs** —
    `docs/strategy/auditor-validation/*`, `docs/blog/*` (labeled DRAFT),

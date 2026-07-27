@@ -68,10 +68,16 @@ Move to `docs/internal/` (retained engineering history, not shipped as product
 docs) or a private repo. See the Phase-4 relocation manifest in
 `docs/internal/README.md`. Categories:
 
-- Business / go-to-market: `docs/strategy/`, `docs/saas/`, `docs/research/`,
-  `docs/productization/`, `docs/reconstruction/03-marketing-research.md`.
-- AI-orchestration process exhaust: `docs/codex-goals/`, `docs/handoffs/`,
-  `docs/superpowers/`, `docs/refactor/`, `docs/audits/`, `docs/architecture-audit.md`.
+- Business / go-to-market — **relocated to the private store**: pricing, investor
+  material, SWOT, startup canvas, pilot-offer economics, outreach drafts, the
+  marketing/ICP/GTM research, and the reconstruction executive summary.
+- AI-orchestration process exhaust — **relocated to the private store**: the Codex
+  `/goal` contracts (they also carried maintainer filesystem paths). Still public and
+  under review: `docs/handoffs/`, `docs/superpowers/`, `docs/refactor/`, `docs/audits/`,
+  `docs/internal/architecture-audit.md`.
+- Deliberately kept public: `docs/saas/` (target-beta contracts — `OPEN_CORE_BOUNDARY.md`
+  is a binding public commitment that no billing or entitlement failure may disable
+  local enforcement) and `docs/research/` (technical research + `limitations.md`).
 - Internal QA / risk ledgers: `hub-verification-report.md`,
   `docs/readiness-*`, `docs/integration-readiness-task-map.md`.
 - Raw launch drafts: `docs/blog/*` platform-thread scratch.

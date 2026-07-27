@@ -1,10 +1,9 @@
-# Governed-MCP Gateway — Gap Analysis (SWOT Recommendation 3)
+# Governed-MCP Gateway — Gap Analysis
 
 > Status: analysis only. Product stage is **alpha**; nothing here claims production-readiness,
 > certification, or compliance approval (see `docs/CLAIMS.md`, `AGENTS.md`).
-> Date: 2026-07-03. Companion to [swot-gove-zone.md](swot-gove-zone.md) (Recommendation 3:
-> "Ship the governed-MCP gateway as the flagship integration") and
-> [startup-canvas-gove-zone.md](startup-canvas-gove-zone.md).
+> Date: 2026-07-03. Enumerates the gateway gaps summarized in
+> [`../research/limitations.md`](../research/limitations.md) §1.
 
 Every claim below maps to a file:line actually inspected on the current working tree
 (branch `feat/governed-vulnclaw-pentest`, dirty tree owned by other sessions — line
@@ -142,11 +141,11 @@ the gateway; the gateway fronts an **arbitrary, unmodified** downstream MCP serv
 | G2 | **No real MCP SDK anywhere in the tested path.** Optional import falls back to `None` (`mcp_server.py:35-43`); demos deliberately avoid the SDK; current-spec behaviors (streamable HTTP, notifications, pagination, progress) unverified | `mcp_server.py:35-43`; `mcp-tool-gateway/demo.py:3-5` | Critical — "works with the current MCP spec" is currently unclaimable | Medium (SDK as optional extra + conformance harness) | **Yes** |
 | G3 | **Policy not partner-configurable on the MCP path.** governed_mcp_v0 policies are hardcoded fixtures (`policy.py:17-101`); the demo wires `PathBoundaryPolicy`/`RuleSetPolicy` in code | `policy.py:17-101`; `demo.py:169,255-263` | Critical — a partner cannot express *their* scope | Medium (`yaml_policy.py` + `TenantPolicyStore` exist, need gateway wiring) | **Yes** |
 | G4 | **Actor identity is hardcoded, not session-derived.** Demos use constants and warn a real server must use the authenticated principal | `demo.py:80-85` (comment), `demo.py:83-86` (constants); `examples/mcp_tool_gate/demo.py:19` | Critical — receipts that bind a made-up actor are weak evidence | Medium | **Yes** |
-| G5 | **Escalate not wired into any MCP flow.** Kernel primitives exist (`escalation.py:87,206`; `decision.py:24`) but no MCP response shape, no pending queue, no resume path; governed_mcp_v0 has only an `approval_required` flag (`eval_gate.py:236`) | as cited | High — deny-only gateways get disabled by users the first time they need an exception; SWOT bar names deny/escalate | Medium | **Yes** (if partner policies use escalate — assume they will) |
+| G5 | **Escalate not wired into any MCP flow.** Kernel primitives exist (`escalation.py:87,206`; `decision.py:24`) but no MCP response shape, no pending queue, no resume path; governed_mcp_v0 has only an `approval_required` flag (`eval_gate.py:236`) | as cited | High — deny-only gateways get disabled by users the first time they need an exception; the gateway bar names deny/escalate | Medium | **Yes** (if partner policies use escalate — assume they will) |
 | G6 | **Argument-hash gotcha blocks arg-keyed policies through the hook adapter** — gateway must evaluate policy on raw MCP `params.arguments`, not the hashed hook summary | `mcp-tool-gateway/README.md` "Hook-adapter gotcha"; `demo.py:24-27` | High — silent no-fire policies are a governance hazard | Low-Medium (gateway calls evaluator directly, as gate 2 already does) | **Yes** (safety-relevant) |
 | G7 | **Two receipt formats in-repo.** governed_mcp_v0's unsigned receipt schema vs. gove-zone signed `DecisionReceipt` | `server.py:136-146` vs. `receipt.py` / `docs/DECISION_RECEIPT_SPEC.md` | Medium — flagship must emit exactly one, the spec'd one | Low (choose gove-zone format; leave governed_mcp_v0 as eval harness) | No (decision now, migration later) |
-| G8 | **Proof-pack export not wired to gateway evidence.** `gove-zone replay` + `proofpack` CLI exist (`cli.py:622,790`) but no "export this gateway session as a verifiable pack" flow/doc | `cli.py:622-800` | Medium — auditor story (SWOT Rec 1 synergy) | Low | No |
-| G9 | **No overhead numbers for the gated call path** (SWOT W6 / Rec 4) | no benchmark artifact for MCP path found | Medium — removes integration-tax objection | Low (harness exists: `benchmark_adapters.py`) | No |
+| G8 | **Proof-pack export not wired to gateway evidence.** `gove-zone replay` + `proofpack` CLI exist (`cli.py:622,790`) but no "export this gateway session as a verifiable pack" flow/doc | `cli.py:622-800` | Medium — auditor story (synergy with the auditor-validation track) | Low | No |
+| G9 | **No overhead numbers for the gated call path** | no benchmark artifact for MCP path found | Medium — removes integration-tax objection | Low (harness exists: `benchmark_adapters.py`) | No |
 | G10 | **Docs/claims for a gateway don't exist yet** (correctly — nothing to claim). New matrix row, CLAIMS.md rows, quickstart | `INTEGRATION_MATRIX.md:23,40`; `docs/mcp/*` | Medium — matrix tier rules require example + conformance test before claiming | Low (after G1-G2) | No (but gates the *announcement*) |
 
 ---
@@ -198,7 +197,7 @@ exit evidence. Items 1–7 constitute the pilot-blocking core (G1–G6); 8–11 
    harness* (its `eval_gate.py` scenarios remain valuable as behavioral spec), not a
    product artifact.
 10. **Benchmarks (G9).** Extend `benchmark_adapters.py` with a gateway lane; publish
-    p50/p99 added latency per governed call in docs (SWOT Rec 4).
+    p50/p99 added latency per governed call in docs (see ../strategy/overhead-benchmarks.md).
 11. **Claim-safe docs (G10).** `docs/mcp/quickstart.md` rewrite around the gateway
     (<1h target, measured); new `INTEGRATION_MATRIX.md` row ("MCP gateway (transport
     proxy)") entering at the tier the evidence supports; matching `docs/CLAIMS.md` rows.

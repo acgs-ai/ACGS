@@ -8,7 +8,7 @@
 > architecture and proposes a phased, non-big-bang migration. It changes no code
 > and seals nothing; every decision below is a recommendation for the maintainer,
 > not a merged fact. Present-tense capability language describes the *target*,
-> not today's state. Doc 05 owns productionization; doc 00 owns synthesis.
+> not today's state. Doc 05 owns productionization.
 
 ---
 

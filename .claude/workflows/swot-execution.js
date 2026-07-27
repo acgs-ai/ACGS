@@ -1,7 +1,7 @@
 export const meta = {
   name: 'swot-execution',
   description: 'Execute the 5 SWOT strategic recommendations for gove-zone in priority order: agent-executable parts land as repo artifacts, human-gated parts produce prep kits',
-  whenToUse: 'After docs/strategy/swot-gove-zone.md is refreshed and its recommendations should be turned into concrete artifacts',
+  whenToUse: 'After the (private) SWOT + startup-canvas strategy docs are refreshed and their recommendations should be turned into concrete repo artifacts. Set STRATEGY_DIR below to the local path of the private strategy store before running.',
   phases: [
     { title: 'R1 Auditor sprint prep' },
     { title: 'R2 Design-partner kit' },
@@ -14,10 +14,14 @@ export const meta = {
 
 const REPO = '/home/martin/Documents/ACGS'
 
+// SWOT + startup-canvas are commercially sensitive and are NOT stored in this
+// public repository. Point this at the private strategy store before running.
+const STRATEGY_DIR = process.env.ACGS_STRATEGY_DIR || '/home/martin/Documents/ACGS-private-docs-staging/strategy'
+
 const COMMON = `
 Repository root: ${REPO}. Always use absolute paths; your cwd may differ.
 Ground rules (non-negotiable):
-- Read ${REPO}/docs/strategy/swot-gove-zone.md and ${REPO}/docs/strategy/startup-canvas-gove-zone.md first for context.
+- Read ${STRATEGY_DIR}/swot-gove-zone.md and ${STRATEGY_DIR}/startup-canvas-gove-zone.md first for context. These live outside the public repo; never copy their commercial content into a file under ${REPO}.
 - The working tree is dirty with files owned by other sessions. NEVER modify existing files unless this task explicitly names one. Only CREATE new files at the paths this task specifies.
 - Never run git add, git commit, git stash, git checkout, or git restore.
 - Claim-safe discipline (see ${REPO}/AGENTS.md and ${REPO}/docs/CLAIMS.md): never claim production-readiness, certification, or compliance approval. Alpha status must stay visible. Every capability claim must map to code/tests you actually inspected or commands you actually ran.

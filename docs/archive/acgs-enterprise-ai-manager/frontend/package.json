@@ -1,6 +1,7 @@
 {
   "name": "acgs-enterprise-manager-frontend",
   "version": "1.0.0",
+  "private": true,
   "description": "ACGS Enterprise Manager Frontend Application",
   "scripts": {
     "dev": "vite",

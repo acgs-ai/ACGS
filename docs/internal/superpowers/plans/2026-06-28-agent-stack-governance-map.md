@@ -92,7 +92,7 @@ Create `docs/AGENT_STACK_GOVERNANCE.md` with exactly this content:
 # The Agent Stack Governance Map
 
 Where ACGS / gove-zone sits in the modern agent-builder stack, and how it
-differs from the alternatives. Companion to [COMPARISON.md](COMPARISON.md).
+differs from the alternatives. Companion to [COMPARISON.md](../../../COMPARISON.md).
 
 ## The stack, and the line everyone skips
 
@@ -150,7 +150,7 @@ closed without a receipt (next), then A2A-native receipts (after).
 
 ## How this differs
 
-See [COMPARISON.md](COMPARISON.md#governance-posture-none-vs-audit-centric-vs-receipt-centric)
+See [COMPARISON.md](../../../COMPARISON.md#governance-posture-none-vs-audit-centric-vs-receipt-centric)
 for the three-tier posture contrast (ungoverned vs audit-centric vs
 receipt-centric).
 
@@ -209,7 +209,7 @@ Three postures a system can take at the agent action boundary:
 ACGS's distinctive choice is **receipt-centric**: the gate runs before the
 side effect, and the receipt is the artifact that proves it. This is a
 technical membrane, not a compliance certification. See
-[AGENT_STACK_GOVERNANCE.md](AGENT_STACK_GOVERNANCE.md) for where each adapter
+[AGENT_STACK_GOVERNANCE.md](../../../AGENT_STACK_GOVERNANCE.md) for where each adapter
 plugs into the agent stack.
 ```
 
