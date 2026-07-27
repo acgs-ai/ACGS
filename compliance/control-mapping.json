@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "title": "ACGS / gove-zone compliance control mapping",
+  "title": "ACGS compliance control mapping",
   "disclaimer": "Self-assessment mapping, not a certification, attestation, or audit result. gove-zone is alpha / local-proof software. A mapping row means the receipt membrane produces evidence toward the requirement at the executor boundary; it does not mean adopting gove-zone makes a system compliant. Compliance is a property of an organization and its full control set. See docs/COMPLIANCE_CROSSWALK.md and docs/CLAIMS.md rows 27-33.",
   "status_rollup_rule": "When a requirement maps to a mix of default-on and opt-in controls, status reflects whether the default-on subset alone delivers the core of the requirement; opt-in components are disclosed in the limitation field. If the requirement's core depends on an opt-in control (or on operator-supplied strength, e.g. identity), the row is downgraded to partial.",
   "status_vocabulary": {
