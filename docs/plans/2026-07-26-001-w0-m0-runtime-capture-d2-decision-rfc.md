@@ -1,8 +1,8 @@
 ---
 title: "W0-M0 Runtime Capture / D2 Decision RFC"
-status: "PROPOSED / NOT IMPLEMENTED / NOT APPROVED UNTIL SIGNED / REQUIRES HUMAN APPROVAL"
+status: "APPROVED FOR INITIAL IMPLEMENTATION SLICE / NOT PRODUCTION-READY / NOT PRIVACY-APPROVED"
 date: 2026-07-26
-head: 314de455
+head: 596a1c0
 scope: packages/gove-zone
 ---
 
@@ -13,6 +13,19 @@ scope: packages/gove-zone
 This RFC is a decision record, not an implementation plan. It exists to
 separate the W0-M0 capture/privacy work from the runtime executor path until the
 write-order and failure-semantics decision set is approved.
+
+## Implementation Authorization Boundary
+
+On 2026-07-27, the requesting human/user in the current task authorized
+implementation of the PR #405 D2 runtime-capture choices only. That
+authorization is limited to the initial runtime-capture slice described here:
+
+- UniversalGateway issuer paths only (`invoke` and Claude hook receipt anchors);
+- no DecisionReceipt schema change;
+- no executor-trusted `CaptureRecord`;
+- no production-readiness, privacy-compliance, qualified-corpus, or broader
+  lifecycle acceptance claim;
+- no merge, release, or production rollout authorization.
 
 ## Current Evidence at HEAD `314de455`
 
@@ -295,37 +308,38 @@ If any future capture change causes authority drift, rollback is to:
 
 ## Human Approval Record
 
-Decision: [ ] APPROVE  [ ] REJECT
+Decision: [x] APPROVE INITIAL IMPLEMENTATION SLICE  [ ] REJECT
 
-Approver role:
-Approver name:
-Signature date:
-Scope: `docs/plans/2026-07-26-001-w0-m0-runtime-capture-d2-decision-rfc.md`
+Approver role: requesting human/user in current task
+Approver name: not recorded in this RFC; do not infer identity from the tool session
+Signature date: 2026-07-27
+Scope: PR #405 D2 runtime-capture choices only; no production, privacy, qualified
+corpus, merge, release, or broader lifecycle approval.
 
 Approved choices to initial if approved:
 
-- [ ] evaluate → audit → capture → pre-execution `DecisionReceipt` issuance →
+- [x] evaluate → audit → capture → pre-execution `DecisionReceipt` issuance →
   executor PEP → side effect
-- [ ] separate non-authoritative versioned `CaptureRecord` with no
+- [x] separate non-authoritative versioned `CaptureRecord` with no
   `DecisionReceipt` schema bump in the first runtime slice
-- [ ] CaptureRecord uses the pre-receipt fields listed in Decision 3
-- [ ] CaptureRecord carries no raw args, state, goal, reason, or transformed_args
-- [ ] missing policy hash / bundle / evaluator / projection / decision time is
+- [x] CaptureRecord uses the pre-receipt fields listed in Decision 3
+- [x] CaptureRecord carries no raw args, state, goal, reason, or transformed_args
+- [x] missing policy hash / bundle / evaluator / projection / decision time is
   insufficient-projection and never replayable
-- [ ] private replay inputs, if any, remain in a separate local/dev data plane
-- [ ] REQUIRED means fail closed, no executable receipt, no executor call
-- [ ] REQUIRED capture-store failure or observation-sink failure blocks
+- [x] private replay inputs, if any, remain in a separate local/dev data plane
+- [x] REQUIRED means fail closed, no executable receipt, no executor call
+- [x] REQUIRED capture-store failure or observation-sink failure blocks
   `DecisionReceipt` issuance and executor invocation
-- [ ] BEST_EFFORT / DISABLED are local-dev only
-- [ ] BEST_EFFORT emits explicit `capture_failed` observation through a
+- [x] BEST_EFFORT / DISABLED are local-dev only
+- [x] BEST_EFFORT emits explicit `capture_failed` observation through a
   separate sink
-- [ ] DISABLED is an explicit config choice, not an inferred fallback
-- [ ] existing audit decision remains, plus separate capture-failure observation
-- [ ] capture failure observation is logged / metered and never claimed as
+- [x] DISABLED is an explicit config choice, not an inferred fallback
+- [x] existing audit decision remains, plus separate capture-failure observation
+- [x] capture failure observation is logged / metered and never claimed as
   captured
-- [ ] per-tenant storage API is mandatory before production
-- [ ] no production claim
-- [ ] `Receipt` remains post-execution and non-executable in the authorization
+- [x] per-tenant storage API is mandatory before production
+- [x] no production claim
+- [x] `Receipt` remains post-execution and non-executable in the authorization
   sequence
 
 ## Notes on Current Merge-Ready State
