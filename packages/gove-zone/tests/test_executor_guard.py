@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from gove_zone import (
     Validator,
     execute_with_receipt,
 )
+from gove_zone.policy import PolicyRule, RuleSetPolicy
 
 
 class SideEffectTracker:
@@ -408,6 +410,76 @@ def test_gate_policy_binding_contradiction_fails_closed() -> None:
         )
     assert "contradictory policy contract" in str(exc_info.value)
     assert not tracker.called
+
+
+def _real_policy() -> RuleSetPolicy:
+    return RuleSetPolicy(
+        policy_id="gate/v1",
+        rules=[PolicyRule.from_dict({"id": "R1", "effect": "deny", "tools": ["fs.delete"]})],
+    )
+
+
+def test_gate_binds_a_real_policy_by_its_full_digest() -> None:
+    """End-to-end: the gate accepts a receipt carrying the real full-digest version.
+
+    Uses a real RuleSetPolicy rather than a stub so the 64-hex identity is the
+    thing actually compared at the gate.
+    """
+    policy = _real_policy()
+    assert re.fullmatch(r"[0-9a-f]{64}", policy.version.rsplit("/", 1)[-1])
+
+    tracker = SideEffectTracker()
+    args = {"path": "safe.txt"}
+    receipt = _receipt_with_policy_hash(policy.version, args=args)
+
+    res = execute_with_receipt(
+        tool_fn=tracker.run_tool,
+        args=args,
+        receipt=receipt,
+        expected_tenant_id="tenant-A",
+        expected_execution_boundary="local-sandbox",
+        expected_action="runtime.file.write",
+        expected_actor="anonymous",
+        policy=policy,
+        require_signature=False,
+    )
+    assert res == "success"
+    assert tracker.called
+
+
+def test_gate_refuses_a_truncated_policy_identity() -> None:
+    """The pre-hardening 16-hex identity must NOT authorize under the new one.
+
+    This is the no-dual-acceptance assertion: the truncated form is an exact
+    prefix of the full digest, so a lenient comparison would accept it. The gate
+    must reject it and run no side effect.
+    """
+    from gove_zone.errors import ReceiptRejectionReason
+
+    policy = _real_policy()
+    prefix, digest = policy.version.rsplit("/", 1)
+    truncated = f"{prefix}/{digest[:16]}"
+    assert policy.version.startswith(truncated)  # a lenient check would pass
+
+    tracker = SideEffectTracker()
+    args = {"path": "safe.txt"}
+    receipt = _receipt_with_policy_hash(truncated, args=args)
+
+    with pytest.raises(ReceiptValidationError) as exc_info:
+        execute_with_receipt(
+            tool_fn=tracker.run_tool,
+            args=args,
+            receipt=receipt,
+            expected_tenant_id="tenant-A",
+            expected_execution_boundary="local-sandbox",
+            expected_action="runtime.file.write",
+            expected_actor="anonymous",
+            policy=policy,
+            require_signature=False,
+        )
+    assert exc_info.value.reason_code == ReceiptRejectionReason.POLICY_HASH_MISMATCH
+    assert not tracker.called
+    assert tracker.called_with is None
 
 
 def test_unbound_executor_ignores_policy_hash_by_default() -> None:

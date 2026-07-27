@@ -11,11 +11,13 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import math
 import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 from gove_zone.decision import (
@@ -51,8 +53,111 @@ class Policy(ABC):
         """
 
 
-class AllowAllPolicy(Policy):
+class PolicyCompositionError(TypeError):
+    """Raised when a policy cannot be safely composed into a CompositePolicy."""
+
+
+_FULL_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _content_addressed_version(prefix: str, digest: str) -> str:
+    """Build a ``<prefix><full sha256>`` policy version.
+
+    The digest segment of a content-addressed policy version is an
+    authorization-bound identity: it reaches
+    :attr:`~gove_zone.receipt.DecisionReceipt.policy_hash` (``tenant.py``) and is
+    what ``GovernedExecutor``/``execute_with_receipt`` derive
+    ``expected_policy_hash`` from when bound to a policy. It therefore carries
+    the full lowercase 64-hex SHA-256 — a truncated digest is rejected here so a
+    shortened identity cannot be reintroduced silently.
+    """
+    if not _FULL_SHA256_RE.fullmatch(digest):
+        raise ValueError("policy version digest must be 64 lowercase SHA-256 hex characters")
+    return f"{prefix}{digest}"
+
+
+def _composite_digest(members: Sequence[Policy]) -> str:
+    """Content hash over the ordered member versions of a composite.
+
+    Concatenating member versions would not be injective: ``policy_id`` may
+    contain any character, so a joined string could in principle be parsed more
+    than one way. Hashing canonical JSON makes the encoding unambiguous —
+    ordering, separators, and escaping are all decided by the serializer.
+    """
+    payload = {
+        "type": "composite-policy",
+        "schema": 1,
+        "children": [member.version for member in members],
+    }
+    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
+class _SealedPolicy(Policy):
+    """Policy whose instance attributes are frozen once :meth:`_seal` runs.
+
+    Built-in policies cache a content-addressed ``version`` at construction while
+    ``evaluate`` reads live attributes. Sealing closes the gap: after
+    construction no attribute can be rebound or deleted, so behaviour cannot
+    change while the cached version stays stable.
+    """
+
+    _sealed: bool = False
+
+    def _seal(self) -> None:
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError(f"{type(self).__name__} is immutable after construction")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError(f"{type(self).__name__} is immutable after construction")
+        object.__delattr__(self, name)
+
+
+def _freeze_policy_json(value: Any) -> Any:
+    """Copy JSON-shaped policy data into deeply immutable containers."""
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("policy rule numbers must be finite")
+        return value
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("policy rule object keys must be strings")
+            frozen[key] = _freeze_policy_json(item)
+        return MappingProxyType(frozen)
+    if _is_sequence(value):
+        return tuple(_freeze_policy_json(item) for item in cast("Sequence[Any]", value))
+    raise ValueError(f"policy rule contains unsupported value {type(value).__name__}")
+
+
+def _thaw_policy_json(value: Any) -> Any:
+    """Return plain, detached JSON containers from frozen policy data."""
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_policy_json(item) for key, item in value.items()}
+    if _is_sequence(value):
+        return [_thaw_policy_json(item) for item in cast("Sequence[Any]", value)]
+    return value
+
+
+def _string_frozenset(value: Any, *, field_name: str) -> frozenset[str]:
+    """Coerce a caller-supplied collection into a detached ``frozenset[str]``."""
+    if isinstance(value, (set, frozenset)):
+        return frozenset(str(item) for item in cast("frozenset[Any]", value))
+    return frozenset(_string_tuple(value, field_name=field_name))
+
+
+class AllowAllPolicy(_SealedPolicy):
     """Allows every call. Useful only in tests."""
+
+    def __init__(self) -> None:
+        self._seal()
 
     @property
     def version(self) -> str:
@@ -69,11 +174,12 @@ class AllowAllPolicy(Policy):
         )
 
 
-class DenyAllPolicy(Policy):
+class DenyAllPolicy(_SealedPolicy):
     """Denies every call. Useful for kill-switches and tests."""
 
     def __init__(self, reason: str = "deny-all policy") -> None:
-        self._reason = reason
+        self._reason = str(reason)
+        self._seal()
 
     @property
     def version(self) -> str:
@@ -91,7 +197,7 @@ class DenyAllPolicy(Policy):
         )
 
 
-class BoundaryPolicy(Policy):
+class BoundaryPolicy(_SealedPolicy):
     """Hard-deny when the canonical-JSON of the args matches a forbidden
     keyword (substring, case-insensitive) or regex pattern.
 
@@ -109,12 +215,15 @@ class BoundaryPolicy(Policy):
         rule_id: str = "BOUNDARY",
         only_tools: Sequence[str] | None = None,
     ) -> None:
-        self._keywords = tuple(k.lower() for k in forbidden_keywords)
-        self._patterns = tuple(re.compile(p, re.IGNORECASE) for p in forbidden_patterns)
-        self._raw_patterns = tuple(forbidden_patterns)
-        self._rule_id = rule_id
-        self._only_tools = None if only_tools is None else frozenset(only_tools)
+        self._keywords = tuple(str(k).lower() for k in forbidden_keywords)
+        self._raw_patterns = tuple(str(p) for p in forbidden_patterns)
+        self._patterns = tuple(re.compile(p, re.IGNORECASE) for p in self._raw_patterns)
+        self._rule_id = str(rule_id)
+        self._only_tools = (
+            None if only_tools is None else _string_frozenset(only_tools, field_name="only_tools")
+        )
         self._version = self._compute_version()
+        self._seal()
 
     def _compute_version(self) -> str:
         h = hashlib.sha256()
@@ -126,7 +235,7 @@ class BoundaryPolicy(Policy):
         h.update(b"|")
         only = sorted(self._only_tools) if self._only_tools else []
         h.update(canonical_json(only).encode())
-        return f"boundary/{h.hexdigest()[:16]}"
+        return _content_addressed_version("boundary/", h.hexdigest())
 
     @property
     def version(self) -> str:
@@ -172,7 +281,7 @@ def _path_has_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
     return len(path) >= len(prefix) and path[: len(prefix)] == prefix
 
 
-class PathBoundaryPolicy(Policy):
+class PathBoundaryPolicy(_SealedPolicy):
     """Deny actor/tool calls against protected path prefixes.
 
     This is the minimal policies-on-paths primitive: the policy evaluates the
@@ -195,10 +304,13 @@ class PathBoundaryPolicy(Policy):
         self._blocked_prefixes = tuple(
             normalize_path_context(prefix) for prefix in blocked_prefixes
         )
-        self._allowed_actors = frozenset(allowed_actors)
-        self._rule_id = rule_id
-        self._only_tools = None if only_tools is None else frozenset(only_tools)
+        self._allowed_actors = _string_frozenset(allowed_actors, field_name="allowed_actors")
+        self._rule_id = str(rule_id)
+        self._only_tools = (
+            None if only_tools is None else _string_frozenset(only_tools, field_name="only_tools")
+        )
         self._version = self._compute_version()
+        self._seal()
 
     def _compute_version(self) -> str:
         h = hashlib.sha256()
@@ -210,7 +322,7 @@ class PathBoundaryPolicy(Policy):
         h.update(b"|")
         only = sorted(self._only_tools) if self._only_tools else []
         h.update(canonical_json(only).encode())
-        return f"path-boundary/{h.hexdigest()[:16]}"
+        return _content_addressed_version("path-boundary/", h.hexdigest())
 
     @property
     def version(self) -> str:
@@ -326,6 +438,45 @@ class PolicyRule:
     trust_tier_key: str = "trust_tier"
     reason: str = ""
 
+    def __post_init__(self) -> None:
+        """Copy and deep-freeze every caller-supplied field.
+
+        ``PolicyRule`` is content-addressed into ``RuleSetPolicy.version``, so a
+        field that stayed aliased to a caller-owned ``dict``/``list`` would let
+        matching behaviour drift while the version stayed stable. Validation
+        also runs here rather than only in :meth:`from_dict`, so a rule built
+        directly cannot carry an effect the bundle format forbids.
+        """
+        rule_id = str(self.rule_id).strip()
+        if not rule_id:
+            raise ValueError("policy rule requires a non-empty id")
+        object.__setattr__(self, "rule_id", rule_id)
+        object.__setattr__(self, "effect", _rule_effect(self.effect))
+        object.__setattr__(self, "path_prefix", _path_prefix(self.path_prefix))
+        object.__setattr__(self, "tools", _string_frozenset(self.tools, field_name="tools"))
+        object.__setattr__(
+            self,
+            "state_equals",
+            _freeze_policy_json(_mapping_dict(self.state_equals, field_name="state_equals")),
+        )
+        object.__setattr__(
+            self,
+            "state_contains",
+            _freeze_policy_json(_mapping_dict(self.state_contains, field_name="state_contains")),
+        )
+        object.__setattr__(
+            self,
+            "allowed_actors",
+            _string_frozenset(self.allowed_actors, field_name="allowed_actors"),
+        )
+        object.__setattr__(
+            self,
+            "allowed_trust_tiers",
+            _string_frozenset(self.allowed_trust_tiers, field_name="allowed_trust_tiers"),
+        )
+        object.__setattr__(self, "trust_tier_key", str(self.trust_tier_key))
+        object.__setattr__(self, "reason", str(self.reason))
+
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> PolicyRule:
         rule_id = str(raw.get("id", "")).strip()
@@ -356,8 +507,8 @@ class PolicyRule:
             "effect": self.effect.value,
             "path_prefix": list(self.path_prefix),
             "tools": sorted(self.tools),
-            "state_equals": dict(self.state_equals),
-            "state_contains": dict(self.state_contains),
+            "state_equals": _thaw_policy_json(self.state_equals),
+            "state_contains": _thaw_policy_json(self.state_contains),
             "allowed_actors": sorted(self.allowed_actors),
             "allowed_trust_tiers": sorted(self.allowed_trust_tiers),
             "trust_tier_key": self.trust_tier_key,
@@ -374,9 +525,9 @@ class PolicyRule:
         if self.path_prefix:
             payload["path_prefix"] = list(self.path_prefix)
         if self.state_equals:
-            payload["state_equals"] = dict(self.state_equals)
+            payload["state_equals"] = _thaw_policy_json(self.state_equals)
         if self.state_contains:
-            payload["state_contains"] = dict(self.state_contains)
+            payload["state_contains"] = _thaw_policy_json(self.state_contains)
 
         allow: dict[str, list[str]] = {}
         if self.allowed_actors:
@@ -414,7 +565,7 @@ class PolicyRule:
         return None
 
 
-class RuleSetPolicy(Policy):
+class RuleSetPolicy(_SealedPolicy):
     """Declarative policy bundle over path + organization state + trust tier.
 
     ``RuleSetPolicy`` is intentionally small and deterministic: bundles are
@@ -427,9 +578,14 @@ class RuleSetPolicy(Policy):
     def __init__(self, *, policy_id: str, rules: Sequence[PolicyRule]) -> None:
         if not rules:
             raise ValueError("RuleSetPolicy requires at least one rule")
-        self._policy_id = policy_id.strip() or "ruleset/v0"
-        self._rules = tuple(rules)
+        self._policy_id = str(policy_id).strip() or "ruleset/v0"
+        rule_tuple = tuple(rules)
+        for rule in rule_tuple:
+            if not isinstance(rule, PolicyRule):
+                raise TypeError("RuleSetPolicy rules must be PolicyRule instances")
+        self._rules = rule_tuple
         self._version = self._compute_version()
+        self._seal()
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RuleSetPolicy:
@@ -464,7 +620,7 @@ class RuleSetPolicy(Policy):
                 }
             ).encode()
         ).hexdigest()
-        return f"ruleset/{self._policy_id}/{digest[:16]}"
+        return _content_addressed_version(f"ruleset/{self._policy_id}/", digest)
 
     @property
     def version(self) -> str:
@@ -565,9 +721,18 @@ class RiskTier:
     description: str = ""
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
+        name = str(self.name).strip()
+        if not name:
             raise ValueError("risk tier requires a non-empty name")
+        object.__setattr__(self, "name", name)
         object.__setattr__(self, "enforcement", _tier_enforcement(self.enforcement))
+        # Copy caller-owned sequences: `requirements` is content-addressed into
+        # RiskTierPolicy.version, so an aliased list would let tier metadata
+        # drift under a stable version.
+        object.__setattr__(
+            self, "requirements", _string_tuple(self.requirements, field_name="requirements")
+        )
+        object.__setattr__(self, "description", str(self.description))
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RiskTier:
@@ -598,7 +763,7 @@ class RiskTier:
         }
 
 
-class RiskTierPolicy(Policy):
+class RiskTierPolicy(_SealedPolicy):
     """Risk-tiered enforcement surface: per-tool enforcement depth as policy data.
 
     Answers the uniform-governance objection — one blanket gate for every
@@ -624,17 +789,23 @@ class RiskTierPolicy(Policy):
     ) -> None:
         if not tiers:
             raise ValueError("RiskTierPolicy requires at least one tier")
-        self._policy_id = policy_id.strip() or "risk-tier/v0"
+        self._policy_id = str(policy_id).strip() or "risk-tier/v0"
         self._tiers = tuple(tiers)
-        self._by_name: dict[str, RiskTier] = {}
+        by_name: dict[str, RiskTier] = {}
         for tier in self._tiers:
-            if tier.name in self._by_name:
+            if not isinstance(tier, RiskTier):
+                raise TypeError("RiskTierPolicy tiers must be RiskTier instances")
+            if tier.name in by_name:
                 raise ValueError(f"duplicate risk tier name: {tier.name!r}")
-            self._by_name[tier.name] = tier
+            by_name[tier.name] = tier
+        # MappingProxyType, not dict: sealing stops the attribute being rebound,
+        # but a plain dict would still be mutable through the live reference and
+        # could retarget tier lookup under a stable version.
+        self._by_name: Mapping[str, RiskTier] = MappingProxyType(by_name)
 
-        self._tool_tiers = {
-            str(tool): str(tier_name) for tool, tier_name in (tool_tiers or {}).items()
-        }
+        self._tool_tiers: Mapping[str, str] = MappingProxyType(
+            {str(tool): str(tier_name) for tool, tier_name in (tool_tiers or {}).items()}
+        )
         for tool, tier_name in self._tool_tiers.items():
             if tier_name not in self._by_name:
                 raise ValueError(f"tool {tool!r} references undefined risk tier {tier_name!r}")
@@ -651,6 +822,7 @@ class RiskTierPolicy(Policy):
                 key=lambda tier: _TIER_SEVERITY[tier.enforcement],
             ).name
         self._version = self._compute_version()
+        self._seal()
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RiskTierPolicy:
@@ -693,7 +865,7 @@ class RiskTierPolicy(Policy):
                 }
             ).encode()
         ).hexdigest()
-        return f"risk-tier/{self._policy_id}/{digest[:16]}"
+        return _content_addressed_version(f"risk-tier/{self._policy_id}/", digest)
 
     @property
     def version(self) -> str:
@@ -763,19 +935,41 @@ class RiskTierPolicy(Policy):
         )
 
 
-class CompositePolicy(Policy):
+class CompositePolicy(_SealedPolicy):
     """Run N policies in order; first non-ALLOW wins.
 
     The returned record's ``policy_version`` is set to this composite's own
-    version (``+``-joined member versions) so replay against the composite is
-    stable.
+    version — a content hash over the ordered member versions — so replay
+    against the composite is stable.
+
+    Member **order is part of the identity**: this is a first-non-ALLOW-wins
+    pipeline, so ``CompositePolicy([A, B])`` and ``CompositePolicy([B, A])`` are
+    different policies and hash differently. That is intended; composition is
+    not an order-free ``AND``.
+
+    Every member must be a sealed built-in policy. The composite caches its
+    version at construction but evaluates each member *live*, so a member whose
+    attributes could still be rebound would change decisions under a stable
+    composite version.
     """
 
     def __init__(self, policies: Sequence[Policy]) -> None:
         if not policies:
             raise ValueError("CompositePolicy requires at least one policy")
-        self._policies = tuple(policies)
-        self._version = "composite[" + "+".join(p.version for p in policies) + "]"
+        members = tuple(policies)
+        for member in members:
+            if not isinstance(member, Policy):
+                raise TypeError("CompositePolicy members must implement Policy")
+            if not isinstance(member, _SealedPolicy):
+                raise PolicyCompositionError(
+                    f"{type(member).__name__} cannot be composed: a CompositePolicy caches "
+                    "its version but evaluates each member live, so every member must be a "
+                    "sealed built-in policy whose attributes are frozen at construction. "
+                    "Express custom logic as a RuleSetPolicy bundle instead."
+                )
+        self._policies = members
+        self._version = _content_addressed_version("composite/", _composite_digest(members))
+        self._seal()
 
     @property
     def version(self) -> str:

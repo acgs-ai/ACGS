@@ -32,9 +32,9 @@ acgs proofpack verify <this-directory>
 - **Actor**: `compliance-officer` (tenant `tenant-A`)
 - **Authority**: tenant-A/write-grant
 - **Execution boundary**: `local-sandbox`
-- **Policy**: `compliance-ruleset/v1` version `ruleset/compliance-ruleset/v1/be02ba386af91111`
-  (hash `ruleset/compliance-ruleset/v1/be02ba386af91111`)
-- **Receipt**: `ev_91173c10c1094a6c` (request `req-1`)
+- **Policy**: `compliance-ruleset/v1` version `ruleset/compliance-ruleset/v1/be02ba386af91111ba8e2f4a3a74eb60f67761c17dabdf62de3935b1c5b6bfe7`
+  (hash `ruleset/compliance-ruleset/v1/be02ba386af91111ba8e2f4a3a74eb60f67761c17dabdf62de3935b1c5b6bfe7`)
+- **Receipt**: `ev_2d7706aca68740c4` (request `req-1`)
 
 ## For engineers
 
