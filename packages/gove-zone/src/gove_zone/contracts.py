@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 from gove_zone.errors import (
     PRODUCTION_NO_VERIFIER_MSG,
     ProductionProfileError,
+    ReceiptRejectionReason,
     ReceiptValidationError,
 )
 from gove_zone.receipt import (
@@ -165,13 +166,39 @@ class AuditEvent:
     def from_receipt_and_event(cls, receipt: DecisionReceipt, event: dict[str, Any]) -> AuditEvent:
         """Join a receipt with its persisted chain *event* into one view.
 
-        The chain record carries the cryptographic anchor (``event_hash``,
-        ``previous_hash``); the receipt carries the governance linkage
-        (``tenant_id``, ``request_id``, ``receipt_id``, ``policy_bundle_id``).
-        Together they form the complete audit evidence for one decision.
+        The chain record carries the claimed cryptographic anchor
+        (``event_hash``, ``previous_hash``); the receipt carries the
+        governance linkage (``tenant_id``, ``request_id``, ``receipt_id``,
+        ``policy_bundle_id``). This method binds the receipt to a matching
+        event id and claimed ``event_hash`` only. Full audit-chain self-
+        verification stays with ``ChainHashAuditStore.verify_chain``.
         """
+        event_id = event.get("event_id")
+        if not isinstance(event_id, str) or not event_id:
+            raise ReceiptValidationError(
+                "audit event missing event_id",
+                reason_code=ReceiptRejectionReason.MISSING_REQUIRED_FIELD,
+            )
+        if event_id != receipt.receipt_id:
+            raise ReceiptValidationError(
+                f"Audit event id mismatch: expected {receipt.receipt_id}, got {event_id}",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
+            )
+
+        event_hash = event.get("event_hash")
+        if not isinstance(event_hash, str) or not event_hash:
+            raise ReceiptValidationError(
+                "audit event missing event_hash",
+                reason_code=ReceiptRejectionReason.MISSING_REQUIRED_FIELD,
+            )
+        if event_hash != receipt.audit_event_hash:
+            raise ReceiptValidationError(
+                f"Audit hash mismatch: expected {receipt.audit_event_hash}, got {event_hash}",
+                reason_code=ReceiptRejectionReason.AUDIT_HASH_MISMATCH,
+            )
+
         return cls(
-            event_id=str(event.get("event_id", receipt.receipt_id)),
+            event_id=event_id,
             request_id=receipt.request_id,
             receipt_id=receipt.receipt_id,
             tenant_id=receipt.tenant_id,
@@ -181,7 +208,7 @@ class AuditEvent:
             policy_bundle_id=receipt.policy_bundle_id,
             timestamp=str(event.get("timestamp_iso", receipt.timestamp)),
             previous_hash=str(event.get("previous_hash", receipt.previous_audit_hash)),
-            event_hash=str(event.get("event_hash", receipt.audit_event_hash)),
+            event_hash=event_hash,
         )
 
     def to_dict(self) -> dict[str, Any]:

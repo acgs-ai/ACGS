@@ -20,6 +20,7 @@ from gove_zone import (
     GovernanceRequest,
     PolicyBundleRef,
     ProposedAction,
+    ReceiptRejectionReason,
     ReceiptValidationError,
     ReceiptVerifier,
     TenantPolicyBinding,
@@ -147,14 +148,16 @@ def test_verifier_rejects_tampered_receipt() -> None:
 def test_audit_event_joins_receipt_and_chain_event() -> None:
     receipt = _allow_receipt()
     chain_event = {
-        "event_id": "ev_chain_1",
+        "event_id": receipt.receipt_id,
         "previous_hash": "0" * 64,
-        "event_hash": "abc123",
+        "event_hash": receipt.audit_event_hash,
         "timestamp_iso": "2026-05-28T00:00:00+00:00",
+        "args": {"content": "secret"},
+        "payload": {"raw": "secret"},
     }
     event = AuditEvent.from_receipt_and_event(receipt, chain_event)
-    assert event.event_id == "ev_chain_1"
-    assert event.event_hash == "abc123"
+    assert event.event_id == receipt.receipt_id
+    assert event.event_hash == receipt.audit_event_hash
     # Governance linkage comes from the receipt, not the bare chain record.
     assert event.tenant_id == "tenant-A"
     assert event.request_id == "req-1"
@@ -174,3 +177,65 @@ def test_audit_event_joins_receipt_and_chain_event() -> None:
         "previous_hash",
         "event_hash",
     }
+    assert "args" not in event.to_dict()
+    assert "payload" not in event.to_dict()
+
+
+def test_audit_event_rejects_event_id_mismatch() -> None:
+    receipt = _allow_receipt()
+    chain_event = {
+        "event_id": "ev_wrong",
+        "previous_hash": receipt.previous_audit_hash,
+        "event_hash": receipt.audit_event_hash,
+        "timestamp_iso": "2026-05-28T00:00:00+00:00",
+    }
+
+    with pytest.raises(ReceiptValidationError, match="Audit event id mismatch") as exc:
+        AuditEvent.from_receipt_and_event(receipt, chain_event)
+    assert exc.value.reason_code is ReceiptRejectionReason.AUDIT_HASH_MISMATCH
+
+
+@pytest.mark.parametrize("event_id", [None, ""])
+def test_audit_event_rejects_missing_or_empty_event_id(event_id: str | None) -> None:
+    receipt = _allow_receipt()
+    chain_event = {
+        "previous_hash": receipt.previous_audit_hash,
+        "event_hash": receipt.audit_event_hash,
+        "timestamp_iso": "2026-05-28T00:00:00+00:00",
+    }
+    if event_id is not None:
+        chain_event["event_id"] = event_id
+
+    with pytest.raises(ReceiptValidationError, match="audit event missing event_id") as exc:
+        AuditEvent.from_receipt_and_event(receipt, chain_event)
+    assert exc.value.reason_code is ReceiptRejectionReason.MISSING_REQUIRED_FIELD
+
+
+def test_audit_event_rejects_audit_hash_mismatch() -> None:
+    receipt = _allow_receipt()
+    chain_event = {
+        "event_id": receipt.receipt_id,
+        "previous_hash": receipt.previous_audit_hash,
+        "event_hash": "wrong_hash",
+        "timestamp_iso": "2026-05-28T00:00:00+00:00",
+    }
+
+    with pytest.raises(ReceiptValidationError, match="Audit hash mismatch") as exc:
+        AuditEvent.from_receipt_and_event(receipt, chain_event)
+    assert exc.value.reason_code is ReceiptRejectionReason.AUDIT_HASH_MISMATCH
+
+
+@pytest.mark.parametrize("event_hash", [None, ""])
+def test_audit_event_rejects_missing_or_empty_event_hash(event_hash: str | None) -> None:
+    receipt = _allow_receipt()
+    chain_event = {
+        "event_id": receipt.receipt_id,
+        "previous_hash": receipt.previous_audit_hash,
+        "timestamp_iso": "2026-05-28T00:00:00+00:00",
+    }
+    if event_hash is not None:
+        chain_event["event_hash"] = event_hash
+
+    with pytest.raises(ReceiptValidationError, match="audit event missing event_hash") as exc:
+        AuditEvent.from_receipt_and_event(receipt, chain_event)
+    assert exc.value.reason_code is ReceiptRejectionReason.MISSING_REQUIRED_FIELD
