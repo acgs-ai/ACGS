@@ -82,7 +82,10 @@ jobs:
         # (see constitutional-hash.yml for the same pattern).
         run: |
           uv python install ${{ matrix.python-version }}
-          uv venv --python ${{ matrix.python-version }} .venv
+          # --clear: the matrix jobs run sequentially on the same persistent
+          # runner workdir, and checkout's git clean does not descend into
+          # the submodule, so a .venv from the previous job may linger.
+          uv venv --clear --python ${{ matrix.python-version }} .venv
           uv pip install --python .venv --no-config --no-sources --editable '.[dev]'
 
       - name: Lint
