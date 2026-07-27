@@ -87,20 +87,35 @@ and `ESCALATE` decisions with:
 - `DENY` and `ESCALATE` recorded as non-executable native evidence with no
   receipt consumption; and
 - `ALLOW` execution, DB mutation, native receipt row, governance event/head,
-  outbox row, and signed consumption attestation inside one rollbackable SQL
-  transaction.
+  outbox row, signed consumption attestation, and signed terminal idempotency
+  result inside one rollbackable SQL transaction.
+
+The same route now requires exactly one bounded `Idempotency-Key` and stores a
+durable result row for terminal `ALLOW`, `DENY`, and `ESCALATE` decisions. The
+row stores digest-only key, request, and response evidence plus receipt/event
+references; it does not store the raw transport key or a raw response body.
+Replay reconstructs the semantic response from authoritative rows and verifies
+the signed result artifact and native evidence chain before returning it. A
+same key with a different request digest returns a conflict without a second
+mutation, receipt, event, outbox row, or idempotency result. PostgreSQL
+serializes this path through a tenant row lock; SQLite coverage is limited to
+same-process locking.
 
 This is route-level evidence, not a full control-plane cutover. Twelve legacy
 unsigned write aliases remain and still block production posture. Native scope
 is hash-bound through the event path, not represented as direct
-project/environment columns on the receipt schema. SQL rollback does not prove
-external exactly-once delivery, and export/offline verification requires trusted
-public keys supplied out of band.
+project/environment columns on the receipt schema. SQL rollback and durable
+agent-create replay do not prove external exactly-once delivery, and
+export/offline verification requires trusted public keys supplied out of band.
+No other mutating route, async export/recovery path, rolling-upgrade path, or
+production deployment is claimed by this slice.
 
 Evidence:
 `packages/acgs-control-plane/tests/test_native_agent_transaction_route.py`,
-`packages/acgs-control-plane/tests/test_exports.py`, and PR #370 commit
-`feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f`.
+`packages/acgs-control-plane/tests/test_agent_create_idempotency.py`,
+`packages/acgs-control-plane/tests/test_exports.py`, PR #370 commit
+`feaabd96ccb68a076f39cc46fe5a7d906e0a9a5f`, and PR #371 commit
+`e0f514f2963987f72827d33ada891abc08677f03`.
 
 ## Expiry
 

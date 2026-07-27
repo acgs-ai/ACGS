@@ -13,7 +13,9 @@ def _seed_activity(client: TestClient, org_id: str, headers: dict[str, str]) -> 
     for i in range(3):
         assert (
             client.post(
-                f"/orgs/{org_id}/agents", json={"name": f"bot-{i}"}, headers=headers
+                f"/orgs/{org_id}/agents",
+                json={"name": f"bot-{i}"},
+                headers={**headers, "Idempotency-Key": f"receipt-dashboard-bot-{i}"},
             ).status_code
             == 201
         )

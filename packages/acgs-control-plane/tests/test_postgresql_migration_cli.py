@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 import sqlalchemy as sa
@@ -27,8 +28,8 @@ from acgs_control_plane.migrations import (
     HEAD_REVISION,
 )
 
-_TEST_POSTGRES_URL = os.environ.get("ACP_TEST_POSTGRES_URL")
-if not _TEST_POSTGRES_URL:
+_raw_test_postgres_url = os.environ.get("ACP_TEST_POSTGRES_URL")
+if not _raw_test_postgres_url:
     pytest.skip(
         "set ACP_TEST_POSTGRES_URL to run disposable PostgreSQL migration CLI tests",
         allow_module_level=True,
@@ -40,6 +41,7 @@ if os.environ.get("ACP_TEST_POSTGRES_ALLOW_DESTRUCTIVE") != "1":
     )
 
 pytest.importorskip("psycopg")
+_TEST_POSTGRES_URL: str = cast(str, _raw_test_postgres_url)
 _TEST_URL = sa.engine.make_url(_TEST_POSTGRES_URL)
 _DISPOSABLE_DATABASE_NAME = "acgs_control_plane_test"
 if _TEST_URL.get_backend_name() != "postgresql":
@@ -305,7 +307,7 @@ def test_rogue_public_schema_fails_without_version_or_table_mutation() -> None:
 def test_public_function_hijack_cannot_mutate_during_status() -> None:
     upgraded, payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert upgraded.returncode == 0
-    assert payload["after"] == "version_0010"
+    assert payload["after"] == "version_0011"
 
     engine = make_engine(_TEST_POSTGRES_URL)
     try:
@@ -469,7 +471,7 @@ def test_lock_contention_is_retryable_and_retry_upgrades_once() -> None:
     assert retried.returncode == 0
     assert retried.stderr == ""
     assert payload == {
-        "after": "version_0010",
+        "after": "version_0011",
         "before": "empty",
         "command": "upgrade",
         "ok": True,
@@ -482,12 +484,12 @@ def test_successful_upgrade_is_forward_only_and_idempotent() -> None:
     first, first_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert first.returncode == 0
     assert first_payload["before"] == "empty"
-    assert first_payload["after"] == "version_0010"
+    assert first_payload["after"] == "version_0011"
 
     second, second_payload = _invoke_cli("upgrade", acknowledge_forward_only=True)
     assert second.returncode == 0
-    assert second_payload["before"] == "version_0010"
-    assert second_payload["after"] == "version_0010"
+    assert second_payload["before"] == "version_0011"
+    assert second_payload["after"] == "version_0011"
     assert _version_rows() == [HEAD_REVISION]
 
     downgrade, payload = _invoke_cli("downgrade")

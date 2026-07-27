@@ -13,7 +13,7 @@ import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import sqlalchemy as sa
@@ -32,13 +32,14 @@ DATABASE = "acgs_control_plane_recovery_bytea_test"
 DATABASE_ENV = "ACP_TEST_RECOVERY_BYTEA_URL"
 TEMP_TABLE = "acgs_recovery_bytea_fingerprint_fixture"
 
-DATABASE_URL = os.environ.get(DATABASE_ENV)
-if not DATABASE_URL:
+_raw_database_url = os.environ.get(DATABASE_ENV)
+if not _raw_database_url:
     pytest.skip(
         f"set {DATABASE_ENV} to run PostgreSQL bytea recovery tests",
         allow_module_level=True,
     )
 pytest.importorskip("psycopg")
+DATABASE_URL: str = cast(str, _raw_database_url)
 
 
 def _validated_url(raw: str) -> str:
@@ -186,7 +187,7 @@ def test_live_bytea_fingerprint_and_oversize_preflight_are_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     upgrade_database(DATABASE_URL)
-    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(DATABASE_URL).state is DatabaseSchemaState.VERSION_0011
 
     engine = sa.create_engine(DATABASE_URL, poolclass=NullPool, future=True)
     table = _table()

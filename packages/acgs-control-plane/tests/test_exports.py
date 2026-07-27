@@ -20,7 +20,11 @@ def test_export_bundle_is_verifiable_and_complete(
     client: TestClient, org: dict[str, Any], admin_headers: dict[str, str]
 ) -> None:
     org_id = org["org_id"]
-    client.post(f"/orgs/{org_id}/agents", json={"name": "bot-a"}, headers=admin_headers)
+    client.post(
+        f"/orgs/{org_id}/agents",
+        json={"name": "bot-a"},
+        headers={**admin_headers, "Idempotency-Key": "export-bot-a"},
+    )
     client.post(
         f"/orgs/{org_id}/policies",
         json={"policy_id": "p1", "rules": [{"id": "r1", "effect": "deny", "tools": ["x"]}]},
@@ -66,7 +70,9 @@ def test_export_native_evidence_is_sufficient_for_offline_verification(
 ) -> None:
     org_id = org["org_id"]
     created_agent = client.post(
-        f"/orgs/{org_id}/agents", json={"name": "offline-native-bot"}, headers=admin_headers
+        f"/orgs/{org_id}/agents",
+        json={"name": "offline-native-bot"},
+        headers={**admin_headers, "Idempotency-Key": "export-offline-native-bot"},
     )
     assert created_agent.status_code == 201, created_agent.text
 
