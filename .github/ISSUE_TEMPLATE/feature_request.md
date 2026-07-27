@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an enhancement for ACGS / gove-zone
+about: Suggest an enhancement for ACGS
 title: "[feat] "
 labels: enhancement
 assignees: ''

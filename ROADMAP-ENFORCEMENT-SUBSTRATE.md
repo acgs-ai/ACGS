@@ -497,7 +497,7 @@ of the work).
 *This blurb is written to pass its own Part VI publication gates — present tense only for
 what is on `master`; roadmap aspirations are explicitly future-tense.*
 
-> ACGS / gove-zone is a **fail-closed reference monitor** for autonomous side effects: a
+> ACGS is a **fail-closed reference monitor** for autonomous side effects: a
 > deterministic authority boundary that emits a cryptographic Decision Receipt and makes
 > executors fail closed without one. (The Anderson *verifiable* property is a roadmap target
 > via the formal track — currently tested, not proven.) It applies the Clark-Wilson integrity

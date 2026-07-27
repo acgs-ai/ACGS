@@ -1,4 +1,4 @@
-# Product Strategy Canvas — ACGS / gove-zone
+# Product Strategy Canvas — ACGS
 
 > **核心不变式 (Core invariant):** *No valid Decision Receipt, no side effect.*
 >
@@ -7,7 +7,7 @@
 
 **状态 (Status):** 草案 / 早期阶段。本文档对成熟度做诚实标注——**未**声称合规认证、受监管批准或生产就绪;此类声明需发布与外部证据支撑(见 `AGENTS.md` 的 "Forbidden changes")。
 
-**范围 (Scope):** 伞形产品 ACGS / gove-zone(收据门控治理层)。`acgs-lite` 为其 PyPI 面向库,`Acgs-Swarm` / `clinicalguard` 为研究与领域落地抓手。
+**范围 (Scope):** 伞形产品 ACGS(收据门控治理层)。`acgs-lite` 为其 PyPI 面向库,`Acgs-Swarm` / `clinicalguard` 为研究与领域落地抓手。
 
 ---
 

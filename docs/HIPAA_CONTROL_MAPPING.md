@@ -1,6 +1,6 @@
 # HIPAA Security Rule — ACGS Control Mapping
 
-> **Scope, read this first.** ACGS / gove-zone and clinicalguard provide
+> **Scope, read this first.** ACGS and clinicalguard provide
 > **technical controls that support** a covered entity's or business associate's
 > compliance with the HIPAA Security Rule. They are **not** a HIPAA
 > certification, attestation, or regulator approval, and installing them does

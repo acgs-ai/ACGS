@@ -3,7 +3,7 @@
 Maps the control families of Terence Picken's *"The Board Accountability Gap in AI
 Cybersecurity: A Proposed Governance Assessment Methodology for AI Cyber Risk at
 Board Level"* (SSRN 6613560, 18 Apr 2026) onto the concrete enforcement primitives
-of ACGS / gove-zone.
+of ACGS.
 
 ## Provenance & claim-safety
 

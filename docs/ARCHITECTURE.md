@@ -1,6 +1,6 @@
 # Runtime architecture
 
-ACGS / gove-zone is the receipt-gated execution membrane between AI-agent reasoning and real-world side effects.
+ACGS is the receipt-gated execution membrane between AI-agent reasoning and real-world side effects.
 
 Core invariant:
 

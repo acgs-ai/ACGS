@@ -1,6 +1,6 @@
 # Security Policy
 
-ACGS / gove-zone is receipt-gated runtime governance for AI-agent side effects.
+ACGS is receipt-gated runtime governance for AI-agent side effects.
 Because the project's purpose is enforcement and auditability, we take
 vulnerability reports seriously — especially any issue that could weaken
 fail-closed behavior, bypass receipt validation, or forge/replay audit evidence.

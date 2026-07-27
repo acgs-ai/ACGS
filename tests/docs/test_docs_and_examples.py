@@ -73,8 +73,12 @@ def test_required_docs_exist_and_carry_core_invariant() -> None:
 
 def test_readme_opening_and_non_claims() -> None:
     text = _read("README.md")
+    # Brand boundary: ACGS is the project, gove-zone is the enforcement kernel
+    # inside it. The lead sentence must keep both halves — dropping the kernel
+    # clause is what widens the kernel's guarantees to the whole monorepo.
     assert text.startswith(
-        "ACGS / gove-zone is a vendor-neutral, receipt-gated governance layer "
+        "ACGS is a governed agent infrastructure project. Its core enforcement "
+        "kernel is gove-zone, a vendor-neutral, receipt-gated governance layer "
         "for AI-agent side effects."
     )
     for phrase in (

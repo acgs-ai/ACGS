@@ -69,11 +69,6 @@ jobs:
             echo "::warning::packages/clinicalguard could not be initialized. Rotate SUBMODULE_TOKEN to include Contents: Read on dislovelhl/clinicalguard, then rerun this workflow for full verification."
           fi
 
-      - uses: actions/setup-python@v5
-        if: steps.clinicalguard.outputs.available == 'true'
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v3
         if: steps.clinicalguard.outputs.available == 'true'
         with:
@@ -82,12 +77,21 @@ jobs:
 
       - name: Install (dev extras)
         if: steps.clinicalguard.outputs.available == 'true'
-        run: uv pip install --system --no-config --no-sources --editable '.[dev]'
+        # uv's python-build-standalone toolchain works on the self-hosted
+        # runner, where actions/setup-python has no prebuilds
+        # (see constitutional-hash.yml for the same pattern).
+        run: |
+          uv python install ${{ matrix.python-version }}
+          # --clear: the matrix jobs run sequentially on the same persistent
+          # runner workdir, and checkout's git clean does not descend into
+          # the submodule, so a .venv from the previous job may linger.
+          uv venv --clear --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv --no-config --no-sources --editable '.[dev]'
 
       - name: Lint
         if: steps.clinicalguard.outputs.available == 'true'
-        run: python -m ruff check .
+        run: .venv/bin/python -m ruff check .
 
       - name: Test
         if: steps.clinicalguard.outputs.available == 'true'
-        run: python -m pytest --import-mode=importlib -q
+        run: .venv/bin/python -m pytest --import-mode=importlib -q
