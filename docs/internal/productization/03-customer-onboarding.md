@@ -28,8 +28,8 @@ flowchart LR
 - Fail-closed tolerance check: confirm the buyer accepts that outages block
   side effects rather than allowing them. If they ask for a production bypass
   switch, disqualify; we do not ship one (deliberate trade-off).
-- Artifacts: [`docs/POSITIONING.md`](../POSITIONING.md),
-  [`docs/COMPARISON.md`](../COMPARISON.md), design-partner kit
+- Artifacts: [`docs/POSITIONING.md`](../../POSITIONING.md),
+  [`docs/COMPARISON.md`](../../COMPARISON.md), design-partner kit
   (`docs/strategy/design-partner-kit/`).
 
 ## Stage 1 — Prove the invariant (15 minutes, no commitment)
@@ -46,15 +46,15 @@ uv run --package gove-zone python examples/tamper_demo/demo.py
 Exit criteria: the customer has watched (a) an allowed action execute with a
 receipt, (b) a denied action leave evidence without executing, (c) a tampered
 receipt get rejected. This is the demo script in
-[`docs/DEMO_SCRIPT.md`](../DEMO_SCRIPT.md) / [`docs/PROOF_PATH.md`](../PROOF_PATH.md).
+[`docs/DEMO_SCRIPT.md`](../../DEMO_SCRIPT.md) / [`docs/PROOF_PATH.md`](../../PROOF_PATH.md).
 
 ## Stage 2 — Pilot wiring (one real path, dev mode)
 
 1. Pick **one** high-value side effect (a deploy step, a payment call, an MCP
    tool) — not a blanket rollout.
-2. Wire it per [`docs/INTEGRATION_GUIDE.md`](../INTEGRATION_GUIDE.md):
+2. Wire it per [`docs/INTEGRATION_GUIDE.md`](../../INTEGRATION_GUIDE.md):
    plain-Python wrapper, MCP gateway, or CI deploy gate depending on shape.
-   Check [`docs/INTEGRATION_MATRIX.md`](../INTEGRATION_MATRIX.md) for the
+   Check [`docs/INTEGRATION_MATRIX.md`](../../INTEGRATION_MATRIX.md) for the
    support tier of the customer's runtime; set expectations honestly for
    pattern-tier runtimes.
 3. Dev mode is acceptable here: `require_signature=False`, explicit and
@@ -98,7 +98,7 @@ traffic, not that it is installed.
 - Additional side-effect paths, additional teams (platform-team motion, S2).
 - Multi-tenant: per-tenant policy bundles via `TenantPolicyStore`.
 - Compliance mapping workshop against
-  [`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) for the
+  [`docs/COMPLIANCE_CROSSWALK.md`](../../COMPLIANCE_CROSSWALK.md) for the
   customer's framework of record (self-assessment, clearly labeled).
 
 ## Onboarding anti-patterns (refuse these)

@@ -125,6 +125,43 @@ jobs:
             --reject-unassigned-runtime-paths \
             --output "$node_evidence/environment-identities.json"
 
+      - name: Install bubblewrap prerequisite
+        # test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_sockets
+        # proves the clean-sibling harness cannot write the host, inherit fds, escape via
+        # double-fork, or open sockets. It can only prove that if bwrap can actually
+        # unshare. Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+        # so bwrap is present at /usr/bin/bwrap but dies as "containment runner
+        # unavailable" — the containment assertion would be untestable, not satisfied.
+        # This grants userns to bwrap alone on the ephemeral runner, mirroring the
+        # prerequisite the p2-idempotency-evidence-gate job already uses in
+        # .github/workflows/python-acgs-control-plane.yml.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          if ! command -v apparmor_parser >/dev/null 2>&1; then
+            sudo apt-get install --yes apparmor
+          fi
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          bwrap --version
+          sudo tee /etc/apparmor.d/acgs-ci-bwrap >/dev/null <<'APPARMOR'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile acgs-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/acgs-ci-bwrap
+          bwrap \
+            --unshare-all --unshare-user --die-with-parent --new-session --disable-userns \
+            --proc /proc --dev /dev --tmpfs /tmp --tmpfs /run \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib \
+            --ro-bind-try /lib64 /lib64 --clearenv \
+            --setenv PATH /usr/bin:/bin \
+            /bin/sh -c 'test -r /proc/self/status'
+
       - name: Run environment-independent P0 evidence contracts
         # Six tests require actual outer capture/UI or the exact static host
         # context. Those remain in the authorized exact-proof lane.

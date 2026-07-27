@@ -3,7 +3,8 @@
 Records the SAME ``median_measurement()`` the pytest gate
 (``benchmarks/test_propagation_overhead.py``) asserts, then writes the verdict to
 ``.benchmarks/propagation-gate-week2.json`` at the repository root, in the shape
-``docs/codex-goals/phase1-week2-paper-gate.md`` specifies. This makes the
+this module's ``build_gate_record()`` defines (the artifact schema is owned here; the
+originating goal contract is kept in the maintainers' private store). This makes the
 ``ROADMAP.md`` ``test -f .benchmarks/propagation-gate-week2.json`` acceptance and
 ADR-0005's "benchmark artifact is committed at ..." statement true with a real,
 regenerable run rather than a hand-written number.
