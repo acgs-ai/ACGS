@@ -403,11 +403,23 @@ obstacle that triggered the stop**.
 
 | Violated constraint | Mandatory response | Why |
 |---|---|---|
-| Rate limits (`v_max`, `a_max`, `τ_max`), payload envelope | `ramp_stop` | the path is admissible; only the speed is not |
+| Rate limits (`v_max`, `a_max`), payload envelope | `ramp_stop` | the path is admissible; only the speed is not |
+| `TorqueEnvelopeViolation` — commanded/measured torque exceeds `τ_max`, model still holds | `ramp_stop` | a control-envelope breach; the system remains controllable and the path is still valid |
+| `TorqueSensorMismatch` — measured torque diverges from the model's prediction beyond tolerance | `category_1_stop` | **`model ≠ reality`** — the dynamics used to plan the trajectory no longer describe the machine, so the remaining path is meaningless |
+| `ActuatorIntegrityFailure` — unexpected acceleration, drive fault word, encoder disagreement | `category_1_stop` | a fault, not a limit; continuing motion is unjustifiable at any speed |
 | SDF / forbidden zone, workspace polytope, self-collision, human proximity | `category_1_stop` | the *path itself* is inadmissible — continuing along it worsens the violation |
 | Non-finite setpoint (check 6), integrity stall (check 5), sequence violation (check 4) | `category_1_stop` | the commanded geometry is untrusted or unknown |
+| Calibration epoch change (check 9, T-13) | `category_1_stop` | joint angles no longer mean what they meant at authorization |
 | Lease revoked, deadline exceeded, boot-id mismatch | `category_1_stop` | authority is gone; no basis to keep moving |
-| Hardware fault signal | `category_0_stop` | below the software layer |
+| Hardware fault signal (safety-rated channel) | `category_0_stop` | below the software layer |
+
+**Faults and limit breaches must not share a class.** A limit breach means *the
+machine did what we asked and we asked for too much* — the model is intact, so
+decelerating along the authorized path is sound. A fault means *the machine is
+not the machine we modeled*; the trajectory was planned against dynamics that no
+longer apply, so following it further has no safety argument behind it regardless
+of speed. Collapsing the two is how "we have a torque limit" becomes a false
+sense of coverage.
 
 A cell may only make a response **stricter** than the table (e.g. configure
 `category_0_stop` where `category_1_stop` is mandated), never weaker. The mapping
@@ -546,6 +558,39 @@ on this machine* does not.
   robot safe-stops. **Falling behind degrades to a stop, never to unverified
   motion.**
 
+### 6.4 Compiler / Loader authority boundary
+
+The compiler and the loader must never both be able to decide what is permitted.
+If the loader can reinterpret constraints, it becomes a **second authority** —
+and a second authority is a second place for the two answers to diverge, with no
+receipt recording which one won.
+
+The split is absolute:
+
+| | Compiler (offline, deterministic) | Loader (online, non-RT) |
+|---|---|---|
+| **Decides** | what the constraints *are* | nothing |
+| **Does** | resolve layers, check monotonicity, generate provenance, emit `ExecutionArtifact` | verify artifact, validate lease, bind runtime |
+| **Output on conflict** | `CompilationRejected` — no artifact | refuse to arm — no lease |
+
+**The loader is explicitly forbidden to:**
+
+```
+✗ modify or re-derive constraints
+✗ resolve conflicts between capability / policy / operator layers
+✗ upgrade, widen, or "fix up" a capability
+✗ substitute a default for a missing field
+✗ recompute a digest it was supposed to compare against
+```
+
+Its entire vocabulary is *verify* and *refuse*. Every value it enforces was
+decided by the compiler and is hash-bound; the loader's only decisions are
+boolean. This mirrors the digital kernel's separation: policy evaluation
+produces the receipt, and the gate only checks it — the gate never re-evaluates
+policy.
+
+> **Runtime enforcement verifies authority. It does not reconstruct authority.**
+
 ---
 
 ## 7. ROS 2 adapter (Lifecycle Node)
@@ -633,18 +678,66 @@ Each phase has an exit gate. No phase claims the next phase's properties.
 
 | Phase | Scope | Exit gate |
 |---|---|---|
-| **P0** Simulation-only | MAR schema as a `constraints.physical` profile; motion compiler; canonical encoder w/ NaN rejection; policy bundle for one cell | Receipts issue + verify against the unmodified kernel; round-trip replay stable; negative-path tests prove no receipt → no lease |
+| **P0-1** Compiler | `PhysicalExecutionCompiler`: inputs `PhysicalSafetyContract`, `RobotCapability`, `CellPolicy`, `OperatorConstraint`, `CalibrationManifest`, `TrajectoryBundle` → emits `ExecutionArtifact` { `contract_digest`, `constraint_digest`, `trajectory_root`, `calibration_epoch`, `execution_root`, `compiler_version`, `provenance` } | Monotonicity lattice `operator ⊆ cell ⊆ capability` enforced — a relaxation yields `CompilationRejected` and **no artifact**; provenance present on every constraint and covered by `contract_digest`; byte-identical output for identical input |
+| **P0-2** Loader + MAR | MAR as a `constraints.physical` profile; canonical encoder w/ NaN rejection; policy bundle for one cell; loader: verify `execution_root` → verify receipt signature → verify `calibration_epoch` → create lease → enable executor | Receipts issue + verify against the unmodified kernel; round-trip replay stable; negative-path tests prove no receipt → no lease; **a test asserts the loader cannot widen a constraint, resolve a layer conflict, or default a missing field** (§6.4) |
 | **P1** Lease + RT kernel in sim | Lease Authority, shm control block, RT kernel as a userspace `SCHED_FIFO` loop against a simulated arm (MuJoCo/Isaac) | All 13 threats (T-01…T-13) reproduced as **failing-before / passing-after** tests; each asserts the side effect did *not* occur |
-| **P2** Timing characterization | `PREEMPT_RT` kernel; `cyclictest` baseline; measure worst-case `admissible()` under full contract | Measured WCET reported with p99.9 and max; **no green claim without literal output** |
+| **P2** Timing characterization | `PREEMPT_RT` kernel; `cyclictest` baseline; measure worst-case `admissible()` under full contract, incl. the SDF lookup | Measured WCET reported with p99.9 and max; **no green claim without literal output**; budget declared *before* measuring (below) |
 | **P3** ROS 2 adapter | Lifecycle node, activation checks, evidence topics; hostile-node test harness | Compromised-ROS-graph test yields DoS only, never motion |
 | **P4** Hardware-in-the-loop | One collaborative arm, safety-rated E-stop independent and verified first, payload-free, fenced cell, operator present | Independent review; documented limitations; **no autonomy claim** |
 
 **P4 is not a production readiness gate.** Deploying beside humans requires a
 certified functional-safety assessment that is out of scope for this profile.
 
+### SDF WCET is a measurement gate, not a design problem
+
+The SDF lookup is the largest engineering risk in the profile (§11.6). It is
+handled by **declaring the budget first and measuring against it** — not by
+designing an optimization in advance:
+
+```
+SDF evaluation budget      p99 < X µs
+                           max < Y µs
+                           zero allocation
+                           zero lock
+```
+
+Measured across a matrix, since a warm-cache number proves nothing about the
+worst case: **cold cache · warm cache · cache pressure · interrupt load ·
+multi-sensor burst**.
+
+If the budget is missed, the response is **not** to add runtime cleverness.
+Escalate in this order:
+
+```
+precompute → immutable artifact → runtime lookup        (correct)
+runtime reasoning / adaptive resolution / caching heuristics   (rejected)
+```
+
+Adding runtime reasoning to hit a timing budget trades a measurable overrun for
+an unmeasurable one, and grows the TCB in the one place it must stay smallest.
+Restating the profile's governing principle in its timing form: **runtime
+enforcement verifies authority, it does not reconstruct authority** — and it
+does not re-derive geometry either.
+
 ---
 
-## 11. Open questions
+## 11. Frozen decisions and open questions
+
+### Frozen before P0 — change these only by amending this RFC
+
+1. **`execution_root` is the sole physical execution binding identity.** Nothing
+   downstream enforces against a bare `merkle_root` (§6.3).
+2. **`calibration_epoch` is the RT drift guard.** A calibration change is an
+   authority transition, not a parameter update: new calibration ⇒ new receipt,
+   never a resumed lease (§6, check 9; T-13).
+3. **Constraint monotonicity is not relaxable.** `operator ⊆ cell ⊆ capability`;
+   a relaxation is a compile-time error producing no artifact (§5).
+4. **Fault ≠ limit breach.** `TorqueEnvelopeViolation` → `ramp_stop`;
+   `TorqueSensorMismatch` / `ActuatorIntegrityFailure` → `category_1_stop` (§5).
+5. **The loader verifies; it never decides.** Constraint resolution belongs to
+   the compiler alone (§6.4).
+
+### Open questions
 
 1. **Signing is mandatory here, unsigned is the base-kernel default.** This
    profile requires `require_signature=True` with a real verifier. Key custody
@@ -659,7 +752,9 @@ certified functional-safety assessment that is out of scope for this profile.
 5. **Multi-arm and mobile bases** — one lease per actuator group composes poorly
    when two arms share a workspace; needs a joint-authority design.
 6. **WCET of the SDF lookup** under cache pressure is the most likely budget
-   violation and must be measured in P2, not assumed.
+   violation. The budget and test matrix are now defined (§10); the *values* of
+   X and Y are still open and must be set per cell before P2, not fitted to
+   whatever the first measurement happens to produce.
 
 ---
 
