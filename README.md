@@ -6,14 +6,19 @@ ACGS is a governed agent infrastructure project. Its core enforcement kernel is 
 
 ACGS's core enforcement kernel, gove-zone, is a fail-closed admission layer
 between an agent's proposed tool call and its execution. ACGS enforces
-fail-closed execution through explicit admission, policy evaluation,
-authorization checks, evidence capture, and receipt validation before side
-effects occur. Fail any of them and the side effect does not occur.
+fail-closed execution through explicit admission, policy evaluation, evidence
+capture, and receipt validation before side effects occur, and supports
+fail-closed principal authorization when enabled. Fail any of them and the side
+effect does not occur.
 
 The model should propose; the runtime should govern.
 
-**Status:** Alpha. The enforcement path is implemented and testable. Formal
-verification is a roadmap item, not a result. Receipt signing is configured by
+**Status:** ACGS the platform is Alpha (`0.1.0`). The gove-zone enforcement
+kernel is a separate line at `1.0.0rc1` with a Beta package classifier — a
+package-maturity statement about the kernel, not about the platform. Neither is
+a production, certification, or assurance claim. The enforcement path is
+implemented and testable. Formal verification is a roadmap item, not a result.
+Receipt signing is configured by
 deployment profile: production profiles require signed receipts, development
 profiles may allow unsigned operation. See [SECURITY.md](SECURITY.md) for the
 current threat-model scope.
