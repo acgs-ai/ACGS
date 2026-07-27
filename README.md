@@ -2,7 +2,21 @@ ACGS is a governed agent infrastructure project. Its core enforcement kernel is 
 
 # ACGS
 
-**Receipt-gated runtime governance for AI-agent side effects.**
+**Runtime governance for autonomous agents. Alpha.**
+
+ACGS's core enforcement kernel, gove-zone, is a fail-closed admission layer
+between an agent's proposed tool call and its execution. ACGS enforces
+fail-closed execution through explicit admission, policy evaluation,
+authorization checks, evidence capture, and receipt validation before side
+effects occur. Fail any of them and the side effect does not occur.
+
+The model should propose; the runtime should govern.
+
+**Status:** Alpha. The enforcement path is implemented and testable. Formal
+verification is a roadmap item, not a result. Receipt signing is configured by
+deployment profile: production profiles require signed receipts, development
+profiles may allow unsigned operation. See [SECURITY.md](SECURITY.md) for the
+current threat-model scope.
 
 [![gove-zone: 1.0.0rc1](https://img.shields.io/badge/gove--zone-1.0.0rc1-blueviolet.svg)](packages/gove-zone/CHANGELOG.md)
 ![python: 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
