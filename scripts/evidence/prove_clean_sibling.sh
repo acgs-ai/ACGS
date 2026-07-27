@@ -17,8 +17,11 @@ if [[ -n "${ACGS_CLEAN_SIBLING_TMP_FD:-}" ]]; then
   # The guardian is a child exec of the first sanitized Bash. That first Bash
   # remains resident under the static launcher while it waits, so authenticate
   # the complete Bash -> BusyBox ancestry on the descriptor-bearing pass.
-  [[ "$(/usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true)" == \
-    /usr/bin/bash ]] || {
+  ACGS_GUARDIAN_PARENT_EXE="$(
+    /usr/bin/readlink -f "/proc/$ACGS_STATIC_PARENT_PID/exe" 2>/dev/null || true
+  )"
+  [[ "$ACGS_GUARDIAN_PARENT_EXE" == /usr/bin/bash || \
+    "$ACGS_GUARDIAN_PARENT_EXE" == /bin/bash ]] || {
     printf '%s\n' \
       'CLEAN_SIBLING=FAIL phase=B0 reason=sanitized guardian parent identity changed' >&2
     exit 2
@@ -59,7 +62,8 @@ mapfile -d '' -t ACGS_STATIC_PARENT_ARGV <"/proc/$ACGS_STATIC_PARENT_PID/cmdline
     'CLEAN_SIBLING=FAIL phase=B0 reason=static launcher parent argv changed' >&2
   exit 2
 }
-unset ACGS_GUARDIAN_PARENT_ARGV ACGS_STATIC_PARENT_ARGV ACGS_EXPECTED_LAUNCHER
+unset ACGS_GUARDIAN_PARENT_ARGV ACGS_GUARDIAN_PARENT_EXE \
+  ACGS_STATIC_PARENT_ARGV ACGS_EXPECTED_LAUNCHER
 ACGS_STATIC_LAUNCHED=1
 
 # Proof authority must not be selected by caller-controlled command lookup,
@@ -325,12 +329,18 @@ TMP_PARENT_STAT_BEFORE="$TMP_PARENT_DEVICE:$TMP_PARENT_INODE:$TMP_PARENT_UID:$TM
 TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
   "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")" ||
   die 'cannot snapshot caller TMPDIR direct entries'
-WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
-SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
 git -C "$SOURCE_REPO" cat-file -e "$T^{commit}" || die 'T commit is unavailable'
 git -C "$SOURCE_REPO" cat-file -e "$P^{commit}" || die 'P commit is unavailable'
 git -C "$SOURCE_REPO" merge-base --is-ancestor "$P" "$T" ||
   die 'P must be an ancestor of exact T'
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT"
+)" || die 'cannot snapshot baseline worktree registry'
+SOURCE_STATUS_BEFORE="$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)"
 [[ -z "$(git -C "$SOURCE_REPO" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'source repository must be clean before proof'
 git -C "$SOURCE_REPO" diff --check "$P..$T" || die 'P..T diff check failed'
@@ -343,18 +353,42 @@ TMP_ROOT_INODE=''
 TMP_ROOT_UID=''
 TMP_ROOT_MODE=''
 WORKTREE=''
+SOURCE_GIT_COMMON_DIR=''
 EVIDENCE_ROOT=''
 NODE_ID="$REQUESTED_NODE_ID"
 NODE_EVIDENCE=''
 SCRATCH_ROOT=''
+RUNTIME_ROOT=''
+BOOTSTRAP_ROOT=''
+BOOTSTRAP_CACHE_ROOT=''
+TRUSTED_LOCK_INPUT_ROOT=''
 RUNTIME_TMP=''
 UV_CACHE_DIR=''
+LOCK_RENDER_ROOT=''
 UV_PYTHON_BIN_DIR=''
 UV_TOOL_DIR=''
 UV_TOOL_BIN_DIR=''
 UV_PYTHON_CACHE_DIR=''
 UV_CREDENTIALS_DIR=''
 WORKTREE_ADDED=0
+SOURCE_COMMON_GITDIR="${SOURCE_COMMON_GITDIR:-}"
+WORKTREE_REGISTRY_ROOT="${WORKTREE_REGISTRY_ROOT:-}"
+WORKTREE_REGISTRY_ROOT_IDENTITY=''
+WORKTREE_REGISTRY_ENTRIES_BEFORE="${WORKTREE_REGISTRY_ENTRIES_BEFORE:-}"
+WORKTREE_ADMIN_GITDIR=''
+WORKTREE_ADMIN_GITDIR_IDENTITY=''
+WORKTREE_GITFILE_RETENTION_REQUIRED=0
+WORKTREE_GITFILE_FD=''
+WORKTREE_GITFILE_PATH=''
+WORKTREE_GITFILE_IDENTITY=''
+WORKTREE_GITFILE_MODE=''
+WORKTREE_GITFILE_LINKS=''
+WORKTREE_GITFILE_SIZE=''
+WORKTREE_GITFILE_SHA256=''
+WORKTREE_GITFILE_CONTENT_B64=''
+WORKTREE_ADMIN_SENTINEL=''
+WORKTREE_ADMIN_SENTINEL_PATH=''
+WORKTREE_ADMIN_SENTINEL_IDENTITY=''
 PROOF_COMPLETE=0
 TRANSCRIPT_RECORDS=0
 R=''
@@ -390,17 +424,21 @@ WORKTREE="$TMP_ROOT/product"
 EVIDENCE_ROOT="$TMP_ROOT/evidence"
 NODE_EVIDENCE="$EVIDENCE_ROOT/$NODE_ID"
 SCRATCH_ROOT="$TMP_ROOT/scratch"
+RUNTIME_ROOT="$TMP_ROOT/runtime"
+BOOTSTRAP_ROOT="$TMP_ROOT/bootstrap"
+BOOTSTRAP_CACHE_ROOT="$BOOTSTRAP_ROOT/cache"
+TRUSTED_LOCK_INPUT_ROOT="$BOOTSTRAP_ROOT/trusted-lock-inputs"
 RUNTIME_TMP="$SCRATCH_ROOT/tmp"
-UV_CACHE_DIR="$SCRATCH_ROOT/uv-cache"
+LOCK_RENDER_ROOT="$SCRATCH_ROOT/lock-render"
+UV_CACHE_DIR="$BOOTSTRAP_CACHE_ROOT/uv-cache"
 
 phase B0
-for path in "$WORKTREE" "$EVIDENCE_ROOT" "$SCRATCH_ROOT"; do
+for path in "$WORKTREE" "$EVIDENCE_ROOT" "$SCRATCH_ROOT" "$RUNTIME_ROOT" "$BOOTSTRAP_ROOT"; do
   reject_lexists "$path"
 done
-mkdir -m 700 "$SCRATCH_ROOT"
+mkdir -m 700 "$SCRATCH_ROOT" "$RUNTIME_ROOT" "$BOOTSTRAP_ROOT"
 mkdir -m 700 \
   "$RUNTIME_TMP" \
-  "$UV_CACHE_DIR" \
   "$SCRATCH_ROOT/home" \
   "$SCRATCH_ROOT/xdg-cache" \
   "$SCRATCH_ROOT/xdg-config" \
@@ -410,16 +448,19 @@ mkdir -m 700 \
   "$SCRATCH_ROOT/mypy-cache" \
   "$SCRATCH_ROOT/ruff-cache" \
   "$SCRATCH_ROOT/coverage" \
-  "$SCRATCH_ROOT/uv-python" \
-  "$SCRATCH_ROOT/uv-python-bin" \
-  "$SCRATCH_ROOT/uv-tools" \
-  "$SCRATCH_ROOT/uv-tool-bin" \
-  "$SCRATCH_ROOT/uv-python-cache" \
-  "$SCRATCH_ROOT/uv-credentials" \
   "$SCRATCH_ROOT/python-user" \
   "$SCRATCH_ROOT/pycache" \
   "$SCRATCH_ROOT/pip-cache" \
   "$SCRATCH_ROOT/hatch-cache"
+mkdir -m 700 \
+  "$BOOTSTRAP_CACHE_ROOT" \
+  "$UV_CACHE_DIR" \
+  "$RUNTIME_ROOT/uv-python" \
+  "$RUNTIME_ROOT/uv-python-bin" \
+  "$RUNTIME_ROOT/uv-tools" \
+  "$RUNTIME_ROOT/uv-tool-bin" \
+  "$RUNTIME_ROOT/uv-python-cache" \
+  "$RUNTIME_ROOT/uv-credentials"
 [[ -z "$(find "$UV_CACHE_DIR" -mindepth 1 -print -quit)" ]] || die 'UV cache must begin empty'
 export TMPDIR="$RUNTIME_TMP"
 export TMP="$RUNTIME_TMP"
@@ -433,12 +474,12 @@ export PYTEST_DEBUG_TEMPROOT="$SCRATCH_ROOT/pytest-temp"
 export MYPY_CACHE_DIR="$SCRATCH_ROOT/mypy-cache"
 export RUFF_CACHE_DIR="$SCRATCH_ROOT/ruff-cache"
 export COVERAGE_FILE="$SCRATCH_ROOT/coverage/.coverage"
-export UV_PYTHON_INSTALL_DIR="$SCRATCH_ROOT/uv-python"
-export UV_PYTHON_BIN_DIR="$SCRATCH_ROOT/uv-python-bin"
-export UV_TOOL_DIR="$SCRATCH_ROOT/uv-tools"
-export UV_TOOL_BIN_DIR="$SCRATCH_ROOT/uv-tool-bin"
-export UV_PYTHON_CACHE_DIR="$SCRATCH_ROOT/uv-python-cache"
-export UV_CREDENTIALS_DIR="$SCRATCH_ROOT/uv-credentials"
+export UV_PYTHON_INSTALL_DIR="$RUNTIME_ROOT/uv-python"
+export UV_PYTHON_BIN_DIR="$RUNTIME_ROOT/uv-python-bin"
+export UV_TOOL_DIR="$RUNTIME_ROOT/uv-tools"
+export UV_TOOL_BIN_DIR="$RUNTIME_ROOT/uv-tool-bin"
+export UV_PYTHON_CACHE_DIR="$RUNTIME_ROOT/uv-python-cache"
+export UV_CREDENTIALS_DIR="$RUNTIME_ROOT/uv-credentials"
 export UV_NO_CONFIG=1
 export UV_NO_ENV_FILE=1
 export PYTHONUSERBASE="$SCRATCH_ROOT/python-user"
@@ -447,9 +488,70 @@ export PIP_CACHE_DIR="$SCRATCH_ROOT/pip-cache"
 export HATCH_CACHE_DIR="$SCRATCH_ROOT/hatch-cache"
 export UV_CACHE_DIR
 [[ "$("$UV_BIN" --version | awk '{print $2}')" == '0.11.19' ]] || die 'uv must be exactly 0.11.19'
+BWRAP_BIN=/usr/bin/bwrap
+[[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+  die 'containment runner unavailable: /usr/bin/bwrap'
+[[ "$("$BWRAP_BIN" --version | awk '{print $2}')" == '0.11.0' ]] ||
+  die 'containment runner version drifted'
 WORKTREE_ADDED=1
 git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" "$T"
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+[[ -f "$WORKTREE_GITFILE_PATH" && ! -L "$WORKTREE_GITFILE_PATH" ]] ||
+  die 'detached sibling gitfile is not a regular file'
+exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH" ||
+  die 'cannot retain detached sibling gitfile descriptor'
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
+IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE \
+  WORKTREE_GITFILE_UID WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS \
+  WORKTREE_GITFILE_SIZE WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(
+  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" "$WORKTREE_GITFILE_PATH"
+)
+[[ -n "${WORKTREE_GITFILE_CONTENT_B64:-}" ]] ||
+  die 'cannot capture detached sibling gitfile descriptor identity'
+WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"
+clean_sibling_validate_retained_gitfile \
+  "$WORKTREE_GITFILE_FD" \
+  "$WORKTREE_GITFILE_PATH" \
+  "$WORKTREE_GITFILE_IDENTITY" \
+  "$WORKTREE_GITFILE_MODE" \
+  "$WORKTREE_GITFILE_LINKS" \
+  "$WORKTREE_GITFILE_SIZE" \
+  "$WORKTREE_GITFILE_SHA256" \
+  "$WORKTREE_GITFILE_CONTENT_B64" ||
+  die 'detached sibling gitfile descriptor identity is unsafe'
+WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
+case "$WORKTREE_ADMIN_GITDIR" in
+  "$WORKTREE_REGISTRY_ROOT"/*) ;;
+  *) die 'detached sibling admin gitdir is outside source worktree registry' ;;
+esac
+IFS=: read -r WORKTREE_REGISTRY_DEVICE WORKTREE_REGISTRY_INODE WORKTREE_REGISTRY_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT"
+)
+WORKTREE_REGISTRY_ROOT_IDENTITY="$WORKTREE_REGISTRY_DEVICE:$WORKTREE_REGISTRY_INODE:$WORKTREE_REGISTRY_UID"
+IFS=: read -r WORKTREE_ADMIN_DEVICE WORKTREE_ADMIN_INODE WORKTREE_ADMIN_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR"
+)
+WORKTREE_ADMIN_GITDIR_IDENTITY="$WORKTREE_ADMIN_DEVICE:$WORKTREE_ADMIN_INODE:$WORKTREE_ADMIN_UID"
+WORKTREE_ADMIN_SENTINEL="$("$SNAPSHOT_PYTHON" - <<'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+)"
+WORKTREE_ADMIN_SENTINEL_PATH="$WORKTREE_ADMIN_GITDIR/acgs-clean-sibling-owner"
+(set -C; umask 077; printf '%s\n' "$WORKTREE_ADMIN_SENTINEL" >"$WORKTREE_ADMIN_SENTINEL_PATH") ||
+  die 'cannot create detached sibling admin owner sentinel'
+chmod 0600 -- "$WORKTREE_ADMIN_SENTINEL_PATH" ||
+  die 'cannot seal detached sibling admin owner sentinel'
+IFS=: read -r WORKTREE_SENTINEL_DEVICE WORKTREE_SENTINEL_INODE WORKTREE_SENTINEL_UID < <(
+  stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_SENTINEL_PATH"
+)
+WORKTREE_ADMIN_SENTINEL_IDENTITY="$WORKTREE_SENTINEL_DEVICE:$WORKTREE_SENTINEL_INODE:$WORKTREE_SENTINEL_UID"
 [[ "$(git -C "$WORKTREE" rev-parse HEAD)" == "$T" ]] || die 'detached sibling is not exact T'
+SOURCE_GIT_COMMON_DIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+SOURCE_GIT_COMMON_DIR="$(realpath -e "$SOURCE_GIT_COMMON_DIR")"
+[[ -d "$SOURCE_GIT_COMMON_DIR" && ! -L "$SOURCE_GIT_COMMON_DIR" ]] ||
+  die 'source git common directory is unsafe'
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'detached sibling is dirty before bootstrap'
 git -C "$WORKTREE" cat-file -e "$P^{commit}" || die 'detached sibling cannot resolve P'
@@ -485,9 +587,304 @@ for path in "${PREEXISTING_REJECT_PATHS[@]}"; do
   reject_lexists "$path"
 done
 
+contained_env_args() {
+  local variable
+  for variable in \
+    PATH LANG LC_ALL TZ \
+    HOME TMPDIR TMP TEMP XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME \
+    PYTEST_DEBUG_TEMPROOT MYPY_CACHE_DIR RUFF_CACHE_DIR COVERAGE_FILE \
+    PIP_CACHE_DIR HATCH_CACHE_DIR \
+    UV_BIN UV_CACHE_DIR UV_PYTHON_INSTALL_DIR UV_PYTHON_BIN_DIR UV_TOOL_DIR \
+    UV_TOOL_BIN_DIR UV_PYTHON_CACHE_DIR UV_CREDENTIALS_DIR UV_NO_CONFIG UV_NO_ENV_FILE \
+    UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE \
+    PYTHONUSERBASE PYTHONPYCACHEPREFIX PYTHONNOUSERSITE PYTHONDONTWRITEBYTECODE \
+    PYTEST_ADDOPTS VIRTUAL_ENV REPO_ROOT ACGS_EVIDENCE_ROOT NODE_ID \
+    ACGS_TEST_SEED PYTHONHASHSEED ACGS_PROCESS_SCHEDULE ACGS_CLOCK_SOURCE \
+    ACGS_SKIPPED_JSON ACGS_EXTERNAL_JSON ACGS_P0_LITERAL_PROVER_INNER_T; do
+    if [[ "${!variable+x}" == x ]]; then
+      printf '%s=%s\0' "$variable" "${!variable}"
+    fi
+  done
+}
+
+contained_mount_args() {
+  local path
+  printf '%s\0%s\0%s\0' --ro-bind "$WORKTREE" "$WORKTREE"
+  printf '%s\0%s\0%s\0' --ro-bind "$SOURCE_GIT_COMMON_DIR" "$SOURCE_GIT_COMMON_DIR"
+  if [[ "${ACGS_RUNTIME_WRITABLE:-0}" != 1 && -d "$RUNTIME_ROOT" && ! -L "$RUNTIME_ROOT" ]]; then
+    printf '%s\0%s\0%s\0' --ro-bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"
+  fi
+  for path in \
+    "$EVIDENCE_ROOT" \
+    "$SCRATCH_ROOT" \
+    "$WORKTREE/.venv-evidence" \
+    "$WORKTREE/packages/acgs-control-plane/.venv" \
+    "$WORKTREE/packages/gove-zone/.venv-beta"; do
+    if [[ -d "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --bind "$path" "$path"
+    fi
+  done
+}
+
+runtime_system_mount_args() {
+  local path
+  for path in \
+    /etc/passwd \
+    /etc/group \
+    /etc/nsswitch.conf; do
+    if [[ -e "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --ro-bind-try "$path" "$path"
+    fi
+  done
+}
+
+runtime_linker_args() {
+  if [[ -x /usr/bin/ld.bfd && -L /usr/bin/ld ]]; then
+    printf '%s\0%s\0' --dir /etc/alternatives
+    printf '%s\0%s\0%s\0' --symlink /usr/bin/ld.bfd /etc/alternatives/ld
+  fi
+}
+
+bootstrap_mount_args() {
+  local path
+  contained_mount_args
+  runtime_system_mount_args
+  for path in "$BOOTSTRAP_CACHE_ROOT" "$TRUSTED_LOCK_INPUT_ROOT"; do
+    if [[ -d "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --bind "$path" "$path"
+    fi
+  done
+  for path in \
+    /etc/resolv.conf \
+    /etc/hosts \
+    /etc/nsswitch.conf \
+    /etc/ssl \
+    /etc/pki; do
+    if [[ -e "$path" && ! -L "$path" ]]; then
+      printf '%s\0%s\0%s\0' --ro-bind-try "$path" "$path"
+    fi
+  done
+}
+
+python_install_bootstrap_mount_args() {
+  bootstrap_mount_args
+  if [[ -d "$RUNTIME_ROOT" && ! -L "$RUNTIME_ROOT" ]]; then
+    printf '%s\0%s\0%s\0' --bind "$RUNTIME_ROOT" "$RUNTIME_ROOT"
+  fi
+}
+
+run_contained() {
+  local cwd="$1"
+  shift
+  [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+    die 'containment runner unavailable: /usr/bin/bwrap'
+  [[ "$cwd" == "$WORKTREE" || "$cwd" == "$WORKTREE"/* || \
+    "$cwd" == "$SCRATCH_ROOT" || "$cwd" == "$SCRATCH_ROOT"/* ]] ||
+    die "contained cwd escaped target worktree/scratch: $cwd"
+  (
+    local fd fd_path
+    for fd_path in /proc/"$BASHPID"/fd/*; do
+      fd="${fd_path##*/}"
+      case "$fd" in
+        0 | 1 | 2) ;;
+        *) eval "exec $fd<&-" 2>/dev/null || true ;;
+      esac
+    done
+    mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
+    mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(contained_mount_args)
+    mapfile -d '' -t ACGS_CONTAINED_SYSTEM_MOUNTS < <(runtime_system_mount_args)
+    mapfile -d '' -t ACGS_CONTAINED_LINKER_ARGS < <(runtime_linker_args)
+    exec "$BWRAP_BIN" \
+      --die-with-parent \
+      --unshare-all \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-net \
+      --new-session \
+      --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_SYSTEM_MOUNTS[@]}" \
+      "${ACGS_CONTAINED_LINKER_ARGS[@]}" \
+      "${ACGS_CONTAINED_MOUNTS[@]}" \
+      --chdir "$cwd" \
+      /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
+  )
+}
+
+run_contained_bootstrap() {
+  local cwd="$1"
+  shift
+  [[ "${1:-}" == "$UV_BIN" ]] ||
+    die 'bootstrap containment only runs the pinned uv executable'
+  [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+    die 'containment runner unavailable: /usr/bin/bwrap'
+  [[ "$cwd" == "$WORKTREE" || "$cwd" == "$WORKTREE"/* || \
+    "$cwd" == "$SCRATCH_ROOT" || "$cwd" == "$SCRATCH_ROOT"/* || \
+    "$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/* ]] ||
+    die "bootstrap cwd escaped target worktree/scratch/bootstrap: $cwd"
+  (
+    local fd fd_path
+    for fd_path in /proc/"$BASHPID"/fd/*; do
+      fd="${fd_path##*/}"
+      case "$fd" in
+        0 | 1 | 2) ;;
+        *) eval "exec $fd<&-" 2>/dev/null || true ;;
+      esac
+    done
+    unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
+    mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
+    mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(bootstrap_mount_args)
+    exec "$BWRAP_BIN" \
+      --die-with-parent \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-pid \
+      --new-session \
+      --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_MOUNTS[@]}" \
+      --chdir "$cwd" \
+      /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
+  )
+}
+
+run_contained_python_install() {
+  local cwd="$1"
+  shift
+  [[ "${1:-}" == "$UV_BIN" && "${2:-}" == python && "${3:-}" == install ]] ||
+    die 'python install bootstrap only runs pinned uv python install'
+  [[ -x "$BWRAP_BIN" && ! -L "$BWRAP_BIN" ]] ||
+    die 'containment runner unavailable: /usr/bin/bwrap'
+  [[ "$cwd" == "$BOOTSTRAP_ROOT" || "$cwd" == "$BOOTSTRAP_ROOT"/* ]] ||
+    die "python install bootstrap cwd escaped bootstrap root: $cwd"
+  (
+    local fd fd_path
+    for fd_path in /proc/"$BASHPID"/fd/*; do
+      fd="${fd_path##*/}"
+      case "$fd" in
+        0 | 1 | 2) ;;
+        *) eval "exec $fd<&-" 2>/dev/null || true ;;
+      esac
+    done
+    unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE
+    ACGS_RUNTIME_WRITABLE=1
+    mapfile -d '' -t ACGS_CONTAINED_ENV < <(contained_env_args)
+    mapfile -d '' -t ACGS_CONTAINED_MOUNTS < <(python_install_bootstrap_mount_args)
+    exec "$BWRAP_BIN" \
+      --die-with-parent \
+      --unshare-user \
+      --unshare-ipc \
+      --unshare-pid \
+      --new-session \
+      --disable-userns \
+      --proc /proc \
+      --dev /dev \
+      --tmpfs /tmp \
+      --tmpfs /run \
+      --dir /run/service \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --ro-bind "$UV_BIN" "$UV_BIN" \
+      "${ACGS_CONTAINED_MOUNTS[@]}" \
+      --chdir "$cwd" \
+      /usr/bin/env -i "${ACGS_CONTAINED_ENV[@]}" "$@"
+  )
+}
+
+validate_and_publish_trusted_lock_inputs() {
+  local rendered_root="$1" trusted_root="$2" expected_root="$3"
+  "$SNAPSHOT_PYTHON" - "$rendered_root" "$trusted_root" "$expected_root" <<'PY'
+import re
+import shutil
+import sys
+from pathlib import Path
+
+rendered_root = Path(sys.argv[1]).resolve(strict=True)
+trusted_root = Path(sys.argv[2]).resolve(strict=False)
+expected_root = Path(sys.argv[3]).resolve(strict=True)
+expected_relatives = (
+    Path("requirements/saas-beta/locks.toml"),
+    Path("requirements/saas-beta/evidence-test.in"),
+    Path("requirements/saas-beta/cp-test.in"),
+    Path("requirements/saas-beta/gz-test.in"),
+    Path("requirements/saas-beta/bootstrap-by-scope.json"),
+    Path("requirements/saas-beta/evidence-test.lock"),
+    Path("requirements/saas-beta/cp-test.lock"),
+    Path("requirements/saas-beta/gz-test.lock"),
+)
+registry_requirement = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:\[[A-Za-z0-9][A-Za-z0-9._-]*(?:\s*,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*\])?"
+    r"\s*(?:(?:~=|==|!=|<=|>=|<|>|===)\s*[A-Za-z0-9][A-Za-z0-9._!*+~-]*"
+    r"(?:\s*,\s*(?:~=|==|!=|<=|>=|<|>|===)\s*[A-Za-z0-9][A-Za-z0-9._!*+~-]*)*)?"
+    r"(?:\s*;\s*[A-Za-z0-9_.\"' <>=!~(),-]+)?$"
+)
+unsafe = re.compile(
+    r"(?i)(?:^|[^\w.+-])(?:https?|file|ssh|git)://|(?:^|[^\w.+-])(?:git|ssh|file)\+"
+)
+if trusted_root.exists():
+    raise SystemExit(f"trusted lock input root already exists: {trusted_root}")
+trusted_root.mkdir(mode=0o700, parents=True)
+try:
+    for relative in expected_relatives:
+        source = (rendered_root / relative).resolve(strict=True)
+        expected = (expected_root / relative).resolve(strict=True)
+        if not source.is_relative_to(rendered_root):
+            raise SystemExit(f"rendered lock input escaped root: {relative}")
+        if source.is_symlink() or not source.is_file():
+            raise SystemExit(f"rendered lock input is not a regular file: {relative}")
+        payload = source.read_bytes()
+        if payload != expected.read_bytes():
+            raise SystemExit(f"rendered lock input drifted from reviewed bytes: {relative}")
+        if relative.suffix == ".in":
+            for number, line in enumerate(payload.decode("utf-8").splitlines(), start=1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if (
+                    stripped.startswith(("-", ".", "/", "~"))
+                    or "@" in stripped
+                    or "://" in stripped
+                    or unsafe.search(stripped)
+                    or not registry_requirement.fullmatch(stripped)
+                ):
+                    raise SystemExit(
+                        f"unsafe lock input requirement in {relative}:{number}: {stripped!r}"
+                    )
+        destination = trusted_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with open(destination, "xb") as handle:
+            handle.write(payload)
+except BaseException:
+    shutil.rmtree(trusted_root, ignore_errors=True)
+    raise
+PY
+}
+
 phase B1
 EXPECTED="$TMP_ROOT/expected-locks"
 mkdir "$EXPECTED"
+mkdir -p "$LOCK_RENDER_ROOT"
 LOCK_FILES=(
   requirements/saas-beta/locks.toml
   requirements/saas-beta/evidence-test.in
@@ -501,44 +898,60 @@ LOCK_FILES=(
 for relative in "${LOCK_FILES[@]}"; do
   mkdir -p "$EXPECTED/$(dirname "$relative")"
   cp -- "$WORKTREE/$relative" "$EXPECTED/$relative"
+  mkdir -p "$LOCK_RENDER_ROOT/$(dirname "$relative")"
+  cp -- "$WORKTREE/$relative" "$LOCK_RENDER_ROOT/$relative"
 done
-(
-  cd "$WORKTREE"
-  LC_ALL=C TZ=UTC PYTHONHASHSEED=0 "$UV_BIN" run --no-project --python 3.11 python \
-    scripts/evidence/render_lock_inputs.py --config requirements/saas-beta/locks.toml
-  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
-    --python-platform x86_64-manylinux_2_28 \
-    --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
-    requirements/saas-beta/evidence-test.in \
-    --output-file requirements/saas-beta/evidence-test.lock
-  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
-    --python-platform x86_64-manylinux_2_28 \
-    --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
-    requirements/saas-beta/cp-test.in \
-    --output-file requirements/saas-beta/cp-test.lock
-  LC_ALL=C TZ=UTC "$UV_BIN" pip compile --python-version 3.11 \
-    --python-platform x86_64-manylinux_2_28 \
-    --exclude-newer 2026-07-10T00:00:00Z --generate-hashes \
-    requirements/saas-beta/gz-test.in \
-    --output-file requirements/saas-beta/gz-test.lock
-)
+LC_ALL=C TZ=UTC PYTHONHASHSEED=0 run_contained "$WORKTREE" \
+  /usr/bin/python3 \
+  scripts/evidence/render_lock_inputs.py \
+  --config requirements/saas-beta/locks.toml \
+  --output-root "$LOCK_RENDER_ROOT"
+validate_and_publish_trusted_lock_inputs "$LOCK_RENDER_ROOT" "$TRUSTED_LOCK_INPUT_ROOT" "$EXPECTED"
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
+  --python-platform x86_64-manylinux_2_28 \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
+  requirements/saas-beta/evidence-test.in \
+  --output-file requirements/saas-beta/evidence-test.lock
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
+  --python-platform x86_64-manylinux_2_28 \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
+  requirements/saas-beta/cp-test.in \
+  --output-file requirements/saas-beta/cp-test.lock
+LC_ALL=C TZ=UTC run_contained_bootstrap "$TRUSTED_LOCK_INPUT_ROOT" "$UV_BIN" pip compile \
+  --python-version 3.11 \
+  --python-platform x86_64-manylinux_2_28 \
+  --exclude-newer 2026-07-10T00:00:00Z --generate-hashes --only-binary :all: \
+  requirements/saas-beta/gz-test.in \
+  --output-file requirements/saas-beta/gz-test.lock
 for relative in "${LOCK_FILES[@]}"; do
-  cmp --silent "$EXPECTED/$relative" "$WORKTREE/$relative" ||
-    die "deterministic render/compile drift: $relative"
+  if [[ "$relative" == *.lock ]]; then
+    cmp --silent \
+      <(tail -n +3 -- "$EXPECTED/$relative") \
+      <(tail -n +3 -- "$TRUSTED_LOCK_INPUT_ROOT/$relative") ||
+      die "deterministic render/compile drift: $relative"
+  else
+    cmp --silent "$EXPECTED/$relative" "$TRUSTED_LOCK_INPUT_ROOT/$relative" ||
+      die "deterministic render/compile drift: $relative"
+  fi
 done
 [[ -z "$(git -C "$WORKTREE" status --porcelain=v1 --untracked-files=all)" ]] ||
   die 'lock regeneration left product-tree drift'
 
 phase B2
-"$UV_BIN" python install 3.11
-"$UV_BIN" venv --python 3.11 "$WORKTREE/.venv-evidence"
+run_contained_python_install "$BOOTSTRAP_ROOT" "$UV_BIN" python install --no-config 3.11
+mkdir -m 700 "$WORKTREE/.venv-evidence"
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+  --python 3.11 "$WORKTREE/.venv-evidence"
 mkdir -p "$NODE_EVIDENCE"
-"$UV_BIN" pip sync --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes \
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
+  --python "$WORKTREE/.venv-evidence/bin/python" --require-hashes --only-binary :all: \
   "$WORKTREE/requirements/saas-beta/evidence-test.lock"
 export UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1
 export RUFF_NO_CACHE=true PYTHONDONTWRITEBYTECODE=1
 EVIDENCE_PY="$WORKTREE/.venv-evidence/bin/python"
-"$EVIDENCE_PY" "$WORKTREE/scripts/evidence/verify_environment.py" \
+run_contained "$WORKTREE" "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/verify_environment.py" \
   --code EVID \
   --lock "$WORKTREE/requirements/saas-beta/evidence-test.lock" \
   --expected-interpreter "$EVIDENCE_PY" \
@@ -551,19 +964,19 @@ EVIDENCE_PY="$WORKTREE/.venv-evidence/bin/python"
   --require jsonschema \
   --require pytest \
   --output "$NODE_EVIDENCE/environment-EVID.json"
-"$UV_BIN" pip freeze --python "$EVIDENCE_PY" >"$NODE_EVIDENCE/evidence.freeze"
+run_contained "$WORKTREE" "$UV_BIN" pip freeze --python "$EVIDENCE_PY" \
+  >"$NODE_EVIDENCE/evidence.freeze"
 EVID_GATE=(.venv-evidence/bin/python -m pytest -q \
   tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline)
 EVID_GATE_STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-(
-  cd "$WORKTREE"
-  "${EVID_GATE[@]}"
-) >"$NODE_EVIDENCE/evid-gate.stdout" 2>"$NODE_EVIDENCE/evid-gate.stderr"
+run_contained "$WORKTREE" "${EVID_GATE[@]}" \
+  >"$NODE_EVIDENCE/evid-gate.stdout" 2>"$NODE_EVIDENCE/evid-gate.stderr"
 EVID_GATE_FINISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 precheck_product() {
   local code="$1" interpreter="$2" lock="$3" output="$4"
-  UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1 "$interpreter" -I - "$lock" "$code" <<'PY' >"$output"
+  UV_OFFLINE=1 UV_NO_INDEX=1 UV_NO_CACHE=1 \
+    run_contained "$WORKTREE" "$interpreter" -I - "$lock" "$code" <<'PY' >"$output"
 import importlib.metadata
 import json
 import pathlib
@@ -594,7 +1007,7 @@ PY
 verify_freeze_delta() {
   local code="$1" before="$2" after="$3"
   shift 3
-  "$EVIDENCE_PY" - "$code" "$before" "$after" "$@" <<'PY'
+  run_contained "$WORKTREE" "$EVIDENCE_PY" - "$code" "$before" "$after" "$@" <<'PY'
 import pathlib
 import sys
 
@@ -612,36 +1025,46 @@ PY
 }
 
 phase B3
-"$UV_BIN" venv --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
-env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
+mkdir -m 700 "$WORKTREE/packages/acgs-control-plane/.venv"
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+  --python 3.11 "$WORKTREE/packages/acgs-control-plane/.venv"
+run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
   --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" --require-hashes \
+  --only-binary :all: \
   "$WORKTREE/requirements/saas-beta/cp-test.lock"
 precheck_product CP \
   "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   "$WORKTREE/requirements/saas-beta/cp-test.lock" \
   "$NODE_EVIDENCE/cp-editables-version.txt"
-"$UV_BIN" pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+run_contained "$WORKTREE" "$UV_BIN" pip freeze \
+  --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   >"$NODE_EVIDENCE/cp-pre-editable.freeze"
 
 if [[ "$INCLUDE_GZ" == 1 ]]; then
-  "$UV_BIN" venv --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
-  env -u UV_OFFLINE -u UV_NO_INDEX -u UV_NO_CACHE "$UV_BIN" pip sync \
+  mkdir -m 700 "$WORKTREE/packages/gove-zone/.venv-beta"
+  run_contained_bootstrap "$WORKTREE" "$UV_BIN" venv --no-config --offline \
+    --python 3.11 "$WORKTREE/packages/gove-zone/.venv-beta"
+  run_contained_bootstrap "$WORKTREE" "$UV_BIN" pip sync \
     --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" --require-hashes \
+    --only-binary :all: \
     "$WORKTREE/requirements/saas-beta/gz-test.lock"
   precheck_product GZ \
     "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
     "$WORKTREE/requirements/saas-beta/gz-test.lock" \
     "$NODE_EVIDENCE/gz-editables-version.txt"
-  "$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+  run_contained "$WORKTREE" "$UV_BIN" pip freeze \
+    --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
     >"$NODE_EVIDENCE/gz-pre-editable.freeze"
 fi
 
 phase B4
-"$UV_BIN" pip install --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+run_contained "$WORKTREE" "$UV_BIN" pip install \
+  --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   --offline --no-index --no-cache --no-build-isolation --no-deps \
   --editable "$WORKTREE/packages/gove-zone" \
   --editable "$WORKTREE/packages/acgs-control-plane"
-"$UV_BIN" pip freeze --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
+run_contained "$WORKTREE" "$UV_BIN" pip freeze \
+  --python "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   >"$NODE_EVIDENCE/cp-post-editable.freeze"
 verify_freeze_delta CP \
   "$NODE_EVIDENCE/cp-pre-editable.freeze" \
@@ -649,10 +1072,12 @@ verify_freeze_delta CP \
   "$WORKTREE/packages/gove-zone" "$WORKTREE/packages/acgs-control-plane"
 
 if [[ "$INCLUDE_GZ" == 1 ]]; then
-  "$UV_BIN" pip install --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+  run_contained "$WORKTREE" "$UV_BIN" pip install \
+    --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
     --offline --no-index --no-cache --no-build-isolation --no-deps \
     --editable "$WORKTREE/packages/gove-zone"
-  "$UV_BIN" pip freeze --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
+  run_contained "$WORKTREE" "$UV_BIN" pip freeze \
+    --python "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
     >"$NODE_EVIDENCE/gz-post-editable.freeze"
   verify_freeze_delta GZ \
     "$NODE_EVIDENCE/gz-pre-editable.freeze" \
@@ -663,7 +1088,8 @@ fi
 append_record() {
   local started="$1" finished="$2" stdout_file="$3" stderr_file="$4" selector="$5" cwd_scope="$6"
   shift 6
-  "$EVIDENCE_PY" - "$WORKTREE/scripts/evidence" "$NODE_EVIDENCE/transcript.jsonl" \
+  run_contained "$WORKTREE" "$EVIDENCE_PY" - \
+    "$WORKTREE/scripts/evidence" "$NODE_EVIDENCE/transcript.jsonl" \
     "$NODE_ID" "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" \
     "$cwd_scope" "$@" <<'PY'
 import hashlib
@@ -726,19 +1152,14 @@ run_recorded_gate() {
   stderr_file="$NODE_EVIDENCE/$basename.stderr"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$scope" == GZ ]]; then
-    if (
-      cd "$cwd"
-      VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" "$@"
-    ) >"$stdout_file" 2>"$stderr_file"; then
+    if VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" \
+      run_contained "$cwd" "$@" >"$stdout_file" 2>"$stderr_file"; then
       gate_status=0
     else
       gate_status=$?
     fi
   else
-    if (
-      cd "$cwd"
-      "$@"
-    ) >"$stdout_file" 2>"$stderr_file"; then
+    if run_contained "$cwd" "$@" >"$stdout_file" 2>"$stderr_file"; then
       gate_status=0
     else
       gate_status=$?
@@ -755,9 +1176,49 @@ run_recorded_gate() {
     "$cwd_scope" "$@"
 }
 
+run_trusted_parent_postgres_gate() {
+  local scope="$1" cwd="$2" basename="$3" selector="$4" cwd_scope="$5"
+  shift 5
+  local started finished stdout_file stderr_file gate_status stderr_sha256 tmpdir
+  [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
+  [[ "$cwd" == "$WORKTREE/packages/acgs-control-plane" ]] ||
+    die 'trusted parent PostgreSQL gate cwd must be the control-plane package'
+  [[ "${1:-}" == ./scripts/run_postgres_gate.sh ]] ||
+    die 'trusted parent PostgreSQL gate only runs the reviewed wrapper'
+  tmpdir="${TMPDIR:-/tmp}"
+  stdout_file="$NODE_EVIDENCE/$basename.stdout"
+  stderr_file="$NODE_EVIDENCE/$basename.stderr"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if (
+    cd "$cwd"
+    env -i \
+      PATH="$PATH" \
+      HOME="$HOME" \
+      TMPDIR="$tmpdir" \
+      UV_BIN="$UV_BIN" \
+      UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
+      ACGS_TEST_SEED=20260710 \
+      PYTHONHASHSEED=0 \
+      "$@"
+  ) >"$stdout_file" 2>"$stderr_file"; then
+    gate_status=0
+  else
+    gate_status=$?
+  fi
+  finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$gate_status" -ne 0 ]]; then
+    stderr_sha256="$(sha256sum "$stderr_file" | awk '{print $1}')"
+    printf 'RECORDED_GATE=FAIL scope=%s selector=%s exit=%s stderr_sha256=%s\n' \
+      "$scope" "$selector" "$gate_status" "$stderr_sha256" >&2
+    return "$gate_status"
+  fi
+  append_record "$started" "$finished" "$stdout_file" "$stderr_file" "$selector" \
+    "$cwd_scope" "$@"
+}
+
 validate_exact_pytest_junit() {
   local junit_file="$1" expected_tests="$2" selector="$3"
-  "$EVIDENCE_PY" - "$junit_file" "$expected_tests" "$selector" <<'PY'
+  run_contained "$WORKTREE" "$EVIDENCE_PY" - "$junit_file" "$expected_tests" "$selector" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -828,20 +1289,16 @@ run_recorded_exact_pytest_gate() {
   junit_file="$NODE_EVIDENCE/$basename.junit.xml"
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$scope" == GZ ]]; then
-    if (
-      cd "$cwd"
-      PYTEST_ADDOPTS="--junitxml=$junit_file" \
-        VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" "$@"
-    ) >"$stdout_file" 2>"$stderr_file"; then
+    if PYTEST_ADDOPTS="--junitxml=$junit_file" \
+      VIRTUAL_ENV="$WORKTREE/packages/gove-zone/.venv-beta" \
+      run_contained "$cwd" "$@" >"$stdout_file" 2>"$stderr_file"; then
       gate_status=0
     else
       gate_status=$?
     fi
   else
-    if (
-      cd "$cwd"
-      PYTEST_ADDOPTS="--junitxml=$junit_file" "$@"
-    ) >"$stdout_file" 2>"$stderr_file"; then
+    if PYTEST_ADDOPTS="--junitxml=$junit_file" \
+      run_contained "$cwd" "$@" >"$stdout_file" 2>"$stderr_file"; then
       gate_status=0
     else
       gate_status=$?
@@ -908,21 +1365,22 @@ if [[ "$INCLUDE_GZ" == 1 ]]; then
     --import-mode=importlib -q --cov=gove_zone --cov-fail-under=90
 fi
 
-"$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
+run_contained "$WORKTREE" "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
   --code CP \
   --interpreter "$WORKTREE/packages/acgs-control-plane/.venv/bin/python" \
   --lock "$WORKTREE/requirements/saas-beta/cp-test.lock" \
   --require-editables 0.6 \
   --output "$NODE_EVIDENCE/environment-CP.json"
 if [[ "$INCLUDE_GZ" == 1 ]]; then
-  "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
+  run_contained "$WORKTREE" "$EVIDENCE_PY" "$WORKTREE/scripts/evidence/capture_environment.py" \
     --code GZ \
     --interpreter "$WORKTREE/packages/gove-zone/.venv-beta/bin/python" \
     --lock "$WORKTREE/requirements/saas-beta/gz-test.lock" \
     --require-editables 0.6 \
     --output "$NODE_EVIDENCE/environment-GZ.json"
 fi
-"$EVIDENCE_PY" "$WORKTREE/scripts/evidence/validate_environment_identities.py" \
+run_contained "$WORKTREE" "$EVIDENCE_PY" \
+  "$WORKTREE/scripts/evidence/validate_environment_identities.py" \
   --node "$NODE_ID" \
   --assignment-map "$WORKTREE/requirements/saas-beta/bootstrap-by-scope.json" \
   --assignment "$ASSIGNED_BOOTSTRAPS" \
@@ -952,7 +1410,7 @@ elif [[ "$NODE_ID" == P1-MIGRATION-001 ]]; then
     tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget \
     tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal \
     tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state)
-  run_recorded_gate CP "$WORKTREE/packages/acgs-control-plane" p1-migration-postgres \
+  run_trusted_parent_postgres_gate CP "$WORKTREE/packages/acgs-control-plane" p1-migration-postgres \
     'packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate' CP \
     "${P1_MIGRATION_GATE[@]}"
 elif [[ "$NODE_ID" == P1-SCOPE-002 ]]; then
@@ -1003,7 +1461,7 @@ elif [[ "$NODE_ID" == P2-TENANT-BOOTSTRAP-000 ]]; then
     tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic \
     tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix \
     tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once)
-  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+  run_trusted_parent_postgres_gate CP \
     "$WORKTREE/packages/acgs-control-plane" p2-tenant-bootstrap-postgres \
     'packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate' CP \
     "${P2_TENANT_BOOTSTRAP_CP_GATE[@]}"
@@ -1037,7 +1495,7 @@ elif [[ "$NODE_ID" == P2-IDEMPOTENCY-002 ]]; then
     tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \
     tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating \
     tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution)
-  ACGS_TEST_SEED=20260710 PYTHONHASHSEED=0 run_recorded_gate CP \
+  run_trusted_parent_postgres_gate CP \
     "$WORKTREE/packages/acgs-control-plane" p2-idempotency-postgres \
     'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP \
     "${P2_IDEMPOTENCY_CP_GATE[@]}"
@@ -1046,7 +1504,8 @@ else
 fi
 
 phase B6
-TRANSCRIPT_RECORDS="$("$EVIDENCE_PY" - "$NODE_EVIDENCE/transcript.jsonl" <<'PY'
+TRANSCRIPT_RECORDS="$(run_contained "$WORKTREE" \
+  "$EVIDENCE_PY" - "$NODE_EVIDENCE/transcript.jsonl" <<'PY'
 import pathlib
 import sys
 
@@ -1055,30 +1514,22 @@ PY
 )"
 [[ "$TRANSCRIPT_RECORDS" == "$EXPECTED_TRANSCRIPT_RECORDS" ]] ||
   die "reviewed transcript must contain exactly $EXPECTED_TRANSCRIPT_RECORDS records"
-(
-  cd "$WORKTREE"
-  "$EVIDENCE_PY" scripts/evidence/generate_run.py \
-    --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
-    --node "$NODE_ID" --parent "$P" --product "$T" --assignment "$ASSIGNED_BOOTSTRAPS" \
-    --environment-identities "$NODE_EVIDENCE/environment-identities.json" \
-    --transcript "$NODE_EVIDENCE/transcript.jsonl" \
-    --output "$NODE_EVIDENCE/run.json"
-)
-(
-  cd "$WORKTREE"
-  "$EVIDENCE_PY" scripts/evidence/validate_run.py \
-    --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
-    --expected-node "$NODE_ID" \
-    --assignment-map requirements/saas-beta/bootstrap-by-scope.json \
-    --expected-environments "$ASSIGNED_BOOTSTRAPS" \
-    --expected-parent "$P" --expected-product "$T" \
-    "$NODE_EVIDENCE/run.json"
-)
+run_contained "$WORKTREE" "$EVIDENCE_PY" scripts/evidence/generate_run.py \
+  --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
+  --node "$NODE_ID" --parent "$P" --product "$T" --assignment "$ASSIGNED_BOOTSTRAPS" \
+  --environment-identities "$NODE_EVIDENCE/environment-identities.json" \
+  --transcript "$NODE_EVIDENCE/transcript.jsonl" \
+  --output "$NODE_EVIDENCE/run.json"
+run_contained "$WORKTREE" "$EVIDENCE_PY" scripts/evidence/validate_run.py \
+  --schema schemas/evidence/acgs-run-evidence-v1.schema.json \
+  --expected-node "$NODE_ID" \
+  --assignment-map requirements/saas-beta/bootstrap-by-scope.json \
+  --expected-environments "$ASSIGNED_BOOTSTRAPS" \
+  --expected-parent "$P" --expected-product "$T" \
+  "$NODE_EVIDENCE/run.json"
 R="$(
-  (
-    cd "$WORKTREE"
-    "$EVIDENCE_PY" scripts/evidence/hash_run_jcs.py "$NODE_EVIDENCE/run.json"
-  )
+  run_contained "$WORKTREE" "$EVIDENCE_PY" \
+    scripts/evidence/hash_run_jcs.py "$NODE_EVIDENCE/run.json"
 )"
 [[ "$R" =~ ^[0-9a-f]{64}$ ]] || die 'JCS run hash is malformed'
 PROOF_COMPLETE=1

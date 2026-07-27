@@ -136,6 +136,11 @@ def _required_url(variable: str) -> str:
             f"{variable} must name exactly the disposable database {expected_database!r}",
             pytrace=False,
         )
+    if url.host is not None or url.port is not None or url.query.get("host") != "/run/acgs-pg":
+        pytest.fail(
+            f"{variable} must use the pinned PostgreSQL Unix socket at /run/acgs-pg",
+            pytrace=False,
+        )
     return raw
 
 

@@ -43,6 +43,11 @@ def _state(*, schema: str = ZERO_HASH) -> DatabaseState:
     return DatabaseState(schema_fingerprint=schema, tables=_tables(), audit_anchors={})
 
 
+def test_expected_tables_include_agent_registration_idempotency_in_sorted_order() -> None:
+    assert "agent_registration_idempotency" in EXPECTED_TABLES
+    assert EXPECTED_TABLES == tuple(sorted(EXPECTED_TABLES))
+
+
 def _write_bundle(root: Path, *, archive: bytes = b"PGDMP-test") -> dict[str, Any]:
     root.mkdir(mode=0o700)
     archive_path = root / ARCHIVE_NAME
@@ -664,6 +669,7 @@ def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
     monkeypatch.setenv("PGPASSFILE", "/tmp/attacker-passfile")
     monkeypatch.setenv("PGOPTIONS", "-c search_path=attacker")
     monkeypatch.setenv("UNRELATED_SECRET", "must-not-cross-boundary")
+    monkeypatch.setenv("ACP_POSTGRES_CLIENT_BROKER_SOCKET", "/run/broker/postgresql-client.sock")
     real_open = os.open
     initial_modes: list[tuple[int, int, int]] = []
 
@@ -691,6 +697,9 @@ def test_pg_environment_excludes_hostile_ambient_controls_and_unrelated_secrets(
         assert environment["PGUSER"] == "operator"
         assert "PGSERVICE" not in environment
         assert environment["PGOPTIONS"] == "-csearch_path=public"
+        assert environment["ACP_POSTGRES_CLIENT_BROKER_SOCKET"] == (
+            "/run/broker/postgresql-client.sock"
+        )
         assert "UNRELATED_SECRET" not in environment
         assert "RECOVERY_SOURCE_URL" not in environment
         passfile = Path(environment["PGPASSFILE"])
@@ -844,8 +853,72 @@ def test_database_url_requires_explicit_endpoint_identity(
     monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
     monkeypatch.setenv("RECOVERY_URL", url)
-    with pytest.raises(RecoveryRefused, match="explicitly identify"):
+    with pytest.raises(RecoveryRefused, match="endpoint, user, and database"):
         recovery._url_from_named_environment("RECOVERY_URL")
+
+
+def test_database_url_accepts_pinned_postgres_socket_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "RECOVERY_URL",
+        "postgresql+psycopg://operator:super-secret@/source_drill?host=/run/acgs-pg",
+    )
+
+    raw, url = recovery._url_from_named_environment("RECOVERY_URL")
+
+    assert raw.endswith("host=/run/acgs-pg")
+    assert url.host is None
+    assert url.query["host"] == "/run/acgs-pg"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+psycopg://operator@/source_drill?host=",
+        "postgresql+psycopg://operator@/source_drill?host=run/acgs-pg",
+        "postgresql+psycopg://operator@/source_drill?host=/tmp/acgs-pg",
+        "postgresql+psycopg://operator@/source_drill?host=/run/acgs-pg/../other",
+        "postgresql+psycopg://operator@db.invalid/source_drill?host=/run/acgs-pg",
+        "postgresql+psycopg://operator@:15432/source_drill?host=/run/acgs-pg",
+        "sqlite:///source_drill?host=/run/acgs-pg",
+    ],
+)
+def test_database_url_rejects_unpinned_or_ambiguous_socket_endpoint(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    monkeypatch.setenv("RECOVERY_URL", url)
+
+    with pytest.raises(RecoveryRefused):
+        recovery._url_from_named_environment("RECOVERY_URL")
+
+
+def test_database_url_rejects_duplicate_socket_host_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "RECOVERY_URL",
+        "postgresql+psycopg://operator@/source_drill?host=/run/acgs-pg&host=/run/acgs-pg",
+    )
+
+    with pytest.raises(RecoveryRefused, match="ambiguous"):
+        recovery._url_from_named_environment("RECOVERY_URL")
+
+
+def test_pg_environment_uses_pinned_postgres_socket_without_command_secret(
+    tmp_path: Path,
+) -> None:
+    url = make_url("postgresql+psycopg://operator:super-secret@/source_drill?host=/run/acgs-pg")
+
+    with recovery._pg_environment(url, tmp_path) as env:
+        assert env["PGHOST"] == "/run/acgs-pg"
+        assert env["PGPORT"] == "5432"
+        assert env["PGDATABASE"] == "source_drill"
+        assert env["PGUSER"] == "operator"
+        assert "super-secret" not in json.dumps(env, sort_keys=True)
+        passfile = Path(env["PGPASSFILE"])
+
+    assert passfile.exists() is False
 
 
 def test_connection_database_identity_is_bound_before_state_use() -> None:
