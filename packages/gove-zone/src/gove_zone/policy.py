@@ -385,6 +385,31 @@ def _mapping_dict(value: Any, *, field_name: str) -> dict[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
+def _json_equal(actual: Any, expected: Any) -> bool:
+    """Structural equality that ignores frozen-vs-plain container differences.
+
+    Rule data is deep-frozen at construction (``list`` -> ``tuple``, ``dict`` ->
+    ``MappingProxyType``) while runtime ``call.state`` arrives as plain
+    JSON-decoded containers. A bare ``!=`` would therefore report a mismatch for
+    equal content whenever the value is a sequence — ``["a"] != ("a",)`` — which
+    silently turns a written DENY rule into an ALLOW. ``MappingProxyType``
+    happens to compare equal to ``dict``, so only sequences are affected, but
+    both are normalized here so the comparison cannot depend on which container
+    type either side happens to use.
+    """
+    if isinstance(expected, Mapping):
+        if not isinstance(actual, Mapping) or len(actual) != len(expected):
+            return False
+        return all(
+            key in actual and _json_equal(actual[key], value) for key, value in expected.items()
+        )
+    if _is_sequence(expected):
+        if not _is_sequence(actual) or len(actual) != len(expected):
+            return False
+        return all(_json_equal(a, e) for a, e in zip(actual, expected, strict=True))
+    return bool(actual == expected)
+
+
 def _path_prefix(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -549,7 +574,7 @@ class PolicyRule:
         if self.path_prefix and not _path_has_prefix(call.path, self.path_prefix):
             return False
         for key, expected in self.state_equals.items():
-            if call.state.get(key) != expected:
+            if not _json_equal(call.state.get(key), expected):
                 return False
         for key, expected in self.state_contains.items():
             if not _state_contains(call.state.get(key), expected):
@@ -960,7 +985,11 @@ class CompositePolicy(_SealedPolicy):
         for member in members:
             if not isinstance(member, Policy):
                 raise TypeError("CompositePolicy members must implement Policy")
-            if not isinstance(member, _SealedPolicy):
+            # Type membership alone is not enough: `_sealed` defaults to False,
+            # so a subclass that never calls _seal(), or an instance built via
+            # __new__, would satisfy isinstance() while staying fully mutable —
+            # exactly the drift this gate exists to stop. Require both.
+            if not isinstance(member, _SealedPolicy) or not getattr(member, "_sealed", False):
                 raise PolicyCompositionError(
                     f"{type(member).__name__} cannot be composed: a CompositePolicy caches "
                     "its version but evaluates each member live, so every member must be a "

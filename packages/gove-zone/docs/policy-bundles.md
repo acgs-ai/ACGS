@@ -104,6 +104,15 @@ identity. Nothing accepts both forms. `CompositePolicy` changed shape too —
 likewise not comparable across the boundary. `to_dict()` / `to_json()` bundle
 documents are unaffected: the version is not part of the serialized bundle.
 
+**Composition is now restricted.** `CompositePolicy` accepts only sealed
+built-ins, so policies that are plain `Policy` subclasses can no longer be
+composed — including three shipped ones: `TransformPolicy`
+(`api.py`, `tenant.py`), `EscalatePolicy` (`api.py`), and the internal
+`_ObserverPolicy` (`integration.py`). Nothing in the tree composes them today,
+and the failure is fail-closed (`PolicyCompositionError` at construction, never a
+silent downgrade), but any downstream code that composed a custom policy will
+raise. Express that logic as a `RuleSetPolicy` bundle.
+
 The committed proof-pack fixture corpus was regenerated and re-signed against the
 new identity (`tests/fixtures/_generate_proofpacks.py`, then
 `tests/fixtures/_generate_acgs_proofpack.py` — in that order, since the ACGS

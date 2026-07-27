@@ -33,6 +33,7 @@ from gove_zone.policy import (
     RiskTier,
     RiskTierPolicy,
     RuleSetPolicy,
+    _SealedPolicy,
     new_event_id,
 )
 from gove_zone.tool import ToolCall, normalize_path_context
@@ -214,6 +215,45 @@ def test_nested_mappings_and_sequences_are_deeply_frozen() -> None:
         frozen["inner"][0] = "hijacked"  # type: ignore[index]
 
 
+@pytest.mark.parametrize(
+    ("expected", "actual", "should_match"),
+    [
+        (["pii", "export"], ["pii", "export"], True),
+        (["pii", "export"], ("pii", "export"), True),
+        (["pii", "export"], ["pii"], False),
+        (["pii", "export"], ["export", "pii"], False),  # order is significant
+        ({"k": ["a"]}, {"k": ["a"]}, True),
+        ({"k": ["a"]}, {"k": ["b"]}, False),
+        ({"k": "v"}, {"k": "v", "extra": 1}, False),
+    ],
+)
+def test_state_equals_matches_sequence_values(
+    expected: Any, actual: Any, should_match: bool
+) -> None:
+    """Regression: deep-freezing must not silently disable a written DENY rule.
+
+    Rule data freezes to tuples/MappingProxyType while runtime ``call.state``
+    arrives as plain JSON containers. A bare ``!=`` reported a mismatch for
+    equal content whenever the value was a sequence, turning the rule's DENY
+    into an ALLOW with no operator-visible signal.
+    """
+    policy = RuleSetPolicy(
+        policy_id="p/v1",
+        rules=[
+            PolicyRule.from_dict(
+                {
+                    "id": "R1",
+                    "effect": "deny",
+                    "tools": ["fs.write"],
+                    "state_equals": {"tags": expected},
+                }
+            )
+        ],
+    )
+    decision = policy.evaluate(_call("fs.write", state={"tags": actual})).decision
+    assert decision is (Decision.DENY if should_match else Decision.ALLOW)
+
+
 def test_unsupported_mutable_values_are_rejected() -> None:
     with pytest.raises(ValueError, match="unsupported value"):
         PolicyRule(rule_id="R1", effect=Decision.DENY, state_equals={"k": {1, 2}})
@@ -361,6 +401,36 @@ def test_composite_rejects_a_mutable_custom_child() -> None:
     child = _MutableCustomPolicy()
     with pytest.raises(PolicyCompositionError, match="cannot be composed"):
         CompositePolicy([child])
+
+
+class _NeverSealsPolicy(_MutableCustomPolicy, _SealedPolicy):
+    """Inherits the sealed type but never calls ``_seal()``.
+
+    ``_sealed`` defaults to ``False``, so this instance satisfies
+    ``isinstance(x, _SealedPolicy)`` while every attribute stays rebindable.
+    """
+
+
+def test_composite_rejects_a_sealed_subclass_that_never_sealed() -> None:
+    """Regression: the composite gate must check sealing, not just the type.
+
+    A type-only check would admit this member, and flipping ``decision``
+    afterwards would change the composite's decisions while its version stayed
+    byte-identical — the exact drift the gate exists to prevent.
+    """
+    child = _NeverSealsPolicy()
+    assert isinstance(child, _SealedPolicy)  # a type-only gate would pass it
+    assert child._sealed is False
+    with pytest.raises(PolicyCompositionError, match="cannot be composed"):
+        CompositePolicy([child])
+
+
+def test_composite_rejects_a_built_in_bypassed_via_new() -> None:
+    """``__new__`` skips ``__init__``, so ``_seal()`` never runs."""
+    unsealed = AllowAllPolicy.__new__(AllowAllPolicy)
+    assert isinstance(unsealed, _SealedPolicy)
+    with pytest.raises(PolicyCompositionError, match="cannot be composed"):
+        CompositePolicy([unsealed])
 
 
 def test_composite_rejects_a_non_policy_member() -> None:
