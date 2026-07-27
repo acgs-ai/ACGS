@@ -1,4 +1,4 @@
-"""Risk-tiered enforcement policy surface (blueprint `docs/reconstruction/04-platform-blueprint.md` §2f).
+"""Risk-tiered enforcement policy surface (`docs/reconstruction/04-platform-blueprint.md` §2f).
 
 Proves:
 
