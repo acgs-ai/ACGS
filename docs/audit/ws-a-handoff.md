@@ -80,15 +80,35 @@ a meaning — it was previously pinned to zero and therefore a dead enum value.
 ## 2. Evidence artifacts
 
 ```
-gove-zone suite   1191 passed, 0 failed, 5 skipped   (baseline 1189; +2 from split invariants)
-tests/docs        84 passed, exit 0
-make lint-docs    exit 0
+gove-zone suite   1197 collected, 1192 passed, 0 failed, 0 errors, 5 skipped   exit 0
+tests/docs        84 collected, 84 passed, 0 failed, 0 errors, 0 skipped       exit 0
+make lint-docs                                                                 exit 0
 ruff check        All checks passed
-ruff format       2 files already formatted
+ruff format       All checked files already formatted
 ```
 
-Counts are from JUnit XML, not stdout. Earlier in this program a `| tail` pipe masked a non-zero
-pytest exit; the discipline is now to redirect and read the XML.
+Counts are parsed from JUnit XML, not stdout — `rtk` strips pytest's summary line on large runs,
+and earlier in this program a `| tail` pipe masked a non-zero pytest exit. The six tests added in
+`91c7cb0e` were confirmed present in the XML by name, rather than inferred from a total.
+
+Of the 5 skips, one is `test_keyless_full_rewrite_residual_KNOWN_GAP` — an intentional `xfail`
+recording an open residual, not an unrun test. The other four are
+`test_mcp_gateway_conformance`, `test_mcp_gateway_session_hardening`,
+`test_mcp_gateway_strict_profile` (module-level skips) and
+`test_langgraph_tools_dispatch_through_gate`.
+
+> **Unreconciled figure, flagged rather than smoothed.** An earlier revision of this block
+> recorded "1191 passed, 5 skipped (baseline 1189)". Six tests have been added since, so the
+> total should now be 1202; it measures 1197. The discrepancy is ~5 tests and I could not
+> reconcile it without re-running the suite at `4459d849`. **The 1189 baseline should be
+> re-measured before being cited again.** The figures above are the measured current state; the
+> historical ones are not trustworthy.
+
+**Guards proven to fire, not merely to pass.** Each new manifest invariant was exercised against
+a synthetic violation — posture-without-evidence, UNKNOWN-with-evidence, bad vocabulary, dropped
+baseline class, nonexistent covering node — and all five raised. The hash-coverage drift guard
+was exercised the same way: injecting an unbound field into `DecisionReceipt` fails it (exit 1
+with the intended message), and the injection was reverted.
 
 **Guards proven to fire, not merely to pass.** Each new manifest invariant was exercised against
 a synthetic violation — posture-without-evidence, UNKNOWN-with-evidence, bad vocabulary, dropped
@@ -155,11 +175,16 @@ capability model it would need to check against.
 
 ## 6. WS-A work not done
 
-- **The A3 text remediation.** 15 forbidden or unscoped occurrences were found and are recorded
-  in the claims map's remediation ledger, but **none was corrected.** Deliberate: the fixes span
-  a Chinese-language strategy document, an archive file, a shipped example README, and a source
-  docstring, and several need judgment rather than substitution. This belongs in its own
-  reviewable diff. The claims map is honest about the gap rather than implying a clean sweep.
+- ~~**The A3 text remediation.**~~ **Now done.** All 13 actionable occurrences are corrected
+  across 9 files, including the Chinese-language strategy document (the TLS protocol analogy and
+  four 防篡改 → 防篡改可检测), a shipped example README, and the `langgraph.py` adapter docstring.
+  Two rulings stand: `docs/archive/**` is not edited, and `docs/adr/0001-*.md` is left intact
+  because an ADR records an architectural intent at a point in time — retroactively amending an
+  accepted ADR is worse practice than the overclaim, and superseding it is the right mechanism.
+  A post-correction re-sweep is recorded in the claims map: every remaining `tamper-proof` hit is
+  a negated disclaimer, a forbidden-word list, a prior-remediation record, or the Anderson term
+  of art, and every `production-certified` / `compliance-certified` / `regulator-approved` hit
+  repo-wide is a negation.
 - **Per-adversary claims tables in the threat model.** The coverage matrix in
   `ENFORCEMENT-BOUNDARY.md` §5 covers the per-mode axis; per-adversary what-holds/what-degrades
   tables inside `docs/security/threat-model-v2.md` were not added.
@@ -175,11 +200,16 @@ on PR-2 and PR-3 per the spec's sequencing.
 **UC-A: NOT satisfied.** The documentation artifacts exist and their known-false statements
 are now corrected, but three things remain open:
 
-1. **A3 text remediation** — 15 forbidden or unscoped occurrences recorded in the claims map's
-   remediation ledger; correction is in progress in this PR series, not complete.
-2. **Per-adversary claims tables** in `docs/security/threat-model-v2.md` — not written.
-3. **Independent re-verification** — the corrections in this pass were made by the same author
-   whose claims failed verification. They have not themselves been adversarially re-checked.
+1. ~~A3 text remediation~~ — **done**, see §6.
+2. **Per-adversary claims tables** in `docs/security/threat-model-v2.md` — not written. Its
+   unscoped anchor claim at row 7 was corrected, but the per-adversary what-holds /
+   what-degrades tables the spec asks for do not exist.
+3. **Independent re-verification** — the decisive gate. The corrections in this pass were made
+   by the same author whose claims failed verification, and two of the nine findings (F-8, F-9)
+   were self-caught *while correcting the first seven*, which is direct evidence that one pass
+   by one author does not converge. Until an independent adversarial pass runs against the
+   corrected documents, UC-A should not be declared.
+4. **The 1189 test baseline** is unreconciled (§2) and must be re-measured before it is cited.
 
 Declaring UC-A met is the reviewer's call on the merged PR. This document does not claim it.
 

@@ -14,12 +14,12 @@ When a defined procedure fits in context, frontier models can self-orchestrate t
 
 The correct ACGS interpretation is narrow and operational: Hermes should be free to self-orchestrate procedural reasoning in context, but side effects must cross an external runtime governance boundary. Prompt-level governance is advisory. Runtime governance is authoritative. Prompt-level procedure and prompt-level compliance can guide behavior, but the authoritative boundary for tool calls, API calls, file writes, shell commands, permissions, data access, audit, role separation, and evidence is the runtime gate.
 
-ACGS should therefore not be positioned as a LangGraph, CrewAI, or OpenAI Agents SDK workflow orchestrator competitor. It should be positioned as the governance runtime around autonomous Hermes execution: a policy-governed, fail-closed, evidence-ready control layer that intercepts every side-effectful action before execution and records every decision in tamper-evident audit material.
+ACGS should therefore not be positioned as a LangGraph, CrewAI, or OpenAI Agents SDK workflow orchestrator competitor. It should be positioned as the governance runtime around autonomous Hermes execution: a policy-governed, fail-closed, evidence-ready control layer that intercepts every side-effectful action **wired through it** before execution, and records every resulting decision in tamper-evident audit material.
 
 Acceptance criteria:
 
 1. Hermes can self-orchestrate procedural reasoning without external routing.
-2. ACGS can intercept every side-effectful action before execution.
+2. ACGS can intercept every side-effectful action routed through its gate before execution. Actions an agent reaches without transiting the gate are not intercepted; wiring is the integrator's responsibility (`docs/ENFORCEMENT-BOUNDARY.md`).
 3. Denied actions do not execute.
 4. Every governance decision produces an audit event.
 5. Audit events are hash-linked or otherwise tamper-evident.

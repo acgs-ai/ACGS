@@ -107,8 +107,9 @@ the gateway; the gateway fronts an **arbitrary, unmodified** downstream MCP serv
    `initialize`, `tools/list`, resources/prompts/notifications untouched.
 2. **Receipt gate on every `tools/call`.** Parse → policy evaluate → mint receipt →
    forward downstream only on ALLOW with a validated (signed, in production posture)
-   receipt. No bypass path; unknown/unparseable methods that can cause side effects are
-   denied, not forwarded.
+   receipt. No bypass path *through the gateway*; unknown/unparseable methods that can
+   cause side effects are denied, not forwarded. A side effect reached without transiting
+   the gateway is outside its mediation.
 3. **Fail-closed everywhere.** Policy exception, evidence-persistence failure, missing
    signer/verifier in production posture, malformed request → deny with structured
    rejection; never forward on error.

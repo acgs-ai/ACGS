@@ -1,7 +1,9 @@
 """LangChain and LangGraph integration adapter for gove-zone.
 
-Wraps standard LangChain/LangGraph tools in the gove-zone governance kernel,
-ensuring all tool executions pass through policy checks, auditing, and sandboxing.
+Wraps standard LangChain/LangGraph tools in the gove-zone governance kernel, so
+that executions of the tools this adapter wraps pass through policy checks,
+auditing, and sandboxing. Tools left unwrapped, and side effects an agent
+reaches without calling a wrapped tool, are not mediated by it.
 """
 
 from __future__ import annotations

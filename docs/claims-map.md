@@ -104,29 +104,37 @@ any historical claim resting on `status` is uninformative by construction.
 
 ---
 
-## Remediation ledger — occurrences found, not yet corrected
+## Remediation ledger — occurrences found and corrected
 
-A repo-wide sweep at `4459d849` found the following. **None is corrected in this pass**; each is
-listed so the claims map is honest about its own enforcement gap. Archive files are recorded but
-deliberately not edited.
+A repo-wide sweep at `4459d849`, including a non-English pass, found the following. **All
+actionable items are now corrected**; the two `LEAVE` rulings and the archive file stand.
+Original phrasing is kept in the table so the change is reviewable.
 
-| File:line | Phrasing | Verdict |
-|---|---|---|
-| `docs/PRODUCT_STRATEGY.md:19` | 如同 TLS 之于传输 ("like TLS is to transport") | **forbidden** — protocol analogy. Found only by a non-English sweep; ASCII greps miss it. |
-| `docs/PRODUCT_STRATEGY.md:30,41,94,111` | 防篡改 (tamper-proof) ×4 | **forbidden** — should be 防篡改可检测 / tamper-evident |
-| `docs/PRODUCT_STRATEGY.md:16` | 每一个副作用都可治理 ("every side effect governable") | unscoped |
-| `docs/strategy/design-partner-kit/ONBOARDING.md:65` | "signed, tamper-proof" | **forbidden** |
-| `packages/gove-zone/examples/undeniable-demo/README.md:4` | "tamper-proof evidence" | **forbidden** — shipped example surface |
-| `packages/gove-zone/src/gove_zone/adapters/langgraph.py:4` | "ensuring all tool executions pass through policy checks" | unscoped — shipped docstring |
-| `docs/hooks-or-runtime/overview.md:3,9` | "governed runtime enforcement" | **forbidden** unscoped |
-| `docs/design/agent-native-architecture-audit.md:77,101,104` | "impossible to bypass", "un-bypassable", "impossible to call un-gated" | **forbidden** unscoped |
-| `docs/design/agent-native-architecture-audit.md:43` | "there is no un-gated execution path" | unscoped |
-| `docs/strategy/mcp-gateway-gap-analysis.md:110` | "No bypass path" | **forbidden** unscoped |
-| `docs/design/acgs-governed-hermes-*.md:17,22` | "intercepts every side-effectful action" | unscoped |
-| `docs/adr/0001-*.md:20,102` | "for every side-effectful action" | unscoped |
-| `docs/crosswalks/PICKEN_BOARD_AI_CYBER_CROSSWALK.md:49` | "A vendor agent cannot act outside its issued receipt." | unscoped |
-| `docs/archive/ROADMAP-ENFORCEMENT-SUBSTRATE.md:65` | "Tamper-proof (cannot be bypassed or altered)" | archive — record, do not edit |
-| `docs/SECURITY_MODEL.md:46` | "tamper-proof" inside the Anderson (1972) citation | **LEAVE** — term of art, already ruled at `CLAIM_AUDIT.md:28` |
+| File:line | Phrasing | Verdict | Status |
+|---|---|---|---|
+| `docs/PRODUCT_STRATEGY.md:19` | 如同 TLS 之于传输 ("like TLS is to transport") | **forbidden** — protocol analogy. Found only by a non-English sweep; ASCII greps miss it. | ✅ analogy removed |
+| `docs/PRODUCT_STRATEGY.md:30,41,94,111` | 防篡改 (tamper-proof) ×4 | **forbidden** — should be 防篡改可检测 / tamper-evident | ✅ all four → 防篡改可检测 |
+| `docs/PRODUCT_STRATEGY.md:16` | 每一个副作用都可治理 ("every side effect governable") | unscoped | ✅ scoped to 接入 ACGS 的执行路径 |
+| `docs/strategy/design-partner-kit/ONBOARDING.md:65` | "signed, tamper-proof" | **forbidden** | ✅ → tamper-evident |
+| `packages/gove-zone/examples/undeniable-demo/README.md:4` | "tamper-proof evidence" | **forbidden** — shipped example surface | ✅ → tamper-evident |
+| `packages/gove-zone/src/gove_zone/adapters/langgraph.py:4` | "ensuring all tool executions pass through policy checks" | unscoped — shipped docstring | ✅ scoped to wrapped tools; unwrapped paths named |
+| `docs/hooks-or-runtime/overview.md:3,9` | "governed runtime enforcement" | **forbidden** unscoped | ✅ scoped to wired paths |
+| `docs/design/agent-native-architecture-audit.md:77,101,104` | "impossible to bypass", "un-bypassable", "impossible to call un-gated" | **forbidden** unscoped | ✅ all three → closes admission-by-omission, not in-process bypass |
+| `docs/design/agent-native-architecture-audit.md:43` | "there is no un-gated execution path" | unscoped | ✅ scoped to registered tools |
+| `docs/strategy/mcp-gateway-gap-analysis.md:110` | "No bypass path" | **forbidden** unscoped | ✅ → "through the gateway" |
+| `docs/design/acgs-governed-hermes-*.md:17,22` | "intercepts every side-effectful action" | unscoped | ✅ scoped to actions routed through the gate |
+| `docs/adr/0001-*.md:20,102` | "for every side-effectful action" | unscoped | **LEAVE** — ADR decision text records an architectural intent at a point in time, not an implemented-state claim. Retroactively amending an accepted ADR is worse practice than the overclaim; supersede it with a new ADR if the intent changes. |
+| `docs/crosswalks/PICKEN_BOARD_AI_CYBER_CROSSWALK.md:49` | "A vendor agent cannot act outside its issued receipt." | unscoped | ✅ prefixed "On a path wired through the gate" |
+| `docs/archive/ROADMAP-ENFORCEMENT-SUBSTRATE.md:65` | "Tamper-proof (cannot be bypassed or altered)" | archive — record, do not edit | **LEAVE** — archive |
+| `docs/SECURITY_MODEL.md:46` | "tamper-proof" inside the Anderson (1972) citation | **LEAVE** — term of art, already ruled at `CLAIM_AUDIT.md:28` | **LEAVE** |
+
+**Re-sweep after correction** (`git grep -in` over `docs/`, `README.md`, and shipped example
+surfaces, excluding archive, this file, and `docs/audit/`): the only remaining `tamper-proof`
+occurrences are negated disclaimers ("not tamper-proof"), forbidden-word lists, prior-remediation
+records, and the Anderson term of art. The only remaining `cannot be bypassed` is
+`docs/gove-zone-pypi-readiness.md:102`, which is about a GitHub required-reviewer ruleset, not
+ACGS enforcement. Every `production-certified` / `compliance-certified` / `regulator-approved`
+hit repo-wide is a negation.
 
 ### Known-stale verdicts elsewhere
 
