@@ -219,6 +219,102 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _materialize_current_p0_environment_identities(evidence_root: Path) -> None:
+    """Publish identity files for tests that run without the excluded capture step."""
+
+    node = evidence_root / "P0-EVIDENCE-000"
+    required = [node / f"environment-{code}.json" for code in ("EVID", "CP", "GZ")]
+    if all(path.is_file() for path in required):
+        return
+    if any(os.path.lexists(path) for path in required):
+        pytest.fail("partial P0 environment identity setup is invalid")
+    node.mkdir(parents=True, exist_ok=True)
+    for code in ("EVID", "CP", "GZ"):
+        output = node / f"environment-{code}.json"
+        marker = _json(validate_environment_identities._marker_path(code, ROOT))
+        interpreter_rel, lock_rel = _common.CODE_PATHS[code]
+        interpreter = ROOT / interpreter_rel
+        lock_path = (ROOT / lock_rel).resolve(strict=True)
+        locked = _common.parse_lock(lock_path)
+        runtime_root = interpreter.parents[1].resolve(strict=True)
+        identity: dict[str, Any] = {
+            "schema_version": "acgs-environment-identity/v1",
+            "code": code,
+            "node_id": "P0-EVIDENCE-000",
+            "captured_at_utc": marker["captured_at_utc"],
+            "interpreter": str(interpreter),
+            "interpreter_realpath": str(interpreter.resolve(strict=True)),
+            "module_root": str(runtime_root),
+            "python_version": marker["python_version"],
+            "python_implementation": marker["python_implementation"],
+            "lock": {
+                "path": lock_rel,
+                "sha256": _common.sha256_file(lock_path),
+                "distributions": locked,
+            },
+            "bootstrap_record": marker,
+            "output_path": str(output),
+        }
+        if code == "EVID":
+            modules: dict[str, dict[str, str]] = {}
+            for distribution, module_name in _common.DIRECT_EVIDENCE_MODULES.items():
+                module = __import__(module_name)
+                modules[module_name] = {
+                    "distribution": distribution,
+                    "version": importlib.metadata.version(distribution),
+                    "path": str(Path(str(module.__file__)).resolve(strict=True)),
+                }
+            identity.update(
+                {
+                    "uv": {"version": "0.11.19", "executable": "/home/martin/.local/bin/uv"},
+                    "installed_distributions": _common.installed_distributions(),
+                    "modules": modules,
+                }
+            )
+        else:
+            live = validate_environment_identities._live_product_probe(code, interpreter)
+            modules = live["modules"]
+            identity.update(
+                {
+                    "python_version": live["python_version"],
+                    "python_implementation": live["python_implementation"],
+                    "installed_distributions": live["distributions"],
+                    "pep517_backend": {
+                        "backend": "hatchling.build",
+                        "distribution": "hatchling",
+                        "version": modules["hatchling"]["version"],
+                        "module_path": str(
+                            Path(modules["hatchling"]["path"])
+                            .resolve(strict=True)
+                            .relative_to(runtime_root)
+                        ),
+                        "artifact_hashes": locked["hatchling"]["artifact_hashes"],
+                    },
+                    "pep660_editable_build": {
+                        "distribution": "editables",
+                        "version": "0.6",
+                        "module": "editables",
+                        "module_path": str(
+                            Path(modules["editables"]["path"])
+                            .resolve(strict=True)
+                            .relative_to(runtime_root)
+                        ),
+                        "lock_sha256": _common.sha256_file(lock_path),
+                        "artifact_hashes": locked["editables"]["artifact_hashes"],
+                    },
+                }
+            )
+        _write_json(output, identity)
+
+
 def _sealed_memfd_snapshot(name: str, payload: bytes) -> int:
     if hasattr(os, "memfd_create"):
         fd = os.memfd_create(name, os.MFD_ALLOW_SEALING)
@@ -232,6 +328,108 @@ def _sealed_memfd_snapshot(name: str, payload: bytes) -> int:
     os.lseek(fd, 0, os.SEEK_SET)
     fcntl.fcntl(fd, 1033, 0x0001 | 0x0002 | 0x0004 | 0x0008)
     return fd
+
+
+def _sealed_snapshot_stat(fd: int) -> str:
+    st = os.fstat(fd)
+    return f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_size}"
+
+
+def _authenticated_fd_stat(fd: int) -> str:
+    st = os.fstat(fd)
+    return f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_nlink}"
+
+
+def _clean_sibling_artifact_paths(uv_path: Path) -> dict[str, Path]:
+    return {
+        "LAUNCHER": EVIDENCE_SCRIPTS / "prove_clean_sibling",
+        "INTERNAL": EVIDENCE_SCRIPTS / "prove_clean_sibling.sh",
+        "CLEANUP": EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh",
+        "UV": uv_path,
+    }
+
+
+def _clean_sibling_authenticated_fd_env(uv_path: Path) -> tuple[dict[str, str], tuple[int, ...]]:
+    env: dict[str, str] = {}
+    fixed_fds = {"LAUNCHER": 8, "INTERNAL": 9, "CLEANUP": 10, "UV": 11}
+    for label, path in _clean_sibling_artifact_paths(uv_path).items():
+        st = path.stat()
+        env[f"ACGS_CLEAN_SIBLING_{label}_FD"] = str(fixed_fds[label])
+        env[f"ACGS_CLEAN_SIBLING_{label}_PATH"] = os.path.realpath(path)
+        env[f"ACGS_CLEAN_SIBLING_{label}_STAT"] = (
+            f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_nlink}"
+        )
+        env[f"ACGS_CLEAN_SIBLING_{label}_SHA256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return env, ()
+
+
+def _clean_sibling_fixed_fd_prelude(uv_path: Path) -> str:
+    artifacts = _clean_sibling_artifact_paths(uv_path)
+    return (
+        f"exec 8<{shlex.quote(str(artifacts['LAUNCHER']))} "
+        f"9<{shlex.quote(str(artifacts['INTERNAL']))} "
+        f"10<{shlex.quote(str(artifacts['CLEANUP']))} "
+        f"11<{shlex.quote(str(artifacts['UV']))}; "
+        'exec /usr/bin/python3 "$1" "$2"'
+    )
+
+
+def _clean_sibling_snapshot_env(uv_path: Path) -> tuple[dict[str, str], tuple[int, ...]]:
+    env: dict[str, str] = {"ACGS_SNAPSHOT_MODE": "anonymous"}
+    fds: list[int] = []
+    snapshot_prefix = {
+        "LAUNCHER": "ACGS_LAUNCHER",
+        "INTERNAL": "ACGS_INTERNAL",
+        "CLEANUP": "ACGS_CLEANUP",
+        "UV": "ACGS_UV",
+    }
+    try:
+        for label, path in _clean_sibling_artifact_paths(uv_path).items():
+            payload = path.read_bytes()
+            fd = _sealed_memfd_snapshot(
+                f"acgs-clean-sibling-{label.lower()}-snapshot",
+                payload,
+            )
+            fds.append(fd)
+            prefix = snapshot_prefix[label]
+            env[f"{prefix}_SNAPSHOT_FD"] = str(fd)
+            env[f"{prefix}_SNAPSHOT_STAT"] = _sealed_snapshot_stat(fd)
+            env[f"ACGS_CLEAN_SIBLING_{label}_PATH"] = str(path.resolve())
+            env[f"ACGS_CLEAN_SIBLING_{label}_SHA256"] = hashlib.sha256(payload).hexdigest()
+    except BaseException:
+        for fd in fds:
+            os.close(fd)
+        raise
+    return env, tuple(fds)
+
+
+def _mounted_artifact_preflight_assignment(source: str) -> str:
+    assignment = (
+        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT="
+        + source.split(
+            "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
+            1,
+        )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    )
+    return assignment + "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
+
+
+def _clean_sibling_gitfile_witness(path: Path) -> dict[str, str]:
+    st = path.stat(follow_symlinks=False)
+    payload = path.read_bytes()
+    content_b64 = base64.b64encode(payload).decode("ascii")
+    values = {
+        "content_b64": content_b64,
+        "identity": f"{st.st_dev}:{st.st_ino}:{st.st_uid}",
+        "mode": f"{stat.S_IMODE(st.st_mode):o}",
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size": str(st.st_size),
+    }
+    witness = hashlib.sha256(
+        json.dumps(values, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {**values, "links": str(st.st_nlink), "witness": witness}
 
 
 def _now(offset: timedelta = timedelta()) -> str:
@@ -5050,10 +5248,13 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
             _shell_function(source, "mounted_artifact_preflight_env_args_postgres"),
         )
     )
-    preflight_assignment = "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=" + source.split(
-        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
-        1,
-    )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    preflight_assignment = (
+        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT="
+        + source.split(
+            "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
+            1,
+        )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    )
     preflight_assignment += "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
     package_dir = tmp_path / "packages/acgs-control-plane"
     script_dir = package_dir / "scripts"
@@ -5904,6 +6105,7 @@ def test_environment_identities_exactly_match_assignment(
         validate_environment_identities._load_assignment_map(path)
 
     evidence_root = _common.evidence_root_from_env(ROOT)
+    _materialize_current_p0_environment_identities(evidence_root)
     node = evidence_root / "P0-EVIDENCE-000"
     for code in ("EVID", "CP", "GZ"):
         identity_path = node / f"environment-{code}.json"
@@ -7339,28 +7541,34 @@ def kill_and_drain_retained_scope(scope):
     guardian_file = tmp_path / "guardian.py"
     guardian_file.write_text(guardian_source, encoding="utf-8")
     target = "0" * 40
-    completed = subprocess.run(
-        [
-            "/bin/bash",
-            "--noprofile",
-            "--norc",
-            "-c",
-            "exec 8</dev/null 9</dev/null 10</dev/null 11</dev/null; "
-            'exec /usr/bin/python3 "$1" "$2"',
-            "guardian-wrapper",
-            str(guardian_file),
-            target,
-        ],
-        env={
-            **os.environ,
-            "P": target,
-            "NODE_ID": "P0-EVIDENCE-000",
-        },
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=8,
-    )
+    descriptor_env, descriptor_fds = _clean_sibling_authenticated_fd_env(Path("/usr/bin/true"))
+    try:
+        completed = subprocess.run(
+            [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                _clean_sibling_fixed_fd_prelude(Path("/usr/bin/true")),
+                "guardian-wrapper",
+                str(guardian_file),
+                target,
+            ],
+            env={
+                **os.environ,
+                **descriptor_env,
+                "P": target,
+                "NODE_ID": "P0-EVIDENCE-000",
+            },
+            pass_fds=descriptor_fds,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=8,
+        )
+    finally:
+        for fd in descriptor_fds:
+            os.close(fd)
     assert completed.returncode == 2, (completed.stdout, completed.stderr)
     assert "child exited 2" in completed.stderr
     assert "guardian startup barrier missing" not in completed.stdout + completed.stderr
@@ -8765,163 +8973,179 @@ def build_child_env(systemd_env, ambient):
     guardian_file = tmp_path / "guardian.py"
     guardian_file.write_text(guardian_source, encoding="utf-8")
     target = "0" * 40
+    descriptor_env, descriptor_fds = _clean_sibling_authenticated_fd_env(Path("/usr/bin/true"))
 
-    def assert_child_reaped(pid_file: Path) -> None:
-        if not pid_file.exists():
-            return
-        child_pid = int(pid_file.read_text(encoding="utf-8").strip())
-        child_proc = Path(f"/proc/{child_pid}")
-        deadline = time.monotonic() + 2
-        while child_proc.exists() and time.monotonic() < deadline:
-            try:
-                state = (
-                    (child_proc / "stat").read_text(encoding="utf-8").rsplit(") ", 1)[1].split()[0]
-                )
-            except OSError:
+    try:
+
+        def assert_child_reaped(pid_file: Path) -> None:
+            if not pid_file.exists():
                 return
-            time.sleep(0.05)
-        if child_proc.exists():
-            try:
-                state = (
-                    (child_proc / "stat").read_text(encoding="utf-8").rsplit(") ", 1)[1].split()[0]
-                )
-            except OSError:
-                return
-            assert state != "Z", child_pid
-        assert not child_proc.exists(), child_pid
+            child_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            child_proc = Path(f"/proc/{child_pid}")
+            deadline = time.monotonic() + 2
+            while child_proc.exists() and time.monotonic() < deadline:
+                try:
+                    state = (
+                        (child_proc / "stat")
+                        .read_text(encoding="utf-8")
+                        .rsplit(") ", 1)[1]
+                        .split()[0]
+                    )
+                except OSError:
+                    return
+                time.sleep(0.05)
+            if child_proc.exists():
+                try:
+                    state = (
+                        (child_proc / "stat")
+                        .read_text(encoding="utf-8")
+                        .rsplit(") ", 1)[1]
+                        .split()[0]
+                    )
+                except OSError:
+                    return
+                assert state != "Z", child_pid
+            assert not child_proc.exists(), child_pid
 
-    for scenario, expected_reason in (
-        ("main_exit_grandchild", "visible output pipe did not close after scope stop"),
-        ("out_of_scope_writer", "visible output pipe did not close after scope stop"),
-        ("cgroup_exception", "injected cgroup verification failure"),
-        ("delayed_reader", "child exited 2"),
-        ("missing_ack", "guardian startup ack timed out"),
-        ("malformed_ack", "guardian startup ack malformed"),
-        ("duplicate_ack", "trusted success status must be exactly one bounded frame"),
-        ("ack_only", "trusted success status must be exactly one bounded frame"),
-        ("final_first", "guardian startup ack malformed"),
-        ("final_only", "guardian startup ack malformed"),
-        ("truncated_ack", "guardian startup ack malformed"),
-        ("ancillary_ack", "guardian startup ack malformed"),
-    ):
-        pid_file = tmp_path / f"{scenario}.pid"
-        completed = subprocess.run(
-            [
-                "/bin/bash",
-                "--noprofile",
-                "--norc",
-                "-c",
-                "exec 8</dev/null 9</dev/null 10</dev/null 11</dev/null; "
-                'exec /usr/bin/python3 "$1" "$2"',
-                "guardian-wrapper",
-                str(guardian_file),
-                target,
-            ],
-            env={
-                **os.environ,
-                "P": target,
-                "NODE_ID": "P0-EVIDENCE-000",
-                "ACGS_TEST_SCENARIO": scenario,
-                "ACGS_TEST_CHILD_PID_FILE": str(pid_file),
-            },
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=8,
-        )
-        assert completed.returncode == 2, (scenario, completed.stdout, completed.stderr)
-        assert "CLEAN_SIBLING=FAIL phase=FINAL" in completed.stderr
-        assert expected_reason in completed.stderr
-        assert "captured_sha256=" in completed.stderr
-        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
-        assert "late-writer" not in completed.stderr
-        assert_child_reaped(pid_file)
-
-    for signal_name, signum, expected_returncode in (
-        ("sigterm", signal.SIGTERM, 143),
-        ("sigint", signal.SIGINT, 130),
-    ):
-        pid_file = tmp_path / f"{signal_name}.pid"
-        proc = subprocess.Popen(
-            [
-                "/bin/bash",
-                "--noprofile",
-                "--norc",
-                "-c",
-                "exec 8</dev/null 9</dev/null 10</dev/null 11</dev/null; "
-                'exec /usr/bin/python3 "$1" "$2"',
-                "guardian-wrapper",
-                str(guardian_file),
-                target,
-            ],
-            env={
-                **os.environ,
-                "P": target,
-                "NODE_ID": "P0-EVIDENCE-000",
-                "ACGS_TEST_SCENARIO": "sleep",
-                "ACGS_TEST_CHILD_PID_FILE": str(pid_file),
-            },
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        deadline = time.monotonic() + 3
-        while not pid_file.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        proc.send_signal(signum)
-        stdout, stderr = proc.communicate(timeout=8)
-        assert proc.returncode == expected_returncode, (signal_name, stdout, stderr)
-        assert f"guardian interrupted by signal {signum}" in stderr
-        assert "CLEAN_SIBLING_TECHNICAL=PASS" not in stdout + stderr
-        assert_child_reaped(pid_file)
-
-    for phase in ("pre-capture", "pre-release", "ack-wait", "post-ACK"):
-        for signal_name, signum, expected_returncode in (
-            ("sigterm", signal.SIGTERM, 143),
-            ("sigint", signal.SIGINT, 130),
+        for scenario, expected_reason in (
+            ("main_exit_grandchild", "visible output pipe did not close after scope stop"),
+            ("out_of_scope_writer", "visible output pipe did not close after scope stop"),
+            ("cgroup_exception", "injected cgroup verification failure"),
+            ("delayed_reader", "child exited 2"),
+            ("missing_ack", "guardian startup ack timed out"),
+            ("malformed_ack", "guardian startup ack malformed"),
+            ("duplicate_ack", "trusted success status must be exactly one bounded frame"),
+            ("ack_only", "trusted success status must be exactly one bounded frame"),
+            ("final_first", "guardian startup ack malformed"),
+            ("final_only", "guardian startup ack malformed"),
+            ("truncated_ack", "guardian startup ack malformed"),
+            ("ancillary_ack", "guardian startup ack malformed"),
         ):
-            pid_file = tmp_path / f"{phase}-{signal_name}.pid"
-            marker = tmp_path / f"{phase}-{signal_name}.phase"
-            kill_log = tmp_path / f"{phase}-{signal_name}.retained-kill.log"
+            pid_file = tmp_path / f"{scenario}.pid"
             completed = subprocess.run(
                 [
                     "/bin/bash",
                     "--noprofile",
                     "--norc",
                     "-c",
-                    "exec 8</dev/null 9</dev/null 10</dev/null 11</dev/null; "
-                    'exec /usr/bin/python3 "$1" "$2"',
+                    _clean_sibling_fixed_fd_prelude(Path("/usr/bin/true")),
                     "guardian-wrapper",
                     str(guardian_file),
                     target,
                 ],
                 env={
                     **os.environ,
+                    **descriptor_env,
                     "P": target,
                     "NODE_ID": "P0-EVIDENCE-000",
-                    "ACGS_TEST_SCENARIO": "sleep",
+                    "ACGS_TEST_SCENARIO": scenario,
                     "ACGS_TEST_CHILD_PID_FILE": str(pid_file),
-                    "ACGS_TEST_PHASE_MARKER": str(marker),
-                    "ACGS_TEST_RETAINED_KILL_LOG": str(kill_log),
-                    "ACGS_TEST_SIGNAL_PHASE": phase,
-                    "ACGS_TEST_SIGNAL_NUMBER": str(signum),
                 },
+                pass_fds=descriptor_fds,
                 text=True,
                 capture_output=True,
                 check=False,
                 timeout=8,
             )
-            assert completed.returncode == expected_returncode, (
-                phase,
-                signal_name,
-                completed.stdout,
-                completed.stderr,
-            )
-            assert marker.read_text(encoding="utf-8").strip() == phase
-            assert f"guardian interrupted by signal {signum}" in completed.stderr
+            assert completed.returncode == 2, (scenario, completed.stdout, completed.stderr)
+            assert "CLEAN_SIBLING=FAIL phase=FINAL" in completed.stderr
+            assert expected_reason in completed.stderr
+            assert "captured_sha256=" in completed.stderr
             assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
-            assert kill_log.read_text(encoding="utf-8").strip()
+            assert "late-writer" not in completed.stderr
             assert_child_reaped(pid_file)
+
+        for signal_name, signum, expected_returncode in (
+            ("sigterm", signal.SIGTERM, 143),
+            ("sigint", signal.SIGINT, 130),
+        ):
+            pid_file = tmp_path / f"{signal_name}.pid"
+            proc = subprocess.Popen(
+                [
+                    "/bin/bash",
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    _clean_sibling_fixed_fd_prelude(Path("/usr/bin/true")),
+                    "guardian-wrapper",
+                    str(guardian_file),
+                    target,
+                ],
+                env={
+                    **os.environ,
+                    **descriptor_env,
+                    "P": target,
+                    "NODE_ID": "P0-EVIDENCE-000",
+                    "ACGS_TEST_SCENARIO": "sleep",
+                    "ACGS_TEST_CHILD_PID_FILE": str(pid_file),
+                    "ACGS_TEST_SIGNAL_PHASE": "post-ACK",
+                    "ACGS_TEST_SIGNAL_NUMBER": str(signum),
+                },
+                pass_fds=descriptor_fds,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = proc.communicate(timeout=8)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+            assert proc.returncode == expected_returncode, (signal_name, stdout, stderr)
+            assert "CLEAN_SIBLING_TECHNICAL=PASS" not in stdout + stderr
+            assert_child_reaped(pid_file)
+        for phase in ("pre-capture", "pre-release", "ack-wait", "post-ACK"):
+            for signal_name, signum, expected_returncode in (
+                ("sigterm", signal.SIGTERM, 143),
+                ("sigint", signal.SIGINT, 130),
+            ):
+                pid_file = tmp_path / f"{phase}-{signal_name}.pid"
+                marker = tmp_path / f"{phase}-{signal_name}.phase"
+                kill_log = tmp_path / f"{phase}-{signal_name}.retained-kill.log"
+                completed = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "--noprofile",
+                        "--norc",
+                        "-c",
+                        _clean_sibling_fixed_fd_prelude(Path("/usr/bin/true")),
+                        "guardian-wrapper",
+                        str(guardian_file),
+                        target,
+                    ],
+                    env={
+                        **os.environ,
+                        **descriptor_env,
+                        "P": target,
+                        "NODE_ID": "P0-EVIDENCE-000",
+                        "ACGS_TEST_SCENARIO": "sleep",
+                        "ACGS_TEST_CHILD_PID_FILE": str(pid_file),
+                        "ACGS_TEST_PHASE_MARKER": str(marker),
+                        "ACGS_TEST_RETAINED_KILL_LOG": str(kill_log),
+                        "ACGS_TEST_SIGNAL_PHASE": phase,
+                        "ACGS_TEST_SIGNAL_NUMBER": str(signum),
+                    },
+                    pass_fds=descriptor_fds,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=8,
+                )
+                assert completed.returncode == expected_returncode, (
+                    phase,
+                    signal_name,
+                    completed.stdout,
+                    completed.stderr,
+                )
+                assert marker.read_text(encoding="utf-8").strip() == phase
+                assert f"guardian interrupted by signal {signum}" in completed.stderr
+                assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+                assert kill_log.read_text(encoding="utf-8").strip()
+                assert_child_reaped(pid_file)
+    finally:
+        for fd in descriptor_fds:
+            os.close(fd)
 
 
 def test_clean_sibling_guardian_cgroup_verification_requires_exact_unified_hierarchy(
@@ -10466,6 +10690,8 @@ def test_clean_sibling_cleanup_success_removes_pg_root_and_authenticated_quota_l
         'WORKTREE_GITFILE_CONTENT_B64 <<<"$retained_gitfile"\n'
         'WORKTREE_GITFILE_IDENTITY="$git_device:$git_inode:$git_uid"\n'
         'WORKTREE_GITFILE_PATH="$gitfile"\n'
+        "clean_sibling_record_worktree_gitfile_pre_detach_witness\n"
+        "clean_sibling_close_worktree_gitfile_pre_detach_witness\n"
         'rm -- "$gitfile"\n'
         'TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries '
         '"$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"\n'
@@ -13989,6 +14215,14 @@ TMP_PARENT="$4"
 TMP_ROOT="$5"
 WORKTREES_BEFORE="$6"
 SOURCE_STATUS_BEFORE="$7"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+WORKTREE_REGISTRY_ROOT_IDENTITY="$(stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT")"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT" \
+    "$WORKTREE_REGISTRY_ROOT_IDENTITY"
+)"
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
@@ -14081,38 +14315,28 @@ def test_clean_sibling_cleanup_large_early_match_listing_still_attempts_remove(
     parent = tmp_path / "caller"
     parent.mkdir(mode=0o700)
     cleanup_root = parent / r"acgs-p0-evidence.backslash-\n-large-listing"
-    cleanup_root.mkdir(mode=0o700)
     cleanup_worktree = cleanup_root / "product"
     assert r"\n" in str(cleanup_worktree)
-    subprocess.run(
-        ["git", "worktree", "add", "--detach", str(cleanup_worktree), "HEAD"],
-        cwd=source_repo,
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
-    worktrees_before = subprocess.run(
-        ["git", "worktree", "list", "--porcelain"],
-        cwd=source_repo,
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout.rstrip("\n")
-    status_before = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=source_repo,
-        text=True,
-        capture_output=True,
-        check=True,
-    ).stdout.rstrip("\n")
     real_git = os.environ.get("ACGS_TEST_ORIGINAL_GIT") or shutil.which("git")
     assert real_git is not None
     remove_marker = tmp_path / "remove-attempted"
+    fake_bwrap = tmp_path / "fake-bwrap"
+    fake_bwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "printf 'attempt\\n' >>\"$ACGS_TEST_REMOVE_MARKER\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_bwrap.chmod(0o755)
     cleanup_command = r"""
 set -u
 set -o pipefail
 REAL_GIT="$1"
-ACGS_TEST_WORKTREE="$8"
-ACGS_TEST_REMOVE_MARKER="$9"
+ACGS_TEST_WORKTREE="$6"
+ACGS_TEST_REMOVE_MARKER="$7"
+BWRAP_BIN="$8"
+export ACGS_TEST_REMOVE_MARKER
 git() {
   if [[ "$*" == *"worktree prune"* ]]; then
     printf 'unexpected worktree prune\n' >&2
@@ -14139,30 +14363,35 @@ source "$2"
 SOURCE_REPO="$3"
 TMP_PARENT="$4"
 TMP_ROOT="$5"
-WORKTREES_BEFORE="$6"
-SOURCE_STATUS_BEFORE="$7"
-OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
-exec {TMP_PARENT_FD}<"$TMP_PARENT"
-TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
-TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
-  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
-IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
-  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
-)
-exec {TMP_ROOT_TEST_FD}<"$TMP_ROOT"
-TMP_ROOT_MNT_ID="$(awk '$1 == "mnt_id:" {print $2; exit}' "/proc/$$/fdinfo/$TMP_ROOT_TEST_FD")"
-exec {TMP_ROOT_TEST_FD}<&-
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+mkdir -m 700 -- "$TMP_ROOT"
 WORKTREE="$TMP_ROOT/product"
+git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null 2>/dev/null
 WORKTREE_ADDED=1
-PROOF_COMPLETE=1
-TRANSCRIPT_RECORDS=10
-ASSIGNED_BOOTSTRAPS=EVID+CP+GZ
-NODE_ID=P0-EVIDENCE-000
-P=1111111111111111111111111111111111111111
-T=2222222222222222222222222222222222222222
-R=3333333333333333333333333333333333333333333333333333333333333333
-printf '%s\n' "$$" >"$OWNER_MARKER"
-clean_sibling_cleanup 0
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
+WORKTREE_ADMIN_GITDIR_IDENTITY="$(stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR")"
+WORKTREE_REGISTRY_ROOT_IDENTITY="$(stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT")"
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT" \
+    "$WORKTREE_REGISTRY_ROOT_IDENTITY"
+)"
+exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
+IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE \
+  WORKTREE_GITFILE_UID WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS \
+  WORKTREE_GITFILE_SIZE WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(
+  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" "$WORKTREE_GITFILE_PATH" linked
+)
+WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"
+clean_sibling_record_worktree_gitfile_pre_detach_witness
+clean_sibling_close_worktree_gitfile_pre_detach_witness
+rm -rf -- "$TMP_ROOT"
+clean_sibling_record_worktree_absence_proof
+clean_sibling_remove_registered_worktree
 exit $?
 """
     cleanup_result = subprocess.run(
@@ -14176,10 +14405,9 @@ exit $?
             str(source_repo),
             str(parent),
             str(cleanup_root),
-            worktrees_before,
-            status_before,
             str(cleanup_worktree),
             str(remove_marker),
+            str(fake_bwrap),
         ],
         text=True,
         capture_output=True,
@@ -14190,33 +14418,18 @@ exit $?
     assert "cleanup refused to delete still-registered worktree root" in cleanup_result.stderr
     assert "unexpected worktree prune" not in cleanup_result.stderr
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
-    assert remove_marker.is_file()
-    assert cleanup_root.is_dir()
-    assert cleanup_worktree.is_dir()
-    assert (
-        subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            cwd=source_repo,
-            text=True,
-            capture_output=True,
-            check=True,
-        ).stdout.rstrip("\n")
-        == worktrees_before
-    )
-    prune_dry_run = subprocess.run(
-        ["git", "worktree", "prune", "--dry-run", "--verbose"],
+    assert remove_marker.is_file(), (cleanup_result.stdout, cleanup_result.stderr)
+    assert remove_marker.read_text(encoding="utf-8").splitlines() == ["attempt"]
+    assert not cleanup_root.exists()
+    assert not cleanup_worktree.exists()
+    worktrees_after = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
         cwd=source_repo,
         text=True,
         capture_output=True,
         check=True,
-    )
-    assert str(cleanup_worktree) not in prune_dry_run.stdout
-    subprocess.run(
-        ["git", "worktree", "remove", "--force", str(cleanup_worktree)],
-        cwd=source_repo,
-        stdout=subprocess.DEVNULL,
-        check=True,
-    )
+    ).stdout
+    assert str(cleanup_worktree) in worktrees_after
 
 
 def test_clean_sibling_cleanup_success_removes_worktree_without_prunable_registry(
@@ -14435,39 +14648,39 @@ def test_clean_sibling_absent_namespace_real_bwrap_masks_recreated_host_target(
         f"TMP_PARENT={shlex.quote(str(parent))}\n"
         f"TMP_ROOT={shlex.quote(str(cleanup_root))}\n"
         f"UNRELATED_WORKTREE={shlex.quote(str(unrelated_worktree))}\n"
-        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse "
-        "--path-format=absolute --git-common-dir)\"\n"
-        "WORKTREE_REGISTRY_ROOT=\"$SOURCE_COMMON_GITDIR/worktrees\"\n"
-        "git -C \"$SOURCE_REPO\" worktree add --detach \"$UNRELATED_WORKTREE\" HEAD >/dev/null\n"
-        "mkdir -m 700 -- \"$TMP_ROOT\"\n"
-        "WORKTREE=\"$TMP_ROOT/product\"\n"
-        "git -C \"$SOURCE_REPO\" worktree add --detach \"$WORKTREE\" HEAD >/dev/null\n"
+        'SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse '
+        '--path-format=absolute --git-common-dir)"\n'
+        'WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"\n'
+        'git -C "$SOURCE_REPO" worktree add --detach "$UNRELATED_WORKTREE" HEAD >/dev/null\n'
+        'mkdir -m 700 -- "$TMP_ROOT"\n'
+        'WORKTREE="$TMP_ROOT/product"\n'
+        'git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null\n'
         "WORKTREE_ADDED=1\n"
-        "WORKTREE_GITFILE_PATH=\"$WORKTREE/.git\"\n"
-        "WORKTREE_ADMIN_GITDIR=\"$(git -C \"$WORKTREE\" rev-parse --absolute-git-dir)\"\n"
-        "WORKTREE_ADMIN_GITDIR_IDENTITY=\"$(stat -c '%d:%i:%u' -- \"$WORKTREE_ADMIN_GITDIR\")\"\n"
-        "WORKTREE_REGISTRY_ROOT_IDENTITY=\"$(stat -c '%d:%i:%u' -- \"$WORKTREE_REGISTRY_ROOT\")\"\n"
-        "WORKTREES_BEFORE=\"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n"
-        "exec {WORKTREE_GITFILE_FD}<\"$WORKTREE_GITFILE_PATH\"\n"
+        'WORKTREE_GITFILE_PATH="$WORKTREE/.git"\n'
+        'WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"\n'
+        'WORKTREE_ADMIN_GITDIR_IDENTITY="$(stat -c \'%d:%i:%u\' -- "$WORKTREE_ADMIN_GITDIR")"\n'
+        'WORKTREE_REGISTRY_ROOT_IDENTITY="$(stat -c \'%d:%i:%u\' -- "$WORKTREE_REGISTRY_ROOT")"\n'
+        'WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"\n'
+        'exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH"\n'
         "WORKTREE_GITFILE_RETENTION_REQUIRED=1\n"
         "IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE WORKTREE_GITFILE_UID "
         "WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS WORKTREE_GITFILE_SIZE "
         "WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(\n"
-        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" "
-        "\"$WORKTREE_GITFILE_PATH\" linked\n"
+        '  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" '
+        '"$WORKTREE_GITFILE_PATH" linked\n'
         ")\n"
-        "WORKTREE_GITFILE_IDENTITY=\"$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID\"\n"
+        'WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"\n'
         "clean_sibling_record_worktree_gitfile_pre_detach_witness\n"
         "clean_sibling_close_worktree_gitfile_pre_detach_witness\n"
-        "rm -rf -- \"$TMP_ROOT\"\n"
+        'rm -rf -- "$TMP_ROOT"\n'
         "clean_sibling_record_worktree_absence_proof\n"
-        "mkdir -p -- \"$WORKTREE\"\n"
+        'mkdir -p -- "$WORKTREE"\n'
         "printf 'host-recreated-sentinel\\n' >\"$WORKTREE/host-sentinel\"\n"
         "clean_sibling_remove_registered_worktree\n"
         "printf 'REMOVE_RC=0\\n'\n"
-        "printf 'SENTINEL=%s' \"$(cat \"$WORKTREE/host-sentinel\")\"\n"
+        'printf \'SENTINEL=%s\' "$(cat "$WORKTREE/host-sentinel")"\n'
         "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' "
-        "\"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n",
+        '"$(git -C "$SOURCE_REPO" worktree list --porcelain)"\n',
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -14498,16 +14711,16 @@ def test_clean_sibling_absent_namespace_closes_inherited_fds_before_bwrap_exec(
         "#!/usr/bin/env bash\n"
         "set -eu\n"
         "printf 'BWRAP_ATTEMPT\\n' >>\"$ACGS_FAKE_BWRAP_REPORT\"\n"
-        "if [[ -e \"/proc/$$/fd/$ACGS_SENTINEL_FD\" || "
-        "-L \"/proc/$$/fd/$ACGS_SENTINEL_FD\" ]]; then\n"
+        'if [[ -e "/proc/$$/fd/$ACGS_SENTINEL_FD" || '
+        '-L "/proc/$$/fd/$ACGS_SENTINEL_FD" ]]; then\n'
         "  printf 'SENTINEL_FD_PRESENT\\n' >>\"$ACGS_FAKE_BWRAP_REPORT\"\n"
         "else\n"
         "  printf 'SENTINEL_FD_ABSENT\\n' >>\"$ACGS_FAKE_BWRAP_REPORT\"\n"
         "fi\n"
         "for fd_path in /proc/$$/fd/*; do\n"
-        "  fd=\"${fd_path##*/}\"\n"
-        "  if [[ \"$fd\" =~ ^[0-9]+$ && \"$fd\" -gt 2 ]]; then\n"
-        "    printf 'EXTRA_FD=%s\\n' \"$fd\" >>\"$ACGS_FAKE_BWRAP_REPORT\"\n"
+        '  fd="${fd_path##*/}"\n'
+        '  if [[ "$fd" =~ ^[0-9]+$ && "$fd" -gt 2 ]]; then\n'
+        '    printf \'EXTRA_FD=%s\\n\' "$fd" >>"$ACGS_FAKE_BWRAP_REPORT"\n'
         "  fi\n"
         "done\n"
         "exit 42\n",
@@ -14528,7 +14741,7 @@ def test_clean_sibling_absent_namespace_closes_inherited_fds_before_bwrap_exec(
         "SOURCE_REPO=/tmp/source-repo-placeholder\n"
         "SOURCE_COMMON_GITDIR=/tmp/source-common-placeholder\n"
         "TMP_ROOT=/tmp/acgs-clean-sibling-fd-close-placeholder\n"
-        "WORKTREE=\"$TMP_ROOT/product\"\n"
+        'WORKTREE="$TMP_ROOT/product"\n'
         "clean_sibling_git_worktree_remove_in_absent_namespace || "
         "printf 'REMOVE_RC=%s\\n' \"$?\"\n",
         encoding="utf-8",
@@ -14592,29 +14805,29 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
         f"TMP_PARENT={shlex.quote(str(parent))}\n"
         f"TMP_ROOT={shlex.quote(str(cleanup_root))}\n"
         f"UNRELATED_WORKTREE={shlex.quote(str(unrelated_worktree))}\n"
-        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse "
-        "--path-format=absolute --git-common-dir)\"\n"
-        "WORKTREE_REGISTRY_ROOT=\"$SOURCE_COMMON_GITDIR/worktrees\"\n"
-        "git -C \"$SOURCE_REPO\" worktree add --detach \"$UNRELATED_WORKTREE\" HEAD >/dev/null\n"
-        "mkdir -m 700 -- \"$TMP_ROOT\"\n"
-        "WORKTREE=\"$TMP_ROOT/product\"\n"
-        "git -C \"$SOURCE_REPO\" worktree add --detach \"$WORKTREE\" HEAD >/dev/null\n"
+        'SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse '
+        '--path-format=absolute --git-common-dir)"\n'
+        'WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"\n'
+        'git -C "$SOURCE_REPO" worktree add --detach "$UNRELATED_WORKTREE" HEAD >/dev/null\n'
+        'mkdir -m 700 -- "$TMP_ROOT"\n'
+        'WORKTREE="$TMP_ROOT/product"\n'
+        'git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null\n'
         "WORKTREE_ADDED=1\n"
-        "WORKTREE_GITFILE_PATH=\"$WORKTREE/.git\"\n"
-        "WORKTREE_ADMIN_GITDIR=\"$(git -C \"$WORKTREE\" rev-parse --absolute-git-dir)\"\n"
-        "WORKTREE_ADMIN_GITDIR_IDENTITY=\"$(stat -c '%d:%i:%u' -- \"$WORKTREE_ADMIN_GITDIR\")\"\n"
-        "exec {WORKTREE_GITFILE_FD}<\"$WORKTREE_GITFILE_PATH\"\n"
+        'WORKTREE_GITFILE_PATH="$WORKTREE/.git"\n'
+        'WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"\n'
+        'WORKTREE_ADMIN_GITDIR_IDENTITY="$(stat -c \'%d:%i:%u\' -- "$WORKTREE_ADMIN_GITDIR")"\n'
+        'exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH"\n'
         "WORKTREE_GITFILE_RETENTION_REQUIRED=1\n"
         "IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE WORKTREE_GITFILE_UID "
         "WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS WORKTREE_GITFILE_SIZE "
         "WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(\n"
-        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" "
-        "\"$WORKTREE_GITFILE_PATH\" linked\n"
+        '  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" '
+        '"$WORKTREE_GITFILE_PATH" linked\n'
         ")\n"
-        "WORKTREE_GITFILE_IDENTITY=\"$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID\"\n"
+        'WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"\n'
         "clean_sibling_record_worktree_gitfile_pre_detach_witness\n"
         "clean_sibling_close_worktree_gitfile_pre_detach_witness\n"
-        "rm -rf -- \"$TMP_ROOT\"\n"
+        'rm -rf -- "$TMP_ROOT"\n'
         "clean_sibling_record_worktree_absence_proof\n"
         "set +e\n"
         "clean_sibling_remove_registered_worktree\n"
@@ -14622,9 +14835,9 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
         "set -e\n"
         "printf 'REMOVE_RC=%s\\n' \"$remove_rc\"\n"
         "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' "
-        "\"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n"
+        '"$(git -C "$SOURCE_REPO" worktree list --porcelain)"\n'
         "printf 'ADMIN_EXISTS=%s\\n' "
-        "\"$([[ -d \"$WORKTREE_ADMIN_GITDIR\" ]] && echo 1 || echo 0)\"\n",
+        '"$([[ -d "$WORKTREE_ADMIN_GITDIR" ]] && echo 1 || echo 0)"\n',
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -14638,9 +14851,7 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     assert "REMOVE_RC=2" in completed.stdout
     assert attempt_log.read_text(encoding="utf-8") == "attempt\n"
-    assert "cleanup refused because exact worktree deregistration failed once" in (
-        completed.stderr
-    )
+    assert "cleanup refused because exact worktree deregistration failed once" in (completed.stderr)
     assert "ADMIN_EXISTS=1" in completed.stdout
     assert str(cleanup_root / "product") in completed.stdout
     assert str(unrelated_worktree) in completed.stdout
@@ -14696,6 +14907,7 @@ def test_clean_sibling_cleanup_refuses_moved_owned_worktree_registration(
     admin_sentinel_path.chmod(0o600)
     admin_stat = Path(worktree_admin_gitdir).stat()
     admin_identity = f"{admin_stat.st_dev}:{admin_stat.st_ino}:{admin_stat.st_uid}"
+    gitfile_witness = _clean_sibling_gitfile_witness(cleanup_worktree / ".git")
     subprocess.run(
         ["git", "worktree", "move", str(cleanup_worktree), str(moved_worktree)],
         cwd=source_repo,
@@ -14728,6 +14940,15 @@ WORKTREE_ADMIN_GITDIR="$8"
 WORKTREE_ADMIN_GITDIR_IDENTITY="$9"
 WORKTREE_REGISTRY_ROOT_IDENTITY="${10}"
 WORKTREE_ADMIN_SENTINEL="${11}"
+WORKTREE_GITFILE_PATH="${12}"
+WORKTREE_GITFILE_IDENTITY="${13}"
+WORKTREE_GITFILE_MODE="${14}"
+WORKTREE_GITFILE_LINKS="${15}"
+WORKTREE_GITFILE_SIZE="${16}"
+WORKTREE_GITFILE_SHA256="${17}"
+WORKTREE_GITFILE_CONTENT_B64="${18}"
+WORKTREE_GITFILE_PRE_DETACH_WITNESS="${19}"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
@@ -14769,6 +14990,14 @@ exit $?
             admin_identity,
             registry_identity,
             admin_sentinel,
+            gitfile_witness["path"],
+            gitfile_witness["identity"],
+            gitfile_witness["mode"],
+            gitfile_witness["links"],
+            gitfile_witness["size"],
+            gitfile_witness["sha256"],
+            gitfile_witness["content_b64"],
+            gitfile_witness["witness"],
         ],
         text=True,
         capture_output=True,
@@ -14840,6 +15069,7 @@ def test_clean_sibling_cleanup_refuses_relocated_admin_registration(
     admin_sentinel_path.chmod(0o600)
     admin_stat = Path(worktree_admin_gitdir).stat()
     admin_identity = f"{admin_stat.st_dev}:{admin_stat.st_ino}:{admin_stat.st_uid}"
+    gitfile_witness = _clean_sibling_gitfile_witness(cleanup_worktree / ".git")
     subprocess.run(
         ["git", "worktree", "move", str(cleanup_worktree), str(moved_worktree)],
         cwd=source_repo,
@@ -14874,6 +15104,15 @@ WORKTREE_ADMIN_GITDIR="$8"
 WORKTREE_ADMIN_GITDIR_IDENTITY="$9"
 WORKTREE_REGISTRY_ROOT_IDENTITY="${10}"
 WORKTREE_ADMIN_SENTINEL="${11}"
+WORKTREE_GITFILE_PATH="${12}"
+WORKTREE_GITFILE_IDENTITY="${13}"
+WORKTREE_GITFILE_MODE="${14}"
+WORKTREE_GITFILE_LINKS="${15}"
+WORKTREE_GITFILE_SIZE="${16}"
+WORKTREE_GITFILE_SHA256="${17}"
+WORKTREE_GITFILE_CONTENT_B64="${18}"
+WORKTREE_GITFILE_PRE_DETACH_WITNESS="${19}"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
@@ -14915,6 +15154,14 @@ exit $?
             admin_identity,
             registry_identity,
             admin_sentinel,
+            gitfile_witness["path"],
+            gitfile_witness["identity"],
+            gitfile_witness["mode"],
+            gitfile_witness["links"],
+            gitfile_witness["size"],
+            gitfile_witness["sha256"],
+            gitfile_witness["content_b64"],
+            gitfile_witness["witness"],
         ],
         text=True,
         capture_output=True,
@@ -14979,8 +15226,7 @@ def test_clean_sibling_cleanup_refuses_copied_admin_without_sentinel_by_gitfile(
         capture_output=True,
         check=True,
     ).stdout.strip()
-    gitfile_stat = (cleanup_worktree / ".git").stat(follow_symlinks=False)
-    gitfile_identity = f"{gitfile_stat.st_dev}:{gitfile_stat.st_ino}:{gitfile_stat.st_uid}"
+    gitfile_witness = _clean_sibling_gitfile_witness(cleanup_worktree / ".git")
     registry_stat = (Path(source_common_gitdir) / "worktrees").stat()
     registry_identity = f"{registry_stat.st_dev}:{registry_stat.st_ino}:{registry_stat.st_uid}"
     admin_sentinel = "3" * 64
@@ -15025,7 +15271,15 @@ WORKTREE_ADMIN_GITDIR="$8"
 WORKTREE_ADMIN_GITDIR_IDENTITY="$9"
 WORKTREE_REGISTRY_ROOT_IDENTITY="${10}"
 WORKTREE_ADMIN_SENTINEL="${11}"
-WORKTREE_GITFILE_IDENTITY="${12}"
+WORKTREE_GITFILE_PATH="${12}"
+WORKTREE_GITFILE_IDENTITY="${13}"
+WORKTREE_GITFILE_MODE="${14}"
+WORKTREE_GITFILE_LINKS="${15}"
+WORKTREE_GITFILE_SIZE="${16}"
+WORKTREE_GITFILE_SHA256="${17}"
+WORKTREE_GITFILE_CONTENT_B64="${18}"
+WORKTREE_GITFILE_PRE_DETACH_WITNESS="${19}"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
@@ -15068,7 +15322,14 @@ exit $?
             admin_identity,
             registry_identity,
             admin_sentinel,
-            gitfile_identity,
+            gitfile_witness["path"],
+            gitfile_witness["identity"],
+            gitfile_witness["mode"],
+            gitfile_witness["links"],
+            gitfile_witness["size"],
+            gitfile_witness["sha256"],
+            gitfile_witness["content_b64"],
+            gitfile_witness["witness"],
         ],
         text=True,
         capture_output=True,
@@ -17595,6 +17856,11 @@ def test_clean_sibling_cleanup_rejects_fifo_admin_sentinel_without_hang(
     parent.mkdir(mode=0o700)
     cleanup_root = parent / "acgs-p0-evidence.fifo-sentinel"
     cleanup_root.mkdir(mode=0o700)
+    gitfile_path = tmp_path / "removed-fifo-gitfile"
+    gitfile_path.write_text("gitdir: removed-worktree\n", encoding="utf-8")
+    gitfile_path.chmod(0o600)
+    gitfile_witness = _clean_sibling_gitfile_witness(gitfile_path)
+    gitfile_path.unlink()
     source_common_gitdir = subprocess.run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=source_repo,
@@ -17628,6 +17894,15 @@ SOURCE_STATUS_BEFORE="$5"
 SOURCE_COMMON_GITDIR="$6"
 WORKTREE_REGISTRY_ROOT_IDENTITY="$7"
 WORKTREE_ADMIN_SENTINEL="$8"
+WORKTREE_GITFILE_PATH="$9"
+WORKTREE_GITFILE_IDENTITY="${10}"
+WORKTREE_GITFILE_MODE="${11}"
+WORKTREE_GITFILE_LINKS="${12}"
+WORKTREE_GITFILE_SIZE="${13}"
+WORKTREE_GITFILE_SHA256="${14}"
+WORKTREE_GITFILE_CONTENT_B64="${15}"
+WORKTREE_GITFILE_PRE_DETACH_WITNESS="${16}"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
 OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
 exec {TMP_PARENT_FD}<"$TMP_PARENT"
 TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
@@ -17668,6 +17943,14 @@ exit $?
             source_common_gitdir,
             registry_identity,
             admin_sentinel,
+            gitfile_witness["path"],
+            gitfile_witness["identity"],
+            gitfile_witness["mode"],
+            gitfile_witness["links"],
+            gitfile_witness["size"],
+            gitfile_witness["sha256"],
+            gitfile_witness["content_b64"],
+            gitfile_witness["witness"],
         ],
         text=True,
         capture_output=True,
@@ -18705,15 +18988,9 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     assert "--ro-bind-data" in snapshot_mounts
     assert "--perms 500 --ro-bind-data" in snapshot_mounts
     assert "--perms 400 --ro-bind-data" in snapshot_mounts
-    assert '"$ACGS_LAUNCHER_DATA_FD" "$ACGS_CLEAN_SIBLING_LAUNCHER_PATH"' in (
-        snapshot_mounts
-    )
-    assert '"$ACGS_INTERNAL_DATA_FD" "$ACGS_CLEAN_SIBLING_INTERNAL_PATH"' in (
-        snapshot_mounts
-    )
-    assert '"$ACGS_CLEANUP_DATA_FD" "$ACGS_CLEAN_SIBLING_CLEANUP_PATH"' in (
-        snapshot_mounts
-    )
+    assert '"$ACGS_LAUNCHER_DATA_FD" "$ACGS_CLEAN_SIBLING_LAUNCHER_PATH"' in (snapshot_mounts)
+    assert '"$ACGS_INTERNAL_DATA_FD" "$ACGS_CLEAN_SIBLING_INTERNAL_PATH"' in (snapshot_mounts)
+    assert '"$ACGS_CLEANUP_DATA_FD" "$ACGS_CLEAN_SIBLING_CLEANUP_PATH"' in (snapshot_mounts)
     assert '"$ACGS_UV_DATA_FD" "$UV_BIN"' in snapshot_mounts
     assert "trusted artifact snapshot mode is not anonymous" in snapshot_validator
     assert "trusted $label snapshot identity changed" in snapshot_validator
@@ -18724,7 +19001,7 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
         snapshot_validator
     )
     assert "snapshot_data_fd_is_retained" in fd_closer
-    assert '0 | 1 | 2)' in fd_closer
+    assert "0 | 1 | 2)" in fd_closer
     assert '"$UV_FD")' not in fd_closer
     assert "ACGS_RUNTIME_WRITABLE=1" not in runner
     assert "unset UV_OFFLINE UV_NO_INDEX UV_NO_CACHE RUFF_NO_CACHE" in bootstrap_runner
@@ -18782,8 +19059,8 @@ def test_clean_sibling_target_commands_are_forced_through_bwrap_containment() ->
     assert "--bind-try /var/run/docker.sock" not in network_resolver
     assert "UV_CREDENTIALS_DIR=/tmp/uv-credentials" in network_resolver
     assert 'UV_CACHE_DIR="$network_cache_root"' in network_resolver
-    assert 'open_uv_snapshot_data_fd' in network_resolver
-    assert 'mounted_artifact_preflight_env_args_uv' in network_resolver
+    assert "open_uv_snapshot_data_fd" in network_resolver
+    assert "mounted_artifact_preflight_env_args_uv" in network_resolver
     assert '--ro-bind-fd "$UV_FD" "$UV_BIN"' not in network_resolver
     assert 'validate_trusted_network_requirement_file "$trusted_root/$input_relative"' in (
         network_resolver
@@ -18945,8 +19222,7 @@ def test_clean_sibling_snapshot_data_fds_are_fresh_for_repeated_bind_data_reads(
         fcntl.fcntl(fd, 1033, required_seals)
         st = os.fstat(fd)
         snapshot_stat = (
-            f"{st.st_dev}:{st.st_ino}:{st.st_uid}:"
-            f"{stat.S_IMODE(st.st_mode):o}:{st.st_size}"
+            f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_size}"
         )
         env = os.environ.copy()
         env.update(
@@ -18977,11 +19253,11 @@ def test_clean_sibling_snapshot_data_fds_are_fresh_for_repeated_bind_data_reads(
                     "PY",
                     "}",
                     "open_uv_snapshot_data_fd",
-                    "first=\"$(read_data_fd \"$ACGS_UV_DATA_FD\")\"",
+                    'first="$(read_data_fd "$ACGS_UV_DATA_FD")"',
                     "exec {ACGS_UV_DATA_FD}<&-",
                     "ACGS_UV_DATA_FD=''",
                     "open_uv_snapshot_data_fd",
-                    "second=\"$(read_data_fd \"$ACGS_UV_DATA_FD\")\"",
+                    'second="$(read_data_fd "$ACGS_UV_DATA_FD")"',
                     "expected='offset-sensitive-bind-data-payload'",
                     '[[ "$first" == "$expected" && "$second" == "$expected" ]] || '
                     "die repeated-read",
@@ -19050,11 +19326,11 @@ def test_clean_sibling_bwrap_ro_bind_data_uses_fresh_fds_for_all_four_artifacts(
             "set -eu; "
             "for spec do "
             "name=${spec%%:*}; rest=${spec#*:}; sha=${rest%%:*}; size=${rest##*:}; "
-            "actual=$(/usr/bin/busybox sha256sum \"/artifacts/$name\"); actual=${actual%% *}; "
-            "[ \"$actual\" = \"$sha\" ] || exit 10; "
-            "actual_size=$(/usr/bin/busybox stat -c %s \"/artifacts/$name\"); "
-            "[ \"$actual_size\" = \"$size\" ] || exit 11; "
-            "if /usr/bin/busybox grep -q host-replacement \"/artifacts/$name\"; then exit 12; fi; "
+            'actual=$(/usr/bin/busybox sha256sum "/artifacts/$name"); actual=${actual%% *}; '
+            '[ "$actual" = "$sha" ] || exit 10; '
+            'actual_size=$(/usr/bin/busybox stat -c %s "/artifacts/$name"); '
+            '[ "$actual_size" = "$size" ] || exit 11; '
+            'if /usr/bin/busybox grep -q host-replacement "/artifacts/$name"; then exit 12; fi; '
             "done; printf 'PASS mounted artifacts verified\\n'"
         )
 
@@ -19099,8 +19375,18 @@ def test_clean_sibling_bootstrap_containment_unshares_network_and_blocks_localho
     if not Path("/usr/bin/bwrap").exists():
         pytest.skip("bubblewrap is unavailable")
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    preflight_assignment = _mounted_artifact_preflight_assignment(source)
     functions = "\n".join(
         (
+            _shell_function(source, "validate_anonymous_snapshot_fd"),
+            _shell_function(source, "validate_snapshot_data_fd"),
+            _shell_function(source, "open_snapshot_data_fd"),
+            _shell_function(source, "open_all_snapshot_data_fds"),
+            _shell_function(source, "snapshot_data_fd_is_retained"),
+            _shell_function(source, "close_noncontained_fds"),
+            _shell_function(source, "contained_snapshot_data_mount_args"),
+            _shell_function(source, "snapshot_size_from_stat"),
+            _shell_function(source, "mounted_artifact_preflight_env_args_all"),
             _shell_function(source, "contained_env_args"),
             _shell_function(source, "contained_mount_args"),
             _shell_function(source, "runtime_system_mount_args"),
@@ -19156,8 +19442,10 @@ def test_clean_sibling_bootstrap_containment_unshares_network_and_blocks_localho
             "TZ=UTC\n"
             'exec 10<"$UV_BIN"\n'
             "UV_FD=10\n"
+            "ACGS_POSTGRES_RUNNER_DATA_FD=''\n"
             "verify_uv_identity() { return 0; }\n"
             "lower_descendant_file_size_limit() { return 0; }\n"
+            f"{preflight_assignment}"
             f"{functions}\n"
             'HOST_NETNS="$(readlink /proc/self/ns/net)"\n'
             f'run_contained_bootstrap "$WORKTREE" "$UV_BIN" -c \'\n'
@@ -19180,12 +19468,19 @@ def test_clean_sibling_bootstrap_containment_unshares_network_and_blocks_localho
             encoding="utf-8",
         )
         harness.chmod(0o755)
-        result = subprocess.run(
-            [str(harness)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        snapshot_env, snapshot_fds = _clean_sibling_snapshot_env(trusted_bash)
+        try:
+            result = subprocess.run(
+                [str(harness)],
+                env={**os.environ, **snapshot_env},
+                pass_fds=snapshot_fds,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        finally:
+            for fd in snapshot_fds:
+                os.close(fd)
         assert result.returncode == 0, (result.stdout, result.stderr)
         assert "BOOTSTRAP_NETNS=ISOLATED" in result.stdout
         with pytest.raises(TimeoutError):
@@ -19210,15 +19505,9 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "--new-session" in pg_runner
     assert "--cap-drop ALL" in pg_runner
     assert "open_uv_snapshot_data_fd" in pg_runner
-    assert (
-        'open_regular_data_fd postgres-runner "$runner_fd" "$runner_path_stat"'
-        in pg_runner
-    )
+    assert 'open_regular_data_fd postgres-runner "$runner_fd" "$runner_path_stat"' in pg_runner
     assert "mounted_artifact_preflight_env_args_postgres" in pg_runner
-    assert (
-        'validate_regular_data_fd postgres-runner "$ACGS_POSTGRES_RUNNER_DATA_FD"'
-        in pg_runner
-    )
+    assert 'validate_regular_data_fd postgres-runner "$ACGS_POSTGRES_RUNNER_DATA_FD"' in pg_runner
     assert '--ro-bind-data "$ACGS_POSTGRES_RUNNER_DATA_FD" "$runner_path"' in pg_runner
     assert '"${ACGS_UV_SNAPSHOT_MOUNT[@]}"' in pg_runner
     assert '"$ACGS_UV_DATA_FD" "$UV_BIN"' in _shell_function(
@@ -19991,7 +20280,7 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
 def _external_intent_cleanup_helper(*, inject_post_unlink_intent: bool = False) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "17d35745d8e85117cd70abe820b40d2f55ec6c63878bce4f3e6cda448076c6d1"
+        "4c54e6106e7a19e509c9d9281366cafa17154b4a9db1ed375f548d46a232ccd7"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -21236,10 +21525,13 @@ def test_clean_sibling_trusted_network_resolver_uses_exact_uv_compile_and_scrubb
             _shell_function(source, "mounted_artifact_preflight_env_args_uv"),
         )
     )
-    preflight_assignment = "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=" + source.split(
-        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
-        1,
-    )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    preflight_assignment = (
+        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT="
+        + source.split(
+            "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
+            1,
+        )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    )
     preflight_assignment += "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
     functions = "\n".join(
         (
@@ -21510,8 +21802,18 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
     tmp_path: Path,
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    preflight_assignment = _mounted_artifact_preflight_assignment(source)
     functions = "\n".join(
         (
+            _shell_function(source, "validate_anonymous_snapshot_fd"),
+            _shell_function(source, "validate_snapshot_data_fd"),
+            _shell_function(source, "open_snapshot_data_fd"),
+            _shell_function(source, "open_all_snapshot_data_fds"),
+            _shell_function(source, "snapshot_data_fd_is_retained"),
+            _shell_function(source, "close_noncontained_fds"),
+            _shell_function(source, "contained_snapshot_data_mount_args"),
+            _shell_function(source, "snapshot_size_from_stat"),
+            _shell_function(source, "mounted_artifact_preflight_env_args_all"),
             _shell_function(source, "contained_env_args"),
             _shell_function(source, "contained_mount_args"),
             _shell_function(source, "runtime_system_mount_args"),
@@ -21539,6 +21841,7 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         "UV_BIN=/usr/bin/true\n"
         'exec 10<"$UV_BIN"\n'
         "UV_FD=10\n"
+        "ACGS_POSTGRES_RUNNER_DATA_FD=''\n"
         'UV_FD_EXPECTED_PATH="$UV_BIN"\n'
         'UV_FD_EXPECTED_STAT="$(stat -Lc \'%d:%i:%u:%a:%h\' -- "/proc/$BASHPID/fd/$UV_FD")"\n'
         'UV_SHA256="$(sha256sum "/proc/$BASHPID/fd/$UV_FD" | awk \'{print $1}\')"\n'
@@ -21594,6 +21897,7 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         '"$TMPDIR" "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" '
         '"$XDG_STATE_HOME" "$UV_PYTHON_INSTALL_DIR" "$UV_PYTHON_BIN_DIR" '
         '"$UV_TOOL_DIR" "$UV_TOOL_BIN_DIR" "$UV_PYTHON_CACHE_DIR" "$UV_CREDENTIALS_DIR"\n'
+        f"{preflight_assignment}"
         f"{functions}\n"
         'case "${1:-}" in\n'
         "  unavailable)\n"
@@ -21674,60 +21978,53 @@ def test_clean_sibling_bwrap_containment_denies_host_writes_fds_double_fork_and_
         encoding="utf-8",
     )
     harness.chmod(0o755)
+    snapshot_env, snapshot_fds = _clean_sibling_snapshot_env(Path("/usr/bin/true"))
 
-    unavailable = subprocess.run(
-        [str(harness), "unavailable"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert unavailable.returncode == 2
-    assert "containment runner unavailable" in unavailable.stderr
-
-    for mode in (
-        "host-write",
-        "inherited-fd",
-        "double-fork",
-        "host-read",
-        "nested-userns",
-        "runtime-replace",
-    ):
-        result = subprocess.run(
-            [str(harness), mode],
+    def run_harness(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(harness), *args],
+            env={**os.environ, **snapshot_env},
+            pass_fds=snapshot_fds,
             text=True,
             capture_output=True,
             check=False,
         )
-        assert result.returncode == 0, (mode, result.stdout, result.stderr)
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_server:
-        tcp_server.bind(("127.0.0.1", 0))
-        tcp_server.listen(1)
-        tcp_server.settimeout(0.5)
-        port = tcp_server.getsockname()[1]
-        result = subprocess.run(
-            [str(harness), "tcp-exfil", str(port)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        with pytest.raises(TimeoutError):
-            tcp_server.accept()
 
     try:
+        unavailable = run_harness("unavailable")
+        assert unavailable.returncode == 2
+        assert "containment runner unavailable" in unavailable.stderr
+
+        for mode in (
+            "host-write",
+            "inherited-fd",
+            "double-fork",
+            "host-read",
+            "nested-userns",
+            "runtime-replace",
+        ):
+            result = run_harness(mode)
+            assert result.returncode == 0, (mode, result.stdout, result.stderr)
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_server:
+            tcp_server.bind(("127.0.0.1", 0))
+            tcp_server.listen(1)
+            tcp_server.settimeout(0.5)
+            port = tcp_server.getsockname()[1]
+            result = run_harness("tcp-exfil", str(port))
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            with pytest.raises(TimeoutError):
+                tcp_server.accept()
+
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as unix_server:
             unix_server.bind(str(unix_socket_path))
             unix_server.listen(1)
             unix_server.settimeout(0.5)
-            result = subprocess.run(
-                [str(harness), "unix-exfil"],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
+            result = run_harness("unix-exfil")
             assert result.returncode == 0, (result.stdout, result.stderr)
             with pytest.raises(TimeoutError):
                 unix_server.accept()
     finally:
+        for fd in snapshot_fds:
+            os.close(fd)
         unix_socket_path.unlink(missing_ok=True)
