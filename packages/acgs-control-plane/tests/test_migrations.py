@@ -1483,10 +1483,16 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    canonical_tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+    tmp_root = Path("/tmp")
+    assert tmp_root.exists()
+    assert tmp_root.is_dir()
+    assert not tmp_root.is_symlink()
+    canonical_tmp = tmp_root.resolve(strict=True)
+    assert canonical_tmp == tmp_root
     state_dir = Path(tempfile.mkdtemp(prefix="acp-pg-gate-race-", dir=canonical_tmp))
     request.addfinalizer(lambda: shutil.rmtree(state_dir, ignore_errors=True))
     state_dir.chmod(0o700)
+    assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700
     broker_dir = state_dir / "broker"
     client_dir = state_dir / "client"
     allowed_tmp = state_dir / "tmp"
@@ -1587,7 +1593,19 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
 
         attacker_link = allowed_tmp / "attacker-link"
         attacker_link.symlink_to(external_dir)
+        original_exchange_identity = (
+            exchange_dir.stat().st_dev,
+            exchange_dir.stat().st_ino,
+        )
         _rename_exchange(exchange_dir, attacker_link)
+        assert exchange_dir.is_symlink()
+        assert exchange_dir.resolve(strict=True) == external_dir.resolve(strict=True)
+        assert attacker_link.is_dir()
+        assert not attacker_link.is_symlink()
+        assert (
+            attacker_link.stat().st_dev,
+            attacker_link.stat().st_ino,
+        ) == original_exchange_identity
 
         external_archive = external_dir / "escape.dump"
         raced = subprocess.run(
