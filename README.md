@@ -48,8 +48,9 @@ Wiring is the integrator's responsibility, and it is the boundary. ACGS runs
 in-process by default, and an in-process library cannot prevent code in the same
 process from bypassing it — an unregistered call, an agent holding a shell tool,
 or a compromised host are outside what the kernel can mediate. That is a
-placement fact, not a defect, and no static check in this repository currently
-detects a newly added ungoverned path.
+placement fact, not a defect. A static wiring check does run in CI, but it
+covers the shipped examples only — nothing detects an ungoverned path added
+outside that set.
 
 See [docs/ENFORCEMENT-BOUNDARY.md](docs/ENFORCEMENT-BOUNDARY.md) for what is
 enforced, what is not, the trust preconditions, and the per-adversary coverage

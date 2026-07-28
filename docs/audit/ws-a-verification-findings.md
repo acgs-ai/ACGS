@@ -25,6 +25,7 @@ checkable.
 | F-6 | The `compromised-host` covering test "documents the bypass rather than asserting a boundary" | It asserts both halves | **Evidence corrected** — now cites the `xfail` residual that does document the bypass | `test_audit_chain_corruption.py:170-177`; `test_mutation_suite.py:438` |
 | F-7 | "editing or splitting row L19 reds the build" | The gate reads CLAIMS.md as one lowercased blob and asserts substrings; splitting is safe | **Narrowed** to the editing half | `test_signing_default_doc_matches_code.py:105-112` |
 | F-8 | *(new — this pass)* "on a default v1 receipt those four are **not** hash-bound" | Literally true, materially misleading: a v1 receipt is validated to carry empty values for all four | **Narrowed** and the reasoning stated | `receipt.py:250-256`, `:677-681`; `executor.py:208` |
+| F-9 | *(new — this pass)* "No named deployment 'profiles' exist as a first-class construct" | `GovernanceProfile` is exported and present at the surveyed ref, with production / production-strict / dev / from_env | **Corrected**; WS-B1 scope reduced | `profile.py`; `__init__.py:138`, `:257` |
 
 Verification method for this pass: every claim above was read from source in the working tree
 before being written, not carried over from an agent report. Two agent findings were themselves
@@ -131,6 +132,30 @@ Recorded rather than silently rewritten because it is the same failure the agent
 opposite direction: **a claim stated without the scope that makes it meaningful.** Overstating a
 weakness is not the safe direction of error — it is the same defect, and in a governance
 document it misdirects a reviewer's attention just as effectively.
+
+### F-9 The Phase 0 baseline denied that a profile construct exists — **CORRECTED**
+Found while sweeping documentation, not by the agents. `audit/phase0-baseline.md` §3 stated:
+"No named deployment 'profiles' exist as a first-class construct; defaults are per-call
+keyword arguments."
+
+`GovernanceProfile` (`profile.py`) is exported from `gove_zone/__init__.py:138` and listed in
+`__all__` at `:257`, and it exists at `4459d849` — the ref the survey itself pins. It provides
+`production()` (the default posture), `production_strict()` (consumption ledger required,
+`require_expiry=True`, plus a policy watchdog the caller must wire separately), `dev()`
+(explicitly unsigned), and `from_env()` reading `$GOVE_ZONE_PROFILE`, which falls back to
+production on an unrecognized value.
+
+This is the most consequential of the nine. Phase 0 gates every workstream, and WS-B1 was
+scoped to build a hardened posture that substantially exists. The second half of the sentence
+was true — gate *defaults* are per-call keyword arguments — and the first half was asserted
+from that observation without checking for a construct one layer up. Same shape as F-2 and
+F-3: a true narrow observation written as a negative existence claim.
+
+**Negative existence claims are this program's recurring failure mode.** F-2, F-3, and F-9 are
+all of the form "no X exists", each contradicted by a single grep. The
+[repository-scope-rule](../repository-scope-rule.md) makes the countermeasure explicit:
+a negative existence claim requires a repository-wide search, or it must name its scope in
+the sentence.
 
 ## OVERCLAIM — must be scoped
 

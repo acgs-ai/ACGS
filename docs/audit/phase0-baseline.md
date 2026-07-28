@@ -86,8 +86,16 @@ spec's §1 premise.
 ### 2.4 Ungoverned-by-construction
 
 Nothing constrains a raw `import requests` inside a tool body once that tool
-runs, except bwrap when enabled. No static scan or CI job anywhere in the repo
-detects an added uncontrolled side effect; all 33 workflows were swept.
+runs, except bwrap when enabled.
+
+**Corrected (F-3):** an earlier revision of this section said no static scan or
+CI job exists. One does — `packages/gove-zone/tests/test_gate_wiring_matrix.py`
+is a static AST check run by `saas-beta-required.yml:202`. Its limits are the
+gap: it asserts a gate entrypoint is *imported and called* in the module
+(`:170-173`), not that the side effect is mediated, and it covers only the
+examples `docs/INTEGRATION_MATRIX.md` claims as shipped. Nothing detects an
+uncontrolled side effect added outside that set. All 32 workflows under
+`.github/workflows/` were swept (33 entries, one of which is `AGENTS.md`).
 `python-gove-zone.yml` runs Lint (`:69`), Test (`:74`), deny-path coverage
 (`:93`), and an ADR-0005 budget check (`:109`) — none of which is an effect scan.
 
@@ -139,11 +147,18 @@ this PR.
 | `max_clock_skew_seconds` | `DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS` — **already configurable** | `executor.py:55`, validated at `:156` via `validate_receipt_clock_skew_seconds` |
 | `authz_enforce` | `False` — opt-in, fail-closed when paired | `kernel.py:94-95`, `:107-108` |
 | `require_bwrap` | unset — **degrades to unrestricted subprocess with a warning** | `sandbox.py:87-98` |
-| Audit anchor (`expected_count` / `expected_last_hash`) | `None` — **no shipped caller supplies either** | `audit.py:311-312` |
+| Audit anchor (`expected_count` / `expected_last_hash`) | `None` — **no caller inside `packages/gove-zone/src/` supplies either**, so the library's default posture is keyless. Repository-wide this is false: `acgs-control-plane` supplies both from a persisted transactional sink (F-2) | `audit.py:311-312`; `governance.py:756-758`, `app.py:1731`, `:1792` |
 | Clock source | Host clock | `executor.py:25`, `:128`, `:227` |
 
-No named deployment "profiles" exist as a first-class construct; defaults are
-per-call keyword arguments.
+**Corrected (F-9):** an earlier revision of this section said no named
+deployment profiles exist as a first-class construct. That is false.
+`GovernanceProfile` (`profile.py`) is exported from `gove_zone/__init__.py:138`
+and present at this survey's own ref, with `production()` (the default),
+`production_strict()` (required consumption ledger, `require_expiry=True`, plus
+a policy watchdog the caller must wire separately), `dev()` (explicitly
+unsigned), and `from_env()` reading `$GOVE_ZONE_PROFILE`. The gate *defaults*
+are per-call keyword arguments, but a first-class profile construct sits above
+them — which materially reduces the WS-B1 scope.
 
 ---
 
