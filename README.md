@@ -37,6 +37,24 @@ Decision Receipt that binds the actor, action, exact arguments, tenant, and
 policy evidence, and lets a governed executor proceed only when that receipt
 verifies.
 
+### Enforcement boundary
+
+**"Wired through ACGS" means a side effect that is registered as a tool and
+dispatched through the gate.** For those paths, admission is fail-closed: a
+missing, tampered, expired, or mismatched receipt, a policy-evaluation failure,
+or an audit-write failure all deny, and ambiguity resolves to deny.
+
+Wiring is the integrator's responsibility, and it is the boundary. ACGS runs
+in-process by default, and an in-process library cannot prevent code in the same
+process from bypassing it — an unregistered call, an agent holding a shell tool,
+or a compromised host are outside what the kernel can mediate. That is a
+placement fact, not a defect, and no static check in this repository currently
+detects a newly added ungoverned path.
+
+See [docs/ENFORCEMENT-BOUNDARY.md](docs/ENFORCEMENT-BOUNDARY.md) for what is
+enforced, what is not, the trust preconditions, and the per-adversary coverage
+matrix.
+
 ACGS complements agent frameworks, MCP, IAM, sandboxes, content guardrails,
 and SIEM. It does not replace them. The ACGS monorepo contains several
 governance components; [`packages/gove-zone`](packages/gove-zone/) is the core
