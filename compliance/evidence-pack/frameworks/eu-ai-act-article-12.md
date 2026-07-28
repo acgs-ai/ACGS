@@ -24,7 +24,7 @@ Self-assessment mapping, not a certification, attestation, or audit result. gove
 
 ## Runtime evidence in this pack
 
-`runtime-evidence/proofpack/` is one real governed action — actor `compliance-officer` proposing `runtime.file.write`, decided **ALLOW** (receipt `ev_91173c10c1094a6c`, unsigned (development posture)) and anchored in a 2-event hash-chained audit log. It is independently re-derivable offline — receipt-hash binding and audit-chain integrity, with no system access — using:
+`runtime-evidence/proofpack/` is one real governed action — actor `compliance-officer` proposing `runtime.file.write`, decided **ALLOW** (receipt `ev_2d7706aca68740c4`, unsigned (development posture)) and anchored in a 2-event hash-chained audit log. It is independently re-derivable offline — receipt-hash binding and audit-chain integrity, with no system access — using:
 
 ```
 acgs proofpack verify compliance/evidence-pack/runtime-evidence/proofpack

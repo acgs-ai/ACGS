@@ -96,10 +96,14 @@ def execute_with_receipt(
     cannot be made vacuous by a tampered receipt. An explicit
     ``expected_policy_hash`` always wins; if both are given and disagree, the
     call fails closed before execution (a contradictory contract). When ``policy``
-    is ``None`` behavior is unchanged. NOTE: ``policy.version`` for
-    :class:`~gove_zone.policy.RuleSetPolicy` embeds only a 64-bit-truncated
-    content digest, so this binds at ~2**64 second-preimage strength, not full
-    SHA-256; it is a same-policy identity check, not a collision-proof seal.
+    is ``None`` behavior is unchanged. Every *content-addressed* ``policy.version``
+    now carries the full 64-hex SHA-256 of its canonical bundle, so for those
+    policies this binds at full SHA-256 second-preimage strength; truncated
+    identities are rejected at construction and are never accepted here (there is
+    no dual-acceptance path). Policies with a fixed, non-content-addressed version
+    (``AllowAllPolicy``, ``DenyAllPolicy``, custom implementations) bind by plain
+    string equality at no cryptographic strength — this is a same-policy identity
+    check, not a collision-proof seal.
 
     ``expected_authority`` / ``expected_validator_role`` (opt-in, default
     ``None``) pin the MACI grant the receipt must carry: when supplied they are
