@@ -171,3 +171,8 @@ credentials/
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+
+# Jekyll / GitHub Pages build output (see _config.yml)
+/_site/
+.jekyll-cache/
+.jekyll-metadata
