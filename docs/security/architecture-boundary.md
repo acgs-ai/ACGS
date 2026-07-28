@@ -267,6 +267,10 @@ holes**. Each is an already-tracked residual with an existing roadmap entry in
 the final column of the `SECURITY_MODEL.md` threat table. Work to close them is
 closure of documented limitations, not correction of an overclaim.
 
+The phase-by-phase status of that closure work — what exists, what is partial,
+and what is missing, with file-level evidence — is tracked in
+[`hardening-ledger.md`](./hardening-ledger.md).
+
 The three residuals with the widest blast radius, in priority order:
 
 1. **Class C — executor bypass (OPEN).** Enforcement currently depends on
