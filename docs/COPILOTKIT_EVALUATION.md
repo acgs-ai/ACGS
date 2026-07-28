@@ -7,7 +7,7 @@
 
 ## 1. The layer mismatch (read this first)
 
-ACGS / gove-zone is the **execution membrane below agent reasoning and above side-effectful tools**. Its invariant is *"No valid Decision Receipt, no side effect."* It does not plan, chat, or reason — it decides whether an executor may run an action and emits a verifiable receipt.
+ACGS is the **execution membrane below agent reasoning and above side-effectful tools**. Its invariant is *"No valid Decision Receipt, no side effect."* It does not plan, chat, or reason — it decides whether an executor may run an action and emits a verifiable receipt.
 
 CopilotKit is the **copilot UX layer above agent reasoning**. It is a React/Angular/Vue frontend SDK plus a Node backend runtime that connects agent frameworks (LangGraph, CrewAI, Mastra, PydanticAI) to a chat/generative-UI surface via the **AG-UI protocol**. MIT-licensed.
 

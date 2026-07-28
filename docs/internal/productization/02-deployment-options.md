@@ -8,7 +8,7 @@ Honest maturity note up front: **what ships today is a self-hosted library +
 CLI + alpha MCP gateway.** "SaaS" below is a proposed offering, not a running
 service. Regulated-environment posture is a hardening recipe over today's
 kernel plus named roadmap gaps — not a certified deployment. See
-[`docs/CLAIMS.md`](../CLAIMS.md).
+[`docs/CLAIMS.md`](../../CLAIMS.md).
 
 ## Option matrix
 
@@ -64,7 +64,7 @@ customer VPC
 ```
 
 Deployment steps: `pip install acgs-lite` or vendor the `gove-zone` package;
-wire the gate per [`docs/INTEGRATION_GUIDE.md`](../INTEGRATION_GUIDE.md); run
+wire the gate per [`docs/INTEGRATION_GUIDE.md`](../../INTEGRATION_GUIDE.md); run
 the default profile (`require_signature=True` + configured trusted verifier);
 enable the consumption ledger for single-use receipts; ship audit JSONL to
 WORM storage on rotation.
@@ -85,7 +85,7 @@ bundles are files; receipts and audit chains are local artifacts.
 
 ## 4. Regulated environment (hardening profile + named residuals)
 
-The target segment (S1 in [`docs/PRODUCT_STRATEGY.md`](../PRODUCT_STRATEGY.md)):
+The target segment (S1 in [`docs/PRODUCT_STRATEGY.md`](../../PRODUCT_STRATEGY.md)):
 teams whose agents act with real consequences under audit pressure.
 
 **Hardened configuration (all shipped):**
@@ -106,7 +106,7 @@ teams whose agents act with real consequences under audit pressure.
    the `gove_zone.consumption` logger.
 
 **What regulated buyers can map today:**
-[`docs/COMPLIANCE_CROSSWALK.md`](../COMPLIANCE_CROSSWALK.md) maps enforced
+[`docs/COMPLIANCE_CROSSWALK.md`](../../COMPLIANCE_CROSSWALK.md) maps enforced
 controls to NIST AI RMF 1.0, NIST CSF 2.0, MITRE ATLAS, and OWASP LLM/Agentic
 risk lists — explicitly a self-assessment producing *evidence toward* outcomes,
 not a certification.

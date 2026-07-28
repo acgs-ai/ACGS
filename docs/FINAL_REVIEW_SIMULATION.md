@@ -39,8 +39,8 @@ verified / production-certified / regulator-approved / guaranteed-safe) appear
 | Affirmative "tamper-proof" wording | Med | **Fixed** — 3 downgrades this pass |
 | `hub-verification-report.md` at root says live site returns **404** | High | Staged for `docs/internal/` (Phase 4) |
 | Version skew: Alpha `0.1.0.dev0` vs Beta `1.0.0rc1` on reviewer surfaces | Med | Documented (`docs/VERSIONING.md`); sweep staged |
-| Internal GTM/strategy/SaaS/investor docs in public tree | Med | Staged for `docs/internal/` |
-| "Built by agents" `docs/codex-goals/*`, CCA/Codex review tells | Med | Staged for `docs/internal/` |
+| Internal GTM/strategy/investor docs in public tree | ~~Med~~ | **Resolved** — relocated to the private store. `docs/saas/` deliberately stays public. |
+| `docs/codex-goals/*` — Codex goal contracts carrying maintainer filesystem paths | ~~Med~~ | **Resolved** — relocated to the private store; two code-level references re-anchored. |
 | 4 third-party `external/*` submodules (unrelated upstreams) | Med | Removal staged (`docs/REPRODUCIBILITY.md`) |
 | Archived second frontend `docs/archive/acgs-enterprise-ai-manager/` | Low | Removal staged (Phase 7) |
 
@@ -104,12 +104,15 @@ A second pass executed most of the checklist. Verified green after each batch
 
 **Deliberately NOT done (blocked or judgment call):**
 
-1. **The test/script-pinned "internal" docs stay public** — `docs/saas/`,
-   `docs/readiness-*`, `docs/strategy/`, `docs/reconstruction/`, `docs/research/`,
-   `docs/codex-goals/`, `docs/audits/`, `docs/handoffs/`, `docs/refactor/`,
-   `docs/plans/`, `docs/integration-readiness-task-map.md`, `docs/vibe-kanban-*`,
-   `docs/governance-stack-index.md`. Each is referenced by a test, script, or the
-   `lint-docs` governance-stack check; moving them requires editing `.py`, which
+1. **Superseded.** The blanket "each is referenced by a test, script, or the
+   `lint-docs` governance-stack check" claim was asserted, not verified. A repo-wide
+   sweep found no pin for `docs/strategy/` and exactly two for `docs/codex-goals/`;
+   both directories have since been relocated with their references re-anchored.
+   `docs/saas/` and `docs/research/` are kept public on the merits, not because they
+   are pinned. Directories still unassessed — `docs/readiness-*`, `docs/audits/`,
+   `docs/handoffs/`, `docs/refactor/`, `docs/plans/`,
+   `docs/integration-readiness-task-map.md`, `docs/vibe-kanban-*`,
+   `docs/governance-stack-index.md` — may require editing `.py`, which
    the brief's final rule and the repo's security rules forbid. A doc under test
    is a contract doc, not scratch. **To make these private, a dedicated PR must
    also update the pinning tests/scripts — a code change for human review.**

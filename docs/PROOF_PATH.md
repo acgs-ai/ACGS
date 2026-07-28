@@ -1,6 +1,6 @@
 # Canonical proof path
 
-This is the central proof narrative of ACGS / gove-zone.
+This is the central proof narrative of ACGS.
 
 > **Denied action → Decision Receipt → evidence bundle → audit replay → tamper attempt → replay failure.**
 
