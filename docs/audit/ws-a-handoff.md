@@ -88,7 +88,7 @@ ruff format       All checked files already formatted
 ```
 
 Counts are parsed from JUnit XML, not stdout — `rtk` strips pytest's summary line on large runs,
-and earlier in this program a `| tail` pipe masked a non-zero pytest exit. The six tests added in
+and earlier in this program a `| tail` pipe masked a non-zero pytest exit. The tests added in
 `91c7cb0e` were confirmed present in the XML by name, rather than inferred from a total.
 
 Of the 5 skips, one is `test_keyless_full_rewrite_residual_KNOWN_GAP` — an intentional `xfail`
@@ -97,12 +97,35 @@ recording an open residual, not an unrun test. The other four are
 `test_mcp_gateway_strict_profile` (module-level skips) and
 `test_langgraph_tools_dispatch_through_gate`.
 
-> **Unreconciled figure, flagged rather than smoothed.** An earlier revision of this block
-> recorded "1191 passed, 5 skipped (baseline 1189)". Six tests have been added since, so the
-> total should now be 1202; it measures 1197. The discrepancy is ~5 tests and I could not
-> reconcile it without re-running the suite at `4459d849`. **The 1189 baseline should be
-> re-measured before being cited again.** The figures above are the measured current state; the
-> historical ones are not trustworthy.
+> **Previously-flagged discrepancy: now RECONCILED (F-11).** An earlier revision of this block
+> claimed the baseline was "1191 passed" and that six added tests should give 1202 against a
+> measured 1197 — and concluded the 1189 baseline was untrustworthy. **That conclusion was
+> wrong, and it was wrong in my own favour: it blamed the baseline for my arithmetic.** Two
+> errors compounded:
+>
+> 1. **Misquoted baseline.** `phase0-baseline.md:177` records JUnit `tests=1189 skipped=5`,
+>    i.e. 1189 *collected* / **1184 passed**. There is no "1191 passed" anywhere; I invented it
+>    by reading a collected count as a passed count.
+> 2. **Miscounted my own additions.** I added **8** tests, not 6 — `test_coverage_manifest.py`
+>    went from 3 test functions to 8 (+5, I had recorded +3), and `test_trust_receipt_v2.py`
+>    from 21 to 24 collected (+3, three non-parametrized drift guards on top of 18 defs whose
+>    3 `parametrize` decorators contribute the same +3 in both revisions).
+>    `test_adaptive_stability.py` changed but added no tests (9 → 9).
+>
+> Reconciliation is then exact, with no missing tests:
+>
+> | | collected | passed | skipped |
+> |---|---:|---:|---:|
+> | baseline `4459d849` | 1189 | 1184 | 5 |
+> | added this pass | +8 | +8 | 0 |
+> | **expected** | **1197** | **1192** | **5** |
+> | **measured** | **1197** | **1192** | **5** |
+>
+> Method: `git show 4459d849:<file>` versus the working tree for each of the three changed test
+> files, counting `^def test_` and `parametrize` occurrences. The 1189 baseline **is** trustworthy
+> and may be cited. This entry is kept rather than deleted because the failure mode — declaring
+> someone else's number unreliable to cover an unchecked one of my own — is exactly what the
+> Repository Scope Rule's evidence element exists to catch.
 
 **Guards proven to fire, not merely to pass.** Each new manifest invariant was exercised against
 a synthetic violation — posture-without-evidence, UNKNOWN-with-evidence, bad vocabulary, dropped
@@ -198,18 +221,25 @@ WS-B against the original scope would build something twice. WS-D is unaffected.
 on PR-2 and PR-3 per the spec's sequencing.
 
 **UC-A: NOT satisfied.** The documentation artifacts exist and their known-false statements
-are now corrected, but three things remain open:
+are now corrected, but two things remain open:
 
 1. ~~A3 text remediation~~ — **done**, see §6.
 2. **Per-adversary claims tables** in `docs/security/threat-model-v2.md` — not written. Its
    unscoped anchor claim at row 7 was corrected, but the per-adversary what-holds /
    what-degrades tables the spec asks for do not exist.
-3. **Independent re-verification** — the decisive gate. The corrections in this pass were made
-   by the same author whose claims failed verification, and two of the nine findings (F-8, F-9)
-   were self-caught *while correcting the first seven*, which is direct evidence that one pass
-   by one author does not converge. Until an independent adversarial pass runs against the
-   corrected documents, UC-A should not be declared.
-4. **The 1189 test baseline** is unreconciled (§2) and must be re-measured before it is cited.
+3. **Independent re-verification** — the decisive gate, and the evidence for it got *stronger*
+   during this pass, not weaker. The corrections were made by the same author whose claims
+   failed verification, and **four** of the eleven findings (F-8, F-9, F-10, F-11) were
+   self-caught while correcting the earlier ones. F-10 is the sharpest: F-1 was "corrected" in
+   `ENFORCEMENT-BOUNDARY.md` while the identical overclaim sat unfixed in
+   `DECISION_RECEIPT_SPEC.md`, `threat-model-v2.md`, and `claims-map.md` — i.e. a fix applied to
+   the document being audited rather than to the claim. F-11 is the second sharpest: a number I
+   had not checked was declared untrustworthy rather than recomputed. Two successive passes each
+   found new defects of the same class; there is no basis for assuming a third would not. Until
+   an independent adversarial pass runs against the corrected documents, UC-A should not be
+   declared.
+4. ~~The 1189 test baseline~~ — **reconciled exactly** (§2, F-11): 1189 + 8 = 1197 collected /
+   1192 passed. The baseline is sound and may be cited.
 
 Declaring UC-A met is the reviewer's call on the merged PR. This document does not claim it.
 

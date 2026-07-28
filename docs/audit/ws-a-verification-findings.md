@@ -26,6 +26,8 @@ checkable.
 | F-7 | "editing or splitting row L19 reds the build" | The gate reads CLAIMS.md as one lowercased blob and asserts substrings; splitting is safe | **Narrowed** to the editing half | `test_signing_default_doc_matches_code.py:105-112` |
 | F-8 | *(new — this pass)* "on a default v1 receipt those four are **not** hash-bound" | Literally true, materially misleading: a v1 receipt is validated to carry empty values for all four | **Narrowed** and the reasoning stated | `receipt.py:250-256`, `:677-681`; `executor.py:208` |
 | F-9 | *(new — this pass)* "No named deployment 'profiles' exist as a first-class construct" | `GovernanceProfile` is exported and present at the surveyed ref, with production / production-strict / dev / from_env | **Corrected**; WS-B1 scope reduced | `profile.py`; `__init__.py:138`, `:257` |
+| F-10 | *(new — this pass)* F-1 was corrected in `ENFORCEMENT-BOUNDARY.md` only; the **authoritative** spec still said the hash covers "canonical receipt JSON except `receipt_hash` and `signature`", `threat-model-v2.md` said "**every** security-relevant field *is* bound", and `claims-map.md` said `compute_hash()` "pops" those two | Same defect as F-1, in the three documents integrators and reviewers actually read. The "pops" mechanism is wrong outright — the payload is hand-enumerated. Four cited `receipt.py` ranges in `threat-model-v2.md` were stale (`:241-245` is `to_json`; `:418-433` is self-validation) | **Corrected** all three; added the v2 field rows and a precise § Hash behavior to the spec; repointed the stale anchors | `DECISION_RECEIPT_SPEC.md` § Hash behavior; `receipt.py:332-374`, `:255`, `:679`, `:663`; `signing.py:76-91` |
+| F-11 | *(new — this pass)* "The 1189 test baseline is unreconciled and untrustworthy" | Wrong, and self-serving: the baseline is sound. I misread `tests=1189` (collected) as "1191 passed", and miscounted my own additions as 6 when they are 8. 1189 + 8 = 1197 collected / 1192 passed — exact | **Corrected**; the erroneous note is retained with its reconciliation rather than deleted | `phase0-baseline.md:177`; per-file `^def test_` counts at `4459d849` vs working tree |
 
 Verification method for this pass: every claim above was read from source in the working tree
 before being written, not carried over from an agent report. Two agent findings were themselves
@@ -145,7 +147,7 @@ keyword arguments."
 (explicitly unsigned), and `from_env()` reading `$GOVE_ZONE_PROFILE`, which falls back to
 production on an unrecognized value.
 
-This is the most consequential of the nine. Phase 0 gates every workstream, and WS-B1 was
+This is the most consequential of the eleven. Phase 0 gates every workstream, and WS-B1 was
 scoped to build a hardened posture that substantially exists. The second half of the sentence
 was true — gate *defaults* are per-call keyword arguments — and the first half was asserted
 from that observation without checking for a construct one layer up. Same shape as F-2 and

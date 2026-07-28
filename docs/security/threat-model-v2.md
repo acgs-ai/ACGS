@@ -67,23 +67,32 @@ Severity uses: **Critical** (default config → unauthorized side effect), **Hig
 
 ### 1. Receipt forgery
 
-**Attack scenario.** `receipt_hash` is a keyless SHA-256 over the canonical receipt
-dict (`receipt.py:241-245`, `compute_hash` pops only `receipt_hash`/`signature`). An
-adversary who can construct a `DecisionReceipt` sets `decision=ALLOW` with any
-actor/action/args, calls `compute_hash()` themselves, stamps the result into
-`receipt_hash`, and the receipt "verifies" — because in **unsigned mode** verification
-only recomputes that same keyless hash (`receipt.py:386-393`).
+**Attack scenario.** `receipt_hash` is a keyless SHA-256 over a hand-enumerated payload
+built by `_hash_payload` (`receipt.py:332-374`). An adversary who can construct a
+`DecisionReceipt` sets `decision=ALLOW` with any actor/action/args, calls
+`compute_hash()` themselves, stamps the result into `receipt_hash`, and the receipt
+"verifies" — because in **unsigned mode** verification only recomputes that same keyless
+hash and compares (`receipt.py:663`).
 
-**Current defense.** Every security-relevant field *is* bound into the hash — actor,
+**Current defense.** The fields this section depends on are bound into the hash — actor,
 `proposed_action`, `argument_hash`, `tenant_id`, `execution_boundary`, `policy_hash`,
 `authority`, `decision`, `expires_at`, and the signature metadata
 `signature_algorithm`/`signing_key_id` (anti-downgrade) — so tampering is caught
-(`receipt.py:164-199`, `receipt.py:386-393`). The residual (a hash is *recomputable*)
-is closed **only when signing is engaged**: Ed25519 signs `receipt_hash` with a private
-key and the gate verifies with the matching public key (`signing.py:1-27`,
-`receipt.py:418-433`). `execute_with_receipt` / `GovernedExecutor` default to the secure
-posture — `require_signature=True` and a hard `ProductionProfileError` if no verifier is
-configured (`executor.py:38,63-64`).
+(`receipt.py:332-374`, compared at `receipt.py:663`).
+
+The payload is enumerated by hand rather than derived from the dataclass, so "every
+field is bound" is **not** an accurate statement of the mechanism: `receipt_hash` and
+`signature` are excluded by construction, and the four receipt-v2 scoped-trust fields
+are excluded on v1 (where they are validated empty — `receipt.py:255`, `:679`). See
+[DECISION_RECEIPT_SPEC.md § Hash behavior](../DECISION_RECEIPT_SPEC.md#hash-behavior)
+for the exact payload and the drift guards that fail when a newly added field is
+silently left unbound.
+
+The residual (a hash is *recomputable*) is closed **only when signing is engaged**:
+Ed25519 signs `receipt_hash` with a private key and the gate verifies with the matching
+public key (`signing.py:76-91`). `execute_with_receipt` / `GovernedExecutor` default to
+the secure posture — `require_signature=True` and a hard `ProductionProfileError` if no
+verifier is configured (`executor.py:38,63-64`).
 Covered: `test_receipt_signing.py::test_forged_recomputed_receipt_rejected_without_private_key`.
 
 **Missing control.** (a) Unsigned mode has *no* adversarial tripwire proving a
