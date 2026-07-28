@@ -587,7 +587,7 @@ P2_IDEMPOTENCY_REVIEWED_BASE='3269252010e5cc394abe5ab451debbaa95298f0c'
 P2_VERTICAL_GATE_REVIEWED_BASE='7d81e853b56352822286eb08d592d9e87256868e'
 P3_POLICY_REVIEWED_BASE='647385084d974322b0f8b9b82738d7b820044ece'
 P3_MUTATIONS_REVIEWED_BASE='014fe1806600d52d55f06875a8c30c0b8a5b973b'
-P3_APPROVAL_REVIEWED_BASE='58a8a2397eec717c08ff20efc287d8af788030d0'
+P3_APPROVAL_REVIEWED_BASE='a2299d510d792dd04646204653e405e0485204a6'
 ASSIGNED_BOOTSTRAPS=''
 INCLUDE_GZ=0
 EXPECTED_TRANSCRIPT_RECORDS=''
@@ -4179,7 +4179,7 @@ run_trusted_parent_p0_launcher_authority_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status stderr_sha256
   local launcher_path launcher_fd launcher_path_stat launcher_fd_stat launcher_sha
-  local trusted_launcher_sha256='075642f1e2b1512b8186fbbb891e3352f4b68d3895a75e51889a1a43079da217'
+  local trusted_launcher_sha256='c23a978fecfe095b47e75236ced2af11fb11789a6d0500eba92b628c41aaa00f'
   local target_sha='1111111111111111111111111111111111111111'
   [[ "$scope" == P0 ]] || die 'trusted parent P0 launcher gate is P0-only'
   [[ "$cwd" == "$WORKTREE" ]] || die 'trusted parent P0 launcher gate cwd must be repository root'

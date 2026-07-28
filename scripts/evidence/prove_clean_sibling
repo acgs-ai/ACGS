@@ -104,7 +104,7 @@ case "$requested_node:$reviewed_parent" in
     P2-VERTICAL-GATE-003:7d81e853b56352822286eb08d592d9e87256868e | \
     P3-POLICY-001:647385084d974322b0f8b9b82738d7b820044ece | \
     P3-MUTATIONS-002:014fe1806600d52d55f06875a8c30c0b8a5b973b | \
-    P3-APPROVAL-003:58a8a2397eec717c08ff20efc287d8af788030d0)
+    P3-APPROVAL-003:a2299d510d792dd04646204653e405e0485204a6)
     ;;
   P0-EVIDENCE-000:*) fail 'P0 reviewed parent must be exact 26d11c2c7a8da37937a7c50c642f18edc75c9345' ;;
   P1-MIGRATION-001:*) fail 'P1-MIGRATION-001 reviewed parent must be exact 79a3c39f841cfc5a6c79e85973887814caf0e694' ;;
@@ -117,7 +117,7 @@ case "$requested_node:$reviewed_parent" in
   P2-VERTICAL-GATE-003:*) fail 'P2-VERTICAL-GATE-003 reviewed parent must be exact 7d81e853b56352822286eb08d592d9e87256868e' ;;
   P3-POLICY-001:*) fail 'P3-POLICY-001 reviewed parent must be exact 647385084d974322b0f8b9b82738d7b820044ece' ;;
   P3-MUTATIONS-002:*) fail 'P3-MUTATIONS-002 reviewed parent must be exact 014fe1806600d52d55f06875a8c30c0b8a5b973b' ;;
-  P3-APPROVAL-003:*) fail 'P3-APPROVAL-003 reviewed parent must be exact 58a8a2397eec717c08ff20efc287d8af788030d0' ;;
+  P3-APPROVAL-003:*) fail 'P3-APPROVAL-003 reviewed parent must be exact a2299d510d792dd04646204653e405e0485204a6' ;;
   *) fail "unsupported clean-sibling node: $requested_node" ;;
 esac
 exec "$BUSYBOX" env -i \
