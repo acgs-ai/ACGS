@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import gove_zone.receipt as receipt_module
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -608,8 +609,10 @@ def test_approval_vote_and_resume_route_execute_parked_agent_registration_once(
     with app.state.session_factory() as session:
         request = session.get(ApprovalRequest, approval_request_id)
         assert request is not None
-        expired_now = _to_utc(request.expires_at) + timedelta(minutes=1)
-    monkeypatch.setattr(approvals_module, "utcnow", lambda: expired_now)
+        vote_row = session.scalars(sa.select(ApprovalVote)).one()
+        vote_receipt = _vote_receipt_for_vote(session, request, vote_row)
+        expired_now = _to_utc(vote_receipt.expires_at) + timedelta(minutes=1)
+    _advance_approval_and_receipt_clocks(monkeypatch, expired_now)
 
     vote_replay_after_expiry = client.post(
         f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
@@ -730,6 +733,86 @@ def test_approval_vote_replay_fails_closed_when_vote_evidence_is_tampered(
     assert after["outcomes"] == before["outcomes"]
     assert after["approval_vote_receipts"] == before["approval_vote_receipts"]
     assert after["agents"] == before["agents"]
+
+
+def test_approval_vote_receipt_expiry_replays_same_key_but_blocks_live_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    replay_request = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-expiry-replay-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-expiry-replay-request-0001"),
+    )
+    assert replay_request.status_code == 202, replay_request.text
+    replay_request_id = replay_request.json()["approval_request_id"]
+    (
+        live_resume_request_id,
+        live_resume_approver,
+    ) = _park_and_approve_existing_org_agent_registration(
+        client,
+        org,
+        name="vote-expiry-live-resume-bot",
+    )
+    approver = _create_user(client, org, role="org_admin")
+    vote_headers = {
+        **approver,
+        BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-expiry-replay-vote-0001",
+    }
+    vote = client.post(
+        f"/orgs/{org['org_id']}/approvals/{replay_request_id}/votes",
+        json={"decision": "approve"},
+        headers=vote_headers,
+    )
+    assert vote.status_code == 200, vote.text
+    with app.state.session_factory() as session:
+        request = session.get(ApprovalRequest, replay_request_id)
+        assert request is not None
+        vote_row = session.scalars(
+            sa.select(ApprovalVote).where(ApprovalVote.approval_request_id == replay_request_id)
+        ).one()
+        vote_receipt = _vote_receipt_for_vote(session, request, vote_row)
+        expired_now = _to_utc(vote_receipt.expires_at) + timedelta(minutes=1)
+    monkeypatch.setattr(receipt_module, "_now_iso", lambda: expired_now.isoformat())
+    before_fresh_resume = _approval_counts(app, org["org_id"])
+
+    fresh_resume = client.post(
+        f"/orgs/{org['org_id']}/approvals/{live_resume_request_id}/resume",
+        headers={
+            **live_resume_approver,
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-expiry-live-resume-0001",
+        },
+    )
+
+    assert fresh_resume.status_code == 503, fresh_resume.text
+    assert fresh_resume.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    assert _approval_counts(app, org["org_id"]) == before_fresh_resume
+
+    _advance_approval_and_receipt_clocks(monkeypatch, expired_now)
+    before = _approval_counts(app, org["org_id"])
+    vote_replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{replay_request_id}/votes",
+        json={"decision": "approve"},
+        headers=vote_headers,
+    )
+    fresh_vote = client.post(
+        f"/orgs/{org['org_id']}/approvals/{replay_request_id}/votes",
+        json={"decision": "approve"},
+        headers={
+            **approver,
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-expiry-replay-vote-0002",
+        },
+    )
+
+    assert vote_replay.status_code == 200, vote_replay.text
+    assert vote_replay.json() == vote.json()
+    assert fresh_vote.status_code == 409, fresh_vote.text
+    assert fresh_vote.json()["code"] == "APPROVAL_EXPIRED"
+    assert _approval_counts(app, org["org_id"]) == before
 
 
 def test_approval_vote_allow_path_replays_refusal_after_stale_preflight(
@@ -921,6 +1004,83 @@ def test_approval_resume_idempotency_replay_survives_trust_rotation(
     assert fresh.json()["code"] == "APPROVAL_TRUST_STALE"
     after_fresh = _approval_counts(app, org["org_id"])
     assert after_fresh == after_replay
+
+
+def test_approval_vote_idempotency_replay_survives_trust_rotation(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-retired-trust-replay-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-retired-trust-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    headers = {
+        **_create_user(client, org, role="org_admin"),
+        BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-retired-trust-vote-0001",
+    }
+    first = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    _rotate_receipt_trust(app, org["org_id"])
+    before_replay = _approval_counts(app, org["org_id"])
+
+    replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == first.json()
+    after_replay = _approval_counts(app, org["org_id"])
+    assert after_replay == before_replay
+
+
+def test_approval_vote_idempotency_replay_rejects_revoked_trust(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-revoked-trust-replay-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-revoked-trust-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    headers = {
+        **_create_user(client, org, role="org_admin"),
+        BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-revoked-trust-vote-0001",
+    }
+    first = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    _expire_or_revoke_trust(app, org["org_id"], status="revoked")
+    before_replay = _approval_counts(app, org["org_id"])
+
+    replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+
+    assert replay.status_code == 503, replay.text
+    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    assert _approval_counts(app, org["org_id"]) == before_replay
 
 
 def test_approval_resume_fails_closed_when_policy_changed_after_approval(tmp_path: Path) -> None:
@@ -1680,21 +1840,36 @@ def test_approval_vote_denial_records_non_executable_evidence_without_vote(
         "receipt_hash",
         "event_payload",
         "missing_outbox",
+        "consumption_hash_other_receipt",
+        "consumption_receipt_id_only",
+        "attempt_receipt_hash_only",
+        "attempt_audit_hash_only",
     ],
 )
+@pytest.mark.parametrize("decision", ["deny", "escalate"])
 def test_approval_vote_refusal_replay_validates_committed_evidence(
     tmp_path: Path,
     tamper_case: str,
+    decision: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app, client = _migrated_client(tmp_path, label=f"vote-refusal-replay-{tamper_case}")
+    app, client = _migrated_client(
+        tmp_path,
+        label=f"vote-refusal-replay-{decision}-{tamper_case}",
+    )
     org = _bootstrap_org(client)
     _seed_default_scope_and_trust(app, org["org_id"])
     _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
     request_resp = client.post(
         f"/orgs/{org['org_id']}/agents",
-        json={"name": f"vote-refusal-replay-{tamper_case}-bot", "trust_tier": "internal"},
-        headers=_agent_headers(org, f"vote-refusal-replay-request-{tamper_case}-0001"),
+        json={
+            "name": f"vote-refusal-replay-{decision}-{tamper_case}-bot",
+            "trust_tier": "internal",
+        },
+        headers=_agent_headers(
+            org,
+            f"vote-refusal-replay-request-{decision}-{tamper_case}-0001",
+        ),
     )
     assert request_resp.status_code == 202, request_resp.text
     approval_request_id = request_resp.json()["approval_request_id"]
@@ -1703,8 +1878,8 @@ def test_approval_vote_refusal_replay_validates_committed_evidence(
         org["org_id"],
         rules=[
             {
-                "id": f"deny-approval-vote-refusal-replay-{tamper_case}",
-                "effect": "deny",
+                "id": f"{decision}-approval-vote-refusal-replay-{tamper_case}",
+                "effect": decision,
                 "tools": [CONTROL_PLANE_APPROVAL_VOTE_ACTION],
                 "reason": "approval vote refusal replay integrity",
             }
@@ -1713,8 +1888,10 @@ def test_approval_vote_refusal_replay_validates_committed_evidence(
     approver = _create_user(client, org, role="org_admin")
     headers = {
         **approver,
-        BOOTSTRAP_IDEMPOTENCY_HEADER: f"vote-refusal-replay-{tamper_case}-0001",
+        BOOTSTRAP_IDEMPOTENCY_HEADER: f"vote-refusal-replay-{decision}-{tamper_case}-0001",
     }
+    expected_status = 202 if decision == "escalate" else 403
+    expected_code = "ESCALATE_PENDING" if decision == "escalate" else "POLICY_DENIED"
     if tamper_case == "missing_committed_refusal":
 
         class UsedReceiptWithoutCommittedRefusal:
@@ -1746,19 +1923,36 @@ def test_approval_vote_refusal_replay_validates_committed_evidence(
         json={"decision": "approve"},
         headers=headers,
     )
-    assert first.status_code == 403, first.text
-    assert first.json()["code"] == "POLICY_DENIED"
+    assert first.status_code == expected_status, first.text
+    assert first.json()["code"] == expected_code
     if tamper_case == "valid":
+        with app.state.session_factory() as session:
+            receipt = _approval_vote_refusal_receipt(session)
+            expired_now = _to_utc(receipt.expires_at) + timedelta(minutes=1)
+        _advance_approval_and_receipt_clocks(monkeypatch, expired_now)
         before = _approval_counts(app, org["org_id"])
         replay = client.post(
             f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
             json={"decision": "approve"},
             headers=headers,
         )
-        assert replay.status_code == 403, replay.text
-        assert replay.json()["code"] == "POLICY_DENIED"
+        assert replay.status_code == expected_status, replay.text
+        assert replay.json()["code"] == expected_code
         after = _approval_counts(app, org["org_id"])
         assert after == before
+        fresh = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: (
+                    f"vote-refusal-replay-{decision}-{tamper_case}-0002"
+                ),
+            },
+        )
+        assert fresh.status_code == 409, fresh.text
+        assert fresh.json()["code"] == "APPROVAL_EXPIRED"
+        assert _approval_counts(app, org["org_id"]) == before
         return
 
     with app.state.session_factory.begin() as session:
@@ -1780,6 +1974,64 @@ def test_approval_vote_refusal_replay_validates_committed_evidence(
                         ManagedOutboxMessage.managed_event_id == event.id
                     )
                 ).one()
+            )
+        elif tamper_case == "consumption_hash_other_receipt":
+            source_receipt = session.scalars(
+                sa.select(ManagedDecisionReceipt).where(
+                    ManagedDecisionReceipt.org_id == receipt.org_id,
+                    ManagedDecisionReceipt.project_id == receipt.project_id,
+                    ManagedDecisionReceipt.environment_id == receipt.environment_id,
+                    ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_AGENT_CREATE_ACTION,
+                    ManagedDecisionReceipt.decision == "escalate",
+                )
+            ).one()
+            session.add(
+                ManagedReceiptConsumption(
+                    id=new_id(),
+                    org_id=receipt.org_id,
+                    project_id=receipt.project_id,
+                    environment_id=receipt.environment_id,
+                    managed_receipt_id=source_receipt.id,
+                    receipt_hash=receipt.receipt_hash,
+                    audit_event_hash=receipt.audit_event_hash,
+                )
+            )
+        elif tamper_case == "consumption_receipt_id_only":
+            session.add(
+                ManagedReceiptConsumption(
+                    id=new_id(),
+                    org_id=receipt.org_id,
+                    project_id=receipt.project_id,
+                    environment_id=receipt.environment_id,
+                    managed_receipt_id=receipt.id,
+                    receipt_hash="1" * 64,
+                    audit_event_hash="2" * 64,
+                )
+            )
+        elif tamper_case in {"attempt_receipt_hash_only", "attempt_audit_hash_only"}:
+            session.add(
+                ManagedMutationAttempt(
+                    id=new_id(),
+                    org_id=receipt.org_id,
+                    project_id=receipt.project_id,
+                    environment_id=receipt.environment_id,
+                    receipt_hash=(
+                        receipt.receipt_hash
+                        if tamper_case == "attempt_receipt_hash_only"
+                        else "3" * 64
+                    ),
+                    audit_event_hash=(
+                        receipt.audit_event_hash
+                        if tamper_case == "attempt_audit_hash_only"
+                        else "4" * 64
+                    ),
+                    action=receipt.proposed_action,
+                    actor_hash=sha256_json(receipt.actor),
+                    argument_hash=receipt.argument_hash,
+                    status="succeeded",
+                    failure_class_hash=None,
+                    failure_digest=None,
+                )
             )
         else:  # pragma: no cover - parametrization guard
             raise AssertionError(f"unsupported refusal replay tamper case: {tamper_case}")
@@ -3505,6 +3757,14 @@ def _expire_or_revoke_trust(app: Any, org_id: str, *, status: str) -> None:
             keys[0].not_after = utcnow() - timedelta(days=1)
         else:
             keys[0].status = status
+
+
+def _advance_approval_and_receipt_clocks(
+    monkeypatch: pytest.MonkeyPatch,
+    instant: datetime,
+) -> None:
+    monkeypatch.setattr(approvals_module, "utcnow", lambda: instant)
+    monkeypatch.setattr(receipt_module, "_now_iso", lambda: instant.isoformat())
 
 
 def _count(session: Any, model: type[Any]) -> int:

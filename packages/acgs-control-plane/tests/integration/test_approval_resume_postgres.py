@@ -10,9 +10,11 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import gove_zone.receipt as receipt_module
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from gove_zone.decision import sha256_json
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy.exc import IntegrityError
 
@@ -205,8 +207,37 @@ def test_pg_approved_resume_executes_once_and_replay_is_stable(
         with app.state.session_factory() as session:
             request = session.get(ApprovalRequest, approval_request_id)
             assert request is not None
-            expired_now = _to_utc(request.expires_at) + timedelta(minutes=1)
-        monkeypatch.setattr(approvals_module, "utcnow", lambda: expired_now)
+            vote = session.scalars(
+                sa.select(ApprovalVote).where(ApprovalVote.approval_request_id == request.id)
+            ).one()
+            vote_receipt = session.scalars(
+                sa.select(ManagedDecisionReceipt).where(
+                    ManagedDecisionReceipt.receipt_id == vote.vote_receipt_id
+                )
+            ).one()
+            expired_now = _to_utc(vote_receipt.expires_at) + timedelta(minutes=1)
+        _advance_approval_and_receipt_clocks(monkeypatch, expired_now)
+
+        vote_replay = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver_headers,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: "pg-approval-positive-vote-0001",
+            },
+        )
+        assert vote_replay.status_code == 200, vote_replay.text
+        assert vote_replay.json()["outcome"] == "approved"
+        fresh_vote = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver_headers,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: "pg-approval-positive-vote-0002",
+            },
+        )
+        assert fresh_vote.status_code == 409, fresh_vote.text
+        assert fresh_vote.json()["code"] == "APPROVAL_EXPIRED"
 
         replay = client.post(
             f"/orgs/{org['org_id']}/approvals/{approval_request_id}/resume",
@@ -323,6 +354,7 @@ def test_pg_rejected_and_expired_requests_resume_zero_side_effects(
 def test_pg_concurrent_vote_refusal_replay_records_one_evidence_set(
     tmp_path: Path,
     decision: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, client, org, database_url = _postgres_approval_app(tmp_path)
     try:
@@ -383,6 +415,80 @@ def test_pg_concurrent_vote_refusal_replay_records_one_evidence_set(
                 )
             ).one()
             assert receipt.projection["request_id_hash"]
+            expired_now = _to_utc(receipt.expires_at) + timedelta(minutes=1)
+        _advance_approval_and_receipt_clocks(monkeypatch, expired_now)
+        before_replay = _approval_counts(app, org["org_id"])
+        replay = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver_headers,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: idempotency_key,
+            },
+        )
+        assert replay.status_code == expected_status, replay.text
+        assert replay.json()["code"] == expected_code
+        assert _approval_counts(app, org["org_id"]) == before_replay
+        fresh_vote = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver_headers,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: (f"pg-vote-refusal-race-{decision}-vote-0002"),
+            },
+        )
+        assert fresh_vote.status_code == 409, fresh_vote.text
+        assert fresh_vote.json()["code"] == "APPROVAL_EXPIRED"
+        assert _approval_counts(app, org["org_id"]) == before_replay
+        with app.state.session_factory.begin() as session:
+            receipt = session.scalars(
+                sa.select(ManagedDecisionReceipt).where(
+                    ManagedDecisionReceipt.org_id == org["org_id"],
+                    ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                    ManagedDecisionReceipt.decision == decision,
+                )
+            ).one()
+            if decision == "deny":
+                session.add(
+                    ManagedReceiptConsumption(
+                        id=new_id(),
+                        org_id=receipt.org_id,
+                        project_id=receipt.project_id,
+                        environment_id=receipt.environment_id,
+                        managed_receipt_id=receipt.id,
+                        receipt_hash="1" * 64,
+                        audit_event_hash="2" * 64,
+                    )
+                )
+            else:
+                session.add(
+                    ManagedMutationAttempt(
+                        id=new_id(),
+                        org_id=receipt.org_id,
+                        project_id=receipt.project_id,
+                        environment_id=receipt.environment_id,
+                        receipt_hash="3" * 64,
+                        audit_event_hash=receipt.audit_event_hash,
+                        action=receipt.proposed_action,
+                        actor_hash=sha256_json(receipt.actor),
+                        argument_hash=receipt.argument_hash,
+                        status="succeeded",
+                        failure_class_hash=None,
+                        failure_digest=None,
+                    )
+                )
+        before_corrupt_replay = _approval_counts(app, org["org_id"])
+        corrupt_replay = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                **approver_headers,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: idempotency_key,
+            },
+        )
+        assert corrupt_replay.status_code == 503, corrupt_replay.text
+        assert corrupt_replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+        assert _approval_counts(app, org["org_id"]) == before_corrupt_replay
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
@@ -916,6 +1022,14 @@ def _rotate_receipt_trust_epoch(app: Any, org_id: str) -> None:
             not_after=utcnow() + timedelta(days=1),
             expected_current_epoch=1,
         )
+
+
+def _advance_approval_and_receipt_clocks(
+    monkeypatch: pytest.MonkeyPatch,
+    instant: Any,
+) -> None:
+    monkeypatch.setattr(approvals_module, "utcnow", lambda: instant)
+    monkeypatch.setattr(receipt_module, "_now_iso", lambda: instant.isoformat())
 
 
 def _approval_counts(app: Any, org_id: str) -> dict[str, int]:

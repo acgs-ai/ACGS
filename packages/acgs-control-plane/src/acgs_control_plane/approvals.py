@@ -205,6 +205,7 @@ class ApprovalService:
                     args=args,
                     expected_actor=current_principal.actor_id,
                     receipt_sealer=self._providers.receipt_sealer,
+                    historical_idempotency_replay=True,
                 )
                 raise _approval_error_for_decision(existing_refusal.decision)
             _require_approval_request_not_expired(request)
@@ -292,6 +293,7 @@ class ApprovalService:
                         args=args,
                         expected_actor=tx_principal.actor_id,
                         receipt_sealer=self._providers.receipt_sealer,
+                        historical_idempotency_replay=True,
                     )
                     raise _CommittedApprovalVoteRefusalRace(existing_refusal.decision)
                 _require_approval_request_not_expired(tx_request)
@@ -373,6 +375,7 @@ class ApprovalService:
                         args=args,
                         expected_actor=current_principal.actor_id,
                         receipt_sealer=self._providers.receipt_sealer,
+                        historical_idempotency_replay=True,
                     )
                     raise _approval_error_for_decision(existing_refusal.decision) from None
             except (ReceiptValidationError, TrustConfigurationError, ManagedTrustError) as exc:
@@ -501,6 +504,7 @@ class ApprovalService:
                         args=args,
                         expected_actor=current_principal.actor_id,
                         receipt_sealer=self._providers.receipt_sealer,
+                        historical_idempotency_replay=True,
                     )
                     raise _CommittedApprovalVoteRefusalRace(existing_refusal.decision)
                 _require_approval_request_not_expired(tx_request)
@@ -1378,6 +1382,7 @@ def _vote_result_from_row(
         request=request,
         vote=vote,
         receipt_sealer=receipt_sealer,
+        historical_idempotency_replay=True,
     )
     if (
         evidence.sealed_receipt.request_id is None
@@ -1706,6 +1711,7 @@ def _recompute_approval_authorization(
             request=request,
             vote=vote,
             receipt_sealer=receipt_sealer,
+            historical_idempotency_replay=False,
         )
     recomputed_vote_hashes = [vote.vote_hash for vote in votes]
     approver_hashes = sorted(vote.approver_actor_hash for vote in votes)
@@ -1751,6 +1757,7 @@ def _validate_approval_vote_evidence(
     request: ApprovalRequest,
     vote: ApprovalVote,
     receipt_sealer: AesGcmReceiptArtifactSealer,
+    historical_idempotency_replay: bool,
 ) -> _VoteEvidence:
     args = {
         "approval_request_id": request.id,
@@ -1815,6 +1822,7 @@ def _validate_approval_vote_evidence(
         allowed_decisions=frozenset({Decision.ALLOW.value}),
         receipt_sealer=receipt_sealer,
         failure_detail="approval vote receipt invalid",
+        historical_idempotency_replay=historical_idempotency_replay,
     )
     event = _single_event_for_receipt(session, receipt)
     result_hash = event.payload.get("result_hash")
@@ -1853,6 +1861,7 @@ def _validate_approval_vote_refusal_evidence(
     args: Mapping[str, Any],
     expected_actor: str,
     receipt_sealer: AesGcmReceiptArtifactSealer,
+    historical_idempotency_replay: bool,
 ) -> None:
     if (
         receipt.proposed_action != CONTROL_PLANE_APPROVAL_VOTE_ACTION
@@ -1888,7 +1897,9 @@ def _validate_approval_vote_refusal_evidence(
         allowed_decisions=frozenset({Decision.DENY.value, Decision.ESCALATE.value}),
         receipt_sealer=receipt_sealer,
         failure_detail="approval vote refusal receipt invalid",
+        historical_idempotency_replay=historical_idempotency_replay,
     )
+    _validate_vote_refusal_zero_execution_evidence(session, request=request, receipt=receipt)
     expected_result_hash = safe_result_hash(
         {"status": "non_executable", "decision": receipt.decision}
     )
@@ -1908,6 +1919,43 @@ def _validate_approval_vote_refusal_evidence(
         outbox=outbox,
         expected_result_hash=expected_result_hash,
     )
+
+
+def _validate_vote_refusal_zero_execution_evidence(
+    session: Session,
+    *,
+    request: ApprovalRequest,
+    receipt: ManagedDecisionReceipt,
+) -> None:
+    if receipt.org_id != request.org_id:
+        raise _resume_replay_integrity_error("approval vote refusal receipt scope mismatch")
+    if (
+        session.scalars(
+            sa.select(ManagedReceiptConsumption.id).where(
+                ManagedReceiptConsumption.org_id == receipt.org_id,
+                sa.or_(
+                    ManagedReceiptConsumption.managed_receipt_id == receipt.id,
+                    ManagedReceiptConsumption.receipt_hash == receipt.receipt_hash,
+                    ManagedReceiptConsumption.audit_event_hash == receipt.audit_event_hash,
+                ),
+            )
+        ).first()
+        is not None
+    ):
+        raise _resume_replay_integrity_error("approval vote refusal receipt was consumed")
+    if (
+        session.scalars(
+            sa.select(ManagedMutationAttempt.id).where(
+                ManagedMutationAttempt.org_id == receipt.org_id,
+                sa.or_(
+                    ManagedMutationAttempt.receipt_hash == receipt.receipt_hash,
+                    ManagedMutationAttempt.audit_event_hash == receipt.audit_event_hash,
+                ),
+            )
+        ).first()
+        is not None
+    ):
+        raise _resume_replay_integrity_error("approval vote refusal has mutation attempt")
 
 
 def _bound_vote_receipt(
@@ -2072,6 +2120,7 @@ def _validate_source_escalate_evidence(
         allowed_decisions=frozenset({Decision.ESCALATE.value}),
         receipt_sealer=receipt_sealer,
         failure_detail="source escalate receipt invalid",
+        historical_idempotency_replay=False,
     )
     if _to_aware_utc(receipt.expires_at) != _parse_receipt_expiry(source_receipt):
         raise _resume_replay_integrity_error("source escalate receipt expiry mismatch")
@@ -2131,6 +2180,7 @@ def _validate_managed_receipt_artifact(
     allowed_decisions: frozenset[str],
     receipt_sealer: AesGcmReceiptArtifactSealer,
     failure_detail: str,
+    historical_idempotency_replay: bool,
 ) -> DecisionReceipt:
     try:
         sealed_receipt = receipt_row.projection.get("sealed_receipt")
@@ -2174,9 +2224,11 @@ def _validate_managed_receipt_artifact(
                 expected_authority=context.authority,
                 verifier=None,
                 require_signature=True,
-                require_expiry=True,
+                require_expiry=not historical_idempotency_replay,
                 trust_registry=SqlReceiptTrustRegistry(session, lock_rows=True),
+                historical_trust_verification=historical_idempotency_replay,
                 trust_purpose=DECISION_RECEIPT_PURPOSE,
+                now_iso=receipt.timestamp if historical_idempotency_replay else None,
                 max_clock_skew_seconds=DEFAULT_RECEIPT_CLOCK_SKEW_SECONDS,
             )
         except ReceiptValidationError as exc:
