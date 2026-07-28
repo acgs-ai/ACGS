@@ -6,6 +6,12 @@
 | **Created by** | WS-A of the ACGS Hardening Spec, per §3/A9 (no claims map existed). |
 | **Evidence ref** | `origin/master` @ `4459d849`, verified 2026-07-28. See [audit/phase0-baseline.md](./audit/phase0-baseline.md). |
 
+> **PROVISIONAL — do not cite outward.** An adversarial verification pass found errors in
+> this file: the "splitting row L19 reds the build" warning below is false for the splitting
+> half, the sandbox caveat is wrong in one branch, and the SAY row for the adversary taxonomy
+> describes a manifest state that does not exist at this file's own pinned evidence ref.
+> See [audit/ws-a-verification-findings.md](./audit/ws-a-verification-findings.md).
+
 ## Relationship to the existing claim documents — read before editing anything
 
 Three claim documents now exist. They are **not** interchangeable.

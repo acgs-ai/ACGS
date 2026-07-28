@@ -6,6 +6,12 @@
 | **Evidence ref** | `origin/master` @ `4459d849`, verified 2026-07-28 ([audit/phase0-baseline.md](./audit/phase0-baseline.md)) |
 | **Speech permission** | Governed by [claims-map.md](./claims-map.md) |
 
+> **PROVISIONAL — do not cite outward.** An adversarial verification pass found several
+> false and unscoped statements in this document. Only the §1 table has been corrected.
+> Read [audit/ws-a-verification-findings.md](./audit/ws-a-verification-findings.md) first;
+> in particular §3.4 and §2 overstate the absence of an audit anchor and of a static
+> gate-wiring check, and the §5 matrix applies its adaptive qualifier asymmetrically.
+
 This document states where ACGS's enforcement begins and ends. It is written to be
 useful to a security reviewer who needs to decide what to trust, so it leads with
 what ACGS **cannot** do.
@@ -25,9 +31,10 @@ For a call that reaches the gate, admission is fail-closed. Ambiguity resolves t
 | Enforced | Mechanism | Evidence |
 |---|---|---|
 | No receipt → no execution | `execute_with_receipt` refuses before invoking `tool_fn` | `executor.py:32`; `test_executor_guard.py::test_executor_refuses_no_receipt` |
-| Tampered receipt → no execution | `receipt_hash` recomputed over every field except `receipt_hash` and `signature` | `receipt.py`; `test_executor_guard.py::test_executor_refuses_tampered_receipt` |
-| Signature required | `require_signature` defaults `True` at all three gate surfaces | `executor.py:50`, `executor.py:291`, `contracts.py:272` |
-| Binding to the exact call | actor, action, canonical arguments, policy, tenant, execution boundary, project, environment, authority all checked | `executor.py:32`; `test_argument_binding.py`, `test_tenant_safety.py` |
+| Tampered receipt → no execution | `receipt_hash` is recomputed and compared. **The hashed payload is hand-enumerated (`_hash_payload`), not "all fields":** `receipt_schema_version`, `project_id`, `environment_id`, and `trust_epoch` are included **only when `receipt_schema_version` is truthy**, so on a default v1 receipt those four are **not** hash-bound. | `receipt.py:332-377`; `test_executor_guard.py::test_executor_refuses_tampered_receipt` |
+| Signature required by default | `require_signature` defaults `True` at all three gate surfaces. **Opt-out exists:** the `dev` profile is "explicitly unsigned (`require_signature=False`)" and is selected by `$GOVE_ZONE_PROFILE`; production is the default when unset. | `executor.py:50`, `executor.py:291`, `contracts.py:272`; `profile.py:18`, `:27-28` |
+| Binding to the exact call | actor, action, canonical arguments, tenant, and execution boundary are required anchors. **`expected_policy_hash`, `expected_project_id`, `expected_environment_id`, and `expected_authority` default to `None`** and are checked only when the caller supplies them. | `executor.py:32-58`; `test_argument_binding.py`, `test_tenant_safety.py` |
+| Expiry | Checked when present — but **`require_expiry` defaults `False`** (`executor.py:51`, `:292`, `contracts.py:273`), so a v1 receipt minted with an empty `expires_at` authorizes indefinitely. | `receipt.py:1069-1096` |
 | Policy failure → deny | An exception in policy evaluation synthesizes DENY and is audited | `test_fail_closed.py` |
 | Audit-write failure → deny | Append failure raises before execution | `test_fail_closed.py`, `test_audit_chain_corruption.py` |
 | Self-validation refused | Proposer may not validate its own proposal | `receipt.py:414-418`; `test_maci_role_separation.py::test_issuance_refuses_self_validation` |
