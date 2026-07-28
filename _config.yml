@@ -1,0 +1,68 @@
+# GitHub Pages configuration for acgs-ai/ACGS.
+#
+# This repository is a code monorepo, not a documentation site. GitHub Pages is
+# configured as a legacy branch build from `master:/`, so without this file
+# Jekyll runs with "Configuration file: none" and walks the entire tree —
+# including submodule working copies, which the Pages builder checks out.
+#
+# That is not merely slow, it is fail-prone: any Markdown file anywhere in the
+# monorepo that contains a non-Liquid template tag aborts the whole build with a
+# Liquid::SyntaxError. Some of that content is legitimately un-editable — for
+# example security reference material that must quote `{% ... %}` template
+# injection payloads verbatim, and files owned by nested repositories that
+# cannot be staged from this parent repo.
+#
+# The fix is to scope the site to what is actually meant to be published
+# (the README, which jekyll-readme-index promotes to the index, plus `docs/`)
+# and exclude source trees outright. Excluded paths are never read, so they are
+# never parsed as Liquid.
+
+title: ACGS
+description: Constitutional AI governance platform — receipt-gated agent execution.
+
+# `exclude` REPLACES Jekyll's built-in defaults rather than extending them, so
+# the standard entries are repeated here. Do not drop them.
+exclude:
+  # --- Jekyll defaults (must be restated) ---
+  - Gemfile
+  - Gemfile.lock
+  - gemfiles/
+  - node_modules/
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+  - .sass-cache/
+  - .jekyll-cache/
+
+  # --- Source trees: published site must not render these ---
+  - acgi-ai/
+  - acgs-cft-governance-pack/
+  - acgs-enterprise-ai-manager/
+  - acgs_governance_eval_mvp/
+  - automation/
+  - evidence/
+  - examples/
+  - experiments/
+  - external/
+  - hermes_acgs_bundle/
+  - packages/
+  - scripts/
+  - specs/
+  - tests/
+  - worktrees/
+
+  # --- Agent/tooling state, never publishable ---
+  - .agents/
+  - .ci-trigger/
+  - .claude/
+  - .codex/
+  - .github/
+  - .omc/
+
+  # --- Build manifests ---
+  - Makefile
+  - package.json
+  - pnpm-workspace.yaml
+  - pyproject.toml
+  - turbo.json
