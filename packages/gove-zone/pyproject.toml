@@ -49,7 +49,12 @@ langchain = ["langchain-core>=0.1"]
 # points; `import gove_zone` / `import gove_zone.adapters` stay dependency-free
 # and the gateway raises a loud RuntimeError with an install hint when the SDK
 # is absent.
-mcp = ["mcp>=1.27"]
+# Capped below 2.0: mcp 2.x removed the 1.x `mcp.server.fastmcp` module and
+# `mcp.shared.memory.create_connected_server_and_client_session`, which the
+# gateway conformance/hardening tests (and the FastMCP-based test harness)
+# depend on. Raise the cap only together with a 2.x migration of the gateway
+# and its test suite.
+mcp = ["mcp>=1.27,<2"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
