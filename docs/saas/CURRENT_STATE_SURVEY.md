@@ -15,12 +15,16 @@ credential material, request payloads, machine-local paths, and raw command outp
 ## Branch-local delta after the frozen survey
 
 The G006 findings below remain the frozen `2026-07-13T09:59:25Z` survey record.
-On branch `beta/p3-approval-003`, the managed control plane adds a narrow
-approval/resume proof path for `agent.register` only:
+On branch `beta/p3-approval-003-reconciled` in draft PR #413, the managed
+control plane adds
+a narrow approval/resume proof path for `agent.register` only:
 
-- Alembic head is now `0009`: revision `0008` adds the managed policy registry,
-  and revision `0009` adds additive, forward-only approval request, vote,
-  outcome, and resume-authorization tables.
+- Alembic head is now `0010`: revision `0008` adds the managed policy registry;
+  revision `0009` adds additive, forward-only approval request, vote, outcome,
+  and resume-authorization tables; and revision `0010` binds each approval vote
+  to the approver credential and exact managed vote receipt. Revision `0010`
+  refuses ambiguous pre-existing vote/resume rows rather than inventing their
+  provenance.
 - `POST /orgs/{org}/agents` now creates a scoped pending approval request when
   the active managed policy returns ESCALATE for `agent.register`; the parked
   request stores sealed arguments and binds scope, action, policy, trust epoch,
@@ -37,9 +41,12 @@ approval/resume proof path for `agent.register` only:
 This delta resolves the prior "no managed control-plane approval/resume API"
 gap only for the local/test `agent.register` path. Bootstrap approvals remain a
 separate pre-tenant domain; policy publish/activate escalations remain
-unsupported and fail closed; customer-runtime evidence ingestion, signed policy
-sync, durable spool, independent witnessing, deployment, customer use, external
-audit, and production readiness remain unclaimed.
+unsupported and fail closed. The activated request threshold is fixed at one
+approver and there is no cancel endpoint. The tested guarantee is at-most-once
+authorized SQL execution for this one action, not exactly-once arbitrary
+external effects. Customer-runtime evidence ingestion, signed policy sync,
+durable spool, independent witnessing, deployment, customer use, external
+audit, compliance, and production readiness remain unclaimed.
 
 The branch evidence is local tests plus live local PostgreSQL harness coverage:
 
@@ -51,6 +58,8 @@ cd packages/acgs-control-plane
   tests/integration/test_approval_resume_postgres.py::test_pg_resume_before_required_vote_is_non_executable \
   tests/integration/test_approval_resume_postgres.py::test_pg_approved_resume_executes_once_and_replay_is_stable \
   tests/integration/test_approval_resume_postgres.py::test_pg_rejected_and_expired_requests_resume_zero_side_effects \
+  tests/integration/test_approval_resume_postgres.py::test_pg_concurrent_vote_refusal_replay_records_one_evidence_set \
+  tests/integration/test_approval_resume_postgres.py::test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact \
   tests/integration/test_approval_resume_postgres.py::test_pg_stale_policy_trust_and_requester_resume_zero_side_effects \
   tests/integration/test_approval_resume_postgres.py::test_pg_tampered_sealed_payload_resume_zero_side_effects \
   tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent \

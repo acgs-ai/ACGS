@@ -269,8 +269,82 @@ treatment, including how bounded-capacity back-pressure (`max_pending` /
 `max_pending_per_principal`) turns the previously unbounded `_pending`/
 `_approvals` growth into a bounded, audited escalation-availability trade-off.
 
+## Managed HTTP approval/resume trust boundary
+
+Draft PR [#413](https://github.com/acgs-ai/ACGS/pull/413) adds a separate
+current-local/test approval boundary to the managed control plane. It does not
+change the MCP operator surface above. Its activated scope is only an
+`agent.register` ESCALATE handled by
+`packages/acgs-control-plane/src/acgs_control_plane/approvals.py` and wired by
+`agent_registration.py` and `app.py`:
+
+- **ESCALATE remains non-executable.** The original request inserts no agent and
+  consumes no receipt. It parks an immutable approval request bound to
+  organization, project, environment, requester, validator role, authority,
+  action, canonical argument hash, policy bundle/version/hash and head
+  generation, trust epoch, execution boundary, ESCALATE receipt/hash, audit
+  event hash, and expiry. Raw registration arguments are sealed with
+  authenticated associated data rather than copied into approval projections or
+  outbox payloads.
+- **Approval is credential-bound and separated.** Vote and resume routes require
+  the configured approver role and permission. The requester cannot approve or
+  resume their own request. Before resume, the service locks and rechecks the
+  active requester, approver actor/credential/role, stored vote evidence,
+  original policy head and signed policy envelope, and active scoped trust epoch.
+  A stale or mismatched principal, credential, policy, trust root, request, vote,
+  or binding fails before agent creation.
+- **Resume uses fresh native authorization.** After the stored approval outcome
+  satisfies quorum, the service reconstructs only the original
+  `control-plane.agent.create` arguments, issues a fresh short-lived signed
+  `DecisionReceipt`, and calls `execute_with_receipt` with explicit tenant,
+  project, environment, actor, action, argument, audit, policy, validator,
+  authority, execution-boundary, expiry, trusted-key, and single-use checks.
+- **The supported SQL effect is at most once.** PostgreSQL locks, idempotency
+  records, scoped uniqueness constraints, and the SQL receipt-consumption ledger
+  ensure a successful local resume transaction commits one agent row together
+  with its managed receipt, governance event, outbox row, mutation attempt, and
+  resume authorization. A same-key retry returns the validated stored response;
+  a different-key retry or losing concurrent process cannot add another agent.
+  This is at-most-once authorized SQL execution, not an exactly-once guarantee
+  for arbitrary external effects.
+- **Refusals preserve the forbidden-side-effect invariant.** Missing quorum,
+  self-approval, wrong role, rejection, expiry, stale policy/trust/requester or
+  approver credentials, tampered sealed payload/evidence, cross-scope rows, and
+  losing vote/resume races execute zero agent-registration side effects. A
+  governed vote refusal may still commit its bounded refusal evidence; that is
+  evidence of rejection, not execution of the parked action.
+
+The implementation and wiring evidence is
+`packages/acgs-control-plane/tests/integration/test_approval_resume_postgres.py`
+(including the scoped-pending, self/wrong-role, no-quorum, stable replay,
+rejected/expired, concurrent-vote, stale-state, sealed-payload, multiprocess
+single-winner, and composite-scope cases) plus
+`tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance`.
+The gove-zone compatibility boundary remains covered by
+`packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_escalate_approve_resume_single_use`,
+`packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse`,
+and the resume/concurrent cases in
+`packages/gove-zone/tests/test_receipt_consumption.py`.
+
+This remains deliberately partial: the request threshold is fixed at one
+approver, no cancel endpoint exists, the default approval-payload sealer is for
+local/test use, and no mutation other than `agent.register` is activated. It is
+not deployment, production-readiness, external-review, compliance, or arbitrary
+external-effect exactly-once evidence. It does not alter the general runtime's
+signing defaults; it documents one managed path that explicitly requires a
+signed receipt and scoped SQL trust registry.
+
 ## Security-sensitive files
 
+- `packages/acgs-control-plane/src/acgs_control_plane/approvals.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/agent_registration.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/app.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/auth.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/managed_mutations.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/models.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/rbac.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0009_approval_substrate.py`
+- `packages/acgs-control-plane/src/acgs_control_plane/migrations/versions/0010_approval_vote_binding.py`
 - `packages/gove-zone/src/gove_zone/adapters/mcp_gateway.py`
 - `packages/gove-zone/src/gove_zone/receipt.py`
 - `packages/gove-zone/src/gove_zone/executor.py`
@@ -287,7 +361,8 @@ treatment, including how bounded-capacity back-pressure (`max_pending` /
 
 ## Required security review behavior
 
-Any change to receipt, policy, audit, signing, replay, executor, hook, or adapter code must include:
+Any change to receipt, policy, audit, signing, replay, executor, approval,
+managed-mutation, hook, or adapter code must include:
 
 - negative-path test proving the side effect did not run;
 - wiring proof at the dispatcher/gateway boundary;
