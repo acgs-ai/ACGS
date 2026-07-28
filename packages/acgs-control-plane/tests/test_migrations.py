@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import json
 import os
 import shutil
@@ -20,7 +21,7 @@ import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic import op as alembic_op
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql, sqlite
 
 import acgs_control_plane.migrations as migration_module
 from acgs_control_plane.app import create_app
@@ -41,6 +42,23 @@ from acgs_control_plane.migrations import (
     upgrade_database,
 )
 from acgs_control_plane.models import AgentRecord
+
+
+def _load_migration_revision_module(filename: str) -> object:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "acgs_control_plane"
+        / "migrations"
+        / "versions"
+        / filename
+    )
+    spec = importlib.util.spec_from_file_location(f"acgs_control_plane_test_{filename}", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _database_url(tmp_path: Path) -> str:
@@ -80,8 +98,8 @@ def test_revision_0006_scopes_agents_without_fabricating_legacy_scope(
 ) -> None:
     database_url = _database_url(tmp_path)
     result = upgrade_database(database_url)
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
 
     engine = make_engine(database_url)
     try:
@@ -563,6 +581,7 @@ def test_wheel_ships_and_resolves_the_canonical_alembic_resources(tmp_path: Path
             "acgs_control_plane/migrations/versions/0007_agent_registration_idempotency.py",
             "acgs_control_plane/migrations/versions/0008_policy_registry.py",
             "acgs_control_plane/migrations/versions/0009_approval_substrate.py",
+            "acgs_control_plane/migrations/versions/0010_approval_vote_binding.py",
         } <= names
         archive.extractall(extracted_root)
 
@@ -588,8 +607,8 @@ assert Path(config.config_file_name).resolve() == package_root / "alembic.ini"
 assert Path(config.get_main_option("script_location")).resolve() == package_root / "migrations"
 result = upgrade_database(database_url)
 assert result.before.state is DatabaseSchemaState.EMPTY
-assert result.after.state is DatabaseSchemaState.VERSION_0009
-assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+assert result.after.state is DatabaseSchemaState.VERSION_0010
+assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
 engine = sa.create_engine(database_url)
 try:
     assert set(sa.inspect(engine).get_table_names()) == {
@@ -651,7 +670,7 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.EMPTY
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     assert _table_names(database_url) == {
         "agent_registration_idempotency",
         "agents",
@@ -689,6 +708,29 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
 
     engine = make_engine(database_url)
     try:
+        inspector = sa.inspect(engine)
+        resume_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("approval_resume_authorizations")
+        }
+        for column_name in {
+            "resumer_actor_hash",
+            "resumer_credential_hash",
+            "resumer_role",
+            "resume_argument_hash",
+            "resume_result_hash",
+            "resume_result",
+            "resume_response_hash",
+            "resume_response",
+            "resume_replay_seal",
+        }:
+            assert column_name in resume_columns
+            assert resume_columns[column_name]["nullable"] is False
+        vote_columns = {
+            column["name"]: column for column in inspector.get_columns("approval_votes")
+        }
+        assert "vote_replay_seal" in vote_columns
+        assert vote_columns["vote_replay_seal"]["nullable"] is False
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
@@ -696,6 +738,146 @@ def test_empty_database_migrates_to_head_through_alembic(tmp_path: Path) -> None
             )
     finally:
         engine.dispose()
+    revision_0010 = _load_migration_revision_module("0010_approval_vote_binding.py")
+    resume_result = sa.Column("resume_result", revision_0010.JSONVariant)
+    resume_response = sa.Column("resume_response", revision_0010.JSONVariant)
+    resume_replay_seal = sa.Column("resume_replay_seal", revision_0010.JSONVariant)
+    vote_replay_seal = sa.Column("vote_replay_seal", revision_0010.JSONVariant)
+    assert resume_result.type.compile(dialect=postgresql.dialect()) == "JSONB"
+    assert resume_response.type.compile(dialect=postgresql.dialect()) == "JSONB"
+    assert resume_replay_seal.type.compile(dialect=postgresql.dialect()) == "JSONB"
+    assert vote_replay_seal.type.compile(dialect=postgresql.dialect()) == "JSONB"
+    assert resume_result.type.compile(dialect=sqlite.dialect()) == "JSON"
+    assert resume_response.type.compile(dialect=sqlite.dialect()) == "JSON"
+    assert resume_replay_seal.type.compile(dialect=sqlite.dialect()) == "JSON"
+    assert vote_replay_seal.type.compile(dialect=sqlite.dialect()) == "JSON"
+
+
+def test_revision_0010_refuses_historical_approval_votes_without_backfill(
+    tmp_path: Path,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, migration_module.APPROVAL_SUBSTRATE_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("PRAGMA foreign_keys=OFF"))
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO approval_votes (
+                        id, org_id, project_id, environment_id, approval_request_id,
+                        approver_actor_hash, approver_role, decision, idempotency_key_hash,
+                        vote_hash, created_at
+                    ) VALUES (
+                        :id, :org_id, :project_id, :environment_id, :approval_request_id,
+                        :approver_actor_hash, :approver_role, :decision, :idempotency_key_hash,
+                        :vote_hash, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "historical-vote-0009",
+                    "org_id": "org-historical-vote",
+                    "project_id": "project-historical-vote",
+                    "environment_id": "environment-historical-vote",
+                    "approval_request_id": "approval-request-historical-vote",
+                    "approver_actor_hash": "a" * 64,
+                    "approver_role": "org_admin",
+                    "decision": "approve",
+                    "idempotency_key_hash": "b" * 64,
+                    "vote_hash": "c" * 64,
+                    "created_at": "2026-07-27T00:00:00+00:00",
+                },
+            )
+            connection.execute(sa.text("PRAGMA foreign_keys=ON"))
+    finally:
+        engine.dispose()
+
+    with pytest.raises(
+        RuntimeError,
+        match="refuses to upgrade databases with historical approval_votes",
+    ):
+        migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+            config,
+            migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+            DatabaseSchemaState.VERSION_0009,
+            lambda: command.upgrade(config, HEAD_REVISION),
+        )
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+
+
+def test_revision_0010_refuses_historical_approval_resumes_without_backfill(
+    tmp_path: Path,
+) -> None:
+    database_url = _database_url(tmp_path)
+    config = migration_config(database_url)
+    migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+        config,
+        migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+        DatabaseSchemaState.EMPTY,
+        lambda: command.upgrade(config, migration_module.APPROVAL_SUBSTRATE_REVISION),
+    )
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sa.text("PRAGMA foreign_keys=OFF"))
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO approval_resume_authorizations (
+                        id, org_id, project_id, environment_id, approval_request_id,
+                        resumed_agent_id, idempotency_key_hash, resume_receipt_id,
+                        resume_receipt_hash, resume_audit_event_hash, approval_chain_hash,
+                        created_at
+                    ) VALUES (
+                        :id, :org_id, :project_id, :environment_id, :approval_request_id,
+                        :resumed_agent_id, :idempotency_key_hash, :resume_receipt_id,
+                        :resume_receipt_hash, :resume_audit_event_hash, :approval_chain_hash,
+                        :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": "historical-resume-0009",
+                    "org_id": "org-historical-resume",
+                    "project_id": "project-historical-resume",
+                    "environment_id": "environment-historical-resume",
+                    "approval_request_id": "approval-request-historical-resume",
+                    "resumed_agent_id": "agent-historical-resume",
+                    "idempotency_key_hash": "b" * 64,
+                    "resume_receipt_id": "receipt-historical-resume",
+                    "resume_receipt_hash": "c" * 64,
+                    "resume_audit_event_hash": "d" * 64,
+                    "approval_chain_hash": "e" * 64,
+                    "created_at": "2026-07-27T00:00:00+00:00",
+                },
+            )
+            connection.execute(sa.text("PRAGMA foreign_keys=ON"))
+    finally:
+        engine.dispose()
+
+    with pytest.raises(
+        RuntimeError,
+        match="approval_resume_authorizations",
+    ):
+        migration_module._run_controlled_operation(  # type: ignore[attr-defined]
+            config,
+            migration_module._SCOPE_RESUME_TOKEN,  # type: ignore[attr-defined]
+            DatabaseSchemaState.VERSION_0009,
+            lambda: command.upgrade(config, HEAD_REVISION),
+        )
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
 
 
 @pytest.mark.parametrize(
@@ -853,9 +1035,22 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
         encoding="utf-8"
     )
 
-    assert "required_command in bwrap cmp docker git mktemp realpath sha256sum stat tar" in script
+    assert (
+        "required_command in bwrap cmp docker git mktemp realpath sha256sum stat tar timeout"
+        in script
+    )
     assert "bwrap preflight failed; refusing to run" in script
     assert 'env -i "$bwrap_bin" "${bwrap_args[@]}" --' in script
+    assert (
+        'write_verified_private_artifact "$state_dir/tmp" "pytest-output.bin" 0600 </dev/null'
+        in script
+    )
+    assert '/usr/bin/python3 -I -S - "$target_dir" "$target_name" "$target_mode" 3<&0 <<' in script
+    assert "payload = sys.stdin.buffer.read" not in script
+    assert "chunk = os.read(3, min(65_536, remaining))" in script
+    assert 'verify_private_artifact_fd "$pytest_output_file"' in script
+    assert 'summarize_private_output_sink "$pytest_output_file"' in script
+    assert "ulimit -f 131072" in script
     assert "--clearenv" in script
     assert "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns" in script
     assert "--share-net" not in script
@@ -874,14 +1069,25 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "docker run -d" in server_launch
     assert "--network none" in server_launch
     assert "--publish" not in server_launch
+    assert "--user 999:999" in server_launch
+    assert "--cap-drop ALL" in server_launch
+    assert (
+        "--tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700"
+        in server_launch
+    )
+    assert "--tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g \\" not in script
     assert "listen_addresses=" in server_launch
 
     pytest_invocation = (
-        'env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
-        '  "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+        'timeout --preserve-status 900s env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
+        '    "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
     )
     assert pytest_invocation in script
-    assert '.venv/bin/pytest -q --junitxml="$junit_report" "$@"' not in script
+    assert ') >"/proc/$BASHPID/fd/$pytest_output_fd" 2>&1' in script
+    assert (
+        'env -i "$bwrap_bin" "${bwrap_args[@]}" -- \\\n'
+        '  "$package_dir/.venv/bin/pytest" -q --junitxml="$junit_report" "$@"'
+    ) not in script
     assert script.index(pytest_invocation) > script.index("broker_socket=")
 
 
@@ -1064,6 +1270,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
     home_dir = state_dir / "home"
     allowed_tmp = state_dir / "tmp"
     proof_scratch = state_dir / "proof-scratch"
+    recovery_root = state_dir / "recovery"
     fake_bin = tmp_path / "fake-bin"
     outside_dir = tmp_path / "outside"
 
@@ -1073,6 +1280,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         home_dir,
         allowed_tmp,
         proof_scratch,
+        recovery_root,
         state_dir / "pg",
         fake_bin,
         outside_dir,
@@ -1100,6 +1308,10 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
                 "args = sys.argv[1:]",
                 "if args[:2] == ['info', '--format']:",
                 "    print('[\"name=rootless\"]')",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['inspect']:",
+                "    raise SystemExit(1)",
+                "if args[:2] == ['rm', '-f']:",
                 "    raise SystemExit(0)",
                 f"log = Path({str(docker_log)!r})",
                 "mounts = {}",
@@ -1148,6 +1360,14 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
     broker_env = os.environ.copy()
     broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
     broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = (
+        f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
+    )
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_NONCE"] = "0123456789abcdef0123456789abcdef"
+    broker_env["ACP_POSTGRES_SERVER_NAME"] = (
+        f"{broker_env['ACP_POSTGRES_CLIENT_PROOF_LABEL']}-server"
+    )
+    broker_env["ACGS_POSTGRES_RECOVERY_ROOT"] = str(recovery_root)
     broker = subprocess.Popen(
         [sys.executable, str(broker_path), str(socket_path)],
         env=broker_env,
@@ -1271,6 +1491,7 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     client_dir = state_dir / "client"
     allowed_tmp = state_dir / "tmp"
     proof_scratch = state_dir / "proof-scratch"
+    recovery_root = state_dir / "recovery"
     fake_bin = tmp_path / "fake-bin"
     external_dir = tmp_path / "external"
     exchange_dir = allowed_tmp / "slot"
@@ -1279,6 +1500,7 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
         client_dir,
         allowed_tmp,
         proof_scratch,
+        recovery_root,
         state_dir / "pg",
         fake_bin,
         external_dir,
@@ -1308,6 +1530,10 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
                 "if args[:2] == ['info', '--format']:",
                 "    print('[\"name=rootless\"]')",
                 "    raise SystemExit(0)",
+                "if args[:1] == ['inspect']:",
+                "    raise SystemExit(1)",
+                "if args[:2] == ['rm', '-f']:",
+                "    raise SystemExit(0)",
                 f"log = Path({str(docker_log)!r})",
                 "with log.open('a', encoding='utf-8') as handle:",
                 "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
@@ -1335,6 +1561,14 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     broker_env = os.environ.copy()
     broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
     broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = (
+        f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
+    )
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_NONCE"] = "0123456789abcdef0123456789abcdef"
+    broker_env["ACP_POSTGRES_SERVER_NAME"] = (
+        f"{broker_env['ACP_POSTGRES_CLIENT_PROOF_LABEL']}-server"
+    )
+    broker_env["ACGS_POSTGRES_RECOVERY_ROOT"] = str(recovery_root)
     broker = subprocess.Popen(
         [sys.executable, str(broker_path), str(socket_path)],
         env=broker_env,
@@ -1403,6 +1637,12 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "server.bind(SOCKET_NAME)" in broker_source
     assert "os.chdir(socket_dir)" in client_source
     assert "client.connect(socket_name)" in client_source
+    assert '"--memory", "512m", "--cpus", "1", "--pids-limit", "128"' in broker_source
+    assert '"--ulimit", "nofile=256:256"' in broker_source
+    assert '"--ulimit", f"fsize={MAX_COMBINED_OUTPUT_BYTES}:{MAX_COMBINED_OUTPUT_BYTES}"' in (
+        broker_source
+    )
+    assert '"nproc=128:128"' not in broker_source
 
 
 def _postgres_gate_client_sources() -> tuple[str, str]:
@@ -1411,11 +1651,13 @@ def _postgres_gate_client_sources() -> tuple[str, str]:
     )
     broker_source = _extract_single_quoted_heredoc(
         script,
-        "cat >\"$state_dir/broker/postgres_client_broker.py\" <<'PY'\n",
+        'write_verified_private_artifact "$state_dir/broker" '
+        "\"postgres_client_broker.py\" 0700 <<'PY'\n",
     )
     client_source = _extract_single_quoted_heredoc(
         script,
-        "cat >\"$state_dir/client/postgresql-client\" <<'PY'\n",
+        'write_verified_private_artifact "$state_dir/client" '
+        "\"$postgres_client_tool\" 0700 <<'PY'\n",
     )
     return broker_source, client_source
 
@@ -1492,7 +1734,7 @@ def test_exact_legacy_schema_is_stamped_only_after_preflight_then_upgraded(tmp_p
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path) -> None:
@@ -1510,8 +1752,8 @@ def test_prior_0002_schema_upgrade_to_0003_preserves_scoped_rows(tmp_path: Path)
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0002
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert _version_number(database_url) == HEAD_REVISION
     assert _scoped_0002_rows(database_url) == (
         ("project-prior-0002", "org-prior-0002"),
@@ -1544,7 +1786,7 @@ def test_current_legacy_create_all_contract_is_adoptable_by_the_guard(tmp_path: 
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 @pytest.mark.parametrize("table_name", ["unowned_explicit_table", "organizations"])
@@ -1806,7 +2048,7 @@ def test_app_create_tables_rejects_a_versioned_schema_until_startup_migration_in
             )
         )
 
-    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
     assert _table_names(database_url) == table_names_before
 
 
@@ -2135,9 +2377,9 @@ def test_upgrade_can_be_retried_after_a_completed_run(tmp_path: Path) -> None:
     first = upgrade_database(database_url)
     second = upgrade_database(database_url)
 
-    assert first.after.state is DatabaseSchemaState.VERSION_0009
-    assert second.before.state is DatabaseSchemaState.VERSION_0009
-    assert second.after.state is DatabaseSchemaState.VERSION_0009
+    assert first.after.state is DatabaseSchemaState.VERSION_0010
+    assert second.before.state is DatabaseSchemaState.VERSION_0010
+    assert second.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
@@ -2221,7 +2463,7 @@ def test_retry_after_failure_immediately_after_legacy_stamp_preserves_evidence(
 
     result = upgrade_database(database_url)
     assert result.before.state is DatabaseSchemaState.VERSION_0001
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_0002_projects_only_interruption_retries_without_rewriting_legacy_evidence(
@@ -2245,7 +2487,7 @@ def test_0002_projects_only_interruption_retries_without_rewriting_legacy_eviden
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_PROJECTS
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     assert _receipt_payload(database_url, "receipt-0002-projects") == (
         "org-0002-resume",
         json.dumps({"preserve": "0002-resume"}),
@@ -2267,7 +2509,7 @@ def test_0002_full_scope_interruption_retries_when_both_empty_tables_are_exact(
     result = upgrade_database(database_url)
 
     assert result.before.state is DatabaseSchemaState.VERSION_0001_PARTIAL_SCOPE
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
 
 def test_0002_data_bearing_partial_scope_is_rejected_without_resuming(

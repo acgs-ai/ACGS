@@ -289,7 +289,7 @@ def _postgres_agent_registration_app(
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
     issuer = local_agent_registration_issuer()
     receipt_issuer = (

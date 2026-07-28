@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
@@ -15,12 +16,14 @@ from fastapi.testclient import TestClient
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
 from sqlalchemy.exc import IntegrityError
 
-from acgs_control_plane.agent_registration import local_agent_registration_issuer
+import acgs_control_plane.approvals as approvals_module
+from acgs_control_plane.agent_registration import _to_utc, local_agent_registration_issuer
 from acgs_control_plane.app import create_app
 from acgs_control_plane.config import RuntimePosture, Settings
 from acgs_control_plane.managed_mutations import (
     CONTROL_PLANE_AGENT_CREATE_ACTION,
     CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+    CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
 )
 from acgs_control_plane.migrations import DatabaseSchemaState, upgrade_database
 from acgs_control_plane.models import (
@@ -164,7 +167,10 @@ def test_pg_resume_before_required_vote_is_non_executable(tmp_path: Path) -> Non
         _reset_postgres_schema(database_url)
 
 
-def test_pg_approved_resume_executes_once_and_replay_is_stable(tmp_path: Path) -> None:
+def test_pg_approved_resume_executes_once_and_replay_is_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app, client, org, database_url = _postgres_approval_app(tmp_path)
     try:
         approval_request_id, approver_headers = _park_and_approve(
@@ -188,6 +194,19 @@ def test_pg_approved_resume_executes_once_and_replay_is_stable(tmp_path: Path) -
         payload = response.json()
         assert payload["name"] == "pg-approved-resume-bot"
         assert payload["receipt_id"]
+
+        status_mutation = client.patch(
+            f"/orgs/{org['org_id']}/agents/{payload['agent_id']}/status",
+            json={"status": "suspended"},
+            headers=approver_headers,
+        )
+        assert status_mutation.status_code == 200, status_mutation.text
+        assert status_mutation.json()["status"] == "suspended"
+        with app.state.session_factory() as session:
+            request = session.get(ApprovalRequest, approval_request_id)
+            assert request is not None
+            expired_now = _to_utc(request.expires_at) + timedelta(minutes=1)
+        monkeypatch.setattr(approvals_module, "utcnow", lambda: expired_now)
 
         replay = client.post(
             f"/orgs/{org['org_id']}/approvals/{approval_request_id}/resume",
@@ -235,7 +254,10 @@ def test_pg_approved_resume_executes_once_and_replay_is_stable(tmp_path: Path) -
         _reset_postgres_schema(database_url)
 
 
-def test_pg_rejected_and_expired_requests_resume_zero_side_effects(tmp_path: Path) -> None:
+def test_pg_rejected_and_expired_requests_resume_zero_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app, client, org, database_url = _postgres_approval_app(tmp_path)
     try:
         rejected_id = _park_agent_registration(
@@ -276,10 +298,11 @@ def test_pg_rejected_and_expired_requests_resume_zero_side_effects(tmp_path: Pat
             name="pg-expired-resume-bot",
             idempotency_key="pg-approval-expired-request-0001",
         )
-        with app.state.session_factory.begin() as session:
+        with app.state.session_factory() as session:
             expired = session.get(ApprovalRequest, expired_id)
             assert expired is not None
-            expired.expires_at = utcnow() - timedelta(minutes=1)
+            expired_now = _to_utc(expired.expires_at) + timedelta(minutes=1)
+        monkeypatch.setattr(approvals_module, "utcnow", lambda: expired_now)
         before_expired_resume = _approval_counts(app, org["org_id"])
         expired_resume = client.post(
             f"/orgs/{org['org_id']}/approvals/{expired_id}/resume",
@@ -291,6 +314,179 @@ def test_pg_rejected_and_expired_requests_resume_zero_side_effects(tmp_path: Pat
         assert expired_resume.status_code == 409, expired_resume.text
         assert expired_resume.json()["code"] == "APPROVAL_EXPIRED"
         assert _approval_counts(app, org["org_id"]) == before_expired_resume
+    finally:
+        app.state.engine.dispose()
+        _reset_postgres_schema(database_url)
+
+
+@pytest.mark.parametrize("decision", ["deny", "escalate"])
+def test_pg_concurrent_vote_refusal_replay_records_one_evidence_set(
+    tmp_path: Path,
+    decision: str,
+) -> None:
+    app, client, org, database_url = _postgres_approval_app(tmp_path)
+    try:
+        approval_request_id = _park_agent_registration(
+            client,
+            org,
+            name=f"pg-vote-refusal-race-{decision}-bot",
+            idempotency_key=f"pg-vote-refusal-race-{decision}-request-0001",
+        )
+        _replace_active_policy_direct(
+            app,
+            org["org_id"],
+            rules=[
+                {
+                    "id": f"pg-{decision}-approval-vote",
+                    "effect": decision,
+                    "tools": [CONTROL_PLANE_APPROVAL_VOTE_ACTION],
+                    "reason": "approval vote refusal race",
+                }
+            ],
+        )
+        approver_headers = _create_user(client, org, role="org_admin")
+        before = _approval_counts(app, org["org_id"])
+        idempotency_key = f"pg-vote-refusal-race-{decision}-vote-0001"
+
+        with ProcessPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(
+                    _vote_worker,
+                    database_url,
+                    org["org_id"],
+                    approval_request_id,
+                    approver_headers["X-API-Key"],
+                    idempotency_key,
+                )
+                for _ in range(4)
+            ]
+            results = [future.result(timeout=30) for future in as_completed(futures)]
+
+        expected_status = 202 if decision == "escalate" else 403
+        expected_code = "ESCALATE_PENDING" if decision == "escalate" else "POLICY_DENIED"
+        assert all(result["status_code"] == expected_status for result in results), results
+        assert all(result["code"] == expected_code for result in results), results
+        after = _approval_counts(app, org["org_id"])
+        assert after == {
+            **before,
+            "approval_vote_receipts": before["approval_vote_receipts"] + 1,
+            "all_receipts": before["all_receipts"] + 1,
+            "events": before["events"] + 1,
+            "outbox": before["outbox"] + 1,
+        }
+        with app.state.session_factory() as session:
+            receipt = session.scalars(
+                sa.select(ManagedDecisionReceipt).where(
+                    ManagedDecisionReceipt.org_id == org["org_id"],
+                    ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                    ManagedDecisionReceipt.decision == decision,
+                )
+            ).one()
+            assert receipt.projection["request_id_hash"]
+    finally:
+        app.state.engine.dispose()
+        _reset_postgres_schema(database_url)
+
+
+def test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact(
+    tmp_path: Path,
+) -> None:
+    app, client, org, database_url = _postgres_approval_app(tmp_path)
+    try:
+        approval_request_id = _park_agent_registration(
+            client,
+            org,
+            name="pg-mixed-vote-refusal-allow-bot",
+            idempotency_key="pg-mixed-vote-request-0001",
+        )
+        first_approver = _create_user(client, org, role="org_admin")
+        second_approver = _create_user(client, org, role="org_admin")
+        before = _approval_counts(app, org["org_id"])
+        idempotency_key = "pg-mixed-vote-key-0001"
+
+        with ProcessPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    _vote_after_policy_worker,
+                    database_url,
+                    org["org_id"],
+                    approval_request_id,
+                    first_approver["X-API-Key"],
+                    idempotency_key,
+                    "deny",
+                    0.0,
+                ),
+                pool.submit(
+                    _vote_after_policy_worker,
+                    database_url,
+                    org["org_id"],
+                    approval_request_id,
+                    second_approver["X-API-Key"],
+                    idempotency_key,
+                    "allow",
+                    0.25,
+                ),
+            ]
+            results = [future.result(timeout=30) for future in as_completed(futures)]
+
+        status_codes = {result["status_code"] for result in results}
+        codes = {result["code"] for result in results}
+        assert status_codes == {403, 409}, results
+        assert codes == {"POLICY_DENIED", "IDEMPOTENCY_CONFLICT"}, results
+        after = _approval_counts(app, org["org_id"])
+        assert after == {
+            **before,
+            "approval_vote_receipts": before["approval_vote_receipts"] + 1,
+            "policy_activate_receipts": before["policy_activate_receipts"] + 2,
+            "all_receipts": before["all_receipts"] + 3,
+            "events": before["events"] + 1,
+            "outbox": before["outbox"] + 1,
+        }
+        with app.state.session_factory() as session:
+            assert _count(session, ApprovalVote, org_id=org["org_id"]) == before["votes"]
+            assert _count(session, ApprovalOutcome, org_id=org["org_id"]) == before["outcomes"]
+            assert (
+                _count(session, ManagedReceiptConsumption, org_id=org["org_id"])
+                == before["consumptions"]
+            )
+            assert (
+                _count(
+                    session,
+                    ManagedDecisionReceipt,
+                    org_id=org["org_id"],
+                    action=CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                )
+                == before["approval_vote_receipts"] + 1
+            )
+            assert (
+                _count(
+                    session,
+                    ManagedDecisionReceipt,
+                    org_id=org["org_id"],
+                    action=CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
+                )
+                == before["policy_activate_receipts"] + 2
+            )
+            receipt = session.scalars(
+                sa.select(ManagedDecisionReceipt).where(
+                    ManagedDecisionReceipt.org_id == org["org_id"],
+                    ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                )
+            ).one()
+            assert receipt.decision == "deny"
+            assert (
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(ManagedDecisionReceipt)
+                    .where(
+                        ManagedDecisionReceipt.org_id == org["org_id"],
+                        ManagedDecisionReceipt.proposed_action
+                        == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                        ManagedDecisionReceipt.decision == "allow",
+                    )
+                )
+                == 0
+            )
     finally:
         app.state.engine.dispose()
         _reset_postgres_schema(database_url)
@@ -467,10 +663,15 @@ def test_pg_approval_composite_constraints_reject_cross_scope_rows(tmp_path: Pat
                         environment_id=other_environment_id,
                         approval_request_id=request_id,
                         approver_actor_hash="0" * 64,
+                        approver_credential_hash="3" * 64,
                         approver_role="org_admin",
                         decision="approve",
                         idempotency_key_hash="1" * 64,
+                        vote_receipt_id="cross-scope-vote-receipt",
+                        vote_receipt_hash="4" * 64,
+                        vote_audit_event_hash="5" * 64,
                         vote_hash="2" * 64,
+                        vote_replay_seal={},
                     )
                 )
                 session.flush()
@@ -491,7 +692,7 @@ def _postgres_approval_app(tmp_path: Path) -> tuple[Any, TestClient, dict[str, A
 
     _reset_postgres_schema(database_url)
     result = upgrade_database(database_url, expected_database=EXPECTED_DATABASE)
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
 
     app = create_app(
         Settings(
@@ -601,6 +802,97 @@ def _resume_worker(
         app.state.engine.dispose()
 
 
+def _vote_worker(
+    database_url: str,
+    org_id: str,
+    approval_request_id: str,
+    api_key: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=Path(tempfile.mkdtemp(prefix="acp-approval-vote-race-audit-")),
+            bootstrap_token=BOOTSTRAP_TOKEN,
+            create_tables=False,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        ),
+        agent_registration_issuer=local_agent_registration_issuer(),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        response = client.post(
+            f"/orgs/{org_id}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                "X-API-Key": api_key,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: idempotency_key,
+            },
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {"text": response.text}
+        return {"status_code": response.status_code, **payload}
+    finally:
+        app.state.engine.dispose()
+
+
+def _vote_after_policy_worker(
+    database_url: str,
+    org_id: str,
+    approval_request_id: str,
+    api_key: str,
+    idempotency_key: str,
+    policy: str,
+    delay_seconds: float,
+) -> dict[str, Any]:
+    app = create_app(
+        Settings(
+            database_url=database_url,
+            audit_dir=Path(tempfile.mkdtemp(prefix="acp-approval-mixed-vote-audit-")),
+            bootstrap_token=BOOTSTRAP_TOKEN,
+            create_tables=False,
+            runtime_posture=RuntimePosture.LOCAL_DEV_LEGACY_UNSIGNED,
+        ),
+        agent_registration_issuer=local_agent_registration_issuer(),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    try:
+        if delay_seconds:
+            time.sleep(delay_seconds)
+        if policy == "allow":
+            _replace_active_policy_direct(app, org_id, rules=_rules_for_policy("allow"))
+        else:
+            _replace_active_policy_direct(
+                app,
+                org_id,
+                rules=[
+                    {
+                        "id": "pg-mixed-deny-approval-vote",
+                        "effect": "deny",
+                        "tools": [CONTROL_PLANE_APPROVAL_VOTE_ACTION],
+                        "reason": "mixed approval vote race",
+                    }
+                ],
+            )
+        response = client.post(
+            f"/orgs/{org_id}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers={
+                "X-API-Key": api_key,
+                BOOTSTRAP_IDEMPOTENCY_HEADER: idempotency_key,
+            },
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {"text": response.text}
+        return {"status_code": response.status_code, **payload}
+    finally:
+        app.state.engine.dispose()
+
+
 def _rotate_receipt_trust_epoch(app: Any, org_id: str) -> None:
     with app.state.session_factory.begin() as session:
         environment = session.scalars(
@@ -641,6 +933,12 @@ def _approval_counts(app: Any, org_id: str) -> dict[str, int]:
                 ManagedDecisionReceipt,
                 org_id=org_id,
                 action=CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+            ),
+            "policy_activate_receipts": _count(
+                session,
+                ManagedDecisionReceipt,
+                org_id=org_id,
+                action=CONTROL_PLANE_POLICY_ACTIVATE_ACTION,
             ),
             "all_receipts": _count(session, ManagedDecisionReceipt, org_id=org_id),
             "consumptions": _count(session, ManagedReceiptConsumption, org_id=org_id),

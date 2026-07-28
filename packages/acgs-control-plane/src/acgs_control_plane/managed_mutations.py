@@ -1307,22 +1307,31 @@ def _validated_policy_activate_args(args: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _validated_approval_vote_args(args: Mapping[str, Any]) -> dict[str, Any]:
-    allowed_fields = {"approval_request_id", "decision", "request_hash"}
+    allowed_fields = {
+        "approval_request_id",
+        "decision",
+        "request_hash",
+        "approver_credential_hash",
+    }
     if set(args) != allowed_fields:
         raise ReceiptValidationError("approval.vote requires exactly the canonical arguments")
     approval_request_id = args.get("approval_request_id")
     decision = args.get("decision")
     request_hash = args.get("request_hash")
+    approver_credential_hash = args.get("approver_credential_hash")
     if not isinstance(approval_request_id, str) or not approval_request_id.strip():
         raise ReceiptValidationError("approval.vote approval_request_id must be non-empty text")
     if decision not in {"approve", "reject"}:
         raise ReceiptValidationError("approval.vote decision must be approve or reject")
     if not isinstance(request_hash, str) or len(request_hash) != 64:
         raise ReceiptValidationError("approval.vote request_hash must be sha256 hex")
+    if not isinstance(approver_credential_hash, str) or len(approver_credential_hash) != 64:
+        raise ReceiptValidationError("approval.vote approver_credential_hash must be sha256 hex")
     return {
         "approval_request_id": approval_request_id,
         "decision": decision,
         "request_hash": request_hash,
+        "approver_credential_hash": approver_credential_hash,
     }
 
 

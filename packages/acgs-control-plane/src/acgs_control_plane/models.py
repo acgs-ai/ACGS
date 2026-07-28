@@ -817,11 +817,44 @@ class ApprovalVote(Base):
             "approver_actor_hash",
             name="uq_av_scope_request_actor",
         ),
+        ForeignKeyConstraint(
+            ["org_id", "project_id", "environment_id", "vote_receipt_id"],
+            [
+                "managed_decision_receipts.org_id",
+                "managed_decision_receipts.project_id",
+                "managed_decision_receipts.environment_id",
+                "managed_decision_receipts.receipt_id",
+            ],
+            name="fk_approval_votes_receipt_scope",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         UniqueConstraint(
             "org_id",
             "approval_request_id",
             "idempotency_key_hash",
             name="uq_av_org_request_idempotency",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "vote_receipt_id",
+            name="uq_av_scope_vote_receipt_id",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "vote_receipt_hash",
+            name="uq_av_scope_vote_receipt_hash",
+        ),
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "environment_id",
+            "vote_audit_event_hash",
+            name="uq_av_scope_vote_audit_event_hash",
         ),
         CheckConstraint("decision IN ('approve', 'reject')", name="ck_approval_votes_decision"),
         {"info": {ALEMBIC_MANAGED_TABLE_INFO_KEY: True}},
@@ -835,10 +868,18 @@ class ApprovalVote(Base):
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     approval_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
     approver_actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approver_credential_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     approver_role: Mapped[str] = mapped_column(String(32), nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Populated by ApprovalService.after_success after the managed UoW has
+    # persisted the canonical receipt row. Application replay/resume paths
+    # reject any committed vote that still lacks these exact bindings.
+    vote_receipt_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    vote_receipt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    vote_audit_event_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     vote_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    vote_replay_seal: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -950,12 +991,21 @@ class ApprovalResumeAuthorization(Base):
     environment_id: Mapped[str] = mapped_column(String(64), nullable=False)
     approval_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
     resumed_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    resumer_actor_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resumer_credential_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resumer_role: Mapped[str] = mapped_column(String(32), nullable=False)
     idempotency_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     resume_receipt_id: Mapped[str] = mapped_column(String(200), nullable=False)
     resume_receipt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     resume_audit_event_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     approval_chain_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resume_argument_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    resume_result_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    resume_result: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    resume_response_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    resume_response: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    resume_replay_seal: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
 
 
 class ReceiptRow(Base):

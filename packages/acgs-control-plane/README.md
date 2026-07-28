@@ -62,8 +62,9 @@ projection and remain invisible to the explorer and export bundle. Native
 receipt-v2 explorer/export support remains future work.
 
 Agent registration idempotency is part of Alembic revision `0007`. The current
-schema head is `0009`: revision `0008` adds the managed policy registry and
-revision `0009` adds the approval request/vote/outcome/resume substrate.
+schema head is `0010`: revision `0008` adds the managed policy registry,
+revision `0009` adds the approval request/vote/outcome/resume substrate, and
+revision `0010` binds approval votes to the approved resume action.
 `POST /orgs/{org}/agents` requires an `Idempotency-Key` header before
 receipt issuance or persistence. Reusing the same key with the same canonical
 request replays the original terminal outcome after validating the stored row
@@ -133,7 +134,7 @@ uv run --package acgs-control-plane uvicorn --factory acgs_control_plane.app:cre
 
 This posture is deliberately non-production: its legacy bootstrap may create only the frozen
 pre-Alembic v0 tables, and `/readyz` always returns 503. For a migration-managed database, run the
-secret-safe operator CLI to the current head (`0009` at this writing), then set
+secret-safe operator CLI to the current head (`0010` at this writing), then set
 `ACP_CREATE_TABLES=0`. Schema currency is reported separately from production readiness.
 `ACP_RUNTIME_POSTURE=production` currently refuses before constructing a database engine because
 legacy mutation routes still exist; an exact current schema does not weaken that blocker.
@@ -207,7 +208,7 @@ uv run --package acgs-control-plane python -m pytest packages/acgs-control-plane
   managed receipt-v2 evidence and a SQL single-use ledger, but the remaining legacy routes still
   differ from gove-zone's secure `require_signature=True` profile. Production posture refuses while
   those legacy mutation routes remain.
-- **Schema mutation is operator-only**: Alembic revisions `0001` through `0009` are advanced
+- **Schema mutation is operator-only**: Alembic revisions `0001` through `0010` are advanced
   through `python -m acgs_control_plane.migration_cli`; schema-managed startup performs an exact,
   read-only revision preflight and never migrates. The legacy `create_all` bootstrap remains
   available only under the explicit local-development posture above.

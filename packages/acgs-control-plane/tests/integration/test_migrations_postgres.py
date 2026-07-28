@@ -74,7 +74,7 @@ _LEGACY_TABLES = (
     "users",
 )
 _CURRENT_FORWARD_ONLY_REVISIONS = frozenset(
-    {"0001", "0002", "0003", "0004", "0005", "0008", "0009"}
+    {"0001", "0002", "0003", "0004", "0005", "0008", "0009", "0010"}
 )
 _CURRENT_REVERSIBLE_REVISIONS: frozenset[str] = frozenset({"0006", "0007"})
 _LEGACY_ROW_COLUMNS = {
@@ -435,7 +435,7 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
     expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
     empty_result = upgrade_database(database_url, expected_database=expected_database)
     assert empty_result.before.state is DatabaseSchemaState.EMPTY
-    assert empty_result.after.state is DatabaseSchemaState.VERSION_0009
+    assert empty_result.after.state is DatabaseSchemaState.VERSION_0010
     assert _head_version(database_url) == HEAD_REVISION
 
     _reset_exact_database(database_url, expected_database)
@@ -445,9 +445,165 @@ def test_empty_and_existing_alpha_upgrade_head() -> None:
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0009
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0010
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
+
+
+def test_revision_0010_refuses_historical_approval_votes_without_invented_bindings() -> None:
+    database_url = _required_url(_MAIN_ENV)
+    expected_database = _EXPECTED_DATABASES[_MAIN_ENV]
+    _controlled_upgrade_to_revision(database_url, migration_module.APPROVAL_SUBSTRATE_REVISION)
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert _head_version(database_url) == migration_module.APPROVAL_SUBSTRATE_REVISION
+
+    engine = make_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO organizations (
+                        id, name, created_at, audit_anchor_count, audit_anchor_hash
+                    ) VALUES (
+                        'org-historical-vote', 'Historical Vote Org', now(), 0, ''
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO projects (id, org_id, slug, name, created_at)
+                    VALUES (
+                        'project-historical-vote', 'org-historical-vote',
+                        'default', 'Default', now()
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO environments (
+                        id, org_id, project_id, slug, name, created_at
+                    ) VALUES (
+                        'environment-historical-vote', 'org-historical-vote',
+                        'project-historical-vote', 'production', 'Production', now()
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO managed_decision_receipts (
+                        id, org_id, project_id, environment_id, receipt_id,
+                        receipt_hash, audit_event_hash, decision, actor,
+                        proposed_action, execution_boundary, policy_bundle_id,
+                        policy_version, policy_hash, argument_hash, signing_key_id,
+                        signature_algorithm, assurance_class, source_system,
+                        issued_at, expires_at, projection, created_at
+                    ) VALUES (
+                        'mdr-historical-escalate', 'org-historical-vote',
+                        'project-historical-vote', 'environment-historical-vote',
+                        'receipt-historical-escalate', repeat('1', 64), repeat('2', 64),
+                        'escalate', 'agent:requester', 'control-plane.agent.create',
+                        'control-plane', 'policy-historical', 'v1', repeat('3', 64),
+                        repeat('4', 64), 'key-historical', 'ed25519', 'native',
+                        'gove-zone', now(), now() + interval '5 minutes',
+                        '{}'::jsonb, now()
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO approval_requests (
+                        id, org_id, project_id, environment_id, action,
+                        requester_actor_hash, validator_role, authority, approver_role,
+                        argument_hash, request_hash, policy_bundle_id, policy_version,
+                        policy_hash, policy_head_generation, trust_epoch,
+                        execution_boundary, escalate_receipt_id, escalate_receipt_hash,
+                        escalate_audit_event_hash, quorum_threshold, sealed_arguments,
+                        aad, status, created_at, expires_at
+                    ) VALUES (
+                        'approval-request-historical-vote', 'org-historical-vote',
+                        'project-historical-vote', 'environment-historical-vote',
+                        'control-plane.agent.create', repeat('5', 64), 'policy_author',
+                        'agent.register', 'org_admin', repeat('6', 128), repeat('7', 64),
+                        'policy-historical', 'v1', repeat('8', 64), 1, 1,
+                        'control-plane', 'receipt-historical-escalate',
+                        repeat('1', 64), repeat('2', 64), 1, '{}'::jsonb,
+                        '{}'::jsonb, 'pending', now(), now() + interval '1 hour'
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO approval_votes (
+                        id, org_id, project_id, environment_id, approval_request_id,
+                        approver_actor_hash, approver_role, decision,
+                        idempotency_key_hash, vote_hash, created_at
+                    ) VALUES (
+                        'historical-vote-0009', 'org-historical-vote',
+                        'project-historical-vote', 'environment-historical-vote',
+                        'approval-request-historical-vote', repeat('9', 64),
+                        'org_admin', 'approve', repeat('a', 64), repeat('b', 64),
+                        now()
+                    )
+                    """
+                )
+            )
+        with engine.connect() as connection:
+            before_columns = {
+                column["name"]
+                for column in sa.inspect(connection).get_columns("approval_votes", schema="public")
+            }
+            before_counts = {
+                table_name: int(connection.scalar(sa.text(f"SELECT count(*) FROM {table_name}")))
+                for table_name in (
+                    "managed_decision_receipts",
+                    "approval_requests",
+                    "approval_votes",
+                )
+            }
+    finally:
+        engine.dispose()
+
+    assert "approver_credential_hash" not in before_columns
+    assert {"vote_receipt_id", "vote_receipt_hash", "vote_audit_event_hash"}.isdisjoint(
+        before_columns
+    )
+    assert before_counts == {
+        "managed_decision_receipts": 1,
+        "approval_requests": 1,
+        "approval_votes": 1,
+    }
+
+    with pytest.raises(RuntimeError, match="historical approval_votes"):
+        upgrade_database(database_url, expected_database=expected_database)
+
+    assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+    assert _head_version(database_url) == migration_module.APPROVAL_SUBSTRATE_REVISION
+    engine = make_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            after_columns = {
+                column["name"]
+                for column in sa.inspect(connection).get_columns("approval_votes", schema="public")
+            }
+            after_counts = {
+                table_name: int(connection.scalar(sa.text(f"SELECT count(*) FROM {table_name}")))
+                for table_name in before_counts
+            }
+    finally:
+        engine.dispose()
+    assert after_columns == before_columns
+    assert after_counts == before_counts
 
 
 def test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps(
@@ -472,7 +628,7 @@ def test_immutable_0004_upgrade_defers_managed_ledger_constraints_and_bootstraps
 
     existing_result = upgrade_database(database_url, expected_database=expected_database)
     assert existing_result.before.state is DatabaseSchemaState.VERSION_0004
-    assert existing_result.after.state is DatabaseSchemaState.VERSION_0009
+    assert existing_result.after.state is DatabaseSchemaState.VERSION_0010
     assert _head_version(database_url) == HEAD_REVISION
     assert all(_constraint_deferrability(database_url, managed_constraints).values())
 
@@ -523,7 +679,7 @@ def test_mixed_version_rolling_compatibility(
         rolling_pg.test_candidate_old_app_remains_org_scoped_across_exact_operator_upgrade(
             engine, tmp_path
         )
-        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0009
+        assert inspect_schema(database_url).state is DatabaseSchemaState.VERSION_0010
         assert _head_version(database_url) == HEAD_REVISION
     finally:
         engine.dispose()
@@ -683,7 +839,7 @@ def test_large_table_online_migration_budget(monkeypatch: pytest.MonkeyPatch) ->
         assert overlapping.started_at <= actual_upgrade_interval["finished_at"]
         assert overlapping.finished_at >= actual_upgrade_interval["started_at"]
     assert result.before.state is DatabaseSchemaState.LEGACY_V0
-    assert result.after.state is DatabaseSchemaState.VERSION_0009
+    assert result.after.state is DatabaseSchemaState.VERSION_0010
     assert elapsed < _MIGRATION_ELAPSED_BUDGET_SECONDS
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows
 
@@ -785,7 +941,7 @@ def test_irreversible_restore_rehearsal(tmp_path: Path) -> None:
         )
         assert created == verified == restored
         assert _capture_database_state_url(target_url) == expected_state
-        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0009
+        assert inspect_schema(target_url).state is DatabaseSchemaState.VERSION_0010
 
         target_before_refusal = _capture_database_state_url(target_url)
         with pytest.raises(RecoveryRefused, match="must have an exact empty"):
@@ -846,6 +1002,6 @@ def test_failed_migration_no_later_state(monkeypatch: pytest.MonkeyPatch) -> Non
 
     retried = upgrade_database(database_url, expected_database=_EXPECTED_DATABASES[_MAIN_ENV])
     assert retried.before.state is DatabaseSchemaState.LEGACY_V0
-    assert retried.after.state is DatabaseSchemaState.VERSION_0009
+    assert retried.after.state is DatabaseSchemaState.VERSION_0010
     assert _head_version(database_url) == HEAD_REVISION
     assert _rows(database_url, _LEGACY_TABLES) == legacy_rows

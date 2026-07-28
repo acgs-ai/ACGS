@@ -15,6 +15,7 @@ from gove_zone.decision import sha256_json
 from gove_zone.policy import RuleSetPolicy
 from gove_zone.receipt import DecisionReceipt, safe_result_hash
 from gove_zone.trust import DECISION_RECEIPT_PURPOSE, ReceiptTrustScope
+from sqlalchemy.exc import IntegrityError
 
 import acgs_control_plane.approvals as approvals_module
 from acgs_control_plane.agent_registration import (
@@ -535,6 +536,7 @@ def test_agent_register_route_refusal_matrix_has_zero_managed_side_effects(
 
 def test_approval_vote_and_resume_route_execute_parked_agent_registration_once(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, client = _migrated_client(tmp_path)
     org = _bootstrap_org(client)
@@ -595,6 +597,37 @@ def test_approval_vote_and_resume_route_execute_parked_agent_registration_once(
     assert resumed["trust_tier"] == "internal"
     assert resumed["allowed_tools"] == ["deploy.staging"]
     assert resumed["receipt_id"]
+    before_replay = _approval_counts(app, org["org_id"])
+    status_mutation = client.patch(
+        f"/orgs/{org['org_id']}/agents/{resumed['agent_id']}/status",
+        json={"status": "suspended"},
+        headers={k: v for k, v in approver_headers.items() if k != BOOTSTRAP_IDEMPOTENCY_HEADER},
+    )
+    assert status_mutation.status_code == 200, status_mutation.text
+    assert status_mutation.json()["status"] == "suspended"
+    with app.state.session_factory() as session:
+        request = session.get(ApprovalRequest, approval_request_id)
+        assert request is not None
+        expired_now = _to_utc(request.expires_at) + timedelta(minutes=1)
+    monkeypatch.setattr(approvals_module, "utcnow", lambda: expired_now)
+
+    vote_replay_after_expiry = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=approver_headers,
+    )
+    assert vote_replay_after_expiry.status_code == 200, vote_replay_after_expiry.text
+    assert vote_replay_after_expiry.json() == vote.json()
+    fresh_vote_after_expiry = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers={
+            **{k: v for k, v in approver_headers.items() if k != BOOTSTRAP_IDEMPOTENCY_HEADER},
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "approval-flow-vote-0002",
+        },
+    )
+    assert fresh_vote_after_expiry.status_code == 409, fresh_vote_after_expiry.text
+    assert _approval_counts(app, org["org_id"]) == before_replay
 
     replay = client.post(
         f"/orgs/{org['org_id']}/approvals/{approval_request_id}/resume",
@@ -602,6 +635,8 @@ def test_approval_vote_and_resume_route_execute_parked_agent_registration_once(
     )
     assert replay.status_code == 201, replay.text
     assert replay.json() == resumed
+    after_replay = _approval_counts(app, org["org_id"])
+    assert after_replay == before_replay
 
     second_resume = client.post(
         f"/orgs/{org['org_id']}/approvals/{approval_request_id}/resume",
@@ -638,6 +673,200 @@ def test_approval_vote_and_resume_route_execute_parked_agent_registration_once(
         assert _count(session, ApprovalResumeAuthorization) == 1
         assert _count(session, ManagedReceiptConsumption) == 2
         assert _count(session, AgentRecord) == 1
+
+
+@pytest.mark.parametrize("mutation", ["consumption", "outcome"])
+def test_approval_vote_replay_fails_closed_when_vote_evidence_is_tampered(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-replay-tamper-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-replay-tamper-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    vote_headers = {
+        **_create_user(client, org, role="org_admin"),
+        BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-replay-tamper-vote-0001",
+    }
+    vote = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=vote_headers,
+    )
+    assert vote.status_code == 200, vote.text
+    with app.state.session_factory.begin() as session:
+        request = session.get(ApprovalRequest, approval_request_id)
+        assert request is not None
+        vote_row = session.scalars(sa.select(ApprovalVote)).one()
+        receipt = _vote_receipt_for_vote(session, request, vote_row)
+        if mutation == "consumption":
+            session.delete(_consumption_for_receipt(session, receipt))
+        else:
+            outcome = session.scalars(sa.select(ApprovalOutcome)).one()
+            outcome.outcome = "rejected"
+    before = _approval_counts(app, org["org_id"])
+
+    replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=vote_headers,
+    )
+
+    if mutation == "outcome":
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["outcome"] == "approved"
+    else:
+        assert replay.status_code == 503, replay.text
+        assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    after = _approval_counts(app, org["org_id"])
+    assert after["votes"] == before["votes"]
+    assert after["outcomes"] == before["outcomes"]
+    assert after["approval_vote_receipts"] == before["approval_vote_receipts"]
+    assert after["agents"] == before["agents"]
+
+
+def test_approval_vote_allow_path_replays_refusal_after_stale_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-mixed-race-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-mixed-race-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    _replace_active_policy_direct(
+        app,
+        org["org_id"],
+        rules=[
+            {
+                "id": "deny-approval-vote-mixed-race",
+                "effect": "deny",
+                "tools": [CONTROL_PLANE_APPROVAL_VOTE_ACTION],
+                "reason": "approval vote mixed race",
+            }
+        ],
+    )
+    approver = _create_user(client, org, role="org_admin")
+    headers = {
+        **approver,
+        BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-mixed-race-key-0001",
+    }
+    refusal = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert refusal.status_code == 403, refusal.text
+    assert refusal.json()["code"] == "POLICY_DENIED"
+    _replace_active_policy_direct(app, org["org_id"], rules=_rules_for_policy("allow"))
+    original_lookup_refusal = approvals_module._lookup_vote_refusal
+    hidden_once = False
+
+    def hide_refusal_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal hidden_once
+        if not hidden_once:
+            hidden_once = True
+            return None
+        return original_lookup_refusal(*args, **kwargs)
+
+    monkeypatch.setattr(approvals_module, "_lookup_vote_refusal", hide_refusal_once)
+    before = _approval_counts(app, org["org_id"])
+
+    replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+
+    assert replay.status_code == 403, replay.text
+    assert replay.json()["code"] == "POLICY_DENIED"
+    after = _approval_counts(app, org["org_id"])
+    assert after["votes"] == before["votes"]
+    assert after["outcomes"] == before["outcomes"]
+    assert after["approval_vote_receipts"] == before["approval_vote_receipts"]
+    assert after["consumptions"] == before["consumptions"]
+    assert after["agents"] == before["agents"]
+
+
+def test_approval_vote_unique_request_actor_survives_credential_rotation(
+    tmp_path: Path,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-rotation-duplicate-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-rotation-duplicate-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    first_key = _create_user(client, org, role="org_admin")
+    first_vote = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers={
+            **first_key,
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-rotation-duplicate-vote-0001",
+        },
+    )
+    assert first_vote.status_code == 200, first_vote.text
+    before = _approval_counts(app, org["org_id"])
+
+    with pytest.raises(IntegrityError), app.state.session_factory.begin() as session:
+        request = session.get(ApprovalRequest, approval_request_id)
+        assert request is not None
+        vote = session.scalars(sa.select(ApprovalVote)).one()
+        session.add(
+            ApprovalVote(
+                id=new_id(),
+                org_id=vote.org_id,
+                project_id=vote.project_id,
+                environment_id=vote.environment_id,
+                approval_request_id=vote.approval_request_id,
+                approver_actor_hash=vote.approver_actor_hash,
+                approver_credential_hash="0" * 64,
+                approver_role=vote.approver_role,
+                decision=vote.decision,
+                idempotency_key_hash="1" * 64,
+                vote_receipt_id=None,
+                vote_receipt_hash=None,
+                vote_audit_event_hash=None,
+                vote_hash=sha256_json(
+                    {
+                        "schema": "approval-vote/v1",
+                        "approval_request_id": request.id,
+                        "request_hash": request.request_hash,
+                        "approver_actor_hash": vote.approver_actor_hash,
+                        "approver_credential_hash": "0" * 64,
+                        "decision": vote.decision,
+                    }
+                ),
+                vote_replay_seal={},
+            )
+        )
+        session.flush()
+
+    after = _approval_counts(app, org["org_id"])
+    assert after["votes"] == before["votes"]
+    assert after["outcomes"] == before["outcomes"]
+    assert after["approval_vote_receipts"] == before["approval_vote_receipts"]
+    assert after["consumptions"] == before["consumptions"]
+    assert after["agents"] == before["agents"]
 
 
 def test_approval_resume_idempotency_replay_survives_trust_rotation(
@@ -867,7 +1096,7 @@ def test_approval_resume_replay_fails_closed_when_caller_changes_after_auth(
     assert after == before
 
 
-@pytest.mark.parametrize("mutation", ["inactive", "deleted", "role_loss"])
+@pytest.mark.parametrize("mutation", ["inactive", "deleted", "role_loss", "credential_rotation"])
 def test_approval_resume_fails_closed_when_vote_approver_is_stale(
     tmp_path: Path,
     mutation: str,
@@ -888,6 +1117,8 @@ def test_approval_resume_fails_closed_when_vote_approver_is_stale(
             voter.active = False
         elif mutation == "role_loss":
             voter.role = "viewer"
+        elif mutation == "credential_rotation":
+            voter.api_key_hash = "0" * 64
         elif mutation != "deleted":  # pragma: no cover - parametrization guard
             raise AssertionError(f"unsupported stale approver mutation: {mutation}")
     if mutation == "deleted":
@@ -990,7 +1221,10 @@ def test_approval_resume_fails_closed_when_request_binding_is_tampered(
     after = _approval_counts(app, org["org_id"])
     assert after["agents"] == before["agents"]
     assert after["agent_receipts"] == before["agent_receipts"]
-    assert after["consumptions"] == before["consumptions"]
+    if mutation == "consumption":
+        assert after["consumptions"] == before["consumptions"] - 1
+    else:
+        assert after["consumptions"] == before["consumptions"]
 
 
 def test_approval_resume_fails_closed_when_request_expiry_exceeds_source_receipt_expiry(
@@ -1077,7 +1311,16 @@ def test_approval_resume_fails_closed_when_votes_deleted_or_outcome_forged(
     assert after["consumptions"] == before["consumptions"]
 
 
-@pytest.mark.parametrize("mutation", ["missing_consumption", "missing_attempt", "failed_attempt"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_binding",
+        "wrong_vote_receipt_hash",
+        "missing_consumption",
+        "missing_attempt",
+        "failed_attempt",
+    ],
+)
 def test_approval_resume_fails_closed_when_vote_execution_evidence_is_invalid(
     tmp_path: Path,
     mutation: str,
@@ -1089,7 +1332,11 @@ def test_approval_resume_fails_closed_when_vote_execution_evidence_is_invalid(
         assert request is not None
         vote = session.scalars(sa.select(ApprovalVote)).one()
         receipt = _vote_receipt_for_vote(session, request, vote)
-        if mutation == "missing_consumption":
+        if mutation == "missing_binding":
+            vote.vote_receipt_id = None
+        elif mutation == "wrong_vote_receipt_hash":
+            vote.vote_receipt_hash = "0" * 64
+        elif mutation == "missing_consumption":
             session.delete(_consumption_for_receipt(session, receipt))
         elif mutation == "missing_attempt":
             session.delete(_attempt_for_receipt(session, receipt))
@@ -1424,7 +1671,203 @@ def test_approval_vote_denial_records_non_executable_evidence_without_vote(
         assert _count(session, ManagedOutboxMessage) == before["outbox"] + 1
 
 
-@pytest.mark.parametrize("mutation", ["receipt", "consumption", "event", "outbox", "agent_scope"])
+@pytest.mark.parametrize(
+    "tamper_case",
+    [
+        "valid",
+        "missing_committed_refusal",
+        "missing_sealed_artifact",
+        "receipt_hash",
+        "event_payload",
+        "missing_outbox",
+    ],
+)
+def test_approval_vote_refusal_replay_validates_committed_evidence(
+    tmp_path: Path,
+    tamper_case: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, client = _migrated_client(tmp_path, label=f"vote-refusal-replay-{tamper_case}")
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": f"vote-refusal-replay-{tamper_case}-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, f"vote-refusal-replay-request-{tamper_case}-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    _replace_active_policy_direct(
+        app,
+        org["org_id"],
+        rules=[
+            {
+                "id": f"deny-approval-vote-refusal-replay-{tamper_case}",
+                "effect": "deny",
+                "tools": [CONTROL_PLANE_APPROVAL_VOTE_ACTION],
+                "reason": "approval vote refusal replay integrity",
+            }
+        ],
+    )
+    approver = _create_user(client, org, role="org_admin")
+    headers = {
+        **approver,
+        BOOTSTRAP_IDEMPOTENCY_HEADER: f"vote-refusal-replay-{tamper_case}-0001",
+    }
+    if tamper_case == "missing_committed_refusal":
+
+        class UsedReceiptWithoutCommittedRefusal:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            def record_non_executable_evidence(self, *args: Any, **kwargs: Any) -> None:
+                raise approvals_module.ReceiptAlreadyUsedError("f" * 64)
+
+        monkeypatch.setattr(
+            approvals_module,
+            "ManagedMutationUnitOfWork",
+            UsedReceiptWithoutCommittedRefusal,
+        )
+        before = _approval_counts(app, org["org_id"])
+        refused = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers=headers,
+        )
+        assert refused.status_code == 503, refused.text
+        assert refused.json()["code"] == "TX_ABORTED"
+        after = _approval_counts(app, org["org_id"])
+        assert after == before
+        return
+
+    first = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+    assert first.status_code == 403, first.text
+    assert first.json()["code"] == "POLICY_DENIED"
+    if tamper_case == "valid":
+        before = _approval_counts(app, org["org_id"])
+        replay = client.post(
+            f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+            json={"decision": "approve"},
+            headers=headers,
+        )
+        assert replay.status_code == 403, replay.text
+        assert replay.json()["code"] == "POLICY_DENIED"
+        after = _approval_counts(app, org["org_id"])
+        assert after == before
+        return
+
+    with app.state.session_factory.begin() as session:
+        receipt = _approval_vote_refusal_receipt(session)
+        if tamper_case == "missing_sealed_artifact":
+            receipt.projection = {
+                key: value for key, value in receipt.projection.items() if key != "sealed_receipt"
+            }
+        elif tamper_case == "receipt_hash":
+            receipt.receipt_hash = "f" * 64
+        elif tamper_case == "event_payload":
+            event = _event_for_receipt(session, receipt)
+            event.payload = {**event.payload, "receipt_hash": "f" * 64}
+        elif tamper_case == "missing_outbox":
+            event = _event_for_receipt(session, receipt)
+            session.delete(
+                session.scalars(
+                    sa.select(ManagedOutboxMessage).where(
+                        ManagedOutboxMessage.managed_event_id == event.id
+                    )
+                ).one()
+            )
+        else:  # pragma: no cover - parametrization guard
+            raise AssertionError(f"unsupported refusal replay tamper case: {tamper_case}")
+    before = _approval_counts(app, org["org_id"])
+
+    replay = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers=headers,
+    )
+
+    assert replay.status_code == 503, replay.text
+    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    after = _approval_counts(app, org["org_id"])
+    assert after == before
+
+
+def test_approval_vote_fails_closed_when_active_policy_changes_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, client = _migrated_client(tmp_path)
+    org = _bootstrap_org(client)
+    _seed_default_scope_and_trust(app, org["org_id"])
+    _publish_and_activate(client, org, rules=_rules_for_policy("escalate"))
+    request_resp = client.post(
+        f"/orgs/{org['org_id']}/agents",
+        json={"name": "vote-policy-race-bot", "trust_tier": "internal"},
+        headers=_agent_headers(org, "vote-policy-race-request-0001"),
+    )
+    assert request_resp.status_code == 202, request_resp.text
+    approval_request_id = request_resp.json()["approval_request_id"]
+    original_issue_receipt = approvals_module._issue_receipt
+    swapped = False
+
+    def issue_then_replace_policy(*args: Any, **kwargs: Any) -> Any:
+        nonlocal swapped
+        receipt = original_issue_receipt(*args, **kwargs)
+        context = kwargs.get("context")
+        if (
+            not swapped
+            and context is not None
+            and context.action == CONTROL_PLANE_APPROVAL_VOTE_ACTION
+        ):
+            swapped = True
+            _replace_active_policy_direct(app, org["org_id"], rules=_rules_for_policy("deny"))
+        return receipt
+
+    monkeypatch.setattr(approvals_module, "_issue_receipt", issue_then_replace_policy)
+    before = _approval_counts(app, org["org_id"])
+    approver = _create_user(client, org, role="org_admin")
+
+    resp = client.post(
+        f"/orgs/{org['org_id']}/approvals/{approval_request_id}/votes",
+        json={"decision": "approve"},
+        headers={
+            **approver,
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "vote-policy-race-0001",
+        },
+    )
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["code"] == "APPROVAL_POLICY_STALE"
+    after = _approval_counts(app, org["org_id"])
+    assert after["votes"] == before["votes"]
+    assert after["outcomes"] == before["outcomes"]
+    assert after["agents"] == before["agents"]
+    assert after["approval_vote_receipts"] == before["approval_vote_receipts"]
+    assert after["consumptions"] == before["consumptions"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "receipt",
+        "consumption",
+        "event",
+        "outbox",
+        "agent_scope",
+        "response",
+        "seal",
+        "seal_key",
+        "seal_aad",
+        "forged_result_response_rehashed",
+        "idempotency_key_swap",
+        "different_resumer",
+    ],
+)
 def test_approval_resume_replay_fails_closed_when_committed_projection_is_tampered(
     tmp_path: Path,
     mutation: str,
@@ -1441,6 +1884,7 @@ def test_approval_resume_replay_fails_closed_when_committed_projection_is_tamper
     )
     assert first.status_code == 201, first.text
     before = _approval_counts(app, org["org_id"])
+    replay_headers = dict(headers)
     with app.state.session_factory.begin() as session:
         resume = session.scalars(sa.select(ApprovalResumeAuthorization)).one()
         if mutation == "receipt":
@@ -1480,8 +1924,59 @@ def test_approval_resume_replay_fails_closed_when_committed_projection_is_tamper
             payload = dict(outbox.payload)
             payload["result_hash"] = "0" * 64
             outbox.payload = payload
+        elif mutation == "response":
+            response_payload = dict(resume.resume_response)
+            response_payload["name"] = "tampered-response-name"
+            resume.resume_response = response_payload
+        elif mutation == "seal":
+            seal = dict(resume.resume_replay_seal)
+            seal["ciphertext"] = "AA=="
+            resume.resume_replay_seal = seal
+        elif mutation == "seal_key":
+            seal = dict(resume.resume_replay_seal)
+            seal["key_id"] = "wrong-approval-payload-key"
+            resume.resume_replay_seal = seal
+        elif mutation == "seal_aad":
+            seal = dict(resume.resume_replay_seal)
+            seal["associated_data_sha256"] = "0" * 64
+            resume.resume_replay_seal = seal
+        elif mutation == "forged_result_response_rehashed":
+            response_payload = dict(resume.resume_response)
+            response_payload["status"] = "suspended"
+            resume.resume_response = response_payload
+            resume.resume_response_hash = sha256_json(response_payload)
+            result_payload = dict(resume.resume_result)
+            result_payload["status"] = "suspended"
+            resume.resume_result = result_payload
+            resume.resume_result_hash = safe_result_hash(result_payload)
+            event = session.scalars(
+                sa.select(ManagedGovernanceEvent).where(
+                    ManagedGovernanceEvent.event_hash == resume.resume_audit_event_hash
+                )
+            ).one()
+            event_payload = dict(event.payload)
+            event_payload["result_hash"] = resume.resume_result_hash
+            event.payload = event_payload
+            _recompute_event_and_outbox_hashes(session, event, resume=resume, update_head=True)
+        elif mutation == "idempotency_key_swap":
+            resume.idempotency_key_hash = approvals_module._idempotency_storage_key(
+                org_id=org["org_id"],
+                approval_request_id=approval_request_id,
+                key="replay-integrity-resume-0002",
+            )
         else:
             pass
+    if mutation == "idempotency_key_swap":
+        replay_headers = {
+            **{k: v for k, v in headers.items() if k != BOOTSTRAP_IDEMPOTENCY_HEADER},
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "replay-integrity-resume-0002",
+        }
+    elif mutation == "different_resumer":
+        other = _create_user(client, org, role="org_admin")
+        replay_headers = {
+            **other,
+            BOOTSTRAP_IDEMPOTENCY_HEADER: "replay-integrity-resume-0001",
+        }
     if mutation == "agent_scope":
         raw_connection = app.state.engine.raw_connection()
         try:
@@ -1499,14 +1994,22 @@ def test_approval_resume_replay_fails_closed_when_committed_projection_is_tamper
 
     replay = client.post(
         f"/orgs/{org['org_id']}/approvals/{approval_request_id}/resume",
-        headers=headers,
+        headers=replay_headers,
     )
 
-    assert replay.status_code == 503, replay.text
-    assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
+    if mutation == "different_resumer":
+        assert replay.status_code == 403, replay.text
+        assert replay.json()["code"] == "APPROVAL_REPLAY_FORBIDDEN"
+    else:
+        assert replay.status_code == 503, replay.text
+        assert replay.json()["code"] == "IDEMPOTENCY_RECORD_INVALID"
     after = _approval_counts(app, org["org_id"])
     assert after["agents"] == before["agents"]
     assert after["agent_receipts"] == before["agent_receipts"]
+    if mutation == "consumption":
+        assert after["consumptions"] == before["consumptions"] - 1
+    else:
+        assert after["consumptions"] == before["consumptions"]
 
 
 @pytest.mark.parametrize("mutation", ["missing_attempt", "failed_attempt", "wrong_scope"])
@@ -2637,6 +3140,18 @@ def _approval_counts(app: Any, org_id: str) -> dict[str, int]:
                 )
                 or 0
             ),
+            "approval_vote_receipts": int(
+                session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(ManagedDecisionReceipt)
+                    .where(
+                        ManagedDecisionReceipt.org_id == org_id,
+                        ManagedDecisionReceipt.proposed_action
+                        == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
+                    )
+                )
+                or 0
+            ),
             "all_receipts": int(
                 session.scalar(
                     sa.select(sa.func.count())
@@ -2756,21 +3271,26 @@ def _vote_receipt_for_vote(
     request: ApprovalRequest,
     vote: ApprovalVote,
 ) -> ManagedDecisionReceipt:
+    assert vote.vote_receipt_id
+    assert vote.vote_receipt_hash
+    assert vote.vote_audit_event_hash
     return session.scalars(
         sa.select(ManagedDecisionReceipt).where(
             ManagedDecisionReceipt.org_id == request.org_id,
             ManagedDecisionReceipt.project_id == request.project_id,
             ManagedDecisionReceipt.environment_id == request.environment_id,
+            ManagedDecisionReceipt.receipt_id == vote.vote_receipt_id,
+            ManagedDecisionReceipt.receipt_hash == vote.vote_receipt_hash,
+            ManagedDecisionReceipt.audit_event_hash == vote.vote_audit_event_hash,
+        )
+    ).one()
+
+
+def _approval_vote_refusal_receipt(session: Any) -> ManagedDecisionReceipt:
+    return session.scalars(
+        sa.select(ManagedDecisionReceipt).where(
             ManagedDecisionReceipt.proposed_action == CONTROL_PLANE_APPROVAL_VOTE_ACTION,
-            ManagedDecisionReceipt.argument_hash
-            == sha256_json(
-                {
-                    "approval_request_id": request.id,
-                    "decision": vote.decision,
-                    "request_hash": request.request_hash,
-                }
-            ),
-            ManagedDecisionReceipt.decision == "allow",
+            ManagedDecisionReceipt.decision.in_(("deny", "escalate")),
         )
     ).one()
 

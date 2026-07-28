@@ -43,7 +43,8 @@ AGENT_SCOPE_REVISION: Final = "0006"
 AGENT_REGISTRATION_IDEMPOTENCY_REVISION: Final = "0007"
 POLICY_REGISTRY_REVISION: Final = "0008"
 APPROVAL_SUBSTRATE_REVISION: Final = "0009"
-HEAD_REVISION: Final = APPROVAL_SUBSTRATE_REVISION
+APPROVAL_VOTE_BINDING_REVISION: Final = "0010"
+HEAD_REVISION: Final = APPROVAL_VOTE_BINDING_REVISION
 _VERSION_TABLE = "alembic_version"
 _ALEMBIC_VERSION_TABLE: Final = sa.table(_VERSION_TABLE, sa.column("version_num"))
 _SCOPE_TABLES: Final = MappingProxyType(
@@ -86,6 +87,7 @@ class DatabaseSchemaState(StrEnum):
     VERSION_0007 = "version_0007"
     VERSION_0008 = "version_0008"
     VERSION_0009 = "version_0009"
+    VERSION_0010 = "version_0010"
     UNKNOWN = "unknown"
 
 
@@ -110,7 +112,7 @@ class StartupSchemaPreflightError(RuntimeError):
     def __init__(self, preflight: SchemaPreflight) -> None:
         self.schema_state = preflight.state
         super().__init__(
-            f"{self.code}: expected {DatabaseSchemaState.VERSION_0009.value}; "
+            f"{self.code}: expected {DatabaseSchemaState.VERSION_0010.value}; "
             f"found {preflight.state.value}. Run the acgs-control-plane migration CLI."
         )
 
@@ -609,6 +611,11 @@ _APPROVAL_SUBSTRATE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("idempotency_key_hash", "string", False, 64),
         _ColumnSpec("vote_hash", "string", False, 64),
         _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("approver_credential_hash", "string", False, 64),
+        _ColumnSpec("vote_receipt_id", "string", True, 200),
+        _ColumnSpec("vote_receipt_hash", "string", True, 64),
+        _ColumnSpec("vote_audit_event_hash", "string", True, 64),
+        _ColumnSpec("vote_replay_seal", "json", False),
     ),
     "approval_outcomes": (
         _ColumnSpec("id", "string", False, 64),
@@ -634,6 +641,66 @@ _APPROVAL_SUBSTRATE_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
         _ColumnSpec("resume_audit_event_hash", "string", False, 64),
         _ColumnSpec("approval_chain_hash", "string", False, 64),
         _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("resume_argument_hash", "string", False, 128),
+        _ColumnSpec("resumer_actor_hash", "string", False, 64),
+        _ColumnSpec("resumer_credential_hash", "string", False, 64),
+        _ColumnSpec("resumer_role", "string", False, 32),
+        _ColumnSpec("resume_result_hash", "string", False, 128),
+        _ColumnSpec("resume_result", "json", False),
+        _ColumnSpec("resume_response_hash", "string", False, 64),
+        _ColumnSpec("resume_response", "json", False),
+        _ColumnSpec("resume_replay_seal", "json", False),
+    ),
+}
+_APPROVAL_SUBSTRATE_0009_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_APPROVAL_SUBSTRATE_COLUMNS,
+    "approval_votes": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("approver_actor_hash", "string", False, 64),
+        _ColumnSpec("approver_role", "string", False, 32),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("vote_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+    "approval_resume_authorizations": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("resumed_agent_id", "string", False, 64),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("resume_receipt_id", "string", False, 200),
+        _ColumnSpec("resume_receipt_hash", "string", False, 64),
+        _ColumnSpec("resume_audit_event_hash", "string", False, 64),
+        _ColumnSpec("approval_chain_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+    ),
+}
+_APPROVAL_VOTE_BINDING_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
+    **_APPROVAL_SUBSTRATE_COLUMNS,
+    "approval_votes": (
+        _ColumnSpec("id", "string", False, 64),
+        _ColumnSpec("org_id", "string", False, 64),
+        _ColumnSpec("project_id", "string", False, 64),
+        _ColumnSpec("environment_id", "string", False, 64),
+        _ColumnSpec("approval_request_id", "string", False, 64),
+        _ColumnSpec("approver_actor_hash", "string", False, 64),
+        _ColumnSpec("approver_role", "string", False, 32),
+        _ColumnSpec("decision", "string", False, 16),
+        _ColumnSpec("idempotency_key_hash", "string", False, 64),
+        _ColumnSpec("vote_hash", "string", False, 64),
+        _ColumnSpec("created_at", "datetime", False),
+        _ColumnSpec("approver_credential_hash", "string", False, 64),
+        _ColumnSpec("vote_receipt_id", "string", True, 200),
+        _ColumnSpec("vote_receipt_hash", "string", True, 64),
+        _ColumnSpec("vote_audit_event_hash", "string", True, 64),
+        _ColumnSpec("vote_replay_seal", "json", False),
     ),
 }
 _PROJECTS_ONLY_COLUMNS: Final[dict[str, tuple[_ColumnSpec, ...]]] = {
@@ -996,6 +1063,18 @@ _APPROVAL_SUBSTRATE_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] =
         }
     ),
 }
+_APPROVAL_SUBSTRATE_0009_FOREIGN_KEYS: Final = _APPROVAL_SUBSTRATE_FOREIGN_KEYS
+_APPROVAL_VOTE_RECEIPT_FK: Final[_ForeignKeySpec] = (
+    ("org_id", "project_id", "environment_id", "vote_receipt_id"),
+    None,
+    "managed_decision_receipts",
+    ("org_id", "project_id", "environment_id", "receipt_id"),
+)
+_APPROVAL_VOTE_BINDING_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
+    **_APPROVAL_SUBSTRATE_FOREIGN_KEYS,
+    "approval_votes": _APPROVAL_SUBSTRATE_FOREIGN_KEYS["approval_votes"]
+    | frozenset({_APPROVAL_VOTE_RECEIPT_FK}),
+}
 _PROJECTS_ONLY_FOREIGN_KEYS: Final[dict[str, frozenset[_ForeignKeySpec]]] = {
     **_LEGACY_FOREIGN_KEYS,
     "projects": _SCOPED_FOREIGN_KEYS["projects"],
@@ -1190,6 +1269,25 @@ _APPROVAL_SUBSTRATE_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
             ("org_id", "resume_receipt_hash"),
             ("org_id", "resume_audit_event_hash"),
             ("org_id", "approval_request_id", "idempotency_key_hash"),
+        }
+    ),
+}
+_APPROVAL_SUBSTRATE_0009_UNIQUES: Final = _APPROVAL_SUBSTRATE_UNIQUES
+_APPROVAL_VOTE_BINDING_UNIQUES: Final[dict[str, frozenset[tuple[str, ...]]]] = {
+    **_APPROVAL_SUBSTRATE_UNIQUES,
+    "approval_votes": frozenset(
+        {
+            (
+                "org_id",
+                "project_id",
+                "environment_id",
+                "approval_request_id",
+                "approver_actor_hash",
+            ),
+            ("org_id", "approval_request_id", "idempotency_key_hash"),
+            ("org_id", "project_id", "environment_id", "vote_receipt_id"),
+            ("org_id", "project_id", "environment_id", "vote_receipt_hash"),
+            ("org_id", "project_id", "environment_id", "vote_audit_event_hash"),
         }
     ),
 }
@@ -1711,20 +1809,35 @@ def inspect_connection(connection: Connection) -> SchemaPreflight:
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0008, "known Alembic revision 0008")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
-    if versions == [HEAD_REVISION]:
+    if versions == [APPROVAL_SUBSTRATE_REVISION]:
         detail = _schema_detail(
             inspector,
             user_tables,
-            _APPROVAL_SUBSTRATE_COLUMNS,
+            _APPROVAL_SUBSTRATE_0009_COLUMNS,
             _APPROVAL_SUBSTRATE_PRIMARY_KEYS,
-            _APPROVAL_SUBSTRATE_FOREIGN_KEYS,
-            _APPROVAL_SUBSTRATE_UNIQUES,
+            _APPROVAL_SUBSTRATE_0009_FOREIGN_KEYS,
+            _APPROVAL_SUBSTRATE_0009_UNIQUES,
             _APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES,
             _APPROVAL_SUBSTRATE_CHECKS,
             _APPROVAL_SUBSTRATE_UNIQUE_INDEXES,
         )
         if detail is None:
             return SchemaPreflight(DatabaseSchemaState.VERSION_0009, "known Alembic revision 0009")
+        return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
+    if versions == [HEAD_REVISION]:
+        detail = _schema_detail(
+            inspector,
+            user_tables,
+            _APPROVAL_VOTE_BINDING_COLUMNS,
+            _APPROVAL_SUBSTRATE_PRIMARY_KEYS,
+            _APPROVAL_VOTE_BINDING_FOREIGN_KEYS,
+            _APPROVAL_VOTE_BINDING_UNIQUES,
+            _APPROVAL_SUBSTRATE_NON_UNIQUE_INDEXES,
+            _APPROVAL_SUBSTRATE_CHECKS,
+            _APPROVAL_SUBSTRATE_UNIQUE_INDEXES,
+        )
+        if detail is None:
+            return SchemaPreflight(DatabaseSchemaState.VERSION_0010, "known Alembic revision 0010")
         return SchemaPreflight(DatabaseSchemaState.UNKNOWN, detail)
 
     return SchemaPreflight(
@@ -1740,7 +1853,7 @@ def assert_current_startup_schema(connection: Connection) -> SchemaPreflight:
     stamps, upgrades, creates, repairs, or otherwise mutates schema or data.
     """
     preflight = inspect_connection(connection)
-    if preflight.state is not DatabaseSchemaState.VERSION_0009:
+    if preflight.state is not DatabaseSchemaState.VERSION_0010:
         raise StartupSchemaPreflightError(preflight)
     return preflight
 
@@ -1843,7 +1956,7 @@ def _upgrade_database_with_independent_connections(database_url: str) -> Migrati
             lambda: command.upgrade(config, "head"),
         )
     after = inspect_schema(database_url)
-    if after.state is not DatabaseSchemaState.VERSION_0009:
+    if after.state is not DatabaseSchemaState.VERSION_0010:
         msg = f"Migration ended in unexpected schema state: {after.state} ({after.detail})"
         raise MigrationPreflightError(msg)
     return MigrationResult(before=before, after=after)
@@ -1905,7 +2018,7 @@ def _upgrade_postgresql_database(
                         )
 
                     after = inspect_connection(connection)
-                    if after.state is not DatabaseSchemaState.VERSION_0009:
+                    if after.state is not DatabaseSchemaState.VERSION_0010:
                         msg = (
                             "Migration ended in unexpected schema state: "
                             f"{after.state} ({after.detail})"
