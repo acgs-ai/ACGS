@@ -25,6 +25,7 @@ from gove_zone.trust import (
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from acgs_control_plane.auth import generate_api_key
 from acgs_control_plane.managed_mutations import (
     ASSURANCE_CLASS_NATIVE,
     TENANT_BOOTSTRAP_ACTION,
@@ -753,6 +754,7 @@ class TenantBootstrapService:
         except BootstrapRefusalError as exc:
             raise _map_executor_refusal(exc) from exc
         holder: dict[str, TenantBootstrapResponse] = {}
+        one_time_secrets: dict[str, str] = {}
         uow = ManagedMutationUnitOfWork(
             self._session_factory,
             receipt_sealer=providers.receipt_sealer,
@@ -817,12 +819,14 @@ class TenantBootstrapService:
                 environment_id=context.environment_id,
                 owner_user_id=args["owner_user_id"],
                 owner_membership_id=args["owner_membership_id"],
+                owner_api_key=one_time_secrets["owner_api_key"],
                 receipt_id=receipt_row.receipt_id,
                 receipt_hash=receipt_row.receipt_hash,
                 event_hash=event.event_hash,
                 idempotency_key=idempotency_key,
                 assurance_class=ASSURANCE_CLASS_NATIVE,
             )
+            replay_response = response.model_copy(update={"owner_api_key": None})
             session.add(
                 TenantBootstrapIdempotency(
                     id=new_id(),
@@ -832,7 +836,7 @@ class TenantBootstrapService:
                     org_id=context.org_id,
                     project_id=context.project_id,
                     environment_id=context.environment_id,
-                    response=response.model_dump(),
+                    response=replay_response.model_dump(),
                 )
             )
             holder["response"] = response
@@ -852,6 +856,7 @@ class TenantBootstrapService:
                     args=cast(dict[str, str], verified_args),
                     actor=actor,
                     context=context,
+                    one_time_secrets=one_time_secrets,
                 ),
                 trust_registry=providers.trust_registry,
                 trust_purpose=PLATFORM_BOOTSTRAP_RECEIPT_PURPOSE,
@@ -1266,6 +1271,7 @@ def _insert_domain_rows(
     body: TenantBootstrapRequest,
     args: dict[str, str],
     actor: str,
+    owner_api_key_hash: str,
 ) -> None:
     org = Organization(id=invitation.prospective_org_id, name=body.display_name.strip())
     project = Project(
@@ -1287,7 +1293,7 @@ def _insert_domain_rows(
         name=body.admin_name.strip(),
         email=str(body.admin_email).lower(),
         role="org_admin",
-        api_key_hash=None,
+        api_key_hash=owner_api_key_hash,
     )
     membership = OrganizationMembership(
         id=invitation.prospective_membership_id,
@@ -1310,6 +1316,7 @@ def _execute_bootstrap_effect(
     args: dict[str, str],
     actor: str,
     context: ManagedMutationContext,
+    one_time_secrets: dict[str, str],
 ) -> dict[str, str]:
     invitation = _locked_invitation(
         session,
@@ -1340,7 +1347,16 @@ def _execute_bootstrap_effect(
             "ORG_MISMATCH",
             "platform bootstrap invitation scope changed before execution",
         )
-    _insert_domain_rows(session, invitation=invitation, body=body, args=args, actor=actor)
+    owner_api_key, owner_api_key_hash = generate_api_key()
+    one_time_secrets["owner_api_key"] = owner_api_key
+    _insert_domain_rows(
+        session,
+        invitation=invitation,
+        body=body,
+        args=args,
+        actor=actor,
+        owner_api_key_hash=owner_api_key_hash,
+    )
     invitation.consumed_at = utcnow()
     invitation.consumed_org_id = context.org_id
     session.flush()
