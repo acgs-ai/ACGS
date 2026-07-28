@@ -19501,9 +19501,14 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "trusted parent PostgreSQL runner digest mismatch" in pg_runner
     assert "--unshare-pid" in pg_runner
     assert "--unshare-net" not in pg_runner
+    assert "--unshare-user" in pg_runner
+    assert "\n      --disable-userns \\" not in pg_runner
     assert "--proc /proc" in pg_runner
     assert "--new-session" in pg_runner
     assert "--cap-drop ALL" in pg_runner
+    assert (
+        "Intentionally omit outer --disable-userns so the descriptor-validated" in pg_runner
+    )
     assert "open_uv_snapshot_data_fd" in pg_runner
     assert 'open_regular_data_fd postgres-runner "$runner_fd" "$runner_path_stat"' in pg_runner
     assert "mounted_artifact_preflight_env_args_postgres" in pg_runner
@@ -19555,6 +19560,11 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
         "for required_command in bwrap cmp docker git mktemp realpath sha256sum stat tar timeout"
     )
     assert required_commands in reviewed_runner_source
+    assert "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns" in (
+        reviewed_runner_source
+    )
+    assert 'env -i "$bwrap_bin" \\' in reviewed_runner_source
+    assert "bwrap_args=(" in reviewed_runner_source
     assert "timeout --preserve-status 30s docker rm -f" in reviewed_runner_source
     assert 'proof_label="acp-postgres-gate-$(id -u)-$$"' not in reviewed_runner_source
     assert 'nonce_file="$state_dir/proof-nonce.hex"' in reviewed_runner_source
@@ -19618,6 +19628,17 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "timeout --preserve-status 60s docker run -d" in reviewed_runner_source
     assert '--cidfile "$server_cidfile"' in reviewed_runner_source
     assert '--label "acgs.postgres.server=main"' in reviewed_runner_source
+    production_bwrap_args = reviewed_runner_source.split("\nbwrap_args=(\n", 1)[1].split(
+        "\n)\n\n",
+        1,
+    )[0]
+    assert "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns" in (
+        production_bwrap_args
+    )
+    assert "--tmpfs /run" in production_bwrap_args
+    assert "--tmpfs /tmp" in production_bwrap_args
+    assert "/run/docker.sock" not in production_bwrap_args
+    assert "/var/run/docker.sock" not in production_bwrap_args
     assert '--label "acgs.postgres.proof=$proof_label"' in reviewed_runner_source
     assert "--memory 2g" in reviewed_runner_source
     assert "--cpus 2" in reviewed_runner_source
@@ -19740,6 +19761,150 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert 'pytest_output_file="$state_dir/tmp/pytest-output.bin"' in reviewed_runner_source
     assert "pytest_output_sha256={digest.hexdigest()}" in reviewed_runner_source
     assert "pytest command failed: status=%s %s\\n" in reviewed_runner_source
+
+
+def test_clean_sibling_outer_bwrap_allows_reviewed_inner_userns_only(tmp_path: Path) -> None:
+    bwrap = Path("/usr/bin/bwrap")
+    if not bwrap.exists():
+        pytest.skip("/usr/bin/bwrap unavailable")
+    reviewed_runner = ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh"
+    reviewed_runner_source = reviewed_runner.read_text(encoding="utf-8")
+    production_bwrap_args = reviewed_runner_source.split("\nbwrap_args=(\n", 1)[1].split(
+        "\n)\n\n",
+        1,
+    )[0]
+    inner_critical_argv = (
+        "--unshare-all --unshare-user --die-with-parent --new-session --disable-userns",
+        "--proc /proc",
+        "--dev /dev",
+        "--tmpfs /tmp",
+        "--tmpfs /run",
+    )
+    for critical_arg in inner_critical_argv:
+        assert critical_arg in production_bwrap_args
+
+    sentinel = tmp_path / "docker.sock"
+    sentinel_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sentinel_socket.bind(str(sentinel))
+    sentinel_socket.listen(1)
+    outer_argv = [
+        str(bwrap),
+        "--die-with-parent",
+        "--unshare-user",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--new-session",
+        "--cap-drop",
+        "ALL",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--tmpfs",
+        "/run",
+        "--dir",
+        "/run/service",
+        "--dir",
+        "/var",
+        "--symlink",
+        "/run",
+        "/var/run",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/bin",
+        "/bin",
+        "--ro-bind-try",
+        "/lib",
+        "/lib",
+        "--ro-bind-try",
+        "/lib64",
+        "/lib64",
+        "--bind",
+        str(sentinel),
+        "/run/docker.sock",
+        "--",
+    ]
+    inner_bwrap = (
+        "/usr/bin/bwrap "
+        + " ".join(inner_critical_argv)
+        + " --ro-bind /usr /usr --ro-bind /bin /bin "
+        "--ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64"
+    )
+    try:
+        try:
+            nested_smoke = subprocess.run(
+                [
+                    *outer_argv,
+                    "/bin/sh",
+                    "-c",
+                    f"{inner_bwrap} -- /bin/true",
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail("nested bwrap smoke timed out after 15s")
+        if nested_smoke.returncode != 0:
+            pytest.skip(
+                "nested /usr/bin/bwrap unsupported: "
+                f"{nested_smoke.stderr.strip() or nested_smoke.stdout.strip()}"
+            )
+
+        inner_probe = (
+            "set -eu\n"
+            "test -r /proc/self/status\n"
+            "test -S /run/docker.sock\n"
+            "test -S /var/run/docker.sock\n"
+            f"{inner_bwrap} "
+            "-- /usr/bin/python3 -I -S - <<'PY'\n"
+            "import ctypes\n"
+            "import errno\n"
+            "from pathlib import Path\n"
+            "\n"
+            "assert Path('/proc/self/status').is_file()\n"
+            "assert not Path('/run/docker.sock').exists()\n"
+            "assert not Path('/var/run/docker.sock').exists()\n"
+            "libc = ctypes.CDLL(None, use_errno=True)\n"
+            "rc = libc.unshare(0x10000000)\n"
+            "err = ctypes.get_errno()\n"
+            "if rc != -1 or err != errno.ENOSPC:\n"
+            "    raise SystemExit(f'unexpected_userns_result rc={rc} errno={err}')\n"
+            "print(f'USERNS_DISABLED rc={rc} errno={err}')\n"
+            "PY\n"
+        )
+        try:
+            result = subprocess.run(
+                [
+                    *outer_argv,
+                    "/bin/sh",
+                    "-c",
+                    inner_probe,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail("nested bwrap isolation probe timed out after 15s")
+    finally:
+        sentinel_socket.close()
+    if "unexpected_userns_result" in result.stderr:
+        pytest.fail(
+            f"inner userns was not disabled: stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+    assert result.returncode == 0, (
+        f"nested bwrap isolation probe failed: stdout={result.stdout!r} "
+        f"stderr={result.stderr!r}"
+    )
+    assert "USERNS_DISABLED rc=-1 errno=28" in result.stdout
 
 
 def test_postgres_gate_nonce_label_is_pid_independent_and_nonce_bound(tmp_path: Path) -> None:

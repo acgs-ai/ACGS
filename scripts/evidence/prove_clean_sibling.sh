@@ -4106,6 +4106,8 @@ run_trusted_parent_postgres_gate() {
     )
     validate_regular_data_fd postgres-runner "$ACGS_POSTGRES_RUNNER_DATA_FD" \
       "$runner_path_stat" "$trusted_runner_sha256"
+    # Intentionally omit outer --disable-userns so the descriptor-validated,
+    # SHA-pinned PostgreSQL runner can create its sealed inner user namespace.
     lower_descendant_file_size_limit
     exec "$BWRAP_BIN" \
       --die-with-parent \
@@ -4114,7 +4116,6 @@ run_trusted_parent_postgres_gate() {
       --unshare-pid \
       --new-session \
       --cap-drop ALL \
-      --disable-userns \
       --proc /proc \
       --dev /dev \
       --tmpfs /run \
