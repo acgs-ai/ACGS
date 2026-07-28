@@ -2692,6 +2692,92 @@ def test_postgres_gate_socket_bridge_creation_uncertainty_writes_contract(
     assert (recovery_root / bridge_name).is_dir()
 
 
+def test_postgres_gate_socket_bridge_create_marks_uncertain_after_mkdir_exchange_estale(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    exchange_name = f"{bridge_name}-exchange"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_ESTALE=1",
+                f"export ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR={exchange_name!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0, result.stderr
+    assert "socket_bridge_creation_uncertain=1" in result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert (recovery_root / exchange_name).is_dir()
+
+
+def test_postgres_gate_socket_bridge_create_pre_mkdir_failure_has_no_completed_identity(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    (recovery_root / bridge_name).mkdir()
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 70, result.stderr
+    assert "socket_bridge_creation_uncertain=1" not in result.stderr
+    assert "socket_bridge_identity=" not in result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+
+
 def test_postgres_gate_socket_bridge_cleanup_refuses_unknown_files(tmp_path: Path) -> None:
     script = _postgres_gate_script_source()
     create_bridge_source = _extract_shell_function(
@@ -2843,6 +2929,143 @@ def test_postgres_gate_socket_bridge_cleanup_refuses_artifact_substitution(
         check=False,
     )
     assert result.returncode == 0, (case_name, result.stderr)
+
+
+def _run_postgres_socket_bridge_cleanup_fault(
+    tmp_path: Path,
+    extra_env: dict[str, str],
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    cleanup_bridge_source = _extract_shell_function(
+        script,
+        "cleanup_postgres_socket_bridge",
+        "unlink_postgres_recovery_intents",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+            f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            create_bridge_source,
+            cleanup_bridge_source,
+            'mapfile -t fields < <(create_postgres_socket_bridge "$proof_label-socket-bridge")',
+            'postgres_socket_bridge="${fields[0]}"',
+            'postgres_socket_bridge_name="${fields[1]}"',
+            'postgres_socket_bridge_identity="${fields[2]}"',
+            'postgres_socket_bridge_marker_sha256="${fields[3]}"',
+            'postgres_socket_bridge_mnt_id="${fields[4]}"',
+            "python3 - \"$postgres_socket_bridge\" <<'PY'",
+            "from pathlib import Path",
+            "import os",
+            "import socket",
+            "import sys",
+            "bridge = Path(sys.argv[1])",
+            "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
+            "try:",
+            "    os.chdir(bridge)",
+            "    sock.bind('.s.PGSQL.5432')",
+            "finally:",
+            "    sock.close()",
+            "(bridge / '.s.PGSQL.5432.lock').write_text('5432\\n', encoding='ascii')",
+            "PY",
+            'chmod 600 "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
+            "set +e",
+            'cleanup_postgres_socket_bridge "$(id -u)"',
+            "cleanup_rc=$?",
+            "set -e",
+            'printf "CLEANUP_RC=%s\\n" "$cleanup_rc"',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        env={**os.environ, **extra_env},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, recovery_root, recovery_root / bridge_name
+
+
+@pytest.mark.parametrize(
+    ("case_name", "extra_env", "expected_rc", "bridge_exists", "root_mode"),
+    [
+        (
+            "post-rmdir-estale",
+            {"ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_AFTER_RMDIR": "1"},
+            0,
+            False,
+            0o700,
+        ),
+        (
+            "pre-rmdir-estale",
+            {"ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_BEFORE_RMDIR": "1"},
+            1,
+            True,
+            0o700,
+        ),
+        (
+            "post-rmdir-eio",
+            {"ACGS_POSTGRES_SOCKET_BRIDGE_EIO_AFTER_RMDIR": "1"},
+            1,
+            False,
+            0o700,
+        ),
+        (
+            "post-rmdir-estale-name-reappears",
+            {
+                "ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_AFTER_RMDIR": "1",
+                "ACGS_POSTGRES_SOCKET_BRIDGE_REAPPEAR_AFTER_RMDIR_ESTALE": "1",
+            },
+            70,
+            True,
+            0o700,
+        ),
+        (
+            "post-rmdir-estale-parent-binding-drift",
+            {
+                "ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_AFTER_RMDIR": "1",
+                "ACGS_POSTGRES_SOCKET_BRIDGE_CHMOD_ROOT_AFTER_RMDIR_ESTALE": "1",
+            },
+            70,
+            False,
+            0o755,
+        ),
+    ],
+)
+def test_postgres_gate_socket_bridge_cleanup_accepts_only_post_rmdir_estale(
+    tmp_path: Path,
+    case_name: str,
+    extra_env: dict[str, str],
+    expected_rc: int,
+    bridge_exists: bool,
+    root_mode: int,
+) -> None:
+    result, recovery_root, bridge = _run_postgres_socket_bridge_cleanup_fault(tmp_path, extra_env)
+    assert result.returncode == 0, (case_name, result.stdout, result.stderr)
+    assert f"CLEANUP_RC={expected_rc}\n" in result.stdout, (case_name, result.stdout, result.stderr)
+    assert bridge.exists() is bridge_exists
+    assert stat.S_IMODE(recovery_root.stat().st_mode) == root_mode
+    if case_name == "pre-rmdir-estale":
+        assert (bridge / ".acgs-postgres-socket-bridge.v2").is_file()
+        assert (bridge / ".s.PGSQL.5432").exists()
+        assert (bridge / ".s.PGSQL.5432.lock").is_file()
 
 
 def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path: Path) -> None:

@@ -698,6 +698,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import errno
 import os
 import re
 import stat
@@ -730,6 +731,8 @@ def mnt_id(fd: int) -> str:
 
 
 def rename_exchange(root_fd: int, first: str, second: str) -> None:
+    if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_ESTALE") == "1":
+        raise OSError(errno.ESTALE, "stale file handle", f"{first} <-> {second}")
     libc = ctypes.CDLL(None, use_errno=True)
     syscall = libc.syscall
     syscall.argtypes = (
@@ -954,6 +957,7 @@ def require_bridge_marker_only(bridge_fd: int, marker_name: str, expected_payloa
         os.close(marker_fd_check)
 
 
+bridge_candidate_mkdir_succeeded = False
 real_mkdir = os.mkdir
 mkdir_exchange_name = os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR")
 mkdir_move_outside_root = os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR")
@@ -966,9 +970,11 @@ mkdir_prepopulate_substitute = (
 
 
 def mkdir(path: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+    global bridge_candidate_mkdir_succeeded
     real_mkdir(path, mode, dir_fd=dir_fd)
     if path != bridge_name or dir_fd != root_fd:
         return
+    bridge_candidate_mkdir_succeeded = True
     if mkdir_move_outside_root:
         if not os.path.isabs(mkdir_move_outside_root) or "\0" in mkdir_move_outside_root:
             raise SystemExit(70)
@@ -1182,7 +1188,7 @@ try:
     os.close(bridge_fd)
     bridge_fd = -1
 except BaseException:
-    if created:
+    if created or bridge_candidate_mkdir_succeeded:
         print("socket_bridge_creation_uncertain=1", file=sys.stderr)
         print(f"recovery_root={recovery_root}", file=sys.stderr)
         print(f"socket_bridge_basename={bridge_name}", file=sys.stderr)
@@ -1923,6 +1929,7 @@ cleanup_postgres_socket_bridge() {
 from __future__ import annotations
 
 import hashlib
+import errno
 import os
 import re
 import stat
@@ -1963,11 +1970,23 @@ def mnt_id(fd: int) -> str:
     raise SystemExit(70)
 
 
+def require_root_binding(root_fd: int) -> None:
+    current = os.fstat(root_fd)
+    current_identity = f"{current.st_dev}:{current.st_ino}:{current.st_uid}:700"
+    if current_identity != root_identity:
+        raise SystemExit(70)
+    if not stat.S_ISDIR(current.st_mode) or stat.S_IMODE(current.st_mode) != 0o700:
+        raise SystemExit(70)
+    if mnt_id(root_fd) != expected_root_mnt_id:
+        raise SystemExit(70)
+
+
 root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
     root_stat = os.fstat(root_fd)
     if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
         raise SystemExit(70)
+    root_identity = f"{root_stat.st_dev}:{root_stat.st_ino}:{root_stat.st_uid}:700"
     if mnt_id(root_fd) != expected_root_mnt_id:
         raise SystemExit(70)
     dir_fd = os.open(
@@ -2042,6 +2061,8 @@ try:
             raise SystemExit(70)
         if mnt_id(dir_fd) != expected_mnt_id:
             raise SystemExit(70)
+        if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_BEFORE_RMDIR") == "1":
+            raise OSError(errno.ESTALE, "stale file handle")
         for name, before in sorted(validated):
             current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
             if (
@@ -2074,17 +2095,32 @@ try:
         finally:
             os.close(rebound_fd)
         os.rmdir(bridge_name, dir_fd=root_fd)
-        removed_stat = os.fstat(dir_fd)
-        if removed_stat.st_nlink != 0:
-            raise SystemExit(70)
+        if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_REAPPEAR_AFTER_RMDIR_ESTALE") == "1":
+            os.mkdir(bridge_name, 0o700, dir_fd=root_fd)
+        if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_CHMOD_ROOT_AFTER_RMDIR_ESTALE") == "1":
+            os.fchmod(root_fd, 0o755)
+        try:
+            if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_ESTALE_AFTER_RMDIR") == "1":
+                raise OSError(errno.ESTALE, "stale file handle")
+            if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_EIO_AFTER_RMDIR") == "1":
+                raise OSError(errno.EIO, "I/O error")
+            removed_stat = os.fstat(dir_fd)
+        except OSError as exc:
+            if exc.errno != errno.ESTALE:
+                raise
+        else:
+            if removed_stat.st_nlink != 0:
+                raise SystemExit(70)
         try:
             os.stat(bridge_name, dir_fd=root_fd, follow_symlinks=False)
         except FileNotFoundError:
             pass
         else:
             raise SystemExit(70)
+        require_root_binding(root_fd)
     finally:
         os.close(dir_fd)
+    require_root_binding(root_fd)
     os.fsync(root_fd)
 finally:
     os.close(root_fd)
