@@ -219,6 +219,21 @@ def _json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _sealed_memfd_snapshot(name: str, payload: bytes) -> int:
+    if hasattr(os, "memfd_create"):
+        fd = os.memfd_create(name, os.MFD_ALLOW_SEALING)
+    else:
+        libc = ctypes.CDLL(None, use_errno=True)
+        fd = libc.syscall(319, name.encode(), 0x0002)
+        if fd < 0:
+            errno_value = ctypes.get_errno()
+            raise OSError(errno_value, os.strerror(errno_value))
+    os.write(fd, payload)
+    os.lseek(fd, 0, os.SEEK_SET)
+    fcntl.fcntl(fd, 1033, 0x0001 | 0x0002 | 0x0004 | 0x0008)
+    return fd
+
+
 def _now(offset: timedelta = timedelta()) -> str:
     return (datetime.now(UTC) + offset).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -5019,6 +5034,27 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     trusted_parent_gate = _shell_function(source, "run_trusted_parent_postgres_gate")
+    helper_contract = "\n".join(
+        (
+            _shell_function(source, "validate_anonymous_snapshot_fd"),
+            _shell_function(source, "validate_snapshot_data_fd"),
+            _shell_function(source, "open_snapshot_data_fd"),
+            _shell_function(source, "open_uv_snapshot_data_fd"),
+            _shell_function(source, "validate_regular_data_fd"),
+            _shell_function(source, "open_regular_data_fd"),
+            _shell_function(source, "snapshot_data_fd_is_retained"),
+            _shell_function(source, "close_noncontained_fds"),
+            _shell_function(source, "contained_uv_snapshot_data_mount_args"),
+            _shell_function(source, "snapshot_size_from_stat"),
+            _shell_function(source, "mounted_artifact_preflight_env_args_uv"),
+            _shell_function(source, "mounted_artifact_preflight_env_args_postgres"),
+        )
+    )
+    preflight_assignment = "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=" + source.split(
+        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
+        1,
+    )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    preflight_assignment += "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
     package_dir = tmp_path / "packages/acgs-control-plane"
     script_dir = package_dir / "scripts"
     script_dir.mkdir(parents=True)
@@ -5064,55 +5100,82 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
     fake_bwrap.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
+        'args=("$@")\n'
         "chdir=\n"
-        'while [[ "$#" -gt 0 && "$1" != /bin/bash ]]; do\n'
-        '  if [[ "$1" == --chdir ]]; then chdir="$2"; shift 2; else shift; fi\n'
+        "env_index=-1\n"
+        'for index in "${!args[@]}"; do\n'
+        '  if [[ "${args[index]}" == --chdir ]]; then chdir="${args[index+1]}"; fi\n'
+        '  if [[ "${args[index]}" == /usr/bin/env ]]; then env_index="$index"; break; fi\n'
         "done\n"
+        '[[ "$env_index" != -1 ]] || exit 91\n'
         '[[ -n "$chdir" ]] && cd "$chdir"\n'
-        'exec "$@"\n',
+        'exec "${args[@]:env_index}"\n',
         encoding="utf-8",
     )
     fake_bwrap.chmod(0o755)
+    fake_uv = tmp_path / "uv"
+    shutil.copy2(sys.executable, fake_uv)
+    fake_uv.chmod(0o700)
+    uv_payload = fake_uv.read_bytes()
+    uv_snapshot_fd = _sealed_memfd_snapshot("acgs-clean-sibling-uv-snapshot", uv_payload)
+    uv_snapshot_stat = os.fstat(uv_snapshot_fd)
     harness = tmp_path / "harness.sh"
     selector_args = " ".join(json.dumps(selector) for selector in expected_args)
-    harness.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -Eeuo pipefail\n"
-        f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
-        f"WORKTREE={json.dumps(str(tmp_path))}\n"
-        f"TMP_ROOT={json.dumps(str(tmp_path / 'proof-root'))}\n"
-        f"ACGS_POSTGRES_RECOVERY_ROOT={json.dumps(str(tmp_path / 'postgres-recovery'))}\n"
-        f"BWRAP_BIN={json.dumps(str(fake_bwrap))}\n"
-        f"UV_BIN={json.dumps(sys.executable)}\n"
-        f"UV_PYTHON_INSTALL_DIR={json.dumps(str(expected_uv_python_install_dir))}\n"
-        f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
-        'mkdir -p "$NODE_EVIDENCE" "$TMP_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
-        'chmod 700 "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
-        'exec 10<"$UV_BIN"\n'
-        "UV_FD=10\n"
-        "verify_uv_identity() { return 0; }\n"
-        "lower_descendant_file_size_limit() { return 0; }\n"
-        "emit_recorded_gate_failure_diagnostic() { return 0; }\n"
-        "die() { printf '%s\\n' \"$*\" >&2; exit 2; }\n"
-        'append_record() { printf \'%s\\n\' "$@" >"$APPEND_MARKER"; }\n'
-        f"{trusted_parent_gate}\n"
-        "export PYTEST_ADDOPTS='--junitxml=/tmp/outer.xml'\n"
-        "export UV_OFFLINE=1\n"
-        "export UV_NO_INDEX=1\n"
-        'run_trusted_parent_postgres_gate CP "$PWD/packages/acgs-control-plane" '
-        "p2-idempotency-postgres "
-        "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "
-        f"./scripts/run_postgres_gate.sh {selector_args}\n",
-        encoding="utf-8",
-    )
-    harness.chmod(0o755)
-    result = subprocess.run(
-        [str(harness)],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        harness.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -Eeuo pipefail\n"
+            f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
+            f"WORKTREE={json.dumps(str(tmp_path))}\n"
+            f"TMP_ROOT={json.dumps(str(tmp_path / 'proof-root'))}\n"
+            f"ACGS_POSTGRES_RECOVERY_ROOT={json.dumps(str(tmp_path / 'postgres-recovery'))}\n"
+            f"BWRAP_BIN={json.dumps(str(fake_bwrap))}\n"
+            f"UV_BIN={json.dumps(str(fake_uv))}\n"
+            f"UV_PYTHON_INSTALL_DIR={json.dumps(str(expected_uv_python_install_dir))}\n"
+            f"APPEND_MARKER={json.dumps(str(tmp_path / 'append-marker'))}\n"
+            "ACGS_SNAPSHOT_MODE=anonymous\n"
+            f"ACGS_UV_SNAPSHOT_FD={uv_snapshot_fd}\n"
+            "ACGS_UV_SNAPSHOT_STAT="
+            f"{json.dumps(f'{uv_snapshot_stat.st_dev}:{uv_snapshot_stat.st_ino}:')}"
+            f"${{UID}}:{stat.S_IMODE(uv_snapshot_stat.st_mode):o}:{uv_snapshot_stat.st_size}\n"
+            f"ACGS_CLEAN_SIBLING_UV_SHA256={hashlib.sha256(uv_payload).hexdigest()}\n"
+            "ACGS_LAUNCHER_DATA_FD=\n"
+            "ACGS_INTERNAL_DATA_FD=\n"
+            "ACGS_CLEANUP_DATA_FD=\n"
+            "ACGS_UV_DATA_FD=\n"
+            "ACGS_POSTGRES_RUNNER_DATA_FD=\n"
+            'mkdir -p "$NODE_EVIDENCE" "$TMP_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
+            'chmod 700 "$ACGS_POSTGRES_RECOVERY_ROOT"\n'
+            'exec 10<"$UV_BIN"\n'
+            "UV_FD=10\n"
+            "verify_uv_identity() { return 0; }\n"
+            "lower_descendant_file_size_limit() { return 0; }\n"
+            "emit_recorded_gate_failure_diagnostic() { return 0; }\n"
+            "die() { printf '%s\\n' \"$*\" >&2; exit 2; }\n"
+            'append_record() { printf \'%s\\n\' "$@" >"$APPEND_MARKER"; }\n'
+            f"{helper_contract}\n"
+            f"{preflight_assignment}\n"
+            f"{trusted_parent_gate}\n"
+            "export PYTEST_ADDOPTS='--junitxml=/tmp/outer.xml'\n"
+            "export UV_OFFLINE=1\n"
+            "export UV_NO_INDEX=1\n"
+            'run_trusted_parent_postgres_gate CP "$PWD/packages/acgs-control-plane" '
+            "p2-idempotency-postgres "
+            "'packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate' CP "
+            f"./scripts/run_postgres_gate.sh {selector_args}\n",
+            encoding="utf-8",
+        )
+        harness.chmod(0o755)
+        result = subprocess.run(
+            [str(harness)],
+            cwd=tmp_path,
+            pass_fds=(uv_snapshot_fd,),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        os.close(uv_snapshot_fd)
     assert result.returncode == 0, (result.stdout, result.stderr)
     appended = (tmp_path / "append-marker").read_text(encoding="utf-8")
     assert "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate" in appended
@@ -13084,6 +13147,99 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     (cleanup_repo / "tracked").write_text("tracked\n", encoding="utf-8")
     subprocess.run(["git", "add", "tracked"], cwd=cleanup_repo, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=cleanup_repo, check=True)
+    cleanup_parent = tmp_path / "cleanup-caller"
+    cleanup_parent.mkdir(mode=0o700)
+    cleanup_parent.chmod(0o700)
+    cleanup_root = cleanup_parent / "acgs-p0-evidence.injected"
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    bwrap_attempt = fake_bin / "bwrap-deregister-attempt"
+    real_git = os.environ.get("ACGS_TEST_ORIGINAL_GIT") or shutil.which("git")
+    assert real_git is not None
+    fake_bwrap = fake_bin / "bwrap"
+    fake_bwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        'printf "attempt\\n" >>"$FAILURE_STATE"\n'
+        "exit 77\n",
+        encoding="utf-8",
+    )
+    fake_bwrap.chmod(0o755)
+    cleanup_env = dict(os.environ)
+    cleanup_command = r"""
+	set -u
+git() {
+  "$REAL_GIT" --no-optional-locks -c core.hooksPath=/dev/null "$@"
+}
+	source "$1"
+	SOURCE_REPO="$2"
+TMP_PARENT="$3"
+TMP_ROOT="$4"
+BWRAP_BIN="$5"
+OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
+exec {TMP_PARENT_FD}<"$TMP_PARENT"
+TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
+TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
+  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
+SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
+WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
+mkdir -m 700 -- "$TMP_ROOT"
+IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
+  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
+)
+exec {TMP_ROOT_TEST_FD}<"$TMP_ROOT"
+TMP_ROOT_MNT_ID="$(awk '$1 == "mnt_id:" {print $2; exit}' "/proc/$$/fdinfo/$TMP_ROOT_TEST_FD")"
+[[ "$TMP_ROOT_MNT_ID" =~ ^[0-9]+$ ]] || exit 91
+exec {TMP_ROOT_TEST_FD}<&-
+WORKTREE="$TMP_ROOT/product"
+git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null 2>/dev/null
+WORKTREE_ADDED=1
+WORKTREE_GITFILE_PATH="$WORKTREE/.git"
+WORKTREE_ADMIN_GITDIR="$(git -C "$WORKTREE" rev-parse --absolute-git-dir)"
+WORKTREE_ADMIN_GITDIR_IDENTITY="$(stat -c '%d:%i:%u' -- "$WORKTREE_ADMIN_GITDIR")"
+if [[ -d "$WORKTREE_REGISTRY_ROOT" ]]; then
+  IFS=: read -r WORKTREE_REGISTRY_DEVICE WORKTREE_REGISTRY_INODE WORKTREE_REGISTRY_UID < <(
+    stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT"
+  )
+  WORKTREE_REGISTRY_ROOT_IDENTITY="$WORKTREE_REGISTRY_DEVICE:$WORKTREE_REGISTRY_INODE:$WORKTREE_REGISTRY_UID"
+else
+  exit 92
+fi
+WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
+WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
+WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
+  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT" \
+    "$WORKTREE_REGISTRY_ROOT_IDENTITY"
+)"
+exec {WORKTREE_GITFILE_FD}<"$WORKTREE_GITFILE_PATH"
+WORKTREE_GITFILE_RETENTION_REQUIRED=1
+IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE WORKTREE_GITFILE_UID \
+  WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS WORKTREE_GITFILE_SIZE \
+  WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(
+  clean_sibling_capture_retained_gitfile "$WORKTREE_GITFILE_FD" "$WORKTREE_GITFILE_PATH" linked
+)
+WORKTREE_GITFILE_IDENTITY="$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID"
+clean_sibling_record_worktree_gitfile_pre_detach_witness
+clean_sibling_close_worktree_gitfile_pre_detach_witness
+PROOF_COMPLETE=1
+TRANSCRIPT_RECORDS=10
+P=1111111111111111111111111111111111111111
+T=2222222222222222222222222222222222222222
+R=3333333333333333333333333333333333333333333333333333333333333333
+printf '%s\n' "$$" >"$OWNER_MARKER"
+clean_sibling_cleanup 0
+exit $?
+"""
+    cleanup_harness = cleanup_repo / "scripts/evidence/prove_clean_sibling.sh"
+    cleanup_harness.parent.mkdir(parents=True)
+    cleanup_harness.write_text(cleanup_command, encoding="utf-8")
+    cleanup_harness.chmod(0o755)
+    subprocess.run(
+        ["git", "add", "scripts/evidence/prove_clean_sibling.sh"],
+        cwd=cleanup_repo,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-qm", "add cleanup harness"], cwd=cleanup_repo, check=True)
     worktrees_before = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
         cwd=cleanup_repo,
@@ -13098,95 +13254,23 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
         capture_output=True,
         check=True,
     ).stdout.rstrip("\n")
-    cleanup_parent = tmp_path / "cleanup-caller"
-    cleanup_parent.mkdir(mode=0o700)
-    cleanup_parent.chmod(0o700)
-    cleanup_root = cleanup_parent / "acgs-p0-evidence.injected"
-    fake_bin = tmp_path / "fake-bin"
-    fake_bin.mkdir()
-    failure_state = fake_bin / "remove-failed-once"
-    real_git = os.environ.get("ACGS_TEST_ORIGINAL_GIT") or shutil.which("git")
-    assert real_git is not None
-    (fake_bin / "git").write_text(
-        "#!/usr/bin/env bash\n"
-        'if [[ "$*" == *"worktree remove --force"* && ! -e "$FAILURE_STATE" ]]; then\n'
-        '  : >"$FAILURE_STATE"\n'
-        "  exit 1\n"
-        "fi\n"
-        'exec "$REAL_GIT" "$@"\n',
-        encoding="utf-8",
-    )
-    (fake_bin / "git").chmod(0o755)
-    cleanup_env = dict(os.environ)
     cleanup_env.update(
         {
-            "PATH": f"{fake_bin}:{cleanup_env['PATH']}",
             "REAL_GIT": real_git,
-            "FAILURE_STATE": str(failure_state),
+            "FAILURE_STATE": str(bwrap_attempt),
             "WORKTREES_BEFORE": worktrees_before,
             "SOURCE_STATUS_BEFORE": status_before,
         }
     )
-    cleanup_command = r"""
-	set -u
-git() {
-  if [[ "$*" == *"worktree remove --force"* && ! -e "$FAILURE_STATE" ]]; then
-    : >"$FAILURE_STATE"
-    return 1
-  fi
-  "$REAL_GIT" --no-optional-locks -c core.hooksPath=/dev/null "$@"
-}
-	source "$1"
-	SOURCE_REPO="$2"
-TMP_PARENT="$3"
-TMP_ROOT="$4"
-OWNER_MARKER="$TMP_ROOT/.acgs-clean-sibling-owned"
-exec {TMP_PARENT_FD}<"$TMP_PARENT"
-TMP_PARENT_STAT_BEFORE="$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$TMP_PARENT_FD")"
-TMP_PARENT_ENTRIES_BEFORE="$(clean_sibling_snapshot_direct_entries \
-  "$TMP_PARENT_FD" "$TMP_PARENT_STAT_BEFORE" "$TMP_PARENT")"
-SOURCE_COMMON_GITDIR="$(git -C "$SOURCE_REPO" rev-parse --path-format=absolute --git-common-dir)"
-WORKTREE_REGISTRY_ROOT="$SOURCE_COMMON_GITDIR/worktrees"
-if [[ -d "$WORKTREE_REGISTRY_ROOT" ]]; then
-  IFS=: read -r WORKTREE_REGISTRY_DEVICE WORKTREE_REGISTRY_INODE WORKTREE_REGISTRY_UID < <(
-    stat -c '%d:%i:%u' -- "$WORKTREE_REGISTRY_ROOT"
-  )
-  WORKTREE_REGISTRY_ROOT_IDENTITY="$WORKTREE_REGISTRY_DEVICE:$WORKTREE_REGISTRY_INODE:$WORKTREE_REGISTRY_UID"
-else
-  WORKTREE_REGISTRY_ROOT_IDENTITY='absent'
-fi
-WORKTREES_BEFORE="$(git -C "$SOURCE_REPO" worktree list --porcelain)"
-WORKTREE_PATHS_BEFORE="$(clean_sibling_worktree_paths_digest "$WORKTREES_BEFORE")"
-WORKTREE_REGISTRY_ENTRIES_BEFORE="$(
-  clean_sibling_snapshot_worktree_registry "$WORKTREE_REGISTRY_ROOT" \
-    "$WORKTREE_REGISTRY_ROOT_IDENTITY"
-)"
-mkdir -m 700 -- "$TMP_ROOT"
-IFS=: read -r TMP_ROOT_DEVICE TMP_ROOT_INODE TMP_ROOT_UID _ < <(
-  stat -c '%d:%i:%u:%a' -- "$TMP_ROOT"
-)
-WORKTREE="$TMP_ROOT/product"
-git -C "$SOURCE_REPO" worktree add --detach "$WORKTREE" HEAD >/dev/null 2>/dev/null
-WORKTREE_ADDED=1
-PROOF_COMPLETE=1
-TRANSCRIPT_RECORDS=10
-P=1111111111111111111111111111111111111111
-T=2222222222222222222222222222222222222222
-R=3333333333333333333333333333333333333333333333333333333333333333
-printf '%s\n' "$$" >"$OWNER_MARKER"
-clean_sibling_cleanup 0
-exit $?
-"""
     cleanup_result = subprocess.run(
         [
             "bash",
-            "-c",
-            cleanup_command,
-            "_",
+            str(cleanup_harness),
             str(EVIDENCE_SCRIPTS / "clean_sibling_cleanup.sh"),
             str(cleanup_repo),
             str(cleanup_parent),
             str(cleanup_root),
+            str(fake_bwrap),
         ],
         env=cleanup_env,
         text=True,
@@ -13195,10 +13279,13 @@ exit $?
     )
     assert cleanup_result.returncode == 2
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_result.stdout
-    assert failure_state.exists(), "first worktree remove failure was not exercised"
-    assert cleanup_root.exists()
-    assert (cleanup_root / ".acgs-clean-sibling-owned").is_file()
-    assert "root mount id missing" in cleanup_result.stderr
+    assert bwrap_attempt.exists(), (cleanup_result.stdout, cleanup_result.stderr)
+    assert bwrap_attempt.read_text(encoding="utf-8").splitlines() == ["attempt"]
+    assert not cleanup_root.exists()
+    assert "cleanup refused because exact worktree deregistration failed once" in (
+        cleanup_result.stderr
+    )
+    assert "root mount id missing" not in cleanup_result.stderr
     assert (
         subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
@@ -13206,8 +13293,17 @@ exit $?
             text=True,
             capture_output=True,
             check=True,
+        ).stdout
+    ).count(f"worktree {cleanup_root}/product") == 1
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=cleanup_repo,
+            text=True,
+            capture_output=True,
+            check=True,
         ).stdout.rstrip("\n")
-        == worktrees_before
+        == status_before
     )
 
     status_snapshot = subprocess.run(
@@ -14339,7 +14435,8 @@ def test_clean_sibling_absent_namespace_real_bwrap_masks_recreated_host_target(
         f"TMP_PARENT={shlex.quote(str(parent))}\n"
         f"TMP_ROOT={shlex.quote(str(cleanup_root))}\n"
         f"UNRELATED_WORKTREE={shlex.quote(str(unrelated_worktree))}\n"
-        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse --path-format=absolute --git-common-dir)\"\n"
+        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse "
+        "--path-format=absolute --git-common-dir)\"\n"
         "WORKTREE_REGISTRY_ROOT=\"$SOURCE_COMMON_GITDIR/worktrees\"\n"
         "git -C \"$SOURCE_REPO\" worktree add --detach \"$UNRELATED_WORKTREE\" HEAD >/dev/null\n"
         "mkdir -m 700 -- \"$TMP_ROOT\"\n"
@@ -14356,7 +14453,8 @@ def test_clean_sibling_absent_namespace_real_bwrap_masks_recreated_host_target(
         "IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE WORKTREE_GITFILE_UID "
         "WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS WORKTREE_GITFILE_SIZE "
         "WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(\n"
-        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" \"$WORKTREE_GITFILE_PATH\" linked\n"
+        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" "
+        "\"$WORKTREE_GITFILE_PATH\" linked\n"
         ")\n"
         "WORKTREE_GITFILE_IDENTITY=\"$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID\"\n"
         "clean_sibling_record_worktree_gitfile_pre_detach_witness\n"
@@ -14368,7 +14466,8 @@ def test_clean_sibling_absent_namespace_real_bwrap_masks_recreated_host_target(
         "clean_sibling_remove_registered_worktree\n"
         "printf 'REMOVE_RC=0\\n'\n"
         "printf 'SENTINEL=%s' \"$(cat \"$WORKTREE/host-sentinel\")\"\n"
-        "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' \"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n",
+        "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' "
+        "\"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -14430,7 +14529,8 @@ def test_clean_sibling_absent_namespace_closes_inherited_fds_before_bwrap_exec(
         "SOURCE_COMMON_GITDIR=/tmp/source-common-placeholder\n"
         "TMP_ROOT=/tmp/acgs-clean-sibling-fd-close-placeholder\n"
         "WORKTREE=\"$TMP_ROOT/product\"\n"
-        "clean_sibling_git_worktree_remove_in_absent_namespace || printf 'REMOVE_RC=%s\\n' \"$?\"\n",
+        "clean_sibling_git_worktree_remove_in_absent_namespace || "
+        "printf 'REMOVE_RC=%s\\n' \"$?\"\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -14492,7 +14592,8 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
         f"TMP_PARENT={shlex.quote(str(parent))}\n"
         f"TMP_ROOT={shlex.quote(str(cleanup_root))}\n"
         f"UNRELATED_WORKTREE={shlex.quote(str(unrelated_worktree))}\n"
-        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse --path-format=absolute --git-common-dir)\"\n"
+        "SOURCE_COMMON_GITDIR=\"$(git -C \"$SOURCE_REPO\" rev-parse "
+        "--path-format=absolute --git-common-dir)\"\n"
         "WORKTREE_REGISTRY_ROOT=\"$SOURCE_COMMON_GITDIR/worktrees\"\n"
         "git -C \"$SOURCE_REPO\" worktree add --detach \"$UNRELATED_WORKTREE\" HEAD >/dev/null\n"
         "mkdir -m 700 -- \"$TMP_ROOT\"\n"
@@ -14507,7 +14608,8 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
         "IFS=: read -r WORKTREE_GITFILE_DEVICE WORKTREE_GITFILE_INODE WORKTREE_GITFILE_UID "
         "WORKTREE_GITFILE_MODE WORKTREE_GITFILE_LINKS WORKTREE_GITFILE_SIZE "
         "WORKTREE_GITFILE_SHA256 WORKTREE_GITFILE_CONTENT_B64 < <(\n"
-        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" \"$WORKTREE_GITFILE_PATH\" linked\n"
+        "  clean_sibling_capture_retained_gitfile \"$WORKTREE_GITFILE_FD\" "
+        "\"$WORKTREE_GITFILE_PATH\" linked\n"
         ")\n"
         "WORKTREE_GITFILE_IDENTITY=\"$WORKTREE_GITFILE_DEVICE:$WORKTREE_GITFILE_INODE:$WORKTREE_GITFILE_UID\"\n"
         "clean_sibling_record_worktree_gitfile_pre_detach_witness\n"
@@ -14519,8 +14621,10 @@ def test_clean_sibling_absent_namespace_fake_bwrap_failure_attempts_once_fail_cl
         "remove_rc=$?\n"
         "set -e\n"
         "printf 'REMOVE_RC=%s\\n' \"$remove_rc\"\n"
-        "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' \"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n"
-        "printf 'ADMIN_EXISTS=%s\\n' \"$([[ -d \"$WORKTREE_ADMIN_GITDIR\" ]] && echo 1 || echo 0)\"\n",
+        "printf 'WORKTREES_AFTER<<EOF\\n%s\\nEOF\\n' "
+        "\"$(git -C \"$SOURCE_REPO\" worktree list --porcelain)\"\n"
+        "printf 'ADMIN_EXISTS=%s\\n' "
+        "\"$([[ -d \"$WORKTREE_ADMIN_GITDIR\" ]] && echo 1 || echo 0)\"\n",
         encoding="utf-8",
     )
     harness.chmod(0o755)
@@ -18840,7 +18944,10 @@ def test_clean_sibling_snapshot_data_fds_are_fresh_for_repeated_bind_data_reads(
         required_seals = 0x0001 | 0x0002 | 0x0004 | 0x0008
         fcntl.fcntl(fd, 1033, required_seals)
         st = os.fstat(fd)
-        snapshot_stat = f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_size}"
+        snapshot_stat = (
+            f"{st.st_dev}:{st.st_ino}:{st.st_uid}:"
+            f"{stat.S_IMODE(st.st_mode):o}:{st.st_size}"
+        )
         env = os.environ.copy()
         env.update(
             {
@@ -18876,7 +18983,8 @@ def test_clean_sibling_snapshot_data_fds_are_fresh_for_repeated_bind_data_reads(
                     "open_uv_snapshot_data_fd",
                     "second=\"$(read_data_fd \"$ACGS_UV_DATA_FD\")\"",
                     "expected='offset-sensitive-bind-data-payload'",
-                    '[[ "$first" == "$expected" && "$second" == "$expected" ]] || die repeated-read',
+                    '[[ "$first" == "$expected" && "$second" == "$expected" ]] || '
+                    "die repeated-read",
                     "ACGS_UV_SNAPSHOT_STAT=0:0:0:0:0",
                     "if ( open_uv_snapshot_data_fd ) 2>/dev/null; then",
                     "  die tampered-stat-accepted",
@@ -21113,6 +21221,26 @@ def test_clean_sibling_trusted_network_resolver_uses_exact_uv_compile_and_scrubb
     tmp_path: Path,
 ) -> None:
     source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    helper_contract = "\n".join(
+        (
+            _shell_function(source, "validate_anonymous_snapshot_fd"),
+            _shell_function(source, "validate_snapshot_data_fd"),
+            _shell_function(source, "open_snapshot_data_fd"),
+            _shell_function(source, "open_uv_snapshot_data_fd"),
+            _shell_function(source, "validate_regular_data_fd"),
+            _shell_function(source, "open_regular_data_fd"),
+            _shell_function(source, "snapshot_data_fd_is_retained"),
+            _shell_function(source, "close_noncontained_fds"),
+            _shell_function(source, "contained_uv_snapshot_data_mount_args"),
+            _shell_function(source, "snapshot_size_from_stat"),
+            _shell_function(source, "mounted_artifact_preflight_env_args_uv"),
+        )
+    )
+    preflight_assignment = "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=" + source.split(
+        "ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT=",
+        1,
+    )[1].split("readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT", 1)[0]
+    preflight_assignment += "readonly ACGS_MOUNTED_ARTIFACT_PREFLIGHT_SCRIPT\n"
     functions = "\n".join(
         (
             _shell_function(source, "validate_trusted_network_requirement_file"),
@@ -21220,39 +21348,59 @@ def test_clean_sibling_trusted_network_resolver_uses_exact_uv_compile_and_scrubb
         encoding="utf-8",
     )
     fake_uv.chmod(0o755)
+    uv_payload = fake_uv.read_bytes()
+    uv_snapshot_fd = _sealed_memfd_snapshot("acgs-clean-sibling-uv-snapshot", uv_payload)
+    uv_snapshot_stat = os.fstat(uv_snapshot_fd)
     harness = tmp_path / "resolver-harness.sh"
-    harness.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -Eeuo pipefail\n"
-        "die() { printf 'HARNESS_DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
-        f"BWRAP_BIN={shlex.quote(str(fake_bwrap))}\n"
-        f"UV_BIN={shlex.quote(str(fake_uv))}\n"
-        f"TRUSTED_LOCK_INPUT_ROOT={shlex.quote(str(trusted))}\n"
-        f"BOOTSTRAP_CACHE_ROOT={shlex.quote(str(cache))}\n"
-        f"WORKTREE={shlex.quote(str(worktree))}\n"
-        'exec 10<"$UV_BIN"\n'
-        "UV_FD=10\n"
-        'verify_uv_identity() { [[ "$UV_BIN" == */uv && -r "/proc/$BASHPID/fd/$UV_FD" ]]; }\n'
-        "lower_descendant_file_size_limit() { return 0; }\n"
-        f"{functions}\n"
-        f'run_trusted_network_uv_compile "$TRUSTED_LOCK_INPUT_ROOT" '
-        f"{shlex.quote(input_relative)} {shlex.quote(output_relative)}\n",
-        encoding="utf-8",
-    )
-    harness.chmod(0o755)
-    completed = subprocess.run(
-        [str(harness)],
-        env={
-            **os.environ,
-            "UV_INDEX_URL": "https://example.invalid/simple",
-            "UV_FIND_LINKS": str(tmp_path / "hostile-links"),
-            "UV_CACHE_DIR": str(hostile_cache),
-            "HOME": str(tmp_path / "hostile-home"),
-        },
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        harness.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -Eeuo pipefail\n"
+            "die() { printf 'HARNESS_DIE=%s\\n' \"$*\" >&2; exit 2; }\n"
+            f"BWRAP_BIN={shlex.quote(str(fake_bwrap))}\n"
+            f"UV_BIN={shlex.quote(str(fake_uv))}\n"
+            f"TRUSTED_LOCK_INPUT_ROOT={shlex.quote(str(trusted))}\n"
+            f"BOOTSTRAP_CACHE_ROOT={shlex.quote(str(cache))}\n"
+            f"WORKTREE={shlex.quote(str(worktree))}\n"
+            "ACGS_SNAPSHOT_MODE=anonymous\n"
+            f"ACGS_UV_SNAPSHOT_FD={uv_snapshot_fd}\n"
+            "ACGS_UV_SNAPSHOT_STAT="
+            f"{uv_snapshot_stat.st_dev}:{uv_snapshot_stat.st_ino}:{uv_snapshot_stat.st_uid}:"
+            f"{stat.S_IMODE(uv_snapshot_stat.st_mode):o}:{uv_snapshot_stat.st_size}\n"
+            f"ACGS_CLEAN_SIBLING_UV_SHA256={hashlib.sha256(uv_payload).hexdigest()}\n"
+            "ACGS_LAUNCHER_DATA_FD=\n"
+            "ACGS_INTERNAL_DATA_FD=\n"
+            "ACGS_CLEANUP_DATA_FD=\n"
+            "ACGS_UV_DATA_FD=\n"
+            "ACGS_POSTGRES_RUNNER_DATA_FD=\n"
+            'exec 10<"$UV_BIN"\n'
+            "UV_FD=10\n"
+            'verify_uv_identity() { [[ "$UV_BIN" == */uv && -r "/proc/$BASHPID/fd/$UV_FD" ]]; }\n'
+            "lower_descendant_file_size_limit() { return 0; }\n"
+            f"{helper_contract}\n"
+            f"{preflight_assignment}\n"
+            f"{functions}\n"
+            f'run_trusted_network_uv_compile "$TRUSTED_LOCK_INPUT_ROOT" '
+            f"{shlex.quote(input_relative)} {shlex.quote(output_relative)}\n",
+            encoding="utf-8",
+        )
+        harness.chmod(0o755)
+        completed = subprocess.run(
+            [str(harness)],
+            env={
+                **os.environ,
+                "UV_INDEX_URL": "https://example.invalid/simple",
+                "UV_FIND_LINKS": str(tmp_path / "hostile-links"),
+                "UV_CACHE_DIR": str(hostile_cache),
+                "HOME": str(tmp_path / "hostile-home"),
+            },
+            pass_fds=(uv_snapshot_fd,),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        os.close(uv_snapshot_fd)
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     assert (trusted / output_relative).read_text(encoding="utf-8") == "resolved\n"
     assert str(worktree) not in bwrap_argv.read_text(encoding="utf-8")
