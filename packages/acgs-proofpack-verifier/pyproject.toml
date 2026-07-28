@@ -8,8 +8,16 @@ version = "0.1.0a1"
 description = "Dependency-minimal offline verifier for ACGS proof packs — validates a governance evidence bundle WITHOUT installing gove-zone."
 readme = "README.md"
 license = { text = "Apache-2.0" }
+# Ship the license text in the sdist and wheel. Without this, hatchling built
+# artifacts that declared Apache-2.0 and carried no license file — a relying
+# party installing only the wheel had the claim and not the grant.
+license-files = { paths = ["LICENSE"] }
 requires-python = ">=3.11"
-authors = [{ name = "ACGS Team", email = "hello@acgs.dev" }]
+# acgs.dev is registered but publishes no MX record, so this address had no mail
+# route; acgs.dev delivery would fall back to its A record, a web host. acgs.ai
+# has Cloudflare email routing. For the package an auditor is told to trust, the
+# contact address has to actually reach someone.
+authors = [{ name = "ACGS Team", email = "hello@acgs.ai" }]
 keywords = ["ai", "governance", "audit", "proof-pack", "verifier", "offline"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -40,8 +48,12 @@ dev = [
 
 [project.urls]
 Homepage = "https://acgs.ai"
-Repository = "https://github.com/dislovelhl/ACGS"
-Issues = "https://github.com/dislovelhl/ACGS/issues"
+# Canonical owner is acgs-ai (confirmed via `gh api repos/... --jq .full_name`).
+# The old dislovelhl/ path only resolves through a GitHub rename redirect, and a
+# redirect stops redirecting the moment anyone recreates that name — which would
+# repoint this package's PyPI "Repository" link at a repo we do not control.
+Repository = "https://github.com/acgs-ai/ACGS"
+Issues = "https://github.com/acgs-ai/ACGS/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/acgs_proofpack_verifier"]
