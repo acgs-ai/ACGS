@@ -4656,6 +4656,51 @@ def _shell_function_before(source: str, name: str, next_name: str) -> str:
     return source[start:end]
 
 
+def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_function: str) -> str:
+    return "\n".join(
+        (
+            _shell_function(runner_source, "read_private_container_file"),
+            _shell_function(runner_source, "write_recovery_contract"),
+            _shell_function(runner_source, "capture_docker_ps_ids"),
+            _shell_function(runner_source, "remove_exact_recorded_container"),
+            _shell_function(runner_source, "cleanup_client_containers"),
+            _shell_function(runner_source, "cleanup_server_container"),
+            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
+            _shell_function(runner_source, "verify_stable_no_proof_labelled_containers"),
+            _shell_function(runner_source, "unlink_postgres_recovery_intents"),
+            "cleanup_postgres_socket_bridge() { return 0; }",
+            "postgres_socket_bridge=",
+            'postgres_recovery_root="$state_dir/recovery-intents"',
+            'mkdir -p "$postgres_recovery_root"',
+            'chmod 700 "$postgres_recovery_root"',
+            'postgres_socket_bridge_name="${proof_label}-socket-bridge"',
+            'postgres_socket_bridge_identity="0:0:0:1777"',
+            'postgres_socket_bridge_marker_sha256="0000000000000000000000000000000000000000000000000000000000000000"',
+            'postgres_socket_bridge_mnt_id="1"',
+            'postgres_recovery_root_mnt_id="1"',
+            'postgres_socket_bridge_creation_uncertain="0"',
+            'proof_nonce="${proof_nonce-${proof_label##*-}}"',
+            'cat >"$postgres_recovery_root/${proof_label}-server.intent" <<EOF',
+            "intent_version=2",
+            "schema=acgs-postgres-recovery-intent/server/v2",
+            "phase=server-intent",
+            "proof_nonce=$proof_nonce",
+            "proof_label=$proof_label",
+            "server_name=$container_name",
+            "record_path=$server_namefile",
+            "server_cidfile=$server_cidfile",
+            "server_namefile=$server_namefile",
+            "socket_bridge_basename=$postgres_socket_bridge_name",
+            "socket_bridge_identity=$postgres_socket_bridge_identity",
+            "socket_bridge_marker_sha256=$postgres_socket_bridge_marker_sha256",
+            "socket_bridge_mnt_id=$postgres_socket_bridge_mnt_id",
+            "EOF",
+            'chmod 600 "$postgres_recovery_root/${proof_label}-server.intent"',
+            cleanup_function,
+        )
+    )
+
+
 def _directory_mnt_id(path: Path) -> str:
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -5320,6 +5365,10 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
     uv_payload = fake_uv.read_bytes()
     uv_snapshot_fd = _sealed_memfd_snapshot("acgs-clean-sibling-uv-snapshot", uv_payload)
     uv_snapshot_stat = os.fstat(uv_snapshot_fd)
+    postgres_recovery = tmp_path / "postgres-recovery"
+    postgres_recovery.mkdir(mode=0o700)
+    postgres_recovery.chmod(0o700)
+    postgres_recovery_stat = postgres_recovery.stat(follow_symlinks=False)
     harness = tmp_path / "harness.sh"
     selector_args = " ".join(json.dumps(selector) for selector in expected_args)
     try:
@@ -5329,7 +5378,10 @@ def test_p2_idempotency_postgres_gate_success_reaches_append_record_with_isolate
             f"NODE_EVIDENCE={json.dumps(str(tmp_path / 'node-evidence'))}\n"
             f"WORKTREE={json.dumps(str(tmp_path))}\n"
             f"TMP_ROOT={json.dumps(str(tmp_path / 'proof-root'))}\n"
-            f"ACGS_POSTGRES_RECOVERY_ROOT={json.dumps(str(tmp_path / 'postgres-recovery'))}\n"
+            f"ACGS_POSTGRES_RECOVERY_ROOT={json.dumps(str(postgres_recovery))}\n"
+            f"ACGS_POSTGRES_RECOVERY_ROOT_DEVICE={postgres_recovery_stat.st_dev}\n"
+            f"ACGS_POSTGRES_RECOVERY_ROOT_INODE={postgres_recovery_stat.st_ino}\n"
+            f"ACGS_POSTGRES_RECOVERY_ROOT_UID={postgres_recovery_stat.st_uid}\n"
             f"BWRAP_BIN={json.dumps(str(fake_bwrap))}\n"
             f"UV_BIN={json.dumps(str(fake_uv))}\n"
             f"UV_PYTHON_INSTALL_DIR={json.dumps(str(expected_uv_python_install_dir))}\n"
@@ -8215,7 +8267,7 @@ def test_clean_sibling_guardian_scope_stop_state_machine_uses_exact_systemctl_id
     assert 'os.open("quota", flags, dir_fd=parent_fd)' in internal
     assert "os.O_NOFOLLOW" in internal
     assert "before_uid != expected_pre_uid" in internal
-    assert "mounted_dev_ino=\"${QUOTA_MOUNT_IDENTITY%:*:*}\"" in internal
+    assert 'mounted_dev_ino="${QUOTA_MOUNT_IDENTITY%:*:*}"' in internal
     assert "quota hardened mount binding changed" in internal
     assert '"${identity%:*:*}" == "${QUOTA_MOUNT_IDENTITY%:*:*}"' in internal
     assert "os.fchown(fd, expected_uid, expected_gid)" in internal
@@ -8223,8 +8275,8 @@ def test_clean_sibling_guardian_scope_stop_state_machine_uses_exact_systemctl_id
     assert "os.fstat(fd)" in internal
     assert "quota mounted root binding changed before hardening" in internal
     assert "quota mounted root binding changed after hardening" in internal
-    assert "chown \"$(id -u):$(id -g)\" -- \"$QUOTA_ROOT\"" not in internal
-    assert "chmod 700 -- \"$QUOTA_ROOT\"" not in internal
+    assert 'chown "$(id -u):$(id -g)" -- "$QUOTA_ROOT"' not in internal
+    assert 'chmod 700 -- "$QUOTA_ROOT"' not in internal
     assert "stat -Lc '%u:%a' -- \"$QUOTA_ROOT\"" not in internal
     assert "quota mounted root must be owned by current user with mode 700" in internal
     assert '"$FUSERMOUNT_BIN" -u -z "$QUOTA_ROOT"' not in internal
@@ -9784,9 +9836,9 @@ def test_clean_sibling_quota_hardener_refuses_wrong_mount_id_without_mutation(
         'exec {QUOTA_TEST_FD}<"$QUOTA_ROOT"\n'
         'identity="$(stat -Lc \'%d:%i:%u:%a\' -- "/proc/$$/fd/$QUOTA_TEST_FD")"\n'
         'actual_mnt_id="$(awk \'/^mnt_id:/ {print $2}\' "/proc/$$/fdinfo/$QUOTA_TEST_FD")"\n'
-        'exec {QUOTA_TEST_FD}<&-\n'
+        "exec {QUOTA_TEST_FD}<&-\n"
         '[[ "$actual_mnt_id" =~ ^[0-9]+$ ]]\n'
-        'wrong_mnt_id=$((actual_mnt_id + 1))\n'
+        "wrong_mnt_id=$((actual_mnt_id + 1))\n"
         'expected_binding="$identity"$\'\\t\'"$wrong_mnt_id"$\'\\t\'"fuse.ext4"$\'\\t\'"/"$\'\\t\'"$QUOTA_ROOT"\n'
         "set +e\n"
         'quota_harden_mounted_root "$expected_binding" >/dev/null 2>&1\n'
@@ -9893,7 +9945,7 @@ def test_clean_sibling_quota_partial_hardening_failure_detaches_exact_mount(
         "set -e\n"
         'printf "MOUNT_RC=%s\\n" "$mount_rc"\n'
         '[[ "$mount_rc" == 2 ]]\n'
-        "[[ -f \"$QUOTA_IMAGE\" && -f \"$QUOTA_LOG\" ]]\n"
+        '[[ -f "$QUOTA_IMAGE" && -f "$QUOTA_LOG" ]]\n'
         "detach_quota_root\n"
         'printf "DETACH_RC=0\\n"\n'
         'if "$MOUNTPOINT_BIN" -q "$QUOTA_ROOT"; then die "quota mount still mounted"; fi\n'
@@ -10015,7 +10067,7 @@ def test_clean_sibling_quota_fuse_mount_tracks_foreground_direct_child(
         "  if (( count == 1 )); then\n"
         "    QUOTA_MOUNT_IDENTITY='999:2:0:755'\n"
         "  else\n"
-        "    QUOTA_MOUNT_IDENTITY=\"999:2:$(id -u):700\"\n"
+        '    QUOTA_MOUNT_IDENTITY="999:2:$(id -u):700"\n'
         "  fi\n"
         "  QUOTA_MOUNT_MNT_ID=999\n"
         "  QUOTA_MOUNT_FSTYPE=fuse.ext4\n"
@@ -13071,6 +13123,25 @@ if [case["case"] for case in payload["cases"]] != [
     raise SystemExit("wrong cases")
 if any(case["returncode"] != 2 for case in payload["cases"]):
     raise SystemExit("case did not fail closed")
+expected_atomic_fault_cases = [
+    "intent:after-temp-create",
+    "intent:partial-write",
+    "intent:after-file-fsync",
+    "intent:after-atomic-publish",
+    "intent:after-dir-fsync",
+    "ledger:after-temp-create",
+    "ledger:partial-write",
+    "ledger:after-file-fsync",
+    "ledger:after-atomic-publish",
+    "ledger:after-dir-fsync",
+]
+if (
+    [case["case"] for case in payload["forbidden_atomic_fault_cases"]]
+    != expected_atomic_fault_cases
+):
+    raise SystemExit("wrong forbidden atomic fault cases")
+if any(case["returncode"] != 2 for case in payload["forbidden_atomic_fault_cases"]):
+    raise SystemExit("forbidden atomic fault case did not fail closed")
 if payload["launcher"].get("id") != "scripts/evidence/prove_clean_sibling":
     raise SystemExit("wrong launcher id")
 encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -13145,6 +13216,10 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert '"CLEAN_SIBLING_TECHNICAL=PASS "' in source
     assert "printf 'CLEAN_SIBLING_TECHNICAL=PASS" not in source
     assert "CLEAN_SIBLING_TECHNICAL=PASS" not in cleanup_source
+    assert "ACGS_CLEAN_SIBLING_ATOMIC_FAULT" in source
+    assert "forbidden test-only atomic fault environment" in source
+    assert "ACGS_CLEAN_SIBLING_ATOMIC_FAULT" not in cleanup_source
+    assert cleanup_source.count('fault = ""  # TEST_ATOMIC_FAULT_MARKER') == 1
     assert "attestations=pending-independent-lanes" in source
     assert "P3-APPROVAL-003:12:EVID+CP+GZ)" not in cleanup_source
     assert '  exit "$?"\nfi' in source
@@ -13191,6 +13266,9 @@ def test_clean_sibling_hash_locked_bootstraps_and_round_trip(tmp_path: Path) -> 
     assert "bounded_preexec" in p0_launcher_authority_gate
     assert "CLEAN_SIBLING=FAIL phase=B0 reason=" in p0_launcher_authority_gate
     assert "captured_contains_pass=0" in p0_launcher_authority_gate
+    assert "run_forbidden_atomic_fault_cases" in p0_launcher_authority_gate
+    assert "forbidden_atomic_fault_cases" in p0_launcher_authority_gate
+    assert "ACGS_CLEAN_SIBLING_ATOMIC_FAULT" in p0_launcher_authority_gate
     assert "1111111111111111111111111111111111111111" in p0_launcher_authority_gate
     assert "P1-MIGRATION-001)" in source
     assert "P1-SCOPE-002)" in source
@@ -19768,9 +19846,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "--proc /proc" in pg_runner
     assert "--new-session" in pg_runner
     assert "--cap-drop ALL" in pg_runner
-    assert (
-        "Intentionally omit outer --disable-userns so the descriptor-validated" in pg_runner
-    )
+    assert "Intentionally omit outer --disable-userns so the descriptor-validated" in pg_runner
     assert "open_uv_snapshot_data_fd" in pg_runner
     assert 'open_regular_data_fd postgres-runner "$runner_fd" "$runner_path_stat"' in pg_runner
     assert "mounted_artifact_preflight_env_args_postgres" in pg_runner
@@ -19786,7 +19862,11 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "--bind-try /var/run/docker.sock /run/docker.sock" in pg_runner
     assert '--bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"' in pg_runner
     assert 'ACGS_POSTGRES_RECOVERY_ROOT="$4"' in pg_runner
-    assert '"$ACGS_POSTGRES_RECOVERY_ROOT" "$@"' in pg_runner
+    assert (
+        '"$ACGS_POSTGRES_RECOVERY_ROOT_DEVICE:$ACGS_POSTGRES_RECOVERY_ROOT_INODE:$ACGS_POSTGRES_RECOVERY_ROOT_UID:700"'
+        in pg_runner
+    )
+    assert '"$6" "${@:7}"' in pg_runner
     assert pg_runner.index('--bind "$TMP_ROOT" "$TMP_ROOT"') < pg_runner.index(
         '--bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT"'
     )
@@ -19866,7 +19946,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "chunk = os.read(3, min(65_536, remaining))" in reviewed_runner_source
     assert "verify_private_artifact_fd()" in reviewed_runner_source
     assert "write_recovery_contract()" in reviewed_runner_source
-    assert "cleanup_postgres_socket_artifacts()" in reviewed_runner_source
+    assert "cleanup_postgres_socket_bridge()" in reviewed_runner_source
     assert "external_cleanup_uncertain=1" in reviewed_runner_source
     assert "os.fsync(fd)" in reviewed_runner_source
     assert "os.fsync(dir_fd)" in reviewed_runner_source
@@ -19982,11 +20062,11 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "--tmpfs /tmp:rw,noexec,nosuid,nodev,size=2g,mode=1777" in reviewed_runner_source
     assert "acgs.postgres.client=cleanup" not in reviewed_runner_source
     assert "rm -f /run/acgs-pg/.s.PGSQL.5432" not in reviewed_runner_source
-    assert 'cleanup_postgres_socket_artifacts "$state_dir/pg" 999' in reviewed_runner_source
-    assert 'expected = {\n    ".s.PGSQL.5432": "socket",' in reviewed_runner_source
+    assert "cleanup_postgres_socket_bridge 999" in reviewed_runner_source
+    assert '".s.PGSQL.5432": "socket"' in reviewed_runner_source
     assert "expected_artifact_uid = int(expected_artifact_uid_text)" in reviewed_runner_source
     assert "os.fchmod(dir_fd, 0o700)" in reviewed_runner_source
-    assert "hardened_stat.st_mode & 0o777 != 0o700" in reviewed_runner_source
+    assert "stat.S_IMODE(hardened_stat.st_mode) != 0o700" in reviewed_runner_source
     assert "before.st_uid != expected_artifact_uid" in reviewed_runner_source
     assert "os.unlink(name, dir_fd=dir_fd)" in reviewed_runner_source
     assert "PostgreSQL evidence gate cleanup failed" in reviewed_runner_source
@@ -20006,10 +20086,25 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "write_client_recovery_intent(client_name, cidfile, namefile)" in (
         reviewed_runner_source
     )
-    assert "intent_version=1" in reviewed_runner_source
+    assert "intent_version=2" in reviewed_runner_source
+    assert "schema=acgs-postgres-recovery-intent/server/v2" in reviewed_runner_source
     assert 'phase not in {"server-intent"}' in reviewed_runner_source
     assert 'f"phase={phase}"' in reviewed_runner_source
     assert "phase=client-intent" in reviewed_runner_source
+    assert 'ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2="$recovery_root_binding"' in pg_runner
+    assert "acgs-postgres-recovery-root/v2\\t{observed_identity}\\t{mnt_id}" in pg_runner
+    for hook_name in (
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MARKER_WRITE",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_BRIDGE_FSYNC",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_ROOT_FSYNC",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_AFTER_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_UNDER_BASELINE_CHILD_INSIDE_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_PREPOPULATE_SUBSTITUTE_INSIDE_MKDIR",
+    ):
+        assert hook_name in pg_runner
     assert "proof_nonce={PROOF_NONCE}" in reviewed_runner_source
     assert "server_name={SERVER_NAME}" in reviewed_runner_source
     assert "os.O_EXCL | os.O_NOFOLLOW" in reviewed_runner_source
@@ -20159,12 +20254,10 @@ def test_clean_sibling_outer_bwrap_allows_reviewed_inner_userns_only(tmp_path: P
         sentinel_socket.close()
     if "unexpected_userns_result" in result.stderr:
         pytest.fail(
-            f"inner userns was not disabled: stdout={result.stdout!r} "
-            f"stderr={result.stderr!r}"
+            f"inner userns was not disabled: stdout={result.stdout!r} stderr={result.stderr!r}"
         )
     assert result.returncode == 0, (
-        f"nested bwrap isolation probe failed: stdout={result.stdout!r} "
-        f"stderr={result.stderr!r}"
+        f"nested bwrap isolation probe failed: stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert "USERNS_DISABLED rc=-1 errno=28" in result.stdout
 
@@ -20278,6 +20371,8 @@ def test_postgres_gate_recovery_intents_fail_closed_before_docker_effect(
     q_state = shlex.quote(str(state))
     q_proof_label = shlex.quote(proof_label)
     q_server_name = shlex.quote(server_name)
+    recovery_stat = recovery_root.stat(follow_symlinks=False)
+    recovery_mnt_id = _directory_mnt_id(recovery_root)
     harness.write_text(
         "#!/usr/bin/env bash\n"
         "set -Eeuo pipefail\n"
@@ -20288,6 +20383,11 @@ def test_postgres_gate_recovery_intents_fail_closed_before_docker_effect(
         f"proof_nonce={shlex.quote(proof_nonce)}\n"
         f"proof_label={q_proof_label}\n"
         f"container_name={q_server_name}\n"
+        f"postgres_socket_bridge_name={shlex.quote(proof_label + '-socket-bridge')}\n"
+        "postgres_socket_bridge_identity="
+        f"{recovery_stat.st_dev}:{recovery_stat.st_ino}:{recovery_stat.st_uid}:1777\n"
+        f"postgres_socket_bridge_marker_sha256={'a' * 64}\n"
+        f"postgres_socket_bridge_mnt_id={recovery_mnt_id}\n"
         'server_cidfile="$state_dir/server.cid"\n'
         'server_namefile="$state_dir/server.name"\n'
         'validated_root="$(validate_postgres_recovery_root "$postgres_recovery_root")"\n'
@@ -20326,6 +20426,43 @@ def test_postgres_gate_recovery_intents_fail_closed_before_docker_effect(
     assert not docker_log.exists()
 
 
+def test_postgres_gate_cleanup_extraction_includes_stable_verifier_dependencies() -> None:
+    runner_source = (ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+    cleanup_start = runner_source.index("\ncleanup() {\n") + 1
+    cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
+    cleanup_function = runner_source[cleanup_start:cleanup_end]
+    cleanup_calls = re.findall(
+        r"^\s*(verify(?:_stable)?_no_proof_labelled_containers)\b",
+        cleanup_function,
+        flags=re.MULTILINE,
+    )
+    assert cleanup_calls == ["verify_stable_no_proof_labelled_containers"]
+
+    extraction = _postgres_gate_cleanup_extraction_functions(runner_source, cleanup_function)
+    for function_name in [
+        "verify_no_proof_labelled_containers",
+        "verify_stable_no_proof_labelled_containers",
+        "unlink_postgres_recovery_intents",
+    ]:
+        assert extraction.count(f"{function_name}() {{") == 1
+    assert extraction.index("verify_no_proof_labelled_containers() {") < extraction.index(
+        "verify_stable_no_proof_labelled_containers() {"
+    )
+    assert extraction.index("verify_stable_no_proof_labelled_containers() {") < extraction.index(
+        "unlink_postgres_recovery_intents() {"
+    )
+    assert extraction.index("unlink_postgres_recovery_intents() {") < extraction.index(
+        "cleanup_postgres_socket_bridge() { return 0; }"
+    )
+    assert extraction.index("cleanup_postgres_socket_bridge() { return 0; }") < extraction.index(
+        "postgres_socket_bridge="
+    )
+    assert extraction.index("postgres_socket_bridge=") < extraction.index("cleanup() {")
+    assert "schema=acgs-postgres-recovery-intent/server/v2" in extraction
+
+
 def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
     tmp_path: Path,
 ) -> None:
@@ -20334,18 +20471,8 @@ def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
     )
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            runner_source[cleanup_start:cleanup_end],
-        )
+    functions = _postgres_gate_cleanup_extraction_functions(
+        runner_source, runner_source[cleanup_start:cleanup_end]
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -20433,6 +20560,7 @@ def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
         f"server_namefile={shlex.quote(str(state / 'server.name'))}\n"
         "broker_pid=\n"
         "postgres_image=postgres-test\n"
+        "docker_started=1\n"
         "DOCKER_PS_IDS=()\n"
         f"{functions}\n"
         "trap cleanup EXIT\n"
@@ -20456,18 +20584,8 @@ def test_postgres_gate_malformed_client_cid_does_not_block_valid_name_cleanup(
     )
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            runner_source[cleanup_start:cleanup_end],
-        )
+    functions = _postgres_gate_cleanup_extraction_functions(
+        runner_source, runner_source[cleanup_start:cleanup_end]
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -20555,6 +20673,7 @@ def test_postgres_gate_malformed_client_cid_does_not_block_valid_name_cleanup(
         f"server_namefile={shlex.quote(str(state / 'server.name'))}\n"
         "broker_pid=\n"
         "postgres_image=postgres-test\n"
+        "docker_started=1\n"
         "DOCKER_PS_IDS=()\n"
         f"{functions}\n"
         "trap cleanup EXIT\n"
@@ -20585,18 +20704,8 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
     )
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            runner_source[cleanup_start:cleanup_end],
-        )
+    functions = _postgres_gate_cleanup_extraction_functions(
+        runner_source, runner_source[cleanup_start:cleanup_end]
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -20684,6 +20793,7 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
         f"server_namefile={shlex.quote(str(state / 'server.name'))}\n"
         "broker_pid=\n"
         "postgres_image=postgres-test\n"
+        "docker_started=1\n"
         "DOCKER_PS_IDS=()\n"
         f"{functions}\n"
         "trap cleanup EXIT\n"
@@ -20704,10 +20814,12 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
     assert removed_marker.exists()
 
 
-def _external_intent_cleanup_helper(*, inject_post_unlink_intent: bool = False) -> str:
+def _external_intent_cleanup_helper(
+    *, inject_post_unlink_intent: bool = False, atomic_fault: str = ""
+) -> str:
     source = (ROOT / "scripts/evidence/clean_sibling_cleanup.sh").read_text(encoding="utf-8")
     assert hashlib.sha256(source.encode("utf-8")).hexdigest() == (
-        "4c54e6106e7a19e509c9d9281366cafa17154b4a9db1ed375f548d46a232ccd7"
+        "68d996434a6a92b4695872b8ec6dbe7792e3a03d6a791bcaae35a3851e7787be"
     )
     helper = _shell_function(source, "clean_sibling_retain_recovery_contracts")
     helper = (
@@ -20717,6 +20829,20 @@ def _external_intent_cleanup_helper(*, inject_post_unlink_intent: bool = False) 
         .replace("INTENT_POLL_SECONDS = 1.0", "INTENT_POLL_SECONDS = 0.01")
         .replace("timeout=timeout_seconds,", "timeout=min(timeout_seconds, 0.05),")
     )
+    if atomic_fault:
+        assert re.fullmatch(
+            r"(intent|ledger):(after-temp-create|partial-write|after-file-fsync|after-atomic-publish|after-dir-fsync)",
+            atomic_fault,
+        )
+        marker = 'fault = ""  # TEST_ATOMIC_FAULT_MARKER'
+        replacement = f"fault = {atomic_fault!r}  # TEST_ATOMIC_FAULT_MARKER"
+        assert helper.count(marker) == 1
+        helper = helper.replace(
+            marker,
+            replacement,
+            1,
+        )
+        assert helper.count(replacement) == 1
     if inject_post_unlink_intent:
         helper = helper.replace(
             "                os.unlink(name, dir_fd=recovery_fd)\n",
@@ -20747,6 +20873,9 @@ def _external_intent_names(tmp_root: Path, nonce: str) -> dict[str, str]:
     proof_label = f"acp-postgres-gate-{uid}-{nonce}"
     server_name = f"{proof_label}-server"
     client_name = f"{proof_label}-client-77-1"
+    bridge = (
+        tmp_root.parent / "acgs-p0-evidence.postgres-recovery.test" / f"{proof_label}-socket-bridge"
+    )
     return {
         "proof_label": proof_label,
         "server_name": server_name,
@@ -20755,6 +20884,8 @@ def _external_intent_names(tmp_root: Path, nonce: str) -> dict[str, str]:
         "server_namefile": str(tmp_root / "server.name"),
         "client_cidfile": str(tmp_root / "client.cid"),
         "client_namefile": str(tmp_root / "client.name"),
+        "socket_bridge_basename": bridge.name,
+        "socket_bridge_path": str(bridge),
     }
 
 
@@ -20764,8 +20895,14 @@ def _write_intent(path: Path, pairs: list[tuple[str, str]]) -> None:
 
 
 def _server_intent_pairs(names: dict[str, str], nonce: str) -> list[tuple[str, str]]:
+    bridge = Path(names["socket_bridge_path"])
+    bridge_stat = bridge.stat(follow_symlinks=False)
+    marker = bridge / ".acgs-postgres-socket-bridge.v2"
+    marker_sha256 = hashlib.sha256(marker.read_bytes()).hexdigest()
+    bridge_mnt_id = _directory_mnt_id(bridge)
     return [
-        ("intent_version", "1"),
+        ("intent_version", "2"),
+        ("schema", "acgs-postgres-recovery-intent/server/v2"),
         ("phase", "server-intent"),
         ("proof_nonce", nonce),
         ("proof_label", names["proof_label"]),
@@ -20773,6 +20910,13 @@ def _server_intent_pairs(names: dict[str, str], nonce: str) -> list[tuple[str, s
         ("record_path", names["server_namefile"]),
         ("server_cidfile", names["server_cidfile"]),
         ("server_namefile", names["server_namefile"]),
+        ("socket_bridge_basename", names["socket_bridge_basename"]),
+        (
+            "socket_bridge_identity",
+            f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}:1777",
+        ),
+        ("socket_bridge_marker_sha256", marker_sha256),
+        ("socket_bridge_mnt_id", bridge_mnt_id),
     ]
 
 
@@ -20798,6 +20942,12 @@ def _client_intent_pairs_for_name(
 
 def _write_external_intent_pair(tmp_root: Path, recovery_root: Path, nonce: str) -> dict[str, str]:
     names = _external_intent_names(tmp_root, nonce)
+    bridge = Path(names["socket_bridge_path"])
+    bridge.mkdir(mode=0o777)
+    bridge.chmod(0o1777)
+    marker = bridge / ".acgs-postgres-socket-bridge.v2"
+    marker.write_text(f"proof_label={names['proof_label']}\n", encoding="ascii")
+    marker.chmod(0o444)
     _write_intent(
         recovery_root / f"{names['proof_label']}-server.intent",
         _server_intent_pairs(names, nonce),
@@ -20937,6 +21087,8 @@ def _run_external_intent_cleanup(
     docker_mode: str | None,
     mutate: Any | None = None,
     post_unlink_intruder: bool = False,
+    atomic_fault: str = "",
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, Path | dict[str, str]]]:
     tmp_parent = tmp_path / "parent"
     tmp_root = tmp_parent / "root"
@@ -20960,6 +21112,10 @@ def _run_external_intent_cleanup(
             recovery_root=recovery_root,
         )
     harness = tmp_path / "external-intent-cleanup.sh"
+    cleanup_helper = _external_intent_cleanup_helper(
+        inject_post_unlink_intent=post_unlink_intruder,
+        atomic_fault=atomic_fault,
+    )
     harness.write_text(
         "#!/usr/bin/env bash\n"
         "set -u\n"
@@ -20967,14 +21123,20 @@ def _run_external_intent_cleanup(
         f"TMP_ROOT={shlex.quote(str(tmp_root))}\n"
         f"TMP_PARENT={shlex.quote(str(tmp_parent))}\n"
         f"ACGS_POSTGRES_RECOVERY_ROOT={shlex.quote(str(recovery_root))}\n"
-        f"{_external_intent_cleanup_helper(inject_post_unlink_intent=post_unlink_intruder)}\n"
+        f"{cleanup_helper}\n"
         "clean_sibling_retain_recovery_contracts\n"
         "rc=$?\n"
         'exit "$rc"\n',
         encoding="utf-8",
     )
     harness.chmod(0o755)
-    completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+    completed = subprocess.run(
+        [str(harness)],
+        env={**os.environ, **(extra_env or {})},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
     return completed, {
         "tmp_parent": tmp_parent,
         "tmp_root": tmp_root,
@@ -20983,6 +21145,7 @@ def _run_external_intent_cleanup(
         "log": log,
         "state": state,
         "names": names,
+        "harness": harness,
     }
 
 
@@ -21027,6 +21190,338 @@ def test_clean_sibling_external_intents_restart_stable_window_after_delayed_crea
     assert docker_state["ps_calls"] >= 4
     assert "c" * 64 in docker_state["removed"]
     assert f"rm -f {'c' * 64}" in log.read_text(encoding="utf-8")
+
+
+def test_clean_sibling_external_intents_resume_after_bridge_removed_before_ledger(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_remove_validated_bridge_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    assert "cleanup retained external recovery packet" not in completed.stderr
+
+
+def test_clean_sibling_external_intents_reuse_exact_committed_ledger_before_unlink(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    assert (
+        recovery_root / "acgs-clean-sibling-recovery-ledger" / f"{names['proof_label']}.committed"
+    ).is_file()
+
+
+def test_clean_sibling_external_intents_resume_after_partial_intent_unlink(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_unlink_first_intent_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    complete = (
+        recovery_root / "acgs-clean-sibling-recovery-ledger" / f"{names['proof_label']}.complete"
+    )
+    assert complete.is_file()
+
+
+def test_clean_sibling_external_intents_resume_after_all_intents_unlinked_before_completion(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_unlink_all_intents_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    complete = (
+        recovery_root / "acgs-clean-sibling-recovery-ledger" / f"{names['proof_label']}.complete"
+    )
+    assert complete.is_file()
+
+
+@pytest.mark.parametrize(
+    "fault_stage",
+    [
+        "after-temp-create",
+        "partial-write",
+        "after-file-fsync",
+        "after-atomic-publish",
+        "after-dir-fsync",
+    ],
+)
+def test_clean_sibling_external_intents_restore_atomic_faults_converge_before_docker(
+    tmp_path: Path,
+    fault_stage: str,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_unlink_first_intent_before_cleanup,
+        atomic_fault=f"intent:{fault_stage}",
+    )
+    log = context["log"]
+    harness = context["harness"]
+    recovery_root = context["recovery_root"]
+    assert isinstance(log, Path)
+    assert isinstance(harness, Path)
+    assert isinstance(recovery_root, Path)
+    marker = f"fault = 'intent:{fault_stage}'  # TEST_ATOMIC_FAULT_MARKER"
+    assert harness.read_text(encoding="utf-8").count(marker) == 1
+    assert completed.returncode == 2, (fault_stage, completed.stdout, completed.stderr)
+    assert "recovery ledger intent restore" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+    harness.write_text(
+        harness.read_text(encoding="utf-8").replace(
+            marker,
+            'fault = ""  # TEST_ATOMIC_FAULT_MARKER',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    rerun = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+    assert rerun.returncode == 0, (fault_stage, rerun.stdout, rerun.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    assert not list(recovery_root.glob(".acgs-clean-sibling.atomic.*"))
+
+
+@pytest.mark.parametrize(
+    "fault_stage",
+    [
+        "after-temp-create",
+        "partial-write",
+        "after-file-fsync",
+        "after-atomic-publish",
+        "after-dir-fsync",
+    ],
+)
+def test_clean_sibling_external_intents_ledger_atomic_faults_converge(
+    tmp_path: Path,
+    fault_stage: str,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        atomic_fault=f"ledger:{fault_stage}",
+    )
+    harness = context["harness"]
+    recovery_root = context["recovery_root"]
+    assert isinstance(harness, Path)
+    assert isinstance(recovery_root, Path)
+    marker = f"fault = 'ledger:{fault_stage}'  # TEST_ATOMIC_FAULT_MARKER"
+    assert harness.read_text(encoding="utf-8").count(marker) == 1
+    assert completed.returncode == 2, (fault_stage, completed.stdout, completed.stderr)
+    assert "intent-ledger" in completed.stderr
+    assert list(recovery_root.glob("*.intent"))
+
+    harness.write_text(
+        harness.read_text(encoding="utf-8").replace(
+            marker,
+            'fault = ""  # TEST_ATOMIC_FAULT_MARKER',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    rerun = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+    assert rerun.returncode == 0, (fault_stage, rerun.stdout, rerun.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    assert not list(ledger.glob(".acgs-clean-sibling.atomic.*"))
+
+
+def test_clean_sibling_external_intents_repairs_partial_final_intent_from_committed_ledger(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_replace_server_with_partial_final,
+    )
+    recovery_root = context["recovery_root"]
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    assert list(recovery_root.glob(".acgs-clean-sibling.preserved.*.bad"))
+
+
+def test_clean_sibling_external_intents_repairs_partial_final_intent_hardlink_crash(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_replace_server_with_partial_final_hardlink,
+    )
+    recovery_root = context["recovery_root"]
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    preserved = list(recovery_root.glob(".acgs-clean-sibling.preserved.*.bad"))
+    assert len(preserved) == 1
+    assert preserved[0].stat(follow_symlinks=False).st_nlink == 1
+
+
+def test_clean_sibling_external_intents_repairs_partial_final_committed_ledger(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_partial_committed_ledger_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    assert (ledger / f"{names['proof_label']}.committed").is_file()
+    assert list(ledger.glob(".acgs-clean-sibling.preserved.*.bad"))
+    assert not list(recovery_root.glob("*.intent"))
+
+
+def test_clean_sibling_external_intents_repairs_partial_final_committed_ledger_hardlink_crash(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_partial_committed_ledger_hardlink_before_cleanup,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    assert (ledger / f"{names['proof_label']}.committed").is_file()
+    preserved = list(ledger.glob(".acgs-clean-sibling.preserved.*.bad"))
+    assert len(preserved) == 1
+    assert preserved[0].stat(follow_symlinks=False).st_nlink == 1
+    assert not list(recovery_root.glob("*.intent"))
+
+
+def test_clean_sibling_external_intents_repairs_partial_final_complete_hardlink_crash(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_and_partial_complete_hardlink,
+    )
+    recovery_root = context["recovery_root"]
+    names = context["names"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(names, dict)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    complete = ledger / f"{names['proof_label']}.complete"
+    assert complete.read_text(encoding="ascii") == (
+        f"completed_recovery_record=1\nproof_label={names['proof_label']}\n"
+    )
+    preserved = list(ledger.glob(".acgs-clean-sibling.preserved.*.bad"))
+    assert len(preserved) == 1
+    assert preserved[0].stat(follow_symlinks=False).st_nlink == 1
+    assert not list(recovery_root.glob("*.intent"))
+
+
+def test_clean_sibling_external_intents_repairs_partial_atomic_temp_hardlink_crash(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_unlink_first_and_partial_atomic_temp_hardlink,
+    )
+    recovery_root = context["recovery_root"]
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert not list(recovery_root.glob("*.intent"))
+    assert not list(recovery_root.glob(".acgs-clean-sibling.atomic.*"))
+    preserved = list(recovery_root.glob(".acgs-clean-sibling.preserved.atomic.*.bad"))
+    assert len(preserved) == 1
+    assert preserved[0].stat(follow_symlinks=False).st_nlink == 1
+
+
+def test_clean_sibling_external_intents_reject_tampered_complete_marker_before_docker(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_matching_recovery_ledger_all_unlinked_and_tamper_complete,
+    )
+    log = context["log"]
+    recovery_root = context["recovery_root"]
+    assert isinstance(log, Path)
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "recovery ledger complete content" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+    assert not list(recovery_root.glob("*.intent"))
+
+
+def test_clean_sibling_external_intents_reject_cross_nonce_ledger_payload_before_docker(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_write_cross_nonce_ledger_payload_and_remove_live_intents,
+    )
+    log = context["log"]
+    recovery_root = context["recovery_root"]
+    assert isinstance(log, Path)
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "recovery ledger payload manifest" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+    assert not list(recovery_root.glob("*.intent"))
+
+
+def test_clean_sibling_external_intents_reject_same_name_payload_mismatch_before_docker(
+    tmp_path: Path,
+) -> None:
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=_replace_live_server_intent_with_same_label_different_bridge,
+    )
+    log = context["log"]
+    recovery_root = context["recovery_root"]
+    assert isinstance(log, Path)
+    assert isinstance(recovery_root, Path)
+    assert completed.returncode == 2, (completed.stdout, completed.stderr)
+    assert "recovery ledger intent content" in completed.stderr
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+    assert list(recovery_root.glob("*.intent"))
 
 
 @pytest.mark.parametrize(
@@ -21139,6 +21634,368 @@ def _add_many_valid_external_clients(
         )
 
 
+def _remove_validated_bridge_before_cleanup(
+    _tmp_root: Path, recovery_root: Path, names: dict[str, str], _nonce: str
+) -> None:
+    bridge = recovery_root / names["socket_bridge_basename"]
+    (bridge / ".acgs-postgres-socket-bridge.v2").unlink()
+    bridge.rmdir()
+
+
+def _write_matching_recovery_ledger_before_cleanup(
+    _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    intent_names = sorted(path.name for path in recovery_root.glob("*.intent"))
+    manifest_lines: list[str] = []
+    for name in intent_names:
+        path = recovery_root / name
+        st = path.stat(follow_symlinks=False)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest_lines.append(
+            f"{name}:{st.st_dev}:{st.st_ino}:{st.st_uid}:"
+            f"{stat.S_IMODE(st.st_mode)}:{st.st_nlink}:{st.st_size}:{digest}"
+        )
+    intent_manifest_sha256 = hashlib.sha256(
+        ("\n".join(manifest_lines) + "\n").encode("ascii")
+    ).hexdigest()
+    payload_manifest = [
+        [
+            name,
+            base64.b64encode((recovery_root / name).read_bytes()).decode("ascii"),
+        ]
+        for name in intent_names
+    ]
+    intent_payload_manifest_b64 = base64.b64encode(
+        json.dumps(payload_manifest, separators=(",", ":")).encode("ascii")
+    ).decode("ascii")
+    server_intent = dict(_server_intent_pairs(names, nonce))
+    packet_lines = [
+        "contract_version=2",
+        "schema=acgs-postgres-recovery-contract/v2",
+        "external_cleanup_uncertain=1",
+        "cleanup_status=2",
+        f"proof_nonce={nonce}",
+        f"proof_label={names['proof_label']}",
+        f"server_name={names['server_name']}",
+        f"socket_bridge_basename={server_intent['socket_bridge_basename']}",
+        f"socket_bridge_identity={server_intent['socket_bridge_identity']}",
+        f"socket_bridge_marker_sha256={server_intent['socket_bridge_marker_sha256']}",
+        f"socket_bridge_mnt_id={server_intent['socket_bridge_mnt_id']}",
+        f"recovery_root_mnt_id={server_intent['socket_bridge_mnt_id']}",
+    ]
+    packet = ("\n".join(packet_lines) + "\n").encode("ascii")
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    ledger.mkdir(mode=0o700)
+    record = ledger / f"{names['proof_label']}.committed"
+    record.write_text(
+        "committed_recovery_record=1\n"
+        f"proof_label={names['proof_label']}\n"
+        f"intent_count={len(intent_names)}\n"
+        f"packet_sha256={hashlib.sha256(packet).hexdigest()}\n"
+        f"intent_manifest_sha256={intent_manifest_sha256}\n"
+        f"intent_payload_manifest_b64={intent_payload_manifest_b64}\n",
+        encoding="ascii",
+    )
+    record.chmod(0o600)
+
+
+def _write_matching_recovery_ledger_and_unlink_first_intent_before_cleanup(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    first_intent = sorted(recovery_root.glob("*.intent"))[0]
+    first_intent.unlink()
+
+
+def _write_matching_recovery_ledger_and_unlink_all_intents_before_cleanup(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    for intent in sorted(recovery_root.glob("*.intent")):
+        intent.unlink()
+
+
+def _write_matching_recovery_ledger_and_replace_server_with_partial_final(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    server = recovery_root / f"{names['proof_label']}-server.intent"
+    server.write_text("intent_version=2\nproof_label=", encoding="ascii")
+    server.chmod(0o600)
+
+
+def _preserved_regular_hardlink(source: Path) -> Path:
+    payload = source.read_bytes()
+    quarantine = (
+        source.parent / f".acgs-clean-sibling.preserved.{source.name}."
+        f"{len(payload)}.{hashlib.sha256(payload).hexdigest()}.bad"
+    )
+    os.link(source, quarantine)
+    assert source.stat(follow_symlinks=False).st_nlink == 2
+    assert quarantine.stat(follow_symlinks=False).st_nlink == 2
+    return quarantine
+
+
+def _write_matching_recovery_ledger_and_replace_server_with_partial_final_hardlink(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_and_replace_server_with_partial_final(
+        tmp_root, recovery_root, names, nonce
+    )
+    _preserved_regular_hardlink(recovery_root / f"{names['proof_label']}-server.intent")
+
+
+def _write_partial_committed_ledger_before_cleanup(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    del tmp_root, nonce
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    ledger.mkdir(mode=0o700)
+    record = ledger / f"{names['proof_label']}.committed"
+    record.write_text(
+        f"committed_recovery_record=1\nproof_label={names['proof_label']}\nintent_count=",
+        encoding="ascii",
+    )
+    record.chmod(0o600)
+
+
+def _write_partial_committed_ledger_hardlink_before_cleanup(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_partial_committed_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    _preserved_regular_hardlink(ledger / f"{names['proof_label']}.committed")
+
+
+def _write_matching_recovery_ledger_and_partial_complete_hardlink(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    complete = ledger / f"{names['proof_label']}.complete"
+    complete.write_text(
+        f"completed_recovery_record=1\nproof_label={names['proof_label'][:-1]}\n",
+        encoding="ascii",
+    )
+    complete.chmod(0o600)
+    _preserved_regular_hardlink(complete)
+
+
+def _write_matching_recovery_ledger_unlink_first_and_partial_atomic_temp_hardlink(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_and_unlink_first_intent_before_cleanup(
+        tmp_root, recovery_root, names, nonce
+    )
+    final_name = f"{names['server_name']}.intent"
+    payload = b"intent_version=2\nproof_label="
+    expected_digest = "0" * 64
+    actual_digest = hashlib.sha256(payload).hexdigest()
+    temp_name = (
+        f".acgs-clean-sibling.atomic.intent.{final_name}."
+        f"{len(payload)}.{expected_digest}.tmp.12345.1"
+    )
+    temp = recovery_root / temp_name
+    temp.write_bytes(payload)
+    temp.chmod(0o600)
+    quarantine = (
+        recovery_root
+        / f".acgs-clean-sibling.preserved.atomic.intent.{expected_digest}.{actual_digest}.bad"
+    )
+    os.link(temp, quarantine)
+    assert temp.stat(follow_symlinks=False).st_nlink == 2
+    assert quarantine.stat(follow_symlinks=False).st_nlink == 2
+
+
+def _write_matching_recovery_ledger_all_unlinked_and_tamper_complete(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_and_unlink_all_intents_before_cleanup(
+        tmp_root, recovery_root, names, nonce
+    )
+    complete = (
+        recovery_root / "acgs-clean-sibling-recovery-ledger" / f"{names['proof_label']}.complete"
+    )
+    wrong_label = names["proof_label"][:-1] + ("0" if names["proof_label"][-1] != "0" else "1")
+    complete.write_text(
+        f"completed_recovery_record=1\nproof_label={wrong_label}\n",
+        encoding="ascii",
+    )
+    complete.chmod(0o600)
+
+
+def _write_cross_nonce_ledger_payload_and_remove_live_intents(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    for intent in sorted(recovery_root.glob("*.intent")):
+        intent.unlink()
+    other_nonce = "00000000000000000000000000000044"
+    other_names = _write_external_intent_pair(tmp_root, recovery_root, other_nonce)
+    payload_manifest = [
+        [
+            path.name,
+            base64.b64encode(path.read_bytes()).decode("ascii"),
+        ]
+        for path in sorted(recovery_root.glob("*.intent"))
+    ]
+    for intent in sorted(recovery_root.glob("*.intent")):
+        intent.unlink()
+    ledger = recovery_root / "acgs-clean-sibling-recovery-ledger"
+    ledger.mkdir(mode=0o700)
+    record = ledger / f"{names['proof_label']}.committed"
+    record.write_text(
+        "committed_recovery_record=1\n"
+        f"proof_label={names['proof_label']}\n"
+        f"intent_count={len(payload_manifest)}\n"
+        f"packet_sha256={'b' * 64}\n"
+        f"intent_manifest_sha256={'c' * 64}\n"
+        "intent_payload_manifest_b64="
+        + base64.b64encode(
+            json.dumps(payload_manifest, separators=(",", ":")).encode("ascii")
+        ).decode("ascii")
+        + "\n",
+        encoding="ascii",
+    )
+    record.chmod(0o600)
+    assert other_names["proof_label"] != names["proof_label"]
+
+
+def _replace_live_server_intent_with_same_label_different_bridge(
+    tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    _write_matching_recovery_ledger_before_cleanup(tmp_root, recovery_root, names, nonce)
+    original_bridge = recovery_root / names["socket_bridge_basename"]
+    replacement_bridge = recovery_root / f"{names['proof_label']}-replacement-socket-bridge"
+    replacement_bridge.mkdir(mode=0o777)
+    replacement_bridge.chmod(0o1777)
+    marker = replacement_bridge / ".acgs-postgres-socket-bridge.v2"
+    marker.write_text(f"proof_label={names['proof_label']}\nreplacement=1\n", encoding="ascii")
+    marker.chmod(0o444)
+    replacement_names = dict(names)
+    replacement_names["socket_bridge_basename"] = original_bridge.name
+    pairs = _server_intent_pairs(replacement_names, nonce)
+    replacement_stat = replacement_bridge.stat(follow_symlinks=False)
+    replacement_pairs = [
+        (
+            key,
+            (
+                f"{replacement_stat.st_dev}:{replacement_stat.st_ino}:{replacement_stat.st_uid}:1777"
+                if key == "socket_bridge_identity"
+                else hashlib.sha256(marker.read_bytes()).hexdigest()
+                if key == "socket_bridge_marker_sha256"
+                else _directory_mnt_id(replacement_bridge)
+                if key == "socket_bridge_mnt_id"
+                else value
+            ),
+        )
+        for key, value in pairs
+    ]
+    _write_intent(
+        recovery_root / f"{names['proof_label']}-server.intent",
+        replacement_pairs,
+    )
+
+
+def _recovery_state_snapshot(recovery_root: Path) -> dict[str, tuple[int, str]]:
+    snapshot: dict[str, tuple[int, str]] = {}
+    for path in sorted(recovery_root.rglob("*")):
+        if path.is_dir():
+            continue
+        relpath = path.relative_to(recovery_root).as_posix()
+        snapshot[relpath] = (
+            stat.S_IMODE(path.stat(follow_symlinks=False).st_mode),
+            path.read_text(encoding="ascii"),
+        )
+    return snapshot
+
+
+def _write_legacy_contract_for_v2_intents(
+    _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    contract = recovery_root / "recovery-contract.env"
+    contract.write_text(
+        "external_cleanup_uncertain=1\n"
+        "cleanup_status=2\n"
+        f"proof_nonce={nonce}\n"
+        f"proof_label={names['proof_label']}\n"
+        f"server_name={names['server_name']}\n",
+        encoding="ascii",
+    )
+    contract.chmod(0o600)
+
+
+def _replace_server_intent_with_v1_and_write_incomplete_v2_contract(
+    _tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+) -> None:
+    server_intent = recovery_root / f"{names['proof_label']}-server.intent"
+    _write_intent(
+        server_intent,
+        [
+            ("intent_version", "1"),
+            ("phase", "server-intent"),
+            ("proof_nonce", nonce),
+            ("proof_label", names["proof_label"]),
+            ("server_name", names["server_name"]),
+            ("record_path", names["server_namefile"]),
+            ("server_cidfile", names["server_cidfile"]),
+            ("server_namefile", names["server_namefile"]),
+        ],
+    )
+    contract = recovery_root / "recovery-contract.env"
+    contract.write_text(
+        "contract_version=2\n"
+        "schema=acgs-postgres-recovery-contract/v2\n"
+        "external_cleanup_uncertain=1\n"
+        "cleanup_status=2\n"
+        f"proof_nonce={nonce}\n"
+        f"proof_label={names['proof_label']}\n"
+        f"server_name={names['server_name']}\n"
+        "socket_bridge_creation_uncertain=1\n"
+        f"socket_bridge_basename={names['socket_bridge_basename']}\n"
+        f"recovery_root_mnt_id={_directory_mnt_id(recovery_root)}\n",
+        encoding="ascii",
+    )
+    contract.chmod(0o600)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "mutate"),
+    [
+        ("v2-intent-legacy-contract", _write_legacy_contract_for_v2_intents),
+        (
+            "v1-intent-incomplete-v2-contract",
+            _replace_server_intent_with_v1_and_write_incomplete_v2_contract,
+        ),
+    ],
+)
+def test_clean_sibling_external_intents_retain_cross_version_state_before_docker(
+    tmp_path: Path,
+    case_name: str,
+    mutate: Any,
+) -> None:
+    before: dict[str, tuple[int, str]] = {}
+
+    def snapshotting_mutate(
+        tmp_root: Path, recovery_root: Path, names: dict[str, str], nonce: str
+    ) -> None:
+        mutate(tmp_root, recovery_root, names, nonce)
+        before.update(_recovery_state_snapshot(recovery_root))
+
+    completed, context = _run_external_intent_cleanup(
+        tmp_path,
+        docker_mode="empty",
+        mutate=snapshotting_mutate,
+    )
+    recovery_root = context["recovery_root"]
+    log = context["log"]
+    assert isinstance(recovery_root, Path)
+    assert isinstance(log, Path)
+    assert completed.returncode == 2, (case_name, completed.stdout, completed.stderr)
+    assert "reason=intent-contract-version-mismatch" in completed.stderr
+    assert _recovery_state_snapshot(recovery_root) == before
+    assert not log.exists() or log.read_text(encoding="utf-8") == ""
+
+
 @pytest.mark.parametrize(
     "docker_mode",
     [
@@ -21214,108 +22071,84 @@ def test_postgres_gate_socket_cleanup_unlinks_only_exact_descriptor_bound_artifa
     runner_source = (ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh").read_text(
         encoding="utf-8"
     )
-    helper = _shell_function(runner_source, "cleanup_postgres_socket_artifacts")
-    with tempfile.TemporaryDirectory(prefix="acgs-pg-", dir="/tmp") as pg_parent:
-        pg_dir = Path(pg_parent) / "pg"
-        pg_dir.mkdir(mode=0o700)
-        untouched = pg_dir / "unrelated"
-        untouched.write_text("keep\n", encoding="utf-8")
-        lock_file = pg_dir / ".s.PGSQL.5432.lock"
-        lock_file.write_text("123\n", encoding="utf-8")
+    helper_start = runner_source.index("\ncleanup_postgres_socket_bridge() {\n") + 1
+    helper_end = runner_source.index("\n}\n\nunlink_postgres_recovery_intents", helper_start) + 3
+    helper = runner_source[helper_start:helper_end]
+    uid = os.getuid()
+    proof_label = f"acp-postgres-gate-{uid}-00000000000000000000000000000033"
+    bridge_name = f"{proof_label}-socket-bridge"
+
+    def make_bridge(_root_name: str) -> tuple[Path, Path, socket.socket]:
+        root = Path(tempfile.mkdtemp(prefix="p", dir="/tmp"))
+        root.chmod(0o700)
+        bridge = root / bridge_name
+        bridge.mkdir(mode=0o777)
+        bridge.chmod(0o1777)
+        marker = bridge / ".acgs-postgres-socket-bridge.v2"
+        marker.write_text(f"proof_label={proof_label}\n", encoding="ascii")
+        marker.chmod(0o444)
+        lock_file = bridge / ".s.PGSQL.5432.lock"
+        lock_file.write_text("123\n", encoding="ascii")
         lock_file.chmod(0o600)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.bind(str(pg_dir / ".s.PGSQL.5432"))
-            harness = tmp_path / "socket-cleanup.sh"
-            harness.write_text(
-                "#!/usr/bin/env bash\n"
-                "set -Eeuo pipefail\n"
-                f"{helper}\n"
-                f'cleanup_postgres_socket_artifacts {shlex.quote(str(pg_dir))} "$(id -u)"\n'
-                "printf 'SOCKET_CLEANUP_OK\\n'\n",
-                encoding="utf-8",
-            )
-            harness.chmod(0o755)
-            completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
-            assert completed.returncode == 0, (completed.stdout, completed.stderr)
-            assert "SOCKET_CLEANUP_OK" in completed.stdout
-            assert not (pg_dir / ".s.PGSQL.5432").exists()
-            assert not lock_file.exists()
-            assert stat.S_IMODE(pg_dir.stat().st_mode) == 0o700
-            assert untouched.read_text(encoding="utf-8") == "keep\n"
-        finally:
-            sock.close()
+        sock.bind(str(bridge / ".s.PGSQL.5432"))
+        return root, bridge, sock
 
-        for name, setup in (
-            (".s.PGSQL.5432", lambda target: target.write_text("not-socket\n", encoding="utf-8")),
-            (".s.PGSQL.5432.lock", lambda target: target.symlink_to("/dev/null")),
-        ):
-            target = pg_dir / name
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            setup(target)
-            cleanup_call = (
-                "if cleanup_postgres_socket_artifacts "
-                f'{shlex.quote(str(pg_dir))} "$(id -u)"; then\n'
-            )
-            harness = tmp_path / f"socket-cleanup-reject-{name.replace('.', '_')}.sh"
-            harness.write_text(
-                "#!/usr/bin/env bash\n"
-                "set -Eeuo pipefail\n"
-                f"{helper}\n"
-                f"{cleanup_call}"
-                "  exit 80\n"
-                "fi\n"
-                "printf 'SOCKET_CLEANUP_REJECTED\\n'\n",
-                encoding="utf-8",
-            )
-            harness.chmod(0o755)
-            completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
-            assert completed.returncode == 0, (name, completed.stdout, completed.stderr)
-            assert "SOCKET_CLEANUP_REJECTED" in completed.stdout
-            assert target.exists() or target.is_symlink()
-            target.unlink()
+    def bridge_env(root: Path, bridge: Path) -> str:
+        marker = bridge / ".acgs-postgres-socket-bridge.v2"
+        bridge_stat = bridge.stat(follow_symlinks=False)
+        return (
+            f"postgres_recovery_root={shlex.quote(str(root))}\n"
+            f"postgres_socket_bridge_name={shlex.quote(bridge.name)}\n"
+            "postgres_socket_bridge_identity="
+            f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}:1777\n"
+            f"postgres_socket_bridge_marker_sha256={hashlib.sha256(marker.read_bytes()).hexdigest()}\n"
+            f"postgres_socket_bridge_mnt_id={_directory_mnt_id(bridge)}\n"
+            f"postgres_recovery_root_mnt_id={_directory_mnt_id(root)}\n"
+        )
 
-        wrong_owner_lock = pg_dir / ".s.PGSQL.5432.lock"
-        wrong_owner_lock.write_text("123\n", encoding="utf-8")
-        wrong_owner_lock.chmod(0o600)
-        harness = tmp_path / "socket-cleanup-reject-owner.sh"
+    root, bridge, sock = make_bridge("socket-root-ok")
+    try:
+        harness = tmp_path / "socket-cleanup.sh"
         harness.write_text(
             "#!/usr/bin/env bash\n"
             "set -Eeuo pipefail\n"
+            f"{bridge_env(root, bridge)}"
             f"{helper}\n"
-            f"if cleanup_postgres_socket_artifacts {shlex.quote(str(pg_dir))} 999; then\n"
-            "  exit 80\n"
-            "fi\n"
-            "printf 'SOCKET_CLEANUP_OWNER_REJECTED\\n'\n",
+            'cleanup_postgres_socket_bridge "$(id -u)"\n'
+            "printf 'SOCKET_CLEANUP_OK\\n'\n",
             encoding="utf-8",
         )
         harness.chmod(0o755)
         completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        assert "SOCKET_CLEANUP_OWNER_REJECTED" in completed.stdout
-        assert wrong_owner_lock.exists()
+        assert "SOCKET_CLEANUP_OK" in completed.stdout
+        assert not bridge.exists()
+    finally:
+        sock.close()
 
-        hardlink_lock = pg_dir / ".s.PGSQL.5432.lock.hardlink"
-        os.link(wrong_owner_lock, hardlink_lock)
-        harness = tmp_path / "socket-cleanup-reject-hardlink.sh"
+    root, bridge, sock = make_bridge("socket-root-reject")
+    try:
+        bad_socket = bridge / ".s.PGSQL.5432"
+        bad_socket.unlink()
+        bad_socket.write_text("not-socket\n", encoding="ascii")
+        harness = tmp_path / "socket-cleanup-reject-socket.sh"
         harness.write_text(
             "#!/usr/bin/env bash\n"
             "set -Eeuo pipefail\n"
+            f"{bridge_env(root, bridge)}"
             f"{helper}\n"
-            f'if cleanup_postgres_socket_artifacts {shlex.quote(str(pg_dir))} "$(id -u)"; then\n'
-            "  exit 80\n"
-            "fi\n"
-            "printf 'SOCKET_CLEANUP_HARDLINK_REJECTED\\n'\n",
+            'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 80; fi\n'
+            "printf 'SOCKET_CLEANUP_REJECTED\\n'\n",
             encoding="utf-8",
         )
         harness.chmod(0o755)
         completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        assert "SOCKET_CLEANUP_HARDLINK_REJECTED" in completed.stdout
-        assert wrong_owner_lock.exists()
-        hardlink_lock.unlink()
-        wrong_owner_lock.unlink()
+        assert "SOCKET_CLEANUP_REJECTED" in completed.stdout
+        assert bridge.exists()
+    finally:
+        sock.close()
 
 
 def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_container(
@@ -21326,18 +22159,8 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
     )
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            runner_source[cleanup_start:cleanup_end],
-        )
+    functions = _postgres_gate_cleanup_extraction_functions(
+        runner_source, runner_source[cleanup_start:cleanup_end]
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -21419,6 +22242,7 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
             f"server_namefile={shlex.quote(str(state / 'server.name'))}\n"
             "broker_pid=\n"
             "postgres_image=postgres-test\n"
+            "docker_started=1\n"
             "DOCKER_PS_IDS=()\n"
             f"{functions}\n"
             "trap cleanup EXIT\n"
@@ -21448,18 +22272,8 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
     )
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            runner_source[cleanup_start:cleanup_end],
-        )
+    functions = _postgres_gate_cleanup_extraction_functions(
+        runner_source, runner_source[cleanup_start:cleanup_end]
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -21547,6 +22361,7 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
             f"server_namefile={shlex.quote(str(server_namefile))}\n"
             "broker_pid=\n"
             "postgres_image=postgres-test\n"
+            "docker_started=1\n"
             "DOCKER_PS_IDS=()\n"
             f"{functions}\n"
             "trap cleanup EXIT\n"
@@ -21574,19 +22389,7 @@ def test_postgres_gate_docker_ps_cleanup_failures_retain_recovery_state(
     cleanup_start = runner_source.index("\ncleanup() {\n") + 1
     cleanup_end = runner_source.index("\n}\ntrap cleanup EXIT", cleanup_start) + 3
     cleanup_function = runner_source[cleanup_start:cleanup_end]
-    functions = "\n".join(
-        (
-            _shell_function(runner_source, "read_private_container_file"),
-            _shell_function(runner_source, "write_recovery_contract"),
-            _shell_function(runner_source, "capture_docker_ps_ids"),
-            _shell_function(runner_source, "remove_exact_recorded_container"),
-            _shell_function(runner_source, "cleanup_client_containers"),
-            _shell_function(runner_source, "cleanup_server_container"),
-            _shell_function(runner_source, "verify_no_proof_labelled_containers"),
-            _shell_function(runner_source, "cleanup_postgres_socket_artifacts"),
-            cleanup_function,
-        )
-    )
+    functions = _postgres_gate_cleanup_extraction_functions(runner_source, cleanup_function)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "docker.log"
@@ -21636,6 +22439,14 @@ def test_postgres_gate_docker_ps_cleanup_failures_retain_recovery_state(
         f"server_namefile={shlex.quote(str(tmp_path / 'state' / 'server.name'))}\n"
         "broker_pid=\n"
         "postgres_image=postgres-test\n"
+        "postgres_socket_bridge=\n"
+        "postgres_socket_bridge_name=\n"
+        "postgres_socket_bridge_identity=\n"
+        "postgres_socket_bridge_marker_sha256=\n"
+        "postgres_socket_bridge_mnt_id=\n"
+        "postgres_recovery_root_mnt_id=\n"
+        "postgres_socket_bridge_creation_uncertain=0\n"
+        "docker_started=1\n"
         "DOCKER_PS_IDS=()\n"
         'mkdir -p "$state_dir/pg"\n'
         f"{functions}\n"
@@ -21848,6 +22659,12 @@ def test_postgres_gate_recovery_contract_rejects_preexisting_or_tampered_target(
         'container_name="${proof_label}-server"\n'
         'server_cidfile="$state_dir/server.cid"\n'
         'server_namefile="$state_dir/server.name"\n'
+        'postgres_socket_bridge_name="${proof_label}-socket-bridge"\n'
+        "postgres_socket_bridge_identity=\n"
+        "postgres_socket_bridge_marker_sha256=\n"
+        "postgres_socket_bridge_mnt_id=\n"
+        "postgres_recovery_root_mnt_id=1\n"
+        "postgres_socket_bridge_creation_uncertain=1\n"
         "write_recovery_contract 70\n"
         "if write_recovery_contract 70 >/dev/null 2>&1; then exit 80; fi\n"
         'rm -f "$state_dir/recovery-contract.env"\n'

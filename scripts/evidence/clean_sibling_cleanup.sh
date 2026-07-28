@@ -118,7 +118,9 @@ clean_sibling_snapshot_worktree_registry() {
     [[ "$expected_identity" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || return 2
   fi
   "$snapshot_python" - "$registry_root" "$expected_identity" <<'PY'
+import base64
 import hashlib
+import json
 import os
 import stat
 import struct
@@ -746,6 +748,7 @@ clean_sibling_git_worktree_remove_in_absent_namespace() {
   (
     local fd_path=''
     local fd=''
+    # shellcheck disable=SC2231
     for fd_path in /proc/$$/fd/*; do
       fd="${fd_path##*/}"
       [[ "$fd" =~ ^[0-9]+$ ]] || continue
@@ -1481,6 +1484,7 @@ clean_sibling_remove_registered_worktree() {
     printf 'cleanup refused to delete still-registered worktree root: %s\n' "$WORKTREE" >&2
     return 2
   fi
+  # shellcheck disable=SC2034
   WORKTREE_REGISTRATION_REMOVED=1
   WORKTREE_POST_REMOVE_GITFILE_VALIDATED=1
   clean_sibling_require_worktree_absent_before_git_deregister || return 2
@@ -1491,7 +1495,9 @@ clean_sibling_retain_recovery_contracts() {
   [[ -n "${TMP_ROOT:-}" && -d "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || return 0
   /usr/bin/python3 -I -S - "$TMP_ROOT" "$TMP_PARENT" \
     "${ACGS_POSTGRES_RECOVERY_ROOT:-}" <<'PY'
+import base64
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -1591,6 +1597,7 @@ try:
     intent_server_records: list[tuple[str, str, str]] = []
     intent_client_records: list[tuple[str, str, str]] = []
     intent_names: list[str] = []
+    intent_bridge_packet: dict[str, str] = {}
 
     def safe_under_tmp_root(path_value: str) -> bool:
         if (
@@ -1716,6 +1723,1127 @@ try:
             if scan_fd >= 0:
                 os.close(scan_fd)
 
+    def parse_key_value_payload(payload: bytes, label: str) -> dict[str, str]:
+        try:
+            text_value = payload.decode("ascii")
+        except UnicodeDecodeError:
+            fail(f"cleanup refused {label} grammar")
+        lines_value = text_value.splitlines()
+        if text_value != "\n".join(lines_value) + "\n":
+            fail(f"cleanup refused {label} grammar")
+        parsed_value: dict[str, str] = {}
+        for line in lines_value:
+            if "=" not in line:
+                fail(f"cleanup refused {label} grammar")
+            key, value = line.split("=", 1)
+            if key in parsed_value or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+                fail(f"cleanup refused {label} grammar")
+            parsed_value[key] = value
+        return parsed_value
+
+    def recovery_root_mount_id() -> str:
+        if recovery_fd < 0:
+            fail("cleanup refused PostgreSQL recovery root mount")
+        with open(f"/proc/self/fdinfo/{recovery_fd}", encoding="utf-8") as fdinfo:
+            for line in fdinfo:
+                if line.startswith("mnt_id:"):
+                    value = line.split(":", 1)[1].strip()
+                    if not value.isdigit():
+                        fail("cleanup refused PostgreSQL recovery root mount")
+                    return value
+        fail("cleanup refused PostgreSQL recovery root mount")
+
+    def parse_ledger_payload_manifest(
+        value: str,
+        expected_count: int,
+        expected_proof_label: str,
+        expected_packet_sha256: str,
+    ) -> dict[str, bytes]:
+        try:
+            raw = base64.b64decode(value.encode("ascii"), validate=True)
+            decoded = json.loads(raw.decode("ascii"))
+        except (ValueError, json.JSONDecodeError):
+            fail("cleanup refused recovery ledger payload manifest")
+        if not isinstance(decoded, list) or len(decoded) != expected_count:
+            fail("cleanup refused recovery ledger payload manifest")
+        payloads: dict[str, bytes] = {}
+        canonical_manifest: list[list[str]] = []
+        servers = 0
+        expected_nonce = expected_proof_label.rsplit("-", 1)[1]
+        expected_server = f"{expected_proof_label}-server"
+        server_bridge: dict[str, str] = {}
+        for item in decoded:
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or not isinstance(item[0], str)
+                or not isinstance(item[1], str)
+            ):
+                fail("cleanup refused recovery ledger payload manifest")
+            name, payload_b64 = item
+            if name in payloads or not re.fullmatch(r"[a-z0-9_.-]{1,160}\.intent", name):
+                fail("cleanup refused recovery ledger payload manifest")
+            try:
+                payload = base64.b64decode(payload_b64.encode("ascii"), validate=True)
+            except ValueError:
+                fail("cleanup refused recovery ledger payload manifest")
+            if len(payload) <= 0 or len(payload) > 2048:
+                fail("cleanup refused recovery ledger payload manifest")
+            parsed_payload = parse_key_value_payload(payload, "recovery ledger intent payload")
+            if name.endswith("-server.intent"):
+                servers += 1
+                required_keys = [
+                    "intent_version",
+                    "schema",
+                    "phase",
+                    "proof_nonce",
+                    "proof_label",
+                    "server_name",
+                    "record_path",
+                    "server_cidfile",
+                    "server_namefile",
+                    "socket_bridge_basename",
+                    "socket_bridge_identity",
+                    "socket_bridge_marker_sha256",
+                    "socket_bridge_mnt_id",
+                ]
+                if list(parsed_payload) != required_keys:
+                    fail("cleanup refused recovery ledger payload manifest")
+                if name != f"{expected_proof_label}-server.intent":
+                    fail("cleanup refused recovery ledger payload manifest")
+                if (
+                    parsed_payload["intent_version"] != "2"
+                    or parsed_payload["schema"] != "acgs-postgres-recovery-intent/server/v2"
+                    or parsed_payload["phase"] != "server-intent"
+                    or parsed_payload["proof_nonce"] != expected_nonce
+                    or parsed_payload["proof_label"] != expected_proof_label
+                    or parsed_payload["server_name"] != expected_server
+                    or parsed_payload["record_path"] != parsed_payload["server_namefile"]
+                    or not safe_under_tmp_root(parsed_payload["server_cidfile"])
+                    or not safe_under_tmp_root(parsed_payload["server_namefile"])
+                    or parsed_payload["socket_bridge_basename"]
+                    != f"{expected_proof_label}-socket-bridge"
+                    or not re.fullmatch(
+                        r"[0-9]+:[0-9]+:[0-9]+:1777",
+                        parsed_payload["socket_bridge_identity"],
+                    )
+                    or not re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        parsed_payload["socket_bridge_marker_sha256"],
+                    )
+                    or not parsed_payload["socket_bridge_mnt_id"].isdigit()
+                ):
+                    fail("cleanup refused recovery ledger payload manifest")
+                server_bridge = {
+                    "socket_bridge_basename": parsed_payload["socket_bridge_basename"],
+                    "socket_bridge_identity": parsed_payload["socket_bridge_identity"],
+                    "socket_bridge_marker_sha256": parsed_payload["socket_bridge_marker_sha256"],
+                    "socket_bridge_mnt_id": parsed_payload["socket_bridge_mnt_id"],
+                }
+            else:
+                required_keys = [
+                    "intent_version",
+                    "phase",
+                    "proof_nonce",
+                    "proof_label",
+                    "server_name",
+                    "client_name",
+                    "record_path",
+                    "client_cidfile",
+                    "client_namefile",
+                ]
+                if list(parsed_payload) != required_keys:
+                    fail("cleanup refused recovery ledger payload manifest")
+                client_name = parsed_payload["client_name"]
+                if (
+                    parsed_payload["intent_version"] != "1"
+                    or parsed_payload["phase"] != "client-intent"
+                    or parsed_payload["proof_nonce"] != expected_nonce
+                    or parsed_payload["proof_label"] != expected_proof_label
+                    or parsed_payload["server_name"] != expected_server
+                    or not re.fullmatch(
+                        rf"{re.escape(expected_proof_label)}-client-[0-9]+-[0-9]+",
+                        client_name,
+                    )
+                    or name != f"{client_name}.intent"
+                    or parsed_payload["record_path"] != parsed_payload["client_namefile"]
+                    or not safe_under_tmp_root(parsed_payload["client_cidfile"])
+                    or not safe_under_tmp_root(parsed_payload["client_namefile"])
+                ):
+                    fail("cleanup refused recovery ledger payload manifest")
+            payloads[name] = payload
+            canonical_manifest.append(
+                [name, base64.b64encode(payload).decode("ascii")]
+            )
+        if servers != 1:
+            fail("cleanup refused recovery ledger payload manifest")
+        if sorted(canonical_manifest, key=lambda item: os.fsencode(item[0])) != canonical_manifest:
+            fail("cleanup refused recovery ledger payload manifest")
+        canonical_raw = json.dumps(canonical_manifest, separators=(",", ":")).encode("ascii")
+        if base64.b64encode(canonical_raw).decode("ascii") != value:
+            fail("cleanup refused recovery ledger payload manifest")
+        packet_lines = [
+            "contract_version=2",
+            "schema=acgs-postgres-recovery-contract/v2",
+            "external_cleanup_uncertain=1",
+            "cleanup_status=2",
+            f"proof_nonce={expected_nonce}",
+            f"proof_label={expected_proof_label}",
+            f"server_name={expected_server}",
+            f"socket_bridge_basename={server_bridge['socket_bridge_basename']}",
+            f"socket_bridge_identity={server_bridge['socket_bridge_identity']}",
+            f"socket_bridge_marker_sha256={server_bridge['socket_bridge_marker_sha256']}",
+            f"socket_bridge_mnt_id={server_bridge['socket_bridge_mnt_id']}",
+            f"recovery_root_mnt_id={server_bridge['socket_bridge_mnt_id']}",
+        ]
+        if hashlib.sha256(("\n".join(packet_lines) + "\n").encode("ascii")).hexdigest() != expected_packet_sha256:
+            fail("cleanup refused recovery ledger packet binding")
+        return payloads
+
+    def parse_committed_ledger_record(record: bytes, expected_proof_label: str) -> dict[str, str]:
+        parsed_record = parse_key_value_payload(record, "recovery ledger record")
+        required = [
+            "committed_recovery_record",
+            "proof_label",
+            "intent_count",
+            "packet_sha256",
+            "intent_manifest_sha256",
+            "intent_payload_manifest_b64",
+        ]
+        if list(parsed_record) != required:
+            fail("cleanup refused recovery ledger record grammar")
+        if parsed_record["committed_recovery_record"] != "1":
+            fail("cleanup refused recovery ledger record")
+        if parsed_record["proof_label"] != expected_proof_label:
+            fail("cleanup refused recovery ledger proof binding")
+        if not re.fullmatch(r"[1-9][0-9]?", parsed_record["intent_count"]):
+            fail("cleanup refused recovery ledger count")
+        if int(parsed_record["intent_count"]) > 64:
+            fail("cleanup refused recovery ledger count")
+        if not re.fullmatch(r"[0-9a-f]{64}", parsed_record["packet_sha256"]):
+            fail("cleanup refused recovery ledger packet")
+        if not re.fullmatch(r"[0-9a-f]{64}", parsed_record["intent_manifest_sha256"]):
+            fail("cleanup refused recovery ledger manifest")
+        return parsed_record
+
+    def canonical_intent_payload_manifest_b64(names: list[str]) -> str:
+        manifest = [
+            [
+                name,
+                base64.b64encode(intent_payload_by_name[name]).decode("ascii"),
+            ]
+            for name in names
+        ]
+        encoded = json.dumps(manifest, separators=(",", ":")).encode("ascii")
+        return base64.b64encode(encoded).decode("ascii")
+
+    atomic_temp_counter = [0]
+
+    def read_exact_fd(fd: int, expected_size: int) -> bytes:
+        chunks = []
+        remaining = expected_size + 1
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    def write_all_fd(fd: int, payload: bytes, reason: str, on_error) -> None:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(fd, payload[offset:])
+            if written <= 0:
+                on_error(reason)
+            offset += written
+
+    def fdatasync_file(fd: int) -> None:
+        if hasattr(os, "fdatasync"):
+            os.fdatasync(fd)
+        else:
+            os.fsync(fd)
+
+    def atomic_temp_name(kind: str, final_name: str, payload: bytes) -> str:
+        atomic_temp_counter[0] += 1
+        digest = hashlib.sha256(payload).hexdigest()
+        return (
+            f".acgs-clean-sibling.atomic.{kind}.{final_name}."
+            f"{len(payload)}.{digest}.tmp.{os.getpid()}.{atomic_temp_counter[0]}"
+        )
+
+    def parse_atomic_temp_name(name: str) -> tuple[str, str, int, str] | None:
+        match = re.fullmatch(
+            r"\.acgs-clean-sibling\.atomic\."
+            r"(intent|ledger|complete)\."
+            r"([A-Za-z0-9_.-]+)\."
+            r"([0-9]+)\."
+            r"([0-9a-f]{64})\.tmp\.[0-9]+\.[0-9]+",
+            name,
+        )
+        if match is None:
+            return None
+        final_name = match.group(2)
+        if "/" in final_name or final_name in {"", ".", ".."}:
+            return None
+        return match.group(1), final_name, int(match.group(3)), match.group(4)
+
+    def atomic_final_name_matches_kind(kind: str, final_name: str) -> bool:
+        if kind == "intent":
+            return bool(
+                re.fullmatch(
+                    rf"acp-postgres-gate-{uid}-[0-9a-f]{{32}}-(server|client-[0-9]+-[0-9]+)\.intent",
+                    final_name,
+                )
+            )
+        if kind == "ledger":
+            return bool(
+                re.fullmatch(rf"acp-postgres-gate-{uid}-[0-9a-f]{{32}}\.committed", final_name)
+            )
+        if kind == "complete":
+            return bool(
+                re.fullmatch(rf"acp-postgres-gate-{uid}-[0-9a-f]{{32}}\.complete", final_name)
+            )
+        return False
+
+    def file_has_exact_payload(
+        dir_fd: int,
+        name: str,
+        expected_size: int,
+        expected_digest: str,
+        *,
+        allow_link_count: set[int],
+    ) -> bool:
+        fd = -1
+        try:
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=dir_fd,
+            )
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink not in allow_link_count
+                or st.st_size != expected_size
+            ):
+                return False
+            payload = read_exact_fd(fd, expected_size)
+            return (
+                len(payload) == expected_size
+                and hashlib.sha256(payload).hexdigest() == expected_digest
+                and not os.read(fd, 1)
+            )
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    def verify_final_atomic_payload(
+        dir_fd: int, final_name: str, payload: bytes, reason: str, on_error
+    ) -> bool:
+        digest = hashlib.sha256(payload).hexdigest()
+        if not file_has_exact_payload(
+            dir_fd,
+            final_name,
+            len(payload),
+            digest,
+            allow_link_count={1},
+        ):
+            try:
+                os.stat(final_name, dir_fd=dir_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                on_error(reason)
+            on_error(reason)
+        return True
+
+    def reconcile_same_inode_quarantine_link(
+        dir_fd: int,
+        source_name: str,
+        quarantine_name: str,
+        expected_size: int,
+        expected_digest: str,
+        reason: str,
+        on_error,
+    ) -> bool:
+        if (
+            "/" in source_name
+            or source_name in {"", ".", ".."}
+            or "/" in quarantine_name
+            or quarantine_name in {"", ".", ".."}
+            or expected_size < 0
+            or expected_size > 262144
+        ):
+            return False
+        source_fd = -1
+        quarantine_fd = -1
+        try:
+            source_fd = os.open(
+                source_name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=dir_fd,
+            )
+            quarantine_fd = os.open(
+                quarantine_name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=dir_fd,
+            )
+            source_st = os.fstat(source_fd)
+            quarantine_st = os.fstat(quarantine_fd)
+            if (
+                source_st.st_dev != quarantine_st.st_dev
+                or source_st.st_ino != quarantine_st.st_ino
+                or not stat.S_ISREG(source_st.st_mode)
+                or source_st.st_uid != uid
+                or stat.S_IMODE(source_st.st_mode) != 0o600
+                or source_st.st_nlink != 2
+                or source_st.st_size != expected_size
+                or not stat.S_ISREG(quarantine_st.st_mode)
+                or quarantine_st.st_uid != uid
+                or stat.S_IMODE(quarantine_st.st_mode) != 0o600
+                or quarantine_st.st_nlink != 2
+                or quarantine_st.st_size != expected_size
+            ):
+                return False
+            payload = read_exact_fd(source_fd, expected_size)
+            if (
+                len(payload) != expected_size
+                or os.read(source_fd, 1)
+                or hashlib.sha256(payload).hexdigest() != expected_digest
+            ):
+                return False
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        finally:
+            if source_fd >= 0:
+                os.close(source_fd)
+            if quarantine_fd >= 0:
+                os.close(quarantine_fd)
+        try:
+            os.unlink(source_name, dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        except OSError:
+            on_error(reason)
+        if not file_has_exact_payload(
+            dir_fd,
+            quarantine_name,
+            expected_size,
+            expected_digest,
+            allow_link_count={1},
+        ):
+            on_error(reason)
+        return True
+
+    def reconcile_atomic_temps(dir_fd: int, on_error) -> None:
+        try:
+            names = os.listdir(dir_fd)
+        except OSError:
+            on_error("atomic-temp-scan")
+        if len(names) > 256:
+            on_error("atomic-temp-count")
+        for temp_name in names:
+            parsed = parse_atomic_temp_name(temp_name)
+            if parsed is None:
+                continue
+            kind, final_name, expected_size, expected_digest = parsed
+            if not atomic_final_name_matches_kind(kind, final_name):
+                continue
+            if expected_size <= 0 or expected_size > 262144:
+                continue
+            if not file_has_exact_payload(
+                dir_fd,
+                temp_name,
+                expected_size,
+                expected_digest,
+                allow_link_count={1, 2},
+            ):
+                quarantine_owned_atomic_temp(
+                    dir_fd,
+                    temp_name,
+                    kind,
+                    expected_size,
+                    expected_digest,
+                    on_error,
+                )
+                continue
+            if file_has_exact_payload(
+                dir_fd,
+                final_name,
+                expected_size,
+                expected_digest,
+                allow_link_count={1, 2},
+            ):
+                try:
+                    os.unlink(temp_name, dir_fd=dir_fd)
+                    os.fsync(dir_fd)
+                except OSError:
+                    on_error("atomic-temp-unlink")
+                continue
+            try:
+                os.stat(final_name, dir_fd=dir_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                try:
+                    os.link(
+                        temp_name,
+                        final_name,
+                        src_dir_fd=dir_fd,
+                        dst_dir_fd=dir_fd,
+                        follow_symlinks=False,
+                    )
+                    os.fsync(dir_fd)
+                    os.unlink(temp_name, dir_fd=dir_fd)
+                    os.fsync(dir_fd)
+                except FileExistsError:
+                    continue
+                except OSError:
+                    on_error("atomic-temp-publish")
+                if not file_has_exact_payload(
+                    dir_fd,
+                    final_name,
+                    expected_size,
+                    expected_digest,
+                    allow_link_count={1},
+                ):
+                    on_error("atomic-temp-final")
+            except OSError:
+                on_error("atomic-temp-final-stat")
+
+    def quarantine_owned_atomic_temp(
+        dir_fd: int,
+        temp_name: str,
+        kind: str,
+        expected_size: int,
+        expected_digest: str,
+        on_error,
+    ) -> None:
+        fd = -1
+        try:
+            fd = os.open(
+                temp_name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=dir_fd,
+            )
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink not in {1, 2}
+                or st.st_size < 0
+                or st.st_size > expected_size
+                or expected_size > 262144
+            ):
+                return
+            payload = read_exact_fd(fd, st.st_size)
+            if len(payload) != st.st_size or os.read(fd, 1):
+                return
+            actual_digest = hashlib.sha256(payload).hexdigest()
+        except OSError:
+            return
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        quarantine_name = (
+            f".acgs-clean-sibling.preserved.atomic.{kind}."
+            f"{expected_digest}.{actual_digest}.bad"
+        )
+        if not re.fullmatch(
+            r"\.acgs-clean-sibling\.preserved\.atomic\."
+            r"(intent|ledger|complete)\.[0-9a-f]{64}\.[0-9a-f]{64}\.bad",
+            quarantine_name,
+        ):
+            return
+        if st.st_nlink == 2:
+            reconcile_same_inode_quarantine_link(
+                dir_fd,
+                temp_name,
+                quarantine_name,
+                st.st_size,
+                actual_digest,
+                "atomic-temp-quarantine",
+                on_error,
+            )
+            return
+        try:
+            os.link(
+                temp_name,
+                quarantine_name,
+                src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd,
+                follow_symlinks=False,
+            )
+            os.fsync(dir_fd)
+        except FileExistsError:
+            if reconcile_same_inode_quarantine_link(
+                dir_fd,
+                temp_name,
+                quarantine_name,
+                st.st_size,
+                actual_digest,
+                "atomic-temp-quarantine",
+                on_error,
+            ):
+                return
+            if not file_has_exact_payload(
+                dir_fd,
+                quarantine_name,
+                st.st_size,
+                actual_digest,
+                allow_link_count={1},
+            ):
+                return
+        except OSError:
+            return
+        try:
+            os.unlink(temp_name, dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        except OSError:
+            on_error("atomic-temp-quarantine")
+
+    def quarantine_owned_regular_file(
+        dir_fd: int,
+        final_name: str,
+        reason: str,
+        on_error,
+        *,
+        max_size: int,
+    ) -> None:
+        if "/" in final_name or final_name in {"", ".", ".."}:
+            on_error(reason)
+        fd = -1
+        try:
+            fd = os.open(
+                final_name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=dir_fd,
+            )
+            st = os.fstat(fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink not in {1, 2}
+                or st.st_size < 0
+                or st.st_size > max_size
+            ):
+                on_error(reason)
+            payload = read_exact_fd(fd, st.st_size)
+            if len(payload) != st.st_size or os.read(fd, 1):
+                on_error(reason)
+            digest = hashlib.sha256(payload).hexdigest()
+        except OSError:
+            on_error(reason)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        quarantine_name = (
+            f".acgs-clean-sibling.preserved.{final_name}.{st.st_size}.{digest}.bad"
+        )
+        if parse_atomic_temp_name(quarantine_name) is not None:
+            on_error(reason)
+        if not re.fullmatch(
+            rf"\.acgs-clean-sibling\.preserved\.{re.escape(final_name)}\.[0-9]+\.[0-9a-f]{{64}}\.bad",
+            quarantine_name,
+        ):
+            on_error(reason)
+        if st.st_nlink == 2:
+            if reconcile_same_inode_quarantine_link(
+                dir_fd,
+                final_name,
+                quarantine_name,
+                st.st_size,
+                digest,
+                reason,
+                on_error,
+            ):
+                return
+            on_error(reason)
+        try:
+            os.link(
+                final_name,
+                quarantine_name,
+                src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd,
+                follow_symlinks=False,
+            )
+            os.fsync(dir_fd)
+        except FileExistsError:
+            if reconcile_same_inode_quarantine_link(
+                dir_fd,
+                final_name,
+                quarantine_name,
+                st.st_size,
+                digest,
+                reason,
+                on_error,
+            ):
+                return
+            if not file_has_exact_payload(
+                dir_fd,
+                quarantine_name,
+                st.st_size,
+                digest,
+                allow_link_count={1},
+            ):
+                on_error(reason)
+        except OSError:
+            on_error(reason)
+        try:
+            os.unlink(final_name, dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        except OSError:
+            on_error(reason)
+
+    def atomic_publish_no_replace(
+        dir_fd: int,
+        final_name: str,
+        payload: bytes,
+        kind: str,
+        reason: str,
+        on_error,
+    ) -> None:
+        if "/" in final_name or final_name in {"", ".", ".."}:
+            on_error(reason)
+        if len(payload) <= 0 or len(payload) > 262144:
+            on_error(reason)
+        if not atomic_final_name_matches_kind(kind, final_name):
+            on_error(reason)
+        reconcile_atomic_temps(dir_fd, on_error)
+        if file_has_exact_payload(
+            dir_fd,
+            final_name,
+            len(payload),
+            hashlib.sha256(payload).hexdigest(),
+            allow_link_count={1},
+        ):
+            return
+        try:
+            os.stat(final_name, dir_fd=dir_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            on_error(reason)
+        else:
+            quarantine_owned_regular_file(
+                dir_fd,
+                final_name,
+                reason,
+                on_error,
+                max_size=262144,
+            )
+        temp_name = atomic_temp_name(kind, final_name, payload)
+        temp_fd = -1
+        fault = ""  # TEST_ATOMIC_FAULT_MARKER
+        try:
+            temp_fd = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=dir_fd,
+            )
+            if fault == f"{kind}:after-temp-create":
+                on_error(f"{reason}-after-temp-create")
+            if fault == f"{kind}:partial-write":
+                partial = payload[: max(1, len(payload) // 2)]
+                write_all_fd(temp_fd, partial, reason, on_error)
+                fdatasync_file(temp_fd)
+                on_error(f"{reason}-partial-write")
+            write_all_fd(temp_fd, payload, reason, on_error)
+            fdatasync_file(temp_fd)
+            if fault == f"{kind}:after-file-fsync":
+                on_error(f"{reason}-after-file-fsync")
+        except OSError:
+            on_error(reason)
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+        try:
+            os.link(
+                temp_name,
+                final_name,
+                src_dir_fd=dir_fd,
+                dst_dir_fd=dir_fd,
+                follow_symlinks=False,
+            )
+            os.fsync(dir_fd)
+            if fault == f"{kind}:after-atomic-publish":
+                on_error(f"{reason}-after-atomic-publish")
+            os.unlink(temp_name, dir_fd=dir_fd)
+            os.fsync(dir_fd)
+            if fault == f"{kind}:after-dir-fsync":
+                on_error(f"{reason}-after-dir-fsync")
+        except FileExistsError:
+            pass
+        except OSError:
+            on_error(reason)
+        verify_final_atomic_payload(dir_fd, final_name, payload, reason, on_error)
+
+    def read_committed_ledger(proof_label_value: str) -> dict[str, str] | None:
+        if recovery_fd < 0:
+            return None
+        ledger_fd = -1
+        record_fd = -1
+        try:
+            ledger_fd = os.open(
+                "acgs-clean-sibling-recovery-ledger",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=recovery_fd,
+            )
+            ledger_st = os.fstat(ledger_fd)
+            if (
+                ledger_st.st_uid != uid
+                or stat.S_IMODE(ledger_st.st_mode) != 0o700
+                or ledger_st.st_nlink < 1
+            ):
+                fail("cleanup refused recovery ledger directory identity")
+            record_fd = os.open(
+                f"{proof_label_value}.committed",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=ledger_fd,
+            )
+            record_st = os.fstat(record_fd)
+            if (
+                not stat.S_ISREG(record_st.st_mode)
+                or record_st.st_uid != uid
+                or stat.S_IMODE(record_st.st_mode) != 0o600
+                or record_st.st_nlink != 1
+                or record_st.st_size <= 0
+                or record_st.st_size > 262144
+            ):
+                fail("cleanup refused recovery ledger file identity")
+            record = os.read(record_fd, record_st.st_size + 1)
+            if len(record) != record_st.st_size or os.read(record_fd, 1):
+                fail("cleanup refused recovery ledger size")
+            return parse_committed_ledger_record(record, proof_label_value)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            fail("cleanup refused recovery ledger open")
+        finally:
+            if record_fd >= 0:
+                os.close(record_fd)
+            if ledger_fd >= 0:
+                os.close(ledger_fd)
+
+    def completed_ledger_record_exists(proof_label_value: str) -> bool:
+        if recovery_fd < 0:
+            return False
+        ledger_fd = -1
+        complete_fd = -1
+        complete_record = (
+            b"completed_recovery_record=1\n"
+            + f"proof_label={proof_label_value}\n".encode("ascii")
+        )
+        try:
+            ledger_fd = os.open(
+                "acgs-clean-sibling-recovery-ledger",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=recovery_fd,
+            )
+            ledger_st = os.fstat(ledger_fd)
+            if (
+                ledger_st.st_uid != uid
+                or stat.S_IMODE(ledger_st.st_mode) != 0o700
+                or ledger_st.st_nlink < 1
+            ):
+                fail("cleanup refused recovery ledger directory identity")
+            complete_fd = os.open(
+                f"{proof_label_value}.complete",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=ledger_fd,
+            )
+            complete_st = os.fstat(complete_fd)
+            if (
+                not stat.S_ISREG(complete_st.st_mode)
+                or complete_st.st_uid != uid
+                or stat.S_IMODE(complete_st.st_mode) != 0o600
+                or complete_st.st_nlink != 1
+                or complete_st.st_size != len(complete_record)
+            ):
+                fail("cleanup refused recovery ledger complete identity")
+            complete_payload = os.read(complete_fd, complete_st.st_size + 1)
+            if complete_payload != complete_record or os.read(complete_fd, 1):
+                fail("cleanup refused recovery ledger complete content")
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            fail("cleanup refused recovery ledger complete open")
+        finally:
+            if complete_fd >= 0:
+                os.close(complete_fd)
+            if ledger_fd >= 0:
+                os.close(ledger_fd)
+
+    def committed_ledger_appears_complete(proof_label_value: str) -> bool:
+        ledger_fd = -1
+        record_fd = -1
+        try:
+            ledger_fd = os.open(
+                "acgs-clean-sibling-recovery-ledger",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=recovery_fd,
+            )
+            record_fd = os.open(
+                f"{proof_label_value}.committed",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=ledger_fd,
+            )
+            st = os.fstat(record_fd)
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_uid != uid
+                or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1
+                or st.st_size <= 0
+                or st.st_size > 262144
+            ):
+                return False
+            payload = os.read(record_fd, st.st_size + 1)
+            return (
+                len(payload) == st.st_size
+                and payload.endswith(b"\n")
+                and b"\nintent_payload_manifest_b64=" in payload
+            )
+        except OSError:
+            return False
+        finally:
+            if record_fd >= 0:
+                os.close(record_fd)
+            if ledger_fd >= 0:
+                os.close(ledger_fd)
+
+    def restore_committed_intents_before_parse() -> None:
+        if recovery_fd < 0:
+            return
+        reconcile_atomic_temps(recovery_fd, fail)
+        existing_names = [name for name in list_recovery_names() if name.endswith(".intent")]
+        ledger_names: list[str] = []
+        ledger_fd = -1
+        try:
+            ledger_fd = os.open(
+                "acgs-clean-sibling-recovery-ledger",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                dir_fd=recovery_fd,
+            )
+            reconcile_atomic_temps(ledger_fd, fail)
+            ledger_names = sorted(os.listdir(ledger_fd), key=os.fsencode)
+        except FileNotFoundError:
+            ledger_names = []
+        except OSError:
+            fail("cleanup refused recovery ledger scan")
+        finally:
+            if ledger_fd >= 0:
+                os.close(ledger_fd)
+        committed = [name for name in ledger_names if name.endswith(".committed")]
+        if committed:
+            if len(committed) != 1:
+                fail("cleanup refused ambiguous recovery ledger records")
+            proof_label_value = committed[0].removesuffix(".committed")
+            if not re.fullmatch(rf"acp-postgres-gate-{uid}-[0-9a-f]{{32}}", proof_label_value):
+                return
+            if not existing_names and completed_ledger_record_exists(proof_label_value):
+                return
+            if existing_names and not committed_ledger_appears_complete(proof_label_value):
+                return
+            ledger_record = read_committed_ledger(proof_label_value)
+            if ledger_record is None:
+                return
+            payloads = parse_ledger_payload_manifest(
+                ledger_record["intent_payload_manifest_b64"],
+                int(ledger_record["intent_count"]),
+                proof_label_value,
+                ledger_record["packet_sha256"],
+            )
+            if not set(existing_names).issubset(payloads):
+                fail("cleanup refused recovery ledger partial intent set")
+            for existing_name in existing_names:
+                expected_payload = payloads[existing_name]
+                expected_digest = hashlib.sha256(expected_payload).hexdigest()
+                if file_has_exact_payload(
+                    recovery_fd,
+                    existing_name,
+                    len(expected_payload),
+                    expected_digest,
+                    allow_link_count={1},
+                ):
+                    continue
+                try:
+                    read_intent_file(existing_name)
+                except SystemExit:
+                    pass
+                else:
+                    fail("cleanup refused recovery ledger intent content")
+                quarantine_owned_regular_file(
+                    recovery_fd,
+                    existing_name,
+                    "cleanup refused recovery ledger intent content",
+                    fail,
+                    max_size=2048,
+                )
+            for name, payload in payloads.items():
+                if file_has_exact_payload(
+                    recovery_fd,
+                    name,
+                    len(payload),
+                    hashlib.sha256(payload).hexdigest(),
+                    allow_link_count={1},
+                ):
+                    continue
+                try:
+                    os.stat(name, dir_fd=recovery_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    fail("cleanup refused recovery ledger intent stat")
+                else:
+                    fail("cleanup refused recovery ledger intent content")
+                atomic_publish_no_replace(
+                    recovery_fd,
+                    name,
+                    payload,
+                    "intent",
+                    "cleanup refused recovery ledger intent restore",
+                    fail,
+                )
+            try:
+                os.fsync(recovery_fd)
+            except OSError:
+                fail("cleanup refused recovery ledger intent fsync")
+            intent_identity_by_name.clear()
+            intent_payload_by_name.clear()
+            return
+        proof_labels: set[str] = set()
+        for existing_name in existing_names:
+            parsed_existing = read_intent_file(existing_name)
+            proof_labels.add(parsed_existing.get("proof_label", ""))
+        intent_identity_by_name.clear()
+        intent_payload_by_name.clear()
+        if existing_names and len(proof_labels) != 1:
+            return
+        proof_label_value = ""
+        if existing_names:
+            proof_label_value = next(iter(proof_labels))
+        else:
+            ledger_fd = -1
+            try:
+                ledger_fd = os.open(
+                    "acgs-clean-sibling-recovery-ledger",
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=recovery_fd,
+                )
+                reconcile_atomic_temps(ledger_fd, fail)
+                ledger_names = sorted(os.listdir(ledger_fd), key=os.fsencode)
+            except FileNotFoundError:
+                return
+            except OSError:
+                fail("cleanup refused recovery ledger scan")
+            finally:
+                if ledger_fd >= 0:
+                    os.close(ledger_fd)
+            committed = [name for name in ledger_names if name.endswith(".committed")]
+            if not committed:
+                return
+            if len(committed) != 1:
+                fail("cleanup refused ambiguous recovery ledger records")
+            proof_label_value = committed[0].removesuffix(".committed")
+            if completed_ledger_record_exists(proof_label_value):
+                return
+        if not re.fullmatch(rf"acp-postgres-gate-{uid}-[0-9a-f]{{32}}", proof_label_value):
+            return
+        ledger_record = read_committed_ledger(proof_label_value)
+        if ledger_record is None:
+            return
+        payloads = parse_ledger_payload_manifest(
+            ledger_record["intent_payload_manifest_b64"],
+            int(ledger_record["intent_count"]),
+            proof_label_value,
+            ledger_record["packet_sha256"],
+        )
+        if not set(existing_names).issubset(payloads):
+            fail("cleanup refused recovery ledger partial intent set")
+        for existing_name in existing_names:
+            expected_payload = payloads[existing_name]
+            try:
+                fd = os.open(
+                    existing_name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=recovery_fd,
+                )
+            except OSError:
+                fail("cleanup refused recovery ledger intent open")
+            try:
+                st = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(st.st_mode)
+                    or st.st_uid != uid
+                    or stat.S_IMODE(st.st_mode) != 0o600
+                    or st.st_nlink != 1
+                    or st.st_size != len(expected_payload)
+                ):
+                    fail("cleanup refused recovery ledger intent identity")
+                current_payload = os.read(fd, len(expected_payload) + 1)
+                if current_payload != expected_payload or os.read(fd, 1):
+                    fail("cleanup refused recovery ledger intent content")
+            finally:
+                os.close(fd)
+        if sorted(existing_names, key=os.fsencode) == sorted(payloads, key=os.fsencode):
+            return
+        for name, payload in payloads.items():
+            try:
+                current = os.stat(name, dir_fd=recovery_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                atomic_publish_no_replace(
+                    recovery_fd,
+                    name,
+                    payload,
+                    "intent",
+                    "cleanup refused recovery ledger intent restore",
+                    fail,
+                )
+            except OSError:
+                fail("cleanup refused recovery ledger intent stat")
+            else:
+                if (
+                    not stat.S_ISREG(current.st_mode)
+                    or current.st_uid != uid
+                    or stat.S_IMODE(current.st_mode) != 0o600
+                    or current.st_nlink != 1
+                    or current.st_size != len(payload)
+                ):
+                    fail("cleanup refused recovery ledger intent identity")
+                try:
+                    fd = os.open(
+                        name,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=recovery_fd,
+                    )
+                    try:
+                        existing_payload = os.read(fd, len(payload) + 1)
+                        if existing_payload != payload or os.read(fd, 1):
+                            fail("cleanup refused recovery ledger intent content")
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    fail("cleanup refused recovery ledger intent open")
+        try:
+            os.fsync(recovery_fd)
+        except OSError:
+            fail("cleanup refused recovery ledger intent fsync")
+        intent_identity_by_name.clear()
+        intent_payload_by_name.clear()
+
+    restore_committed_intents_before_parse()
+
     def parse_recovery_intents() -> tuple[dict[str, str] | None, list[tuple[str, str, str]], list[tuple[str, str, str]], list[str]]:
         if recovery_fd < 0:
             return None, [], [], []
@@ -1732,8 +2860,6 @@ try:
             nonce_value = parsed_intent.get("proof_nonce", "")
             proof_value = parsed_intent.get("proof_label", "")
             server_value = parsed_intent.get("server_name", "")
-            if parsed_intent.get("intent_version") != "1":
-                fail("cleanup refused PostgreSQL recovery intent version")
             if not re.fullmatch(r"[0-9a-f]{32}", nonce_value):
                 fail("cleanup refused PostgreSQL recovery intent nonce")
             expected_label = f"acp-postgres-gate-{uid}-{nonce_value}"
@@ -1741,13 +2867,20 @@ try:
                 fail("cleanup refused PostgreSQL recovery intent binding")
             group = groups.setdefault(
                 proof_value,
-                {"nonce": nonce_value, "server": None, "clients": set(), "files": []},
+                {
+                    "nonce": nonce_value,
+                    "server": None,
+                    "clients": set(),
+                    "files": [],
+                    "bridge": None,
+                },
             )
             if group["nonce"] != nonce_value:
                 fail("cleanup refused PostgreSQL recovery intent cross nonce")
             group["files"].append(name)  # type: ignore[index]
             if phase_value == "server-intent":
-                required_keys = [
+                intent_version = parsed_intent.get("intent_version")
+                v1_required_keys = [
                     "intent_version",
                     "phase",
                     "proof_nonce",
@@ -1757,18 +2890,67 @@ try:
                     "server_cidfile",
                     "server_namefile",
                 ]
-                if list(parsed_intent) != required_keys:
+                v2_required_keys = [
+                    "intent_version",
+                    "schema",
+                    "phase",
+                    "proof_nonce",
+                    "proof_label",
+                    "server_name",
+                    "record_path",
+                    "server_cidfile",
+                    "server_namefile",
+                    "socket_bridge_basename",
+                    "socket_bridge_identity",
+                    "socket_bridge_marker_sha256",
+                    "socket_bridge_mnt_id",
+                ]
+                if intent_version not in {"1", "2"}:
+                    fail("cleanup refused PostgreSQL server intent version")
+                if intent_version == "1" and list(parsed_intent) != v1_required_keys:
                     fail("cleanup refused PostgreSQL server intent grammar")
+                if intent_version == "2":
+                    if parsed_intent.get("schema") != "acgs-postgres-recovery-intent/server/v2":
+                        fail("cleanup refused PostgreSQL server intent schema")
+                    if list(parsed_intent) != v2_required_keys:
+                        fail("cleanup refused PostgreSQL server intent grammar")
                 if name != f"{proof_value}-server.intent":
                     fail("cleanup refused PostgreSQL server intent filename")
                 if group["server"] is not None:
                     fail("cleanup refused duplicate PostgreSQL server intent")
+                if intent_version == "2":
+                    state_dir_value = os.path.dirname(parsed_intent["server_namefile"])
+                    if (
+                        os.path.basename(parsed_intent["server_cidfile"]) != "server.cid"
+                        or os.path.basename(parsed_intent["server_namefile"]) != "server.name"
+                        or os.path.dirname(parsed_intent["server_cidfile"]) != state_dir_value
+                    ):
+                        fail("cleanup refused PostgreSQL server intent live record binding")
                 if (
                     parsed_intent["record_path"] != parsed_intent["server_namefile"]
                     or not safe_under_tmp_root(parsed_intent["server_cidfile"])
                     or not safe_under_tmp_root(parsed_intent["server_namefile"])
                 ):
                     fail("cleanup refused PostgreSQL server intent path binding")
+                if intent_version == "2":
+                    bridge_basename = parsed_intent["socket_bridge_basename"]
+                    bridge_identity = parsed_intent["socket_bridge_identity"]
+                    bridge_marker_sha256 = parsed_intent["socket_bridge_marker_sha256"]
+                    bridge_mnt_id = parsed_intent["socket_bridge_mnt_id"]
+                    if bridge_basename != f"{proof_value}-socket-bridge":
+                        fail("cleanup refused PostgreSQL server intent bridge binding")
+                    if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", bridge_identity):
+                        fail("cleanup refused PostgreSQL server intent bridge identity")
+                    if not re.fullmatch(r"[0-9a-f]{64}", bridge_marker_sha256):
+                        fail("cleanup refused PostgreSQL server intent bridge marker")
+                    if not bridge_mnt_id.isdigit():
+                        fail("cleanup refused PostgreSQL server intent bridge mount")
+                    group["bridge"] = {
+                        "socket_bridge_basename": bridge_basename,
+                        "socket_bridge_identity": bridge_identity,
+                        "socket_bridge_marker_sha256": bridge_marker_sha256,
+                        "socket_bridge_mnt_id": bridge_mnt_id,
+                    }
                 group["server"] = parsed_intent["server_name"]
             elif phase_value == "client-intent":
                 required_keys = [
@@ -1784,6 +2966,8 @@ try:
                 ]
                 if list(parsed_intent) != required_keys:
                     fail("cleanup refused PostgreSQL client intent grammar")
+                if parsed_intent.get("intent_version") != "1":
+                    fail("cleanup refused PostgreSQL client intent version")
                 client_name = parsed_intent["client_name"]
                 if not re.fullmatch(rf"{re.escape(proof_value)}-client-[0-9]+-[0-9]+", client_name):
                     fail("cleanup refused PostgreSQL client intent name")
@@ -1809,13 +2993,39 @@ try:
         if not isinstance(server_name_value, str):
             fail("cleanup refused missing PostgreSQL server intent")
         nonce_value = str(group_value["nonce"])
-        base_packet = {
-            "external_cleanup_uncertain": "1",
-            "cleanup_status": "2",
-            "proof_nonce": nonce_value,
-            "proof_label": proof_label_value,
-            "server_name": server_name_value,
-        }
+        bridge_value = group_value.get("bridge")
+        if isinstance(bridge_value, dict):
+            intent_bridge_packet.update(
+                {
+                    "proof_nonce": nonce_value,
+                    "proof_label": proof_label_value,
+                    "server_name": server_name_value,
+                    "socket_bridge_basename": bridge_value["socket_bridge_basename"],
+                    "socket_bridge_identity": bridge_value["socket_bridge_identity"],
+                    "socket_bridge_marker_sha256": bridge_value["socket_bridge_marker_sha256"],
+                    "socket_bridge_mnt_id": bridge_value["socket_bridge_mnt_id"],
+                    "recovery_root_mnt_id": bridge_value["socket_bridge_mnt_id"],
+                }
+            )
+            base_packet = {
+                "contract_version": "2",
+                "schema": "acgs-postgres-recovery-contract/v2",
+                "external_cleanup_uncertain": "1",
+                "cleanup_status": "2",
+                "proof_nonce": nonce_value,
+                "proof_label": proof_label_value,
+                "server_name": server_name_value,
+                **bridge_value,
+                "recovery_root_mnt_id": bridge_value["socket_bridge_mnt_id"],
+            }
+        else:
+            base_packet = {
+                "external_cleanup_uncertain": "1",
+                "cleanup_status": "2",
+                "proof_nonce": nonce_value,
+                "proof_label": proof_label_value,
+                "server_name": server_name_value,
+            }
         servers = [(server_name_value, server_name_value, "main")]
         clients = [
             (client_name, client_name, "trusted-broker")
@@ -1830,18 +3040,30 @@ try:
             nonce = parsed["proof_nonce"]
             proof_label = parsed["proof_label"]
             server_name = parsed["server_name"]
-            payload = (
-                "\n".join(
-                    [
-                        "external_cleanup_uncertain=1",
-                        "cleanup_status=2",
-                        f"proof_nonce={nonce}",
-                        f"proof_label={proof_label}",
-                        f"server_name={server_name}",
-                    ]
-                )
-                + "\n"
-            ).encode("ascii")
+            if parsed.get("contract_version") == "2":
+                payload_lines = [
+                    "contract_version=2",
+                    "schema=acgs-postgres-recovery-contract/v2",
+                    "external_cleanup_uncertain=1",
+                    "cleanup_status=2",
+                    f"proof_nonce={nonce}",
+                    f"proof_label={proof_label}",
+                    f"server_name={server_name}",
+                    f"socket_bridge_basename={parsed['socket_bridge_basename']}",
+                    f"socket_bridge_identity={parsed['socket_bridge_identity']}",
+                    f"socket_bridge_marker_sha256={parsed['socket_bridge_marker_sha256']}",
+                    f"socket_bridge_mnt_id={parsed['socket_bridge_mnt_id']}",
+                    f"recovery_root_mnt_id={parsed['recovery_root_mnt_id']}",
+                ]
+            else:
+                payload_lines = [
+                    "external_cleanup_uncertain=1",
+                    "cleanup_status=2",
+                    f"proof_nonce={nonce}",
+                    f"proof_label={proof_label}",
+                    f"server_name={server_name}",
+                ]
+            payload = ("\n".join(payload_lines) + "\n").encode("ascii")
             contract = os.path.join(recovery_root, intent_names[0])
             text = payload.decode("ascii")
             lines = text.splitlines()
@@ -2025,9 +3247,6 @@ try:
         lines = text.splitlines()
         if text != "\n".join(lines) + "\n":
             fail("cleanup refused recovery contract grammar")
-        allowed_lengths = {5, 6}
-        if len(lines) not in allowed_lengths:
-            fail("cleanup refused recovery contract grammar")
         parsed: dict[str, str] = {}
         for line in lines:
             if "=" not in line:
@@ -2035,21 +3254,69 @@ try:
             key, value = line.split("=", 1)
             if key in parsed:
                 fail("cleanup refused duplicate recovery contract keys")
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+                fail("cleanup refused recovery contract grammar")
             parsed[key] = value
-    required = [
+    legacy_required = [
         "external_cleanup_uncertain",
         "cleanup_status",
         "proof_nonce",
         "proof_label",
         "server_name",
     ]
-    optional = ["server_cid"]
-    if list(parsed) != required and list(parsed) != required + optional:
-        fail("cleanup refused recovery contract grammar")
+    legacy_optional = ["server_cid"]
+    v2_base = [
+        "contract_version",
+        "schema",
+        "external_cleanup_uncertain",
+        "cleanup_status",
+        "proof_nonce",
+        "proof_label",
+        "server_name",
+    ]
+    parsed_keys = list(parsed)
+    is_v2_contract = False
+    if parsed_keys == legacy_required or parsed_keys == legacy_required + legacy_optional:
+        is_v2_contract = False
+    else:
+        if parsed_keys[: len(v2_base)] != v2_base:
+            fail("cleanup refused recovery contract grammar")
+        is_v2_contract = True
+        if parsed["contract_version"] != "2":
+            fail("cleanup refused recovery contract version")
+        if parsed["schema"] != "acgs-postgres-recovery-contract/v2":
+            fail("cleanup refused recovery contract schema")
+        allowed_tail = [
+            "socket_bridge_creation_uncertain",
+            "server_cid",
+            "socket_bridge_basename",
+            "socket_bridge_identity",
+            "socket_bridge_marker_sha256",
+            "socket_bridge_mnt_id",
+            "recovery_root_mnt_id",
+        ]
+        tail = parsed_keys[len(v2_base):]
+        cursor = 0
+        if cursor < len(tail) and tail[cursor] == "socket_bridge_creation_uncertain":
+            cursor += 1
+        if cursor < len(tail) and tail[cursor] == "server_cid":
+            cursor += 1
+        bridge_tail = tail[cursor:]
+        incomplete_bridge_tail = ["socket_bridge_basename", "recovery_root_mnt_id"]
+        if bridge_tail and bridge_tail not in (allowed_tail[2:], incomplete_bridge_tail):
+            fail("cleanup refused recovery contract grammar")
+        if any(key not in allowed_tail for key in tail):
+            fail("cleanup refused recovery contract grammar")
     nonce = parsed["proof_nonce"]
     proof_label = parsed["proof_label"]
     server_name = parsed["server_name"]
     server_cid = parsed.get("server_cid", "")
+    bridge_creation_uncertain = parsed.get("socket_bridge_creation_uncertain", "0")
+    bridge_basename = parsed.get("socket_bridge_basename", "")
+    bridge_identity = parsed.get("socket_bridge_identity", "")
+    bridge_marker_sha256 = parsed.get("socket_bridge_marker_sha256", "")
+    bridge_mnt_id = parsed.get("socket_bridge_mnt_id", "")
+    recovery_root_mnt_id = parsed.get("recovery_root_mnt_id", "")
     if parsed["external_cleanup_uncertain"] != "1":
         fail("cleanup refused recovery contract certainty")
     if not re.fullmatch(r"[0-9]+", parsed["cleanup_status"]):
@@ -2061,6 +3328,50 @@ try:
         fail("cleanup refused recovery contract binding")
     if server_cid and not re.fullmatch(r"[0-9a-f]{12,64}", server_cid):
         fail("cleanup refused recovery contract cid")
+    if is_v2_contract:
+        if "socket_bridge_creation_uncertain" in parsed and bridge_creation_uncertain != "1":
+            fail("cleanup refused recovery contract bridge certainty")
+        if bridge_basename and bridge_basename != f"{proof_label}-socket-bridge":
+            fail("cleanup refused recovery contract bridge binding")
+        bridge_values = [bridge_basename, bridge_identity, bridge_marker_sha256, bridge_mnt_id, recovery_root_mnt_id]
+        creation_uncertain_incomplete = (
+            bridge_creation_uncertain == "1"
+            and bool(bridge_basename)
+            and not bridge_identity
+            and not bridge_marker_sha256
+            and not bridge_mnt_id
+            and bool(recovery_root_mnt_id)
+        )
+        if any(bridge_values) and not creation_uncertain_incomplete:
+            if not all(bridge_values):
+                fail("cleanup refused recovery contract bridge metadata")
+            if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", bridge_identity):
+                fail("cleanup refused recovery contract bridge identity")
+            if not re.fullmatch(r"[0-9a-f]{64}", bridge_marker_sha256):
+                fail("cleanup refused recovery contract bridge marker")
+            if not bridge_mnt_id.isdigit() or not recovery_root_mnt_id.isdigit():
+                fail("cleanup refused recovery contract bridge mount")
+            if bridge_mnt_id != recovery_root_mnt_id:
+                fail("cleanup refused recovery contract bridge mount")
+        if creation_uncertain_incomplete and not recovery_root_mnt_id.isdigit():
+            fail("cleanup refused recovery contract bridge mount")
+        if all(bridge_values):
+            if not intent_bridge_packet:
+                # A contract alone is not deletion authority for bridge state.
+                pass
+            else:
+                for key in (
+                    "proof_nonce",
+                    "proof_label",
+                    "server_name",
+                    "socket_bridge_basename",
+                    "socket_bridge_identity",
+                    "socket_bridge_marker_sha256",
+                    "socket_bridge_mnt_id",
+                    "recovery_root_mnt_id",
+                ):
+                    if parsed.get(key, "") != intent_bridge_packet.get(key, ""):
+                        fail("cleanup refused recovery contract intent equivalence")
     packet = payload
 
     def read_state_file(path: str, label: str, required: bool) -> str:
@@ -2238,6 +3549,252 @@ try:
         )
         raise SystemExit(2)
 
+    def enforce_intent_contract_version_class_before_mutation() -> None:
+        if intent_names:
+            intent_is_v2 = bool(intent_bridge_packet)
+            if intent_is_v2:
+                if (
+                    not is_v2_contract
+                    or bridge_creation_uncertain == "1"
+                    or not all(
+                        [
+                            bridge_basename,
+                            bridge_identity,
+                            bridge_marker_sha256,
+                            bridge_mnt_id,
+                            recovery_root_mnt_id,
+                        ]
+                    )
+                ):
+                    retain_packet("intent-contract-version-mismatch")
+            elif is_v2_contract:
+                retain_packet("intent-contract-version-mismatch")
+        elif is_v2_contract:
+            retain_packet("contract-only-v2")
+
+    enforce_intent_contract_version_class_before_mutation()
+
+    def fd_mnt_id(fd: int) -> str:
+        with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+            for line in fdinfo:
+                if line.startswith("mnt_id:"):
+                    value = line.split(":", 1)[1].strip()
+                    if not value.isdigit():
+                        retain_packet("socket-bridge-mntid")
+                    return value
+        retain_packet("socket-bridge-mntid")
+
+    def cleanup_socket_bridge_if_authorized() -> None:
+        if not is_v2_contract:
+            return
+        bridge_values = [
+            bridge_basename,
+            bridge_identity,
+            bridge_marker_sha256,
+            bridge_mnt_id,
+            recovery_root_mnt_id,
+        ]
+        if bridge_creation_uncertain == "1" and not all(bridge_values):
+            retain_packet("socket-bridge-creation-uncertain")
+        if not any(bridge_values):
+            retain_packet("socket-bridge-incomplete")
+        if not all(bridge_values):
+            retain_packet("socket-bridge-incomplete")
+        if not intent_bridge_packet:
+            retain_packet("socket-bridge-intent-missing")
+        if recovery_fd < 0:
+            retain_packet("socket-bridge-recovery-fd-missing")
+        if bridge_mnt_id != recovery_root_mnt_id:
+            retain_packet("socket-bridge-runner-mnt-mismatch")
+        if bridge_basename != f"{proof_label}-socket-bridge":
+            retain_packet("socket-bridge-name")
+        expected_identity_without_mode = bridge_identity.rsplit(":", 1)[0]
+        dir_fd = -1
+        try:
+            root_before = os.fstat(recovery_fd)
+            root_local_mnt = fd_mnt_id(recovery_fd)
+            if root_before.st_uid != uid or stat.S_IMODE(root_before.st_mode) != 0o700:
+                retain_packet("socket-bridge-root-identity")
+            try:
+                dir_fd = os.open(
+                    bridge_basename,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=recovery_fd,
+                )
+            except FileNotFoundError:
+                # Idempotent completion after a prior authenticated bridge
+                # rmdir is safe only on the full v2 intent/contract path and
+                # only after exact-label Docker absence has already stabilized.
+                if intent_bridge_packet:
+                    return
+                retain_packet("socket-bridge-missing")
+            except OSError:
+                retain_packet("socket-bridge-open")
+            before_dir = os.fstat(dir_fd)
+            dir_identity_without_mode = f"{before_dir.st_dev}:{before_dir.st_ino}:{before_dir.st_uid}"
+            if dir_identity_without_mode != expected_identity_without_mode:
+                retain_packet("socket-bridge-identity")
+            if before_dir.st_uid != uid or stat.S_IMODE(before_dir.st_mode) not in {0o1777, 0o700}:
+                retain_packet("socket-bridge-mode")
+            if fd_mnt_id(dir_fd) != root_local_mnt:
+                retain_packet("socket-bridge-cleanup-mnt-mismatch")
+            expected_entries = {
+                ".acgs-postgres-socket-bridge.v2": "marker",
+                ".s.PGSQL.5432": "socket",
+                ".s.PGSQL.5432.lock": "lock",
+            }
+            listed_names = os.listdir(dir_fd)
+            if len(listed_names) > len(expected_entries):
+                retain_packet("socket-bridge-entry-count")
+            names = sorted(listed_names, key=os.fsencode)
+            if any(name not in expected_entries for name in names):
+                retain_packet("socket-bridge-unknown-entry")
+            validated: list[tuple[str, tuple[int, int, int, int, int, int]]] = []
+            for name in names:
+                try:
+                    before = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    retain_packet("socket-bridge-entry-stat")
+                if before.st_nlink != 1:
+                    retain_packet("socket-bridge-entry-link")
+                kind = expected_entries[name]
+                if kind == "marker":
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or before.st_uid != uid
+                        or stat.S_IMODE(before.st_mode) != 0o444
+                    ):
+                        retain_packet("socket-bridge-marker-identity")
+                    if before.st_size <= 0 or before.st_size > 4096:
+                        retain_packet("socket-bridge-marker-size")
+                    marker_fd = -1
+                    try:
+                        marker_fd = os.open(
+                            name,
+                            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=dir_fd,
+                        )
+                        opened = os.fstat(marker_fd)
+                        if (
+                            opened.st_dev != before.st_dev
+                            or opened.st_ino != before.st_ino
+                            or opened.st_uid != before.st_uid
+                            or opened.st_nlink != before.st_nlink
+                            or stat.S_IMODE(opened.st_mode) != stat.S_IMODE(before.st_mode)
+                            or not stat.S_ISREG(opened.st_mode)
+                        ):
+                            retain_packet("socket-bridge-marker-open")
+                        payload_bytes = os.read(marker_fd, before.st_size + 1)
+                        if len(payload_bytes) != before.st_size or os.read(marker_fd, 1):
+                            retain_packet("socket-bridge-marker-size")
+                        if hashlib.sha256(payload_bytes).hexdigest() != bridge_marker_sha256:
+                            retain_packet("socket-bridge-marker-digest")
+                    except OSError:
+                        retain_packet("socket-bridge-marker-open")
+                    finally:
+                        if marker_fd >= 0:
+                            os.close(marker_fd)
+                elif kind == "socket":
+                    if not stat.S_ISSOCK(before.st_mode) or before.st_uid != 999:
+                        retain_packet("socket-bridge-socket-identity")
+                elif kind == "lock":
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or before.st_uid != 999
+                        or before.st_size > 1024
+                        or stat.S_IMODE(before.st_mode) & 0o022
+                    ):
+                        retain_packet("socket-bridge-lock-identity")
+                else:
+                    retain_packet("socket-bridge-entry-kind")
+                validated.append(
+                    (
+                        name,
+                        (
+                            before.st_dev,
+                            before.st_ino,
+                            before.st_uid,
+                            stat.S_IFMT(before.st_mode),
+                            stat.S_IMODE(before.st_mode),
+                            before.st_nlink,
+                            before.st_size,
+                        ),
+                    )
+                )
+            try:
+                os.fchmod(dir_fd, 0o700)
+            except OSError:
+                retain_packet("socket-bridge-harden")
+            hardened = os.fstat(dir_fd)
+            if (
+                f"{hardened.st_dev}:{hardened.st_ino}:{hardened.st_uid}" != expected_identity_without_mode
+                or stat.S_IMODE(hardened.st_mode) != 0o700
+                or fd_mnt_id(dir_fd) != root_local_mnt
+            ):
+                retain_packet("socket-bridge-harden-identity")
+            for name, expected_identity in validated:
+                try:
+                    current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    retain_packet("socket-bridge-entry-restat")
+                current_identity = (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_uid,
+                    stat.S_IFMT(current.st_mode),
+                    stat.S_IMODE(current.st_mode),
+                    current.st_nlink,
+                    current.st_size,
+                )
+                if current_identity != expected_identity:
+                    retain_packet("socket-bridge-entry-changed")
+                try:
+                    os.unlink(name, dir_fd=dir_fd)
+                except OSError:
+                    retain_packet("socket-bridge-entry-unlink")
+            try:
+                os.fsync(dir_fd)
+                rebound_fd = os.open(
+                    bridge_basename,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=recovery_fd,
+                )
+                try:
+                    rebound = os.fstat(rebound_fd)
+                    if (
+                        f"{rebound.st_dev}:{rebound.st_ino}:{rebound.st_uid}"
+                        != expected_identity_without_mode
+                        or fd_mnt_id(rebound_fd) != root_local_mnt
+                    ):
+                        retain_packet("socket-bridge-rebound")
+                finally:
+                    os.close(rebound_fd)
+                os.rmdir(bridge_basename, dir_fd=recovery_fd)
+                removed = os.fstat(dir_fd)
+                if removed.st_nlink != 0:
+                    retain_packet("socket-bridge-rmdir")
+                try:
+                    os.stat(bridge_basename, dir_fd=recovery_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    retain_packet("socket-bridge-rmdir")
+                os.fsync(recovery_fd)
+            except OSError:
+                retain_packet("socket-bridge-remove")
+            root_after = os.fstat(recovery_fd)
+            if (
+                root_after.st_dev != root_before.st_dev
+                or root_after.st_ino != root_before.st_ino
+                or root_after.st_uid != root_before.st_uid
+                or stat.S_IMODE(root_after.st_mode) != stat.S_IMODE(root_before.st_mode)
+                or fd_mnt_id(recovery_fd) != root_local_mnt
+            ):
+                retain_packet("socket-bridge-root-changed")
+        finally:
+            if dir_fd >= 0:
+                os.close(dir_fd)
+
     docker_bin = shutil.which("docker")
     if not docker_bin or not os.path.isabs(docker_bin):
         retain_packet("docker-unavailable")
@@ -2401,6 +3958,9 @@ try:
             retain_packet("intent-rescan")
         if current_intent_names != intent_names:
             retain_packet("intent-rescan-mismatch")
+
+        cleanup_socket_bridge_if_authorized()
+
         def restore_validated_intents() -> None:
             if recovery_fd < 0:
                 retain_packet("intent-restore-recovery-fd-missing")
@@ -2415,21 +3975,14 @@ try:
                 payload = intent_payload_by_name.get(restored_name)
                 if payload is None:
                     retain_packet("intent-restore-payload")
-                try:
-                    restored_fd = os.open(
-                        restored_name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                        0o600,
-                        dir_fd=recovery_fd,
-                    )
-                except OSError:
-                    retain_packet("intent-restore-open")
-                try:
-                    if os.write(restored_fd, payload) != len(payload):
-                        retain_packet("intent-restore-write")
-                    os.fsync(restored_fd)
-                finally:
-                    os.close(restored_fd)
+                atomic_publish_no_replace(
+                    recovery_fd,
+                    restored_name,
+                    payload,
+                    "intent",
+                    "intent-restore",
+                    retain_packet,
+                )
             try:
                 os.fsync(recovery_fd)
             except OSError:
@@ -2439,6 +3992,14 @@ try:
             ledger_file = f"{proof_label}.committed"
             ledger_fd = -1
             record_fd = -1
+            intent_manifest = "\n".join(
+                f"{name}:{':'.join(str(part) for part in intent_identity_by_name[name])}"
+                for name in intent_names
+            )
+            intent_manifest_sha256 = hashlib.sha256(
+                (intent_manifest + "\n").encode("ascii")
+            ).hexdigest()
+            intent_payload_manifest_b64 = canonical_intent_payload_manifest_b64(intent_names)
             try:
                 try:
                     os.mkdir(ledger_dir, 0o700, dir_fd=recovery_fd)
@@ -2449,6 +4010,7 @@ try:
                     os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
                     dir_fd=recovery_fd,
                 )
+                reconcile_atomic_temps(ledger_fd, retain_packet)
                 ledger_st = os.fstat(ledger_fd)
                 if (
                     ledger_st.st_uid != uid
@@ -2461,25 +4023,90 @@ try:
                     + f"proof_label={proof_label}\n".encode("ascii")
                     + f"intent_count={len(intent_names)}\n".encode("ascii")
                     + f"packet_sha256={hashlib.sha256(packet).hexdigest()}\n".encode("ascii")
+                    + f"intent_manifest_sha256={intent_manifest_sha256}\n".encode("ascii")
+                    + f"intent_payload_manifest_b64={intent_payload_manifest_b64}\n".encode("ascii")
                 )
-                record_fd = os.open(
-                    ledger_file,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-                    0o600,
-                    dir_fd=ledger_fd,
-                )
-                if os.write(record_fd, record) != len(record):
-                    retain_packet("intent-ledger-write")
-                os.fsync(record_fd)
-                record_st = os.fstat(record_fd)
-                if (
-                    not stat.S_ISREG(record_st.st_mode)
-                    or record_st.st_uid != uid
-                    or stat.S_IMODE(record_st.st_mode) != 0o600
-                    or record_st.st_nlink != 1
-                    or record_st.st_size != len(record)
-                ):
-                    retain_packet("intent-ledger-file-identity")
+                try:
+                    record_fd = os.open(
+                        ledger_file,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=ledger_fd,
+                    )
+                except FileNotFoundError:
+                    atomic_publish_no_replace(
+                        ledger_fd,
+                        ledger_file,
+                        record,
+                        "ledger",
+                        "intent-ledger",
+                        retain_packet,
+                    )
+                    record_fd = os.open(
+                        ledger_file,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=ledger_fd,
+                    )
+                try:
+                    existing_st = os.fstat(record_fd)
+                    if (
+                        not stat.S_ISREG(existing_st.st_mode)
+                        or existing_st.st_uid != uid
+                        or stat.S_IMODE(existing_st.st_mode) != 0o600
+                        or existing_st.st_size <= 0
+                        or existing_st.st_size > 262144
+                    ):
+                        retain_packet("intent-ledger-existing-identity")
+                    replace_existing_ledger = existing_st.st_nlink == 2
+                    if existing_st.st_nlink not in {1, 2}:
+                        retain_packet("intent-ledger-existing-identity")
+                    existing = os.read(record_fd, existing_st.st_size + 1)
+                    if os.read(record_fd, 1):
+                        retain_packet("intent-ledger-existing-content")
+                    if existing != record:
+                        try:
+                            existing_record = parse_committed_ledger_record(existing, proof_label)
+                        except SystemExit:
+                            replace_existing_ledger = True
+                        else:
+                            if (
+                                existing_record["intent_count"] != str(len(intent_names))
+                                or existing_record["packet_sha256"] != hashlib.sha256(packet).hexdigest()
+                                or existing_record["intent_payload_manifest_b64"] != intent_payload_manifest_b64
+                            ):
+                                replace_existing_ledger = True
+                    if replace_existing_ledger:
+                        os.close(record_fd)
+                        record_fd = -1
+                        quarantine_owned_regular_file(
+                            ledger_fd,
+                            ledger_file,
+                            "intent-ledger-existing-content",
+                            retain_packet,
+                            max_size=262144,
+                        )
+                        atomic_publish_no_replace(
+                            ledger_fd,
+                            ledger_file,
+                            record,
+                            "ledger",
+                            "intent-ledger",
+                            retain_packet,
+                        )
+                        record_fd = os.open(
+                            ledger_file,
+                            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=ledger_fd,
+                        )
+                        if not file_has_exact_payload(
+                            ledger_fd,
+                            ledger_file,
+                            len(record),
+                            hashlib.sha256(record).hexdigest(),
+                            allow_link_count={1},
+                        ):
+                            retain_packet("intent-ledger-existing-content")
+                except OSError:
+                    retain_packet("intent-ledger-existing-open")
                 os.fsync(ledger_fd)
                 os.fsync(recovery_fd)
             except OSError:
@@ -2487,6 +4114,66 @@ try:
             finally:
                 if record_fd >= 0:
                     os.close(record_fd)
+                if ledger_fd >= 0:
+                    os.close(ledger_fd)
+
+        def mark_recovery_ledger_complete() -> None:
+            ledger_dir = "acgs-clean-sibling-recovery-ledger"
+            complete_file = f"{proof_label}.complete"
+            ledger_fd = -1
+            complete_fd = -1
+            complete_record = (
+                b"completed_recovery_record=1\n"
+                + f"proof_label={proof_label}\n".encode("ascii")
+            )
+            try:
+                ledger_fd = os.open(
+                    ledger_dir,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    dir_fd=recovery_fd,
+                )
+                ledger_st = os.fstat(ledger_fd)
+                if (
+                    ledger_st.st_uid != uid
+                    or stat.S_IMODE(ledger_st.st_mode) != 0o700
+                    or ledger_st.st_nlink < 1
+                ):
+                    retain_packet("intent-ledger-directory-identity")
+                atomic_publish_no_replace(
+                    ledger_fd,
+                    complete_file,
+                    complete_record,
+                    "complete",
+                    "intent-ledger-complete",
+                    retain_packet,
+                )
+                try:
+                    complete_fd = os.open(
+                        complete_file,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=ledger_fd,
+                    )
+                    existing_st = os.fstat(complete_fd)
+                    if (
+                        not stat.S_ISREG(existing_st.st_mode)
+                        or existing_st.st_uid != uid
+                        or stat.S_IMODE(existing_st.st_mode) != 0o600
+                        or existing_st.st_nlink != 1
+                        or existing_st.st_size != len(complete_record)
+                    ):
+                        retain_packet("intent-ledger-complete-identity")
+                    existing = os.read(complete_fd, existing_st.st_size + 1)
+                    if existing != complete_record or os.read(complete_fd, 1):
+                        retain_packet("intent-ledger-complete-content")
+                except OSError:
+                    retain_packet("intent-ledger-complete-open")
+                os.fsync(ledger_fd)
+                os.fsync(recovery_fd)
+            except OSError:
+                retain_packet("intent-ledger-complete")
+            finally:
+                if complete_fd >= 0:
+                    os.close(complete_fd)
                 if ledger_fd >= 0:
                     os.close(ledger_fd)
         commit_recovery_ledger()
@@ -2563,12 +4250,14 @@ try:
         if remaining_intents:
             restore_validated_intents()
             retain_packet("intent-post-unlink-leftover")
+        mark_recovery_ledger_complete()
     else:
         final = docker(["ps", "-aq", "--filter", f"label=acgs.postgres.proof={proof_label}"])
         if final.returncode != 0:
             retain_packet("docker-ps-final")
         if any(line for line in final.stdout.splitlines()):
             retain_packet("docker-leftover")
+        cleanup_socket_bridge_if_authorized()
     raise SystemExit(0)
 finally:
     if recovery_fd >= 0:

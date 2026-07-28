@@ -433,6 +433,54 @@ print(os.path.realpath(path))
 PY
 }
 
+validate_postgres_recovery_root_binding() {
+  local recovery_root=$1
+  local expected_root_binding=$2
+  /usr/bin/python3 -I -S - "$recovery_root" "$expected_root_binding" <<'PY'
+from __future__ import annotations
+
+import os
+import stat
+import sys
+
+path, expected_root_binding = sys.argv[1:3]
+if not expected_root_binding:
+    raise SystemExit(70)
+
+
+def mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    raise SystemExit(70)
+                return value
+    raise SystemExit(70)
+
+
+fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    root_stat = os.fstat(fd)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise SystemExit(70)
+    if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    root_identity = f"{root_stat.st_dev}:{root_stat.st_ino}:{root_stat.st_uid}:700"
+    observed_mnt_id = mnt_id(fd)
+    fields = expected_root_binding.split("\t")
+    if len(fields) != 3 or fields[0] != "acgs-postgres-recovery-root/v2":
+        raise SystemExit(70)
+    if fields[1] != root_identity:
+        raise SystemExit(70)
+    if not fields[2].isdigit() or fields[2] != observed_mnt_id:
+        raise SystemExit(70)
+    print(observed_mnt_id)
+finally:
+    os.close(fd)
+PY
+}
+
 mint_postgres_proof_nonce "$nonce_file" >/dev/null || {
   echo 'failed to mint PostgreSQL evidence gate proof nonce' >&2
   exit 69
@@ -465,6 +513,14 @@ proof_label="$(derive_postgres_proof_label "$(id -u)" "$proof_nonce")" || {
 container_name="${proof_label}-server"
 server_cidfile="$state_dir/server.cid"
 server_namefile="$state_dir/server.name"
+postgres_socket_bridge=''
+postgres_socket_bridge_name="${proof_label}-socket-bridge"
+postgres_socket_bridge_identity=''
+postgres_socket_bridge_marker_sha256=''
+postgres_socket_bridge_mnt_id=''
+postgres_socket_bridge_creation_uncertain=0
+postgres_recovery_root_binding="${ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2:-}"
+postgres_recovery_root_mnt_id=''
 postgres_recovery_root="${ACGS_POSTGRES_RECOVERY_ROOT:-}"
 if [[ -z "$postgres_recovery_root" ]]; then
   echo 'ACGS_POSTGRES_RECOVERY_ROOT is required for PostgreSQL recovery intents' >&2
@@ -474,9 +530,16 @@ postgres_recovery_root="$(validate_postgres_recovery_root "$postgres_recovery_ro
   echo 'ACGS_POSTGRES_RECOVERY_ROOT is not an owner-only descriptor-bound directory' >&2
   exit 70
 }
+postgres_recovery_root_mnt_id="$(
+  validate_postgres_recovery_root_binding "$postgres_recovery_root" "$postgres_recovery_root_binding"
+)" || {
+  echo 'ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2 is required and does not match recovery root identity' >&2
+  exit 70
+}
 export ACGS_POSTGRES_RECOVERY_ROOT="$postgres_recovery_root"
 container_id=''
 broker_pid=''
+docker_started=0
 DOCKER_PS_IDS=()
 
 read_private_container_file() {
@@ -626,6 +689,622 @@ finally:
 PY
 }
 
+create_postgres_socket_bridge() {
+  local bridge_name=$1
+  /usr/bin/python3 -I -S - \
+    "$postgres_recovery_root" "$bridge_name" "$proof_nonce" "$proof_label" \
+    "$postgres_recovery_root_binding" "$postgres_recovery_root_mnt_id" <<'PY'
+from __future__ import annotations
+
+import ctypes
+import hashlib
+import os
+import re
+import stat
+import sys
+
+recovery_root, bridge_name, proof_nonce, proof_label, expected_root_binding, expected_root_mnt_id = (
+    sys.argv[1:7]
+)
+if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-socket-bridge", bridge_name):
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9a-f]{32}", proof_nonce):
+    raise SystemExit(70)
+if bridge_name != f"{proof_label}-socket-bridge":
+    raise SystemExit(70)
+if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}", proof_label):
+    raise SystemExit(70)
+if not expected_root_mnt_id.isdigit():
+    raise SystemExit(70)
+
+
+def mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    raise SystemExit(70)
+                return value
+    raise SystemExit(70)
+
+
+def rename_exchange(root_fd: int, first: str, second: str) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    syscall = libc.syscall
+    syscall.argtypes = (
+        ctypes.c_long,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    syscall.restype = ctypes.c_long
+    renameat2_syscall = 316
+    rename_exchange_flag = 2
+    rc = syscall(
+        renameat2_syscall,
+        root_fd,
+        os.fsencode(first),
+        root_fd,
+        os.fsencode(second),
+        rename_exchange_flag,
+    )
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err), f"{first} <-> {second}")
+
+
+SnapshotValue = tuple[int, int, int, int, int, int, int, str]
+
+
+def hash_fd(fd: int) -> str:
+    digest = hashlib.sha256()
+    os.lseek(fd, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    os.lseek(fd, 0, os.SEEK_SET)
+    return digest.hexdigest()
+
+
+def snapshot_entry(
+    parent_fd: int,
+    child_name: str,
+    relative_name: str,
+    snapshot: dict[str, SnapshotValue],
+) -> None:
+    if not child_name or "/" in child_name or "\0" in child_name:
+        raise SystemExit(70)
+    child_stat = os.stat(child_name, dir_fd=parent_fd, follow_symlinks=False)
+    mode_type = stat.S_IFMT(child_stat.st_mode)
+    mode_bits = stat.S_IMODE(child_stat.st_mode)
+    content_hash = ""
+    if stat.S_ISLNK(child_stat.st_mode):
+        raise SystemExit(70)
+    if stat.S_ISDIR(child_stat.st_mode):
+        child_fd = os.open(
+            child_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+        try:
+            if mnt_id(child_fd) != expected_root_mnt_id:
+                raise SystemExit(70)
+            entries = os.listdir(child_fd)
+            content_hash = hashlib.sha256(
+                b"\0".join(sorted(name.encode("utf-8") for name in entries))
+            ).hexdigest()
+            snapshot[relative_name] = (
+                child_stat.st_dev,
+                child_stat.st_ino,
+                child_stat.st_uid,
+                mode_type,
+                mode_bits,
+                child_stat.st_nlink,
+                child_stat.st_size,
+                content_hash,
+            )
+            for nested_name in entries:
+                snapshot_entry(
+                    child_fd,
+                    nested_name,
+                    f"{relative_name}/{nested_name}",
+                    snapshot,
+                )
+        finally:
+            os.close(child_fd)
+        return
+    if stat.S_ISREG(child_stat.st_mode):
+        child_fd = os.open(
+            child_name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+        try:
+            if mnt_id(child_fd) != expected_root_mnt_id:
+                raise SystemExit(70)
+            content_hash = hash_fd(child_fd)
+        finally:
+            os.close(child_fd)
+    snapshot[relative_name] = (
+        child_stat.st_dev,
+        child_stat.st_ino,
+        child_stat.st_uid,
+        mode_type,
+        mode_bits,
+        child_stat.st_nlink,
+        child_stat.st_size,
+        content_hash,
+    )
+
+
+def recovery_root_snapshot(root_fd: int) -> dict[str, SnapshotValue]:
+    snapshot: dict[str, SnapshotValue] = {}
+    for child_name in os.listdir(root_fd):
+        snapshot_entry(root_fd, child_name, child_name, snapshot)
+    return snapshot
+
+
+def root_child_snapshot(root_fd: int) -> dict[str, SnapshotValue]:
+    snapshot: dict[str, SnapshotValue] = {}
+    for child_name in os.listdir(root_fd):
+        if not child_name or "/" in child_name or "\0" in child_name:
+            raise SystemExit(70)
+        child_stat = os.stat(child_name, dir_fd=root_fd, follow_symlinks=False)
+        snapshot[child_name] = (
+            child_stat.st_dev,
+            child_stat.st_ino,
+            child_stat.st_uid,
+            stat.S_IFMT(child_stat.st_mode),
+            stat.S_IMODE(child_stat.st_mode),
+            child_stat.st_nlink,
+            child_stat.st_size,
+            "",
+        )
+    return snapshot
+
+
+def require_root_child_delta(
+    before: dict[str, SnapshotValue],
+    after: dict[str, SnapshotValue],
+    bridge_name: str,
+    bridge_stat: os.stat_result,
+    bridge_mode: int,
+) -> None:
+    for child_name, child_identity in before.items():
+        if after.get(child_name) != child_identity:
+            raise OSError("socket bridge root baseline changed")
+    new_names = set(after) - set(before)
+    if new_names != {bridge_name}:
+        raise OSError("socket bridge root child set changed")
+    expected = (
+        bridge_stat.st_dev,
+        bridge_stat.st_ino,
+        bridge_stat.st_uid,
+        stat.S_IFMT(bridge_stat.st_mode),
+        bridge_mode,
+        bridge_stat.st_nlink,
+        bridge_stat.st_size,
+        "",
+    )
+    if after[bridge_name] != expected:
+        raise OSError("socket bridge root candidate changed")
+
+
+def require_baseline_subtree_unchanged(
+    before: dict[str, SnapshotValue],
+    root_fd: int,
+    bridge_name: str,
+    bridge_stat: os.stat_result,
+    bridge_mode: int,
+) -> None:
+    after = recovery_root_snapshot(root_fd)
+    for child_name, child_identity in before.items():
+        if after.get(child_name) != child_identity:
+            raise OSError("socket bridge baseline subtree changed")
+    new_names = set(after) - set(before)
+    new_root_names = {name.split("/", 1)[0] for name in new_names}
+    if new_root_names != {bridge_name}:
+        raise OSError("socket bridge root child set changed")
+    if bridge_name not in after:
+        raise OSError("socket bridge root candidate changed")
+    expected = (
+        bridge_stat.st_dev,
+        bridge_stat.st_ino,
+        bridge_stat.st_uid,
+        stat.S_IFMT(bridge_stat.st_mode),
+        bridge_mode,
+        bridge_stat.st_nlink,
+        bridge_stat.st_size,
+        after[bridge_name][7],
+    )
+    if after[bridge_name] != expected:
+        raise OSError("socket bridge root candidate changed")
+
+
+def require_bridge_empty(bridge_fd: int) -> None:
+    if os.listdir(bridge_fd):
+        raise OSError("socket bridge candidate is not empty")
+
+
+def require_bridge_marker_only(bridge_fd: int, marker_name: str, expected_payload: bytes) -> None:
+    if os.listdir(bridge_fd) != [marker_name]:
+        raise OSError("socket bridge marker set changed")
+    marker_fd_check = os.open(
+        marker_name,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=bridge_fd,
+    )
+    try:
+        marker_stat_check = os.fstat(marker_fd_check)
+        marker_payload_check = os.read(marker_fd_check, 4096)
+        if (
+            not stat.S_ISREG(marker_stat_check.st_mode)
+            or marker_stat_check.st_uid != os.getuid()
+            or marker_stat_check.st_nlink != 1
+            or stat.S_IMODE(marker_stat_check.st_mode) != 0o444
+            or marker_payload_check != expected_payload
+        ):
+            raise OSError("socket bridge marker changed")
+    finally:
+        os.close(marker_fd_check)
+
+
+real_mkdir = os.mkdir
+mkdir_exchange_name = os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR")
+mkdir_move_outside_root = os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR")
+mkdir_move_under_baseline_child = os.environ.get(
+    "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_UNDER_BASELINE_CHILD_INSIDE_MKDIR"
+)
+mkdir_prepopulate_substitute = (
+    os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_PREPOPULATE_SUBSTITUTE_INSIDE_MKDIR") == "1"
+)
+
+
+def mkdir(path: str, mode: int = 0o777, *, dir_fd: int | None = None) -> None:
+    real_mkdir(path, mode, dir_fd=dir_fd)
+    if path != bridge_name or dir_fd != root_fd:
+        return
+    if mkdir_move_outside_root:
+        if not os.path.isabs(mkdir_move_outside_root) or "\0" in mkdir_move_outside_root:
+            raise SystemExit(70)
+        os.rename(path, mkdir_move_outside_root, src_dir_fd=root_fd)
+        real_mkdir(path, mode, dir_fd=root_fd)
+        if mkdir_prepopulate_substitute:
+            substitute_fd = os.open(
+                path,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root_fd,
+            )
+            try:
+                fd = os.open(
+                    "prepopulated",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=substitute_fd,
+                )
+                os.close(fd)
+            finally:
+                os.close(substitute_fd)
+        return
+    if mkdir_move_under_baseline_child:
+        if not re.fullmatch(r"baseline-[0-9a-f]{8}", mkdir_move_under_baseline_child):
+            raise SystemExit(70)
+        os.rename(
+            path,
+            f"{mkdir_move_under_baseline_child}/{bridge_name}",
+            src_dir_fd=root_fd,
+            dst_dir_fd=root_fd,
+        )
+        real_mkdir(path, mode, dir_fd=root_fd)
+        if mkdir_prepopulate_substitute:
+            substitute_fd = os.open(
+                path,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root_fd,
+            )
+            try:
+                fd = os.open(
+                    "prepopulated",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=substitute_fd,
+                )
+                os.close(fd)
+            finally:
+                os.close(substitute_fd)
+        return
+    if mkdir_exchange_name:
+        if not re.fullmatch(
+            r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-socket-bridge-exchange",
+            mkdir_exchange_name,
+        ):
+            raise SystemExit(70)
+        real_mkdir(mkdir_exchange_name, 0o700, dir_fd=root_fd)
+        rename_exchange(root_fd, bridge_name, mkdir_exchange_name)
+
+
+created = False
+marker_created = False
+bridge_fd = -1
+marker_fd = -1
+root_child_delta_valid = False
+root_fd = os.open(recovery_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    root_stat = os.fstat(root_fd)
+    if not stat.S_ISDIR(root_stat.st_mode):
+        raise SystemExit(70)
+    if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    root_identity = f"{root_stat.st_dev}:{root_stat.st_ino}:{root_stat.st_uid}:700"
+    fields = expected_root_binding.split("\t")
+    if len(fields) != 3 or fields[0] != "acgs-postgres-recovery-root/v2":
+        raise SystemExit(70)
+    if fields[1] != root_identity:
+        raise SystemExit(70)
+    if not fields[2].isdigit() or fields[2] != expected_root_mnt_id:
+        raise SystemExit(70)
+    if mnt_id(root_fd) != expected_root_mnt_id:
+        raise SystemExit(70)
+    root_child_snapshot_before = root_child_snapshot(root_fd)
+    baseline_subtree_snapshot_before = recovery_root_snapshot(root_fd)
+    if bridge_name in root_child_snapshot_before:
+        raise SystemExit(70)
+    try:
+        mkdir(bridge_name, 0o700, dir_fd=root_fd)
+        created = True
+    except FileExistsError:
+        raise SystemExit(70)
+    bridge_fd = os.open(
+        bridge_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=root_fd,
+    )
+    bridge_stat = os.fstat(bridge_fd)
+    if not stat.S_ISDIR(bridge_stat.st_mode):
+        raise SystemExit(70)
+    if bridge_stat.st_uid != os.getuid() or stat.S_IMODE(bridge_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    require_bridge_empty(bridge_fd)
+    root_child_snapshot_after_mkdir = root_child_snapshot(root_fd)
+    require_root_child_delta(
+        root_child_snapshot_before,
+        root_child_snapshot_after_mkdir,
+        bridge_name,
+        bridge_stat,
+        0o700,
+    )
+    require_baseline_subtree_unchanged(
+        baseline_subtree_snapshot_before,
+        root_fd,
+        bridge_name,
+        bridge_stat,
+        0o700,
+    )
+    root_child_delta_valid = True
+    bridge_stable_identity = f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}"
+    bridge_mnt_id = mnt_id(bridge_fd)
+    if bridge_mnt_id != expected_root_mnt_id:
+        raise SystemExit(70)
+    exchange_name = os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_AFTER_MKDIR")
+    if exchange_name:
+        if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-socket-bridge-exchange", exchange_name):
+            raise SystemExit(70)
+        os.mkdir(exchange_name, 0o700, dir_fd=root_fd)
+        rename_exchange(root_fd, bridge_name, exchange_name)
+    if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR") == "1":
+        raise RuntimeError("injected fault after socket bridge mkdir")
+    os.fchmod(bridge_fd, 0o1777)
+    bridge_stat = os.fstat(bridge_fd)
+    if not stat.S_ISDIR(bridge_stat.st_mode):
+        raise SystemExit(70)
+    if bridge_stat.st_uid != os.getuid() or stat.S_IMODE(bridge_stat.st_mode) != 0o1777:
+        raise SystemExit(70)
+    if f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}" != bridge_stable_identity:
+        raise SystemExit(70)
+    require_bridge_empty(bridge_fd)
+    root_child_snapshot_after_chmod = root_child_snapshot(root_fd)
+    require_root_child_delta(
+        root_child_snapshot_before,
+        root_child_snapshot_after_chmod,
+        bridge_name,
+        bridge_stat,
+        0o1777,
+    )
+    bridge_identity = (
+        f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}:1777"
+    )
+    bridge_mnt_id = mnt_id(bridge_fd)
+    if bridge_mnt_id != expected_root_mnt_id:
+        raise SystemExit(70)
+    marker_payload = "\n".join(
+        (
+            "schema=acgs-postgres-socket-bridge/v2",
+            f"proof_nonce={proof_nonce}",
+            f"proof_label={proof_label}",
+            f"bridge_basename={bridge_name}",
+            f"bridge_identity={bridge_identity}",
+            f"bridge_mnt_id={bridge_mnt_id}",
+            "",
+        )
+    ).encode("ascii")
+    marker_name = ".acgs-postgres-socket-bridge.v2"
+    marker_fd = os.open(
+        marker_name,
+        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o444,
+        dir_fd=bridge_fd,
+    )
+    marker_created = True
+    os.fchmod(marker_fd, 0o444)
+    marker_stat = os.fstat(marker_fd)
+    if not stat.S_ISREG(marker_stat.st_mode):
+        raise SystemExit(70)
+    if marker_stat.st_uid != os.getuid() or marker_stat.st_nlink != 1:
+        raise SystemExit(70)
+    if stat.S_IMODE(marker_stat.st_mode) != 0o444:
+        raise SystemExit(70)
+    if os.write(marker_fd, marker_payload) != len(marker_payload):
+        raise SystemExit(70)
+    if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MARKER_WRITE") == "1":
+        raise RuntimeError("injected fault after socket bridge marker write")
+    require_bridge_marker_only(bridge_fd, marker_name, marker_payload)
+    bridge_stat = os.fstat(bridge_fd)
+    require_baseline_subtree_unchanged(
+        baseline_subtree_snapshot_before,
+        root_fd,
+        bridge_name,
+        bridge_stat,
+        0o1777,
+    )
+    os.fsync(marker_fd)
+    os.close(marker_fd)
+    marker_fd = -1
+    os.fsync(bridge_fd)
+    if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_BRIDGE_FSYNC") == "1":
+        raise RuntimeError("injected fault after socket bridge fsync")
+    os.fsync(root_fd)
+    if os.environ.get("ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_ROOT_FSYNC") == "1":
+        raise RuntimeError("injected fault after socket bridge root fsync")
+    require_bridge_marker_only(bridge_fd, marker_name, marker_payload)
+    bridge_stat = os.fstat(bridge_fd)
+    require_baseline_subtree_unchanged(
+        baseline_subtree_snapshot_before,
+        root_fd,
+        bridge_name,
+        bridge_stat,
+        0o1777,
+    )
+    os.close(bridge_fd)
+    bridge_fd = -1
+except BaseException:
+    if created:
+        print("socket_bridge_creation_uncertain=1", file=sys.stderr)
+        print(f"recovery_root={recovery_root}", file=sys.stderr)
+        print(f"socket_bridge_basename={bridge_name}", file=sys.stderr)
+        print(f"recovery_root_identity={root_identity}", file=sys.stderr)
+        print(f"recovery_root_mnt_id={expected_root_mnt_id}", file=sys.stderr)
+        print(f"socket_bridge_marker_created={int(marker_created)}", file=sys.stderr)
+        if "bridge_stable_identity" in locals():
+            print(f"socket_bridge_stable_identity={bridge_stable_identity}", file=sys.stderr)
+        if "bridge_identity" in locals():
+            print(f"socket_bridge_identity={bridge_identity}", file=sys.stderr)
+        if "bridge_mnt_id" in locals():
+            print(f"socket_bridge_mnt_id={bridge_mnt_id}", file=sys.stderr)
+    raise
+finally:
+    if marker_fd >= 0:
+        os.close(marker_fd)
+    if bridge_fd >= 0:
+        os.close(bridge_fd)
+    os.close(root_fd)
+
+bridge_path = os.path.join(recovery_root, bridge_name)
+print(bridge_path)
+print(bridge_name)
+print(bridge_identity)
+print(hashlib.sha256(marker_payload).hexdigest())
+print(bridge_mnt_id)
+PY
+}
+
+verify_postgres_socket_bridge() {
+  local expected_mode=$1
+  /usr/bin/python3 -I -S - \
+    "$postgres_recovery_root" "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
+    "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" "$expected_mode" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import stat
+import sys
+
+root, bridge_name, expected_identity, expected_marker_sha256, expected_mnt_id, mode_text = (
+    sys.argv[1:7]
+)
+if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-socket-bridge", bridge_name):
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9a-f]{64}", expected_marker_sha256):
+    raise SystemExit(70)
+if not expected_mnt_id.isdigit() or mode_text not in {"700", "1777"}:
+    raise SystemExit(70)
+expected_mode = int(mode_text, 8)
+if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", expected_identity):
+    raise SystemExit(70)
+expected_stable_identity = expected_identity.rsplit(":", 1)[0]
+
+
+def mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    raise SystemExit(70)
+                return value
+    raise SystemExit(70)
+
+
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    root_stat = os.fstat(root_fd)
+    if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    bridge_fd = os.open(
+        bridge_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=root_fd,
+    )
+    try:
+        bridge_stat = os.fstat(bridge_fd)
+        observed_stable_identity = (
+            f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}"
+        )
+        if observed_stable_identity != expected_stable_identity:
+            raise SystemExit(70)
+        if stat.S_IMODE(bridge_stat.st_mode) != expected_mode:
+            raise SystemExit(70)
+        with open(f"/proc/self/fdinfo/{bridge_fd}", encoding="utf-8") as fdinfo:
+            observed_mnt_id = ""
+            for line in fdinfo:
+                if line.startswith("mnt_id:"):
+                    observed_mnt_id = line.split(":", 1)[1].strip()
+                    break
+        if observed_mnt_id != expected_mnt_id:
+            raise SystemExit(70)
+        if observed_mnt_id != mnt_id(root_fd):
+            raise SystemExit(70)
+        marker_fd = os.open(
+            ".acgs-postgres-socket-bridge.v2",
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=bridge_fd,
+        )
+        try:
+            marker_stat = os.fstat(marker_fd)
+            if not stat.S_ISREG(marker_stat.st_mode):
+                raise SystemExit(70)
+            if marker_stat.st_uid != os.getuid() or marker_stat.st_nlink != 1:
+                raise SystemExit(70)
+            if stat.S_IMODE(marker_stat.st_mode) != 0o444:
+                raise SystemExit(70)
+            payload = os.read(marker_fd, 4096)
+            if hashlib.sha256(payload).hexdigest() != expected_marker_sha256:
+                raise SystemExit(70)
+        finally:
+            os.close(marker_fd)
+    finally:
+        os.close(bridge_fd)
+finally:
+    os.close(root_fd)
+PY
+}
+
 verify_private_artifact_fd() {
   local source_path=$1
   local fd_path=$2
@@ -662,7 +1341,9 @@ write_postgres_recovery_intent() {
   local record_path=$3
   /usr/bin/python3 -I -S - \
     "$postgres_recovery_root" "$phase" "$intent_name" "$record_path" \
-    "$proof_nonce" "$proof_label" "$container_name" "$server_cidfile" "$server_namefile" <<'PY'
+    "$proof_nonce" "$proof_label" "$container_name" "$server_cidfile" "$server_namefile" \
+    "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
+    "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" <<'PY'
 from __future__ import annotations
 
 import os
@@ -680,7 +1361,11 @@ import sys
     server_name,
     server_cidfile,
     server_namefile,
-) = sys.argv[1:10]
+    bridge_basename,
+    bridge_identity,
+    bridge_marker_sha256,
+    bridge_mnt_id,
+) = sys.argv[1:14]
 if phase not in {"server-intent"}:
     raise SystemExit(70)
 if not re.fullmatch(r"[a-z0-9_.-]{1,96}", intent_name):
@@ -693,6 +1378,14 @@ if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}", proof_label):
     raise SystemExit(70)
 if server_name != f"{proof_label}-server":
     raise SystemExit(70)
+if bridge_basename != f"{proof_label}-socket-bridge":
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", bridge_identity):
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9a-f]{64}", bridge_marker_sha256):
+    raise SystemExit(70)
+if not bridge_mnt_id.isdigit():
+    raise SystemExit(70)
 root_fd = os.open(recovery_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
 try:
     root_stat = os.fstat(root_fd)
@@ -700,7 +1393,8 @@ try:
         raise SystemExit(70)
     payload = "\n".join(
         (
-            "intent_version=1",
+            "intent_version=2",
+            "schema=acgs-postgres-recovery-intent/server/v2",
             f"phase={phase}",
             f"proof_nonce={nonce}",
             f"proof_label={proof_label}",
@@ -708,6 +1402,10 @@ try:
             f"record_path={record_path}",
             f"server_cidfile={server_cidfile}",
             f"server_namefile={server_namefile}",
+            f"socket_bridge_basename={bridge_basename}",
+            f"socket_bridge_identity={bridge_identity}",
+            f"socket_bridge_marker_sha256={bridge_marker_sha256}",
+            f"socket_bridge_mnt_id={bridge_mnt_id}",
             "",
         )
     ).encode("ascii")
@@ -750,7 +1448,10 @@ write_recovery_contract() {
     server_cid="$(read_private_container_file "$server_cidfile" cid 2>/dev/null || true)"
   fi
   /usr/bin/python3 -I -S - \
-    "$contract_file" "$cleanup_rc" "$proof_nonce" "$proof_label" "$container_name" "$server_cid" <<'PY'
+    "$contract_file" "$cleanup_rc" "$proof_nonce" "$proof_label" "$container_name" "$server_cid" \
+    "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
+    "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" \
+    "$postgres_recovery_root_mnt_id" "$postgres_socket_bridge_creation_uncertain" <<'PY'
 from __future__ import annotations
 
 import os
@@ -758,7 +1459,20 @@ import re
 import stat
 import sys
 
-path, cleanup_rc, nonce, proof_label, server_name, server_cid = sys.argv[1:7]
+(
+    path,
+    cleanup_rc,
+    nonce,
+    proof_label,
+    server_name,
+    server_cid,
+    bridge_basename,
+    bridge_identity,
+    bridge_marker_sha256,
+    bridge_mnt_id,
+    root_mnt_id,
+    bridge_creation_uncertain,
+) = sys.argv[1:13]
 if not re.fullmatch(r"[0-9]+", cleanup_rc):
     raise SystemExit(70)
 if not re.fullmatch(r"[0-9a-f]{32}", nonce):
@@ -769,15 +1483,41 @@ if server_name != f"{proof_label}-server":
     raise SystemExit(70)
 if server_cid and not re.fullmatch(r"[0-9a-f]{12,64}", server_cid):
     raise SystemExit(70)
+if bridge_basename and bridge_basename != f"{proof_label}-socket-bridge":
+    raise SystemExit(70)
+if bridge_identity and not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", bridge_identity):
+    raise SystemExit(70)
+if bridge_marker_sha256 and not re.fullmatch(r"[0-9a-f]{64}", bridge_marker_sha256):
+    raise SystemExit(70)
+if bridge_mnt_id and not bridge_mnt_id.isdigit():
+    raise SystemExit(70)
+if root_mnt_id and not root_mnt_id.isdigit():
+    raise SystemExit(70)
+if bridge_creation_uncertain not in {"0", "1"}:
+    raise SystemExit(70)
 lines = [
+    "contract_version=2",
+    "schema=acgs-postgres-recovery-contract/v2",
     "external_cleanup_uncertain=1",
     f"cleanup_status={cleanup_rc}",
     f"proof_nonce={nonce}",
     f"proof_label={proof_label}",
     f"server_name={server_name}",
 ]
+if bridge_creation_uncertain == "1":
+    lines.append("socket_bridge_creation_uncertain=1")
 if server_cid:
     lines.append(f"server_cid={server_cid}")
+if bridge_basename:
+    lines.extend(
+        [
+            f"socket_bridge_basename={bridge_basename}",
+            f"socket_bridge_identity={bridge_identity}",
+            f"socket_bridge_marker_sha256={bridge_marker_sha256}",
+            f"socket_bridge_mnt_id={bridge_mnt_id}",
+            f"recovery_root_mnt_id={root_mnt_id}",
+        ]
+    )
 payload = ("\n".join(lines) + "\n").encode("ascii")
 fd = os.open(
     path,
@@ -1167,10 +1907,196 @@ verify_no_proof_labelled_containers() {
   return 0
 }
 
-cleanup_postgres_socket_artifacts() {
-  local pg_dir=$1
-  local expected_artifact_uid=$2
-  /usr/bin/python3 -I -S - "$pg_dir" "$expected_artifact_uid" <<'PY'
+verify_stable_no_proof_labelled_containers() {
+  for _ in {1..3}; do
+    verify_no_proof_labelled_containers || return $?
+    sleep 0.2
+  done
+}
+
+cleanup_postgres_socket_bridge() {
+  local expected_artifact_uid=$1
+  /usr/bin/python3 -I -S - \
+    "$postgres_recovery_root" "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
+    "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" \
+    "$postgres_recovery_root_mnt_id" "$expected_artifact_uid" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import stat
+import sys
+
+root, bridge_name, expected_identity, expected_marker_sha256, expected_mnt_id, expected_root_mnt_id, expected_artifact_uid_text = (
+    sys.argv[1:8]
+)
+if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-socket-bridge", bridge_name):
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", expected_identity):
+    raise SystemExit(70)
+expected_stable_identity = expected_identity.rsplit(":", 1)[0]
+if not re.fullmatch(r"[0-9a-f]{64}", expected_marker_sha256):
+    raise SystemExit(70)
+if not expected_mnt_id.isdigit():
+    raise SystemExit(70)
+if not expected_root_mnt_id.isdigit() or expected_mnt_id != expected_root_mnt_id:
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):
+    raise SystemExit(70)
+expected_artifact_uid = int(expected_artifact_uid_text)
+expected = {
+    ".acgs-postgres-socket-bridge.v2": "marker",
+    ".s.PGSQL.5432": "socket",
+    ".s.PGSQL.5432.lock": "regular",
+}
+
+
+def mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    raise SystemExit(70)
+                return value
+    raise SystemExit(70)
+
+
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    root_stat = os.fstat(root_fd)
+    if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    if mnt_id(root_fd) != expected_root_mnt_id:
+        raise SystemExit(70)
+    dir_fd = os.open(
+        bridge_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=root_fd,
+    )
+    try:
+        dir_stat = os.fstat(dir_fd)
+        observed_stable_identity = f"{dir_stat.st_dev}:{dir_stat.st_ino}:{dir_stat.st_uid}"
+        if observed_stable_identity != expected_stable_identity:
+            raise SystemExit(70)
+        if mnt_id(dir_fd) != expected_mnt_id:
+            raise SystemExit(70)
+        if dir_stat.st_uid != os.getuid() or stat.S_IMODE(dir_stat.st_mode) != 0o1777:
+            raise SystemExit(70)
+        names = os.listdir(dir_fd)
+        if any(name not in expected for name in names):
+            raise SystemExit(70)
+        validated: list[tuple[str, os.stat_result]] = []
+        for name in names:
+            before = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            expected_kind = expected[name]
+            if before.st_nlink != 1:
+                raise SystemExit(70)
+            if expected_kind == "marker":
+                if not stat.S_ISREG(before.st_mode):
+                    raise SystemExit(70)
+                if before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) != 0o444:
+                    raise SystemExit(70)
+                marker_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=dir_fd,
+                )
+                try:
+                    opened = os.fstat(marker_fd)
+                    if (
+                        opened.st_dev != before.st_dev
+                        or opened.st_ino != before.st_ino
+                        or opened.st_uid != before.st_uid
+                        or opened.st_nlink != before.st_nlink
+                        or stat.S_IMODE(opened.st_mode) != stat.S_IMODE(before.st_mode)
+                    ):
+                        raise SystemExit(70)
+                    payload = os.read(marker_fd, 4096)
+                    if hashlib.sha256(payload).hexdigest() != expected_marker_sha256:
+                        raise SystemExit(70)
+                    if opened.st_size != len(payload):
+                        raise SystemExit(70)
+                finally:
+                    os.close(marker_fd)
+            elif expected_kind == "socket":
+                if before.st_uid != expected_artifact_uid or not stat.S_ISSOCK(before.st_mode):
+                    raise SystemExit(70)
+            elif expected_kind == "regular":
+                if before.st_uid != expected_artifact_uid or not stat.S_ISREG(before.st_mode):
+                    raise SystemExit(70)
+                if before.st_mode & 0o022:
+                    raise SystemExit(70)
+            else:
+                raise SystemExit(70)
+            validated.append((name, before))
+        os.fchmod(dir_fd, 0o700)
+        hardened_stat = os.fstat(dir_fd)
+        hardened_identity = (
+            f"{hardened_stat.st_dev}:{hardened_stat.st_ino}:{hardened_stat.st_uid}"
+        )
+        if hardened_identity != expected_stable_identity:
+            raise SystemExit(70)
+        if hardened_stat.st_uid != os.getuid() or stat.S_IMODE(hardened_stat.st_mode) != 0o700:
+            raise SystemExit(70)
+        if mnt_id(dir_fd) != expected_mnt_id:
+            raise SystemExit(70)
+        for name, before in sorted(validated):
+            current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            if (
+                current.st_dev != before.st_dev
+                or current.st_ino != before.st_ino
+                or current.st_uid != before.st_uid
+                or current.st_nlink != before.st_nlink
+                or current.st_size != before.st_size
+                or stat.S_IFMT(current.st_mode) != stat.S_IFMT(before.st_mode)
+                or stat.S_IMODE(current.st_mode) != stat.S_IMODE(before.st_mode)
+            ):
+                raise SystemExit(70)
+            os.unlink(name, dir_fd=dir_fd)
+        os.fsync(dir_fd)
+        rebound_fd = os.open(
+            bridge_name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=root_fd,
+        )
+        try:
+            rebound_stat = os.fstat(rebound_fd)
+            rebound_identity = (
+                f"{rebound_stat.st_dev}:{rebound_stat.st_ino}:{rebound_stat.st_uid}"
+            )
+            if (
+                rebound_identity != expected_stable_identity
+                or mnt_id(rebound_fd) != expected_root_mnt_id
+            ):
+                raise SystemExit(70)
+        finally:
+            os.close(rebound_fd)
+        os.rmdir(bridge_name, dir_fd=root_fd)
+        removed_stat = os.fstat(dir_fd)
+        if removed_stat.st_nlink != 0:
+            raise SystemExit(70)
+        try:
+            os.stat(bridge_name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise SystemExit(70)
+    finally:
+        os.close(dir_fd)
+    os.fsync(root_fd)
+finally:
+    os.close(root_fd)
+PY
+}
+
+unlink_postgres_recovery_intents() {
+  /usr/bin/python3 -I -S - \
+    "$postgres_recovery_root" "$state_dir" "$proof_label" "$container_name" \
+    "$server_cidfile" "$server_namefile" \
+    "$postgres_socket_bridge_name" "$postgres_socket_bridge_identity" \
+    "$postgres_socket_bridge_marker_sha256" "$postgres_socket_bridge_mnt_id" <<'PY'
 from __future__ import annotations
 
 import os
@@ -1178,59 +2104,251 @@ import re
 import stat
 import sys
 
-directory = sys.argv[1]
-expected_artifact_uid_text = sys.argv[2]
-if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):
+(
+    root,
+    state_dir,
+    proof_label,
+    server_name,
+    server_cidfile,
+    server_namefile,
+    bridge_basename,
+    bridge_identity,
+    bridge_marker_sha256,
+    bridge_mnt_id,
+) = (
+    sys.argv[1:11]
+)
+if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}", proof_label):
     raise SystemExit(70)
-expected_artifact_uid = int(expected_artifact_uid_text)
-expected = {
-    ".s.PGSQL.5432": "socket",
-    ".s.PGSQL.5432.lock": "regular",
-}
-dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-try:
-    dir_stat = os.fstat(dir_fd)
-    if not stat.S_ISDIR(dir_stat.st_mode):
+if server_name != f"{proof_label}-server":
+    raise SystemExit(70)
+if bridge_basename != f"{proof_label}-socket-bridge":
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", bridge_identity):
+    raise SystemExit(70)
+if not re.fullmatch(r"[0-9a-f]{64}", bridge_marker_sha256):
+    raise SystemExit(70)
+if not bridge_mnt_id.isdigit():
+    raise SystemExit(70)
+state_dir_real = os.path.realpath(state_dir)
+if not os.path.isabs(state_dir_real):
+    raise SystemExit(70)
+expected_server_cidfile = os.path.realpath(server_cidfile)
+expected_server_namefile = os.path.realpath(server_namefile)
+if expected_server_cidfile != os.path.join(state_dir_real, "server.cid"):
+    raise SystemExit(70)
+if expected_server_namefile != os.path.join(state_dir_real, "server.name"):
+    raise SystemExit(70)
+expected_client_dir = os.path.join(state_dir_real, "client")
+
+
+def parse_payload(raw: bytes) -> list[tuple[str, str]]:
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
         raise SystemExit(70)
-    if dir_stat.st_uid != os.getuid():
-        raise SystemExit(70)
-    descriptor_path = os.path.realpath(f"/proc/self/fd/{dir_fd}")
-    if descriptor_path != os.path.realpath(directory):
-        raise SystemExit(70)
-    identity = (dir_stat.st_dev, dir_stat.st_ino)
-    os.fchmod(dir_fd, 0o700)
-    hardened_stat = os.fstat(dir_fd)
-    if (hardened_stat.st_dev, hardened_stat.st_ino) != identity:
-        raise SystemExit(70)
-    if hardened_stat.st_uid != os.getuid() or hardened_stat.st_mode & 0o777 != 0o700:
-        raise SystemExit(70)
-    for name, expected_kind in expected.items():
-        try:
-            before = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-        except FileNotFoundError:
+    parsed: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        if not line:
             continue
-        if before.st_uid != expected_artifact_uid or before.st_nlink != 1:
+        if "=" not in line:
             raise SystemExit(70)
-        if expected_kind == "socket":
-            if not stat.S_ISSOCK(before.st_mode):
-                raise SystemExit(70)
-        elif expected_kind == "regular":
-            if not stat.S_ISREG(before.st_mode):
-                raise SystemExit(70)
-            if before.st_mode & 0o022:
-                raise SystemExit(70)
+        key, value = line.split("=", 1)
+        if key in seen:
+            raise SystemExit(70)
+        seen.add(key)
+        parsed.append((key, value))
+    return parsed
+
+
+def assert_exact_payload(
+    pairs: list[tuple[str, str]],
+    expected_pairs: tuple[tuple[str, str], ...],
+) -> None:
+    if tuple(pairs) != expected_pairs:
+        raise SystemExit(70)
+
+
+def assert_expected_path(path: str, expected: str) -> None:
+    if path != expected:
+        raise SystemExit(70)
+    if os.path.dirname(path) not in {state_dir_real, expected_client_dir}:
+        raise SystemExit(70)
+    if not os.path.basename(path):
+        raise SystemExit(70)
+
+
+def read_intent(root_fd: int, name: str) -> tuple[list[tuple[str, str]], os.stat_result]:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd)
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise SystemExit(70)
+        if file_stat.st_uid != os.getuid() or file_stat.st_nlink != 1:
+            raise SystemExit(70)
+        if stat.S_IMODE(file_stat.st_mode) != 0o600:
+            raise SystemExit(70)
+        if file_stat.st_size > 8192:
+            raise SystemExit(70)
+        raw = os.read(fd, file_stat.st_size)
+        if len(raw) != file_stat.st_size:
+            raise SystemExit(70)
+        return parse_payload(raw), file_stat
+    finally:
+        os.close(fd)
+
+
+root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    root_stat = os.fstat(root_fd)
+    if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise SystemExit(70)
+    names = sorted(name for name in os.listdir(root_fd) if name.startswith(f"{proof_label}-"))
+    intent_names = [name for name in names if name.endswith(".intent")]
+    if names != intent_names:
+        raise SystemExit(70)
+    server_intent_name = f"{proof_label}-server.intent"
+    if server_intent_name not in intent_names:
+        raise SystemExit(70)
+    validated: list[tuple[str, os.stat_result]] = []
+    for name in intent_names:
+        payload, before = read_intent(root_fd, name)
+        if name == server_intent_name:
+            assert_expected_path(server_cidfile, expected_server_cidfile)
+            assert_expected_path(server_namefile, expected_server_namefile)
+            assert_exact_payload(
+                payload,
+                (
+                    ("intent_version", "2"),
+                    ("schema", "acgs-postgres-recovery-intent/server/v2"),
+                    ("phase", "server-intent"),
+                    ("proof_nonce", proof_label.rsplit("-", 1)[1]),
+                    ("proof_label", proof_label),
+                    ("server_name", server_name),
+                    ("record_path", server_namefile),
+                    ("server_cidfile", server_cidfile),
+                    ("server_namefile", server_namefile),
+                    ("socket_bridge_basename", bridge_basename),
+                    ("socket_bridge_identity", bridge_identity),
+                    ("socket_bridge_marker_sha256", bridge_marker_sha256),
+                    ("socket_bridge_mnt_id", bridge_mnt_id),
+                ),
+            )
         else:
+            client_pattern = (
+                rf"{re.escape(proof_label)}-client-[0-9]+-[0-9]+\.intent"
+            )
+            if not re.fullmatch(client_pattern, name):
+                raise SystemExit(70)
+            client_name = name[:-7]
+            client_cidfile = os.path.join(expected_client_dir, f"{client_name}.cid")
+            client_namefile = os.path.join(expected_client_dir, f"{client_name}.name")
+            assert_expected_path(client_cidfile, client_cidfile)
+            assert_expected_path(client_namefile, client_namefile)
+            assert_exact_payload(
+                payload,
+                (
+                    ("intent_version", "1"),
+                    ("phase", "client-intent"),
+                    ("proof_nonce", proof_label.rsplit("-", 1)[1]),
+                    ("proof_label", proof_label),
+                    ("server_name", server_name),
+                    ("client_name", client_name),
+                    ("record_path", client_namefile),
+                    ("client_cidfile", client_cidfile),
+                    ("client_namefile", client_namefile),
+                ),
+            )
+        validated.append((name, before))
+    for name, before in validated:
+        current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        if (
+            current.st_dev != before.st_dev
+            or current.st_ino != before.st_ino
+            or current.st_uid != before.st_uid
+            or current.st_nlink != before.st_nlink
+            or current.st_size != before.st_size
+            or stat.S_IFMT(current.st_mode) != stat.S_IFMT(before.st_mode)
+            or stat.S_IMODE(current.st_mode) != stat.S_IMODE(before.st_mode)
+        ):
             raise SystemExit(70)
-        os.unlink(name, dir_fd=dir_fd)
-    os.fsync(dir_fd)
+        os.unlink(name, dir_fd=root_fd)
+    os.fsync(root_fd)
 finally:
-    os.close(dir_fd)
+    os.close(root_fd)
 PY
+}
+
+verify_docker_mounts() {
+  local container_ref=$1
+  local expected_json=$2
+  local inspect_output=''
+  inspect_output="$(
+    timeout --preserve-status 10s docker inspect --format '{{json .Mounts}}' "$container_ref"
+  )" || return $?
+  /usr/bin/python3 -I -S - "$inspect_output" "$expected_json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+raw_mounts, raw_expected = sys.argv[1:3]
+try:
+    mounts = json.loads(raw_mounts)
+    expected = json.loads(raw_expected)
+except json.JSONDecodeError:
+    raise SystemExit(70)
+if not isinstance(mounts, list) or not isinstance(expected, dict):
+    raise SystemExit(70)
+observed: dict[str, tuple[str, str, bool]] = {}
+for mount in mounts:
+    if not isinstance(mount, dict):
+        raise SystemExit(70)
+    destination = mount.get("Destination")
+    source = mount.get("Source")
+    rw = mount.get("RW")
+    mount_type = mount.get("Type")
+    if (
+        not isinstance(destination, str)
+        or not isinstance(source, str)
+        or not isinstance(rw, bool)
+        or not isinstance(mount_type, str)
+    ):
+        raise SystemExit(70)
+    if destination in observed:
+        raise SystemExit(70)
+    observed[destination] = (mount_type, source, rw)
+if set(observed) != set(expected):
+    raise SystemExit(70)
+for destination, fields in expected.items():
+    if not isinstance(fields, dict):
+        raise SystemExit(70)
+    expected_type = fields.get("type")
+    expected_source = fields.get("source")
+    expected_rw = fields.get("rw")
+    if (
+        not isinstance(expected_type, str)
+        or not isinstance(expected_source, str)
+        or not isinstance(expected_rw, bool)
+    ):
+        raise SystemExit(70)
+    if observed.get(destination) != (expected_type, expected_source, expected_rw):
+        raise SystemExit(70)
+PY
+}
+
+verify_server_socket_bridge_marker() {
+  local inspect_name=$1
+  timeout --preserve-status 10s docker exec "$inspect_name" sh -ec \
+    "test -f /run/acgs-pg/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /run/acgs-pg/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256'" \
+    >/dev/null
 }
 
 cleanup() {
   local status=$?
   local cleanup_status=0
+  local cleanup_safe=1
   local rc=0
   trap '' INT TERM
   if [[ -n "$broker_pid" ]]; then
@@ -1246,24 +2364,37 @@ cleanup() {
     fi
     wait "$broker_pid" >/dev/null 2>&1 || true
   fi
-  cleanup_client_containers || {
-    rc=$?
-    [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
-  }
-  cleanup_server_container || {
-    rc=$?
-    [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
-  }
-  if [[ -d "$state_dir/pg" ]]; then
-    cleanup_postgres_socket_artifacts "$state_dir/pg" 999 || {
+  [[ "$cleanup_status" == 0 ]] || cleanup_safe=0
+  if [[ "$docker_started" == 1 ]]; then
+    cleanup_client_containers || {
       rc=$?
       [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
+      cleanup_safe=0
+    }
+    cleanup_server_container || {
+      rc=$?
+      [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
+      cleanup_safe=0
+    }
+    verify_stable_no_proof_labelled_containers || {
+      rc=$?
+      [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
+      cleanup_safe=0
     }
   fi
-  verify_no_proof_labelled_containers || {
-    rc=$?
-    [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
-  }
+  if [[ "$cleanup_safe" == 1 && -n "$postgres_socket_bridge" ]]; then
+    cleanup_postgres_socket_bridge 999 || {
+      rc=$?
+      [[ "$cleanup_status" == 0 ]] && cleanup_status=$rc
+      cleanup_safe=0
+    }
+  fi
+  if [[ "$cleanup_safe" == 1 && "$cleanup_status" == 0 ]]; then
+    unlink_postgres_recovery_intents || {
+      cleanup_status=$?
+      cleanup_safe=0
+    }
+  fi
   if [[ "$cleanup_status" == 0 ]]; then
     rm -rf "$state_dir" || cleanup_status=$?
   else
@@ -1300,13 +2431,39 @@ timeout --preserve-status 30s docker image inspect --format '{{json .RepoDigests
 
 mkdir -p \
   "$state_dir/broker" "$state_dir/client" "$state_dir/home" "$state_dir/tmp" \
-  "$state_dir/proof-scratch" "$state_dir/uv-cache" "$state_dir/acp-old" "$state_dir/pg" \
+  "$state_dir/proof-scratch" "$state_dir/uv-cache" "$state_dir/acp-old" \
   "$state_dir/old-1" "$state_dir/old-2"
 chmod 0700 \
   "$state_dir" "$state_dir/broker" "$state_dir/client" "$state_dir/home" \
   "$state_dir/tmp" "$state_dir/proof-scratch"
-chmod 0777 "$state_dir/pg"
 chmod 0700 "$state_dir/uv-cache"
+postgres_socket_bridge_output="$(create_postgres_socket_bridge "$postgres_socket_bridge_name")" || {
+  postgres_socket_bridge_creation_uncertain=1
+  write_recovery_contract 70 >/dev/null 2>&1 || true
+  echo 'failed to create descriptor-bound PostgreSQL socket bridge' >&2
+  exit 70
+}
+mapfile -t postgres_socket_bridge_fields <<<"$postgres_socket_bridge_output"
+unset postgres_socket_bridge_output
+if [[ "${#postgres_socket_bridge_fields[@]}" != 5 ]]; then
+  echo 'PostgreSQL socket bridge metadata is malformed' >&2
+  exit 70
+fi
+for postgres_socket_bridge_field in "${postgres_socket_bridge_fields[@]}"; do
+  [[ -n "$postgres_socket_bridge_field" ]] || {
+    echo 'PostgreSQL socket bridge metadata is incomplete' >&2
+    exit 70
+  }
+done
+postgres_socket_bridge="${postgres_socket_bridge_fields[0]}"
+postgres_socket_bridge_name="${postgres_socket_bridge_fields[1]}"
+postgres_socket_bridge_identity="${postgres_socket_bridge_fields[2]}"
+postgres_socket_bridge_marker_sha256="${postgres_socket_bridge_fields[3]}"
+postgres_socket_bridge_mnt_id="${postgres_socket_bridge_fields[4]}"
+verify_postgres_socket_bridge 1777 || {
+  echo 'PostgreSQL socket bridge failed descriptor verification' >&2
+  exit 70
+}
 write_postgres_recovery_intent server-intent server "$server_namefile" || {
   echo 'failed to persist PostgreSQL server recovery intent' >&2
   exit 70
@@ -1316,6 +2473,7 @@ write_private_container_name_file "$server_namefile" "$container_name" || {
   exit 70
 }
 
+docker_started=1
 container_id="$(
   timeout --preserve-status 60s docker run -d \
     --pull=never \
@@ -1339,19 +2497,33 @@ container_id="$(
     --env "POSTGRES_PASSWORD=$postgres_password" \
     --env "POSTGRES_INITDB_ARGS=--auth-local=scram-sha-256 --auth-host=scram-sha-256" \
     --env PGHOST=/run/acgs-pg \
-    --health-cmd "pg_isready -h /run/acgs-pg -U $postgres_user -d $main_database" \
+    --health-cmd "test -f /run/acgs-pg/.acgs-postgres-socket-bridge.v2 && test \"\$(sha256sum /run/acgs-pg/.acgs-postgres-socket-bridge.v2 | awk '{print \$1}')\" = '$postgres_socket_bridge_marker_sha256' && pg_isready -h /run/acgs-pg -U $postgres_user -d $main_database" \
     --health-interval 1s \
     --health-timeout 5s \
     --health-retries 60 \
     --security-opt label=disable \
-    --volume "$state_dir/pg:/run/acgs-pg:rw" \
-    --volume "$state_dir/pg:/var/run/postgresql:rw" \
+    --mount "type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg" \
     --tmpfs /var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700 \
     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=2g,mode=1777 \
     "$postgres_image" \
     postgres -c listen_addresses= -c unix_socket_directories=/run/acgs-pg \
       -c unix_socket_permissions=0777
 )"
+server_mount_expectation="$(
+  printf '{"%s":{"type":"bind","source":%s,"rw":true},"%s":{"type":"tmpfs","source":"","rw":true},"%s":{"type":"tmpfs","source":"","rw":true}}' \
+    "/run/acgs-pg" \
+    "$(printf '%s' "$postgres_socket_bridge" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+    "/var/lib/postgresql/data" \
+    "/tmp"
+)"
+verify_docker_mounts "$container_id" "$server_mount_expectation" || {
+  echo 'PostgreSQL server socket bridge mount did not match expected descriptor source' >&2
+  exit 70
+}
+verify_server_socket_bridge_marker "$container_id" || {
+  echo 'PostgreSQL server socket bridge marker was not visible through mounted path' >&2
+  exit 70
+}
 
 for _ in {1..90}; do
   container_status="$(timeout --preserve-status 10s docker inspect --format '{{.State.Status}}' "$container_id")"
@@ -1374,7 +2546,7 @@ if [[ "$(timeout --preserve-status 10s docker inspect --format '{{.State.Health.
   exit 70
 fi
 
-if [[ ! -S "$state_dir/pg/.s.PGSQL.5432" ]]; then
+if [[ ! -S "$postgres_socket_bridge/.s.PGSQL.5432" ]]; then
   echo 'timed out waiting for PostgreSQL Unix socket' >&2
   exit 70
 fi
@@ -1384,9 +2556,11 @@ write_verified_private_artifact "$state_dir/broker" "postgres_client_broker.py" 
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import selectors
+import shlex
 import signal
 import socket
 import stat
@@ -1396,7 +2570,7 @@ import time
 from pathlib import Path
 
 SOCKET_PATH = Path(sys.argv[1])
-STATE_DIR = SOCKET_PATH.parent.parent.resolve(strict=True)
+STATE_DIR = Path(sys.argv[2]).resolve(strict=True)
 SOCKET_DIR = SOCKET_PATH.parent.resolve(strict=True)
 SOCKET_NAME = SOCKET_PATH.name
 IMAGE = "postgres:17.10-bookworm@sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394"
@@ -1405,6 +2579,11 @@ PROOF_LABEL = os.environ["ACP_POSTGRES_CLIENT_PROOF_LABEL"]
 PROOF_NONCE = os.environ["ACP_POSTGRES_CLIENT_PROOF_NONCE"]
 SERVER_NAME = os.environ["ACP_POSTGRES_SERVER_NAME"]
 RECOVERY_ROOT = Path(os.environ["ACGS_POSTGRES_RECOVERY_ROOT"])
+PG_SOCKET_BRIDGE = Path(os.environ["ACP_POSTGRES_SOCKET_BRIDGE"])
+PG_SOCKET_BRIDGE_IDENTITY = os.environ["ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY"]
+PG_SOCKET_BRIDGE_MARKER_SHA256 = os.environ["ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256"]
+PG_SOCKET_BRIDGE_MNT_ID = os.environ["ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID"]
+PG_RECOVERY_ROOT_MNT_ID = os.environ["ACP_POSTGRES_RECOVERY_ROOT_MNT_ID"]
 ALLOWED_TOOLS = {"psql", "pg_dump", "pg_restore"}
 PINNED_PGHOST = "/run/acgs-pg"
 PINNED_PGPORT = "5432"
@@ -1419,6 +2598,8 @@ ALLOWED_ENV = {
     "PGCONNECT_TIMEOUT", "PGOPTIONS", "PGSSLMODE", "PGSSLROOTCERT", "PGSSLCERT",
     "PGSSLKEY", "PGAPPNAME", "LANG", "LC_ALL", "LC_CTYPE",
 }
+FORBIDDEN_ENDPOINT_ENV = {"PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"}
+FORBIDDEN_CONNINFO_KEYS = {"host", "hostaddr", "port", "service", "servicefile"}
 MAX_REQUEST_BYTES = 131_072
 MAX_COMBINED_OUTPUT_BYTES = 2_097_152
 MAX_RESPONSE_BYTES = 16_777_216
@@ -1442,6 +2623,181 @@ if not RECOVERY_ROOT.is_absolute() or RECOVERY_ROOT.is_symlink():
 RECOVERY_ROOT_STAT = RECOVERY_ROOT.stat()
 if RECOVERY_ROOT_STAT.st_uid != os.getuid() or RECOVERY_ROOT_STAT.st_mode & 0o077:
     fail("broker recovery root must be owner-only", 70)
+if not PG_SOCKET_BRIDGE.is_absolute() or PG_SOCKET_BRIDGE.is_symlink():
+    fail("PostgreSQL socket bridge must be absolute non-symlink", 70)
+if PG_SOCKET_BRIDGE.parent.resolve(strict=True) != RECOVERY_ROOT.resolve(strict=True):
+    fail("PostgreSQL socket bridge must live under the recovery root", 70)
+if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:1777", PG_SOCKET_BRIDGE_IDENTITY):
+    fail("PostgreSQL socket bridge identity is malformed", 70)
+if not re.fullmatch(r"[0-9a-f]{64}", PG_SOCKET_BRIDGE_MARKER_SHA256):
+    fail("PostgreSQL socket bridge marker digest is malformed", 70)
+if not PG_SOCKET_BRIDGE_MNT_ID.isdigit():
+    fail("PostgreSQL socket bridge mount id is malformed", 70)
+if not PG_RECOVERY_ROOT_MNT_ID.isdigit() or PG_RECOVERY_ROOT_MNT_ID != PG_SOCKET_BRIDGE_MNT_ID:
+    fail("PostgreSQL socket bridge root mount id is malformed", 70)
+
+
+def fd_mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    fail("PostgreSQL socket bridge mount id is unsafe", 70)
+                return value
+    fail("PostgreSQL socket bridge mount id is missing", 70)
+
+
+def validate_socket_bridge() -> None:
+    root_fd = os.open(RECOVERY_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        root_stat = os.fstat(root_fd)
+        if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+            fail("PostgreSQL socket bridge recovery root is unsafe", 70)
+        if fd_mnt_id(root_fd) != PG_RECOVERY_ROOT_MNT_ID:
+            fail("PostgreSQL socket bridge recovery root mount id changed", 70)
+        bridge_fd = os.open(
+            PG_SOCKET_BRIDGE.name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=root_fd,
+        )
+        try:
+            bridge_stat = os.fstat(bridge_fd)
+            observed_identity = (
+                f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}"
+            )
+            expected_identity = PG_SOCKET_BRIDGE_IDENTITY.rsplit(":", 1)[0]
+            if observed_identity != expected_identity:
+                fail("PostgreSQL socket bridge identity changed", 70)
+            if bridge_stat.st_uid != os.getuid() or stat.S_IMODE(bridge_stat.st_mode) != 0o1777:
+                fail("PostgreSQL socket bridge mode is unsafe", 70)
+            if fd_mnt_id(bridge_fd) != PG_SOCKET_BRIDGE_MNT_ID:
+                fail("PostgreSQL socket bridge mount id changed", 70)
+            marker_fd = os.open(
+                ".acgs-postgres-socket-bridge.v2",
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=bridge_fd,
+            )
+            try:
+                marker_stat = os.fstat(marker_fd)
+                if not stat.S_ISREG(marker_stat.st_mode):
+                    fail("PostgreSQL socket bridge marker is not regular", 70)
+                if marker_stat.st_uid != os.getuid() or marker_stat.st_nlink != 1:
+                    fail("PostgreSQL socket bridge marker identity is unsafe", 70)
+                if stat.S_IMODE(marker_stat.st_mode) != 0o444:
+                    fail("PostgreSQL socket bridge marker mode is unsafe", 70)
+                marker_payload = os.read(marker_fd, 4096)
+                if hashlib.sha256(marker_payload).hexdigest() != PG_SOCKET_BRIDGE_MARKER_SHA256:
+                    fail("PostgreSQL socket bridge marker digest changed", 70)
+            finally:
+                os.close(marker_fd)
+        finally:
+            os.close(bridge_fd)
+    finally:
+        os.close(root_fd)
+
+
+def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
+    expected = {
+        "/run/acgs-pg": ("bind", str(PG_SOCKET_BRIDGE), False),
+        "/run/tmp": ("bind", str(HOST_TMP), True),
+        "/proof-scratch": ("bind", str(HOST_PROOF_SCRATCH), True),
+        "/tmp": ("tmpfs", "", True),
+    }
+    observed: dict[str, tuple[str, str, bool]] = {}
+    index = 0
+    while index < len(docker_args):
+        item = docker_args[index]
+        if item == "--mount":
+            if index + 1 >= len(docker_args):
+                fail("PostgreSQL client broker Docker mount is malformed", 70)
+            raw_parts = docker_args[index + 1].split(",")
+            parts = dict(part.split("=", 1) for part in raw_parts if "=" in part)
+            source = parts.get("src")
+            target = parts.get("dst")
+            readonly = "readonly" in raw_parts
+            if parts.get("type") != "bind" or not source or not target:
+                fail("PostgreSQL client broker Docker mount is malformed", 70)
+            if target in observed:
+                fail("PostgreSQL client broker Docker mount is duplicated", 70)
+            observed[target] = ("bind", source, not readonly)
+            index += 2
+            continue
+        if item == "--volume":
+            fail("PostgreSQL client broker forbids volume syntax drift", 70)
+        if item == "--tmpfs":
+            if index + 1 >= len(docker_args):
+                fail("PostgreSQL client broker Docker tmpfs is malformed", 70)
+            target = docker_args[index + 1].split(":", 1)[0]
+            if target in observed:
+                fail("PostgreSQL client broker Docker mount is duplicated", 70)
+            observed[target] = ("tmpfs", "", True)
+            index += 2
+            continue
+        index += 1
+    if observed != expected:
+        fail("PostgreSQL client broker Docker mounts changed", 70)
+    if any(source == str(STATE_DIR) for _type, source, _mode in observed.values()):
+        fail("PostgreSQL client broker must not bind the whole state directory", 70)
+
+
+def inspect_actual_docker_mounts(container_ref: str) -> bool:
+    try:
+        completed = subprocess.run(
+            [str(DOCKER_BIN), "inspect", "--format", "{{json .Mounts}}", container_ref],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        fail("PostgreSQL client broker mount inspection is uncertain", 70)
+    if completed.returncode != 0:
+        return False
+    try:
+        mounts = json.loads(completed.stdout.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        fail("PostgreSQL client broker mount inspection is malformed", 70)
+    expected = {
+        "/run/acgs-pg": ("bind", str(PG_SOCKET_BRIDGE), False),
+        "/run/tmp": ("bind", str(HOST_TMP), True),
+        "/proof-scratch": ("bind", str(HOST_PROOF_SCRATCH), True),
+        "/tmp": ("tmpfs", "", True),
+    }
+    observed: dict[str, tuple[str, str, bool]] = {}
+    if not isinstance(mounts, list):
+        fail("PostgreSQL client broker mount inspection is malformed", 70)
+    for mount in mounts:
+        if not isinstance(mount, dict):
+            fail("PostgreSQL client broker mount inspection is malformed", 70)
+        destination = mount.get("Destination")
+        source = mount.get("Source")
+        rw = mount.get("RW")
+        mount_type = mount.get("Type")
+        if (
+            not isinstance(destination, str)
+            or not isinstance(source, str)
+            or not isinstance(rw, bool)
+            or not isinstance(mount_type, str)
+        ):
+            fail("PostgreSQL client broker mount inspection is malformed", 70)
+        if destination in observed:
+            fail("PostgreSQL client broker actual Docker mount is duplicated", 70)
+        observed[destination] = (mount_type, source, rw)
+    if set(observed) != set(expected):
+        fail("PostgreSQL client broker actual Docker mounts changed", 70)
+    for destination, expected_value in expected.items():
+        if observed.get(destination) != expected_value:
+            fail("PostgreSQL client broker actual Docker mounts changed", 70)
+    return True
+
+
+def wait_for_actual_docker_mounts(container_ref: str) -> None:
+    for _attempt in range(25):
+        if inspect_actual_docker_mounts(container_ref):
+            return
+        time.sleep(0.1)
+    fail("PostgreSQL client broker mount inspection is uncertain", 70)
 
 
 def validate_string_list(value: object, label: str) -> list[str]:
@@ -1450,6 +2806,106 @@ def validate_string_list(value: object, label: str) -> list[str]:
     if any("\0" in item for item in value):
         fail(f"{label} contains a NUL byte")
     return value
+
+
+def reject_endpoint_override_args(tool: str, args: list[str]) -> None:
+    def reject_conninfo(value: str) -> None:
+        if re.search(r"\b(?:postgresql|postgres)://", value):
+            fail("PostgreSQL client broker endpoint is pinned")
+        pattern = r"(^|\s)(" + "|".join(sorted(FORBIDDEN_CONNINFO_KEYS)) + r")\s*="
+        if re.search(pattern, value, flags=re.IGNORECASE):
+            fail("PostgreSQL client broker endpoint is pinned")
+
+    def validate_psql_sql(value: str) -> None:
+        if "\\" in value:
+            fail("PostgreSQL client broker psql reconnect paths are disabled")
+        if re.search(r":(?:[A-Za-z_][A-Za-z0-9_]*|'[^']*'|\"[^\"]*\")", value):
+            fail("PostgreSQL client broker psql variable interpolation is disabled")
+
+    def validate_psql_allowlist() -> None:
+        if args == ["--version"]:
+            return
+        index = 0
+        saw_command = False
+        while index < len(args):
+            argument = args[index]
+            if argument == "--set":
+                if index + 1 >= len(args) or args[index + 1] != "ON_ERROR_STOP=1":
+                    fail("PostgreSQL client broker psql argv is not allowed")
+                index += 2
+                continue
+            if argument == "--set=ON_ERROR_STOP=1":
+                index += 1
+                continue
+            if argument == "--command":
+                if index + 1 >= len(args):
+                    fail("PostgreSQL client broker psql argv is not allowed")
+                validate_psql_sql(args[index + 1])
+                saw_command = True
+                index += 2
+                continue
+            if argument in {"--tuples-only", "--no-align"}:
+                index += 1
+                continue
+            fail("PostgreSQL client broker psql argv is not allowed")
+        if not saw_command:
+            fail("PostgreSQL client broker psql argv is not allowed")
+
+    if tool == "psql":
+        validate_psql_allowlist()
+        return
+
+    def reject_long_option(argument: str, next_argument: str | None) -> None:
+        option = argument.split("=", 1)[0]
+        if option.startswith("--"):
+            name = option[2:]
+            if name and ("host".startswith(name) or "port".startswith(name)):
+                fail("PostgreSQL client broker endpoint is pinned")
+            if name and "dbname".startswith(name):
+                if "=" in argument:
+                    reject_conninfo(argument.split("=", 1)[1])
+                elif next_argument is None:
+                    fail("PostgreSQL client broker endpoint is pinned")
+                else:
+                    reject_conninfo(next_argument)
+
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument.startswith("--"):
+            reject_long_option(
+                argument,
+                args[index + 1] if index + 1 < len(args) else None,
+            )
+        elif argument.startswith("-") and argument != "-":
+            cluster = argument[1:]
+            if "h" in cluster or "p" in cluster:
+                fail("PostgreSQL client broker endpoint is pinned")
+            if "d" in cluster:
+                dbname_index = cluster.index("d")
+                attached_value = cluster[dbname_index + 1 :]
+                if attached_value:
+                    reject_conninfo(attached_value)
+                elif index + 1 >= len(args):
+                    fail("PostgreSQL client broker endpoint is pinned")
+                else:
+                    reject_conninfo(args[index + 1])
+        if argument in {"-d", "--dbname"}:
+            if index + 1 >= len(args):
+                fail("PostgreSQL client broker endpoint is pinned")
+            reject_conninfo(args[index + 1])
+        if argument.startswith("--dbname="):
+            reject_conninfo(argument.split("=", 1)[1])
+        reject_conninfo(argument)
+        endpoint_key_pattern = "|".join(sorted(FORBIDDEN_CONNINFO_KEYS))
+        if re.fullmatch(rf"(?:{endpoint_key_pattern})\s*=.*", argument, re.IGNORECASE):
+            fail("PostgreSQL client broker endpoint is pinned")
+        try:
+            for field in shlex.split(argument):
+                reject_conninfo(field)
+        except ValueError:
+            fail("PostgreSQL client broker endpoint is pinned")
+        index += 1
 
 
 def is_under(path: Path, roots: tuple[Path, ...]) -> bool:
@@ -1600,6 +3056,8 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     env = request.get("env")
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         fail("env must be a string map")
+    if set(env) & FORBIDDEN_ENDPOINT_ENV:
+        fail("PostgreSQL client broker endpoint is pinned")
     unknown_env = set(env) - ALLOWED_ENV
     if unknown_env:
         fail("unsupported PostgreSQL client env: " + ",".join(sorted(unknown_env)))
@@ -1608,6 +3066,12 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     if env.get("PGPORT", PINNED_PGPORT) != PINNED_PGPORT:
         fail("PostgreSQL client broker endpoint is pinned")
     env = {**env, "PGHOST": PINNED_PGHOST, "PGPORT": PINNED_PGPORT}
+    reject_endpoint_override_args(tool, args)
+    docker_cli_env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": str(STATE_DIR / "home"),
+    }
+    docker_cli_env.update(env)
     paths: dict[str, str] = {}
     for variable in ("PGPASSFILE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"):
         if env.get(variable):
@@ -1648,7 +3112,7 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
     write_client_recovery_intent(client_name, cidfile, namefile)
 
     docker_args = [
-        str(DOCKER_BIN), "run", "--rm", "--pull=never", "--network", "none",
+        str(DOCKER_BIN), "create", "--pull=never", "--network", "none",
         "--name", client_name,
         "--cidfile", str(cidfile),
         "--label", "acgs.postgres.client=trusted-broker",
@@ -1661,17 +3125,37 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         "--security-opt", "label=disable", "--user", f"{os.getuid()}:{os.getgid()}",
         "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777,size=512m",
-        "--volume", f"{STATE_DIR / 'pg'}:/run/acgs-pg:ro",
-        "--volume", f"{HOST_TMP}:/run/tmp:rw",
-        "--volume", f"{HOST_PROOF_SCRATCH}:/proof-scratch:rw",
+        "--mount", f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly",
+        "--mount", f"type=bind,src={HOST_TMP},dst=/run/tmp",
+        "--mount", f"type=bind,src={HOST_PROOF_SCRATCH},dst=/proof-scratch",
     ]
     for key in sorted(env):
         docker_args.extend(["--env", key])
+    marker_wrapper = (
+        "marker=/run/acgs-pg/.acgs-postgres-socket-bridge.v2; "
+        "test -f \"$marker\" && test ! -L \"$marker\" || exit 70; "
+        f"test \"$(stat -c '%u:%h:%a' \"$marker\")\" = \"{os.getuid()}:1:444\" || exit 70; "
+        f"test \"$(sha256sum \"$marker\" | awk '{{print $1}}')\" = \"{PG_SOCKET_BRIDGE_MARKER_SHA256}\" || exit 70; "
+        "exec \"$@\""
+    )
+    docker_create_args = [
+        *docker_args,
+        IMAGE,
+        "sh",
+        "-ec",
+        marker_wrapper,
+        "acgs-client-marker-wrapper",
+        tool,
+        *args,
+    ]
+    validate_socket_bridge()
+    inspect_exact_docker_mounts(docker_args)
     del paths
     combined = bytearray()
     timed_out = False
     overflow = False
     process: subprocess.Popen[bytes] | None = None
+    created_container_ref: str | None = None
 
     def read_record(path: Path, pattern: str) -> str | None:
         try:
@@ -1775,11 +3259,31 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         return not client_exists()
 
     try:
-        process = subprocess.Popen(
-            [*docker_args, IMAGE, tool, *args],
-            env={key: env[key] for key in env},
+        created = subprocess.run(
+            docker_create_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            check=False,
+            timeout=20,
+            env=docker_cli_env,
+        )
+        if created.returncode != 0:
+            return created.returncode, created.stdout, b""
+        try:
+            created_container_ref = created.stdout.decode("ascii", "strict").strip()
+        except UnicodeDecodeError:
+            fail("PostgreSQL client broker Docker create output is malformed", 70)
+        if "\n" in created_container_ref or not re.fullmatch(
+            r"[0-9a-f]{12,64}", created_container_ref
+        ):
+            fail("PostgreSQL client broker Docker create output is malformed", 70)
+        wait_for_actual_docker_mounts(created_container_ref)
+        validate_socket_bridge()
+        process = subprocess.Popen(
+            [str(DOCKER_BIN), "start", "-a", created_container_ref],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(STATE_DIR / "home")},
         )
         assert process.stdout is not None
         selector = selectors.DefaultSelector()
@@ -1824,6 +3328,8 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         if overflow:
             fail("PostgreSQL client broker combined output is too large", 70)
     finally:
+        if created_container_ref is not None and not kill_client():
+            fail("PostgreSQL client broker container cleanup is uncertain", 70)
         if client_exists():
             fail("PostgreSQL client broker container cleanup is uncertain", 70)
         try:
@@ -1866,6 +3372,7 @@ def main() -> int:
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, terminate)
+    validate_socket_bridge()
     os.chdir(SOCKET_DIR)
     Path(SOCKET_NAME).unlink(missing_ok=True)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
@@ -1965,7 +3472,13 @@ ACP_POSTGRES_CLIENT_BROKER_DOCKER="$docker_bin" \
 ACP_POSTGRES_CLIENT_PROOF_LABEL="$proof_label" \
 ACP_POSTGRES_CLIENT_PROOF_NONCE="$proof_nonce" \
 ACP_POSTGRES_SERVER_NAME="$container_name" \
-/usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" "$broker_socket" &
+ACGS_POSTGRES_RECOVERY_ROOT="$postgres_recovery_root" \
+ACP_POSTGRES_SOCKET_BRIDGE="$postgres_socket_bridge" \
+ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY="$postgres_socket_bridge_identity" \
+ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256="$postgres_socket_bridge_marker_sha256" \
+ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID="$postgres_socket_bridge_mnt_id" \
+ACP_POSTGRES_RECOVERY_ROOT_MNT_ID="$postgres_recovery_root_mnt_id" \
+/usr/bin/python3 -I -S "/proc/$BASHPID/fd/$broker_script_fd" "$broker_socket" "$state_dir" &
 broker_pid=$!
 for _ in {1..50}; do
   [[ -S "$broker_socket" ]] && break
@@ -2162,7 +3675,7 @@ bwrap_args=(
   --ro-bind "$python_runtime_bind_root" "$python_runtime_bind_root"
   --ro-bind "$state_dir/client" /run/client
   --ro-bind "$state_dir/broker" /run/broker
-  --ro-bind "$state_dir/pg" /run/acgs-pg
+  --ro-bind "$postgres_socket_bridge" /run/acgs-pg
   --ro-bind "$state_dir/old-1" /old-1
   --ro-bind "$state_dir/old-2" /old-2
   --bind "$state_dir/home" /run/home

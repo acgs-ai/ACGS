@@ -87,6 +87,10 @@ early_fail() {
   exit 2
 }
 
+if [[ -n "${ACGS_CLEAN_SIBLING_ATOMIC_FAULT+x}" ]]; then
+  early_fail 'forbidden test-only atomic fault environment'
+fi
+
 STATIC_LAUNCHER_SHA256=98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc
 [[ "${ACGS_CLEAN_SIBLING_STATIC_LAUNCHER:-}" == "$STATIC_LAUNCHER_SHA256" ]] || {
   early_fail 'internal prover requires trusted static launcher'
@@ -4179,7 +4183,7 @@ run_trusted_parent_postgres_gate() {
   shift 5
   local started finished stdout_file stderr_file gate_status stderr_sha256 tmpdir
   local runner_path runner_fd runner_path_stat runner_fd_stat runner_sha runner_size
-  local trusted_runner_sha256='b6fbf39766d90fcd29cb9786df5ca18a7a317b42bb8b45ca596f372a343e844d'
+  local trusted_runner_sha256='115c124685b755ed178e952ee01593b2ff565ba53d9e22e0b9b1cfb695d52b3d'
   [[ "$scope" == CP ]] || die 'trusted parent PostgreSQL gate is CP-only'
   [[ "$cwd" == "$WORKTREE/packages/acgs-control-plane" ]] ||
     die 'trusted parent PostgreSQL gate cwd must be the control-plane package'
@@ -4240,15 +4244,15 @@ run_trusted_parent_postgres_gate() {
       --dir /run/service \
       --dir /var \
       --symlink /run /var/run \
-	      --ro-bind /usr /usr \
-	      --ro-bind /bin /bin \
-	      --ro-bind-try /lib /lib \
-	      --ro-bind-try /lib64 /lib64 \
-	      --bind "$TMP_ROOT" "$TMP_ROOT" \
-	      --bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT" \
-	      --ro-bind "$WORKTREE" "$WORKTREE" \
-	      "${ACGS_UV_SNAPSHOT_MOUNT[@]}" \
-	      --perms 500 --ro-bind-data "$ACGS_POSTGRES_RUNNER_DATA_FD" "$runner_path" \
+      --ro-bind /usr /usr \
+      --ro-bind /bin /bin \
+      --ro-bind-try /lib /lib \
+      --ro-bind-try /lib64 /lib64 \
+      --bind "$TMP_ROOT" "$TMP_ROOT" \
+      --bind "$ACGS_POSTGRES_RECOVERY_ROOT" "$ACGS_POSTGRES_RECOVERY_ROOT" \
+      --ro-bind "$WORKTREE" "$WORKTREE" \
+      "${ACGS_UV_SNAPSHOT_MOUNT[@]}" \
+      --perms 500 --ro-bind-data "$ACGS_POSTGRES_RUNNER_DATA_FD" "$runner_path" \
       --bind-try /var/run/docker.sock /run/docker.sock \
       --chdir "$cwd" \
       /usr/bin/env -i "${ACGS_PREFLIGHT_ENV[@]}" \
@@ -4262,18 +4266,66 @@ run_trusted_parent_postgres_gate() {
             *) eval "exec $fd<&-" 2>/dev/null || true ;;
           esac
         done
+        unset \
+          ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR \
+          ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MARKER_WRITE \
+          ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_BRIDGE_FSYNC \
+          ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_ROOT_FSYNC \
+          ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_AFTER_MKDIR \
+          ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR \
+          ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR \
+          ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_UNDER_BASELINE_CHILD_INSIDE_MKDIR \
+          ACGS_POSTGRES_SOCKET_BRIDGE_PREPOPULATE_SUBSTITUTE_INSIDE_MKDIR
+        recovery_root_binding="$(
+          /usr/bin/python3 -I -S - "$4" "$5" <<'"'"'PY'"'"'
+from __future__ import annotations
+
+import os
+import stat
+import sys
+
+root, expected_identity = sys.argv[1:3]
+fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode):
+        raise SystemExit(70)
+    if st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+        raise SystemExit(70)
+    descriptor_path = os.path.realpath(f"/proc/self/fd/{fd}")
+    if descriptor_path != os.path.realpath(root):
+        raise SystemExit(70)
+    observed_identity = f"{st.st_dev}:{st.st_ino}:{st.st_uid}:700"
+    if observed_identity != expected_identity:
+        raise SystemExit(70)
+    mnt_id = ""
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                mnt_id = line.split(":", 1)[1].strip()
+                break
+    if not mnt_id.isdigit():
+        raise SystemExit(70)
+    print(f"acgs-postgres-recovery-root/v2\t{observed_identity}\t{mnt_id}")
+finally:
+    os.close(fd)
+PY
+        )" || exit 70
         exec env -i \
           PATH=/usr/bin:/bin \
           HOME=/dev/null \
-	          TMPDIR="$1" \
-	          UV_BIN="$2" \
-	          UV_PYTHON_INSTALL_DIR="$3" \
-	          ACGS_POSTGRES_RECOVERY_ROOT="$4" \
-	          ACGS_TEST_SEED=20260710 \
-	          PYTHONHASHSEED=0 \
-	          "$5" "${@:6}"
-	      ' _ "$tmpdir" "$UV_BIN" "$UV_PYTHON_INSTALL_DIR" \
-	      "$ACGS_POSTGRES_RECOVERY_ROOT" "$@"
+          TMPDIR="$1" \
+          UV_BIN="$2" \
+          UV_PYTHON_INSTALL_DIR="$3" \
+          ACGS_POSTGRES_RECOVERY_ROOT="$4" \
+          ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2="$recovery_root_binding" \
+          ACGS_TEST_SEED=20260710 \
+          PYTHONHASHSEED=0 \
+          "$6" "${@:7}"
+      ' _ "$tmpdir" "$UV_BIN" "$UV_PYTHON_INSTALL_DIR" \
+      "$ACGS_POSTGRES_RECOVERY_ROOT" \
+      "$ACGS_POSTGRES_RECOVERY_ROOT_DEVICE:$ACGS_POSTGRES_RECOVERY_ROOT_INODE:$ACGS_POSTGRES_RECOVERY_ROOT_UID:700" \
+      "$@"
   ) >"$stdout_file" 2>"$stderr_file"; then
     gate_status=0
   else
@@ -4359,6 +4411,18 @@ from pathlib import Path
 MAX_CASE_OUTPUT_BYTES = 8 * 1024 * 1024
 REVIEWED_PARENT = "26d11c2c7a8da37937a7c50c642f18edc75c9345"
 TARGET = "1111111111111111111111111111111111111111"
+ATOMIC_FAULT_VALUES = (
+    "intent:after-temp-create",
+    "intent:partial-write",
+    "intent:after-file-fsync",
+    "intent:after-atomic-publish",
+    "intent:after-dir-fsync",
+    "ledger:after-temp-create",
+    "ledger:partial-write",
+    "ledger:after-file-fsync",
+    "ledger:after-atomic-publish",
+    "ledger:after-dir-fsync",
+)
 FORBIDDEN_TEXT = (
     "CLEAN_SIBLING=FAIL phase=B0 reason=",
     "CLEAN_SIBLING_TECHNICAL=PASS",
@@ -4645,6 +4709,48 @@ def run_launcher_cases(launcher: Path, root: Path) -> list[dict[str, object]]:
     return summaries
 
 
+def run_forbidden_atomic_fault_cases(launcher: Path, root: Path) -> list[dict[str, object]]:
+    summaries = []
+    for value in ATOMIC_FAULT_VALUES:
+        case_name = value.replace(":", "-")
+        caller = root / f"caller-forbidden-atomic-{case_name}"
+        caller.mkdir(mode=0o700)
+        sentinel = caller / "sentinel"
+        sentinel.write_bytes(b"unchanged")
+        env = launcher_env(os.environ, {}, caller)
+        env["ACGS_CLEAN_SIBLING_ATOMIC_FAULT"] = value
+        completed = run_checked(
+            [str(launcher), TARGET],
+            env=env,
+        )
+        combined = completed.stdout + completed.stderr
+        if completed.returncode != 2:
+            fail(f"{value} forbidden atomic fault case returned {completed.returncode}")
+        if "CLEAN_SIBLING=FAIL phase=FINAL reason=child exited 2 " not in completed.stderr:
+            fail(f"{value} forbidden atomic fault case did not use guardian final summary")
+        for required in ("captured_sha256=", "captured_contains_pass=0"):
+            if required not in completed.stderr:
+                fail(f"{value} forbidden atomic fault case missing {required}")
+        for forbidden in FORBIDDEN_TEXT:
+            if forbidden in combined:
+                fail(f"{value} forbidden atomic fault case leaked forbidden text")
+        if sentinel.read_bytes() != b"unchanged":
+            fail(f"{value} forbidden atomic fault case mutated sentinel")
+        if sorted(path.name for path in caller.iterdir()) != ["sentinel"]:
+            fail(f"{value} forbidden atomic fault case mutated caller directory")
+        summaries.append(
+            {
+                "case": value,
+                "returncode": completed.returncode,
+                "stderr_sha256": hashlib.sha256(completed.stderr.encode()).hexdigest(),
+                "stdout_sha256": hashlib.sha256(completed.stdout.encode()).hexdigest(),
+                "stderr_bytes": len(completed.stderr.encode()),
+                "stdout_bytes": len(completed.stdout.encode()),
+            }
+        )
+    return summaries
+
+
 def main() -> None:
     global RUN_CAPTURE_DIR
     if sys.argv[1:] != ["scripts/evidence/prove_clean_sibling", TARGET]:
@@ -4662,6 +4768,7 @@ def main() -> None:
     try:
         controls = assert_positive_controls(root)
         cases = run_launcher_cases(canonical, root)
+        forbidden_atomic_fault_cases = run_forbidden_atomic_fault_cases(canonical, root)
         executables = [
             validate_executable(label, path)
             for label, path in (
@@ -4676,6 +4783,7 @@ def main() -> None:
             {
                 "cases": cases,
                 "executables": executables,
+                "forbidden_atomic_fault_cases": forbidden_atomic_fault_cases,
                 "launcher": {
                     "id": "scripts/evidence/prove_clean_sibling",
                     "sha256": sha256_file(canonical),

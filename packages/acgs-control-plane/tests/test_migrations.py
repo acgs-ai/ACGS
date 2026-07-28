@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import socket
 import stat
@@ -1059,7 +1061,7 @@ def test_postgres_gate_wrapper_runs_pytest_only_inside_bwrap_sandbox() -> None:
     assert "--setenv ACP_TEST_POSTGRES_GATE_ACTIVE 1" in script
     assert '--setenv ACP_TEST_POSTGRES_SELECTOR_MODE "$selector_mode"' in script
     assert '--setenv PYTEST_ADDOPTS "-p no:cacheprovider"' in script
-    assert '--ro-bind "$state_dir/pg" /run/acgs-pg' in script
+    assert '--ro-bind "$postgres_socket_bridge" /run/acgs-pg' in script
     assert '--bind "$state_dir/tmp" /run/tmp' in script
     assert '--bind "$state_dir/proof-scratch" /proof-scratch' in script
     assert "--setenv ACP_POSTGRES_CLIENT_BROKER_SOCKET /run/broker/postgresql-client.sock" in script
@@ -1250,6 +1252,385 @@ def test_postgres_gate_python_runtime_rejects_untrusted_proof_roots(
     assert expected_stderr in result.stderr
 
 
+def _write_postgres_socket_bridge(
+    socket_bridge: Path,
+    proof_label: str,
+    proof_nonce: str,
+) -> tuple[str, str, str]:
+    socket_bridge.mkdir(mode=0o700)
+    socket_bridge.chmod(0o1777)
+    bridge_stat = socket_bridge.stat(follow_symlinks=False)
+    bridge_identity = f"{bridge_stat.st_dev}:{bridge_stat.st_ino}:{bridge_stat.st_uid}:1777"
+    fd = os.open(socket_bridge, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        bridge_mnt_id = ""
+        with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+            for line in fdinfo:
+                if line.startswith("mnt_id:"):
+                    bridge_mnt_id = line.split(":", 1)[1].strip()
+                    break
+    finally:
+        os.close(fd)
+    assert bridge_mnt_id.isdigit()
+    marker_payload = "\n".join(
+        (
+            "schema=acgs-postgres-socket-bridge/v2",
+            f"proof_nonce={proof_nonce}",
+            f"proof_label={proof_label}",
+            f"bridge_basename={socket_bridge.name}",
+            f"bridge_identity={bridge_identity}",
+            f"bridge_mnt_id={bridge_mnt_id}",
+            "",
+        )
+    ).encode("ascii")
+    marker = socket_bridge / ".acgs-postgres-socket-bridge.v2"
+    marker.write_bytes(marker_payload)
+    marker.chmod(0o444)
+    return bridge_identity, hashlib.sha256(marker_payload).hexdigest(), bridge_mnt_id
+
+
+def _mount_id(path: Path) -> str:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+            for line in fdinfo:
+                if line.startswith("mnt_id:"):
+                    value = line.split(":", 1)[1].strip()
+                    assert value.isdigit()
+                    return value
+    finally:
+        os.close(fd)
+    raise AssertionError("mnt_id missing")
+
+
+def _recovery_root_binding(path: Path) -> str:
+    root_stat = path.stat(follow_symlinks=False)
+    return (
+        "acgs-postgres-recovery-root/v2\t"
+        f"{root_stat.st_dev}:{root_stat.st_ino}:{root_stat.st_uid}:700\t"
+        f"{_mount_id(path)}"
+    )
+
+
+def _write_fake_postgres_client_docker(
+    docker_path: Path,
+    docker_log: Path,
+    docker_state: Path,
+    mounts: list[dict[str, object]],
+    *,
+    mode: str = "ok",
+) -> None:
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, os, shlex, subprocess, sys, time",
+                "from pathlib import Path",
+                "args = sys.argv[1:]",
+                f"log = Path({str(docker_log)!r})",
+                f"state = Path({str(docker_state)!r})",
+                f"mounts = json.loads({json.dumps(mounts)!r})",
+                f"mode = {mode!r}",
+                "cid = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'",
+                "def append_log(payload):",
+                "    with log.open('a', encoding='utf-8') as handle:",
+                "        handle.write(json.dumps(payload, separators=(',', ':')) + '\\n')",
+                "def create_args_mount_source(target):",
+                "    data = json.loads(state.read_text(encoding='utf-8'))",
+                "    raw_args = data['args']",
+                "    for index, value in enumerate(raw_args):",
+                "        if value == '--mount':",
+                "            parts = dict(",
+                "                item.split('=', 1)",
+                "                for item in raw_args[index + 1].split(',')",
+                "                if '=' in item",
+                "            )",
+                "            if parts.get('dst') == target:",
+                "                return Path(parts['src'])",
+                "    raise SystemExit(70)",
+                "if args[:2] == ['info', '--format']:",
+                "    print('[\"name=rootless\"]')",
+                "    raise SystemExit(0)",
+                "if args[:3] == ['inspect', '--format', '{{json .Mounts}}']:",
+                "    if mode == 'fast-inspect-fail':",
+                "        raise SystemExit(1)",
+                "    if mode == 'delayed-inspect':",
+                "        count = Path(str(state) + '.inspect-count')",
+                "        previous = (",
+                "            int(count.read_text(encoding='ascii')) if count.exists() else 0",
+                "        )",
+                "        count.write_text(str(previous + 1), encoding='ascii')",
+                "        if previous == 0:",
+                "            raise SystemExit(1)",
+                "    actual = list(mounts)",
+                "    if mode == 'extra-mount':",
+                "        actual.append(",
+                "            {",
+                "                'Type': 'bind',",
+                "                'Source': '/tmp/extra',",
+                "                'Destination': '/extra',",
+                "                'RW': True,",
+                "            }",
+                "        )",
+                "    elif mode == 'duplicate-mount':",
+                "        actual.append(actual[0])",
+                "    elif mode == 'wrong-mount':",
+                "        actual[0] = {**actual[0], 'Source': '/tmp/wrong'}",
+                "    elif mode == 'wrong-type':",
+                "        actual[0] = {**actual[0], 'Type': 'volume'}",
+                "    print(json.dumps(actual, separators=(',', ':')))",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['inspect']:",
+                "    if not state.exists():",
+                "        raise SystemExit(1)",
+                "    data = json.loads(state.read_text(encoding='utf-8'))",
+                "    print(f\"{data['id']}|/{data['name']}|{data['proof']}||trusted-broker\")",
+                "    raise SystemExit(0)",
+                "if args[:2] == ['rm', '-f']:",
+                "    state.unlink(missing_ok=True)",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['create']:",
+                "    append_log(args)",
+                "    if mode == 'create-fail':",
+                "        print('create failed')",
+                "        raise SystemExit(65)",
+                "    name = args[args.index('--name') + 1]",
+                "    proof = next(",
+                "        args[index + 1].split('=', 1)[1]",
+                "        for index, value in enumerate(args)",
+                "        if value == '--label'",
+                "        and args[index + 1].startswith('acgs.postgres.proof=')",
+                "    )",
+                "    cidfile = Path(args[args.index('--cidfile') + 1])",
+                "    cidfile.write_text(cid + '\\n', encoding='ascii')",
+                "    Path(str(state) + '.env.json').write_text(",
+                "        json.dumps(",
+                "            {",
+                "                'pgpassword_is_request': os.environ.get('PGPASSWORD')",
+                "                == 'request-secret',",
+                "                'pgpassword_is_ambient': os.environ.get('PGPASSWORD')",
+                "                == 'ambient-secret',",
+                "            },",
+                "            separators=(',', ':'),",
+                "        ),",
+                "        encoding='utf-8',",
+                "    )",
+                "    state.write_text(",
+                "        json.dumps({'id': cid, 'name': name, 'proof': proof, 'args': args}),",
+                "        encoding='utf-8',",
+                "    )",
+                "    print(cid)",
+                "    raise SystemExit(0)",
+                "if args[:2] == ['start', '-a']:",
+                "    append_log(args)",
+                "    data = json.loads(state.read_text(encoding='utf-8'))",
+                "    raw_args = data['args']",
+                "    if mode == 'marker-missing-on-start':",
+                "        marker = (",
+                "            create_args_mount_source('/run/acgs-pg')",
+                "            / '.acgs-postgres-socket-bridge.v2'",
+                "        )",
+                "        marker.unlink(missing_ok=True)",
+                "    if mode == 'marker-hardlink-on-start':",
+                "        marker = (",
+                "            create_args_mount_source('/run/acgs-pg')",
+                "            / '.acgs-postgres-socket-bridge.v2'",
+                "        )",
+                "        os.link(",
+                "            marker,",
+                "            marker.with_name('.acgs-postgres-socket-bridge.v2.link'),",
+                "        )",
+                "    if mode in {'marker-missing-on-start', 'marker-hardlink-on-start'}:",
+                "        wrapper = raw_args[raw_args.index('-ec') + 1]",
+                "        host_marker = (",
+                "            create_args_mount_source('/run/acgs-pg')",
+                "            / '.acgs-postgres-socket-bridge.v2'",
+                "        )",
+                "        wrapper = wrapper.replace(",
+                "            'marker=/run/acgs-pg/.acgs-postgres-socket-bridge.v2;',",
+                "            'marker=' + shlex.quote(str(host_marker)) + ';',",
+                "        )",
+                "        sentinel = Path(str(state) + '.tool-sentinel')",
+                "        completed = subprocess.run(",
+                "            [",
+                "                'sh',",
+                "                '-ec',",
+                "                wrapper,",
+                "                'wrapper',",
+                "                'sh',",
+                "                '-c',",
+                "                'touch ' + shlex.quote(str(sentinel)),",
+                "            ],",
+                "            check=False,",
+                "        )",
+                "        raise SystemExit(completed.returncode)",
+                "    if 'pg_dump' in raw_args:",
+                "        file_arg = next(arg for arg in raw_args if arg.startswith('--file='))",
+                "        output = Path(file_arg.split('=', 1)[1])",
+                "        source = create_args_mount_source('/run/tmp')",
+                "        host_output = source / output.relative_to('/run/tmp')",
+                "        if host_output.parent.is_symlink() or host_output.is_symlink():",
+                "            print(",
+                "                'container output path resolves outside mounted roots',",
+                "                file=sys.stderr,",
+                "            )",
+                "            raise SystemExit(65)",
+                "        host_output.parent.mkdir(parents=True, exist_ok=True)",
+                "        host_output.write_bytes(b'PGDMP-test')",
+                "    raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+
+def _run_fake_docker_broker_request(
+    tmp_path: Path,
+    mode: str,
+    *,
+    tool: str = "pg_dump",
+    argv: list[str] | None = None,
+    env_overrides: dict[str, str] | None = None,
+    ambient_password: str = "secret",
+) -> tuple[dict[str, object], list[object], bool, dict[str, bool] | None, bool]:
+    state_dir = tmp_path / f"state-{mode}"
+    broker_dir = state_dir / "broker"
+    client_dir = state_dir / "client"
+    allowed_tmp = state_dir / "tmp"
+    proof_scratch = state_dir / "proof-scratch"
+    recovery_root = state_dir / "recovery"
+    fake_bin = tmp_path / f"fake-bin-{mode}"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
+    socket_bridge = recovery_root / f"{proof_label}-socket-bridge"
+    for directory in (
+        broker_dir,
+        client_dir,
+        allowed_tmp,
+        proof_scratch,
+        recovery_root,
+        fake_bin,
+    ):
+        directory.mkdir(parents=True)
+        directory.chmod(0o700)
+    bridge_identity, bridge_marker_sha256, bridge_mnt_id = _write_postgres_socket_bridge(
+        socket_bridge,
+        proof_label,
+        "0123456789abcdef0123456789abcdef",
+    )
+    root_mnt_id = _mount_id(recovery_root)
+    broker_source, _client_source = _postgres_gate_client_sources()
+    broker_path = broker_dir / "postgres_client_broker.py"
+    broker_path.write_text(broker_source, encoding="utf-8")
+    docker_log = tmp_path / f"docker-{mode}.jsonl"
+    docker_state = tmp_path / f"docker-{mode}.state.json"
+    docker_path = fake_bin / "docker"
+    _write_fake_postgres_client_docker(
+        docker_path,
+        docker_log,
+        docker_state,
+        [
+            {
+                "Type": "bind",
+                "Source": str(socket_bridge),
+                "Destination": "/run/acgs-pg",
+                "RW": False,
+            },
+            {"Type": "bind", "Source": str(allowed_tmp), "Destination": "/run/tmp", "RW": True},
+            {
+                "Type": "bind",
+                "Source": str(proof_scratch),
+                "Destination": "/proof-scratch",
+                "RW": True,
+            },
+            {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
+        ],
+        mode=mode,
+    )
+    socket_path = broker_dir / "postgresql-client.sock"
+    broker_env = os.environ.copy()
+    broker_env["PGPASSWORD"] = ambient_password
+    broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
+    broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = proof_label
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_NONCE"] = "0123456789abcdef0123456789abcdef"
+    broker_env["ACP_POSTGRES_SERVER_NAME"] = f"{proof_label}-server"
+    broker_env["ACGS_POSTGRES_RECOVERY_ROOT"] = str(recovery_root)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE"] = str(socket_bridge)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY"] = bridge_identity
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256"] = bridge_marker_sha256
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID"] = bridge_mnt_id
+    broker_env["ACP_POSTGRES_RECOVERY_ROOT_MNT_ID"] = root_mnt_id
+    broker = subprocess.Popen(
+        [sys.executable, str(broker_path), str(socket_path), str(state_dir)],
+        env=broker_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not socket_path.exists() and time.monotonic() < deadline:
+            if broker.poll() is not None:
+                stdout, stderr = broker.communicate(timeout=1)
+                pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
+            time.sleep(0.05)
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(socket_path.parent)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as broker_client:
+                broker_client.connect(socket_path.name)
+                broker_client.sendall(
+                    json.dumps(
+                        {
+                            "tool": tool,
+                            "argv": argv or ["--file=/run/tmp/archive.dump"],
+                            "env": {
+                                "PGHOST": "/run/acgs-pg",
+                                "PGPORT": "5432",
+                                "PGUSER": "operator",
+                                "PGPASSWORD": "request-secret",
+                                "PGDATABASE": "acgs_control_plane_test",
+                                **(env_overrides or {}),
+                            },
+                        },
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+                broker_client.shutdown(socket.SHUT_WR)
+                response = json.loads(broker_client.recv(65536).decode("utf-8"))
+        finally:
+            os.chdir(original_cwd)
+    finally:
+        broker.terminate()
+        try:
+            broker.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            broker.kill()
+            broker.wait(timeout=5)
+    log_lines = (
+        [json.loads(line) for line in docker_log.read_text(encoding="utf-8").splitlines()]
+        if docker_log.exists()
+        else []
+    )
+    env_attestation_path = Path(str(docker_state) + ".env.json")
+    env_attestation = (
+        json.loads(env_attestation_path.read_text(encoding="utf-8"))
+        if env_attestation_path.exists()
+        else None
+    )
+    return (
+        response,
+        log_lines,
+        (allowed_tmp / "archive.dump").exists(),
+        env_attestation,
+        Path(str(docker_state) + ".tool-sentinel").exists(),
+    )
+
+
 def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escape(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -1271,6 +1652,8 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
     allowed_tmp = state_dir / "tmp"
     proof_scratch = state_dir / "proof-scratch"
     recovery_root = state_dir / "recovery"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
+    socket_bridge = recovery_root / f"{proof_label}-socket-bridge"
     fake_bin = tmp_path / "fake-bin"
     outside_dir = tmp_path / "outside"
 
@@ -1281,12 +1664,18 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         allowed_tmp,
         proof_scratch,
         recovery_root,
-        state_dir / "pg",
         fake_bin,
         outside_dir,
     ):
         directory.mkdir(parents=True)
         directory.chmod(0o700)
+    bridge_identity, bridge_marker_sha256, bridge_mnt_id = _write_postgres_socket_bridge(
+        socket_bridge,
+        proof_label,
+        "0123456789abcdef0123456789abcdef",
+    )
+    root_mnt_id = _mount_id(recovery_root)
+    assert bridge_mnt_id == root_mnt_id
 
     broker_source, client_source = _postgres_gate_client_sources()
     broker_path = broker_dir / "postgres_client_broker.py"
@@ -1297,79 +1686,43 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
     (client_dir / "pg_dump").symlink_to("postgresql-client")
 
     docker_log = tmp_path / "docker-args.jsonl"
+    docker_state = tmp_path / "docker-state.json"
     docker_path = fake_bin / "docker"
-    docker_path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json, os, sys",
-                "from pathlib import Path",
-                "args = sys.argv[1:]",
-                "if args[:2] == ['info', '--format']:",
-                "    print('[\"name=rootless\"]')",
-                "    raise SystemExit(0)",
-                "if args[:1] == ['inspect']:",
-                "    raise SystemExit(1)",
-                "if args[:2] == ['rm', '-f']:",
-                "    raise SystemExit(0)",
-                f"log = Path({str(docker_log)!r})",
-                "mounts = {}",
-                "index = 0",
-                "while index < len(args):",
-                "    if args[index] == '--mount':",
-                "        spec = args[index + 1]",
-                "        parts = dict(item.split('=', 1) for item in spec.split(',') "
-                "if '=' in item)",
-                "        mounts[parts['dst']] = Path(parts['src'])",
-                "        index += 2",
-                "        continue",
-                "    if args[index] == '--volume':",
-                "        src, dst, *_mode = args[index + 1].split(':')",
-                "        mounts[dst] = Path(src)",
-                "        index += 2",
-                "        continue",
-                "    index += 1",
-                "with log.open('a', encoding='utf-8') as handle:",
-                "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
-                "if 'pg_dump' in args:",
-                "    file_arg = next(arg for arg in args if arg.startswith('--file='))",
-                "    output = Path(file_arg.split('=', 1)[1])",
-                "    matched = next((dst for dst in mounts if output == Path(dst) "
-                "or Path(dst) in output.parents), None)",
-                "    if matched is None:",
-                "        print('output path is not mounted', file=sys.stderr)",
-                "        raise SystemExit(65)",
-                "    host_output = mounts[matched] / output.relative_to(matched)",
-                "    if host_output.parent.is_symlink() or host_output.is_symlink():",
-                "        print('container output path resolves outside mounted roots', "
-                "file=sys.stderr)",
-                "        raise SystemExit(65)",
-                "    host_output.parent.mkdir(parents=True, exist_ok=True)",
-                "    host_output.write_bytes(b'PGDMP-test')",
-                "raise SystemExit(0)",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    docker_path.chmod(0o755)
-
+    fake_mounts = [
+        {
+            "Type": "bind",
+            "Source": str(socket_bridge),
+            "Destination": "/run/acgs-pg",
+            "RW": False,
+        },
+        {"Type": "bind", "Source": str(allowed_tmp), "Destination": "/run/tmp", "RW": True},
+        {
+            "Type": "bind",
+            "Source": str(proof_scratch),
+            "Destination": "/proof-scratch",
+            "RW": True,
+        },
+        {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
+    ]
+    _write_fake_postgres_client_docker(docker_path, docker_log, docker_state, fake_mounts)
     socket_path = broker_dir / "postgresql-client.sock"
     assert len(str(socket_path)) > 108
     broker_env = os.environ.copy()
     broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
     broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
-    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = (
-        f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
-    )
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = proof_label
     broker_env["ACP_POSTGRES_CLIENT_PROOF_NONCE"] = "0123456789abcdef0123456789abcdef"
     broker_env["ACP_POSTGRES_SERVER_NAME"] = (
         f"{broker_env['ACP_POSTGRES_CLIENT_PROOF_LABEL']}-server"
     )
     broker_env["ACGS_POSTGRES_RECOVERY_ROOT"] = str(recovery_root)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE"] = str(socket_bridge)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY"] = bridge_identity
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256"] = bridge_marker_sha256
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID"] = bridge_mnt_id
+    broker_env["ACP_POSTGRES_RECOVERY_ROOT_MNT_ID"] = root_mnt_id
     broker = subprocess.Popen(
-        [sys.executable, str(broker_path), str(socket_path)],
+        [sys.executable, str(broker_path), str(socket_path), str(state_dir)],
         env=broker_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1457,7 +1810,14 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         )
         assert allowed.returncode == 0, allowed.stderr
         assert allowed_archive.read_bytes() == b"PGDMP-test"
-        docker_invocation = json.loads(docker_log.read_text(encoding="utf-8").splitlines()[-1])
+        docker_lines = docker_log.read_text(encoding="utf-8").splitlines()
+        docker_invocation = json.loads(docker_lines[0])
+        assert docker_invocation[0] == "create"
+        assert json.loads(docker_lines[-1]) == [
+            "start",
+            "-a",
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        ]
         assert "--network" in docker_invocation
         assert docker_invocation[docker_invocation.index("--network") + 1] == "none"
         assert "--user" in docker_invocation
@@ -1465,11 +1825,31 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
             f"{os.getuid()}:{os.getgid()}"
         )
         assert "label=disable" in docker_invocation
-        assert f"{state_dir / 'pg'}:/run/acgs-pg:ro" in docker_invocation
-        assert f"{allowed_tmp}:/run/tmp:rw" in docker_invocation
-        assert f"{proof_scratch}:/proof-scratch:rw" in docker_invocation
+        assert f"type=bind,src={socket_bridge},dst=/run/acgs-pg,readonly" in docker_invocation
+        assert f"type=bind,src={allowed_tmp},dst=/run/tmp" in docker_invocation
+        assert f"type=bind,src={proof_scratch},dst=/proof-scratch" in docker_invocation
+        assert not any(f"{state_dir}:/run/acgs-pg" in argument for argument in docker_invocation)
         assert not any(str(outside_dir) in argument for argument in docker_invocation)
         assert docker_invocation[-2:] == ["pg_dump", "--file=/run/tmp/archive.dump"]
+
+        docker_log.unlink()
+        marker = socket_bridge / ".acgs-postgres-socket-bridge.v2"
+        marker.chmod(0o644)
+        marker.write_text(
+            "tampered\n",
+            encoding="ascii",
+        )
+        marker.chmod(0o444)
+        tampered = subprocess.run(
+            [str(client_dir / "pg_dump"), "--file=/run/tmp/tampered.dump"],
+            env=client_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert tampered.returncode == 70
+        assert "socket bridge marker digest changed" in tampered.stderr
+        assert not docker_log.exists()
     finally:
         broker.terminate()
         try:
@@ -1477,6 +1857,227 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         except subprocess.TimeoutExpired:
             broker.kill()
             broker.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_rc", "expected_started"),
+    [
+        ("delayed-inspect", 0, True),
+        ("fast-inspect-fail", 70, False),
+        ("extra-mount", 70, False),
+        ("duplicate-mount", 70, False),
+        ("wrong-mount", 70, False),
+        ("wrong-type", 70, False),
+        ("marker-missing-on-start", 70, True),
+        ("marker-hardlink-on-start", 70, True),
+    ],
+)
+def test_postgres_gate_client_broker_fake_docker_mount_and_marker_refusals(
+    tmp_path: Path,
+    mode: str,
+    expected_rc: int,
+    expected_started: bool,
+) -> None:
+    (
+        response,
+        docker_lines,
+        archive_exists,
+        _env_attestation,
+        tool_sentinel_exists,
+    ) = _run_fake_docker_broker_request(
+        tmp_path,
+        mode,
+    )
+
+    assert response["returncode"] == expected_rc, response
+    assert archive_exists is (expected_rc == 0)
+    assert docker_lines[0][0] == "create"
+    starts = [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    assert bool(starts) is expected_started
+    assert not tool_sentinel_exists
+
+
+@pytest.mark.parametrize(
+    ("argv", "env_overrides"),
+    [
+        (["--file=/run/tmp/archive.dump", "--host=/run/tmp", "--port=6543"], {}),
+        (["--file=/run/tmp/archive.dump", "--host", "/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "--port", "6543"], {}),
+        (["--file=/run/tmp/archive.dump", "--hos=/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "--por=6543"], {}),
+        (["--file=/run/tmp/archive.dump", "-h", "/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "-p6543"], {}),
+        (["--file=/run/tmp/archive.dump", "-vh/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "-vp6543"], {}),
+        (["--file=/run/tmp/archive.dump", "--dbn=host=/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "--db=service=prod"], {}),
+        (["--file=/run/tmp/archive.dump", "--dbn", "host=/run/tmp"], {}),
+        (["--file=/run/tmp/archive.dump", "--db", "service=prod"], {}),
+        (["--file=/run/tmp/archive.dump", "-vdservice=foo"], {}),
+        (["--file=/run/tmp/archive.dump", "-vd", "service=foo"], {}),
+        (["postgresql://operator@example.invalid:6543/db"], {}),
+        (["dbname=acgs host=/run/tmp port=6543"], {}),
+        (["--dbname", "host = /run/tmp port = 6543 dbname=x"], {}),
+        (["--dbname=host = /run/tmp port = 6543 dbname=x"], {}),
+        (["service=prod"], {}),
+        (["service = prod"], {}),
+        (["servicefile=/run/tmp/pg_service.conf"], {}),
+        (["--file=/run/tmp/archive.dump"], {"PGHOSTADDR": "127.0.0.1"}),
+        (["--file=/run/tmp/archive.dump"], {"PGSERVICE": "prod"}),
+        (["--file=/run/tmp/archive.dump"], {"PGSERVICEFILE": "/run/tmp/pg_service.conf"}),
+    ],
+)
+def test_postgres_gate_client_broker_rejects_endpoint_override_before_docker(
+    tmp_path: Path,
+    argv: list[str],
+    env_overrides: dict[str, str],
+) -> None:
+    (
+        response,
+        docker_lines,
+        archive_exists,
+        env_attestation,
+        tool_sentinel_exists,
+    ) = _run_fake_docker_broker_request(
+        tmp_path,
+        "ok",
+        argv=argv,
+        env_overrides=env_overrides,
+    )
+
+    assert response["returncode"] == 64, response
+    assert "endpoint is pinned" in response["stderr"]
+    assert docker_lines == []
+    assert env_attestation is None
+    assert not archive_exists
+    assert not tool_sentinel_exists
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--command=\\connect attacker operator /run/tmp 6543"],
+        ["--command", "\\connect attacker operator /run/tmp 6543"],
+        ["--com=\\c attacker"],
+        ["--com", "\\c attacker"],
+        ["-c\\connect attacker operator /run/tmp 6543"],
+        ["-c", "\\connect attacker operator /run/tmp 6543"],
+        ["-vc\\c attacker"],
+        ["--file=/run/tmp/reconnect.sql"],
+        ["--file", "/run/tmp/reconnect.sql"],
+        ["--fil=/run/tmp/reconnect.sql"],
+        ["--fil", "/run/tmp/reconnect.sql"],
+        ["-f/run/tmp/reconnect.sql"],
+        ["-f", "/run/tmp/reconnect.sql"],
+        ["-vf/run/tmp/reconnect.sql"],
+        ["--set=evil=\\connect attacker operator /run/tmp 6543", "--command", ":evil"],
+        ["--variable=evil=\\connect attacker operator /run/tmp 6543", "--command", ":evil"],
+        ["--set", "evil=\\connect attacker operator /run/tmp 6543", "--command", ":evil"],
+        ["--command", ":evil"],
+        ["--command=SELECT 1"],
+    ],
+)
+def test_postgres_gate_client_broker_rejects_psql_reconnect_paths_before_docker(
+    tmp_path: Path,
+    argv: list[str],
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "ok",
+            tool="psql",
+            argv=argv,
+        )
+    )
+
+    assert response["returncode"] == 64, response
+    assert (
+        "psql reconnect paths are disabled" in response["stderr"]
+        or "psql script files are disabled" in response["stderr"]
+        or "psql variable interpolation is disabled" in response["stderr"]
+        or "psql argv is not allowed" in response["stderr"]
+    )
+    assert docker_lines == []
+    assert env_attestation is None
+    assert not archive_exists
+    assert not tool_sentinel_exists
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--set", "ON_ERROR_STOP=1", "--command", "SELECT 1"],
+        ["--set=ON_ERROR_STOP=1", "--command", "SELECT 1"],
+        [
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--command",
+            "CREATE DATABASE acgs_control_plane_recovery_source_test",
+        ],
+        [
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--command",
+            "CREATE ROLE acgs_fixture_owner LOGIN PASSWORD 'secret' NOSUPERUSER",
+            "--command",
+            "GRANT CONNECT, TEMPORARY ON DATABASE acgs_control_plane_test TO acgs_fixture_owner",
+        ],
+        [
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--command",
+            "COPY (SELECT 1) TO PROGRAM 'true'",
+        ],
+        ["--tuples-only", "--no-align", "--command", "SELECT rolname FROM pg_roles"],
+        ["--version"],
+    ],
+)
+def test_postgres_gate_client_broker_allows_gate_psql_sql_without_meta_commands(
+    tmp_path: Path,
+    argv: list[str],
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "ok",
+            tool="psql",
+            argv=argv,
+        )
+    )
+
+    assert response["returncode"] == 0, response
+    assert docker_lines[0][0] == "create"
+    assert any(line[:2] == ["start", "-a"] for line in docker_lines)
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    assert not archive_exists
+    assert not tool_sentinel_exists
+
+
+def test_postgres_gate_client_broker_uses_request_env_and_omits_create_id_stdout(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "ok",
+            ambient_password="ambient-secret",
+        )
+    )
+
+    assert response["returncode"] == 0, response
+    assert response["stdout"] == ""
+    assert "abcdef123456" not in response["stdout"]
+    assert "ambient-secret" not in json.dumps(response, sort_keys=True)
+    assert "ambient-secret" not in json.dumps(docker_lines, sort_keys=True)
+    assert archive_exists
+    assert not tool_sentinel_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
 
 
 def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
@@ -1498,6 +2099,8 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     allowed_tmp = state_dir / "tmp"
     proof_scratch = state_dir / "proof-scratch"
     recovery_root = state_dir / "recovery"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
+    socket_bridge = recovery_root / f"{proof_label}-socket-bridge"
     fake_bin = tmp_path / "fake-bin"
     external_dir = tmp_path / "external"
     exchange_dir = allowed_tmp / "slot"
@@ -1507,13 +2110,19 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
         allowed_tmp,
         proof_scratch,
         recovery_root,
-        state_dir / "pg",
         fake_bin,
         external_dir,
         exchange_dir,
     ):
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(0o700)
+    bridge_identity, bridge_marker_sha256, bridge_mnt_id = _write_postgres_socket_bridge(
+        socket_bridge,
+        proof_label,
+        "0123456789abcdef0123456789abcdef",
+    )
+    root_mnt_id = _mount_id(recovery_root)
+    assert bridge_mnt_id == root_mnt_id
 
     broker_source, client_source = _postgres_gate_client_sources()
     broker_path = broker_dir / "postgres_client_broker.py"
@@ -1524,59 +2133,47 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     (client_dir / "pg_dump").symlink_to("postgresql-client")
 
     docker_log = tmp_path / "docker-race-args.jsonl"
+    docker_state = tmp_path / "docker-race-state.json"
     docker_path = fake_bin / "docker"
-    docker_path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "from __future__ import annotations",
-                "import json, sys, time",
-                "from pathlib import Path",
-                "args = sys.argv[1:]",
-                "if args[:2] == ['info', '--format']:",
-                "    print('[\"name=rootless\"]')",
-                "    raise SystemExit(0)",
-                "if args[:1] == ['inspect']:",
-                "    raise SystemExit(1)",
-                "if args[:2] == ['rm', '-f']:",
-                "    raise SystemExit(0)",
-                f"log = Path({str(docker_log)!r})",
-                "with log.open('a', encoding='utf-8') as handle:",
-                "    handle.write(json.dumps(args, separators=(',', ':')) + '\\n')",
-                "time.sleep(0.02)",
-                "if 'pg_dump' in args:",
-                "    file_arg = next(arg for arg in args if arg.startswith('--file='))",
-                "    output = Path(file_arg.split('=', 1)[1])",
-                "    mount_spec = next(args[index + 1] for index, value in enumerate(args) "
-                "if value == '--volume' and ':/run/tmp:' in args[index + 1])",
-                "    source = Path(mount_spec.split(':', 2)[0])",
-                "    host_output = source / output.relative_to('/run/tmp')",
-                "    if host_output.parent.is_symlink():",
-                "        print('refused exchanged symlink output parent', file=sys.stderr)",
-                "        raise SystemExit(65)",
-                "    host_output.write_bytes(b'PGDMP-test')",
-                "raise SystemExit(0)",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_fake_postgres_client_docker(
+        docker_path,
+        docker_log,
+        docker_state,
+        [
+            {
+                "Type": "bind",
+                "Source": str(socket_bridge),
+                "Destination": "/run/acgs-pg",
+                "RW": False,
+            },
+            {"Type": "bind", "Source": str(allowed_tmp), "Destination": "/run/tmp", "RW": True},
+            {
+                "Type": "bind",
+                "Source": str(proof_scratch),
+                "Destination": "/proof-scratch",
+                "RW": True,
+            },
+            {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
+        ],
     )
-    docker_path.chmod(0o755)
 
     socket_path = broker_dir / "postgresql-client.sock"
     broker_env = os.environ.copy()
     broker_env["PATH"] = f"{fake_bin}:{broker_env['PATH']}"
     broker_env["ACP_POSTGRES_CLIENT_BROKER_DOCKER"] = str(docker_path)
-    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = (
-        f"acp-postgres-gate-{os.getuid()}-0123456789abcdef0123456789abcdef"
-    )
+    broker_env["ACP_POSTGRES_CLIENT_PROOF_LABEL"] = proof_label
     broker_env["ACP_POSTGRES_CLIENT_PROOF_NONCE"] = "0123456789abcdef0123456789abcdef"
     broker_env["ACP_POSTGRES_SERVER_NAME"] = (
         f"{broker_env['ACP_POSTGRES_CLIENT_PROOF_LABEL']}-server"
     )
     broker_env["ACGS_POSTGRES_RECOVERY_ROOT"] = str(recovery_root)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE"] = str(socket_bridge)
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_IDENTITY"] = bridge_identity
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MARKER_SHA256"] = bridge_marker_sha256
+    broker_env["ACP_POSTGRES_SOCKET_BRIDGE_MNT_ID"] = bridge_mnt_id
+    broker_env["ACP_POSTGRES_RECOVERY_ROOT_MNT_ID"] = root_mnt_id
     broker = subprocess.Popen(
-        [sys.executable, str(broker_path), str(socket_path)],
+        [sys.executable, str(broker_path), str(socket_path), str(state_dir)],
         env=broker_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1646,9 +2243,23 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "listen_addresses=" in script
     assert "unix_socket_directories=/run/acgs-pg" in script
     assert "--security-opt label=disable" in script
-    assert '"$state_dir/pg:/run/acgs-pg:rw"' in script
-    assert '"$state_dir/pg:/var/run/postgresql:rw"' in script
-    assert "f\"{STATE_DIR / 'pg'}:/run/acgs-pg:ro\"" in broker_source
+    assert '"type=bind,src=$postgres_socket_bridge,dst=/run/acgs-pg"' in script
+    assert "verify_docker_mounts" in script
+    assert "verify_server_socket_bridge_marker" in script
+    assert ":/var/run/postgresql:" not in script
+    assert '"$state_dir/pg:/run/acgs-pg' not in script
+    assert "forbids volume syntax drift" in broker_source
+    assert "STATE_DIR = Path(sys.argv[2]).resolve(strict=True)" in broker_source
+    assert "SOCKET_PATH.parent.parent" not in broker_source
+    assert 'PG_SOCKET_BRIDGE = Path(os.environ["ACP_POSTGRES_SOCKET_BRIDGE"])' in broker_source
+    assert 'f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly"' in broker_source
+    assert "validate_socket_bridge()" in broker_source
+    assert "inspect_exact_docker_mounts(docker_args)" in broker_source
+    assert 'str(DOCKER_BIN), "create"' in broker_source
+    assert '"--rm"' not in broker_source
+    assert "wait_for_actual_docker_mounts(created_container_ref)" in broker_source
+    assert 'str(DOCKER_BIN), "start", "-a", created_container_ref' in broker_source
+    assert "acgs-client-marker-wrapper" in broker_source
     assert "server.bind(str(SOCKET_PATH))" not in broker_source
     assert "client.connect(socket_path)" not in client_source
     assert "os.chdir(SOCKET_DIR)" in broker_source
@@ -1678,6 +2289,1086 @@ def _postgres_gate_client_sources() -> tuple[str, str]:
         "\"$postgres_client_tool\" 0700 <<'PY'\n",
     )
     return broker_source, client_source
+
+
+def _postgres_gate_script_source() -> str:
+    return (Path(__file__).resolve().parents[1] / "scripts" / "run_postgres_gate.sh").read_text(
+        encoding="utf-8"
+    )
+
+
+def _extract_shell_function(script: str, name: str, next_name: str) -> str:
+    start = script.index(f"{name}() {{")
+    end = script.index(f"\n{next_name}() {{", start)
+    return script[start:end]
+
+
+def test_postgres_gate_socket_bridge_create_refuses_existing_paths(tmp_path: Path) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+            f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            create_bridge_source,
+            'mapfile -t fields < <(create_postgres_socket_bridge "$proof_label-socket-bridge")',
+            'test "${#fields[@]}" = 5',
+            'test -d "${fields[0]}"',
+            'test "$(stat -c %a "${fields[0]}")" = 1777',
+            'test "$(stat -c %a "${fields[0]}/.acgs-postgres-socket-bridge.v2")" = 444',
+            'if create_postgres_socket_bridge "$proof_label-socket-bridge"; then exit 90; fi',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    shutil.rmtree(recovery_root / bridge_name)
+    (recovery_root / bridge_name).symlink_to(tmp_path)
+    symlink_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert symlink_result.returncode == 70
+    assert (recovery_root / bridge_name).is_symlink()
+
+    (recovery_root / bridge_name).unlink()
+    for case_name, binding, mnt_id in (
+        ("missing-binding", "", root_mnt_id),
+        ("wrong-binding", "acgs-postgres-recovery-root/v2\t1:2:3:700", root_mnt_id),
+        ("wrong-mnt", root_binding, "0"),
+    ):
+        bad_result = subprocess.run(
+            ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+            input="\n".join(
+                (
+                    "set -euo pipefail",
+                    f"postgres_recovery_root={str(recovery_root)!r}",
+                    f"postgres_recovery_root_binding={shlex.quote(binding)}",
+                    f"postgres_recovery_root_mnt_id={mnt_id!r}",
+                    f"proof_nonce={proof_nonce!r}",
+                    f"proof_label={proof_label!r}",
+                    create_bridge_source,
+                    'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+                )
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert bad_result.returncode == 70, (case_name, bad_result.stderr)
+        assert not (recovery_root / bridge_name).exists()
+
+    for fault_name in (
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MARKER_WRITE",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_BRIDGE_FSYNC",
+        "ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_ROOT_FSYNC",
+    ):
+        shutil.rmtree(recovery_root)
+        recovery_root.mkdir()
+        recovery_root.chmod(0o700)
+        root_binding = _recovery_root_binding(recovery_root)
+        root_mnt_id = _mount_id(recovery_root)
+        fault_result = subprocess.run(
+            ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+            input="\n".join(
+                (
+                    "set -euo pipefail",
+                    f"export {fault_name}=1",
+                    f"postgres_recovery_root={str(recovery_root)!r}",
+                    f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                    f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                    f"proof_nonce={proof_nonce!r}",
+                    f"proof_label={proof_label!r}",
+                    create_bridge_source,
+                    'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+                )
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert fault_result.returncode != 0, (fault_name, fault_result.stderr)
+        assert "socket_bridge_creation_uncertain=1" in fault_result.stderr
+        assert (recovery_root / bridge_name).exists(), fault_name
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    outside_original = tmp_path / "outside-original"
+    outside_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR=1",
+                "export "
+                f"ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR={str(outside_original)!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert outside_result.returncode != 0, outside_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in outside_result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert outside_original.is_dir()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    baseline_child = recovery_root / "baseline-1234abcd"
+    baseline_child.mkdir()
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    under_baseline_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR=1",
+                "export "
+                "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_UNDER_BASELINE_CHILD_INSIDE_MKDIR="
+                f"{baseline_child.name!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert under_baseline_result.returncode != 0, under_baseline_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in under_baseline_result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert (baseline_child / bridge_name).is_dir()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    baseline_child = recovery_root / "baseline-5678abcd"
+    baseline_child.mkdir()
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    no_fault_under_baseline_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export "
+                "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_UNDER_BASELINE_CHILD_INSIDE_MKDIR="
+                f"{baseline_child.name!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert no_fault_under_baseline_result.returncode != 0, no_fault_under_baseline_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in no_fault_under_baseline_result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert (baseline_child / bridge_name).is_dir()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    prepopulated_original = tmp_path / "prepopulated-original"
+    prepopulated_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_PREPOPULATE_SUBSTITUTE_INSIDE_MKDIR=1",
+                "export "
+                "ACGS_POSTGRES_SOCKET_BRIDGE_MOVE_OUTSIDE_ROOT_INSIDE_MKDIR="
+                f"{str(prepopulated_original)!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert prepopulated_result.returncode != 0, prepopulated_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in prepopulated_result.stderr
+    assert prepopulated_original.is_dir()
+    assert (recovery_root / bridge_name / "prepopulated").is_file()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    inside_exchange_name = f"{bridge_name}-exchange"
+    inside_exchange_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR=1",
+                "export "
+                "ACGS_POSTGRES_SOCKET_BRIDGE_EXCHANGE_INSIDE_MKDIR="
+                f"{inside_exchange_name!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert inside_exchange_result.returncode != 0, inside_exchange_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in inside_exchange_result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert (recovery_root / inside_exchange_name).is_dir()
+
+    shutil.rmtree(recovery_root)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    exchange_name = f"{bridge_name}-exchange"
+    exchange_result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input="\n".join(
+            (
+                "set -euo pipefail",
+                "export ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR=1",
+                f"export ACGS_POSTGRES_SOCKET_BRIDGE_RENAME_EXCHANGE_AFTER_MKDIR={exchange_name!r}",
+                f"postgres_recovery_root={str(recovery_root)!r}",
+                f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+                f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+                f"proof_nonce={proof_nonce!r}",
+                f"proof_label={proof_label!r}",
+                create_bridge_source,
+                'create_postgres_socket_bridge "$proof_label-socket-bridge"',
+            )
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert exchange_result.returncode != 0, exchange_result.stderr
+    assert "socket_bridge_creation_uncertain=1" in exchange_result.stderr
+    assert (recovery_root / bridge_name).is_dir()
+    assert (recovery_root / exchange_name).is_dir()
+
+
+def test_postgres_gate_socket_bridge_creation_uncertainty_writes_contract(
+    tmp_path: Path,
+) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    write_recovery_source = _extract_shell_function(
+        script,
+        "write_recovery_contract",
+        "verify_junit_report",
+    )
+    state_dir = tmp_path / "state"
+    recovery_root = tmp_path / "recovery"
+    state_dir.mkdir()
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"state_dir={str(state_dir)!r}",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+            f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={proof_label + '-server'!r}",
+            f"server_cidfile={str(state_dir / 'server.cid')!r}",
+            f"postgres_socket_bridge_name={bridge_name!r}",
+            "postgres_socket_bridge_identity=''",
+            "postgres_socket_bridge_marker_sha256=''",
+            "postgres_socket_bridge_mnt_id=''",
+            "postgres_socket_bridge_creation_uncertain=0",
+            "export ACGS_POSTGRES_SOCKET_BRIDGE_FAULT_AFTER_MKDIR=1",
+            create_bridge_source,
+            write_recovery_source,
+            'if create_postgres_socket_bridge "$postgres_socket_bridge_name"; then exit 90; fi',
+            "postgres_socket_bridge_creation_uncertain=1",
+            "write_recovery_contract 70",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    contract = (state_dir / "recovery-contract.env").read_text(encoding="ascii")
+    assert "socket_bridge_creation_uncertain=1\n" in contract
+    assert f"socket_bridge_basename={bridge_name}\n" in contract
+    assert "socket_bridge_identity=\n" in contract
+    assert "socket_bridge_marker_sha256=\n" in contract
+    assert "socket_bridge_mnt_id=\n" in contract
+    assert f"recovery_root_mnt_id={root_mnt_id}\n" in contract
+    assert (recovery_root / bridge_name).is_dir()
+
+
+def test_postgres_gate_socket_bridge_cleanup_refuses_unknown_files(tmp_path: Path) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    cleanup_bridge_source = _extract_shell_function(
+        script,
+        "cleanup_postgres_socket_bridge",
+        "unlink_postgres_recovery_intents",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge_name = f"{proof_label}-socket-bridge"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+            f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            create_bridge_source,
+            cleanup_bridge_source,
+            'mapfile -t fields < <(create_postgres_socket_bridge "$proof_label-socket-bridge")',
+            'postgres_socket_bridge="${fields[0]}"',
+            'postgres_socket_bridge_name="${fields[1]}"',
+            'postgres_socket_bridge_identity="${fields[2]}"',
+            'postgres_socket_bridge_marker_sha256="${fields[3]}"',
+            'postgres_socket_bridge_mnt_id="${fields[4]}"',
+            'printf unsafe >"$postgres_socket_bridge/unexpected"',
+            'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 90; fi',
+            'test -e "$postgres_socket_bridge/unexpected"',
+            'rm "$postgres_socket_bridge/unexpected"',
+            "python3 - \"$postgres_socket_bridge\" <<'PY'",
+            "from pathlib import Path",
+            "import os",
+            "import socket",
+            "import sys",
+            "bridge = Path(sys.argv[1])",
+            "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
+            "try:",
+            "    os.chdir(bridge)",
+            "    sock.bind('.s.PGSQL.5432')",
+            "finally:",
+            "    sock.close()",
+            "(bridge / '.s.PGSQL.5432.lock').write_text('5432\\n', encoding='ascii')",
+            "PY",
+            'chmod 600 "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
+            'cleanup_postgres_socket_bridge "$(id -u)"',
+            f"test ! -e {str(recovery_root / bridge_name)!r}",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("case_name", "setup_lines", "expected_exists"),
+    [
+        (
+            "marker-symlink",
+            [
+                'rm "$postgres_socket_bridge/.acgs-postgres-socket-bridge.v2"',
+                'ln -s /dev/null "$postgres_socket_bridge/.acgs-postgres-socket-bridge.v2"',
+            ],
+            ".acgs-postgres-socket-bridge.v2",
+        ),
+        (
+            "socket-regular",
+            ['printf x >"$postgres_socket_bridge/.s.PGSQL.5432"'],
+            ".s.PGSQL.5432",
+        ),
+        (
+            "lock-hardlink",
+            [
+                'printf 5432 >"$postgres_socket_bridge/.s.PGSQL.5432.lock"',
+                (
+                    'ln "$postgres_socket_bridge/.s.PGSQL.5432.lock" '
+                    '"$postgres_socket_bridge/lock-copy"'
+                ),
+            ],
+            ".s.PGSQL.5432.lock",
+        ),
+    ],
+)
+def test_postgres_gate_socket_bridge_cleanup_refuses_artifact_substitution(
+    tmp_path: Path,
+    case_name: str,
+    setup_lines: list[str],
+    expected_exists: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    create_bridge_source = _extract_shell_function(
+        script,
+        "create_postgres_socket_bridge",
+        "verify_postgres_socket_bridge",
+    )
+    cleanup_bridge_source = _extract_shell_function(
+        script,
+        "cleanup_postgres_socket_bridge",
+        "unlink_postgres_recovery_intents",
+    )
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    root_binding = _recovery_root_binding(recovery_root)
+    root_mnt_id = _mount_id(recovery_root)
+    harness = "\n".join(
+        [
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_recovery_root_binding={shlex.quote(root_binding)}",
+            f"postgres_recovery_root_mnt_id={root_mnt_id!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            create_bridge_source,
+            cleanup_bridge_source,
+            'mapfile -t fields < <(create_postgres_socket_bridge "$proof_label-socket-bridge")',
+            'postgres_socket_bridge="${fields[0]}"',
+            'postgres_socket_bridge_name="${fields[1]}"',
+            'postgres_socket_bridge_identity="${fields[2]}"',
+            'postgres_socket_bridge_marker_sha256="${fields[3]}"',
+            'postgres_socket_bridge_mnt_id="${fields[4]}"',
+            *setup_lines,
+            'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 90; fi',
+            f'test -e "$postgres_socket_bridge/{expected_exists}"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (case_name, result.stderr)
+
+
+def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path: Path) -> None:
+    script = _postgres_gate_script_source()
+    unlink_source = _extract_shell_function(
+        script,
+        "unlink_postgres_recovery_intents",
+        "verify_docker_mounts",
+    )
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "client").mkdir()
+    recovery_root = tmp_path / "recovery"
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    server_name = f"{proof_label}-server"
+    server_cidfile = state_dir / "server.cid"
+    server_namefile = state_dir / "server.name"
+    bridge_name = f"{proof_label}-socket-bridge"
+    bridge_identity = "1:2:3:1777"
+    bridge_sha = "a" * 64
+    bridge_mnt = "42"
+    server_payload = "\n".join(
+        (
+            "intent_version=2",
+            "schema=acgs-postgres-recovery-intent/server/v2",
+            "phase=server-intent",
+            f"proof_nonce={proof_nonce}",
+            f"proof_label={proof_label}",
+            f"server_name={server_name}",
+            f"record_path={server_namefile}",
+            f"server_cidfile={server_cidfile}",
+            f"server_namefile={server_namefile}",
+            f"socket_bridge_basename={bridge_name}",
+            f"socket_bridge_identity={bridge_identity}",
+            f"socket_bridge_marker_sha256={bridge_sha}",
+            f"socket_bridge_mnt_id={bridge_mnt}",
+            "",
+        )
+    )
+    client_name = f"{proof_label}-client-123-1"
+    client_cidfile = state_dir / "client" / f"{client_name}.cid"
+    client_namefile = state_dir / "client" / f"{client_name}.name"
+    client_payload = "\n".join(
+        (
+            "intent_version=1",
+            "phase=client-intent",
+            f"proof_nonce={proof_nonce}",
+            f"proof_label={proof_label}",
+            f"server_name={server_name}",
+            f"client_name={client_name}",
+            f"record_path={client_namefile}",
+            f"client_cidfile={client_cidfile}",
+            f"client_namefile={client_namefile}",
+            "",
+        )
+    )
+    (recovery_root / f"{proof_label}-server.intent").write_text(server_payload, encoding="ascii")
+    (recovery_root / f"{client_name}.intent").write_text(client_payload, encoding="ascii")
+    for path in recovery_root.iterdir():
+        path.chmod(0o600)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"state_dir={str(state_dir)!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={server_name!r}",
+            f"server_cidfile={str(server_cidfile)!r}",
+            f"server_namefile={str(server_namefile)!r}",
+            f"postgres_socket_bridge_name={bridge_name!r}",
+            f"postgres_socket_bridge_identity={bridge_identity!r}",
+            f"postgres_socket_bridge_marker_sha256={bridge_sha!r}",
+            f"postgres_socket_bridge_mnt_id={bridge_mnt!r}",
+            unlink_source,
+            "unlink_postgres_recovery_intents",
+            f"test ! -e {str(recovery_root / f'{proof_label}-server.intent')!r}",
+            f"test ! -e {str(recovery_root / f'{client_name}.intent')!r}",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "server-extra",
+        "server-missing",
+        "server-duplicate",
+        "server-name-derived-path",
+        "client-wrong-record-path",
+    ],
+)
+def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
+    tmp_path: Path,
+    case_name: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    unlink_source = _extract_shell_function(
+        script,
+        "unlink_postgres_recovery_intents",
+        "verify_docker_mounts",
+    )
+    state_dir = tmp_path / "state"
+    client_dir = state_dir / "client"
+    recovery_root = tmp_path / "recovery"
+    client_dir.mkdir(parents=True)
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    server_name = f"{proof_label}-server"
+    server_cidfile = state_dir / "server.cid"
+    server_namefile = state_dir / "server.name"
+    bridge_name = f"{proof_label}-socket-bridge"
+    bridge_identity = "1:2:3:1777"
+    bridge_sha = "a" * 64
+    bridge_mnt = "42"
+    server_pairs = [
+        ("intent_version", "2"),
+        ("schema", "acgs-postgres-recovery-intent/server/v2"),
+        ("phase", "server-intent"),
+        ("proof_nonce", proof_nonce),
+        ("proof_label", proof_label),
+        ("server_name", server_name),
+        ("record_path", str(server_namefile)),
+        ("server_cidfile", str(server_cidfile)),
+        ("server_namefile", str(server_namefile)),
+        ("socket_bridge_basename", bridge_name),
+        ("socket_bridge_identity", bridge_identity),
+        ("socket_bridge_marker_sha256", bridge_sha),
+        ("socket_bridge_mnt_id", bridge_mnt),
+    ]
+    client_name = f"{proof_label}-client-123-1"
+    client_cidfile = client_dir / f"{client_name}.cid"
+    client_namefile = client_dir / f"{client_name}.name"
+    client_pairs = [
+        ("intent_version", "1"),
+        ("phase", "client-intent"),
+        ("proof_nonce", proof_nonce),
+        ("proof_label", proof_label),
+        ("server_name", server_name),
+        ("client_name", client_name),
+        ("record_path", str(client_namefile)),
+        ("client_cidfile", str(client_cidfile)),
+        ("client_namefile", str(client_namefile)),
+    ]
+    if case_name == "server-extra":
+        server_pairs.append(("unexpected", "1"))
+    elif case_name == "server-missing":
+        server_pairs.pop(1)
+    elif case_name == "server-duplicate":
+        server_pairs.append(("proof_label", proof_label))
+    elif case_name == "server-name-derived-path":
+        server_pairs[7] = ("server_cidfile", str(state_dir / f"{server_name}.cid"))
+    elif case_name == "client-wrong-record-path":
+        client_pairs[6] = ("record_path", str(tmp_path / "outside.name"))
+    server_payload = "\n".join(f"{key}={value}" for key, value in server_pairs) + "\n"
+    client_payload = "\n".join(f"{key}={value}" for key, value in client_pairs) + "\n"
+    server_intent = recovery_root / f"{proof_label}-server.intent"
+    client_intent = recovery_root / f"{client_name}.intent"
+    server_intent.write_text(server_payload, encoding="ascii")
+    client_intent.write_text(client_payload, encoding="ascii")
+    server_intent.chmod(0o600)
+    client_intent.chmod(0o600)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"state_dir={str(state_dir)!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={server_name!r}",
+            f"server_cidfile={str(server_cidfile)!r}",
+            f"server_namefile={str(server_namefile)!r}",
+            f"postgres_socket_bridge_name={bridge_name!r}",
+            f"postgres_socket_bridge_identity={bridge_identity!r}",
+            f"postgres_socket_bridge_marker_sha256={bridge_sha!r}",
+            f"postgres_socket_bridge_mnt_id={bridge_mnt!r}",
+            unlink_source,
+            "if unlink_postgres_recovery_intents; then exit 90; fi",
+            f"test -e {str(server_intent)!r}",
+            f"test -e {str(client_intent)!r}",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (case_name, result.stderr)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "mutate", "expected_rc"),
+    [
+        ("exact", None, 0),
+        ("wrong-type", "wrong-type", 70),
+        ("extra", "extra", 70),
+        ("duplicate-destination", "duplicate-destination", 70),
+        ("tmpfs-wrong-type", "tmpfs-wrong-type", 70),
+        ("tmpfs-nonempty-source", "tmpfs-nonempty-source", 70),
+        ("tmpfs-wrong-rw", "tmpfs-wrong-rw", 70),
+    ],
+)
+def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
+    tmp_path: Path,
+    case_name: str,
+    mutate: str | None,
+    expected_rc: int,
+) -> None:
+    script = _postgres_gate_script_source()
+    verify_source = _extract_shell_function(
+        script,
+        "verify_docker_mounts",
+        "verify_server_socket_bridge_marker",
+    )
+    socket_bridge = tmp_path / "bridge"
+    socket_bridge.mkdir()
+    mounts = [
+        {
+            "Type": "bind",
+            "Source": str(socket_bridge),
+            "Destination": "/run/acgs-pg",
+            "RW": True,
+        },
+        {
+            "Type": "tmpfs",
+            "Source": "",
+            "Destination": "/var/lib/postgresql/data",
+            "RW": True,
+        },
+        {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
+    ]
+    if mutate == "wrong-type":
+        mounts[0] = {**mounts[0], "Type": "volume"}
+    elif mutate == "extra":
+        mounts.append({"Type": "bind", "Source": "/tmp/extra", "Destination": "/extra", "RW": True})
+    elif mutate == "duplicate-destination":
+        mounts.append(
+            {
+                "Type": "bind",
+                "Source": str(socket_bridge),
+                "Destination": "/run/acgs-pg",
+                "RW": True,
+            }
+        )
+    elif mutate == "tmpfs-wrong-type":
+        mounts[1] = {**mounts[1], "Type": "bind"}
+    elif mutate == "tmpfs-nonempty-source":
+        mounts[1] = {**mounts[1], "Source": "/tmp/postgres-data"}
+    elif mutate == "tmpfs-wrong-rw":
+        mounts[1] = {**mounts[1], "RW": False}
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import json, sys",
+                f"mounts = json.loads({json.dumps(mounts)!r})",
+                "if sys.argv[1:4] == ['inspect', '--format', '{{json .Mounts}}']:",
+                "    print(json.dumps(mounts, separators=(',', ':')))",
+                "    raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    expected = {
+        "/run/acgs-pg": {"type": "bind", "source": str(socket_bridge), "rw": True},
+        "/var/lib/postgresql/data": {"type": "tmpfs", "source": "", "rw": True},
+        "/tmp": {"type": "tmpfs", "source": "", "rw": True},
+    }
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            verify_source,
+            "verify_docker_mounts container "
+            f"{shlex.quote(json.dumps(expected, separators=(',', ':')))}",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_rc, (case_name, result.stderr)
+
+
+def test_postgres_gate_recovery_intent_keeps_server_v2_and_client_v1_contracts() -> None:
+    script = _postgres_gate_script_source()
+    broker_source, _client_source = _postgres_gate_client_sources()
+
+    assert "intent_version=2" in script
+    assert "schema=acgs-postgres-recovery-intent/server/v2" in script
+    assert "socket_bridge_basename=" in script
+    assert "socket_bridge_identity=" in script
+    assert "socket_bridge_marker_sha256=" in script
+    assert "socket_bridge_mnt_id=" in script
+    assert "intent_version=1" in broker_source
+    client_payload = broker_source.split("def write_client_recovery_intent", 1)[1].split(
+        "\ndef execute", 1
+    )[0]
+    assert "socket_bridge_" not in client_payload
+
+
+def test_postgres_gate_cleanup_preserves_bridge_until_docker_absence_is_stable() -> None:
+    script = _postgres_gate_script_source()
+    start = script.index("cleanup() {")
+    end = script.index("\ntrap cleanup EXIT", start)
+    cleanup_source = script[start:end]
+
+    assert "local cleanup_safe=1" in cleanup_source
+    assert 'if [[ "$docker_started" == 1 ]]; then' in cleanup_source
+    assert "verify_stable_no_proof_labelled_containers" in cleanup_source
+    assert "cleanup_safe=0" in cleanup_source
+    assert 'if [[ "$cleanup_safe" == 1 && -n "$postgres_socket_bridge" ]]; then' in (cleanup_source)
+    assert cleanup_source.index("cleanup_client_containers") < cleanup_source.index(
+        "cleanup_postgres_socket_bridge"
+    )
+    assert cleanup_source.index("cleanup_server_container") < cleanup_source.index(
+        "cleanup_postgres_socket_bridge"
+    )
+    assert cleanup_source.index("verify_stable_no_proof_labelled_containers") < (
+        cleanup_source.index("cleanup_postgres_socket_bridge")
+    )
+    assert cleanup_source.index("cleanup_postgres_socket_bridge") < cleanup_source.index(
+        "unlink_postgres_recovery_intents"
+    )
+    assert "write_recovery_contract" in cleanup_source
+
+
+@pytest.mark.parametrize(
+    "failure_function",
+    ["cleanup_client_containers", "verify_stable_no_proof_labelled_containers"],
+)
+def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
+    tmp_path: Path,
+    failure_function: str,
+) -> None:
+    script = _postgres_gate_script_source()
+    read_private_source = _extract_shell_function(
+        script,
+        "read_private_container_file",
+        "write_private_container_name_file",
+    )
+    write_recovery_source = _extract_shell_function(
+        script,
+        "write_recovery_contract",
+        "verify_junit_report",
+    )
+    capture_source = _extract_shell_function(
+        script,
+        "capture_docker_ps_ids",
+        "cleanup_client_containers",
+    )
+    cleanup_client_source = _extract_shell_function(
+        script,
+        "cleanup_client_containers",
+        "remove_exact_recorded_container",
+    )
+    remove_exact_source = _extract_shell_function(
+        script,
+        "remove_exact_recorded_container",
+        "cleanup_server_container",
+    )
+    cleanup_server_source = _extract_shell_function(
+        script,
+        "cleanup_server_container",
+        "verify_no_proof_labelled_containers",
+    )
+    verify_no_source = _extract_shell_function(
+        script,
+        "verify_no_proof_labelled_containers",
+        "verify_stable_no_proof_labelled_containers",
+    )
+    verify_stable_source = _extract_shell_function(
+        script,
+        "verify_stable_no_proof_labelled_containers",
+        "cleanup_postgres_socket_bridge",
+    )
+    start = script.index("cleanup() {")
+    end = script.index("\ntrap cleanup EXIT", start)
+    cleanup_source = script[start:end]
+    state_dir = tmp_path / "state"
+    client_dir = state_dir / "client"
+    fake_bin = tmp_path / "fake-bin"
+    recovery_root = tmp_path / "recovery"
+    proof_nonce = "0123456789abcdef0123456789abcdef"
+    proof_label = f"acp-postgres-gate-{os.getuid()}-{proof_nonce}"
+    bridge = recovery_root / f"{proof_label}-socket-bridge"
+    intent = recovery_root / f"{proof_label}-client-1-1.intent"
+    client_name = f"{proof_label}-client-1-1"
+    client_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    state_dir.mkdir()
+    client_dir.mkdir()
+    fake_bin.mkdir()
+    recovery_root.mkdir()
+    recovery_root.chmod(0o700)
+    bridge_identity, bridge_marker_sha256, bridge_mnt_id = _write_postgres_socket_bridge(
+        bridge,
+        proof_label,
+        proof_nonce,
+    )
+    intent.write_text("intent", encoding="ascii")
+    intent.chmod(0o600)
+    server_cidfile = state_dir / f"{proof_label}-server.cid"
+    server_namefile = state_dir / f"{proof_label}-server.name"
+    if failure_function == "cleanup_client_containers":
+        (client_dir / f"{client_name}.cid").write_text(f"{client_id}\n", encoding="ascii")
+        (client_dir / f"{client_name}.name").write_text(f"{client_name}\n", encoding="ascii")
+        (client_dir / f"{client_name}.cid").chmod(0o600)
+        (client_dir / f"{client_name}.name").chmod(0o600)
+    docker_path = fake_bin / "docker"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "import os, sys",
+                "args = sys.argv[1:]",
+                f"mode = {failure_function!r}",
+                f"proof_label = {proof_label!r}",
+                f"client_id = {client_id!r}",
+                f"client_name = {client_name!r}",
+                "if args[:1] == ['inspect'] and '--format' in args:",
+                "    ref = args[-1]",
+                "    if mode == 'cleanup_client_containers' and ref in {client_id, client_name}:",
+                "        print(f'{client_id}|/{client_name}|{proof_label}||trusted-broker')",
+                "        raise SystemExit(0)",
+                "    raise SystemExit(1)",
+                "if args[:1] == ['inspect']:",
+                "    raise SystemExit(1)",
+                "if args[:2] == ['rm', '-f']:",
+                "    if mode == 'cleanup_client_containers':",
+                "        raise SystemExit(70)",
+                "    raise SystemExit(0)",
+                "if args[:2] == ['ps', '-aq']:",
+                "    joined = ' '.join(args)",
+                "    if mode == 'cleanup_client_containers':",
+                "        print(client_id)",
+                "        raise SystemExit(0)",
+                "    if 'acgs.postgres.client=trusted-broker' in joined:",
+                "        raise SystemExit(0)",
+                "    raise SystemExit(70)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    touched = tmp_path / "touched"
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            f"state_dir={str(state_dir)!r}",
+            f"proof_nonce={proof_nonce!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={proof_label + '-server'!r}",
+            "container_id=''",
+            f"server_cidfile={str(server_cidfile)!r}",
+            f"server_namefile={str(server_namefile)!r}",
+            f"postgres_recovery_root={str(recovery_root)!r}",
+            f"postgres_socket_bridge={str(bridge)!r}",
+            f"postgres_socket_bridge_name={bridge.name!r}",
+            f"postgres_socket_bridge_identity={bridge_identity!r}",
+            f"postgres_socket_bridge_marker_sha256={bridge_marker_sha256!r}",
+            f"postgres_socket_bridge_mnt_id={bridge_mnt_id!r}",
+            "postgres_socket_bridge_creation_uncertain=0",
+            f"postgres_recovery_root_mnt_id={_mount_id(recovery_root)!r}",
+            "broker_pid=''",
+            "docker_started=1",
+            "DOCKER_PS_IDS=()",
+            read_private_source,
+            write_recovery_source,
+            capture_source,
+            cleanup_client_source,
+            remove_exact_source,
+            cleanup_server_source,
+            verify_no_source,
+            verify_stable_source,
+            "cleanup_postgres_socket_bridge() {",
+            f"  echo bridge >>{str(touched)!r}",
+            f"  rm -rf {str(bridge)!r}",
+            "}",
+            "unlink_postgres_recovery_intents() {",
+            f"  echo intents >>{str(touched)!r}",
+            f"  rm -f {str(intent)!r}",
+            "}",
+            cleanup_source,
+            "cleanup",
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 70, (failure_function, result.stderr)
+    assert bridge.is_dir()
+    assert (bridge / ".acgs-postgres-socket-bridge.v2").is_file()
+    assert intent.read_text(encoding="ascii") == "intent"
+    assert not touched.exists()
+    assert (state_dir / "recovery-contract.env").exists()
 
 
 def _rename_exchange(first: Path, second: Path) -> None:
