@@ -165,8 +165,12 @@ def validate_dependencies() -> ValidationReport:
 
 def generate_config(*, enforce: bool = False) -> dict[str, Any]:
     """Render the host-runtime config payload."""
+    # ``--project`` pins uv's workspace resolution to the project root. Without it the
+    # hook inherits the tool call's cwd; outside the workspace uv exits with
+    # "No `pyproject.toml` found" before importing gove_zone, so no receipt is emitted.
     hook_cmd = (
-        'uv run --package gove-zone python "$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py"'
+        'uv run --project "$CLAUDE_PROJECT_DIR" --package gove-zone '
+        'python "$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py"'
     )
     env: dict[str, str] = {}
     if enforce:

@@ -89,7 +89,7 @@
           },
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       },
@@ -98,7 +98,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
+            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" --package gove-zone python \"$CLAUDE_PROJECT_DIR/.claude/hooks/acgs-emit-receipt.py\""
           }
         ]
       }
