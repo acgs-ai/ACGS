@@ -2321,56 +2321,139 @@ verify_docker_mounts() {
   local expected_json=$2
   local inspect_output=''
   inspect_output="$(
-    timeout --preserve-status 10s docker inspect --format '{{json .Mounts}}' "$container_ref"
+    timeout --preserve-status 10s docker inspect --format '{"Mounts":{{json .Mounts}},"HostConfig":{"Tmpfs":{{json .HostConfig.Tmpfs}}}}' "$container_ref"
   )" || return $?
+  [[ "${#inspect_output}" -le 65536 ]] || {
+    printf 'mount-verifier: inspect output is oversized\n' >&2
+    return 70
+  }
   /usr/bin/python3 -I -S - "$inspect_output" "$expected_json" <<'PY'
 from __future__ import annotations
 
 import json
 import sys
 
-raw_mounts, raw_expected = sys.argv[1:3]
+raw_snapshot, raw_expected = sys.argv[1:3]
+
+
+def fail(reason: str) -> None:
+    print(f"mount-verifier: {reason}", file=sys.stderr)
+    raise SystemExit(70)
+
+
+def require_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or "\0" in value or len(value) > 4096:
+        fail(f"{label} is malformed")
+    return value
+
+
+def reject_duplicate_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            fail("JSON object has duplicate keys")
+        result[key] = value
+    return result
+
+
+def canonical_tmpfs_options(raw_options: str) -> dict[str, str]:
+    flag_options = {"rw", "noexec", "nosuid", "nodev"}
+    assigned_options = {"size", "uid", "gid", "mode"}
+    options: dict[str, str] = {}
+    for item in require_string(raw_options, "tmpfs options").split(","):
+        if not item:
+            fail("tmpfs option is empty")
+        key, separator, value = item.partition("=")
+        if not key or key in options:
+            fail("tmpfs options are duplicated")
+        if key in flag_options:
+            if separator:
+                fail("tmpfs flag option must not use assignment")
+        elif key in assigned_options:
+            if not separator or not value:
+                fail("tmpfs assigned option is malformed")
+        else:
+            fail("tmpfs option is unsupported")
+        options[key] = value if separator else ""
+    return options
+
+
+def verify_binds(mounts: object, expected_binds: object) -> None:
+    if not isinstance(mounts, list) or len(mounts) > 16:
+        fail("mount list is malformed")
+    if not isinstance(expected_binds, dict):
+        fail("expected bind set is malformed")
+    observed: dict[str, dict[str, object]] = {}
+    allowed_mount_keys = {"Type", "Source", "Destination", "Mode", "RW", "Propagation"}
+    for mount in mounts:
+        if not isinstance(mount, dict) or not set(mount).issubset(allowed_mount_keys):
+            fail("mount entry is malformed")
+        destination = require_string(mount.get("Destination"), "mount destination")
+        source = require_string(mount.get("Source"), "mount source")
+        mount_type = require_string(mount.get("Type"), "mount type")
+        mode = require_string(mount.get("Mode"), "mount mode")
+        propagation = require_string(mount.get("Propagation"), "mount propagation")
+        rw = mount.get("RW")
+        if not isinstance(rw, bool):
+            fail("mount rw flag is malformed")
+        if mount_type != "bind":
+            fail(f"unexpected non-bind mount at {destination}")
+        if destination in observed:
+            fail(f"duplicate bind mount at {destination}")
+        observed[destination] = {
+            "source": source,
+            "rw": rw,
+            "mode": mode,
+            "propagation": propagation,
+        }
+    if set(observed) != set(expected_binds):
+        fail("bind destination set changed")
+    for destination, expected in expected_binds.items():
+        if not isinstance(expected, dict):
+            fail("expected bind entry is malformed")
+        expected_entry = {
+            "source": require_string(expected.get("source"), "expected bind source"),
+            "rw": expected.get("rw"),
+            "mode": require_string(expected.get("mode"), "expected bind mode"),
+            "propagation": require_string(
+                expected.get("propagation"),
+                "expected bind propagation",
+            ),
+        }
+        if not isinstance(expected_entry["rw"], bool):
+            fail("expected bind rw flag is malformed")
+        if observed.get(destination) != expected_entry:
+            fail(f"bind mount mismatch at {destination}")
+
+
+def verify_tmpfs(tmpfs: object, expected_tmpfs: object) -> None:
+    if not isinstance(tmpfs, dict) or not isinstance(expected_tmpfs, dict) or len(tmpfs) > 16:
+        fail("tmpfs set is malformed")
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in tmpfs.items()):
+        fail("tmpfs entry is malformed")
+    if set(tmpfs) != set(expected_tmpfs):
+        fail("tmpfs destination set changed")
+    for destination, expected_options in expected_tmpfs.items():
+        actual = canonical_tmpfs_options(tmpfs[destination])
+        expected = canonical_tmpfs_options(require_string(expected_options, "expected tmpfs options"))
+        if actual != expected:
+            fail(f"tmpfs options mismatch at {destination}")
+
+
 try:
-    mounts = json.loads(raw_mounts)
-    expected = json.loads(raw_expected)
+    snapshot = json.loads(raw_snapshot, object_pairs_hook=reject_duplicate_json_object)
+    expected = json.loads(raw_expected, object_pairs_hook=reject_duplicate_json_object)
 except json.JSONDecodeError:
-    raise SystemExit(70)
-if not isinstance(mounts, list) or not isinstance(expected, dict):
-    raise SystemExit(70)
-observed: dict[str, tuple[str, str, bool]] = {}
-for mount in mounts:
-    if not isinstance(mount, dict):
-        raise SystemExit(70)
-    destination = mount.get("Destination")
-    source = mount.get("Source")
-    rw = mount.get("RW")
-    mount_type = mount.get("Type")
-    if (
-        not isinstance(destination, str)
-        or not isinstance(source, str)
-        or not isinstance(rw, bool)
-        or not isinstance(mount_type, str)
-    ):
-        raise SystemExit(70)
-    if destination in observed:
-        raise SystemExit(70)
-    observed[destination] = (mount_type, source, rw)
-if set(observed) != set(expected):
-    raise SystemExit(70)
-for destination, fields in expected.items():
-    if not isinstance(fields, dict):
-        raise SystemExit(70)
-    expected_type = fields.get("type")
-    expected_source = fields.get("source")
-    expected_rw = fields.get("rw")
-    if (
-        not isinstance(expected_type, str)
-        or not isinstance(expected_source, str)
-        or not isinstance(expected_rw, bool)
-    ):
-        raise SystemExit(70)
-    if observed.get(destination) != (expected_type, expected_source, expected_rw):
-        raise SystemExit(70)
+    fail("inspect JSON is malformed")
+if not isinstance(snapshot, dict) or set(snapshot) != {"Mounts", "HostConfig"}:
+    fail("inspect snapshot is malformed")
+host_config = snapshot.get("HostConfig")
+if not isinstance(host_config, dict) or set(host_config) != {"Tmpfs"}:
+    fail("host config snapshot is malformed")
+if not isinstance(expected, dict) or set(expected) != {"binds", "tmpfs"}:
+    fail("expected mount policy is malformed")
+verify_binds(snapshot.get("Mounts"), expected.get("binds"))
+verify_tmpfs(host_config.get("Tmpfs"), expected.get("tmpfs"))
 PY
 }
 
@@ -2546,7 +2629,7 @@ container_id="$(
       -c unix_socket_permissions=0777
 )"
 server_mount_expectation="$(
-  printf '{"%s":{"type":"bind","source":%s,"rw":true},"%s":{"type":"tmpfs","source":"","rw":true},"%s":{"type":"tmpfs","source":"","rw":true}}' \
+  printf '{"binds":{"%s":{"source":%s,"rw":true,"mode":"","propagation":"rprivate"}},"tmpfs":{"%s":"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700","%s":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}' \
     "/run/acgs-pg" \
     "$(printf '%s' "$postgres_socket_bridge" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
     "/var/lib/postgresql/data" \
@@ -2734,13 +2817,19 @@ def validate_socket_bridge() -> None:
 
 
 def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
-    expected = {
-        "/run/acgs-pg": ("bind", str(PG_SOCKET_BRIDGE), False),
-        "/run/tmp": ("bind", str(HOST_TMP), True),
-        "/proof-scratch": ("bind", str(HOST_PROOF_SCRATCH), True),
-        "/tmp": ("tmpfs", "", True),
+    expected_binds = {
+        "/run/acgs-pg": (str(PG_SOCKET_BRIDGE), False, "ro", "rprivate"),
+        "/run/tmp": (str(HOST_TMP), True, "", "rprivate"),
+        "/proof-scratch": (str(HOST_PROOF_SCRATCH), True, "", "rprivate"),
     }
-    observed: dict[str, tuple[str, str, bool]] = {}
+    expected_tmpfs = {
+        "/var/lib/postgresql/data": canonical_tmpfs_options(
+            "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+        ),
+        "/tmp": canonical_tmpfs_options("rw,noexec,nosuid,nodev,mode=1777,size=512m"),
+    }
+    observed_binds: dict[str, tuple[str, bool, str, str]] = {}
+    observed_tmpfs: dict[str, dict[str, str]] = {}
     index = 0
     while index < len(docker_args):
         item = docker_args[index]
@@ -2754,9 +2843,10 @@ def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
             readonly = "readonly" in raw_parts
             if parts.get("type") != "bind" or not source or not target:
                 fail("PostgreSQL client broker Docker mount is malformed", 70)
-            if target in observed:
+            if target in observed_binds:
                 fail("PostgreSQL client broker Docker mount is duplicated", 70)
-            observed[target] = ("bind", source, not readonly)
+            mode = "ro" if readonly else ""
+            observed_binds[target] = (source, not readonly, mode, "rprivate")
             index += 2
             continue
         if item == "--volume":
@@ -2764,23 +2854,146 @@ def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
         if item == "--tmpfs":
             if index + 1 >= len(docker_args):
                 fail("PostgreSQL client broker Docker tmpfs is malformed", 70)
-            target = docker_args[index + 1].split(":", 1)[0]
-            if target in observed:
+            target, separator, raw_options = docker_args[index + 1].partition(":")
+            if not separator:
+                fail("PostgreSQL client broker Docker tmpfs is malformed", 70)
+            if target in observed_tmpfs:
                 fail("PostgreSQL client broker Docker mount is duplicated", 70)
-            observed[target] = ("tmpfs", "", True)
+            observed_tmpfs[target] = canonical_tmpfs_options(raw_options)
             index += 2
             continue
         index += 1
-    if observed != expected:
+    if observed_binds != expected_binds or observed_tmpfs != expected_tmpfs:
         fail("PostgreSQL client broker Docker mounts changed", 70)
-    if any(source == str(STATE_DIR) for _type, source, _mode in observed.values()):
+    if any(source == str(STATE_DIR) for source, _rw, _mode, _propagation in observed_binds.values()):
         fail("PostgreSQL client broker must not bind the whole state directory", 70)
+
+
+def canonical_tmpfs_options(raw_options: str) -> dict[str, str]:
+    flag_options = {"rw", "noexec", "nosuid", "nodev"}
+    assigned_options = {"size", "uid", "gid", "mode"}
+    options: dict[str, str] = {}
+    if not isinstance(raw_options, str):
+        fail("PostgreSQL client broker tmpfs options are malformed", 70)
+    if "\0" in raw_options or len(raw_options) > 4096:
+        fail("PostgreSQL client broker tmpfs options are malformed", 70)
+    for item in raw_options.split(","):
+        if not item:
+            fail("PostgreSQL client broker tmpfs option is empty", 70)
+        key, separator, value = item.partition("=")
+        if not key or key in options:
+            fail("PostgreSQL client broker tmpfs options are duplicated", 70)
+        if key in flag_options:
+            if separator:
+                fail("PostgreSQL client broker tmpfs flag option must not use assignment", 70)
+        elif key in assigned_options:
+            if not separator or not value:
+                fail("PostgreSQL client broker tmpfs assigned option is malformed", 70)
+        else:
+            fail("PostgreSQL client broker tmpfs option is unsupported", 70)
+        options[key] = value if separator else ""
+    return options
+
+
+def reject_duplicate_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            fail("PostgreSQL client broker JSON object has duplicate keys", 70)
+        result[key] = value
+    return result
+
+
+def require_inspected_string(value: object) -> str:
+    if not isinstance(value, str) or "\0" in value or len(value) > 4096:
+        fail("PostgreSQL client broker mount inspection is malformed", 70)
+    return value
+
+
+def validate_mount_snapshot(snapshot: object) -> None:
+    expected_binds = {
+        "/run/acgs-pg": {
+            "source": str(PG_SOCKET_BRIDGE),
+            "rw": False,
+            "mode": "ro",
+            "propagation": "rprivate",
+        },
+        "/run/tmp": {
+            "source": str(HOST_TMP),
+            "rw": True,
+            "mode": "",
+            "propagation": "rprivate",
+        },
+        "/proof-scratch": {
+            "source": str(HOST_PROOF_SCRATCH),
+            "rw": True,
+            "mode": "",
+            "propagation": "rprivate",
+        },
+    }
+    expected_tmpfs = {
+        "/var/lib/postgresql/data": canonical_tmpfs_options(
+            "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+        ),
+        "/tmp": canonical_tmpfs_options("rw,noexec,nosuid,nodev,mode=1777,size=512m"),
+    }
+    if not isinstance(snapshot, dict) or set(snapshot) != {"Mounts", "HostConfig"}:
+        fail("PostgreSQL client broker mount inspection is malformed", 70)
+    mounts = snapshot.get("Mounts")
+    host_config = snapshot.get("HostConfig")
+    if not isinstance(host_config, dict) or set(host_config) != {"Tmpfs"}:
+        fail("PostgreSQL client broker host config inspection is malformed", 70)
+    tmpfs = host_config.get("Tmpfs")
+    if not isinstance(mounts, list) or len(mounts) > 16:
+        fail("PostgreSQL client broker mount inspection is malformed", 70)
+    if not isinstance(tmpfs, dict) or len(tmpfs) > 16:
+        fail("PostgreSQL client broker tmpfs inspection is malformed", 70)
+    observed_tmpfs = {
+        require_inspected_string(key): require_inspected_string(value)
+        for key, value in tmpfs.items()
+    }
+    observed_binds: dict[str, dict[str, object]] = {}
+    allowed_keys = {"Type", "Source", "Destination", "Mode", "RW", "Propagation"}
+    for mount in mounts:
+        if not isinstance(mount, dict) or not set(mount).issubset(allowed_keys):
+            fail("PostgreSQL client broker mount inspection is malformed", 70)
+        destination = require_inspected_string(mount.get("Destination"))
+        source = require_inspected_string(mount.get("Source"))
+        mount_type = require_inspected_string(mount.get("Type"))
+        mode = require_inspected_string(mount.get("Mode"))
+        propagation = require_inspected_string(mount.get("Propagation"))
+        rw = mount.get("RW")
+        if not isinstance(rw, bool):
+            fail("PostgreSQL client broker mount inspection is malformed", 70)
+        if mount_type != "bind":
+            fail("PostgreSQL client broker actual Docker mount is not bind", 70)
+        if destination in observed_binds:
+            fail("PostgreSQL client broker actual Docker mount is duplicated", 70)
+        observed_binds[destination] = {
+            "source": source,
+            "rw": rw,
+            "mode": mode,
+            "propagation": propagation,
+        }
+    if observed_binds != expected_binds:
+        fail("PostgreSQL client broker actual Docker mounts changed", 70)
+    if set(observed_tmpfs) != set(expected_tmpfs):
+        fail("PostgreSQL client broker actual Docker tmpfs changed", 70)
+    for destination, expected_options in expected_tmpfs.items():
+        if canonical_tmpfs_options(observed_tmpfs[destination]) != expected_options:
+            fail("PostgreSQL client broker actual Docker tmpfs options changed", 70)
 
 
 def inspect_actual_docker_mounts(container_ref: str) -> bool:
     try:
         completed = subprocess.run(
-            [str(DOCKER_BIN), "inspect", "--format", "{{json .Mounts}}", container_ref],
+            [
+                str(DOCKER_BIN),
+                "inspect",
+                "--format",
+                '{"Mounts":{{json .Mounts}},"HostConfig":{"Tmpfs":{{json .HostConfig.Tmpfs}}}}',
+                container_ref,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -2790,41 +3003,16 @@ def inspect_actual_docker_mounts(container_ref: str) -> bool:
         fail("PostgreSQL client broker mount inspection is uncertain", 70)
     if completed.returncode != 0:
         return False
+    if len(completed.stdout) > 65536:
+        fail("PostgreSQL client broker mount inspection is oversized", 70)
     try:
-        mounts = json.loads(completed.stdout.decode("utf-8"))
+        snapshot = json.loads(
+            completed.stdout.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_json_object,
+        )
     except (json.JSONDecodeError, UnicodeDecodeError):
         fail("PostgreSQL client broker mount inspection is malformed", 70)
-    expected = {
-        "/run/acgs-pg": ("bind", str(PG_SOCKET_BRIDGE), False),
-        "/run/tmp": ("bind", str(HOST_TMP), True),
-        "/proof-scratch": ("bind", str(HOST_PROOF_SCRATCH), True),
-        "/tmp": ("tmpfs", "", True),
-    }
-    observed: dict[str, tuple[str, str, bool]] = {}
-    if not isinstance(mounts, list):
-        fail("PostgreSQL client broker mount inspection is malformed", 70)
-    for mount in mounts:
-        if not isinstance(mount, dict):
-            fail("PostgreSQL client broker mount inspection is malformed", 70)
-        destination = mount.get("Destination")
-        source = mount.get("Source")
-        rw = mount.get("RW")
-        mount_type = mount.get("Type")
-        if (
-            not isinstance(destination, str)
-            or not isinstance(source, str)
-            or not isinstance(rw, bool)
-            or not isinstance(mount_type, str)
-        ):
-            fail("PostgreSQL client broker mount inspection is malformed", 70)
-        if destination in observed:
-            fail("PostgreSQL client broker actual Docker mount is duplicated", 70)
-        observed[destination] = (mount_type, source, rw)
-    if set(observed) != set(expected):
-        fail("PostgreSQL client broker actual Docker mounts changed", 70)
-    for destination, expected_value in expected.items():
-        if observed.get(destination) != expected_value:
-            fail("PostgreSQL client broker actual Docker mounts changed", 70)
+    validate_mount_snapshot(snapshot)
     return True
 
 
@@ -3160,6 +3348,7 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
         "--security-opt", "label=disable", "--user", f"{os.getuid()}:{os.getgid()}",
         "--read-only",
+        "--tmpfs", "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
         "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777,size=512m",
         "--mount", f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly",
         "--mount", f"type=bind,src={HOST_TMP},dst=/run/tmp",

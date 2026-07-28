@@ -1333,6 +1333,22 @@ def _write_fake_postgres_client_docker(
                 f"mounts = json.loads({json.dumps(mounts)!r})",
                 f"mode = {mode!r}",
                 "cid = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'",
+                "def normalized_mount_snapshot():",
+                "    bind_mounts = []",
+                "    tmpfs = {}",
+                "    for mount in mounts:",
+                "        if mount.get('Type') == 'tmpfs':",
+                "            destination = mount['Destination']",
+                "            tmpfs[destination] = mount.get(",
+                "                'Options',",
+                "                'rw,noexec,nosuid,nodev,mode=1777,size=512m',",
+                "            )",
+                "            continue",
+                "        item = dict(mount)",
+                "        item.setdefault('Mode', 'ro' if not item.get('RW', True) else '')",
+                "        item.setdefault('Propagation', 'rprivate')",
+                "        bind_mounts.append(item)",
+                "    return {'Mounts': bind_mounts, 'HostConfig': {'Tmpfs': tmpfs}}",
                 "def append_log(payload):",
                 "    with log.open('a', encoding='utf-8') as handle:",
                 "        handle.write(json.dumps(payload, separators=(',', ':')) + '\\n')",
@@ -1352,9 +1368,37 @@ def _write_fake_postgres_client_docker(
                 "if args[:2] == ['info', '--format']:",
                 "    print('[\"name=rootless\"]')",
                 "    raise SystemExit(0)",
-                "if args[:3] == ['inspect', '--format', '{{json .Mounts}}']:",
+                "if args[:2] == ['inspect', '--format'] and args[2].startswith('{\"Mounts\":'):",
                 "    if mode == 'fast-inspect-fail':",
                 "        raise SystemExit(1)",
+                "    if mode == 'malformed-inspect':",
+                "        print('{')",
+                "        raise SystemExit(0)",
+                "    if mode == 'oversized-inspect':",
+                "        print('x' * 70000)",
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-top':",
+                '        print(\'{"Mounts":[],"Mounts":[],"HostConfig":{"Tmpfs":{}}}\')',
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-nested':",
+                '        print(\'{"Mounts":[],"HostConfig":{"Tmpfs":{},"Tmpfs":{}}}\')',
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-bind-field':",
+                "        print(",
+                '            \'{"Mounts":[{"Type":"bind","Type":"bind",\'',
+                '            \'"Source":"/tmp/x","Destination":"/run/acgs-pg",\'',
+                '            \'"RW":false,"Mode":"ro","Propagation":"rprivate"}],\'',
+                '            \'"HostConfig":{"Tmpfs":{\'',
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,mode=1777,size=512m"}}}\'',
+                "        )",
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-tmpfs-destination':",
+                "        print(",
+                '            \'{"Mounts":[],"HostConfig":{"Tmpfs":{\'',
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,mode=1777,size=512m",\'',
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,mode=1777,size=512m"}}}\'',
+                "        )",
+                "        raise SystemExit(0)",
                 "    if mode == 'delayed-inspect':",
                 "        count = Path(str(state) + '.inspect-count')",
                 "        previous = (",
@@ -1363,7 +1407,9 @@ def _write_fake_postgres_client_docker(
                 "        count.write_text(str(previous + 1), encoding='ascii')",
                 "        if previous == 0:",
                 "            raise SystemExit(1)",
-                "    actual = list(mounts)",
+                "    snapshot = normalized_mount_snapshot()",
+                "    actual = list(snapshot['Mounts'])",
+                "    tmpfs = snapshot['HostConfig']['Tmpfs']",
                 "    if mode == 'extra-mount':",
                 "        actual.append(",
                 "            {",
@@ -1371,6 +1417,8 @@ def _write_fake_postgres_client_docker(
                 "                'Source': '/tmp/extra',",
                 "                'Destination': '/extra',",
                 "                'RW': True,",
+                "                'Mode': '',",
+                "                'Propagation': 'rprivate',",
                 "            }",
                 "        )",
                 "    elif mode == 'duplicate-mount':",
@@ -1379,7 +1427,66 @@ def _write_fake_postgres_client_docker(
                 "        actual[0] = {**actual[0], 'Source': '/tmp/wrong'}",
                 "    elif mode == 'wrong-type':",
                 "        actual[0] = {**actual[0], 'Type': 'volume'}",
-                "    print(json.dumps(actual, separators=(',', ':')))",
+                "    elif mode == 'wrong-rw':",
+                "        actual[0] = {**actual[0], 'RW': True, 'Mode': ''}",
+                "    elif mode == 'wrong-propagation':",
+                "        actual[0] = {**actual[0], 'Propagation': 'rshared'}",
+                "    elif mode == 'tmpfs-fabricated-in-mounts':",
+                "        actual.append(",
+                "            {",
+                "                'Type': 'tmpfs',",
+                "                'Source': '',",
+                "                'Destination': '/tmp',",
+                "                'RW': True,",
+                "                'Mode': '',",
+                "                'Propagation': '',",
+                "            }",
+                "        )",
+                "    elif mode == 'image-volume-data-entry':",
+                "        actual.append(",
+                "            {",
+                "                'Type': 'volume',",
+                "                'Source': '/var/lib/docker/volumes/postgres-data/_data',",
+                "                'Destination': '/var/lib/postgresql/data',",
+                "                'RW': True,",
+                "                'Mode': '',",
+                "                'Propagation': '',",
+                "            }",
+                "        )",
+                "    elif mode == 'missing-tmpfs':",
+                "        tmpfs.pop('/tmp', None)",
+                "    elif mode == 'missing-data-tmpfs':",
+                "        tmpfs.pop('/var/lib/postgresql/data', None)",
+                "    elif mode == 'extra-tmpfs':",
+                "        tmpfs['/run'] = 'rw,noexec,nosuid,nodev,mode=755,size=64m'",
+                "    elif mode == 'weak-data-tmpfs-option':",
+                "        tmpfs['/var/lib/postgresql/data'] = (",
+                "            'rw,nosuid,nodev,size=2g,uid=999,gid=999,mode=700'",
+                "        )",
+                "    elif mode == 'wrong-data-tmpfs-option':",
+                "        tmpfs['/var/lib/postgresql/data'] = (",
+                "            'rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=755'",
+                "        )",
+                "    elif mode == 'wrong-tmpfs-option':",
+                "        tmpfs['/tmp'] = 'rw,exec,nosuid,nodev,mode=1777,size=512m'",
+                "    elif mode == 'duplicate-tmpfs-option':",
+                "        tmpfs['/tmp'] = 'rw,rw,noexec,nosuid,nodev,mode=1777,size=512m'",
+                "    elif mode == 'tmpfs-flag-assigned':",
+                "        tmpfs['/tmp'] = 'rw=true,noexec,nosuid,nodev,mode=1777,size=512m'",
+                "    elif mode == 'tmpfs-assignment-missing':",
+                "        tmpfs['/tmp'] = 'rw,noexec,nosuid,nodev,mode,size=512m'",
+                "    elif mode == 'tmpfs-assignment-empty':",
+                "        tmpfs['/tmp'] = 'rw,noexec,nosuid,nodev,mode=,size=512m'",
+                "    elif mode == 'tmpfs-unsupported-key':",
+                "        tmpfs['/tmp'] = 'rw,noexec,nosuid,nodev,mode=1777,size=512m,foo=bar'",
+                "    elif mode == 'null-hostconfig':",
+                "        snapshot['HostConfig'] = None",
+                "    snapshot['Mounts'] = actual",
+                "    print(json.dumps(snapshot, separators=(',', ':')))",
+                "    raise SystemExit(0)",
+                "if args[:3] == ['inspect', '--format', '{{json .Mounts}}']:",
+                "    legacy_mounts = normalized_mount_snapshot()['Mounts']",
+                "    print(json.dumps(legacy_mounts, separators=(',', ':')))",
                 "    raise SystemExit(0)",
                 "if args[:1] == ['inspect']:",
                 "    if not state.exists():",
@@ -1546,6 +1653,13 @@ def _run_fake_docker_broker_request(
                 "Destination": "/proof-scratch",
                 "RW": True,
             },
+            {
+                "Type": "tmpfs",
+                "Source": "",
+                "Destination": "/var/lib/postgresql/data",
+                "RW": True,
+                "Options": "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+            },
             {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
         ],
         mode=mode,
@@ -1702,6 +1816,13 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
             "Destination": "/proof-scratch",
             "RW": True,
         },
+        {
+            "Type": "tmpfs",
+            "Source": "",
+            "Destination": "/var/lib/postgresql/data",
+            "RW": True,
+            "Options": "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+        },
         {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
     ]
     _write_fake_postgres_client_docker(docker_path, docker_log, docker_state, fake_mounts)
@@ -1825,6 +1946,10 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
             f"{os.getuid()}:{os.getgid()}"
         )
         assert "label=disable" in docker_invocation
+        assert (
+            "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700"
+            in (docker_invocation)
+        )
         assert f"type=bind,src={socket_bridge},dst=/run/acgs-pg,readonly" in docker_invocation
         assert f"type=bind,src={allowed_tmp},dst=/run/tmp" in docker_invocation
         assert f"type=bind,src={proof_scratch},dst=/proof-scratch" in docker_invocation
@@ -1868,6 +1993,28 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         ("duplicate-mount", 70, False),
         ("wrong-mount", 70, False),
         ("wrong-type", 70, False),
+        ("wrong-rw", 70, False),
+        ("wrong-propagation", 70, False),
+        ("tmpfs-fabricated-in-mounts", 70, False),
+        ("image-volume-data-entry", 70, False),
+        ("missing-tmpfs", 70, False),
+        ("missing-data-tmpfs", 70, False),
+        ("extra-tmpfs", 70, False),
+        ("weak-data-tmpfs-option", 70, False),
+        ("wrong-data-tmpfs-option", 70, False),
+        ("wrong-tmpfs-option", 70, False),
+        ("duplicate-tmpfs-option", 70, False),
+        ("tmpfs-flag-assigned", 70, False),
+        ("tmpfs-assignment-missing", 70, False),
+        ("tmpfs-assignment-empty", 70, False),
+        ("tmpfs-unsupported-key", 70, False),
+        ("malformed-inspect", 70, False),
+        ("null-hostconfig", 70, False),
+        ("oversized-inspect", 70, False),
+        ("duplicate-json-top", 70, False),
+        ("duplicate-json-nested", 70, False),
+        ("duplicate-json-bind-field", 70, False),
+        ("duplicate-json-tmpfs-destination", 70, False),
         ("marker-missing-on-start", 70, True),
         ("marker-hardlink-on-start", 70, True),
     ],
@@ -2153,6 +2300,13 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
                 "Destination": "/proof-scratch",
                 "RW": True,
             },
+            {
+                "Type": "tmpfs",
+                "Source": "",
+                "Destination": "/var/lib/postgresql/data",
+                "RW": True,
+                "Options": "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+            },
             {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
         ],
     )
@@ -2268,6 +2422,10 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "client.connect(socket_name)" in client_source
     assert '"--memory", "512m", "--cpus", "1", "--pids-limit", "128"' in broker_source
     assert '"--ulimit", "nofile=256:256"' in broker_source
+    assert (
+        '"/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700"'
+        in broker_source
+    )
     assert '"--ulimit", f"fsize={MAX_COMBINED_OUTPUT_BYTES}:{MAX_COMBINED_OUTPUT_BYTES}"' in (
         broker_source
     )
@@ -3270,21 +3428,39 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
 
 
 @pytest.mark.parametrize(
-    ("case_name", "mutate", "expected_rc"),
+    ("case_name", "mode", "expected_rc"),
     [
         ("exact", None, 0),
-        ("wrong-type", "wrong-type", 70),
-        ("extra", "extra", 70),
-        ("duplicate-destination", "duplicate-destination", 70),
-        ("tmpfs-wrong-type", "tmpfs-wrong-type", 70),
-        ("tmpfs-nonempty-source", "tmpfs-nonempty-source", 70),
-        ("tmpfs-wrong-rw", "tmpfs-wrong-rw", 70),
+        ("reordered-tmpfs-options", "reordered-tmpfs-options", 0),
+        ("tmpfs-fabricated-in-mounts", "tmpfs-fabricated-in-mounts", 70),
+        ("missing-tmpfs", "missing-tmpfs", 70),
+        ("extra-tmpfs", "extra-tmpfs", 70),
+        ("wrong-tmpfs-option", "wrong-tmpfs-option", 70),
+        ("duplicate-tmpfs-option", "duplicate-tmpfs-option", 70),
+        ("tmpfs-flag-assigned", "tmpfs-flag-assigned", 70),
+        ("tmpfs-assignment-missing", "tmpfs-assignment-missing", 70),
+        ("tmpfs-assignment-empty", "tmpfs-assignment-empty", 70),
+        ("tmpfs-unsupported-key", "tmpfs-unsupported-key", 70),
+        ("wrong-bind-type", "wrong-bind-type", 70),
+        ("wrong-bind-source", "wrong-bind-source", 70),
+        ("wrong-bind-rw", "wrong-bind-rw", 70),
+        ("wrong-bind-propagation", "wrong-bind-propagation", 70),
+        ("extra-bind", "extra-bind", 70),
+        ("duplicate-bind-destination", "duplicate-bind-destination", 70),
+        ("malformed-inspect", "malformed-inspect", 70),
+        ("null-hostconfig", "null-hostconfig", 70),
+        ("oversized-inspect", "oversized-inspect", 70),
+        ("duplicate-json-top", "duplicate-json-top", 70),
+        ("duplicate-json-nested", "duplicate-json-nested", 70),
+        ("duplicate-json-bind-field", "duplicate-json-bind-field", 70),
+        ("duplicate-json-tmpfs-destination", "duplicate-json-tmpfs-destination", 70),
+        ("inspect-failure", "inspect-failure", 66),
     ],
 )
 def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
     tmp_path: Path,
     case_name: str,
-    mutate: str | None,
+    mode: str | None,
     expected_rc: int,
 ) -> None:
     script = _postgres_gate_script_source()
@@ -3295,40 +3471,92 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
     )
     socket_bridge = tmp_path / "bridge"
     socket_bridge.mkdir()
-    mounts = [
-        {
-            "Type": "bind",
-            "Source": str(socket_bridge),
-            "Destination": "/run/acgs-pg",
-            "RW": True,
-        },
-        {
-            "Type": "tmpfs",
-            "Source": "",
-            "Destination": "/var/lib/postgresql/data",
-            "RW": True,
-        },
-        {"Type": "tmpfs", "Source": "", "Destination": "/tmp", "RW": True},
-    ]
-    if mutate == "wrong-type":
-        mounts[0] = {**mounts[0], "Type": "volume"}
-    elif mutate == "extra":
-        mounts.append({"Type": "bind", "Source": "/tmp/extra", "Destination": "/extra", "RW": True})
-    elif mutate == "duplicate-destination":
-        mounts.append(
+    snapshot = {
+        "Mounts": [
             {
                 "Type": "bind",
                 "Source": str(socket_bridge),
                 "Destination": "/run/acgs-pg",
                 "RW": True,
+                "Mode": "",
+                "Propagation": "rprivate",
+            },
+        ],
+        "HostConfig": {
+            "Tmpfs": {
+                "/var/lib/postgresql/data": (
+                    "rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700"
+                ),
+                "/tmp": "rw,noexec,nosuid,nodev,size=2g,mode=1777",
+            },
+        },
+    }
+    if mode == "reordered-tmpfs-options":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "mode=1777,size=2g,nodev,nosuid,noexec,rw"
+    elif mode == "tmpfs-fabricated-in-mounts":
+        snapshot["Mounts"].append(
+            {
+                "Type": "tmpfs",
+                "Source": "",
+                "Destination": "/tmp",
+                "RW": True,
+                "Mode": "",
+                "Propagation": "",
             }
         )
-    elif mutate == "tmpfs-wrong-type":
-        mounts[1] = {**mounts[1], "Type": "bind"}
-    elif mutate == "tmpfs-nonempty-source":
-        mounts[1] = {**mounts[1], "Source": "/tmp/postgres-data"}
-    elif mutate == "tmpfs-wrong-rw":
-        mounts[1] = {**mounts[1], "RW": False}
+    elif mode == "missing-tmpfs":
+        del snapshot["HostConfig"]["Tmpfs"]["/tmp"]
+    elif mode == "extra-tmpfs":
+        snapshot["HostConfig"]["Tmpfs"]["/run"] = "rw,noexec,nosuid,nodev,size=64m,mode=755"
+    elif mode == "wrong-tmpfs-option":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw,exec,nosuid,nodev,size=2g,mode=1777"
+    elif mode == "duplicate-tmpfs-option":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw,rw,noexec,nosuid,nodev,size=2g,mode=1777"
+    elif mode == "tmpfs-flag-assigned":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw=true,noexec,nosuid,nodev,size=2g,mode=1777"
+    elif mode == "tmpfs-assignment-missing":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,nodev,size,mode=1777"
+    elif mode == "tmpfs-assignment-empty":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,nodev,size=,mode=1777"
+    elif mode == "tmpfs-unsupported-key":
+        snapshot["HostConfig"]["Tmpfs"]["/tmp"] = "rw,noexec,nosuid,nodev,size=2g,mode=1777,foo=bar"
+    elif mode == "wrong-bind-type":
+        snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "Type": "volume"}
+    elif mode == "wrong-bind-source":
+        snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "Source": "/tmp/wrong"}
+    elif mode == "wrong-bind-rw":
+        snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "RW": False}
+    elif mode == "wrong-bind-propagation":
+        snapshot["Mounts"][0] = {**snapshot["Mounts"][0], "Propagation": "rshared"}
+    elif mode == "extra-bind":
+        snapshot["Mounts"].append(
+            {
+                "Type": "bind",
+                "Source": "/tmp/extra",
+                "Destination": "/extra",
+                "RW": True,
+                "Mode": "",
+                "Propagation": "rprivate",
+            }
+        )
+    elif mode == "duplicate-bind-destination":
+        snapshot["Mounts"].append(dict(snapshot["Mounts"][0]))
+    elif mode == "null-hostconfig":
+        snapshot["HostConfig"] = None
+    expected = {
+        "binds": {
+            "/run/acgs-pg": {
+                "source": str(socket_bridge),
+                "rw": True,
+                "mode": "",
+                "propagation": "rprivate",
+            },
+        },
+        "tmpfs": {
+            "/var/lib/postgresql/data": ("rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700"),
+            "/tmp": "rw,noexec,nosuid,nodev,size=2g,mode=1777",
+        },
+    }
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     docker_path = fake_bin / "docker"
@@ -3338,9 +3566,42 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
                 "#!/usr/bin/env python3",
                 "from __future__ import annotations",
                 "import json, sys",
-                f"mounts = json.loads({json.dumps(mounts)!r})",
-                "if sys.argv[1:4] == ['inspect', '--format', '{{json .Mounts}}']:",
-                "    print(json.dumps(mounts, separators=(',', ':')))",
+                f"snapshot = json.loads({json.dumps(snapshot)!r})",
+                f"mode = {mode!r}",
+                "if sys.argv[1:3] == ['inspect', '--format']:",
+                "    if mode == 'inspect-failure':",
+                "        raise SystemExit(66)",
+                "    if mode == 'malformed-inspect':",
+                "        print('{')",
+                "        raise SystemExit(0)",
+                "    if mode == 'oversized-inspect':",
+                "        print('x' * 70000)",
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-top':",
+                '        print(\'{"Mounts":[],"Mounts":[],"HostConfig":{"Tmpfs":{}}}\')',
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-nested':",
+                '        print(\'{"Mounts":[],"HostConfig":{"Tmpfs":{},"Tmpfs":{}}}\')',
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-bind-field':",
+                "        print(",
+                '            \'{"Mounts":[{"Type":"bind","Type":"bind",\'',
+                '            \'"Source":"/tmp/x","Destination":"/run/acgs-pg",\'',
+                '            \'"RW":true,"Mode":"","Propagation":"rprivate"}],\'',
+                '            \'"HostConfig":{"Tmpfs":{\'',
+                "            '\"/var/lib/postgresql/data\":'",
+                "            '\"rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700\",'",
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}}\'',
+                "        )",
+                "        raise SystemExit(0)",
+                "    if mode == 'duplicate-json-tmpfs-destination':",
+                "        print(",
+                '            \'{"Mounts":[],"HostConfig":{"Tmpfs":{\'',
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,size=2g,mode=1777",\'',
+                '            \'"/tmp":"rw,noexec,nosuid,nodev,size=2g,mode=1777"}}}\'',
+                "        )",
+                "        raise SystemExit(0)",
+                "    print(json.dumps(snapshot, separators=(',', ':')))",
                 "    raise SystemExit(0)",
                 "raise SystemExit(127)",
             ]
@@ -3349,11 +3610,6 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
         encoding="utf-8",
     )
     docker_path.chmod(0o755)
-    expected = {
-        "/run/acgs-pg": {"type": "bind", "source": str(socket_bridge), "rw": True},
-        "/var/lib/postgresql/data": {"type": "tmpfs", "source": "", "rw": True},
-        "/tmp": {"type": "tmpfs", "source": "", "rw": True},
-    }
     harness = "\n".join(
         (
             "set -euo pipefail",
