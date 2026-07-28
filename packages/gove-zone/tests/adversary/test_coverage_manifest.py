@@ -19,22 +19,45 @@ variant (``adaptive`` BYPASSABLE). Read both.
 ``status`` was formerly ``Literal["DEFENDED"]``, so every class read DEFENDED by
 construction and the schema could not express a gap — which is also why a class
 with no coverage could not be added to the taxonomy at all. The vocabulary is
-widened so that absence is representable. This is deliberately a schema change,
-not an evidence change: the eight original classes keep the posture their
-existing tests actually support.
+widened so that absence is representable.
 
-Two invariants keep the wider vocabulary honest in both directions. A class may
-not claim ``DEFENDED``/``PARTIAL``/``BYPASSABLE`` without citing at least one
-real test, so a posture cannot be asserted without evidence; and a class may not
-claim ``UNKNOWN`` while citing tests, so a gap cannot be recorded while evidence
-exists that would settle it.
+Three layers, kept deliberately separate
+----------------------------------------
 
-Each entry names real ``file::test`` nodes in ``packages/gove-zone/tests``. The
-tests below assert every one exists, so the taxonomy cannot silently rot.
+- **Claim** — ``status`` / ``adaptive``. What this repository *declares* about a
+  class. Hand-maintained.
+- **Evidence** — ``covering``, plus the ``GAP``/``BOUNDARY`` kind that
+  :func:`_evidence_kind` derives *from the cited test itself* (an ``xfail``
+  marker or the repo's ``_KNOWN_GAP`` name suffix), not from a label repeated
+  here. Evidence a maintainer can relabel by hand is not independent evidence.
+- **Verifier** — the tests below, which check the claim against the evidence.
+
+What the verifier does and does not establish
+---------------------------------------------
+
+It checks *consistency*, not truth. Passing means the declared posture does not
+contradict the kind of evidence cited for it. It cannot show that a control is
+correct, that coverage is sufficient, or that a class is genuinely defended —
+no manifest can. Specifically:
+
+- ``DEFENDED`` requires at least one boundary-asserting test and **no** test
+  that documents a residual gap. This is what makes posture inflation cost
+  something: flipping a class to ``DEFENDED`` while it still cites a gap-marked
+  test fails, so the evidence must change too.
+- ``BYPASSABLE`` requires at least one gap-documenting test.
+- ``PARTIAL`` requires at least one boundary-asserting test. The "does not cover
+  the whole class" half is prose and is **not** machine-checked.
+- ``UNKNOWN`` must cite nothing, so a gap cannot be recorded while evidence
+  exists that would settle it.
+
+Each entry names real ``file::test`` nodes under ``packages/gove-zone/tests``.
+The tests below assert every one resolves inside that tree, so the taxonomy
+cannot silently rot.
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -128,10 +151,13 @@ MANIFEST: dict[str, ManifestEntry] = {
     "negligent-integrator": {
         # Wiring omissions, framework-native tool-calling paths that skip the
         # gate, and signature checks disabled in a test config that reaches
-        # production. PARTIAL: shipped examples are proven to route through the
-        # gate and an in-process direct call is blocked and audited, but nothing
-        # detects a newly added ungoverned effect path — no static scan and no
-        # CI job anywhere in the repository performs that check.
+        # production. PARTIAL: a static AST check does run in CI
+        # (test_gate_wiring_matrix.py, via saas-beta-required.yml), and an
+        # in-process direct call is blocked and audited. But that check asserts
+        # only that a gate symbol is imported *and* called somewhere in the
+        # module, over the examples INTEGRATION_MATRIX.md claims as shipped —
+        # not that the side effect is mediated, and not over integrator code.
+        # Nothing detects an ungoverned effect path added outside that set.
         "status": "PARTIAL",
         "adaptive": "UNTESTED",
         "covering": [
@@ -140,15 +166,18 @@ MANIFEST: dict[str, ManifestEntry] = {
         ],
     },
     "compromised-host": {
-        # Attacker controls process memory, filesystem, and clock. BYPASSABLE:
-        # the covering test documents the bypass rather than asserting a
-        # boundary — a keyless ``verify_chain()`` returns valid on a truncated
-        # chain, and only a caller-supplied external anchor detects it. No
-        # shipped src/ call site supplies one, so the default posture is
-        # keyless. Signing keys are readable by definition under this adversary.
+        # Attacker controls process memory, filesystem, and clock. BYPASSABLE
+        # rests on the xfail residual: keyless ``verify_chain()`` accepts a
+        # self-consistent full rewrite, and only a caller-supplied external
+        # anchor detects it. Signing keys are readable by definition under this
+        # adversary. The truncation test is cited alongside it because it
+        # asserts the *anchored* boundary affirmatively (length_mismatch and
+        # last_hash_mismatch), so the pair records both halves: what the anchor
+        # catches, and what its absence does not.
         "status": "BYPASSABLE",
         "adaptive": "UNTESTED",
         "covering": [
+            "test_mutation_suite.py::test_keyless_full_rewrite_residual_KNOWN_GAP",
             "test_audit_chain_corruption.py::test_verify_chain_detects_whole_event_truncation",
         ],
     },
@@ -188,11 +217,68 @@ _VALID_ADAPTIVE = frozenset({"STABLE", "BYPASSABLE", "UNTESTED"})
 _EVIDENCE_BEARING = frozenset({"DEFENDED", "PARTIAL", "BYPASSABLE"})
 
 
+def _resolve_node(node: str) -> tuple[Path, str] | None:
+    """Resolve ``<file>::<test_name>`` to a real test function, or ``None``.
+
+    Rejects anything that is not a ``test_``-prefixed function in a ``.py`` file
+    *inside* ``TESTS_DIR``. Without the containment check a covering entry could
+    cite ``../src/gove_zone/audit.py::...`` and satisfy the existence invariant
+    with a source file rather than a test.
+    """
+    filename, sep, test_name = node.partition("::")
+    if not sep or not test_name.startswith("test_"):
+        return None
+    path = (TESTS_DIR / filename).resolve()
+    if path.suffix != ".py" or not path.is_relative_to(TESTS_DIR) or not path.is_file():
+        return None
+    return (path, test_name) if f"def {test_name}(" in path.read_text(encoding="utf-8") else None
+
+
 def _node_exists(node: str) -> bool:
-    """``<file>::<test_name>`` exists iff the file defines that test function."""
-    filename, _, test_name = node.partition("::")
-    path = TESTS_DIR / filename
-    return path.is_file() and f"def {test_name}(" in path.read_text(encoding="utf-8")
+    return _resolve_node(node) is not None
+
+
+def _evidence_kind(node: str) -> str:
+    """``GAP`` or ``BOUNDARY``, derived from the cited test, not from a label.
+
+    A test counts as gap-documenting when it is marked ``xfail`` or carries the
+    repository's ``_KNOWN_GAP`` name suffix — both of which say "this reproduces
+    a residual we have not closed". Everything else is read as asserting a
+    boundary. Deriving this from the test source is the point: a maintainer
+    cannot inflate a posture by editing a label next to the claim.
+    """
+    resolved = _resolve_node(node)
+    if resolved is None:
+        return "BOUNDARY"
+    path, test_name = resolved
+    if test_name.endswith("_KNOWN_GAP"):
+        return "GAP"
+    for item in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))):
+        if (
+            isinstance(item, ast.FunctionDef)
+            and item.name == test_name
+            and any("xfail" in ast.dump(dec) for dec in item.decorator_list)
+        ):
+            return "GAP"
+    return "BOUNDARY"
+
+
+def _posture_evidence_violations(manifest: dict[str, ManifestEntry]) -> list[str]:
+    """Check each declared posture against the *kind* of evidence it cites.
+
+    Consistency only — see the module docstring for what this does not prove.
+    """
+    violations: list[str] = []
+    for cls, entry in sorted(manifest.items()):
+        kinds = {_evidence_kind(node) for node in entry["covering"]}
+        status = entry["status"]
+        if status == "DEFENDED" and "GAP" in kinds:
+            violations.append(f"{cls}: DEFENDED while citing a gap-documenting test")
+        if status in {"DEFENDED", "PARTIAL"} and "BOUNDARY" not in kinds:
+            violations.append(f"{cls}: {status} without any boundary-asserting test")
+        if status == "BYPASSABLE" and "GAP" not in kinds:
+            violations.append(f"{cls}: BYPASSABLE without any gap-documenting test")
+    return violations
 
 
 def test_baseline_classes_are_never_dropped() -> None:
@@ -247,3 +333,40 @@ def test_every_covering_test_actually_exists() -> None:
             if not _node_exists(node):
                 missing.append(f"{cls}: {node}")
     assert not missing, "covering tests referenced but not found:\n" + "\n".join(missing)
+
+
+def test_covering_nodes_must_resolve_inside_the_test_tree() -> None:
+    """A source file, a private helper, or a path escaping ``tests/`` is not evidence."""
+    for forged in (
+        "../src/gove_zone/audit.py::test_verify_chain_detects_whole_event_truncation",
+        "test_audit_chain_corruption.py::_record",
+        "test_audit_chain_corruption.py",
+    ):
+        assert not _node_exists(forged), f"accepted a non-test covering node: {forged}"
+
+
+def test_declared_posture_is_consistent_with_its_evidence() -> None:
+    violations = _posture_evidence_violations(MANIFEST)
+    assert not violations, "posture contradicts the evidence cited for it:\n" + "\n".join(
+        violations
+    )
+
+
+def test_posture_inflation_without_new_evidence_is_rejected() -> None:
+    """The negative case that gives the consistency check teeth.
+
+    Before this rule, flipping ``compromised-host`` from BYPASSABLE to DEFENDED
+    with its ``covering`` list completely unchanged passed every invariant —
+    posture inflation was free. It must now cost a change in evidence, because
+    the class still cites an xfail-marked residual.
+    """
+    inflated: dict[str, ManifestEntry] = dict(MANIFEST)
+    inflated["compromised-host"] = {
+        **MANIFEST["compromised-host"],
+        "status": "DEFENDED",
+    }
+
+    violations = _posture_evidence_violations(inflated)
+    assert any("compromised-host" in v and "DEFENDED" in v for v in violations), (
+        f"claiming DEFENDED while still citing a gap-documenting test must fail; got: {violations}"
+    )
