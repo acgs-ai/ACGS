@@ -420,6 +420,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The hardened gate refuses to run without an owner-only recovery-intent
+          # directory; mktemp -d creates it with mode 0700 owned by the runner user.
+          recovery_root="$(mktemp -d "${RUNNER_TEMP}/acp-postgres-recovery.XXXXXXXX")"
+          export ACGS_POSTGRES_RECOVERY_ROOT="$(realpath -e "$recovery_root")"
           UV_BIN="$(realpath -e "$(command -v uv)")" ./scripts/run_postgres_gate.sh \
             tests/integration/test_agent_registration_idempotency_postgres.py::test_identical_key_and_canonical_request_converges_to_one_terminal_result \
             tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects \
