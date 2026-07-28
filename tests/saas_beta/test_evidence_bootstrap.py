@@ -7357,6 +7357,7 @@ def test_clean_sibling_build_child_env_allowlists_acgs_and_scrubs_hostile_author
         "ACGS_CLEAN_SIBLING_DIAGNOSTIC_FD": "21",
         "ACGS_CLEAN_SIBLING_MEMFD_FD": "22",
         "ACGS_CLEAN_SIBLING_MEMFD_IDENTITY": "1:2:3:100600",
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_HARDEN_FAULT": "chown_success_chmod_fail",
         "ACGS_CLEAN_SIBLING_TMP_FD": "unexpected-prefix",
         "ACGS_CLEAN_SIBLING_UNREVIEWED": "unexpected-prefix",
         "BASH_FUNC_realpath%%": f"() {{ touch {function_marker}; }}",
@@ -7402,6 +7403,7 @@ def test_clean_sibling_build_child_env_allowlists_acgs_and_scrubs_hostile_author
         "ACGS_CLEAN_SIBLING_DIAGNOSTIC_FD",
         "ACGS_CLEAN_SIBLING_MEMFD_FD",
         "ACGS_CLEAN_SIBLING_MEMFD_IDENTITY",
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_HARDEN_FAULT",
         "ACGS_CLEAN_SIBLING_TMP_FD",
         "ACGS_CLEAN_SIBLING_UNREVIEWED",
         "BASH_FUNC_realpath%%",
@@ -8205,10 +8207,26 @@ def test_clean_sibling_guardian_scope_stop_state_machine_uses_exact_systemctl_id
     assert "quota_root_fd_binding()" in internal
     assert "quota_recorded_mount_state()" in internal
     assert "quota_capture_mount_binding()" in internal
+    assert "quota_harden_mounted_root()" in internal
     assert "QUOTA_MOUNT_MNT_ID" in internal
     assert "QUOTA_UNDERLAY_MNT_ID" in internal
     assert "QUOTA_MOUNT_ROOT" in internal
     assert "QUOTA_MOUNT_POINT" in internal
+    assert 'os.open("quota", flags, dir_fd=parent_fd)' in internal
+    assert "os.O_NOFOLLOW" in internal
+    assert "before_uid != expected_pre_uid" in internal
+    assert "mounted_dev_ino=\"${QUOTA_MOUNT_IDENTITY%:*:*}\"" in internal
+    assert "quota hardened mount binding changed" in internal
+    assert '"${identity%:*:*}" == "${QUOTA_MOUNT_IDENTITY%:*:*}"' in internal
+    assert "os.fchown(fd, expected_uid, expected_gid)" in internal
+    assert "os.fchmod(fd, 0o700)" in internal
+    assert "os.fstat(fd)" in internal
+    assert "quota mounted root binding changed before hardening" in internal
+    assert "quota mounted root binding changed after hardening" in internal
+    assert "chown \"$(id -u):$(id -g)\" -- \"$QUOTA_ROOT\"" not in internal
+    assert "chmod 700 -- \"$QUOTA_ROOT\"" not in internal
+    assert "stat -Lc '%u:%a' -- \"$QUOTA_ROOT\"" not in internal
+    assert "quota mounted root must be owned by current user with mode 700" in internal
     assert '"$FUSERMOUNT_BIN" -u -z "$QUOTA_ROOT"' not in internal
     assert "QUOTA_FUSE_STARTTIME" in internal
     assert "quota_fuse_pid_started()" in internal
@@ -8241,6 +8259,15 @@ def test_clean_sibling_guardian_scope_stop_state_machine_uses_exact_systemctl_id
     assert 'WORKTREE="$QUOTA_ROOT/product"' in internal
     assert "mount_quota_root\nlower_descendant_file_size_limit\nWORKTREE=" not in internal
     assert internal.count('lower_descendant_file_size_limit\n    exec "$BWRAP_BIN"') == 5
+    first_capture = internal.index(
+        "quota_capture_mount_binding || die 'quota mount binding is unsafe'"
+    )
+    harden = internal.index("quota_harden_mounted_root \\")
+    second_capture = internal.index(
+        "quota_capture_mount_binding || die 'quota hardened mount binding is unsafe'"
+    )
+    assert first_capture < harden < second_capture
+    assert second_capture < internal.index("quota mounted root must be owned by current user")
     assert internal.index("mount_quota_root") < internal.index('WORKTREE="$QUOTA_ROOT/product"')
     assert 'SCRATCH_ROOT="$QUOTA_ROOT/scratch"' in internal
     assert 'TRUSTED_LEDGER_ROOT="$TMP_ROOT/trusted-ledger"' in internal
@@ -9586,6 +9613,7 @@ def test_clean_sibling_quota_fuse_mount_enforces_byte_inode_and_detaches(
             _shell_function(source, "quota_root_fd_binding"),
             _shell_function(source, "quota_recorded_mount_state"),
             _shell_function(source, "quota_capture_mount_binding"),
+            _shell_function(source, "quota_harden_mounted_root"),
             _shell_function(source, "quota_mountpoint_state"),
             _shell_function(source, "quota_mountpoint_absent"),
             _shell_function(source, "quota_bound_descriptors_match"),
@@ -9633,6 +9661,9 @@ def test_clean_sibling_quota_fuse_mount_enforces_byte_inode_and_detaches(
         'mkdir -m 700 "$TMP_ROOT"\n'
         'exec {TMP_ROOT_FD}<"$TMP_ROOT"\n'
         "mount_quota_root\n"
+        'mounted_root_identity="$(stat -Lc \'%u:%a\' -- "$QUOTA_ROOT")"\n'
+        '[[ "$mounted_root_identity" == "$(id -u):700" ]] || '
+        'die "quota mounted root not private: $mounted_root_identity"\n'
         'if dd if=/dev/zero of="$QUOTA_ROOT/fill" bs=1M count=8 status=none '
         "2>/dev/null; then\n"
         "  die 'quota byte cap did not refuse +1 write'\n"
@@ -9661,6 +9692,228 @@ def test_clean_sibling_quota_fuse_mount_enforces_byte_inode_and_detaches(
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
 
 
+def test_clean_sibling_quota_hardener_refuses_symlink_without_victim_metadata_change(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    functions = "\n".join(
+        (
+            _shell_function(source, "quota_root_fd_binding"),
+            _shell_function(source, "quota_capture_mount_binding"),
+            _shell_function(source, "quota_harden_mounted_root"),
+        )
+    )
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    victim = tmp_path / "victim"
+    victim.mkdir(mode=0o755)
+    (victim / "sentinel").write_text("victim\n", encoding="utf-8")
+    symlink = root / "quota"
+    symlink.symlink_to(victim, target_is_directory=True)
+    before = victim.stat()
+    expected_binding = f"0:0:0:700\t1\tfuse.ext4\t/\t{symlink}"
+    harness = tmp_path / "quota-symlink-hardener.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "die() { printf 'DIE=%s\\n' \"$*\" >&2; return 2; }\n"
+        "SNAPSHOT_PYTHON=/usr/bin/python3\n"
+        f"TMP_ROOT={shlex.quote(str(root))}\n"
+        f"QUOTA_ROOT={shlex.quote(str(symlink))}\n"
+        "QUOTA_ROOT_IDENTITY='0:0:0:700'\n"
+        "QUOTA_UNDERLAY_MNT_ID=0\n"
+        f"{functions}\n"
+        'exec {TMP_ROOT_FD}<"$TMP_ROOT"\n'
+        "set +e\n"
+        "quota_capture_mount_binding >/dev/null 2>&1\n"
+        "capture_rc=$?\n"
+        "quota_harden_mounted_root "
+        f"{shlex.quote(expected_binding)} "
+        ">/dev/null 2>&1\n"
+        "harden_rc=$?\n"
+        "set -e\n"
+        'printf "CAPTURE_RC=%s\\n" "$capture_rc"\n'
+        'printf "HARDEN_RC=%s\\n" "$harden_rc"\n'
+        '[[ "$capture_rc" == 2 ]]\n'
+        '[[ "$harden_rc" == 2 ]]\n'
+        '[[ -z "${QUOTA_MOUNT_IDENTITY:-}" ]]\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=8,
+    )
+    after = victim.stat()
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "CAPTURE_RC=2" in completed.stdout
+    assert "HARDEN_RC=2" in completed.stdout
+    assert (victim / "sentinel").read_text(encoding="utf-8") == "victim\n"
+    assert (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) == (
+        before.st_uid,
+        before.st_gid,
+        stat.S_IMODE(before.st_mode),
+    )
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+
+
+def test_clean_sibling_quota_hardener_refuses_wrong_mount_id_without_mutation(
+    tmp_path: Path,
+) -> None:
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    functions = _shell_function(source, "quota_harden_mounted_root")
+    root = tmp_path / "root"
+    root.mkdir(mode=0o700)
+    quota = root / "quota"
+    quota.mkdir(mode=0o700)
+    sentinel = quota / "sentinel"
+    sentinel.write_text("victim\n", encoding="utf-8")
+    before = quota.stat()
+    harness = tmp_path / "quota-wrong-mount-id-hardener.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "SNAPSHOT_PYTHON=/usr/bin/python3\n"
+        f"TMP_ROOT={shlex.quote(str(root))}\n"
+        f"QUOTA_ROOT={shlex.quote(str(quota))}\n"
+        f"{functions}\n"
+        'exec {TMP_ROOT_FD}<"$TMP_ROOT"\n'
+        'exec {QUOTA_TEST_FD}<"$QUOTA_ROOT"\n'
+        'identity="$(stat -Lc \'%d:%i:%u:%a\' -- "/proc/$$/fd/$QUOTA_TEST_FD")"\n'
+        'actual_mnt_id="$(awk \'/^mnt_id:/ {print $2}\' "/proc/$$/fdinfo/$QUOTA_TEST_FD")"\n'
+        'exec {QUOTA_TEST_FD}<&-\n'
+        '[[ "$actual_mnt_id" =~ ^[0-9]+$ ]]\n'
+        'wrong_mnt_id=$((actual_mnt_id + 1))\n'
+        'expected_binding="$identity"$\'\\t\'"$wrong_mnt_id"$\'\\t\'"fuse.ext4"$\'\\t\'"/"$\'\\t\'"$QUOTA_ROOT"\n'
+        "set +e\n"
+        'quota_harden_mounted_root "$expected_binding" >/dev/null 2>&1\n'
+        "harden_rc=$?\n"
+        "set -e\n"
+        'printf "HARDEN_RC=%s\\n" "$harden_rc"\n'
+        '[[ "$harden_rc" == 2 ]]\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=8,
+    )
+    after = quota.stat()
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "HARDEN_RC=2" in completed.stdout
+    assert sentinel.read_text(encoding="utf-8") == "victim\n"
+    assert (after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)) == (
+        before.st_uid,
+        before.st_gid,
+        stat.S_IMODE(before.st_mode),
+    )
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ("chown_success_chmod_fail", "chmod_success_chown_fail"),
+)
+def test_clean_sibling_quota_partial_hardening_failure_detaches_exact_mount(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    if not Path("/dev/fuse").is_char_device():
+        pytest.skip("/dev/fuse unavailable")
+    source = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
+    functions = "\n".join(
+        (
+            _shell_function(source, "validate_exact_tool"),
+            _shell_function(source, "configured_quota_bytes"),
+            _shell_function(source, "configured_quota_inodes"),
+            _shell_function(source, "quota_create_private_file"),
+            _shell_function(source, "mount_quota_root"),
+            _shell_function(source, "quota_log_summary"),
+            _shell_function(source, "quota_root_fd_binding"),
+            _shell_function(source, "quota_recorded_mount_state"),
+            _shell_function(source, "quota_capture_mount_binding"),
+            _shell_function(source, "quota_harden_mounted_root"),
+            _shell_function(source, "quota_mountpoint_state"),
+            _shell_function(source, "quota_mountpoint_absent"),
+            _shell_function(source, "quota_bound_descriptors_match"),
+            _shell_function(source, "quota_fuse_read_stat"),
+            _shell_function(source, "quota_fuse_pid_started"),
+            _shell_function(source, "quota_fuse_started"),
+            _shell_function(source, "quota_fuse_pid_is_current_job"),
+            _shell_function(source, "quota_fuse_read_pid_state"),
+            _shell_function(source, "quota_fuse_child_matches"),
+            _shell_function(source, "quota_fuse_child_reaped_cleanly"),
+            _shell_function(source, "quota_fuse_reap_unverified_pid"),
+            _shell_function(source, "quota_fuse_force_terminate"),
+            _shell_function(source, "detach_quota_root"),
+        )
+    )
+    parent = tmp_path / "private-tmp"
+    parent.mkdir(mode=0o700)
+    harness = tmp_path / f"quota-partial-hardening-{fault}.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "die() { printf 'DIE=%s\\n' \"$*\" >&2; return 2; }\n"
+        "readonly ACGS_PROOF_QUOTA_BYTES=8589934592\n"
+        "readonly ACGS_PROOF_QUOTA_INODES=100000\n"
+        "readonly FUSE2FS_BIN=/usr/bin/fuse2fs\n"
+        "readonly MKFS_EXT4_BIN=/usr/bin/mkfs.ext4\n"
+        "readonly FUSERMOUNT_BIN=/usr/bin/fusermount3\n"
+        "readonly MOUNTPOINT_BIN=/usr/bin/mountpoint\n"
+        "SNAPSHOT_PYTHON=/usr/bin/python3\n"
+        f"TMP_PARENT={shlex.quote(str(parent))}\n"
+        "TMP_BASENAME=acgs-test-quota\n"
+        'TMP_ROOT="$TMP_PARENT/root"\n'
+        'QUOTA_ROOT="$TMP_ROOT/quota"\n'
+        "QUOTA_IMAGE=\n"
+        "QUOTA_LOG=\n"
+        "QUOTA_MOUNTED=0\n"
+        "QUOTA_FUSE_PID=\n"
+        "QUOTA_FUSE_STARTTIME=\n"
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_ENABLE=1\n"
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_BYTES=4194304\n"
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_INODES=32\n"
+        f"ACGS_CLEAN_SIBLING_TEST_QUOTA_HARDEN_FAULT={shlex.quote(fault)}\n"
+        "export ACGS_CLEAN_SIBLING_TEST_QUOTA_ENABLE "
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_BYTES ACGS_CLEAN_SIBLING_TEST_QUOTA_INODES "
+        "ACGS_CLEAN_SIBLING_TEST_QUOTA_HARDEN_FAULT\n"
+        f"{functions}\n"
+        'mkdir -m 700 "$TMP_ROOT"\n'
+        'exec {TMP_ROOT_FD}<"$TMP_ROOT"\n'
+        "set +e\n"
+        "mount_quota_root\n"
+        "mount_rc=$?\n"
+        "set -e\n"
+        'printf "MOUNT_RC=%s\\n" "$mount_rc"\n'
+        '[[ "$mount_rc" == 2 ]]\n'
+        "[[ -f \"$QUOTA_IMAGE\" && -f \"$QUOTA_LOG\" ]]\n"
+        "detach_quota_root\n"
+        'printf "DETACH_RC=0\\n"\n'
+        'if "$MOUNTPOINT_BIN" -q "$QUOTA_ROOT"; then die "quota mount still mounted"; fi\n'
+        'rm -rf -- "$TMP_ROOT" "$QUOTA_IMAGE" "$QUOTA_LOG"\n',
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run(
+        [str(harness)],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "MOUNT_RC=2" in completed.stdout
+    assert "DETACH_RC=0" in completed.stdout
+    assert "CLEAN_SIBLING_TECHNICAL=PASS" not in completed.stdout + completed.stderr
+
+
 def test_clean_sibling_quota_fuse_mount_tracks_foreground_direct_child(
     tmp_path: Path,
 ) -> None:
@@ -9677,6 +9930,7 @@ def test_clean_sibling_quota_fuse_mount_tracks_foreground_direct_child(
             _shell_function(source, "quota_root_fd_binding"),
             _shell_function(source, "quota_recorded_mount_state"),
             _shell_function(source, "quota_capture_mount_binding"),
+            _shell_function(source, "quota_harden_mounted_root"),
             _shell_function(source, "quota_mountpoint_state"),
             _shell_function(source, "quota_mountpoint_absent"),
             _shell_function(source, "quota_bound_descriptors_match"),
@@ -9755,13 +10009,20 @@ def test_clean_sibling_quota_fuse_mount_tracks_foreground_direct_child(
         "ACGS_CLEAN_SIBLING_TEST_QUOTA_BYTES ACGS_CLEAN_SIBLING_TEST_QUOTA_INODES\n"
         f"{functions}\n"
         "quota_capture_mount_binding() {\n"
-        f"  printf 'called\\n' >{shlex.quote(str(capture_called))}\n"
-        "  QUOTA_MOUNT_IDENTITY='999:2:0:755'\n"
+        f"  count=$(cat {shlex.quote(str(capture_called))} 2>/dev/null || printf '0')\n"
+        "  count=$((count + 1))\n"
+        f"  printf '%s\\n' \"$count\" >{shlex.quote(str(capture_called))}\n"
+        "  if (( count == 1 )); then\n"
+        "    QUOTA_MOUNT_IDENTITY='999:2:0:755'\n"
+        "  else\n"
+        "    QUOTA_MOUNT_IDENTITY=\"999:2:$(id -u):700\"\n"
+        "  fi\n"
         "  QUOTA_MOUNT_MNT_ID=999\n"
         "  QUOTA_MOUNT_FSTYPE=fuse.ext4\n"
         "  QUOTA_MOUNT_ROOT='/'\n"
         f"  QUOTA_MOUNT_POINT={shlex.quote(str(parent / 'root' / 'quota'))}\n"
         "}\n"
+        "quota_harden_mounted_root() { return 0; }\n"
         'mkdir -m 700 "$TMP_ROOT"\n'
         'exec {TMP_ROOT_FD}<"$TMP_ROOT"\n'
         "mount_quota_root\n"
@@ -9783,7 +10044,7 @@ def test_clean_sibling_quota_fuse_mount_tracks_foreground_direct_child(
         timeout=15,
     )
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
-    assert capture_called.read_text(encoding="utf-8").strip() == "called"
+    assert capture_called.read_text(encoding="utf-8").strip() == "2"
     args = fuse_args.read_text(encoding="utf-8").splitlines()
     assert args[:3] == ["-f", "-o", "fakeroot,auto_unmount"]
     ppid = re.search(r"^FUSE_PPID=(\d+)$", completed.stdout, re.MULTILINE)
@@ -12007,6 +12268,7 @@ def test_clean_sibling_quota_startup_timeout_reaps_started_mounter_without_pass(
             _shell_function(source, "quota_root_fd_binding"),
             _shell_function(source, "quota_recorded_mount_state"),
             _shell_function(source, "quota_capture_mount_binding"),
+            _shell_function(source, "quota_harden_mounted_root"),
             _shell_function(source, "quota_mountpoint_state"),
             _shell_function(source, "quota_mountpoint_absent"),
             _shell_function(source, "quota_bound_descriptors_match"),

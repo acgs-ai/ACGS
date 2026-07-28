@@ -960,6 +960,11 @@ mount_quota_root() {
   local deadline=0
   local image_identity=''
   local log_identity=''
+  local mounted_dev_ino=''
+  local mounted_fstype=''
+  local mounted_mnt_id=''
+  local mounted_point=''
+  local mounted_root=''
   local root_binding=''
   local root_identity=''
   local root_mnt_id=''
@@ -1039,6 +1044,23 @@ mount_quota_root() {
   [[ "$(stat -Lc '%d:%i:%u:%a' -- "/proc/$$/fd/$QUOTA_ROOT_FD")" == "$QUOTA_ROOT_IDENTITY" ]] ||
     die 'quota mountpoint identity is unsafe'
   quota_capture_mount_binding || die 'quota mount binding is unsafe'
+  mounted_dev_ino="${QUOTA_MOUNT_IDENTITY%:*:*}"
+  mounted_mnt_id="$QUOTA_MOUNT_MNT_ID"
+  mounted_fstype="$QUOTA_MOUNT_FSTYPE"
+  mounted_root="$QUOTA_MOUNT_ROOT"
+  mounted_point="$QUOTA_MOUNT_POINT"
+  quota_harden_mounted_root \
+    "$QUOTA_MOUNT_IDENTITY"$'\t'"$QUOTA_MOUNT_MNT_ID"$'\t'"$QUOTA_MOUNT_FSTYPE"$'\t'"$QUOTA_MOUNT_ROOT"$'\t'"$QUOTA_MOUNT_POINT" ||
+    die 'quota mounted root hardening is unsafe'
+  quota_capture_mount_binding || die 'quota hardened mount binding is unsafe'
+  [[ "${QUOTA_MOUNT_IDENTITY%:*:*}" == "$mounted_dev_ino" &&
+    "$QUOTA_MOUNT_MNT_ID" == "$mounted_mnt_id" &&
+    "$QUOTA_MOUNT_FSTYPE" == "$mounted_fstype" &&
+    "$QUOTA_MOUNT_ROOT" == "$mounted_root" &&
+    "$QUOTA_MOUNT_POINT" == "$mounted_point" ]] ||
+    die 'quota hardened mount binding changed'
+  [[ "$QUOTA_MOUNT_IDENTITY" == *":$(id -u):700" ]] ||
+    die "quota mounted root must be owned by current user with mode 700: $QUOTA_MOUNT_IDENTITY"
 }
 
 quota_create_private_file() {
@@ -1892,6 +1914,93 @@ quota_capture_mount_binding() {
   QUOTA_MOUNT_POINT="$mount_point"
 }
 
+quota_harden_mounted_root() {
+  "$SNAPSHOT_PYTHON" -I -S - "${TMP_ROOT_FD:-}" "${1:-}" "$(id -u)" "$(id -g)" <<'PY'
+import os
+import stat
+import sys
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def fd_mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                mnt_id = line.split(":", 1)[1].strip()
+                if not mnt_id.isdigit():
+                    fail("quota mounted root descriptor mount id is unsafe")
+                return mnt_id
+    fail("quota mounted root descriptor mount id is unavailable")
+
+
+def stat_identity(fd: int) -> tuple[int, int, int, int, int]:
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode):
+        fail("quota mounted root descriptor is not a directory")
+    return st.st_dev, st.st_ino, st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)
+
+
+fd = -1
+try:
+    try:
+        parent_fd = int(sys.argv[1])
+        expected = tuple(sys.argv[2].split("\t"))
+        expected_uid = int(sys.argv[3])
+        expected_gid = int(sys.argv[4])
+    except (IndexError, ValueError):
+        fail("quota mounted root hardening arguments are invalid")
+    if len(expected) != 5:
+        fail("quota mounted root expected binding is invalid")
+    try:
+        expected_dev, expected_ino, expected_pre_uid, expected_pre_mode = (
+            int(part, 8 if index == 3 else 10)
+            for index, part in enumerate(expected[0].split(":"))
+        )
+    except ValueError:
+        fail("quota mounted root expected identity is invalid")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("quota", flags, dir_fd=parent_fd)
+    before_dev, before_ino, before_uid, _before_gid, before_mode = stat_identity(fd)
+    before_mnt_id = fd_mnt_id(fd)
+    if (
+        before_dev != expected_dev
+        or before_ino != expected_ino
+        or before_uid != expected_pre_uid
+        or before_mode != expected_pre_mode
+        or before_mnt_id != expected[1]
+    ):
+        fail("quota mounted root binding changed before hardening")
+    fault = os.environ.get("ACGS_CLEAN_SIBLING_TEST_QUOTA_HARDEN_FAULT", "")
+    if fault == "chmod_success_chown_fail":
+        os.fchmod(fd, 0o700)
+        fail("injected quota mounted root chown failure")
+    os.fchown(fd, expected_uid, expected_gid)
+    if fault == "chown_success_chmod_fail":
+        fail("injected quota mounted root chmod failure")
+    os.fchmod(fd, 0o700)
+    after_dev, after_ino, after_uid, after_gid, after_mode = stat_identity(fd)
+    after_mnt_id = fd_mnt_id(fd)
+    if after_dev != expected_dev or after_ino != expected_ino or after_mnt_id != expected[1]:
+        fail("quota mounted root binding changed after hardening")
+    if after_uid != expected_uid or after_gid != expected_gid or after_mode != 0o700:
+        fail(
+            "quota mounted root must be owned by current user with mode 700: "
+            f"{after_dev}:{after_ino}:{after_uid}:{after_gid}:{after_mode:o}"
+        )
+except OSError as exc:
+    fail(f"quota mounted root descriptor hardening failed: {exc.strerror or exc.__class__.__name__}")
+except UnicodeError:
+    fail("quota mountinfo path is unsafe")
+finally:
+    if fd >= 0:
+        os.close(fd)
+PY
+}
+
 quota_mountpoint_state() {
   local binding=''
   local identity=''
@@ -1925,6 +2034,15 @@ quota_mountpoint_state() {
       printf 'error\n'
       return
     }
+    if [[ "$recorded_state" == exact &&
+      "${identity%:*:*}" == "${QUOTA_MOUNT_IDENTITY%:*:*}" &&
+      "$mnt_id" == "$QUOTA_MOUNT_MNT_ID" &&
+      "$fstype" == "$QUOTA_MOUNT_FSTYPE" &&
+      "$mount_root" == "$QUOTA_MOUNT_ROOT" &&
+      "$mount_point" == "$QUOTA_MOUNT_POINT" ]]; then
+      printf 'mounted\n'
+      return
+    fi
     if [[ "$identity" == "$QUOTA_ROOT_IDENTITY" &&
       "$mnt_id" == "$QUOTA_UNDERLAY_MNT_ID" &&
       "$recorded_state" == absent ]]; then
