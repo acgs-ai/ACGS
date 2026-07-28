@@ -855,19 +855,23 @@ def test_new_app_refuses_noncurrent_and_wrong_search_path_without_mutation(
             _upgrade_to(database_url, "0001" if case == "0001" else HEAD_REVISION)
         if case == "partial":
             with pg_engine.begin() as connection:
-                # Revision 0003 through 0008 tables reference environments or
+                # Revision 0003 through 0010 tables reference environments or
                 # managed_decision_receipts, so seeding the partial revision
                 # 0001 shape must remove them first. Dropping environments
                 # with CASCADE instead would leave them in place minus their
                 # foreign keys, which is not a shape any real 0001 database
                 # has. One statement drops the whole set together, so
                 # dependencies among the listed tables (the 0005 bootstrap
-                # tables all reference platform_bootstrap_invitations, and the
+                # tables all reference platform_bootstrap_invitations, the
                 # 0007/0008 idempotency and policy tables all reference
-                # managed_decision_receipts) do not constrain the order.
+                # managed_decision_receipts, and the 0009/0010 approval
+                # tables reference managed_decision_receipts and each other)
+                # do not constrain the order.
                 connection.execute(
                     sa.text(
                         "DROP TABLE agent_registration_idempotency, "
+                        "approval_resume_authorizations, approval_outcomes, "
+                        "approval_votes, approval_requests, "
                         "tenant_bootstrap_refusal_events, "
                         "tenant_bootstrap_pending_outbox, pending_approvals, "
                         "tenant_bootstrap_policy_artifacts, "
