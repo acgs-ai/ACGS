@@ -1,4 +1,5 @@
 #!/usr/bin/busybox ash
+# shellcheck shell=sh
 # Static entry boundary for the P0 clean-sibling proof.
 
 set -eu
@@ -9,6 +10,34 @@ BUSYBOX_SHA256=98d9040015eb17931e17b45e00b5f49f2451326372d5107a3a280f1cb3aaf3fc
 fail() {
   "$BUSYBOX" printf '%s\n' "CLEAN_SIBLING=FAIL phase=B0 reason=$1" >&2
   exit 2
+}
+
+validated_fd_open() {
+  path="$1"
+  fd="$2"
+  [ -f "$path" ] && [ ! -L "$path" ] || fail "trusted script is unavailable: $path"
+  eval "exec $fd<\"\$path\""
+  path_stat="$($BUSYBOX stat -Lc '%d:%i:%u:%a:%h' "$path")" ||
+    fail "trusted script stat failed: $path"
+  fd_stat="$($BUSYBOX stat -Lc '%d:%i:%u:%a:%h' "/proc/$$/fd/$fd")" ||
+    fail "trusted script fd stat failed: $path"
+  [ "$path_stat" = "$fd_stat" ] || fail "trusted script fd identity mismatch: $path"
+  owner="${path_stat#*:*:}"
+  owner="${owner%%:*}"
+  [ "$owner" = "$($BUSYBOX id -u)" ] || fail "trusted script owner mismatch: $path"
+  links="${path_stat##*:}"
+  [ "$links" = 1 ] || fail "trusted script must be single-link: $path"
+  mode="${path_stat%:*}"
+  mode="${mode##*:}"
+  group_writable=$((mode / 10 % 10))
+  world_writable=$((mode % 10))
+  [ $((group_writable & 2)) -eq 0 ] && [ $((world_writable & 2)) -eq 0 ] ||
+    fail "trusted script must not be group/world writable: $path"
+  digest="$($BUSYBOX sha256sum "/proc/$$/fd/$fd")"
+  digest="${digest%% *}"
+  eval "ACGS_FD_${fd}_PATH=\"\$path\""
+  eval "ACGS_FD_${fd}_STAT=\"\$path_stat\""
+  eval "ACGS_FD_${fd}_SHA256=\"\$digest\""
 }
 
 [ -x "$BUSYBOX" ] || fail 'trusted static BusyBox is unavailable'
@@ -32,6 +61,13 @@ if [ "$0" != "$launcher" ]; then
 fi
 internal="$repo/scripts/evidence/prove_clean_sibling.sh"
 [ -f "$internal" ] && [ ! -L "$internal" ] || fail 'internal prover is unavailable'
+cleanup="$repo/scripts/evidence/clean_sibling_cleanup.sh"
+uv_bin=/home/martin/.local/bin/uv
+
+validated_fd_open "$launcher" 8
+validated_fd_open "$internal" 9
+validated_fd_open "$cleanup" 10
+validated_fd_open "$uv_bin" 11
 
 # Capture only the two reviewed caller inputs before replacing the entire
 # environment. BusyBox is static, so hostile ELF-loader state cannot run while
@@ -39,8 +75,52 @@ internal="$repo/scripts/evidence/prove_clean_sibling.sh"
 # only by env -i below.
 reviewed_parent="${P-}"
 caller_tmpdir="${TMPDIR-/tmp}"
-set +e
-"$BUSYBOX" env -i \
+requested_node="${NODE_ID-P0-EVIDENCE-000}"
+requested_target="$1"
+case "$reviewed_parent" in
+  '') fail 'P must be exported as the reviewed parent commit SHA' ;;
+  *[!0123456789abcdef]*)
+    fail 'P must be a lowercase 40-hex commit SHA'
+    ;;
+esac
+[ "${#reviewed_parent}" -eq 40 ] || fail 'P must be a lowercase 40-hex commit SHA'
+case "$requested_target" in
+  '' | *[!0123456789abcdef]*)
+    fail 'T commit is unavailable'
+    ;;
+esac
+[ "${#requested_target}" -eq 40 ] || fail 'T commit is unavailable'
+[ "$requested_target" != 0000000000000000000000000000000000000000 ] ||
+  fail 'T commit is unavailable'
+case "$requested_node:$reviewed_parent" in
+  P0-EVIDENCE-000:26d11c2c7a8da37937a7c50c642f18edc75c9345 | \
+    P1-MIGRATION-001:79a3c39f841cfc5a6c79e85973887814caf0e694 | \
+    P1-SCOPE-002:40781e1200289507fcfbcedf6ab14c120ac6aae8 | \
+    P1-LEDGER-003:9450db249e4428021c4d98b2f1b81d414693d9af | \
+    P1-TRUST-004:f113d9bc7263ba2607ff9800da9881a3ff624441 | \
+    P2-TENANT-BOOTSTRAP-000:70b0d39010b46d6aed86d93572dcbda213350883 | \
+    P2-REGISTER-001:3f60e812bece9869b57bf32fdfa4f070a464592a | \
+    P2-IDEMPOTENCY-002:3269252010e5cc394abe5ab451debbaa95298f0c | \
+    P2-VERTICAL-GATE-003:7d81e853b56352822286eb08d592d9e87256868e | \
+    P3-POLICY-001:647385084d974322b0f8b9b82738d7b820044ece | \
+    P3-MUTATIONS-002:014fe1806600d52d55f06875a8c30c0b8a5b973b | \
+    P3-APPROVAL-003:58a8a2397eec717c08ff20efc287d8af788030d0)
+    ;;
+  P0-EVIDENCE-000:*) fail 'P0 reviewed parent must be exact 26d11c2c7a8da37937a7c50c642f18edc75c9345' ;;
+  P1-MIGRATION-001:*) fail 'P1-MIGRATION-001 reviewed parent must be exact 79a3c39f841cfc5a6c79e85973887814caf0e694' ;;
+  P1-SCOPE-002:*) fail 'P1-SCOPE-002 reviewed parent must be exact 40781e1200289507fcfbcedf6ab14c120ac6aae8' ;;
+  P1-LEDGER-003:*) fail 'P1-LEDGER-003 reviewed parent must be exact 9450db249e4428021c4d98b2f1b81d414693d9af' ;;
+  P1-TRUST-004:*) fail 'P1-TRUST-004 reviewed parent must be exact f113d9bc7263ba2607ff9800da9881a3ff624441' ;;
+  P2-TENANT-BOOTSTRAP-000:*) fail 'P2-TENANT-BOOTSTRAP-000 reviewed parent must be exact 70b0d39010b46d6aed86d93572dcbda213350883' ;;
+  P2-REGISTER-001:*) fail 'P2-REGISTER-001 reviewed parent must be exact 3f60e812bece9869b57bf32fdfa4f070a464592a' ;;
+  P2-IDEMPOTENCY-002:*) fail 'P2-IDEMPOTENCY-002 reviewed parent must be exact 3269252010e5cc394abe5ab451debbaa95298f0c' ;;
+  P2-VERTICAL-GATE-003:*) fail 'P2-VERTICAL-GATE-003 reviewed parent must be exact 7d81e853b56352822286eb08d592d9e87256868e' ;;
+  P3-POLICY-001:*) fail 'P3-POLICY-001 reviewed parent must be exact 647385084d974322b0f8b9b82738d7b820044ece' ;;
+  P3-MUTATIONS-002:*) fail 'P3-MUTATIONS-002 reviewed parent must be exact 014fe1806600d52d55f06875a8c30c0b8a5b973b' ;;
+  P3-APPROVAL-003:*) fail 'P3-APPROVAL-003 reviewed parent must be exact 58a8a2397eec717c08ff20efc287d8af788030d0' ;;
+  *) fail "unsupported clean-sibling node: $requested_node" ;;
+esac
+exec "$BUSYBOX" env -i \
   PATH=/usr/bin:/bin \
   HOME=/dev/null \
   XDG_CONFIG_HOME=/dev/null \
@@ -48,12 +128,2312 @@ set +e
   LC_ALL=C.UTF-8 \
   P="$reviewed_parent" \
   TMPDIR="$caller_tmpdir" \
-  NODE_ID="${NODE_ID-P0-EVIDENCE-000}" \
+  NODE_ID="$requested_node" \
   GIT_CONFIG_NOSYSTEM=1 \
   GIT_CONFIG_GLOBAL=/dev/null \
   PYTHONDONTWRITEBYTECODE=1 \
   ACGS_CLEAN_SIBLING_STATIC_LAUNCHER="$BUSYBOX_SHA256" \
-  /bin/bash --noprofile --norc "$internal" "$1"
-status=$?
-set -e
-exit "$status"
+  ACGS_CLEAN_SIBLING_LAUNCHER_FD=8 \
+  ACGS_CLEAN_SIBLING_LAUNCHER_PATH="$ACGS_FD_8_PATH" \
+  ACGS_CLEAN_SIBLING_LAUNCHER_STAT="$ACGS_FD_8_STAT" \
+  ACGS_CLEAN_SIBLING_LAUNCHER_SHA256="$ACGS_FD_8_SHA256" \
+  ACGS_CLEAN_SIBLING_INTERNAL_FD=9 \
+  ACGS_CLEAN_SIBLING_INTERNAL_PATH="$ACGS_FD_9_PATH" \
+  ACGS_CLEAN_SIBLING_INTERNAL_STAT="$ACGS_FD_9_STAT" \
+  ACGS_CLEAN_SIBLING_INTERNAL_SHA256="$ACGS_FD_9_SHA256" \
+  ACGS_CLEAN_SIBLING_CLEANUP_FD=10 \
+  ACGS_CLEAN_SIBLING_CLEANUP_PATH="$ACGS_FD_10_PATH" \
+  ACGS_CLEAN_SIBLING_CLEANUP_STAT="$ACGS_FD_10_STAT" \
+  ACGS_CLEAN_SIBLING_CLEANUP_SHA256="$ACGS_FD_10_SHA256" \
+  ACGS_CLEAN_SIBLING_UV_FD=11 \
+  ACGS_CLEAN_SIBLING_UV_PATH="$ACGS_FD_11_PATH" \
+  ACGS_CLEAN_SIBLING_UV_STAT="$ACGS_FD_11_STAT" \
+  ACGS_CLEAN_SIBLING_UV_SHA256="$ACGS_FD_11_SHA256" \
+  /usr/bin/python3 -I -S -c '
+import array
+import errno
+import fcntl
+import ctypes
+import hashlib
+import json
+import mmap
+import os
+import resource
+import signal
+import socket
+import stat
+import sys
+import time
+
+F_ADD_SEALS = 1033
+F_GET_SEALS = 1034
+F_SEAL_SEAL = 0x0001
+F_SEAL_SHRINK = 0x0002
+F_SEAL_GROW = 0x0004
+F_SEAL_WRITE = 0x0008
+REQUIRED_SEALS = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE
+PASS_MARKER = b"CLEAN_SIBLING_TECHNICAL=PASS"
+MAX_STATUS_FRAME_BYTES = 4 * 1024 * 1024
+MAX_VISIBLE_OUTPUT_BYTES = 64 * 1024 * 1024
+MAX_FAILURE_CAPTURE_BYTES = 64 * 1024 * 1024
+TRUSTED_QUOTA_SETUP_FSIZE_BYTES = 8 * 1024 * 1024 * 1024
+MAX_RUN_FD_BYTES = 8 * 1024 * 1024
+MAX_SNAPSHOT_ARTIFACT_BYTES = 64 * 1024 * 1024
+SNAPSHOT_ARTIFACTS = (
+    ("launcher", 8),
+    ("internal", 9),
+    ("cleanup", 10),
+    ("uv", 11),
+)
+STARTUP_ACK_FRAME = b"ACGS_STARTUP_ACK_V1_CLOSED_UNSET"
+STARTUP_ACK_TIMEOUT_SECONDS = 3.0
+PR_SET_DUMPABLE = 4
+PR_GET_DUMPABLE = 3
+PR_SET_PDEATHSIG = 1
+GUARDIAN_CHILD_TIMEOUT_SECONDS = 60 * 60
+GUARDIAN_POST_STOP_DRAIN_SECONDS = 2.0
+GUARDIAN_CPU_SECONDS = 30 * 60
+GUARDIAN_MEMORY_BYTES = 4 * 1024 * 1024 * 1024
+GUARDIAN_ADDRESS_SPACE_BYTES = 8 * 1024 * 1024 * 1024
+EXPECTED_SCOPE_TASKS_MAX = 512
+CGROUP2_SUPER_MAGIC = 0x63677270
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+SYSTEMCTL = "/usr/bin/systemctl"
+EXPECTED_SYSTEMD_SCOPE_PROPERTIES = {
+    "RuntimeMaxUSec": {"1h 1min", "1h 1min 0", "3660000000", "3660s"},
+    "TimeoutStopUSec": {"15s", "15000000"},
+    "KillMode": {"control-group"},
+    "KillSignal": {"15", "SIGTERM"},
+    "SendSIGKILL": {"yes"},
+    "FinalKillSignal": {"9", "SIGKILL"},
+    "CollectMode": {"inactive-or-failed"},
+}
+EXPECTED_STATUS = {
+    "P0-EVIDENCE-000": ("EVID+CP+GZ", "11", ["single-process"]),
+    "P1-MIGRATION-001": ("EVID+CP", "6", ["single-process"]),
+    "P1-SCOPE-002": ("EVID+CP", "6", ["single-process"]),
+    "P1-LEDGER-003": ("EVID+CP", "6", ["single-process"]),
+    "P1-TRUST-004": ("EVID+CP+GZ", "11", ["single-process"]),
+    "P2-TENANT-BOOTSTRAP-000": ("EVID+CP+GZ", "11", ["single-process"]),
+    "P2-REGISTER-001": ("EVID+CP+GZ", "11", ["single-process"]),
+    "P2-IDEMPOTENCY-002": (
+        "EVID+CP",
+        "6",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-100-request-multiprocess-agent-registration-idempotency",
+        ],
+    ),
+    "P2-VERTICAL-GATE-003": (
+        "EVID+CP+GZ",
+        "12",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-vertical-bootstrap-register",
+        ],
+    ),
+    "P3-POLICY-001": (
+        "EVID+CP",
+        "7",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-pg6-policy-registry-lifecycle",
+        ],
+    ),
+    "P3-MUTATIONS-002": (
+        "EVID+CP",
+        "7",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-pg6-mutation-inventory-drift",
+        ],
+    ),
+    "P3-APPROVAL-003": (
+        "EVID+CP+GZ",
+        "12",
+        [
+            "single-process-evidence-and-package-gates",
+            "postgres-pg9-approval-resume-multiprocess",
+        ],
+    ),
+}
+EXPECTED_COMMAND_SELECTORS = {
+    "P0-EVIDENCE-000": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "root:P0-EVIDENCE-000-launcher-authority-harness",
+        "root:P0-EVIDENCE-000",
+    ],
+    "P1-MIGRATION-001": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate",
+    ],
+    "P1-SCOPE-002": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate",
+    ],
+    "P1-LEDGER-003": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate",
+    ],
+    "P1-TRUST-004": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate",
+        "packages/gove-zone:P1-TRUST-004-trust-runtime-gate",
+    ],
+    "P2-TENANT-BOOTSTRAP-000": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate",
+        "root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract",
+    ],
+    "P2-REGISTER-001": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate",
+        "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate",
+    ],
+    "P2-IDEMPOTENCY-002": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate",
+    ],
+    "P2-VERTICAL-GATE-003": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P2-VERTICAL-GATE-003-postgres-vertical-gate",
+        "root:P2-VERTICAL-GATE-003-cross-plane-contract",
+        "packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate",
+    ],
+    "P3-POLICY-001": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate",
+        "root:P3-POLICY-001-cross-plane-contract",
+    ],
+    "P3-MUTATIONS-002": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:P3-MUTATIONS-002-postgres-mutation-inventory-gate",
+        "root:P3-MUTATIONS-002-cross-plane-contract",
+    ],
+    "P3-APPROVAL-003": [
+        "root:EVID-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/acgs-control-plane:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/gove-zone:local-gate",
+        "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate",
+        "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility",
+        "root:P3-APPROVAL-003-cross-plane-contract",
+    ],
+}
+
+
+def expected_command_argv(selector, index):
+    if index == 0 and selector == "root:EVID-gate":
+        return [
+            ".venv-evidence/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/saas_beta/test_evidence_bootstrap.py::test_universal_evidence_interpreter_offline",
+        ]
+    if selector == "packages/acgs-control-plane:local-gate":
+        cp_local = {
+            1: [".venv/bin/ruff", "check", "."],
+            2: [".venv/bin/ruff", "format", "--check", "."],
+            3: [".venv/bin/mypy", "src/"],
+            4: [".venv/bin/pytest", "-q"],
+        }
+        return cp_local.get(index)
+    if selector == "packages/gove-zone:local-gate":
+        uv = "/home/martin/.local/bin/uv"
+        gz_local = {
+            5: [
+                uv,
+                "run",
+                "--active",
+                "--no-sync",
+                "--python",
+                "3.11",
+                "--package",
+                "gove-zone",
+                "ruff",
+                "check",
+                "packages/gove-zone/src",
+                "packages/gove-zone/tests",
+                "packages/gove-zone/examples",
+            ],
+            6: [
+                uv,
+                "run",
+                "--active",
+                "--no-sync",
+                "--python",
+                "3.11",
+                "--package",
+                "gove-zone",
+                "ruff",
+                "format",
+                "--check",
+                "packages/gove-zone/src",
+                "packages/gove-zone/tests",
+                "packages/gove-zone/examples",
+            ],
+            7: [
+                uv,
+                "run",
+                "--active",
+                "--no-sync",
+                "--python",
+                "3.11",
+                "--package",
+                "gove-zone",
+                "mypy",
+                "packages/gove-zone/src/gove_zone",
+            ],
+            8: [
+                uv,
+                "run",
+                "--active",
+                "--no-sync",
+                "--python",
+                "3.11",
+                "--package",
+                "gove-zone",
+                "python",
+                "-m",
+                "pytest",
+                "packages/gove-zone/tests",
+                "--import-mode=importlib",
+                "-q",
+                "--cov=gove_zone",
+                "--cov-fail-under=90",
+            ],
+        }
+        return gz_local.get(index)
+    postgres_tests = {
+        "packages/acgs-control-plane:P1-MIGRATION-001-postgres-gate": [
+            "tests/integration/test_migrations_postgres.py::test_empty_and_existing_alpha_upgrade_head",
+            "tests/integration/test_migrations_postgres.py::test_declared_reversible_round_trip",
+            "tests/integration/test_migrations_postgres.py::test_mixed_version_rolling_compatibility",
+            "tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget",
+            "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
+            "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
+            "tests/integration/test_migrations_postgres.py::test_revision_0010_refuses_historical_approval_votes_without_invented_bindings",
+        ],
+        "packages/acgs-control-plane:P2-TENANT-BOOTSTRAP-000-postgres-bootstrap-gate": [
+            "tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_allow_atomic",
+            "tests/integration/test_tenant_bootstrap_vertical.py::test_real_api_postgres_bootstrap_refusal_matrix",
+            "tests/integration/test_tenant_bootstrap_vertical.py::test_100_request_multiprocess_bootstrap_once",
+        ],
+        "packages/acgs-control-plane:P2-IDEMPOTENCY-002-postgres-idempotency-gate": [
+            "tests/integration/test_agent_registration_idempotency_postgres.py::test_identical_key_and_canonical_request_converges_to_one_terminal_result",
+            "tests/integration/test_agent_registration_idempotency_postgres.py::test_same_key_different_canonical_request_conflicts_without_additional_side_effects",
+            "tests/integration/test_agent_registration_idempotency_postgres.py::test_exact_receipt_replay_is_typed_and_nonduplicating",
+            "tests/integration/test_agent_registration_idempotency_postgres.py::test_100_request_multiprocess_has_at_most_one_authorized_execution",
+        ],
+        "packages/acgs-control-plane:P2-VERTICAL-GATE-003-postgres-vertical-gate": [
+            "tests/integration/test_vertical_gate_postgres.py::test_real_postgres_tenant_bootstrap_then_customer_agent_register",
+            "tests/integration/test_vertical_gate_postgres.py::test_real_postgres_vertical_negative_oracles_and_production_legacy_reachability",
+        ],
+        "packages/acgs-control-plane:P3-POLICY-001-postgres-policy-gate": [
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_immutable_version_without_head",
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activate_advances_exactly_one_head",
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_concurrent_candidates_have_one_generation_winner",
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_publish_idempotent_replay_is_one_terminal_effect",
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_idempotency_conflict_has_zero_delta",
+            "tests/integration/test_managed_policy_lifecycle_postgres.py::test_pg_activation_revalidates_trust_and_rolls_back_before_effect",
+        ],
+        "packages/acgs-control-plane:P3-MUTATIONS-002-postgres-mutation-inventory-gate": [
+            "tests/integration/test_mutation_inventory_postgres.py::test_pg_agent_register_commits_one_sql_atomic_managed_mutation",
+            "tests/integration/test_mutation_inventory_postgres.py::test_pg_route_app_drift_refuses_before_replacement_and_preserves_sql_counts",
+            "tests/integration/test_mutation_inventory_postgres.py::test_pg_service_binding_drift_preserves_sql_counts_and_legacy_blockers",
+            "tests/integration/test_mutation_inventory_postgres.py::test_pg_legacy_regex_precedence_drift_preserves_sql_counts_before_bootstrap",
+        ],
+        "packages/acgs-control-plane:P3-APPROVAL-003-postgres-approval-gate": [
+            "tests/integration/test_approval_resume_postgres.py::test_pg_escalate_creates_scoped_pending_without_agent_or_consumption",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_self_and_wrong_role_approval_are_non_executable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_resume_before_required_vote_is_non_executable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_approved_resume_executes_once_and_replay_is_stable",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_rejected_and_expired_requests_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_concurrent_vote_refusal_replay_records_one_evidence_set",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_tampered_sealed_payload_resume_zero_side_effects",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_multiprocess_resume_race_authorizes_one_agent",
+            "tests/integration/test_approval_resume_postgres.py::test_pg_approval_composite_constraints_reject_cross_scope_rows",
+        ],
+    }
+    if selector in postgres_tests:
+        return ["./scripts/run_postgres_gate.sh", *postgres_tests[selector]]
+    cp_pytest_tests = {
+        "packages/acgs-control-plane:P1-SCOPE-002-scope-posture-gate": [
+            "tests/test_project_environment_scope.py::test_environment_cannot_reference_a_project_from_another_org",
+            "tests/test_project_environment_scope.py::test_orm_models_use_the_same_composite_parent_join",
+            "tests/test_project_environment_scope.py::test_public_api_exposes_no_project_or_environment_mutation_routes",
+            "tests/test_repositories.py::test_prospective_scope_ids_persist_exactly_without_commit",
+            "tests/test_repositories.py::test_cross_tenant_reads_are_non_enumerating",
+            "tests/test_repositories.py::test_cross_tenant_updates_and_deletes_mutate_zero_rows",
+            "tests/test_repositories.py::test_prospective_id_conflicts_fail_atomically",
+            "tests/integration/test_production_posture.py::test_tenant_bootstrap_and_register_contract_stub_no_mutation",
+        ],
+        "packages/acgs-control-plane:P1-LEDGER-003-managed-mutation-uow-gate": [
+            "tests/test_managed_mutation_uow.py::test_allow_mutation_commits_consumption_receipt_event_and_outbox_atomically",
+            "tests/test_managed_mutation_uow.py::test_injected_failure_before_commit_rolls_back_consumption_receipt_event_outbox_and_side_effect",
+            "tests/test_managed_mutation_uow.py::test_deny_and_escalate_do_not_consume_or_execute_or_persist_success",
+            "tests/test_managed_mutation_uow.py::test_wrong_scope_receipt_rejected_by_database_tenant_environment_constraints",
+            "tests/test_managed_mutation_uow.py::test_concurrent_receipt_consumption_has_single_committed_winner",
+            "tests/test_managed_mutation_uow.py::test_outbox_rows_appear_only_after_sql_commit",
+        ],
+        "packages/acgs-control-plane:P1-TRUST-004-trust-control-plane-gate": [
+            "tests/test_trust_receipt_v2.py::test_receipt_v2_scoped_trust_roots_bind_tenant_scope_and_trust_epoch",
+            "tests/test_trust_receipt_v2.py::test_active_retired_and_revoked_trust_rotation_preserves_history_and_blocks_new_or_revoked",
+            "tests/test_trust_receipt_v2.py::test_trust_readiness_report_requires_active_root_and_rotation_window",
+            "tests/test_trust_receipt_v2.py::test_wrong_scope_missing_trust_and_replay_reject_without_side_effect",
+        ],
+        "packages/acgs-control-plane:P2-REGISTER-001-agent-registration-gate": [
+            "tests/test_agent_registration_managed_route.py::test_agent_register_route_executes_through_managed_receipt_v2_spine",
+            "tests/test_agent_registration_managed_route.py::test_agent_register_route_refusal_matrix_has_zero_managed_side_effects",
+            "tests/test_agent_registration_managed_route.py::test_agent_register_route_scope_and_policy_are_server_owned",
+        ],
+    }
+    if selector in cp_pytest_tests:
+        return [".venv/bin/pytest", "-q", *cp_pytest_tests[selector]]
+    root_pytest_tests = {
+        "root:P2-TENANT-BOOTSTRAP-000-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract",
+        ],
+        "root:P2-VERTICAL-GATE-003-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_tenant_bootstrap_receipt_contract",
+            "tests/saas_beta/test_cross_plane_contracts.py::test_vertical_gate_contract_locks_managed_routes_and_production_blockers",
+        ],
+        "root:P3-POLICY-001-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_policy_registry_contract_locks_managed_routes_negative_oracles_and_local_posture",
+        ],
+        "root:P3-MUTATIONS-002-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_mutation_inventory_contract_locks_registry_and_actual_routing",
+        ],
+        "root:P3-APPROVAL-003-cross-plane-contract": [
+            "tests/saas_beta/test_cross_plane_contracts.py::test_approval_contract_locks_vote_and_resume_assurance",
+        ],
+    }
+    if selector in root_pytest_tests:
+        return [
+            "packages/acgs-control-plane/.venv/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            *root_pytest_tests[selector],
+        ]
+    if selector == "root:P0-EVIDENCE-000":
+        return [
+            ".venv-evidence/bin/python",
+            "-m",
+            "pytest",
+            "-q",
+            "tests/saas_beta/test_evidence_bootstrap.py::test_clean_sibling_hash_locked_bootstraps_and_round_trip",
+            "tests/saas_beta/test_evidence_bootstrap.py::test_environment_identities_exactly_match_assignment",
+            "tests/saas_beta/test_evidence_bootstrap.py::test_missing_extra_or_retained_environment_rejected",
+            "tests/saas_beta/test_evidence_bootstrap.py::test_pep660_helpers_required_for_assigned_python_scopes",
+        ]
+    if selector == "root:P0-EVIDENCE-000-launcher-authority-harness":
+        return [
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-",
+            "scripts/evidence/prove_clean_sibling",
+            "1111111111111111111111111111111111111111",
+        ]
+    uv = "/home/martin/.local/bin/uv"
+    gz_selector_tests = {
+        "packages/gove-zone:P1-TRUST-004-trust-runtime-gate": [
+            "packages/gove-zone/tests/test_trust_receipt_v2.py::test_receipt_v2_scoped_trust_verification_requires_scope_binding",
+            "packages/gove-zone/tests/test_trust_receipt_v2.py::test_active_retired_revoked_runtime_rotation_verifies_historical_retired_and_denies_revoked",
+            "packages/gove-zone/tests/test_trust_receipt_v2.py::test_trust_readiness_runtime_reports_missing_or_expired_roots",
+            "packages/gove-zone/tests/test_trust_receipt_v2.py::test_wrong_scope_missing_trust_and_replay_runtime_do_not_execute",
+        ],
+        "packages/gove-zone:P2-REGISTER-001-runtime-registration-gate": [
+            "packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_allows_registered_principal_through_dispatcher",
+            "packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_denies_unregistered_actor_through_dispatcher",
+            "packages/gove-zone/tests/test_mcp_binding.py::test_unregistered_tool_cannot_run_and_is_not_audited",
+            "packages/gove-zone/tests/test_mcp_binding.py::test_runtime_registered_tool_is_gated_with_zero_binding_changes",
+        ],
+        "packages/gove-zone:P2-VERTICAL-GATE-003-runtime-registration-gate": [
+            "packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_allows_registered_principal_through_dispatcher",
+            "packages/gove-zone/tests/test_authz_enforcement.py::test_enforce_denies_unregistered_actor_through_dispatcher",
+            "packages/gove-zone/tests/test_mcp_binding.py::test_unregistered_tool_cannot_run_and_is_not_audited",
+            "packages/gove-zone/tests/test_mcp_binding.py::test_runtime_registered_tool_is_gated_with_zero_binding_changes",
+        ],
+        "packages/gove-zone:P3-APPROVAL-003-escalation-consumption-compatibility": [
+            "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_escalate_approve_resume_single_use",
+            "packages/gove-zone/tests/test_mcp_gateway_conformance.py::test_cross_pending_reuse",
+            "packages/gove-zone/tests/test_receipt_consumption.py::test_resume_replay_blocked_with_ledger",
+            "packages/gove-zone/tests/test_receipt_consumption.py::test_concurrent_consumers_single_winner",
+        ],
+    }
+    if selector in gz_selector_tests:
+        return [
+            uv,
+            "run",
+            "--active",
+            "--no-sync",
+            "--python",
+            "3.11",
+            "--package",
+            "gove-zone",
+            "python",
+            "-m",
+            "pytest",
+            *gz_selector_tests[selector],
+            "--import-mode=importlib",
+            "-q",
+        ]
+    return None
+
+
+def write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        view = view[written:]
+
+
+def canonical_failure_reason(message):
+    text = str(message)
+    safe = []
+    for character in text[:512]:
+        code = ord(character)
+        if 0x20 <= code <= 0x7E and character not in "\r\n":
+            safe.append(character)
+        else:
+            safe.append("?")
+    return "".join(safe) or "unspecified failure"
+
+
+def emit_failure(message, captured=b""):
+    captured = captured[:MAX_FAILURE_CAPTURE_BYTES]
+    captured_sha256 = hashlib.sha256(captured).hexdigest()
+    captured_has_pass = PASS_MARKER in captured
+    write_all(
+        diagnostic_fd,
+        (
+            "CLEAN_SIBLING=FAIL phase=FINAL "
+            f"reason={canonical_failure_reason(message)} "
+            f"captured_bytes={len(captured)} "
+            f"captured_sha256={captured_sha256} "
+            f"captured_contains_pass={1 if captured_has_pass else 0}\n"
+        ).encode("ascii"),
+    )
+    return 2
+
+
+def validate_executable(path, label):
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        raise RuntimeError(f"{label} is not a regular non-symlink")
+    if st.st_uid != 0 or stat.S_IMODE(st.st_mode) & 0o022:
+        raise RuntimeError(f"{label} ownership/mode is unsafe")
+    if not os.access(path, os.X_OK):
+        raise RuntimeError(f"{label} is not executable")
+
+
+def fail_authenticated_runtime_unavailable():
+    print(
+        "CLEAN_SIBLING=FAIL phase=B0 reason=authenticated runtime bus unavailable",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def fail_authenticated_systemd_tooling_unavailable():
+    print(
+        "CLEAN_SIBLING=FAIL phase=B0 reason=authenticated systemd tooling unavailable",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def user_bus_env():
+    uid = os.getuid()
+    runtime = f"/run/user/{uid}"
+    bus = f"{runtime}/bus"
+    try:
+        runtime_st = os.lstat(runtime)
+    except OSError:
+        fail_authenticated_runtime_unavailable()
+    if (
+        not stat.S_ISDIR(runtime_st.st_mode)
+        or runtime_st.st_uid != uid
+        or stat.S_IMODE(runtime_st.st_mode) & 0o077
+    ):
+        fail_authenticated_runtime_unavailable()
+    try:
+        bus_st = os.lstat(bus)
+    except OSError:
+        fail_authenticated_runtime_unavailable()
+    if not stat.S_ISSOCK(bus_st.st_mode) or bus_st.st_uid != uid:
+        fail_authenticated_runtime_unavailable()
+    try:
+        validate_executable(SYSTEMD_RUN, "systemd-run")
+        validate_executable(SYSTEMCTL, "systemctl")
+    except (OSError, RuntimeError):
+        fail_authenticated_systemd_tooling_unavailable()
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/dev/null",
+        "XDG_RUNTIME_DIR": runtime,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}",
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8",
+    }
+
+
+CHILD_ACGS_ENV_ALLOWLIST = frozenset(
+    {
+        "ACGS_CLEAN_SIBLING_CLEANUP_FD",
+        "ACGS_CLEAN_SIBLING_CLEANUP_PATH",
+        "ACGS_CLEAN_SIBLING_CLEANUP_SHA256",
+        "ACGS_CLEAN_SIBLING_CLEANUP_SNAPSHOT_FD",
+        "ACGS_CLEAN_SIBLING_CLEANUP_SNAPSHOT_STAT",
+        "ACGS_CLEAN_SIBLING_CLEANUP_STAT",
+        "ACGS_CLEAN_SIBLING_INTERNAL_FD",
+        "ACGS_CLEAN_SIBLING_INTERNAL_PATH",
+        "ACGS_CLEAN_SIBLING_INTERNAL_SHA256",
+        "ACGS_CLEAN_SIBLING_INTERNAL_SNAPSHOT_FD",
+        "ACGS_CLEAN_SIBLING_INTERNAL_SNAPSHOT_STAT",
+        "ACGS_CLEAN_SIBLING_INTERNAL_STAT",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_FD",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_PATH",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_SHA256",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_SNAPSHOT_FD",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_SNAPSHOT_STAT",
+        "ACGS_CLEAN_SIBLING_LAUNCHER_STAT",
+        "ACGS_CLEAN_SIBLING_OUTPUT_GUARDIAN",
+        "ACGS_CLEAN_SIBLING_SNAPSHOT_MODE",
+        "ACGS_CLEAN_SIBLING_STATIC_LAUNCHER",
+        "ACGS_CLEAN_SIBLING_STARTUP_BARRIER_FD",
+        "ACGS_CLEAN_SIBLING_STARTUP_BARRIER_IDENTITY",
+        "ACGS_CLEAN_SIBLING_STATUS_FD",
+        "ACGS_CLEAN_SIBLING_UV_FD",
+        "ACGS_CLEAN_SIBLING_UV_PATH",
+        "ACGS_CLEAN_SIBLING_UV_SHA256",
+        "ACGS_CLEAN_SIBLING_UV_SNAPSHOT_FD",
+        "ACGS_CLEAN_SIBLING_UV_SNAPSHOT_STAT",
+        "ACGS_CLEAN_SIBLING_UV_STAT",
+    }
+)
+
+
+def build_child_env(systemd_env, ambient):
+    child = dict(systemd_env)
+    child["GIT_CONFIG_NOSYSTEM"] = "1"
+    child["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    for key in ("P", "NODE_ID", "TMPDIR"):
+        if key in ambient:
+            child[key] = ambient[key]
+    for key in CHILD_ACGS_ENV_ALLOWLIST:
+        if key in ambient:
+            child[key] = ambient[key]
+    return child
+
+
+def wait_for_pid(pid, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        waited_pid, status_value = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            return status_value
+        if time.monotonic() >= deadline:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            _, status_value = os.waitpid(pid, 0)
+            return status_value
+        time.sleep(0.05)
+
+
+def kill_and_reap_pid(pid, timeout=2):
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return wait_for_pid(pid, timeout)
+
+
+def exec_and_wait(argv, env, timeout=15):
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.execve(argv[0], argv, env)
+        except BaseException:
+            os._exit(127)
+    status_value = wait_for_pid(pid, timeout)
+    if os.WIFEXITED(status_value):
+        return os.WEXITSTATUS(status_value)
+    return 128 + os.WTERMSIG(status_value)
+
+
+def exec_capture_and_wait(argv, env, timeout=15, max_bytes=65536):
+    read_fd, write_fd = os.pipe()
+    pid = None
+    status_value = None
+
+    def kill_and_reap_helper() -> None:
+        nonlocal status_value
+        if pid is None or status_value is not None:
+            return
+        try:
+            waited_pid, candidate_status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            status_value = 0
+            return
+        if waited_pid == pid:
+            status_value = candidate_status
+            return
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            _, status_value = os.waitpid(pid, 0)
+        except ChildProcessError:
+            status_value = 0
+
+    try:
+        os.set_inheritable(read_fd, False)
+        os.set_inheritable(write_fd, True)
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(read_fd)
+                os.dup2(write_fd, 1)
+                os.dup2(write_fd, 2)
+                if write_fd not in (1, 2):
+                    os.close(write_fd)
+                os.execve(argv[0], argv, env)
+            except BaseException:
+                os._exit(127)
+        os.close(write_fd)
+        write_fd = None
+        os.set_blocking(read_fd, False)
+        deadline = time.monotonic() + timeout
+        chunks = []
+        total = 0
+        eof = False
+        try:
+            while status_value is None or not eof:
+                if status_value is None:
+                    waited_pid, candidate_status = os.waitpid(pid, os.WNOHANG)
+                    if waited_pid == pid:
+                        status_value = candidate_status
+                try:
+                    chunk = os.read(read_fd, 4096)
+                except BlockingIOError:
+                    chunk = None
+                if chunk == b"":
+                    eof = True
+                elif chunk:
+                    total += len(chunk)
+                    if total > max_bytes:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        status_value = wait_for_pid(pid, 2) if status_value is None else status_value
+                        raise RuntimeError("trusted systemctl show output is too large")
+                    chunks.append(chunk)
+                if time.monotonic() >= deadline:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    status_value = wait_for_pid(pid, 2) if status_value is None else status_value
+                    raise RuntimeError("trusted systemctl show timed out")
+                if status_value is None or not eof:
+                    time.sleep(0.02)
+        except BaseException:
+            kill_and_reap_helper()
+            raise
+        if os.WIFEXITED(status_value):
+            exit_code = os.WEXITSTATUS(status_value)
+        else:
+            exit_code = 128 + os.WTERMSIG(status_value)
+        return exit_code, b"".join(chunks)
+    finally:
+        if write_fd is not None:
+            close_fd_quietly(write_fd)
+        close_fd_quietly(read_fd)
+
+
+def unit_cgroup_path(unit_name):
+    uid = os.getuid()
+    return f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/{unit_name}"
+
+
+def verify_child_cgroup(pid, unit_name):
+    expected_sysfs = unit_cgroup_path(unit_name)
+    prefix = "/sys/fs/cgroup"
+    if not expected_sysfs.startswith(prefix + "/"):
+        raise RuntimeError("guardian systemd scope cgroup path is outside unified hierarchy")
+    expected = expected_sysfs[len(prefix):]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            cgroup = open(f"/proc/{pid}/cgroup", encoding="utf-8").read()
+        except OSError:
+            time.sleep(0.05)
+            continue
+        for line in cgroup.splitlines():
+            fields = line.split(":", 2)
+            if len(fields) == 3 and fields[0] == "0" and fields[1] == "":
+                if fields[2] == expected:
+                    return
+        time.sleep(0.05)
+    raise RuntimeError("guardian child did not enter exact systemd scope cgroup")
+
+
+def verify_scope_tasks_max(pid, unit_name):
+    uid = os.getuid()
+    if (
+        not unit_name.startswith(f"acgs-clean-sibling-{uid}-")
+        or not unit_name.endswith(".scope")
+        or "/" in unit_name
+        or unit_name in {".", ".."}
+        or any(ord(character) < 0x21 or ord(character) == 0x7F for character in unit_name)
+    ):
+        raise RuntimeError("guardian systemd scope unit name is invalid")
+    components = (
+        "user.slice",
+        f"user-{uid}.slice",
+        f"user@{uid}.service",
+        "app.slice",
+        unit_name,
+    )
+
+    class Statfs(ctypes.Structure):
+        _fields_ = [
+            ("f_type", ctypes.c_long),
+            ("f_bsize", ctypes.c_long),
+            ("f_blocks", ctypes.c_ulong),
+            ("f_bfree", ctypes.c_ulong),
+            ("f_bavail", ctypes.c_ulong),
+            ("f_files", ctypes.c_ulong),
+            ("f_ffree", ctypes.c_ulong),
+            ("f_fsid", ctypes.c_int * 2),
+            ("f_namelen", ctypes.c_long),
+            ("f_frsize", ctypes.c_long),
+            ("f_flags", ctypes.c_long),
+            ("f_spare", ctypes.c_long * 4),
+        ]
+
+    def verify_cgroup2_fd(fd):
+        statfs = Statfs()
+        local_libc = ctypes.CDLL(None, use_errno=True)
+        if local_libc.fstatfs(fd, ctypes.byref(statfs)) != 0:
+            raise OSError(ctypes.get_errno(), "guardian cgroup statfs failed")
+        if statfs.f_type != CGROUP2_SUPER_MAGIC:
+            raise RuntimeError("guardian systemd scope is not on cgroup2")
+
+    def verify_cgroup_dir_fd(fd, label, expected_dev=None):
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode):
+            raise RuntimeError(f"guardian cgroup component is not a directory: {label}")
+        if st.st_uid not in (0, uid) or stat.S_IMODE(st.st_mode) & 0o022:
+            raise RuntimeError(f"guardian cgroup component ownership/mode is unsafe: {label}")
+        if expected_dev is not None and st.st_dev != expected_dev:
+            raise RuntimeError(f"guardian cgroup component device mismatch: {label}")
+        verify_cgroup2_fd(fd)
+        return st
+
+    def open_cgroup_dir_at(parent_fd, name):
+        return os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
+
+    def verify_cgroup_file_fd(fd, label, expected_dev):
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"guardian systemd scope {label} is not a regular file")
+        if st.st_uid not in (0, uid) or stat.S_IMODE(st.st_mode) & 0o022 or st.st_dev != expected_dev:
+            raise RuntimeError(f"guardian systemd scope {label} metadata is unsafe")
+
+    def read_cgroup_file(fd, label):
+        chunks = []
+        total = 0
+        while True:
+            try:
+                chunk = os.read(fd, 64 - total + 1)
+            except OSError as exc:
+                raise RuntimeError(f"guardian systemd scope {label} is unreadable") from exc
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 64:
+                raise RuntimeError(f"guardian systemd scope {label} is overlong")
+
+    def read_scope_file(scope_fd, label, expected_dev):
+        try:
+            fd = os.open(label, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=scope_fd)
+        except OSError as exc:
+            raise RuntimeError(f"guardian systemd scope {label} is unavailable") from exc
+        try:
+            verify_cgroup_file_fd(fd, label, expected_dev)
+            return read_cgroup_file(fd, label)
+        finally:
+            os.close(fd)
+
+    def open_scope_file(scope_fd, label, flags, expected_dev):
+        try:
+            fd = os.open(label, flags | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=scope_fd)
+        except OSError as exc:
+            raise RuntimeError(f"guardian systemd scope {label} is unavailable") from exc
+        try:
+            verify_cgroup_file_fd(fd, label, expected_dev)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    path = unit_cgroup_path(unit_name)
+    try:
+        root_fd = os.open("/sys/fs/cgroup", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise RuntimeError("guardian cgroup root is unavailable") from exc
+    opened = [root_fd]
+    scope_fd = None
+    try:
+        root_st = verify_cgroup_dir_fd(root_fd, "/sys/fs/cgroup")
+        parent_fd = root_fd
+        for component in components:
+            try:
+                child_fd = open_cgroup_dir_at(parent_fd, component)
+            except OSError as exc:
+                raise RuntimeError("guardian systemd scope cgroup directory is unavailable") from exc
+            opened.append(child_fd)
+            child_st = verify_cgroup_dir_fd(child_fd, component, root_st.st_dev)
+            parent_fd = child_fd
+        scope_fd = opened[-1]
+        scope_identity = (child_st.st_dev, child_st.st_ino)
+        raw_max = read_scope_file(scope_fd, "pids.max", root_st.st_dev)
+        raw_current = read_scope_file(scope_fd, "pids.current", root_st.st_dev)
+        if raw_max != b"512\n":
+            raise RuntimeError("guardian systemd scope pids.max must be exactly 512")
+        if not (
+            raw_current == b"0\n"
+            or (
+                raw_current.endswith(b"\n")
+                and raw_current[:-1].isdigit()
+                and not raw_current.startswith(b"0")
+            )
+        ):
+            raise RuntimeError("guardian systemd scope pids.current must be a canonical integer")
+        if int(raw_current) > EXPECTED_SCOPE_TASKS_MAX:
+            raise RuntimeError("guardian systemd scope pids.current exceeds pids.max")
+        verify_child_cgroup(pid, unit_name)
+        current_scope_st = os.fstat(scope_fd)
+        if (current_scope_st.st_dev, current_scope_st.st_ino) != scope_identity or path != unit_cgroup_path(unit_name):
+            raise RuntimeError("guardian systemd scope cgroup identity changed")
+        retained = {"identity": scope_identity}
+        try:
+            retained["scope_fd"] = os.dup(scope_fd)
+            os.set_inheritable(retained["scope_fd"], False)
+            retained["kill_fd"] = open_scope_file(scope_fd, "cgroup.kill", os.O_WRONLY, root_st.st_dev)
+            os.set_inheritable(retained["kill_fd"], False)
+            retained["events_fd"] = open_scope_file(scope_fd, "cgroup.events", os.O_RDONLY, root_st.st_dev)
+            os.set_inheritable(retained["events_fd"], False)
+            retained["pids_max_fd"] = open_scope_file(scope_fd, "pids.max", os.O_RDONLY, root_st.st_dev)
+            os.set_inheritable(retained["pids_max_fd"], False)
+            retained["pids_current_fd"] = open_scope_file(scope_fd, "pids.current", os.O_RDONLY, root_st.st_dev)
+            os.set_inheritable(retained["pids_current_fd"], False)
+        except BaseException:
+            close_retained_scope(retained)
+            raise
+        return retained
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def verify_systemd_scope_properties(unit_name, env):
+    properties = list(EXPECTED_SYSTEMD_SCOPE_PROPERTIES)
+    argv = [SYSTEMCTL, "--user", "show", unit_name]
+    for property_name in properties:
+        argv.append(f"--property={property_name}")
+    exit_code, output = exec_capture_and_wait(argv, env, timeout=15, max_bytes=16384)
+    if exit_code != 0:
+        raise RuntimeError("guardian systemd scope property query failed")
+    decoded = output.decode("ascii", "strict")
+    observed = {}
+    for line in decoded.splitlines():
+        if not line or "=" not in line:
+            raise RuntimeError("guardian systemd scope property output is malformed")
+        key, value = line.split("=", 1)
+        if key in observed:
+            raise RuntimeError("guardian systemd scope property output is duplicated")
+        observed[key] = value
+    for key, expected_values in EXPECTED_SYSTEMD_SCOPE_PROPERTIES.items():
+        if observed.get(key) not in expected_values:
+            raise RuntimeError(f"guardian systemd scope property mismatch: {key}")
+
+
+def parse_systemctl_show_properties(output, expected_properties):
+    decoded = output.decode("ascii", "strict")
+    observed = {}
+    expected = set(expected_properties)
+    for line in decoded.splitlines():
+        if not line or "=" not in line:
+            raise RuntimeError("guardian systemd scope state output is malformed")
+        key, value = line.split("=", 1)
+        if key in observed:
+            raise RuntimeError("guardian systemd scope state output is duplicated")
+        if key not in expected:
+            raise RuntimeError("guardian systemd scope state output is unexpected")
+        observed[key] = value
+    if set(observed) != expected:
+        raise RuntimeError("guardian systemd scope state output is incomplete")
+    return observed
+
+
+def query_scope_state(unit_name, env):
+    properties = ("LoadState", "ActiveState", "InvocationID", "ControlGroup")
+    argv = [SYSTEMCTL, "--user", "show", unit_name]
+    for property_name in properties:
+        argv.append(f"--property={property_name}")
+    exit_code, output = exec_capture_and_wait(argv, env, timeout=15, max_bytes=16384)
+    if exit_code != 0:
+        raise RuntimeError("guardian systemd scope state query failed")
+    return parse_systemctl_show_properties(output, properties)
+
+
+def expected_scope_control_group(unit_name):
+    prefix = "/sys/fs/cgroup"
+    path = unit_cgroup_path(unit_name)
+    if not path.startswith(prefix + "/"):
+        raise RuntimeError("guardian systemd scope cgroup path is outside unified hierarchy")
+    return path[len(prefix):]
+
+
+def active_scope_identity_from_state(unit_name, state):
+    invocation_id = state["InvocationID"]
+    control_group = state["ControlGroup"]
+    if state["LoadState"] != "loaded" or state["ActiveState"] != "active":
+        raise RuntimeError("guardian systemd scope is not active")
+    if len(invocation_id) != 32 or any(character not in "0123456789abcdef" for character in invocation_id):
+        raise RuntimeError("guardian systemd scope InvocationID is malformed")
+    if control_group != expected_scope_control_group(unit_name):
+        raise RuntimeError("guardian systemd scope ControlGroup mismatch")
+    return invocation_id, control_group
+
+
+def capture_initial_scope_identity(unit_name, env, cgroup_identity):
+    state = query_scope_state(unit_name, env)
+    invocation_id, control_group = active_scope_identity_from_state(unit_name, state)
+    return {
+        "invocation_id": invocation_id,
+        "control_group": control_group,
+        "cgroup": cgroup_identity,
+    }
+
+
+def capture_verified_scope_readiness(unit_name, env, cgroup_identity, child_pid):
+    properties = tuple(EXPECTED_SYSTEMD_SCOPE_PROPERTIES) + (
+        "LoadState",
+        "ActiveState",
+        "InvocationID",
+        "ControlGroup",
+    )
+    argv = [SYSTEMCTL, "--user", "show", unit_name]
+    for property_name in properties:
+        argv.append(f"--property={property_name}")
+    exit_code, output = exec_capture_and_wait(argv, env, timeout=15, max_bytes=32768)
+    if exit_code != 0:
+        raise RuntimeError("guardian systemd scope readiness query failed")
+    observed = parse_systemctl_show_properties(output, properties)
+    for key, expected_values in EXPECTED_SYSTEMD_SCOPE_PROPERTIES.items():
+        if observed.get(key) not in expected_values:
+            raise RuntimeError(f"guardian systemd scope property mismatch: {key}")
+    invocation_id, control_group = active_scope_identity_from_state(unit_name, observed)
+    if retained_scope_identity(cgroup_identity) != cgroup_identity["identity"]:
+        raise RuntimeError("guardian retained cgroup identity changed before release")
+    if read_retained_cgroup_file(cgroup_identity["pids_max_fd"], "pids.max") != b"512\n":
+        raise RuntimeError("guardian systemd scope pids.max changed before release")
+    verify_child_cgroup(child_pid, unit_name)
+    return {
+        "invocation_id": invocation_id,
+        "control_group": control_group,
+        "cgroup": cgroup_identity,
+    }
+
+
+def scope_cgroup_absent_repeated(unit_name):
+    path = unit_cgroup_path(unit_name)
+    for index in range(2):
+        if os.path.exists(path):
+            return False
+        if index == 0:
+            time.sleep(0.05)
+    return True
+
+
+def scope_state_is_collected_absent(unit_name, state):
+    if state["LoadState"] != "not-found" or state["ActiveState"] != "inactive":
+        return False
+    if state["InvocationID"] or state["ControlGroup"]:
+        raise RuntimeError("guardian systemd scope replacement identity is present")
+    return scope_cgroup_absent_repeated(unit_name)
+
+
+class RetainedCgroupUnreadable(RuntimeError):
+    def __init__(self, label, error_number):
+        super().__init__(f"guardian retained cgroup {label} is unreadable")
+        self.label = label
+        self.errno = error_number
+
+
+def read_retained_cgroup_file(fd, label):
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(fd, 4096 - total + 1)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 4096:
+                raise RuntimeError(f"guardian retained cgroup {label} is overlong")
+    except OSError as exc:
+        raise RetainedCgroupUnreadable(label, exc.errno) from exc
+
+
+def parse_retained_cgroup_integer(raw, label):
+    if not raw.endswith(b"\n"):
+        raise RuntimeError(f"guardian retained cgroup {label} is not newline terminated")
+    value = raw[:-1]
+    if not value.isdigit() or (len(value) > 1 and value.startswith(b"0")):
+        raise RuntimeError(f"guardian retained cgroup {label} is not a canonical integer")
+    return int(value)
+
+
+def retained_cgroup_events_populated_zero(raw):
+    observed = {}
+    known_keys = {b"populated", b"frozen"}
+    if not raw.endswith(b"\n"):
+        raise RuntimeError("guardian retained cgroup cgroup.events is not newline terminated")
+    for line in raw.splitlines():
+        fields = line.split(b" ")
+        if len(fields) != 2:
+            raise RuntimeError("guardian retained cgroup cgroup.events is malformed")
+        key = fields[0]
+        value = fields[1]
+        if key not in known_keys:
+            raise RuntimeError("guardian retained cgroup cgroup.events has unknown key")
+        if key in observed:
+            raise RuntimeError("guardian retained cgroup cgroup.events has duplicate keys")
+        if value not in (b"0", b"1"):
+            raise RuntimeError("guardian retained cgroup cgroup.events has noncanonical value")
+        observed[key] = int(value)
+    if b"populated" not in observed:
+        raise RuntimeError("guardian retained cgroup cgroup.events missing populated")
+    return observed[b"populated"] == 0
+
+
+def retained_scope_identity(scope):
+    st = os.fstat(scope["scope_fd"])
+    return (st.st_dev, st.st_ino)
+
+
+def prove_retained_scope_collected_absent(scope, unreadable):
+    if unreadable.errno != errno.ENODEV:
+        raise unreadable
+    scope_st = os.fstat(scope["scope_fd"])
+    if (scope_st.st_dev, scope_st.st_ino) != scope["identity"] or scope_st.st_nlink != 0:
+        raise unreadable
+    for key in ("scope_fd", "pids_current_fd", "pids_max_fd", "events_fd", "kill_fd"):
+        fd_st = os.fstat(scope[key])
+        if fd_st.st_nlink != 0:
+            raise unreadable
+    try:
+        state = query_scope_state(unit_name, systemd_env)
+    except RuntimeError as query_exc:
+        raise unreadable from query_exc
+    try:
+        collected_absent = scope_state_is_collected_absent(unit_name, state)
+    except RuntimeError as state_exc:
+        raise unreadable from state_exc
+    if not collected_absent:
+        raise unreadable
+
+
+def kill_and_drain_retained_scope(scope):
+    if retained_scope_identity(scope) != scope["identity"]:
+        raise RuntimeError("guardian retained cgroup identity changed before kill")
+    try:
+        current = read_retained_cgroup_file(scope["pids_current_fd"], "pids.current")
+        if parse_retained_cgroup_integer(current, "pids.current") != 0:
+            write_all(scope["kill_fd"], b"1")
+    except OSError as exc:
+        raise RuntimeError("guardian retained cgroup.kill failed") from exc
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if retained_scope_identity(scope) != scope["identity"]:
+            raise RuntimeError("guardian retained cgroup identity changed while draining")
+        current = read_retained_cgroup_file(scope["pids_current_fd"], "pids.current")
+        events = read_retained_cgroup_file(scope["events_fd"], "cgroup.events")
+        if (
+            parse_retained_cgroup_integer(current, "pids.current") == 0
+            and retained_cgroup_events_populated_zero(events)
+        ):
+            return
+        time.sleep(0.1)
+    raise RuntimeError("guardian retained cgroup did not drain")
+
+
+def close_retained_scope(scope):
+    if not isinstance(scope, dict):
+        return
+    for key in ("pids_current_fd", "pids_max_fd", "events_fd", "kill_fd", "scope_fd"):
+        fd = scope.get(key)
+        if isinstance(fd, int):
+            close_fd_quietly(fd)
+
+
+def apply_child_limits():
+    resource.setrlimit(
+        resource.RLIMIT_FSIZE,
+        (TRUSTED_QUOTA_SETUP_FSIZE_BYTES, TRUSTED_QUOTA_SETUP_FSIZE_BYTES),
+    )
+    resource.setrlimit(resource.RLIMIT_AS, (GUARDIAN_ADDRESS_SPACE_BYTES, GUARDIAN_ADDRESS_SPACE_BYTES))
+    resource.setrlimit(resource.RLIMIT_CPU, (GUARDIAN_CPU_SECONDS, GUARDIAN_CPU_SECONDS))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (256, 256))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
+def read_pipe_into_memfd(pipe_fd, limit):
+    total = 0
+    overflow = False
+    while True:
+        try:
+            chunk = os.read(pipe_fd, 1024 * 1024)
+        except BlockingIOError:
+            break
+        if not chunk:
+            return total, overflow, True
+        if total + len(chunk) > limit:
+            remaining = limit - total
+            if remaining > 0:
+                write_all(memfd, chunk[:remaining])
+                total += remaining
+            overflow = True
+            break
+        write_all(memfd, chunk)
+        total += len(chunk)
+    return total, overflow, False
+
+
+def fd_mode_octal(fd):
+    return format(stat.S_IMODE(os.fstat(fd).st_mode), "o")
+
+
+def fd_identity_for_env(fd):
+    st = os.fstat(fd)
+    return f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{fd_mode_octal(fd)}:{st.st_size}"
+
+
+def authenticated_fd_stat_for_env(fd):
+    st = os.fstat(fd)
+    return f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}:{st.st_nlink}"
+
+
+def sha256_fd(fd, limit, expected_size=None):
+    size = os.fstat(fd).st_size
+    if size > limit:
+        raise RuntimeError("trusted snapshot artifact exceeded 64MiB bound")
+    if expected_size is not None and size != expected_size:
+        raise RuntimeError("trusted snapshot artifact size mismatch")
+    digest = hashlib.sha256()
+    total = 0
+    offset = 0
+    while total < size:
+        chunk = os.pread(fd, min(1024 * 1024, size - total), offset)
+        if not chunk:
+            raise RuntimeError("trusted snapshot artifact truncated")
+        total += len(chunk)
+        offset += len(chunk)
+        digest.update(chunk)
+    if total != size:
+        raise RuntimeError("trusted snapshot artifact read count mismatch")
+    return digest.hexdigest()
+
+
+def sealed_memfd_snapshot_from_fd(label, source_fd):
+    prefix = f"ACGS_CLEAN_SIBLING_{label.upper()}"
+    expected_path = os.environ.get(f"{prefix}_PATH", "")
+    expected_stat = os.environ.get(f"{prefix}_STAT", "")
+    expected_sha256 = os.environ.get(f"{prefix}_SHA256", "")
+    if not expected_path or not expected_stat or not expected_sha256:
+        raise RuntimeError(f"trusted {label} snapshot metadata missing")
+    source_path = os.path.realpath(f"/proc/{os.getpid()}/fd/{source_fd}")
+    if source_path != expected_path:
+        raise RuntimeError(f"trusted {label} snapshot source path changed")
+    if authenticated_fd_stat_for_env(source_fd) != expected_stat:
+        raise RuntimeError(f"trusted {label} snapshot source identity changed")
+    source_size = os.fstat(source_fd).st_size
+    if source_size > MAX_SNAPSHOT_ARTIFACT_BYTES:
+        raise RuntimeError("trusted snapshot artifact exceeded 64MiB bound")
+    source_sha256 = sha256_fd(source_fd, MAX_SNAPSHOT_ARTIFACT_BYTES, source_size)
+    if source_sha256 != expected_sha256:
+        raise RuntimeError(f"trusted {label} snapshot source digest changed")
+    snapshot_fd = os.memfd_create(
+        f"acgs-clean-sibling-{label}-snapshot",
+        os.MFD_ALLOW_SEALING | getattr(os, "MFD_CLOEXEC", 0),
+    )
+    total = 0
+    offset = 0
+    while total < source_size:
+        chunk = os.pread(source_fd, min(1024 * 1024, source_size - total), offset)
+        if not chunk:
+            raise RuntimeError(f"trusted {label} snapshot source truncated")
+        total += len(chunk)
+        offset += len(chunk)
+        write_all(snapshot_fd, chunk)
+    if total != source_size:
+        raise RuntimeError(f"trusted {label} snapshot copy count mismatch")
+    os.lseek(source_fd, 0, os.SEEK_SET)
+    os.lseek(snapshot_fd, 0, os.SEEK_SET)
+    if os.fstat(snapshot_fd).st_size != source_size:
+        raise RuntimeError(f"trusted {label} snapshot size mismatch")
+    if sha256_fd(snapshot_fd, MAX_SNAPSHOT_ARTIFACT_BYTES, source_size) != expected_sha256:
+        raise RuntimeError(f"trusted {label} snapshot digest mismatch")
+    fcntl.fcntl(snapshot_fd, F_ADD_SEALS, REQUIRED_SEALS)
+    if fcntl.fcntl(snapshot_fd, F_GET_SEALS) != REQUIRED_SEALS:
+        raise RuntimeError(f"trusted {label} snapshot seal mismatch")
+    os.set_inheritable(snapshot_fd, True)
+    return {
+        "fd": snapshot_fd,
+        "stat": fd_identity_for_env(snapshot_fd),
+    }
+
+
+def build_sealed_snapshot_artifacts():
+    artifacts = {}
+    os.environ["ACGS_CLEAN_SIBLING_SNAPSHOT_MODE"] = "anonymous"
+    for label, fd in SNAPSHOT_ARTIFACTS:
+        snapshot = sealed_memfd_snapshot_from_fd(label, fd)
+        artifacts[label] = snapshot
+        prefix = f"ACGS_CLEAN_SIBLING_{label.upper()}"
+        os.environ[f"{prefix}_SNAPSHOT_FD"] = str(snapshot["fd"])
+        os.environ[f"{prefix}_SNAPSHOT_STAT"] = snapshot["stat"]
+    return artifacts
+
+
+def read_memfd():
+    os.lseek(memfd, 0, os.SEEK_SET)
+    captured = b""
+    while True:
+        chunk = os.read(memfd, 1024 * 1024)
+        if not chunk:
+            break
+        captured += chunk
+        if len(captured) > MAX_VISIBLE_OUTPUT_BYTES:
+            raise RuntimeError("visible output memfd exceeded 64MiB bound")
+    return captured
+
+
+def seal_and_read_memfd():
+    os.lseek(memfd, 0, os.SEEK_END)
+    size = os.lseek(memfd, 0, os.SEEK_CUR)
+    seals = fcntl.fcntl(memfd, F_GET_SEALS)
+    if seals != REQUIRED_SEALS:
+        fcntl.fcntl(memfd, F_ADD_SEALS, REQUIRED_SEALS)
+        seals = fcntl.fcntl(memfd, F_GET_SEALS)
+    if seals != REQUIRED_SEALS:
+        raise RuntimeError(f"visible output memfd seals mismatch: {seals}")
+    if size:
+        try:
+            mmap.mmap(memfd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_WRITE)
+        except OSError:
+            pass
+        else:
+            raise RuntimeError("visible output memfd accepted writable mmap after sealing")
+    captured = read_memfd()
+    if PASS_MARKER in captured:
+        raise RuntimeError("subordinate proof output attempted to emit technical PASS")
+    return captured
+
+
+def close_fd_quietly(fd):
+    if fd is None:
+        return
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def is_sha(value, length):
+    return isinstance(value, str) and len(value) == length and all(
+        ch in "0123456789abcdef" for ch in value
+    )
+
+
+def is_abs(value):
+    return isinstance(value, str) and value.startswith("/") and len(value) > 1
+
+
+def is_utc(value):
+    if not isinstance(value, str) or len(value) != 20 or value[-1] != "Z":
+        return False
+    return (
+        value[0:4].isdigit()
+        and value[4] == "-"
+        and value[5:7].isdigit()
+        and value[7] == "-"
+        and value[8:10].isdigit()
+        and value[10] == "T"
+        and value[11:13].isdigit()
+        and value[13] == ":"
+        and value[14:16].isdigit()
+        and value[16] == ":"
+        and value[17:19].isdigit()
+    )
+
+
+def exact_keys(value, keys, label):
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise RuntimeError(f"trusted success status {label} shape mismatch")
+
+
+def validate_lock(value, *, ui=False):
+    keys = {"path", "sha256"} if ui else {"path", "sha256", "distributions"}
+    exact_keys(value, keys, "lock")
+    if not isinstance(value["path"], str) or not value["path"] or not is_sha(value["sha256"], 64):
+        raise RuntimeError("trusted success status lock content mismatch")
+    if not ui:
+        distributions = value["distributions"]
+        if not isinstance(distributions, dict) or not distributions:
+            raise RuntimeError("trusted success status lock distribution mismatch")
+        for name, item in distributions.items():
+            exact_keys(item, {"version", "artifact_hashes"}, "lock distribution")
+            if not isinstance(name, str) or not name or not isinstance(item["version"], str):
+                raise RuntimeError("trusted success status lock distribution content mismatch")
+            hashes = item["artifact_hashes"]
+            if not isinstance(hashes, list) or not hashes or len(set(hashes)) != len(hashes):
+                raise RuntimeError("trusted success status lock hashes mismatch")
+            if not all(is_sha(digest, 64) for digest in hashes):
+                raise RuntimeError("trusted success status lock hashes malformed")
+
+
+def validate_bootstrap_record(value, code, node_id):
+    required = {
+        "schema_version",
+        "node_id",
+        "code",
+        "captured_at_utc",
+        "runtime_root",
+        "interpreter",
+        "interpreter_realpath",
+        "runtime_ctime_ns",
+        "lock_sha256",
+        "nonce",
+    }
+    if code == "UI":
+        required |= {"node_version", "pnpm_executable", "pnpm_version"}
+    else:
+        required |= {"python_version", "python_implementation", "pyvenv_cfg_sha256"}
+    exact_keys(value, required, "bootstrap record")
+    if (
+        value["schema_version"] != "acgs-bootstrap-record/v1"
+        or value["node_id"] != node_id
+        or value["code"] != code
+        or not is_utc(value["captured_at_utc"])
+        or not is_abs(value["runtime_root"])
+        or not is_abs(value["interpreter"])
+        or not is_abs(value["interpreter_realpath"])
+        or not str(value["runtime_ctime_ns"]).isdigit()
+        or not is_sha(value["lock_sha256"], 64)
+        or not is_sha(value["nonce"], 64)
+    ):
+        raise RuntimeError("trusted success status bootstrap record mismatch")
+    if code == "UI":
+        if value["node_version"] != "24.18.0" or value["pnpm_version"] != "9.15.4":
+            raise RuntimeError("trusted success status UI bootstrap mismatch")
+    elif value["python_implementation"] != "cpython":
+        raise RuntimeError("trusted success status Python bootstrap mismatch")
+
+
+def validate_environment_identity(code, identity, node_id):
+    if code == "EVID":
+        required = {
+            "schema_version",
+            "code",
+            "node_id",
+            "captured_at_utc",
+            "interpreter",
+            "interpreter_realpath",
+            "module_root",
+            "python_version",
+            "python_implementation",
+            "uv",
+            "lock",
+            "installed_distributions",
+            "modules",
+            "bootstrap_record",
+            "output_path",
+        }
+    elif code in {"CP", "GZ"}:
+        required = {
+            "schema_version",
+            "code",
+            "node_id",
+            "captured_at_utc",
+            "interpreter",
+            "interpreter_realpath",
+            "module_root",
+            "python_version",
+            "python_implementation",
+            "lock",
+            "installed_distributions",
+            "pep517_backend",
+            "pep660_editable_build",
+            "bootstrap_record",
+            "output_path",
+        }
+    elif code == "UI":
+        required = {
+            "schema_version",
+            "code",
+            "node_id",
+            "captured_at_utc",
+            "node",
+            "pnpm",
+            "module_root",
+            "lock",
+            "bootstrap_record",
+            "output_path",
+        }
+    else:
+        raise RuntimeError("trusted success status unknown environment")
+    exact_keys(identity, required, "environment identity")
+    if (
+        identity["schema_version"] != "acgs-environment-identity/v1"
+        or identity["code"] != code
+        or identity["node_id"] != node_id
+        or not is_utc(identity["captured_at_utc"])
+        or not is_abs(identity["module_root"])
+        or not is_abs(identity["output_path"])
+    ):
+        raise RuntimeError("trusted success status environment identity mismatch")
+    validate_bootstrap_record(identity["bootstrap_record"], code, node_id)
+    validate_lock(identity["lock"], ui=(code == "UI"))
+    installed = identity.get("installed_distributions")
+    if code != "UI":
+        if not isinstance(installed, dict) or not installed:
+            raise RuntimeError("trusted success status installed distribution mismatch")
+        for name, item in installed.items():
+            exact_keys(item, {"version", "location"}, "installed distribution")
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(item["version"], str)
+                or not item["version"]
+                or not is_abs(item["location"])
+            ):
+                raise RuntimeError("trusted success status installed distribution content mismatch")
+    if code == "EVID":
+        exact_keys(identity["uv"], {"version", "executable"}, "uv identity")
+        if identity["uv"]["version"] != "0.11.19" or not is_abs(identity["uv"]["executable"]):
+            raise RuntimeError("trusted success status uv identity mismatch")
+        modules = identity.get("modules")
+        if (
+            not isinstance(modules, dict)
+            or set(modules) != {"rfc8785", "cryptography", "jsonschema", "pytest"}
+        ):
+            raise RuntimeError("trusted success status module identity mismatch")
+        for module_name, module in modules.items():
+            exact_keys(module, {"distribution", "version", "path"}, "module identity")
+            if (
+                not isinstance(module["distribution"], str)
+                or not module["distribution"]
+                or not isinstance(module["version"], str)
+                or not module["version"]
+                or not is_abs(module["path"])
+            ):
+                raise RuntimeError("trusted success status module content mismatch")
+    if code in {"CP", "GZ"}:
+        pep660 = identity["pep660_editable_build"]
+        exact_keys(
+            pep660,
+            {"distribution", "version", "module", "module_path", "lock_sha256", "artifact_hashes"},
+            "pep660 identity",
+        )
+        if (
+            pep660["distribution"] != "editables"
+            or pep660["version"] != "0.6"
+            or pep660["module"] != "editables"
+            or not isinstance(pep660["module_path"], str)
+            or not is_sha(pep660["lock_sha256"], 64)
+            or not isinstance(pep660["artifact_hashes"], list)
+            or not pep660["artifact_hashes"]
+            or not all(is_sha(digest, 64) for digest in pep660["artifact_hashes"])
+        ):
+            raise RuntimeError("trusted success status pep660 identity mismatch")
+
+
+def validate_run_semantics(run, node_id, parent, target, assignments, records, process_schedule):
+    top_keys = {
+        "schema_version",
+        "node_version",
+        "node_id",
+        "parent_commit_sha",
+        "product_commit_sha",
+        "git_tree_sha",
+        "assignment",
+        "environment_identities",
+        "pep660_editable_build",
+        "ed25519_implementation",
+        "commands",
+        "selectors",
+        "determinism",
+        "clock",
+        "platform",
+        "artifacts",
+        "skipped",
+        "external",
+        "timestamps",
+    }
+    exact_keys(run, top_keys, "run")
+    if (
+        run["schema_version"] != "acgs-run-evidence/v1"
+        or run["node_version"] != 1
+        or run["node_id"] != node_id
+        or run["parent_commit_sha"] != parent
+        or run["product_commit_sha"] != target
+        or run["assignment"] != assignments
+        or not is_sha(run["git_tree_sha"], 40)
+    ):
+        raise RuntimeError("trusted success status run binding mismatch")
+    tokens = assignments.split("+")
+    identities = run["environment_identities"]
+    if not isinstance(identities, dict) or set(identities) != set(tokens) or "EVID" not in identities:
+        raise RuntimeError("trusted success status environment set mismatch")
+    for code, identity in identities.items():
+        validate_environment_identity(code, identity, node_id)
+    pep660 = run["pep660_editable_build"]
+    exact_keys(pep660, {"distribution", "version", "module", "environments"}, "pep660 aggregate")
+    expected_pep660_envs = {code for code in tokens if code in {"CP", "GZ"}}
+    if (
+        pep660["distribution"] != "editables"
+        or pep660["version"] != "0.6"
+        or pep660["module"] != "editables"
+        or set(pep660["environments"]) != expected_pep660_envs
+    ):
+        raise RuntimeError("trusted success status pep660 aggregate mismatch")
+    for code in expected_pep660_envs:
+        aggregate = pep660["environments"][code]
+        source = identities[code]["pep660_editable_build"]
+        exact_keys(aggregate, {"module_path", "product_lock_sha256", "artifact_hashes"}, "pep660 env")
+        if aggregate != {
+            "module_path": source["module_path"],
+            "product_lock_sha256": source["lock_sha256"],
+            "artifact_hashes": source["artifact_hashes"],
+        }:
+            raise RuntimeError("trusted success status pep660 aggregate copied data mismatch")
+    ed = run["ed25519_implementation"]
+    exact_keys(ed, {"distribution", "version", "module", "evidence_test_lock_sha256", "artifact_hashes"}, "ed25519")
+    if (
+        ed["distribution"] != "cryptography"
+        or ed["module"] != "cryptography.hazmat.primitives.asymmetric.ed25519"
+        or not isinstance(ed["version"], str)
+        or not is_sha(ed["evidence_test_lock_sha256"], 64)
+        or not isinstance(ed["artifact_hashes"], list)
+        or not ed["artifact_hashes"]
+        or not all(is_sha(digest, 64) for digest in ed["artifact_hashes"])
+    ):
+        raise RuntimeError("trusted success status ed25519 binding mismatch")
+    determinism = run["determinism"]
+    exact_keys(determinism, {"seed", "python_hash_seed", "process_schedule"}, "determinism")
+    if (
+        determinism["seed"] != 20260710
+        or determinism["python_hash_seed"] != "0"
+        or determinism["process_schedule"] != process_schedule
+    ):
+        raise RuntimeError("trusted success status determinism mismatch")
+    clock = run["clock"]
+    exact_keys(clock, {"source", "skew_ms"}, "clock")
+    if clock["source"] != "system-utc" or not isinstance(clock["skew_ms"], int):
+        raise RuntimeError("trusted success status clock mismatch")
+    platform = run["platform"]
+    exact_keys(platform, {"os", "architecture", "container"}, "platform")
+    exact_keys(platform["container"], {"kind", "identity"}, "container")
+    if not all(isinstance(platform[name], str) and platform[name] for name in ("os", "architecture")):
+        raise RuntimeError("trusted success status platform mismatch")
+    if not all(isinstance(platform["container"][name], str) and platform["container"][name] for name in ("kind", "identity")):
+        raise RuntimeError("trusted success status container mismatch")
+    if run["skipped"] != [] or run["external"] != []:
+        raise RuntimeError("trusted success status skipped/external mismatch")
+    timestamps = run["timestamps"]
+    exact_keys(
+        timestamps,
+        {"generated_at_utc", "transcript_started_at_utc", "transcript_finished_at_utc"},
+        "timestamps",
+    )
+    if not all(is_utc(timestamps[name]) for name in timestamps):
+        raise RuntimeError("trusted success status timestamps malformed")
+    artifacts = run["artifacts"]
+    if not isinstance(artifacts, list) or len(artifacts) != 2:
+        raise RuntimeError("trusted success status artifact count mismatch")
+    artifact_paths = set()
+    required_suffixes = ("environment-identities.json", "transcript.jsonl")
+    for index, artifact in enumerate(artifacts):
+        exact_keys(artifact, {"path", "sha256"}, "artifact")
+        if not is_abs(artifact["path"]) or not is_sha(artifact["sha256"], 64):
+            raise RuntimeError("trusted success status artifact malformed")
+        if artifact["path"] in artifact_paths or not artifact["path"].endswith(required_suffixes[index]):
+            raise RuntimeError("trusted success status artifact path mismatch")
+        artifact_paths.add(artifact["path"])
+    commands = run["commands"]
+    expected_command_selectors = EXPECTED_COMMAND_SELECTORS[node_id]
+    if not isinstance(commands, list) or len(commands) != int(records):
+        raise RuntimeError("trusted success status run record count mismatch")
+    root_cwd = commands[0].get("cwd") if commands and isinstance(commands[0], dict) else None
+    if not is_abs(root_cwd):
+        raise RuntimeError("trusted success status root cwd mismatch")
+    expected_cwd_by_scope = {
+        "REPO_ROOT": root_cwd,
+        "CP": f"{root_cwd}/packages/acgs-control-plane",
+        "GZ": root_cwd,
+        "UI": f"{root_cwd}/acgi-ai",
+    }
+    observed_selectors = []
+    for index, command in enumerate(commands):
+        if not isinstance(command, dict):
+            raise RuntimeError("trusted success status command record mismatch")
+        allowed = {
+            "argv",
+            "cwd",
+            "exit_code",
+            "stdout_sha256",
+            "stderr_sha256",
+            "started_at_utc",
+            "finished_at_utc",
+            "selectors",
+        }
+        if "cwd_scope" in command:
+            allowed.add("cwd_scope")
+        exact_keys(command, allowed, "command")
+        if (
+            not isinstance(command["argv"], list)
+            or not command["argv"]
+            or not is_abs(command["cwd"])
+            or len(command["argv"]) > 256
+            or any(
+                not isinstance(argument, str)
+                or not argument
+                or len(argument) > 4096
+                or any(ord(character) < 0x20 or ord(character) == 0x7F for character in argument)
+                for argument in command["argv"]
+            )
+            or command["exit_code"] != 0
+            or not is_sha(command["stdout_sha256"], 64)
+            or not is_sha(command["stderr_sha256"], 64)
+            or not is_utc(command["started_at_utc"])
+            or not is_utc(command["finished_at_utc"])
+            or command["finished_at_utc"] < command["started_at_utc"]
+            or command["selectors"] != [expected_command_selectors[index]]
+        ):
+            raise RuntimeError("trusted success status command record mismatch")
+        expected_argv = expected_command_argv(expected_command_selectors[index], index)
+        if expected_argv is None or command["argv"] != expected_argv:
+            raise RuntimeError("trusted success status command argv mismatch")
+        if "cwd_scope" in command and command["cwd_scope"] not in {"REPO_ROOT", "CP", "GZ", "UI"}:
+            raise RuntimeError("trusted success status command cwd mismatch")
+        if "cwd_scope" in command:
+            if command["cwd"] != expected_cwd_by_scope[command["cwd_scope"]]:
+                raise RuntimeError("trusted success status command cwd mismatch")
+        else:
+            selector = command["selectors"][0]
+            if selector.startswith("packages/acgs-control-plane:"):
+                expected_cwd = expected_cwd_by_scope["CP"]
+            elif selector.startswith("root:") or selector.startswith("packages/gove-zone:"):
+                expected_cwd = expected_cwd_by_scope["REPO_ROOT"]
+            else:
+                raise RuntimeError("trusted success status command cwd mismatch")
+            if command["cwd"] != expected_cwd:
+                raise RuntimeError("trusted success status command cwd mismatch")
+        if index == 0 and timestamps["transcript_started_at_utc"] != command["started_at_utc"]:
+            raise RuntimeError("trusted success status transcript start mismatch")
+        if index == len(commands) - 1 and timestamps["transcript_finished_at_utc"] != command["finished_at_utc"]:
+            raise RuntimeError("trusted success status transcript finish mismatch")
+        for selector in command["selectors"]:
+            if selector not in observed_selectors:
+                observed_selectors.append(selector)
+    if run["selectors"] != observed_selectors:
+        raise RuntimeError("trusted success status selector index mismatch")
+
+
+def read_status_run(status_run_fd, expected_identity, expected_size, expected_sha256):
+    if int(expected_size) > MAX_RUN_FD_BYTES:
+        raise RuntimeError("trusted success status run descriptor exceeded 8MiB bound")
+    st = os.fstat(status_run_fd)
+    actual_identity = f"{st.st_dev}:{st.st_ino}:{st.st_uid}:{stat.S_IMODE(st.st_mode):o}"
+    if (
+        actual_identity != expected_identity
+        or st.st_nlink != 0
+        or st.st_size != int(expected_size)
+    ):
+        raise RuntimeError("trusted success status run descriptor mismatch")
+    chunks = []
+    remaining = int(expected_size)
+    os.lseek(status_run_fd, 0, os.SEEK_SET)
+    while remaining:
+        chunk = os.read(status_run_fd, min(1024 * 1024, remaining))
+        if not chunk:
+            raise RuntimeError("trusted success status run descriptor truncated")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    if os.read(status_run_fd, 1):
+        raise RuntimeError("trusted success status run descriptor size mismatch")
+    run_bytes = b"".join(chunks)
+    if hashlib.sha256(run_bytes).hexdigest() != expected_sha256:
+        raise RuntimeError("trusted success status run descriptor hash mismatch")
+    return run_bytes
+
+
+def verified_status(status_payload, status_run_fd):
+    fields = status_payload.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields = fields[:-1]
+    if len(fields) != 8:
+        raise RuntimeError("trusted success status metadata missing")
+    (
+        parent,
+        target,
+        run_hash,
+        records,
+        assignments,
+        run_identity,
+        run_size,
+        run_sha256,
+    ) = [
+        field.decode("utf-8", "strict") for field in fields
+    ]
+    node_id = os.environ.get("NODE_ID", "P0-EVIDENCE-000")
+    expected = EXPECTED_STATUS.get(node_id)
+    if expected is None:
+        raise RuntimeError("trusted success status node unsupported")
+    expected_assignments, expected_records, expected_process_schedule = expected
+    if parent != os.environ.get("P", "") or target != sys.argv[1]:
+        raise RuntimeError("trusted success status target mismatch")
+    if assignments != expected_assignments or records != expected_records:
+        raise RuntimeError("trusted success status node contract mismatch")
+    if not (len(run_hash) == 64 and all(ch in "0123456789abcdef" for ch in run_hash)):
+        raise RuntimeError("trusted success status run hash malformed")
+    try:
+        run_bytes = read_status_run(status_run_fd, run_identity, run_size, run_sha256)
+        run = json.loads(run_bytes)
+    except Exception as exc:
+        raise RuntimeError(f"trusted success status run JSON malformed: {exc}") from exc
+    if not isinstance(run, dict):
+        raise RuntimeError("trusted success status run JSON is not an object")
+    validate_run_semantics(
+        run, node_id, parent, target, assignments, records, expected_process_schedule
+    )
+    canonical = json.dumps(run, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(canonical).hexdigest() != run_hash:
+        raise RuntimeError("trusted success status run hash mismatch")
+    return parent, target, run_hash, records, assignments
+
+
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+    raise OSError(ctypes.get_errno(), "guardian prctl(PR_SET_DUMPABLE) failed")
+if libc.prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0:
+    raise RuntimeError("guardian remained dumpable")
+try:
+    memfd = os.memfd_create(
+        "acgs-clean-sibling-visible-output",
+        os.MFD_ALLOW_SEALING | getattr(os, "MFD_CLOEXEC", 0),
+    )
+except AttributeError:
+    print("CLEAN_SIBLING=FAIL phase=B0 reason=memfd sealing unavailable", file=sys.stderr)
+    raise SystemExit(2)
+except OSError as exc:
+    print(f"CLEAN_SIBLING=FAIL phase=B0 reason=memfd creation failed: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+
+systemd_env = user_bus_env()
+attest_fd = os.dup(1)
+diagnostic_fd = os.dup(2)
+snapshot_artifacts = build_sealed_snapshot_artifacts()
+status_parent, status_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+status_write_fd = status_child.fileno()
+output_read_fd, output_write_fd = os.pipe()
+startup_read_fd, startup_write_fd = os.pipe()
+startup_read_st = os.fstat(startup_read_fd)
+if not stat.S_ISFIFO(startup_read_st.st_mode):
+    raise RuntimeError("guardian startup barrier is not an anonymous pipe")
+startup_read_flags = fcntl.fcntl(startup_read_fd, fcntl.F_GETFL)
+if startup_read_flags & os.O_ACCMODE != os.O_RDONLY:
+    raise RuntimeError("guardian startup barrier read end is not read-only")
+startup_read_identity = (
+    f"{startup_read_st.st_dev}:{startup_read_st.st_ino}:{startup_read_st.st_uid}:"
+    f"{startup_read_st.st_mode:x}"
+)
+runtime_dir = systemd_env.get("XDG_RUNTIME_DIR", "")
+if not runtime_dir.startswith(f"/run/user/{os.getuid()}"):
+    raise RuntimeError("guardian runtime directory is not tenant-bound")
+os.set_inheritable(memfd, False)
+for fd in (8, 9, 10, 11, status_write_fd, *[snapshot["fd"] for snapshot in snapshot_artifacts.values()]):
+    os.set_inheritable(fd, True)
+os.set_inheritable(output_write_fd, True)
+for fd in (
+    attest_fd,
+    diagnostic_fd,
+    status_parent.fileno(),
+    output_read_fd,
+    startup_read_fd,
+    startup_write_fd,
+):
+    os.set_inheritable(fd, False)
+os.environ["ACGS_CLEAN_SIBLING_OUTPUT_GUARDIAN"] = "1"
+os.environ["ACGS_CLEAN_SIBLING_STATUS_FD"] = str(status_write_fd)
+os.environ["ACGS_CLEAN_SIBLING_STARTUP_BARRIER_FD"] = "0"
+os.environ["ACGS_CLEAN_SIBLING_STARTUP_BARRIER_IDENTITY"] = startup_read_identity
+child_env = build_child_env(systemd_env, os.environ)
+systemd_setenv_args = [
+    f"--setenv={key}={value}" for key, value in sorted(child_env.items())
+]
+unit_name = f"acgs-clean-sibling-{os.getuid()}-{os.getpid()}-{int(time.time_ns())}.scope"
+guardian_pid = os.getpid()
+pid = os.fork()
+if pid == 0:
+    try:
+        if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "guardian child prctl(PR_SET_PDEATHSIG) failed")
+        if os.getppid() != guardian_pid:
+            os._exit(2)
+        apply_child_limits()
+        status_parent.close()
+        os.close(output_read_fd)
+        os.close(attest_fd)
+        os.close(diagnostic_fd)
+        os.close(memfd)
+        os.close(startup_write_fd)
+        os.dup2(startup_read_fd, 0)
+        if startup_read_fd != 0:
+            os.close(startup_read_fd)
+        os.dup2(output_write_fd, 1)
+        os.dup2(output_write_fd, 2)
+        if output_write_fd not in (1, 2):
+            os.close(output_write_fd)
+        os.execve(
+            SYSTEMD_RUN,
+            [
+                SYSTEMD_RUN,
+                "--user",
+                "--scope",
+                f"--unit={unit_name}",
+                "--quiet",
+                *systemd_setenv_args,
+                "-p",
+                "MemoryMax=4G",
+                "-p",
+                "MemorySwapMax=0",
+                "-p",
+                "TasksMax=512",
+                "-p",
+                "CPUQuota=400%",
+                "-p",
+                "RuntimeMaxSec=3660s",
+                "-p",
+                "TimeoutStopSec=15s",
+                "-p",
+                "KillMode=control-group",
+                "-p",
+                "KillSignal=SIGTERM",
+                "-p",
+                "SendSIGKILL=yes",
+                "-p",
+                "FinalKillSignal=SIGKILL",
+                "-p",
+                "CollectMode=inactive-or-failed",
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                f"/proc/{os.getpid()}/fd/9",
+                sys.argv[1],
+            ],
+            child_env,
+        )
+    except BaseException as exc:
+        print(f"CLEAN_SIBLING=FAIL phase=B0 reason=guardian child exec failed: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+status_child.close()
+os.close(output_write_fd)
+os.close(startup_read_fd)
+os.set_blocking(output_read_fd, False)
+scope_stop_proven = False
+initial_scope_identity = None
+startup_barrier_released = False
+signal_state = {"signum": None, "handling": False}
+
+
+class GuardianInterrupted(RuntimeError):
+    def __init__(self, signum):
+        super().__init__(f"guardian interrupted by signal {signum}")
+        self.signum = signum
+
+
+def handle_guardian_signal(signum, _frame):
+    if signal_state["handling"]:
+        return
+    signal_state["handling"] = True
+    signal_state["signum"] = signum
+    raise GuardianInterrupted(signum)
+
+
+def stop_scope_once():
+    global scope_stop_proven
+    if scope_stop_proven:
+        return
+    if initial_scope_identity is None:
+        raise RuntimeError("guardian systemd scope identity was not captured")
+    kill_and_drain_or_accept_collected_scope(initial_scope_identity["cgroup"])
+    scope_stop_proven = True
+    try:
+        state = query_scope_state(unit_name, systemd_env)
+    except RuntimeError:
+        return
+    try:
+        invocation_id, control_group = active_scope_identity_from_state(unit_name, state)
+    except RuntimeError as exc:
+        if str(exc) == "guardian systemd scope is not active":
+            if scope_state_is_collected_absent(unit_name, state):
+                return
+        raise
+    if (
+        invocation_id != initial_scope_identity["invocation_id"]
+        or control_group != initial_scope_identity["control_group"]
+    ):
+        raise RuntimeError("guardian systemd scope identity changed before stop")
+
+
+def kill_and_drain_or_accept_collected_scope(scope):
+    try:
+        kill_and_drain_retained_scope(scope)
+    except RetainedCgroupUnreadable as exc:
+        prove_retained_scope_collected_absent(scope, exc)
+
+
+def release_startup_barrier():
+    global startup_barrier_released
+    if startup_barrier_released:
+        return
+    try:
+        released = os.write(startup_write_fd, b"R")
+        close_fd_quietly(startup_write_fd)
+    except BrokenPipeError as exc:
+        raise RuntimeError("guardian child exited before startup release") from exc
+    except OSError as exc:
+        raise RuntimeError("guardian startup barrier release failed") from exc
+    if released != 1:
+        raise RuntimeError("guardian startup barrier release was incomplete")
+    startup_barrier_released = True
+
+
+def reap_exited_child_reason():
+    global wait_status
+    if wait_status is not None:
+        return f"child exited {os.waitstatus_to_exitcode(wait_status)}"
+    waited_pid, candidate_status = os.waitpid(pid, os.WNOHANG)
+    if waited_pid != pid:
+        return None
+    wait_status = candidate_status
+    return f"child exited {os.waitstatus_to_exitcode(wait_status)}"
+
+
+def drain_visible_output_until(deadline_at):
+    global output_total, output_overflow, output_eof
+    while not output_eof and time.monotonic() < deadline_at:
+        captured_now, overflow_now, eof_now = read_pipe_into_memfd(
+            output_read_fd, MAX_VISIBLE_OUTPUT_BYTES - output_total
+        )
+        output_total += captured_now
+        output_eof = output_eof or eof_now
+        if overflow_now:
+            output_overflow = True
+            break
+        if captured_now == 0 and not eof_now:
+            time.sleep(0.05)
+
+
+def receive_startup_ack():
+    global wait_status
+    deadline_at = time.monotonic() + STARTUP_ACK_TIMEOUT_SECONDS
+    status_parent.setblocking(False)
+    while time.monotonic() < deadline_at:
+        try:
+            chunk, ancillary, flags, _address = status_parent.recvmsg(
+                len(STARTUP_ACK_FRAME) + 1,
+                socket.CMSG_SPACE(array.array("i").itemsize),
+            )
+        except BlockingIOError:
+            waited_pid, candidate_status = os.waitpid(pid, os.WNOHANG)
+            if waited_pid == pid:
+                wait_status = candidate_status
+                raise RuntimeError(
+                    f"child exited {os.waitstatus_to_exitcode(wait_status)} before startup ack"
+                )
+            drain_visible_output_until(time.monotonic() + 0.001)
+            time.sleep(0.05)
+            continue
+        frame_fds = []
+        for level, cmsg_type, cmsg_data in ancillary:
+            if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+                received = array.array("i")
+                received.frombytes(
+                    cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
+                )
+                frame_fds.extend(received.tolist())
+        close_received_status_fds(frame_fds)
+        if not chunk:
+            raise RuntimeError("guardian startup ack socket closed")
+        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or ancillary or chunk != STARTUP_ACK_FRAME:
+            raise RuntimeError("guardian startup ack malformed")
+        return
+    raise RuntimeError("guardian startup ack timed out")
+
+
+def close_received_status_fds(status_run_fds):
+    for received_fd in status_run_fds:
+        close_fd_quietly(received_fd)
+
+
+def collect_status_frames():
+    status_parent.setblocking(False)
+    status_frames = []
+    status_run_fds = []
+    status_rejected = False
+    while True:
+        try:
+            chunk, ancillary, flags, _address = status_parent.recvmsg(
+                MAX_STATUS_FRAME_BYTES + 1,
+                socket.CMSG_SPACE(array.array("i").itemsize),
+            )
+        except BlockingIOError:
+            break
+        if not chunk:
+            break
+        frame_fds = []
+        for level, cmsg_type, cmsg_data in ancillary:
+            if level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
+                received = array.array("i")
+                received.frombytes(
+                    cmsg_data[: len(cmsg_data) - (len(cmsg_data) % received.itemsize)]
+                )
+                frame_fds.extend(received.tolist())
+        if flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC) or len(chunk) > MAX_STATUS_FRAME_BYTES:
+            close_received_status_fds(frame_fds)
+            status_rejected = True
+            status_frames.append(b"")
+            status_frames.append(b"")
+            break
+        status_frames.append(chunk)
+        status_run_fds.extend(frame_fds)
+    return status_rejected, status_frames, status_run_fds
+
+
+deadline = time.monotonic() + GUARDIAN_CHILD_TIMEOUT_SECONDS
+wait_status = None
+output_total = 0
+output_overflow = False
+output_eof = False
+first_failure = None
+signal_exit_code = None
+status_run_fds = []
+scope_cgroup_identity = None
+previous_sigterm = signal.signal(signal.SIGTERM, handle_guardian_signal)
+previous_sigint = signal.signal(signal.SIGINT, handle_guardian_signal)
+try:
+    try:
+        verify_child_cgroup(pid, unit_name)
+    except RuntimeError as exc:
+        fast_exit_reason = reap_exited_child_reason()
+        if fast_exit_reason is not None:
+            raise RuntimeError(fast_exit_reason) from exc
+        raise
+    scope_cgroup_identity = verify_scope_tasks_max(pid, unit_name)
+    initial_scope_identity = capture_verified_scope_readiness(
+        unit_name,
+        systemd_env,
+        scope_cgroup_identity,
+        pid,
+    )
+    release_startup_barrier()
+    receive_startup_ack()
+    while wait_status is None:
+        waited_pid, candidate_status = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            wait_status = candidate_status
+            break
+        drain_visible_output_until(time.monotonic() + 0.001)
+        if output_overflow:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            wait_status = wait_for_pid(pid, 2)
+            break
+        if time.monotonic() >= deadline:
+            first_failure = "guardian child timed out"
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            wait_status = wait_for_pid(pid, 2)
+            break
+        time.sleep(0.1)
+    exit_code = os.waitstatus_to_exitcode(wait_status)
+    if exit_code != 0:
+        raise RuntimeError(f"child exited {exit_code}")
+    stop_scope_once()
+    post_stop_deadline = min(deadline, time.monotonic() + GUARDIAN_POST_STOP_DRAIN_SECONDS)
+    drain_visible_output_until(post_stop_deadline)
+    if not output_eof:
+        raise RuntimeError("visible output pipe did not close after scope stop")
+    captured = seal_and_read_memfd()
+    if output_overflow:
+        raise RuntimeError("visible output memfd exceeded 64MiB bound")
+    status_rejected, status_frames, status_run_fds = collect_status_frames()
+    if status_rejected or len(status_frames) != 1 or len(status_run_fds) != 1:
+        raise RuntimeError("trusted success status must be exactly one bounded frame")
+    parent, target, run_hash, records, assignments = verified_status(
+        status_frames[0], status_run_fds[0]
+    )
+    write_all(
+        attest_fd,
+        (
+            "CLEAN_SIBLING_TECHNICAL=PASS "
+            f"P={parent} T={target} R={run_hash} records={records} "
+            f"assignments={assignments} attestations=pending-independent-lanes\n"
+        ).encode(),
+    )
+except GuardianInterrupted as exc:
+    signal_exit_code = 128 + exc.signum
+    if first_failure is None:
+        first_failure = f"guardian interrupted by signal {exc.signum}"
+except BaseException as exc:
+    if first_failure is None:
+        first_failure = str(exc)
+finally:
+    close_fd_quietly(startup_write_fd)
+    if scope_cgroup_identity is not None and not scope_stop_proven:
+        try:
+            kill_and_drain_or_accept_collected_scope(scope_cgroup_identity)
+            scope_stop_proven = True
+        except BaseException as exc:
+            if first_failure is None:
+                first_failure = str(exc)
+    if wait_status is None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            wait_status = wait_for_pid(pid, 2)
+        except BaseException as exc:
+            if first_failure is None:
+                first_failure = str(exc)
+    try:
+        stop_scope_once()
+    except BaseException as exc:
+        if first_failure is None:
+            first_failure = str(exc)
+    post_stop_deadline = min(deadline, time.monotonic() + GUARDIAN_POST_STOP_DRAIN_SECONDS)
+    try:
+        drain_visible_output_until(post_stop_deadline)
+    except BaseException as exc:
+        if first_failure is None:
+            first_failure = str(exc)
+    if not output_eof and first_failure is None:
+        first_failure = "visible output pipe did not close after scope stop"
+    close_received_status_fds(status_run_fds)
+    close_retained_scope(scope_cgroup_identity)
+    close_fd_quietly(output_read_fd)
+    close_fd_quietly(status_parent.fileno())
+    signal.signal(signal.SIGTERM, previous_sigterm)
+    signal.signal(signal.SIGINT, previous_sigint)
+if first_failure is not None:
+    failure_status = emit_failure(first_failure, read_memfd())
+    raise SystemExit(signal_exit_code if signal_exit_code is not None else failure_status)
+' "$1"

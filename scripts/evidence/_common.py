@@ -134,6 +134,17 @@ REVIEWED_P0_TRANSCRIPT = (
         ),
     ),
     (
+        "root:P0-EVIDENCE-000-launcher-authority-harness",
+        (
+            "/usr/bin/python3",
+            "-I",
+            "-S",
+            "-",
+            "scripts/evidence/prove_clean_sibling",
+            "1111111111111111111111111111111111111111",
+        ),
+    ),
+    (
         "root:P0-EVIDENCE-000",
         (
             ".venv-evidence/bin/python",
@@ -142,8 +153,6 @@ REVIEWED_P0_TRANSCRIPT = (
             "-q",
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_clean_sibling_hash_locked_bootstraps_and_round_trip",
-            "tests/saas_beta/test_evidence_bootstrap.py::"
-            "test_clean_sibling_rejects_loader_and_git_authority_before_mutation",
             "tests/saas_beta/test_evidence_bootstrap.py::"
             "test_environment_identities_exactly_match_assignment",
             "tests/saas_beta/test_evidence_bootstrap.py::"
@@ -160,6 +169,8 @@ P1_MIGRATION_SELECTORS = (
     "tests/integration/test_migrations_postgres.py::test_large_table_online_migration_budget",
     "tests/integration/test_migrations_postgres.py::test_irreversible_restore_rehearsal",
     "tests/integration/test_migrations_postgres.py::test_failed_migration_no_later_state",
+    "tests/integration/test_migrations_postgres.py::"
+    "test_revision_0010_refuses_historical_approval_votes_without_invented_bindings",
 )
 P1_SCOPE_SELECTORS = (
     "tests/test_project_environment_scope.py::"
@@ -300,6 +311,10 @@ P3_APPROVAL_CP_SELECTORS = (
     "test_pg_approved_resume_executes_once_and_replay_is_stable",
     "tests/integration/test_approval_resume_postgres.py::"
     "test_pg_rejected_and_expired_requests_resume_zero_side_effects",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_concurrent_vote_refusal_replay_records_one_evidence_set",
+    "tests/integration/test_approval_resume_postgres.py::"
+    "test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact",
     "tests/integration/test_approval_resume_postgres.py::"
     "test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
     "tests/integration/test_approval_resume_postgres.py::"

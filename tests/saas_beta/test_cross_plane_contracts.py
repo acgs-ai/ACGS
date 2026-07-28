@@ -509,6 +509,10 @@ def test_approval_contract_locks_vote_and_resume_assurance(tmp_path) -> None:
         "tests/integration/test_approval_resume_postgres.py::"
         "test_pg_rejected_and_expired_requests_resume_zero_side_effects",
         "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_concurrent_vote_refusal_replay_records_one_evidence_set",
+        "tests/integration/test_approval_resume_postgres.py::"
+        "test_pg_mixed_refusal_then_allow_same_vote_key_has_one_terminal_artifact",
+        "tests/integration/test_approval_resume_postgres.py::"
         "test_pg_stale_policy_trust_and_requester_resume_zero_side_effects",
         "tests/integration/test_approval_resume_postgres.py::"
         "test_pg_tampered_sealed_payload_resume_zero_side_effects",
