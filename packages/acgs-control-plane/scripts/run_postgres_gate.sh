@@ -1938,14 +1938,11 @@ cleanup_client_containers() {
   return 0
 }
 
-remove_exact_recorded_container() {
+validate_exact_recorded_container() {
   local container_ref=$1
   local expected_name=$2
   local expected_role=$3
-  local validated_id=''
-  local rc=0
-  validated_id="$(
-    /usr/bin/python3 -I -S - "$container_ref" "$expected_name" "$expected_role" "$proof_label" <<'PY'
+  /usr/bin/python3 -I -S - "$container_ref" "$expected_name" "$expected_role" "$proof_label" <<'PY'
 from __future__ import annotations
 
 import json
@@ -1956,10 +1953,10 @@ import sys
 
 container_ref, expected_name, expected_role, proof_label = sys.argv[1:5]
 inspect_format = (
-    '{{printf "["}}{{json .Id}},{{json .Name}},'
-    '{{with index .Config.Labels "acgs.postgres.proof"}}{{json .}}{{else}}null{{end}},'
-    '{{with index .Config.Labels "acgs.postgres.server"}}{{json .}}{{else}}null{{end}},'
-    '{{with index .Config.Labels "acgs.postgres.client"}}{{json .}}{{else}}null{{end}}'
+    '{{printf "["}}{{json .Id}},{{json .Name}},{{json .Config.Labels}},'
+    '{{json .State.Status}},{{json .State.Running}},{{json .State.Restarting}},'
+    '{{json .State.Paused}},{{json .State.Dead}},{{json .State.OOMKilled}},'
+    '{{json .State.ExitCode}},{{json .HostConfig.RestartPolicy.Name}}'
     '{{printf "]"}}'
 )
 try:
@@ -1991,36 +1988,97 @@ try:
     fields = json.loads(payload)
 except (UnicodeDecodeError, json.JSONDecodeError):
     raise SystemExit(70) from None
-if not isinstance(fields, list) or len(fields) != 5:
+if not isinstance(fields, list) or len(fields) != 11:
     raise SystemExit(70)
-if not all(isinstance(field, str) or field is None for field in fields):
+if not isinstance(fields[2], dict):
     raise SystemExit(70)
-container_id, name, inspected_proof, server_role, client_role = (
-    "" if field is None else field for field in fields
-)
-if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+if not all(isinstance(key, str) and isinstance(value, str) for key, value in fields[2].items()):
     raise SystemExit(70)
-if re.fullmatch(r"[0-9a-f]{12,64}", container_ref) and container_id != container_ref:
+container_id, name, labels, state, running, restarting, paused, dead, oom_killed, exit_code, restart_policy = fields
+if not isinstance(container_id, str) or not isinstance(name, str):
     raise SystemExit(70)
-if name != f"/{expected_name}" or inspected_proof != proof_label:
+if not isinstance(state, str) or not isinstance(restart_policy, str):
     raise SystemExit(70)
-if expected_role == "main":
-    if server_role != "main" or client_role != "":
+if not all(isinstance(flag, bool) for flag in (running, restarting, paused, dead, oom_killed)):
+    raise SystemExit(70)
+if not isinstance(exit_code, int):
+    raise SystemExit(70)
+if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+    raise SystemExit(70)
+if re.fullmatch(r"[0-9A-Fa-f]+", container_ref):
+    if re.fullmatch(r"[0-9a-f]{64}", container_ref) is None or container_id != container_ref:
         raise SystemExit(70)
-elif expected_role == "trusted-broker":
-    if server_role != "" or client_role != "trusted-broker":
+if labels.get("acgs.postgres.proof") != proof_label:
+    raise SystemExit(70)
+if name != f"/{expected_name}":
+    raise SystemExit(70)
+if state == "running":
+    if not running or restarting or paused or dead:
+        raise SystemExit(70)
+elif state == "created":
+    if running or restarting or paused or dead or oom_killed:
+        raise SystemExit(70)
+elif state == "exited":
+    if running or restarting or paused or dead or oom_killed or exit_code != 0:
         raise SystemExit(70)
 else:
     raise SystemExit(70)
-sys.stdout.write(container_id)
+if restart_policy != "no":
+    raise SystemExit(70)
+if expected_role == "main":
+    if labels.get("acgs.postgres.server") != "main" or "acgs.postgres.client" in labels:
+        raise SystemExit(70)
+elif expected_role == "trusted-broker":
+    if labels.get("acgs.postgres.client") != "trusted-broker" or "acgs.postgres.server" in labels:
+        raise SystemExit(70)
+else:
+    raise SystemExit(70)
+sys.stdout.write(f"{container_id}\t{state}")
 PY
-  )" || {
+}
+
+remove_exact_recorded_container() {
+  local container_ref=$1
+  local expected_name=$2
+  local expected_role=$3
+  local validated_record=''
+  local validated_id=''
+  local validated_state=''
+  local signal_record=''
+  local signal_id=''
+  local signal_state=''
+  local rm_args=()
+  local rc=0
+  validated_record="$(validate_exact_recorded_container "$container_ref" "$expected_name" "$expected_role")" || {
     rc=$?
     [[ "$rc" == 1 ]] && return 1
     return "$rc"
   }
-  [[ "$validated_id" =~ ^[0-9a-f]{12,64}$ ]] || return 70
-  timeout --preserve-status 30s docker rm -f "$validated_id" >/dev/null 2>&1 || return $?
+  IFS=$'\t' read -r validated_id validated_state <<<"$validated_record"
+  [[ "$validated_id" =~ ^[0-9a-f]{64}$ ]] || return 70
+  [[ "$validated_state" == "created" || "$validated_state" == "running" || "$validated_state" == "exited" ]] || return 70
+  if [[ "$expected_role" == "main" ]]; then
+    if [[ "$validated_state" == "running" ]]; then
+      timeout --preserve-status 10s docker kill --signal SIGINT "$validated_id" >/dev/null 2>&1 || return $?
+      for _ in {1..150}; do
+        signal_record="$(validate_exact_recorded_container "$validated_id" "$expected_name" "$expected_role")" || return 70
+        IFS=$'\t' read -r signal_id signal_state <<<"$signal_record"
+        [[ "$signal_id" == "$validated_id" ]] || return 70
+        if [[ "$signal_state" == "exited" ]]; then
+          break
+        fi
+        [[ "$signal_state" == "running" ]] || return 70
+        sleep 0.2
+      done
+      [[ "$signal_state" == "exited" ]] || return 70
+    fi
+    rm_args=(rm)
+  elif [[ "$expected_role" == "trusted-broker" ]]; then
+    rm_args=(rm -f)
+  else
+    return 70
+  fi
+  timeout --preserve-status 30s docker "${rm_args[@]}" "$validated_id" >/dev/null 2>&1 || return $?
   for _ in {1..25}; do
     if timeout --preserve-status 10s docker inspect "$validated_id" >/dev/null 2>&1; then
       sleep 0.2
@@ -2039,63 +2097,57 @@ PY
 cleanup_server_container() {
   local cid_ref=''
   local name_ref=''
-  local rc=0
-  local aggregate_rc=0
-  local removed_by_name=0
+  local selected_ref=''
   if [[ -n "$container_id" ]]; then
-    if [[ "$container_id" =~ ^[0-9a-f]{12,64}$ ]]; then
-      remove_exact_recorded_container "$container_id" "$container_name" main || {
-        rc=$?
-        [[ "$rc" == 1 || "$aggregate_rc" != 0 ]] || aggregate_rc=$rc
-      }
+    if [[ "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+      selected_ref=$container_id
     else
-      aggregate_rc=70
       if [[ ! -e "$state_dir/recovery-container-ids.txt" ]]; then
         printf 'invalid PostgreSQL server docker-run stdout: %s\n' "$container_id" \
           >"$state_dir/recovery-container-ids.txt" 2>/dev/null || true
       fi
+      return 70
     fi
-  fi
-  if [[ -e "$server_cidfile" ]]; then
+  elif [[ -e "$server_cidfile" ]]; then
     if cid_ref="$(read_private_container_file "$server_cidfile" cid)"; then
-      if [[ "$cid_ref" != "$container_id" ]]; then
-        remove_exact_recorded_container "$cid_ref" "$container_name" main || {
-          rc=$?
-          [[ "$rc" == 1 || "$aggregate_rc" != 0 ]] || aggregate_rc=$rc
-        }
-      fi
-    else
-      rc=$?
-      [[ "$rc" == 1 ]] || {
-        [[ "$aggregate_rc" == 0 ]] && aggregate_rc=$rc
+      if [[ "$cid_ref" =~ ^[0-9a-f]{64}$ ]]; then
+        selected_ref=$cid_ref
+      else
         if [[ ! -e "$state_dir/recovery-container-ids.txt" ]]; then
           printf 'invalid PostgreSQL server cidfile: %s\n' "$server_cidfile" \
             >"$state_dir/recovery-container-ids.txt" 2>/dev/null || true
         fi
-      }
-    fi
-  fi
-  if [[ -e "$server_namefile" ]]; then
-    if name_ref="$(read_private_container_file "$server_namefile" name)"; then
-      remove_exact_recorded_container "$name_ref" "$container_name" main || {
-        rc=$?
-        [[ "$rc" == 1 || "$aggregate_rc" != 0 ]] || aggregate_rc=$rc
-      }
-      removed_by_name=1
+        return 70
+      fi
     else
-      rc=$?
-      [[ "$rc" == 1 ]] || {
-        [[ "$aggregate_rc" == 0 ]] && aggregate_rc=$rc
+      if [[ ! -e "$state_dir/recovery-container-ids.txt" ]]; then
+        printf 'invalid PostgreSQL server cidfile: %s\n' "$server_cidfile" \
+          >"$state_dir/recovery-container-ids.txt" 2>/dev/null || true
+      fi
+      return 70
+    fi
+  elif [[ -e "$server_namefile" ]]; then
+    if name_ref="$(read_private_container_file "$server_namefile" name)"; then
+      if [[ "$name_ref" == "$container_name" ]]; then
+        selected_ref=$name_ref
+      else
         if [[ ! -e "$state_dir/recovery-container-ids.txt" ]]; then
           printf 'invalid PostgreSQL server namefile: %s\n' "$server_namefile" \
             >"$state_dir/recovery-container-ids.txt" 2>/dev/null || true
         fi
-      }
+        return 70
+      fi
+    else
+      if [[ ! -e "$state_dir/recovery-container-ids.txt" ]]; then
+        printf 'invalid PostgreSQL server namefile: %s\n' "$server_namefile" \
+          >"$state_dir/recovery-container-ids.txt" 2>/dev/null || true
+      fi
+      return 70
     fi
+  else
+    return 0
   fi
-  [[ "$removed_by_name" == 0 || "$aggregate_rc" != 0 ]] || return 0
-  [[ "$aggregate_rc" == 0 ]] || return "$aggregate_rc"
-  return 0
+  remove_exact_recorded_container "$selected_ref" "$container_name" main
 }
 
 verify_no_proof_labelled_containers() {
@@ -2155,11 +2207,8 @@ if not expected_root_mnt_id.isdigit() or expected_mnt_id != expected_root_mnt_id
     raise SystemExit(70)
 if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):
     raise SystemExit(70)
-expected_artifact_uid = int(expected_artifact_uid_text)
 expected = {
     ".acgs-postgres-socket-bridge.v2": "marker",
-    ".s.PGSQL.5432": "socket",
-    ".s.PGSQL.5432.lock": "regular",
 }
 
 
@@ -2208,6 +2257,8 @@ try:
         if dir_stat.st_uid != os.getuid() or stat.S_IMODE(dir_stat.st_mode) != 0o1777:
             raise SystemExit(70)
         names = os.listdir(dir_fd)
+        if names != [".acgs-postgres-socket-bridge.v2"]:
+            raise SystemExit(70)
         if any(name not in expected for name in names):
             raise SystemExit(70)
         validated: list[tuple[str, os.stat_result]] = []
@@ -2243,14 +2294,6 @@ try:
                         raise SystemExit(70)
                 finally:
                     os.close(marker_fd)
-            elif expected_kind == "socket":
-                if before.st_uid != expected_artifact_uid or not stat.S_ISSOCK(before.st_mode):
-                    raise SystemExit(70)
-            elif expected_kind == "regular":
-                if before.st_uid != expected_artifact_uid or not stat.S_ISREG(before.st_mode):
-                    raise SystemExit(70)
-                if before.st_mode & 0o022:
-                    raise SystemExit(70)
             else:
                 raise SystemExit(70)
             validated.append((name, before))

@@ -5499,6 +5499,11 @@ def test_postgres_gate_socket_bridge_cleanup_refuses_unknown_files(tmp_path: Pat
             "(bridge / '.s.PGSQL.5432.lock').write_text('5432\\n', encoding='ascii')",
             "PY",
             'chmod 600 "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
+            'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 91; fi',
+            'test -S "$postgres_socket_bridge/.s.PGSQL.5432"',
+            'test -f "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
+            'rm "$postgres_socket_bridge/.s.PGSQL.5432"',
+            'rm "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
             'cleanup_postgres_socket_bridge "$(id -u)"',
             f"test ! -e {str(recovery_root / bridge_name)!r}",
         )
@@ -5636,21 +5641,6 @@ def _run_postgres_socket_bridge_cleanup_fault(
             'postgres_socket_bridge_identity="${fields[2]}"',
             'postgres_socket_bridge_marker_sha256="${fields[3]}"',
             'postgres_socket_bridge_mnt_id="${fields[4]}"',
-            "python3 - \"$postgres_socket_bridge\" <<'PY'",
-            "from pathlib import Path",
-            "import os",
-            "import socket",
-            "import sys",
-            "bridge = Path(sys.argv[1])",
-            "sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
-            "try:",
-            "    os.chdir(bridge)",
-            "    sock.bind('.s.PGSQL.5432')",
-            "finally:",
-            "    sock.close()",
-            "(bridge / '.s.PGSQL.5432.lock').write_text('5432\\n', encoding='ascii')",
-            "PY",
-            'chmod 600 "$postgres_socket_bridge/.s.PGSQL.5432.lock"',
             "set +e",
             'cleanup_postgres_socket_bridge "$(id -u)"',
             "cleanup_rc=$?",
@@ -5730,8 +5720,6 @@ def test_postgres_gate_socket_bridge_cleanup_accepts_only_post_rmdir_estale(
     assert stat.S_IMODE(recovery_root.stat().st_mode) == root_mode
     if case_name == "pre-rmdir-estale":
         assert (bridge / ".acgs-postgres-socket-bridge.v2").is_file()
-        assert (bridge / ".s.PGSQL.5432").exists()
-        assert (bridge / ".s.PGSQL.5432.lock").is_file()
 
 
 def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path: Path) -> None:
@@ -6210,7 +6198,7 @@ def test_postgres_gate_duplicate_cleanup_inspect_absence_is_quiet_and_fail_close
     script = _postgres_gate_script_source()
     remove_exact_source = _extract_shell_function(
         script,
-        "remove_exact_recorded_container",
+        "validate_exact_recorded_container",
         "cleanup_server_container",
     )
     fake_bin = tmp_path / "fake-bin"
@@ -6261,41 +6249,97 @@ def test_postgres_gate_duplicate_cleanup_inspect_absence_is_quiet_and_fail_close
 
 
 @pytest.mark.parametrize(
-    ("mode", "container_ref", "expected_role", "expected_rc", "rm_expected"),
+    ("mode", "container_ref", "expected_role", "expected_rc", "rm_expected", "signal_expected"),
     [
-        ("exact-trusted-broker", "trusted-client", "trusted-broker", 0, True),
-        ("exact-main", "main-server", "main", 0, True),
-        ("trusted-with-server-label", "trusted-client", "trusted-broker", 70, False),
-        ("main-with-client-label", "main-server", "main", 70, False),
-        ("trusted-missing-role", "trusted-client", "trusted-broker", 70, False),
-        ("main-missing-role", "main-server", "main", 70, False),
-        ("proof-terminal-lf", "trusted-client", "trusted-broker", 70, False),
-        ("proof-multiple-lf", "trusted-client", "trusted-broker", 70, False),
-        ("proof-terminal-space", "trusted-client", "trusted-broker", 70, False),
-        ("proof-terminal-tab", "trusted-client", "trusted-broker", 70, False),
-        ("client-terminal-lf", "trusted-client", "trusted-broker", 70, False),
-        ("client-multiple-lf", "trusted-client", "trusted-broker", 70, False),
-        ("client-terminal-space", "trusted-client", "trusted-broker", 70, False),
-        ("client-terminal-tab", "trusted-client", "trusted-broker", 70, False),
-        ("main-client-terminal-lf", "main-server", "main", 70, False),
-        ("main-client-multiple-lf", "main-server", "main", 70, False),
-        ("main-client-terminal-space", "main-server", "main", 70, False),
-        ("main-client-terminal-tab", "main-server", "main", 70, False),
-        ("malformed-json", "trusted-client", "trusted-broker", 70, False),
-        ("extra-json", "trusted-client", "trusted-broker", 70, False),
-        ("oversize-json", "trusted-client", "trusted-broker", 70, False),
-        ("wrong-name", "trusted-client", "trusted-broker", 70, False),
+        ("exact-trusted-broker", "trusted-client", "trusted-broker", 0, True, False),
+        ("exact-main-running", "main-server", "main", 0, True, True),
+        ("exact-main-created", "main-server", "main", 0, True, False),
+        ("exact-main-exited", "main-server", "main", 0, True, False),
+        ("trusted-created", "trusted-client", "trusted-broker", 0, True, False),
+        ("trusted-exited", "trusted-client", "trusted-broker", 0, True, False),
+        ("trusted-with-server-label", "trusted-client", "trusted-broker", 70, False, False),
+        ("main-with-client-label", "main-server", "main", 70, False, False),
+        ("trusted-missing-role", "trusted-client", "trusted-broker", 70, False, False),
+        ("main-missing-role", "main-server", "main", 70, False, False),
+        ("trusted-empty-server-label", "trusted-client", "trusted-broker", 70, False, False),
+        ("main-empty-client-label", "main-server", "main", 70, False, False),
+        ("proof-terminal-lf", "trusted-client", "trusted-broker", 70, False, False),
+        ("proof-multiple-lf", "trusted-client", "trusted-broker", 70, False, False),
+        ("proof-terminal-space", "trusted-client", "trusted-broker", 70, False, False),
+        ("proof-terminal-tab", "trusted-client", "trusted-broker", 70, False, False),
+        ("client-terminal-lf", "trusted-client", "trusted-broker", 70, False, False),
+        ("client-multiple-lf", "trusted-client", "trusted-broker", 70, False, False),
+        ("client-terminal-space", "trusted-client", "trusted-broker", 70, False, False),
+        ("client-terminal-tab", "trusted-client", "trusted-broker", 70, False, False),
+        ("main-client-terminal-lf", "main-server", "main", 70, False, False),
+        ("main-client-multiple-lf", "main-server", "main", 70, False, False),
+        ("main-client-terminal-space", "main-server", "main", 70, False, False),
+        ("main-client-terminal-tab", "main-server", "main", 70, False, False),
+        ("malformed-json", "trusted-client", "trusted-broker", 70, False, False),
+        ("extra-json", "trusted-client", "trusted-broker", 70, False, False),
+        ("oversize-json", "trusted-client", "trusted-broker", 70, False, False),
+        ("wrong-name", "trusted-client", "trusted-broker", 70, False, False),
+        ("restart-always", "trusted-client", "trusted-broker", 70, False, False),
+        ("trusted-paused", "trusted-client", "trusted-broker", 70, False, False),
+        ("trusted-restarting", "trusted-client", "trusted-broker", 70, False, False),
+        ("trusted-removing", "trusted-client", "trusted-broker", 70, False, False),
+        ("trusted-dead", "trusted-client", "trusted-broker", 70, False, False),
+        ("main-paused", "main-server", "main", 70, False, False),
+        ("main-restarting", "main-server", "main", 70, False, False),
+        ("main-removing", "main-server", "main", 70, False, False),
+        ("main-dead", "main-server", "main", 70, False, False),
+        ("main-running-flag-false", "main-server", "main", 70, False, False),
+        ("main-created-running-true", "main-server", "main", 70, False, False),
+        ("main-exited-running-true", "main-server", "main", 70, False, False),
+        ("main-exited-oom", "main-server", "main", 70, False, False),
+        ("main-exited-nonzero", "main-server", "main", 70, False, False),
+        ("signal-rc2", "main-server", "main", 2, False, True),
+        ("signal-rc143", "main-server", "main", 143, False, True),
+        ("post-signal-running", "main-server", "main", 70, False, True),
+        ("post-signal-disappeared", "main-server", "main", 70, False, True),
+        ("post-signal-restarting", "main-server", "main", 70, False, True),
+        ("post-signal-identity-mismatch", "main-server", "main", 70, False, True),
+        ("post-signal-restart-always", "main-server", "main", 70, False, True),
+        ("post-signal-oom", "main-server", "main", 70, False, True),
+        ("post-signal-nonzero-exit", "main-server", "main", 70, False, True),
+        ("main-nonforce-rm-failure", "main-server", "main", 2, True, True),
         (
             "wrong-id",
             "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
             "trusted-broker",
             70,
             False,
+            False,
         ),
-        ("post-rm-eventual-absence", "trusted-client", "trusted-broker", 0, True),
-        ("post-rm-nonabsence", "trusted-client", "trusted-broker", 70, True),
-        ("post-rm-rc2", "trusted-client", "trusted-broker", 2, True),
-        ("post-rm-timeout", "trusted-client", "trusted-broker", 124, True),
+        ("short-hex-ref", "abcdef123456", "trusted-broker", 70, False, False),
+        (
+            "sixty-three-hex-ref",
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456789",
+            "trusted-broker",
+            70,
+            False,
+            False,
+        ),
+        (
+            "sixty-five-hex-ref",
+            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678901",
+            "trusted-broker",
+            70,
+            False,
+            False,
+        ),
+        (
+            "uppercase-id-ref",
+            "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890",
+            "trusted-broker",
+            70,
+            False,
+            False,
+        ),
+        ("post-rm-eventual-absence", "trusted-client", "trusted-broker", 0, True, False),
+        ("post-rm-nonabsence", "trusted-client", "trusted-broker", 70, True, False),
+        ("post-rm-rc2", "trusted-client", "trusted-broker", 2, True, False),
+        ("post-rm-timeout", "trusted-client", "trusted-broker", 124, True, False),
     ],
 )
 def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
@@ -6305,17 +6349,21 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
     expected_role: str,
     expected_rc: int,
     rm_expected: bool,
+    signal_expected: bool,
 ) -> None:
     script = _postgres_gate_script_source()
     remove_exact_source = _extract_shell_function(
         script,
-        "remove_exact_recorded_container",
+        "validate_exact_recorded_container",
         "cleanup_server_container",
     )
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir()
     rm_marker = tmp_path / "rm-called"
+    signal_marker = tmp_path / "signal-called"
+    command_log = tmp_path / "docker-commands.log"
     post_rm_inspect_count = tmp_path / "post-rm-inspect-count"
+    signal_inspect_count = tmp_path / "signal-inspect-count"
     trusted_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-client-1-1"
     main_name = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef-server"
     trusted_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
@@ -6333,12 +6381,20 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "args = sys.argv[1:]",
                 f"mode = {mode!r}",
                 f"rm_marker = Path({str(rm_marker)!r})",
+                f"signal_marker = Path({str(signal_marker)!r})",
+                f"command_log = Path({str(command_log)!r})",
                 f"post_rm_inspect_count = Path({str(post_rm_inspect_count)!r})",
+                f"signal_inspect_count = Path({str(signal_inspect_count)!r})",
                 f"trusted_id = {trusted_id!r}",
                 f"main_id = {main_id!r}",
                 f"trusted_name = {trusted_name!r}",
                 f"main_name = {main_name!r}",
                 "proof = 'acp-postgres-gate-1000-0123456789abcdef0123456789abcdef'",
+                "if command_log.exists():",
+                "    previous_log = command_log.read_text(encoding='ascii')",
+                "else:",
+                "    previous_log = ''",
+                "command_log.write_text(previous_log + ' '.join(args) + '\\n', encoding='ascii')",
                 "if args[:1] == ['inspect'] and '--format' in args:",
                 "    if mode == 'malformed-json':",
                 "        print('malformed-inspect-record')",
@@ -6346,10 +6402,29 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "    if mode == 'oversize-json':",
                 "        sys.stdout.write('[' + (' ' * 8193) + ']')",
                 "        raise SystemExit(0)",
-                "    container_id = main_id if mode == 'exact-main' else trusted_id",
+                "    is_main = (",
+                "        mode.startswith('main')",
+                "        or mode.startswith('exact-main')",
+                "        or mode.startswith('signal-')",
+                "        or mode.startswith('post-signal')",
+                "    )",
+                "    if signal_marker.exists():",
+                "        signal_count = 1",
+                "        if signal_inspect_count.exists():",
+                "            previous_count = signal_inspect_count.read_text(encoding='ascii')",
+                "            signal_count = int(previous_count) + 1",
+                "        signal_inspect_count.write_text(",
+                "            str(signal_count) + '\\n',",
+                "            encoding='ascii',",
+                "        )",
+                "    else:",
+                "        signal_count = 0",
+                "    if mode == 'post-signal-disappeared' and signal_marker.exists():",
+                "        raise SystemExit(1)",
+                "    container_id = main_id if is_main else trusted_id",
                 "    name = (",
                 "        main_name",
-                "        if mode.startswith('main') or mode == 'exact-main'",
+                "        if is_main",
                 "        else trusted_name",
                 "    )",
                 "    if mode == 'wrong-id':",
@@ -6357,49 +6432,129 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
                 "            'fedcba0987654321fedcba0987654321'",
                 "            'fedcba0987654321fedcba0987654321'",
                 "        )",
+                "    if mode == 'post-signal-identity-mismatch' and signal_marker.exists():",
+                "        container_id = trusted_id",
                 "    if mode == 'wrong-name':",
                 "        name = 'unexpected-client-name'",
-                "    server = None",
-                "    client = 'trusted-broker'",
-                "    if mode == 'exact-main':",
-                "        server = 'main'",
-                "        client = None",
-                "    elif mode == 'trusted-with-server-label':",
-                "        server = 'main'",
+                "    labels = {'acgs.postgres.proof': proof}",
+                "    if is_main:",
+                "        labels['acgs.postgres.server'] = 'main'",
+                "    else:",
+                "        labels['acgs.postgres.client'] = 'trusted-broker'",
+                "    if mode == 'trusted-with-server-label':",
+                "        labels['acgs.postgres.server'] = 'main'",
                 "    elif mode == 'main-with-client-label':",
-                "        server = 'main'",
-                "        client = 'trusted-broker'",
+                "        labels['acgs.postgres.client'] = 'trusted-broker'",
                 "    elif mode == 'trusted-missing-role':",
-                "        client = None",
+                "        labels.pop('acgs.postgres.client', None)",
                 "    elif mode == 'main-missing-role':",
-                "        server = None",
-                "        client = None",
+                "        labels.pop('acgs.postgres.server', None)",
+                "    elif mode == 'trusted-empty-server-label':",
+                "        labels['acgs.postgres.server'] = ''",
+                "    elif mode == 'main-empty-client-label':",
+                "        labels['acgs.postgres.client'] = ''",
                 "    elif mode.startswith('main-client-'):",
-                "        server = 'main'",
-                "        client = ''",
+                "        labels['acgs.postgres.client'] = ''",
                 "    if mode == 'proof-terminal-lf':",
-                "        proof = proof + '\\n'",
+                "        labels['acgs.postgres.proof'] = proof + '\\n'",
                 "    elif mode == 'proof-multiple-lf':",
-                "        proof = proof + '\\nspoof'",
+                "        labels['acgs.postgres.proof'] = proof + '\\nspoof'",
                 "    elif mode == 'proof-terminal-space':",
-                "        proof = proof + ' '",
+                "        labels['acgs.postgres.proof'] = proof + ' '",
                 "    elif mode == 'proof-terminal-tab':",
-                "        proof = proof + '\\t'",
+                "        labels['acgs.postgres.proof'] = proof + '\\t'",
+                "    client_value = labels.get('acgs.postgres.client', '')",
                 "    if mode in {'client-terminal-lf', 'main-client-terminal-lf'}:",
-                "        client = client + '\\n'",
+                "        labels['acgs.postgres.client'] = client_value + '\\n'",
                 "    elif mode in {'client-multiple-lf', 'main-client-multiple-lf'}:",
-                "        client = client + '\\nspoof'",
+                "        labels['acgs.postgres.client'] = client_value + '\\nspoof'",
                 "    elif mode in {'client-terminal-space', 'main-client-terminal-space'}:",
-                "        client = client + ' '",
+                "        labels['acgs.postgres.client'] = client_value + ' '",
                 "    elif mode in {'client-terminal-tab', 'main-client-terminal-tab'}:",
-                "        client = client + '\\t'",
-                "    fields = [container_id, f'/{name}', proof, server, client]",
+                "        labels['acgs.postgres.client'] = client_value + '\\t'",
+                "    state = 'running'",
+                "    if mode.endswith('-created'):",
+                "        state = 'created'",
+                "    elif mode.endswith('-exited'):",
+                "        state = 'exited'",
+                "    elif mode.endswith('-paused'):",
+                "        state = 'paused'",
+                "    elif mode.endswith('-restarting'):",
+                "        state = 'restarting'",
+                "    elif mode.endswith('-removing'):",
+                "        state = 'removing'",
+                "    elif mode.endswith('-dead'):",
+                "        state = 'dead'",
+                "    if mode == 'main-created-running-true':",
+                "        state = 'created'",
+                "    elif mode in {",
+                "        'main-exited-running-true',",
+                "        'main-exited-oom',",
+                "        'main-exited-nonzero',",
+                "    }:",
+                "        state = 'exited'",
+                "    if mode.startswith('post-signal') and not signal_marker.exists():",
+                "        state = 'running'",
+                "    if signal_marker.exists() and mode not in {",
+                "        'post-signal-running',",
+                "        'post-signal-restarting',",
+                "    }:",
+                "        state = 'exited'",
+                "    if mode == 'post-signal-running':",
+                "        state = 'running'",
+                "    elif mode == 'post-signal-restarting' and signal_marker.exists():",
+                "        state = 'restarting'",
+                "    restart_policy = 'no'",
+                "    if mode == 'restart-always' or (",
+                "        mode == 'post-signal-restart-always'",
+                "        and signal_marker.exists()",
+                "    ):",
+                "        restart_policy = 'always'",
+                "    running = state == 'running'",
+                "    restarting = state == 'restarting'",
+                "    paused = state == 'paused'",
+                "    dead = state == 'dead'",
+                "    oom_killed = mode in {'main-exited-oom', 'post-signal-oom'}",
+                "    exit_code = 0",
+                "    if mode in {'main-exited-nonzero', 'post-signal-nonzero-exit'}:",
+                "        exit_code = 1",
+                "    if mode == 'main-running-flag-false':",
+                "        running = False",
+                "    elif mode == 'main-created-running-true':",
+                "        running = True",
+                "    elif mode == 'main-exited-running-true':",
+                "        running = True",
+                "    fields = [",
+                "        container_id,",
+                "        f'/{name}',",
+                "        labels,",
+                "        state,",
+                "        running,",
+                "        restarting,",
+                "        paused,",
+                "        dead,",
+                "        oom_killed,",
+                "        exit_code,",
+                "        restart_policy,",
+                "    ]",
                 "    if mode == 'extra-json':",
                 "        fields.append('extra')",
                 "    print(json.dumps(fields, separators=(',', ':')))",
                 "    raise SystemExit(0)",
+                "if args[:1] == ['kill']:",
+                "    signal_marker.write_text(' '.join(args) + '\\n', encoding='ascii')",
+                "    if mode == 'signal-rc2':",
+                "        raise SystemExit(2)",
+                "    if mode == 'signal-rc143':",
+                "        raise SystemExit(143)",
+                "    raise SystemExit(0)",
                 "if args[:2] == ['rm', '-f']:",
                 "    rm_marker.write_text(args[-1] + '\\n', encoding='ascii')",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['rm']:",
+                "    rm_marker.write_text(' '.join(args) + '\\n', encoding='ascii')",
+                "    if mode == 'main-nonforce-rm-failure':",
+                "        raise SystemExit(2)",
                 "    raise SystemExit(0)",
                 "if args[:1] == ['inspect']:",
                 "    count = 1",
@@ -6449,10 +6604,219 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
     )
     assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
     assert rm_marker.exists() is rm_expected
+    assert signal_marker.exists() is signal_expected
+    docker_commands = command_log.read_text(encoding="ascii").splitlines()
+    if expected_role == "main" and rm_expected:
+        assert any(
+            command.startswith("rm ") and " -f " not in f" {command} "
+            for command in docker_commands
+        )
+    if expected_role == "trusted-broker" and rm_expected:
+        assert any(command.startswith("rm -f ") for command in docker_commands)
+        assert not any(command.startswith("kill ") for command in docker_commands)
+    if mode == "exact-main-running":
+        assert docker_commands.index(f"kill --signal SIGINT {main_id}") < next(
+            index for index, command in enumerate(docker_commands) if command == f"rm {main_id}"
+        )
+    if mode == "post-signal-running":
+        assert int(signal_inspect_count.read_text(encoding="ascii")) == 150
     if mode == "post-rm-eventual-absence":
         assert int(post_rm_inspect_count.read_text(encoding="ascii")) > 1
     elif mode == "post-rm-nonabsence":
         assert int(post_rm_inspect_count.read_text(encoding="ascii")) == 25
+
+
+@pytest.mark.parametrize(
+    (
+        "mode",
+        "expected_rc",
+        "expected_signal_count",
+        "expected_inspect_count",
+        "expected_rm",
+        "expected_post_rm_inspects",
+    ),
+    [
+        ("selected-created-success", 0, 0, 1, True, 1),
+        ("selected-rc1", 1, 0, 1, False, 0),
+        ("signal-rc143", 143, 1, 1, False, 0),
+        ("post-signal-exhaustion", 70, 1, 151, False, 0),
+        ("ambiguous-state", 70, 0, 1, False, 0),
+    ],
+)
+def test_postgres_gate_cleanup_server_container_uses_one_authoritative_ref(
+    tmp_path: Path,
+    mode: str,
+    expected_rc: int,
+    expected_signal_count: int,
+    expected_inspect_count: int,
+    expected_rm: bool,
+    expected_post_rm_inspects: int,
+) -> None:
+    script = _postgres_gate_script_source()
+    remove_exact_source = _extract_shell_function(
+        script,
+        "validate_exact_recorded_container",
+        "cleanup_server_container",
+    )
+    cleanup_server_source = _extract_shell_function(
+        script,
+        "cleanup_server_container",
+        "verify_no_proof_labelled_containers",
+    )
+    fake_bin = tmp_path / "fake-bin"
+    state_dir = tmp_path / "state"
+    fake_bin.mkdir()
+    state_dir.mkdir()
+    proof_label = "acp-postgres-gate-1000-0123456789abcdef0123456789abcdef"
+    server_name = f"{proof_label}-server"
+    selected_id = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    cidfile_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    server_cidfile = state_dir / f"{proof_label}-server.cid"
+    server_namefile = state_dir / f"{proof_label}-server.name"
+    server_cidfile.write_text(f"{cidfile_id}\n", encoding="ascii")
+    server_namefile.write_text(f"{server_name}\n", encoding="ascii")
+    server_cidfile.chmod(0o600)
+    server_namefile.chmod(0o600)
+    inspect_refs = tmp_path / "inspect-refs.log"
+    post_rm_inspect_refs = tmp_path / "post-rm-inspect-refs.log"
+    signal_log = tmp_path / "signal.log"
+    rm_log = tmp_path / "rm.log"
+    docker_path = fake_bin / "docker"
+    sleep_path = fake_bin / "sleep"
+    docker_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "from __future__ import annotations",
+                "from pathlib import Path",
+                "import json",
+                "import sys",
+                "args = sys.argv[1:]",
+                f"mode = {mode!r}",
+                f"proof_label = {proof_label!r}",
+                f"server_name = {server_name!r}",
+                f"selected_id = {selected_id!r}",
+                f"cidfile_id = {cidfile_id!r}",
+                f"inspect_refs = Path({str(inspect_refs)!r})",
+                f"post_rm_inspect_refs = Path({str(post_rm_inspect_refs)!r})",
+                f"signal_log = Path({str(signal_log)!r})",
+                f"rm_log = Path({str(rm_log)!r})",
+                "def append(path: Path, text: str) -> None:",
+                "    previous = path.read_text(encoding='ascii') if path.exists() else ''",
+                "    path.write_text(previous + text + '\\n', encoding='ascii')",
+                "def emit(container_id: str, name: str, state: str) -> None:",
+                "    print(",
+                "        json.dumps(",
+                "            [",
+                "                container_id,",
+                "                f'/{name}',",
+                "                {",
+                "                    'acgs.postgres.proof': proof_label,",
+                "                    'acgs.postgres.server': 'main',",
+                "                },",
+                "                state,",
+                "                state == 'running',",
+                "                state == 'restarting',",
+                "                state == 'paused',",
+                "                False,",
+                "                False,",
+                "                0,",
+                "                'no',",
+                "            ],",
+                "            separators=(',', ':'),",
+                "        )",
+                "    )",
+                "if args[:1] == ['inspect'] and '--format' in args:",
+                "    ref = args[-1]",
+                "    append(inspect_refs, ref)",
+                "    if ref == selected_id:",
+                "        if mode == 'selected-rc1':",
+                "            raise SystemExit(1)",
+                "        if mode == 'ambiguous-state':",
+                "            emit(selected_id, server_name, 'paused')",
+                "            raise SystemExit(0)",
+                "        if mode == 'selected-created-success':",
+                "            emit(selected_id, server_name, 'created')",
+                "            raise SystemExit(0)",
+                "        if signal_log.exists():",
+                "            emit(selected_id, server_name, 'running')",
+                "            raise SystemExit(0)",
+                "        emit(selected_id, server_name, 'running')",
+                "        raise SystemExit(0)",
+                "    if ref in {cidfile_id, server_name}:",
+                "        emit(cidfile_id, server_name, 'exited')",
+                "        raise SystemExit(0)",
+                "    raise SystemExit(1)",
+                "if args[:1] == ['inspect']:",
+                "    ref = args[-1]",
+                "    append(post_rm_inspect_refs, ref)",
+                "    if mode == 'selected-created-success' and ref == selected_id:",
+                "        raise SystemExit(1)",
+                "    raise SystemExit(127)",
+                "if args[:1] == ['kill']:",
+                "    append(signal_log, ' '.join(args))",
+                "    if mode == 'signal-rc143':",
+                "        raise SystemExit(143)",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['rm']:",
+                "    append(rm_log, ' '.join(args))",
+                "    raise SystemExit(0)",
+                "raise SystemExit(127)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    sleep_path.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    sleep_path.chmod(0o755)
+    harness = "\n".join(
+        (
+            "set -euo pipefail",
+            f"PATH={str(fake_bin)!r}:$PATH",
+            f"state_dir={str(state_dir)!r}",
+            f"proof_label={proof_label!r}",
+            f"container_name={server_name!r}",
+            f"container_id={selected_id!r}",
+            f"server_cidfile={str(server_cidfile)!r}",
+            f"server_namefile={str(server_namefile)!r}",
+            remove_exact_source,
+            cleanup_server_source,
+            "if cleanup_server_container; then",
+            "  rc=0",
+            "else",
+            "  rc=$?",
+            "fi",
+            f'test "$rc" -eq {expected_rc}',
+        )
+    )
+    result = subprocess.run(
+        ["bash", "-s"],
+        input=harness,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (mode, result.returncode, result.stdout, result.stderr)
+    refs = inspect_refs.read_text(encoding="ascii").splitlines()
+    assert refs == [selected_id] * expected_inspect_count
+    assert cidfile_id not in refs
+    assert server_name not in refs
+    signals = signal_log.read_text(encoding="ascii").splitlines() if signal_log.exists() else []
+    assert len(signals) == expected_signal_count
+    rms = rm_log.read_text(encoding="ascii").splitlines() if rm_log.exists() else []
+    if expected_rm:
+        assert rms == [f"rm {selected_id}"]
+    else:
+        assert rms == []
+    assert not any(cidfile_id in rm for rm in rms)
+    assert not any(server_name in rm for rm in rms)
+    post_rm_refs = (
+        post_rm_inspect_refs.read_text(encoding="ascii").splitlines()
+        if post_rm_inspect_refs.exists()
+        else []
+    )
+    assert post_rm_refs == [selected_id] * expected_post_rm_inspects
 
 
 @pytest.mark.parametrize(
@@ -6466,6 +6830,7 @@ def test_postgres_gate_remove_exact_recorded_container_strict_identity_matrix(
         "cleanup_client_multiple_lf",
         "cleanup_client_terminal_space",
         "cleanup_client_terminal_tab",
+        "cleanup_server_post_signal_exhaustion",
         "verify_stable_no_proof_labelled_containers",
     ],
 )
@@ -6496,7 +6861,7 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     )
     remove_exact_source = _extract_shell_function(
         script,
-        "remove_exact_recorded_container",
+        "validate_exact_recorded_container",
         "cleanup_server_container",
     )
     cleanup_server_source = _extract_shell_function(
@@ -6530,6 +6895,9 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     intent = recovery_root / f"{proof_label}-client-1-1.intent"
     client_name = f"{proof_label}-client-1-1"
     client_id = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    server_name = f"{proof_label}-server"
+    server_id = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    alternate_server_id = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321"
     state_dir.mkdir()
     client_dir.mkdir()
     fake_bin.mkdir()
@@ -6544,6 +6912,11 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     intent.chmod(0o600)
     server_cidfile = state_dir / f"{proof_label}-server.cid"
     server_namefile = state_dir / f"{proof_label}-server.name"
+    if failure_function == "cleanup_server_post_signal_exhaustion":
+        server_cidfile.write_text(f"{alternate_server_id}\n", encoding="ascii")
+        server_namefile.write_text(f"{server_name}\n", encoding="ascii")
+        server_cidfile.chmod(0o600)
+        server_namefile.chmod(0o600)
     if failure_function in {
         "cleanup_client_containers",
         "cleanup_client_identity_mismatch",
@@ -6560,6 +6933,8 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
         (client_dir / f"{client_name}.name").chmod(0o600)
     docker_path = fake_bin / "docker"
     rm_marker = tmp_path / "cleanup-rm-called"
+    signal_marker = tmp_path / "cleanup-signal-called"
+    inspect_log = tmp_path / "cleanup-inspects.log"
     docker_path.write_text(
         "\n".join(
             [
@@ -6573,9 +6948,67 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
                 f"proof_label = {proof_label!r}",
                 f"client_id = {client_id!r}",
                 f"client_name = {client_name!r}",
+                f"server_id = {server_id!r}",
+                f"alternate_server_id = {alternate_server_id!r}",
+                f"server_name = {server_name!r}",
                 f"rm_marker = Path({str(rm_marker)!r})",
+                f"signal_marker = Path({str(signal_marker)!r})",
+                f"inspect_log = Path({str(inspect_log)!r})",
+                "def append(path: Path, text: str) -> None:",
+                "    previous = path.read_text(encoding='ascii') if path.exists() else ''",
+                "    path.write_text(previous + text + '\\n', encoding='ascii')",
                 "if args[:1] == ['inspect'] and '--format' in args:",
                 "    ref = args[-1]",
+                "    append(inspect_log, ref)",
+                "    if mode == 'cleanup_server_post_signal_exhaustion' and ref == server_id:",
+                "        print(",
+                "            json.dumps(",
+                "                [",
+                "                    server_id,",
+                "                    f'/{server_name}',",
+                "                    {",
+                "                        'acgs.postgres.proof': proof_label,",
+                "                        'acgs.postgres.server': 'main',",
+                "                    },",
+                "                    'running',",
+                "                    True,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    0,",
+                "                    'no',",
+                "                ],",
+                "                separators=(',', ':'),",
+                "            )",
+                "        )",
+                "        raise SystemExit(0)",
+                "    if mode == 'cleanup_server_post_signal_exhaustion' and ref in {",
+                "        alternate_server_id,",
+                "        server_name,",
+                "    }:",
+                "        print(",
+                "            json.dumps(",
+                "                [",
+                "                    alternate_server_id,",
+                "                    f'/{server_name}',",
+                "                    {",
+                "                        'acgs.postgres.proof': proof_label,",
+                "                        'acgs.postgres.server': 'main',",
+                "                    },",
+                "                    'exited',",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    0,",
+                "                    'no',",
+                "                ],",
+                "                separators=(',', ':'),",
+                "            )",
+                "        )",
+                "        raise SystemExit(0)",
                 "    if mode in {",
                 "        'cleanup_client_containers',",
                 "        'cleanup_client_post_rm_rc2',",
@@ -6586,9 +7019,18 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
                 "                [",
                 "                    client_id,",
                 "                    f'/{client_name}',",
-                "                    proof_label,",
-                "                    None,",
-                "                    'trusted-broker',",
+                "                    {",
+                "                        'acgs.postgres.proof': proof_label,",
+                "                        'acgs.postgres.client': 'trusted-broker',",
+                "                    },",
+                "                    'running',",
+                "                    True,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    0,",
+                "                    'no',",
                 "                ],",
                 "                separators=(',', ':'),",
                 "            )",
@@ -6603,9 +7045,18 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
                 "                [",
                 "                    client_id,",
                 "                    f'/{client_name}',",
-                "                    proof_label,",
-                "                    None,",
-                "                    'wrong-client-label',",
+                "                    {",
+                "                        'acgs.postgres.proof': proof_label,",
+                "                        'acgs.postgres.client': 'wrong-client-label',",
+                "                    },",
+                "                    'running',",
+                "                    True,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    0,",
+                "                    'no',",
                 "                ],",
                 "                separators=(',', ':'),",
                 "            )",
@@ -6628,7 +7079,22 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
                 "            client_label += '\\t'",
                 "        print(",
                 "            json.dumps(",
-                "                [client_id, f'/{client_name}', proof_label, None, client_label],",
+                "                [",
+                "                    client_id,",
+                "                    f'/{client_name}',",
+                "                    {",
+                "                        'acgs.postgres.proof': proof_label,",
+                "                        'acgs.postgres.client': client_label,",
+                "                    },",
+                "                    'running',",
+                "                    True,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    False,",
+                "                    0,",
+                "                    'no',",
+                "                ],",
                 "                separators=(',', ':'),",
                 "            )",
                 "        )",
@@ -6646,6 +7112,9 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
                 "        raise SystemExit(70)",
                 "    if mode == 'cleanup_client_identity_mismatch':",
                 "        raise SystemExit(90)",
+                "    raise SystemExit(0)",
+                "if args[:1] == ['kill']:",
+                "    signal_marker.write_text(' '.join(args) + '\\n', encoding='ascii')",
                 "    raise SystemExit(0)",
                 "if args[:2] == ['ps', '-aq']:",
                 "    joined = ' '.join(args)",
@@ -6673,7 +7142,9 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
             f"proof_nonce={proof_nonce!r}",
             f"proof_label={proof_label!r}",
             f"container_name={proof_label + '-server'!r}",
-            "container_id=''",
+            f"container_id={server_id!r}"
+            if failure_function == "cleanup_server_post_signal_exhaustion"
+            else "container_id=''",
             f"server_cidfile={str(server_cidfile)!r}",
             f"server_namefile={str(server_namefile)!r}",
             f"postgres_recovery_root={str(recovery_root)!r}",
@@ -6728,6 +7199,12 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
     assert intent.read_text(encoding="ascii") == "intent"
     assert not touched.exists()
     assert (state_dir / "recovery-contract.env").exists()
+    if failure_function == "cleanup_server_post_signal_exhaustion":
+        refs = inspect_log.read_text(encoding="ascii").splitlines()
+        assert refs == [server_id] * 151
+        assert alternate_server_id not in refs
+        assert server_name not in refs
+        assert signal_marker.read_text(encoding="ascii") == (f"kill --signal SIGINT {server_id}\n")
     if failure_function in {
         "cleanup_client_containers",
         "cleanup_client_post_rm_rc2",
@@ -6736,7 +7213,16 @@ def test_postgres_gate_cleanup_uncertainty_preserves_bridge_and_intents(
         assert rm_marker.exists()
     else:
         assert not rm_marker.exists()
-    if failure_function != "verify_stable_no_proof_labelled_containers":
+    if failure_function in {
+        "cleanup_client_containers",
+        "cleanup_client_identity_mismatch",
+        "cleanup_client_post_rm_rc2",
+        "cleanup_client_post_rm_timeout",
+        "cleanup_client_terminal_lf",
+        "cleanup_client_multiple_lf",
+        "cleanup_client_terminal_space",
+        "cleanup_client_terminal_tab",
+    }:
         assert (client_dir / f"{client_name}.cid").read_text(encoding="ascii") == (f"{client_id}\n")
         assert (client_dir / f"{client_name}.name").read_text(encoding="ascii") == (
             f"{client_name}\n"

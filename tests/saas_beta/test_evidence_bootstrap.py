@@ -165,7 +165,7 @@ P3_APPROVAL_ROOT_SELECTORS = (
     "test_approval_contract_locks_vote_and_resume_assurance",
 )
 P3_APPROVAL_POSTGRES_RUNNER_SHA256 = (
-    "9abedfa3445832d12459ebf79f40824c6bc0cb2cf3217c07ba0c021a7389a4cb"
+    "5249c8f76eed2ac53e5d16395763c546912edc075563322611cc2bbb786fe7bc"
 )
 P2_IDEMPOTENCY_RETIRED_SELECTOR_PATTERNS = (
     "tests/integration/test_production_posture.py",
@@ -4675,6 +4675,7 @@ def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_func
             _shell_function(runner_source, "read_private_container_file"),
             _shell_function(runner_source, "write_recovery_contract"),
             _shell_function(runner_source, "capture_docker_ps_ids"),
+            _shell_function(runner_source, "validate_exact_recorded_container"),
             _shell_function(runner_source, "remove_exact_recorded_container"),
             _shell_function(runner_source, "cleanup_client_containers"),
             _shell_function(runner_source, "cleanup_server_container"),
@@ -4713,6 +4714,39 @@ def _postgres_gate_cleanup_extraction_functions(runner_source: str, cleanup_func
             'chmod 600 "$postgres_recovery_root/${proof_label}-server.intent"',
             cleanup_function,
         )
+    )
+
+
+def _docker_inspect_payload(
+    container_id: str,
+    name: str,
+    proof_label: str,
+    *,
+    role: str,
+    state: str = "running",
+) -> str:
+    labels = {"acgs.postgres.proof": proof_label}
+    if role == "main":
+        labels["acgs.postgres.server"] = "main"
+    elif role == "trusted-broker":
+        labels["acgs.postgres.client"] = "trusted-broker"
+    else:
+        raise ValueError(role)
+    return json.dumps(
+        [
+            container_id,
+            f"/{name}",
+            labels,
+            state,
+            state == "running",
+            False,
+            False,
+            False,
+            False,
+            0,
+            "no",
+        ],
+        separators=(",", ":"),
     )
 
 
@@ -20747,10 +20781,15 @@ def _assert_postgres_uv_fd_contract(
     uv_fd_verifier = _shell_function(runner_source, "verify_trusted_uv_fd")
     active_fd_opener = _shell_function(runner_source, "open_active_verified_uv_fd")
     active_fd_closer = _shell_function(runner_source, "close_active_uv_fd")
+    exact_container_validator = _shell_function(
+        runner_source,
+        "validate_exact_recorded_container",
+    )
     exact_container_cleanup = _shell_function(
         runner_source,
         "remove_exact_recorded_container",
     )
+    server_cleanup = _shell_function(runner_source, "cleanup_server_container")
     inner_preflight = _shell_single_quoted_assignment(
         runner_source,
         "inner_uv_preflight",
@@ -20829,9 +20868,51 @@ def _assert_postgres_uv_fd_contract(
         "active_uv_fd=''"
     )
 
-    expected_cleanup_sequence = (
-        '  timeout --preserve-status 30s docker rm -f "$validated_id" >/dev/null 2>&1 '
-        "|| return $?\n"
+    assert "{{json .Config.Labels}}" in exact_container_validator
+    assert "{{json .State.Status}}" in exact_container_validator
+    assert "{{json .State.Running}}" in exact_container_validator
+    assert "{{json .State.Restarting}}" in exact_container_validator
+    assert "{{json .State.ExitCode}}" in exact_container_validator
+    assert "{{json .HostConfig.RestartPolicy.Name}}" in exact_container_validator
+    assert "if not isinstance(fields, list) or len(fields) != 11:" in exact_container_validator
+    assert "if not isinstance(fields[2], dict):" in exact_container_validator
+    assert 'labels.get("acgs.postgres.proof") != proof_label' in exact_container_validator
+    assert "container_id != container_ref" in exact_container_validator
+    assert 'if state == "running":' in exact_container_validator
+    assert 'elif state == "created":' in exact_container_validator
+    assert 'elif state == "exited":' in exact_container_validator
+    assert "exit_code != 0" in exact_container_validator
+    assert 'restart_policy != "no"' in exact_container_validator
+    assert (
+        'labels.get("acgs.postgres.server") != "main" or "acgs.postgres.client" in labels'
+        in exact_container_validator
+    )
+    assert (
+        'labels.get("acgs.postgres.client") != "trusted-broker" or "acgs.postgres.server" in labels'
+        in exact_container_validator
+    )
+    assert 'sys.stdout.write(f"{container_id}\\t{state}")' in exact_container_validator
+
+    assert 'timeout --preserve-status 10s docker kill --signal SIGINT "$validated_id"' in (
+        exact_container_cleanup
+    )
+    assert "docker stop" not in exact_container_cleanup
+    assert "for _ in {1..150}; do" in exact_container_cleanup
+    assert 'signal_record="$(validate_exact_recorded_container "$validated_id"' in (
+        exact_container_cleanup
+    )
+    assert '[[ "$signal_id" == "$validated_id" ]] || return 70' in exact_container_cleanup
+    assert '[[ "$signal_state" == "running" ]] || return 70' in exact_container_cleanup
+    assert '[[ "$signal_state" == "exited" ]] || return 70' in exact_container_cleanup
+    assert "rm_args=(rm)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then" in (
+        exact_container_cleanup
+    )
+    assert "rm_args=(rm -f)" in exact_container_cleanup
+    assert (
+        'timeout --preserve-status 30s docker "${rm_args[@]}" "$validated_id" >/dev/null 2>&1'
+        in exact_container_cleanup
+    )
+    post_rm_block = (
         "  for _ in {1..25}; do\n"
         '    if timeout --preserve-status 10s docker inspect "$validated_id" '
         ">/dev/null 2>&1; then\n"
@@ -20845,9 +20926,18 @@ def _assert_postgres_uv_fd_contract(
         "    fi\n"
         '    return "$rc"\n'
         "  done\n"
-        "  return 70"
+        "  return 70\n"
     )
-    assert expected_cleanup_sequence in exact_container_cleanup
+    assert post_rm_block in exact_container_cleanup
+    assert 'elif [[ -e "$server_namefile" ]]; then' in server_cleanup
+    assert server_cleanup.index('if [[ -n "$container_id" ]]; then') < server_cleanup.index(
+        'elif [[ -e "$server_cidfile" ]]; then'
+    )
+    assert server_cleanup.index('elif [[ -e "$server_cidfile" ]]; then') < server_cleanup.index(
+        'elif [[ -e "$server_namefile" ]]; then'
+    )
+    assert 'return 70\n    fi\n  elif [[ -e "$server_cidfile" ]]; then' in server_cleanup
+    assert 'return 70\n    fi\n  elif [[ -e "$server_namefile" ]]; then' in server_cleanup
 
     assert inner_preflight.startswith("set -eu\n")
     assert "mode=$(/usr/bin/stat -c %a -- \"$uv_path\")" in inner_preflight
@@ -21084,6 +21174,102 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             "  local cleanup_status=0\n",
             1,
         ),
+        "main-sigint-kill-deleted": reviewed_runner_source.replace(
+            "      timeout --preserve-status 10s docker kill --signal SIGINT "
+            '"$validated_id" >/dev/null 2>&1 || return $?\n',
+            "",
+            1,
+        ),
+        "main-sigint-changed-to-docker-stop": reviewed_runner_source.replace(
+            'docker kill --signal SIGINT "$validated_id"',
+            'docker stop "$validated_id"',
+            1,
+        ),
+        "main-container-force-rm-reintroduced": reviewed_runner_source.replace(
+            "    rm_args=(rm)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then",
+            "    rm_args=(rm -f)\n  elif [[ \"$expected_role\" == \"trusted-broker\" ]]; then",
+            1,
+        ),
+        "trusted-broker-force-rm-removed": reviewed_runner_source.replace(
+            "    rm_args=(rm -f)",
+            "    rm_args=(rm)",
+            1,
+        ),
+        "clean-exit-poll-loop-removed": reviewed_runner_source.replace(
+            "      for _ in {1..150}; do\n"
+            '        signal_record="$(validate_exact_recorded_container "$validated_id" '
+            '"$expected_name" "$expected_role")" || return 70\n'
+            "        IFS=$'\\t' read -r signal_id signal_state <<<\"$signal_record\"\n"
+            "        [[ \"$signal_id\" == \"$validated_id\" ]] || return 70\n"
+            "        if [[ \"$signal_state\" == \"exited\" ]]; then\n"
+            "          break\n"
+            "        fi\n"
+            "        [[ \"$signal_state\" == \"running\" ]] || return 70\n"
+            "        sleep 0.2\n"
+            "      done\n"
+            "      [[ \"$signal_state\" == \"exited\" ]] || return 70\n",
+            "",
+            1,
+        ),
+        "signal-poll-allows-id-drift": reviewed_runner_source.replace(
+            '        [[ "$signal_id" == "$validated_id" ]] || return 70\n',
+            "",
+            1,
+        ),
+        "signal-poll-allows-created-state": reviewed_runner_source.replace(
+            '        [[ "$signal_state" == "running" ]] || return 70',
+            '        [[ "$signal_state" == "running" '
+            '|| "$signal_state" == "created" ]] || return 70',
+            1,
+        ),
+        "validator-stops-parsing-label-map": reviewed_runner_source.replace(
+            "if not isinstance(fields[2], dict):\n    raise SystemExit(70)\n",
+            "",
+            1,
+        ),
+        "validator-allows-short-hex-ref": reviewed_runner_source.replace(
+            "if re.fullmatch(r\"[0-9A-Fa-f]+\", container_ref):\n"
+            "    if re.fullmatch(r\"[0-9a-f]{64}\", container_ref) is None "
+            "or container_id != container_ref:\n"
+            "        raise SystemExit(70)\n",
+            "if re.fullmatch(r\"[0-9A-Fa-f]+\", container_ref):\n"
+            "    if container_id[:12] != container_ref[:12]:\n"
+            "        raise SystemExit(70)\n",
+            1,
+        ),
+        "validator-accepts-opposite-main-label": reviewed_runner_source.replace(
+            'labels.get("acgs.postgres.server") != "main" or "acgs.postgres.client" in labels',
+            'labels.get("acgs.postgres.server") != "main"',
+            1,
+        ),
+        "validator-accepts-opposite-client-label": reviewed_runner_source.replace(
+            'labels.get("acgs.postgres.client") != "trusted-broker" '
+            'or "acgs.postgres.server" in labels',
+            'labels.get("acgs.postgres.client") != "trusted-broker"',
+            1,
+        ),
+        "validator-accepts-dirty-exited-state": reviewed_runner_source.replace(
+            "elif state == \"exited\":\n"
+            "    if running or restarting or paused or dead or oom_killed or exit_code != 0:\n"
+            "        raise SystemExit(70)\n",
+            "elif state == \"exited\":\n    pass\n",
+            1,
+        ),
+        "validator-accepts-restart-policy": reviewed_runner_source.replace(
+            "if restart_policy != \"no\":\n    raise SystemExit(70)\n",
+            "",
+            1,
+        ),
+        "server-cleanup-container-id-fallback-reintroduced": reviewed_runner_source.replace(
+            "      return 70\n    fi\n  elif [[ -e \"$server_cidfile\" ]]; then",
+            "    fi\n  elif [[ -e \"$server_cidfile\" ]]; then",
+            1,
+        ),
+        "server-cleanup-cid-fallback-reintroduced": reviewed_runner_source.replace(
+            "      return 70\n    fi\n  elif [[ -e \"$server_namefile\" ]]; then",
+            "    fi\n  elif [[ -e \"$server_namefile\" ]]; then",
+            1,
+        ),
         "post-rm-loop-collapsed-to-one-shot": reviewed_runner_source.replace(
             "  for _ in {1..25}; do\n"
             '    if timeout --preserve-status 10s docker inspect "$validated_id" '
@@ -21110,8 +21296,15 @@ def test_clean_sibling_postgres_uv_fd_contract_rejects_inner_bind_mutations() ->
             1,
         ),
         "post-rm-still-present-treated-as-success": reviewed_runner_source.replace(
-            "      sleep 0.2\n      continue\n",
-            "      return 0\n",
+            '    if timeout --preserve-status 10s docker inspect "$validated_id" '
+            ">/dev/null 2>&1; then\n"
+            "      sleep 0.2\n"
+            "      continue\n"
+            "    else\n",
+            '    if timeout --preserve-status 10s docker inspect "$validated_id" '
+            ">/dev/null 2>&1; then\n"
+            "      return 0\n"
+            "    else\n",
             1,
         ),
         "post-rm-exhaustion-treated-as-success": reviewed_runner_source.replace(
@@ -21411,7 +21604,9 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     )
     assert 'env -i "$bwrap_bin" \\' in reviewed_runner_source
     assert "bwrap_args=(" in reviewed_runner_source
-    assert "timeout --preserve-status 30s docker rm -f" in reviewed_runner_source
+    assert 'timeout --preserve-status 30s docker "${rm_args[@]}" "$validated_id"' in (
+        reviewed_runner_source
+    )
     assert 'proof_label="acp-postgres-gate-$(id -u)-$$"' not in reviewed_runner_source
     assert 'nonce_file="$state_dir/proof-nonce.hex"' in reviewed_runner_source
     assert "mint_postgres_proof_nonce()" in reviewed_runner_source
@@ -21711,11 +21906,17 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "acgs.postgres.client=cleanup" not in reviewed_runner_source
     assert "rm -f /run/acgs-pg/.s.PGSQL.5432" not in reviewed_runner_source
     assert "cleanup_postgres_socket_bridge 999" in reviewed_runner_source
-    assert '".s.PGSQL.5432": "socket"' in reviewed_runner_source
-    assert "expected_artifact_uid = int(expected_artifact_uid_text)" in reviewed_runner_source
+    assert '".s.PGSQL.5432": "socket"' not in reviewed_runner_source
+    assert '".s.PGSQL.5432.lock"' not in reviewed_runner_source
+    assert 'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n}' in (
+        reviewed_runner_source
+    )
+    assert 'if not re.fullmatch(r"[0-9]+", expected_artifact_uid_text):' in (
+        reviewed_runner_source
+    )
     assert "os.fchmod(dir_fd, 0o700)" in reviewed_runner_source
     assert "stat.S_IMODE(hardened_stat.st_mode) != 0o700" in reviewed_runner_source
-    assert "before.st_uid != expected_artifact_uid" in reviewed_runner_source
+    assert "before.st_uid != os.getuid()" in reviewed_runner_source
     assert "os.unlink(name, dir_fd=dir_fd)" in reviewed_runner_source
     assert "PostgreSQL evidence gate cleanup failed" in reviewed_runner_source
     assert "BROKER_SOCKET_TIMEOUT_SECONDS = 15" in reviewed_runner_source
@@ -22361,6 +22562,12 @@ def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
     q_proof_label = shlex.quote(proof_label)
     q_other_label = shlex.quote(other_label)
     q_removed_marker = shlex.quote(str(removed_marker))
+    client_payload = shlex.quote(
+        _docker_inspect_payload(client_id, client_name, proof_label, role="trusted-broker")
+    )
+    other_payload = shlex.quote(
+        _docker_inspect_payload(other_id, other_name, other_label, role="trusted-broker")
+    )
     timeout_bin = fake_bin / "timeout"
     timeout_bin.write_text(
         "#!/usr/bin/env bash\n"
@@ -22380,13 +22587,11 @@ def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_client_id} || "$ref" == {q_client_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_client_id} '
-        f"{q_client_name} {q_proof_label}\n"
+        f"    printf '%s\\n' {client_payload}\n"
         "    exit 0\n"
         "  fi\n"
         f'  if [[ "$ref" == {q_other_id} || "$ref" == {q_other_name} ]]; then\n'
-        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_other_id} '
-        f"{q_other_name} {q_other_label}\n"
+        f"    printf '%s\\n' {other_payload}\n"
         "    exit 0\n"
         "  fi\n"
         "  exit 1\n"
@@ -22475,6 +22680,9 @@ def test_postgres_gate_malformed_client_cid_does_not_block_valid_name_cleanup(
     q_proof_label = shlex.quote(proof_label)
     q_other_label = shlex.quote(other_label)
     q_removed_marker = shlex.quote(str(removed_marker))
+    client_payload = shlex.quote(
+        _docker_inspect_payload(client_id, client_name, proof_label, role="trusted-broker")
+    )
     timeout_bin = fake_bin / "timeout"
     timeout_bin.write_text(
         "#!/usr/bin/env bash\n"
@@ -22494,8 +22702,7 @@ def test_postgres_gate_malformed_client_cid_does_not_block_valid_name_cleanup(
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_client_id} || "$ref" == {q_client_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_client_id} '
-        f"{q_client_name} {q_proof_label}\n"
+        f"    printf '%s\\n' {client_payload}\n"
         "    exit 0\n"
         "  fi\n"
         f'  [[ "$ref" != {q_other_id} ]] || exit 77\n'
@@ -22590,6 +22797,9 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
     expected_id = "2" * 64
     unrelated_id = "3" * 64
     removed_marker = tmp_path / "removed-client"
+    expected_payload = shlex.quote(
+        _docker_inspect_payload(expected_id, client_name, proof_label, role="trusted-broker")
+    )
     timeout_bin = fake_bin / "timeout"
     timeout_bin.write_text(
         "#!/usr/bin/env bash\n"
@@ -22610,8 +22820,7 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
         f'  [[ "$ref" != {shlex.quote(stale_id)} ]] || exit 1\n'
         f'  if [[ "$ref" == {shlex.quote(client_name)} ]]; then\n'
         f"    [[ ! -e {shlex.quote(str(removed_marker))} ]] || exit 1\n"
-        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' '
-        f"{shlex.quote(expected_id)} {shlex.quote(client_name)} {shlex.quote(proof_label)}\n"
+        f"    printf '%s\\n' {expected_payload}\n"
         "    exit 0\n"
         "  fi\n"
         "  exit 1\n"
@@ -22871,6 +23080,8 @@ def _write_fake_external_intent_docker(
         "data = {'removed': [], 'ps_calls': 0}\n"
         "if os.path.exists(STATE):\n"
         "    data = json.loads(open(STATE, encoding='utf-8').read())\n"
+        "data.setdefault('removed', [])\n"
+        "data.setdefault('ps_calls', 0)\n"
         "def save():\n"
         "    with open(STATE, 'w', encoding='utf-8') as fh:\n"
         "        json.dump(data, fh)\n"
@@ -23946,11 +24157,21 @@ def test_postgres_gate_socket_cleanup_unlinks_only_exact_descriptor_bound_artifa
     helper_start = runner_source.index("\ncleanup_postgres_socket_bridge() {\n") + 1
     helper_end = runner_source.index("\n}\n\nunlink_postgres_recovery_intents", helper_start) + 3
     helper = runner_source[helper_start:helper_end]
+
+    def assert_marker_only_bridge_cleanup_contract(source: str) -> None:
+        assert 'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n}' in source
+        assert 'if names != [".acgs-postgres-socket-bridge.v2"]:' in source
+        assert "if any(name not in expected for name in names):" in source
+        assert "expected_kind == \"marker\"" in source
+        assert ".s.PGSQL.5432" not in source
+        assert ".s.PGSQL.5432.lock" not in source
+
+    assert_marker_only_bridge_cleanup_contract(helper)
     uid = os.getuid()
     proof_label = f"acp-postgres-gate-{uid}-00000000000000000000000000000033"
     bridge_name = f"{proof_label}-socket-bridge"
 
-    def make_bridge(_root_name: str) -> tuple[Path, Path, socket.socket]:
+    def make_bridge(_root_name: str) -> tuple[Path, Path]:
         root = Path(tempfile.mkdtemp(prefix="p", dir="/tmp"))
         root.chmod(0o700)
         bridge = root / bridge_name
@@ -23959,12 +24180,7 @@ def test_postgres_gate_socket_cleanup_unlinks_only_exact_descriptor_bound_artifa
         marker = bridge / ".acgs-postgres-socket-bridge.v2"
         marker.write_text(f"proof_label={proof_label}\n", encoding="ascii")
         marker.chmod(0o444)
-        lock_file = bridge / ".s.PGSQL.5432.lock"
-        lock_file.write_text("123\n", encoding="ascii")
-        lock_file.chmod(0o600)
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(str(bridge / ".s.PGSQL.5432"))
-        return root, bridge, sock
+        return root, bridge
 
     def bridge_env(root: Path, bridge: Path) -> str:
         marker = bridge / ".acgs-postgres-socket-bridge.v2"
@@ -23979,48 +24195,126 @@ def test_postgres_gate_socket_cleanup_unlinks_only_exact_descriptor_bound_artifa
             f"postgres_recovery_root_mnt_id={_directory_mnt_id(root)}\n"
         )
 
-    root, bridge, sock = make_bridge("socket-root-ok")
-    try:
-        harness = tmp_path / "socket-cleanup.sh"
-        harness.write_text(
-            "#!/usr/bin/env bash\n"
-            "set -Eeuo pipefail\n"
-            f"{bridge_env(root, bridge)}"
-            f"{helper}\n"
-            'cleanup_postgres_socket_bridge "$(id -u)"\n'
-            "printf 'SOCKET_CLEANUP_OK\\n'\n",
-            encoding="utf-8",
-        )
-        harness.chmod(0o755)
-        completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
-        assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        assert "SOCKET_CLEANUP_OK" in completed.stdout
-        assert not bridge.exists()
-    finally:
-        sock.close()
+    root, bridge = make_bridge("socket-root-ok")
+    harness = tmp_path / "socket-cleanup.sh"
+    harness.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        f"{bridge_env(root, bridge)}"
+        f"{helper}\n"
+        'cleanup_postgres_socket_bridge "$(id -u)"\n'
+        "printf 'SOCKET_CLEANUP_OK\\n'\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o755)
+    completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert "SOCKET_CLEANUP_OK" in completed.stdout
+    assert not bridge.exists()
 
-    root, bridge, sock = make_bridge("socket-root-reject")
+    for case_name in ("socket", "lock", "overflow", "unknown"):
+        root, bridge = make_bridge(f"socket-root-reject-{case_name}")
+        env_text = bridge_env(root, bridge)
+        held_socket: socket.socket | None = None
+        if case_name == "socket":
+            held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            held_socket.bind(str(bridge / ".s.PGSQL.5432"))
+        elif case_name == "lock":
+            residue = bridge / ".s.PGSQL.5432.lock"
+            residue.write_text("123\n", encoding="ascii")
+            residue.chmod(0o600)
+        elif case_name == "overflow":
+            marker = bridge / ".acgs-postgres-socket-bridge.v2"
+            marker.chmod(0o600)
+            marker.write_text(f"proof_label={proof_label}\noverflow=1\n", encoding="ascii")
+            marker.chmod(0o444)
+        else:
+            residue = bridge / "unknown-residue"
+            residue.write_text("unknown\n", encoding="ascii")
+            residue.chmod(0o600)
+        try:
+            harness = tmp_path / f"socket-cleanup-reject-{case_name}.sh"
+            harness.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -Eeuo pipefail\n"
+                f"{env_text}"
+                f"{helper}\n"
+                'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 80; fi\n'
+                f"printf 'SOCKET_CLEANUP_REJECTED {case_name}\\n'\n",
+                encoding="utf-8",
+            )
+            harness.chmod(0o755)
+            completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+            assert completed.returncode == 0, (case_name, completed.stdout, completed.stderr)
+            assert f"SOCKET_CLEANUP_REJECTED {case_name}" in completed.stdout
+            assert bridge.exists()
+        finally:
+            if held_socket is not None:
+                held_socket.close()
+
+    socket_cleanup_mutations = {
+        "socket-accepted": helper.replace(
+            'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n}',
+            'expected = {\n    ".acgs-postgres-socket-bridge.v2": "marker",\n'
+            '    ".s.PGSQL.5432": "socket",\n}',
+            1,
+        ),
+        "marker-guard-removed": helper.replace(
+            'if names != [".acgs-postgres-socket-bridge.v2"]:\n            raise SystemExit(70)\n',
+            "",
+            1,
+        ),
+        "unknown-residue-accepted": helper.replace(
+            "if any(name not in expected for name in names):\n            raise SystemExit(70)\n",
+            "",
+            1,
+        ),
+    }
+    for mutated_helper in socket_cleanup_mutations.values():
+        with pytest.raises(AssertionError):
+            assert_marker_only_bridge_cleanup_contract(mutated_helper)
+
+    socket_acceptance_mutation = socket_cleanup_mutations["socket-accepted"]
+    root, bridge = make_bridge("socket-root-mutated-socket-accepted")
+    held_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    held_socket.bind(str(bridge / ".s.PGSQL.5432"))
     try:
-        bad_socket = bridge / ".s.PGSQL.5432"
-        bad_socket.unlink()
-        bad_socket.write_text("not-socket\n", encoding="ascii")
-        harness = tmp_path / "socket-cleanup-reject-socket.sh"
+        harness = tmp_path / "socket-cleanup-mutated-socket-accepted.sh"
         harness.write_text(
             "#!/usr/bin/env bash\n"
             "set -Eeuo pipefail\n"
             f"{bridge_env(root, bridge)}"
-            f"{helper}\n"
+            f"{socket_acceptance_mutation}\n"
             'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 80; fi\n'
-            "printf 'SOCKET_CLEANUP_REJECTED\\n'\n",
+            "printf 'SOCKET_MUTATION_REJECTED socket-accepted\\n'\n",
             encoding="utf-8",
         )
         harness.chmod(0o755)
         completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
         assert completed.returncode == 0, (completed.stdout, completed.stderr)
-        assert "SOCKET_CLEANUP_REJECTED" in completed.stdout
-        assert bridge.exists()
     finally:
-        sock.close()
+        held_socket.close()
+
+    for name, mutated_helper in {
+        key: value for key, value in socket_cleanup_mutations.items() if key != "socket-accepted"
+    }.items():
+        root, bridge = make_bridge(f"socket-root-mutated-{name}")
+        residue = bridge / "unknown-residue"
+        residue.write_text("unknown\n", encoding="ascii")
+        residue.chmod(0o600)
+        harness = tmp_path / f"socket-cleanup-mutated-{name}.sh"
+        harness.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -Eeuo pipefail\n"
+            f"{bridge_env(root, bridge)}"
+            f"{mutated_helper}\n"
+            'if cleanup_postgres_socket_bridge "$(id -u)"; then exit 80; fi\n'
+            f"printf 'SOCKET_MUTATION_REJECTED {name}\\n'\n",
+            encoding="utf-8",
+        )
+        harness.chmod(0o755)
+        completed = subprocess.run([str(harness)], text=True, capture_output=True, check=False)
+        assert completed.returncode == 0, (name, completed.stdout, completed.stderr)
 
 
 def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_container(
@@ -24042,10 +24336,18 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
     server_name = f"{proof_label}-server"
     server_id = "c" * 64
     removed_marker = tmp_path / "removed-server"
+    killed_marker = tmp_path / "killed-server"
     q_server_id = shlex.quote(server_id)
     q_server_name = shlex.quote(server_name)
     q_proof_label = shlex.quote(proof_label)
     q_removed_marker = shlex.quote(str(removed_marker))
+    q_killed_marker = shlex.quote(str(killed_marker))
+    running_payload = shlex.quote(
+        _docker_inspect_payload(server_id, server_name, proof_label, role="main")
+    )
+    exited_payload = shlex.quote(
+        _docker_inspect_payload(server_id, server_name, proof_label, role="main", state="exited")
+    )
     timeout_bin = fake_bin / "timeout"
     timeout_bin.write_text(
         "#!/usr/bin/env bash\n"
@@ -24065,18 +24367,24 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_server_id} || "$ref" == {q_server_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f'    printf \'["%s","/%s","%s","main",null]\\n\' {q_server_id} '
-        f"{q_server_name} {q_proof_label}\n"
+        f"    if [[ -e {q_killed_marker} ]]; then printf '%s\\n' {exited_payload}; "
+        f"else printf '%s\\n' {running_payload}; fi\n"
         "    exit 0\n"
         "  fi\n"
         "  exit 1\n"
         "fi\n"
+        'if [[ "${1:-}" == kill && "${2:-}" == --signal && "${3:-}" == SIGINT ]]; then\n'
+        f'  [[ "${{4:-}}" == {q_server_id} ]] || exit 77\n'
+        f"  touch {q_killed_marker}\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "${1:-}" == stop ]]; then exit 78; fi\n'
         'if [[ "${1:-}" == inspect ]]; then\n'
         f'  [[ "${{2:-}}" == {q_server_id} && ! -e {q_removed_marker} ]] && exit 0\n'
         "  exit 1\n"
         "fi\n"
-        'if [[ "${1:-}" == rm && "${2:-}" == -f ]]; then\n'
-        f'  [[ "${{3:-}}" == {q_server_id} ]] || exit 77\n'
+        'if [[ "${1:-}" == rm ]]; then\n'
+        f'  [[ "${{2:-}}" == {q_server_id} ]] || exit 77\n'
         f"  touch {q_removed_marker}\n"
         "  exit 0\n"
         "fi\n"
@@ -24096,6 +24404,8 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
             shutil.rmtree(state)
         if removed_marker.exists():
             removed_marker.unlink()
+        if killed_marker.exists():
+            killed_marker.unlink()
         if log.exists():
             log.unlink()
         (state / "client").mkdir(parents=True)
@@ -24133,11 +24443,14 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
         )
         assert "BODY_REACHED" in completed.stdout
         assert "PASS" not in completed.stdout + completed.stderr
-        assert f"rm -f {server_id}" in log.read_text(encoding="utf-8")
+        logged = log.read_text(encoding="utf-8")
+        assert f"kill --signal SIGINT {server_id}" in logged
+        assert f"rm {server_id}" in logged
+        assert f"rm -f {server_id}" not in logged
         assert removed_marker.exists()
 
 
-def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
+def test_postgres_gate_server_cleanup_never_falls_back_after_bad_authoritative_ref(
     tmp_path: Path,
 ) -> None:
     runner_source = (ROOT / "packages/acgs-control-plane/scripts/run_postgres_gate.sh").read_text(
@@ -24154,9 +24467,6 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
     proof_nonce = "00000000000000000000000000000007"
     proof_label = f"acp-postgres-gate-1000-{proof_nonce}"
     server_name = f"{proof_label}-server"
-    server_id = "f" * 64
-    q_server_id = shlex.quote(server_id)
-    q_server_name = shlex.quote(server_name)
     q_proof_label = shlex.quote(proof_label)
     timeout_bin = fake_bin / "timeout"
     timeout_bin.write_text(
@@ -24175,37 +24485,17 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
         log = tmp_path / f"docker-{mode}.log"
         removed_marker = tmp_path / f"removed-{mode}"
         q_log = shlex.quote(str(log))
-        q_removed_marker = shlex.quote(str(removed_marker))
         docker_bin = fake_bin / "docker"
         docker_bin.write_text(
             "#!/usr/bin/env bash\n"
             "set -Eeuo pipefail\n"
             f"printf '%s\\n' \"$*\" >>{q_log}\n"
-            'if [[ "${1:-}" == inspect && "${2:-}" == --format ]]; then\n'
-            '  ref="${4:-}"\n'
-            f'  if [[ "$ref" == {q_server_id} || "$ref" == {q_server_name} ]]; then\n'
-            f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-            f'    printf \'["%s","/%s","%s","main",null]\\n\' {q_server_id} '
-            f"{q_server_name} {q_proof_label}\n"
-            "    exit 0\n"
-            "  fi\n"
-            "  exit 1\n"
-            "fi\n"
-            'if [[ "${1:-}" == inspect ]]; then\n'
-            f'  [[ "${{2:-}}" == {q_server_id} && ! -e {q_removed_marker} ]] && exit 0\n'
-            "  exit 1\n"
-            "fi\n"
-            'if [[ "${1:-}" == rm && "${2:-}" == -f ]]; then\n'
-            f'  [[ "${{3:-}}" == {q_server_id} ]] || exit 77\n'
-            f"  touch {q_removed_marker}\n"
-            "  exit 0\n"
-            "fi\n"
+            'if [[ "${1:-}" == inspect || "${1:-}" == rm '
+            '|| "${1:-}" == kill || "${1:-}" == stop ]]; then exit 77; fi\n'
             'if [[ "${1:-}" == ps && "${2:-}" == -aq ]]; then\n'
             '  args="$*"\n'
             '  [[ "$args" != *"acgs.postgres.client=trusted-broker"* ]] || exit 0\n'
-            f'  if [[ "$args" == *{q_proof_label}* && ! -e {q_removed_marker} ]]; then\n'
-            f"    printf '%s\\n' {q_server_id}\n"
-            "  fi\n"
+            f'  [[ "$args" != *{q_proof_label}* ]] || exit 78\n'
             "  exit 0\n"
             "fi\n"
             "exit 64\n",
@@ -24247,8 +24537,12 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
         assert completed.returncode == 70, (mode, completed.stdout, completed.stderr)
         assert "BODY_REACHED" in completed.stdout
         assert "PASS" not in completed.stdout + completed.stderr
-        assert f"rm -f {server_id}" in log.read_text(encoding="utf-8")
-        assert removed_marker.exists()
+        logged = log.read_text(encoding="utf-8")
+        assert "inspect" not in logged
+        assert "kill" not in logged
+        assert "stop" not in logged
+        assert "\nrm" not in f"\n{logged}"
+        assert not removed_marker.exists()
         recovery = state / "recovery-container-ids.txt"
         assert recovery.is_file()
         assert expected_recovery in recovery.read_text(encoding="utf-8")
