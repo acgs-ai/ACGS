@@ -20860,6 +20860,42 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
                 found_direct_validation = True
         assert found_direct_validation
 
+    def assert_client_broker_socket_contract(client_source: str) -> None:
+        module = ast.parse(client_source)
+        connector = _function_node(module, "connect_broker_socket")
+        connector_source = ast.get_source_segment(client_source, connector)
+        assert connector_source is not None
+        assert "deadline = time.monotonic() + 15" in connector_source
+        assert "client.settimeout(min(1.0, remaining))" in connector_source
+        assert "time.sleep(min(0.05, remaining))" in connector_source
+        assert "except (FileNotFoundError, ConnectionRefusedError, TimeoutError):" in (
+            connector_source
+        )
+        assert "except Exception:" in connector_source
+        assert "raise SystemExit(70) from None" in connector_source
+
+        connect_offset = connector_source.index("client.connect(socket_name)")
+        return_offset = connector_source.index("return client")
+        assert connect_offset < return_offset
+
+        with_statements = [
+            node
+            for node in module.body
+            if isinstance(node, ast.With)
+            and len(node.items) == 1
+            and ast.unparse(node.items[0].context_expr) == "connect_broker_socket()"
+            and isinstance(node.items[0].optional_vars, ast.Name)
+            and node.items[0].optional_vars.id == "client"
+        ]
+        assert len(with_statements) == 1
+        with_statement = with_statements[0]
+        assert with_statement.body
+        first_statement = with_statement.body[0]
+        assert isinstance(first_statement, ast.Expr)
+        assert isinstance(first_statement.value, ast.Call)
+        assert ast.unparse(first_statement.value.func) == "client.sendall"
+        assert ast.unparse(first_statement.value.args[0]) == "request"
+
     assert f"local trusted_runner_sha256='{reviewed_sha}'" in pg_runner
     assert 'exec {runner_fd}<"$runner_path"' in pg_runner
     assert "stat -Lc '%d:%i:%u:%a:%h' -- \"$runner_path\"" in pg_runner
@@ -21170,7 +21206,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     with pytest.raises(AssertionError):
         assert_broker_create_contract(broker_intervening_mutation)
     assert "def handle(conn: socket.socket)" in broker_payload
-    assert "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:" in client_payload
+    assert_client_broker_socket_contract(client_payload)
     assert "--log-opt max-size=1m" in reviewed_runner_source
     assert "--log-opt max-file=2" in reviewed_runner_source
     assert "--cap-drop ALL" in reviewed_runner_source
