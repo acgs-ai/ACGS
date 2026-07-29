@@ -3973,50 +3973,63 @@ def test_postgres_gate_client_wrapper_retries_until_bound_socket_listens(
 ) -> None:
     _broker_source, client_source = _postgres_gate_client_sources()
     client_path = _write_extracted_postgres_client(tmp_path, client_source)
-    socket_path = tmp_path / "delayed-listen.sock"
     received: list[dict[str, object]] = []
 
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
+    with tempfile.TemporaryDirectory(prefix="acgs-pg-client-", dir="/tmp") as socket_dir_name:
+        socket_dir = Path(socket_dir_name)
+        socket_path = socket_dir / "delayed-listen.sock"
+        assert socket_dir.parent == Path("/tmp")
+        assert socket_dir.stat().st_uid == os.getuid()
+        assert stat.S_IMODE(socket_dir.stat().st_mode) == 0o700
+        assert str(tmp_path) not in str(socket_path)
+        assert len(os.fsencode(socket_path)) < 108
 
-    def delayed_server() -> None:
-        time.sleep(0.25)
-        server.listen(1)
-        server.settimeout(5)
-        conn, _addr = server.accept()
-        with conn:
-            payload = conn.recv(65536)
-            received.append(json.loads(payload.decode("utf-8")))
-            conn.sendall(
-                json.dumps(
-                    {"stdout": "ready\n", "stderr": "", "returncode": 0},
-                    separators=(",", ":"),
-                ).encode("utf-8")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(socket_path))
+
+        def delayed_server() -> None:
+            time.sleep(0.25)
+            server.listen(1)
+            server.settimeout(5)
+            conn, _addr = server.accept()
+            with conn:
+                payload = conn.recv(65536)
+                received.append(json.loads(payload.decode("utf-8")))
+                conn.sendall(
+                    json.dumps(
+                        {"stdout": "ready\n", "stderr": "", "returncode": 0},
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                )
+            server.close()
+
+        thread = threading.Thread(target=delayed_server)
+        thread.start()
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(client_path),
+                    "--format=custom",
+                    "--file=/run/tmp/archive.dump",
+                ],
+                env={
+                    **os.environ,
+                    "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+                    "PGHOST": "/run/acgs-pg",
+                    "PGPORT": "5432",
+                    "PGUSER": "operator",
+                    "PGPASSWORD": "request-secret",
+                    "PGDATABASE": "acgs_control_plane_test",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
             )
-        server.close()
-
-    thread = threading.Thread(target=delayed_server)
-    thread.start()
-    try:
-        result = subprocess.run(
-            [sys.executable, str(client_path), "--format=custom", "--file=/run/tmp/archive.dump"],
-            env={
-                **os.environ,
-                "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
-                "PGHOST": "/run/acgs-pg",
-                "PGPORT": "5432",
-                "PGUSER": "operator",
-                "PGPASSWORD": "request-secret",
-                "PGDATABASE": "acgs_control_plane_test",
-            },
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-    finally:
-        thread.join(timeout=5)
-        server.close()
+        finally:
+            thread.join(timeout=5)
+            server.close()
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "ready\n"
