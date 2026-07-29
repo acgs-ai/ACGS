@@ -4965,6 +4965,7 @@ import json
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 tool = Path(sys.argv[0]).name
@@ -4991,10 +4992,42 @@ request = json.dumps(
     {"tool": tool, "argv": sys.argv[1:], "env": env},
     separators=(",", ":"),
 ).encode("utf-8")
-with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-    client.settimeout(15)
-    os.chdir(socket_dir)
-    client.connect(socket_name)
+
+def connect_broker_socket() -> socket.socket:
+    deadline = time.monotonic() + 15
+    try:
+        os.chdir(socket_dir)
+    except Exception:
+        print("PostgreSQL client broker is unavailable", file=sys.stderr)
+        raise SystemExit(70) from None
+    while True:
+        client: socket.socket | None = None
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("PostgreSQL client broker is unavailable", file=sys.stderr)
+                raise SystemExit(70) from None
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(min(1.0, remaining))
+            client.connect(socket_name)
+            client.settimeout(15)
+            return client
+        except (FileNotFoundError, ConnectionRefusedError, TimeoutError):
+            if client is not None:
+                client.close()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                print("PostgreSQL client broker is unavailable", file=sys.stderr)
+                raise SystemExit(70) from None
+            time.sleep(min(0.05, remaining))
+        except Exception:
+            if client is not None:
+                client.close()
+            print("PostgreSQL client broker is unavailable", file=sys.stderr)
+            raise SystemExit(70) from None
+
+
+with connect_broker_socket() as client:
     client.sendall(request)
     client.shutdown(socket.SHUT_WR)
     chunks = []

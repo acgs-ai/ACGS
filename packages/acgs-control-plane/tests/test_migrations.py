@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import shlex
@@ -14,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from collections.abc import Callable
@@ -2384,22 +2387,46 @@ def _run_fake_docker_broker_request(
         umask=0o077,
     )
     try:
-        deadline = time.monotonic() + 5
-        while not socket_path.exists() and time.monotonic() < deadline:
+        deadline = time.monotonic() + 15
+        original_cwd = Path.cwd()
+        broker_client: socket.socket | None = None
+        try:
+            os.chdir(socket_path.parent)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    pytest.fail("broker socket did not become ready")
+                if broker.poll() is not None:
+                    stdout, stderr = broker.communicate(timeout=1)
+                    pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
+                candidate: socket.socket | None = None
+                try:
+                    candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    candidate.settimeout(min(1.0, remaining))
+                    candidate.connect(socket_path.name)
+                except (FileNotFoundError, ConnectionRefusedError, TimeoutError):
+                    if candidate is not None:
+                        candidate.close()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        pytest.fail("broker socket did not become ready")
+                    time.sleep(min(0.05, remaining))
+                    continue
+                except Exception:
+                    if candidate is not None:
+                        candidate.close()
+                    raise
+                broker_client = candidate
+                broker_client.settimeout(15)
+                break
             if broker.poll() is not None:
                 stdout, stderr = broker.communicate(timeout=1)
                 pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
-            time.sleep(0.05)
-        if mode == "precreate-bridge-mode":
-            socket_bridge.chmod(0o700)
-        if before_request is not None:
-            before_request(state_dir)
-        original_cwd = Path.cwd()
-        try:
-            os.chdir(socket_path.parent)
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as broker_client:
-                broker_client.settimeout(15)
-                broker_client.connect(socket_path.name)
+            if mode == "precreate-bridge-mode":
+                socket_bridge.chmod(0o700)
+            if before_request is not None:
+                before_request(state_dir)
+            with broker_client:
                 broker_client.sendall(
                     json.dumps(
                         {
@@ -3886,6 +3913,16 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert "os.chdir(SOCKET_DIR)" in broker_source
     assert "server.bind(SOCKET_NAME)" in broker_source
     assert "os.chdir(socket_dir)" in client_source
+    assert "import time" in client_source
+    assert "def connect_broker_socket() -> socket.socket:" in client_source
+    assert "deadline = time.monotonic() + 15" in client_source
+    assert "except (FileNotFoundError, ConnectionRefusedError, TimeoutError):" in client_source
+    assert "client.settimeout(min(1.0, remaining))" in client_source
+    assert "client.settimeout(15)" in client_source
+    assert "time.sleep(min(0.05, remaining))" in client_source
+    assert "PostgreSQL client broker is unavailable" in client_source
+    assert "raise SystemExit(70) from None" in client_source
+    assert "with connect_broker_socket() as client:" in client_source
     assert "client.connect(socket_name)" in client_source
     exchange_marker_open_index = broker_source.index("def write_exchange_marker")
     exchange_marker_fchmod_index = broker_source.index(
@@ -3922,6 +3959,339 @@ def _postgres_gate_client_sources() -> tuple[str, str]:
         "\"$postgres_client_tool\" 0700 <<'PY'\n",
     )
     return broker_source, client_source
+
+
+def _write_extracted_postgres_client(tmp_path: Path, source: str) -> Path:
+    client_path = tmp_path / "pg_dump"
+    client_path.write_text(source, encoding="utf-8")
+    client_path.chmod(0o700)
+    return client_path
+
+
+def test_postgres_gate_client_wrapper_retries_until_bound_socket_listens(
+    tmp_path: Path,
+) -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    client_path = _write_extracted_postgres_client(tmp_path, client_source)
+    socket_path = tmp_path / "delayed-listen.sock"
+    received: list[dict[str, object]] = []
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+
+    def delayed_server() -> None:
+        time.sleep(0.25)
+        server.listen(1)
+        server.settimeout(5)
+        conn, _addr = server.accept()
+        with conn:
+            payload = conn.recv(65536)
+            received.append(json.loads(payload.decode("utf-8")))
+            conn.sendall(
+                json.dumps(
+                    {"stdout": "ready\n", "stderr": "", "returncode": 0},
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+        server.close()
+
+    thread = threading.Thread(target=delayed_server)
+    thread.start()
+    try:
+        result = subprocess.run(
+            [sys.executable, str(client_path), "--format=custom", "--file=/run/tmp/archive.dump"],
+            env={
+                **os.environ,
+                "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+                "PGHOST": "/run/acgs-pg",
+                "PGPORT": "5432",
+                "PGUSER": "operator",
+                "PGPASSWORD": "request-secret",
+                "PGDATABASE": "acgs_control_plane_test",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    finally:
+        thread.join(timeout=5)
+        server.close()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "ready\n"
+    assert result.stderr == ""
+    assert received
+    assert received[0]["tool"] == "pg_dump"
+    assert received[0]["argv"] == ["--format=custom", "--file=/run/tmp/archive.dump"]
+
+
+def test_postgres_gate_client_wrapper_fails_closed_when_broker_unavailable(
+    tmp_path: Path,
+) -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    client_source = client_source.replace("time.monotonic() + 15", "time.monotonic() + 0.2", 1)
+    assert "time.monotonic() + 0.2" in client_source
+    client_path = _write_extracted_postgres_client(tmp_path, client_source)
+    socket_path = tmp_path / "missing-broker.sock"
+    side_effect = tmp_path / "side-effect"
+
+    result = subprocess.run(
+        [sys.executable, str(client_path), "--format=custom", f"--file={side_effect}"],
+        env={
+            **os.environ,
+            "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+            "PGHOST": "/run/acgs-pg",
+            "PGPORT": "5432",
+            "PGUSER": "operator",
+            "PGPASSWORD": "request-secret",
+            "PGDATABASE": "acgs_control_plane_test",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert result.stderr.strip() == "PostgreSQL client broker is unavailable"
+    assert not socket_path.exists()
+    assert not side_effect.exists()
+
+
+class _FakePostgresClientClock:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.elapsed
+
+    def sleep(self, duration: float) -> None:
+        self.sleeps.append(duration)
+        self.elapsed += duration
+
+
+class _FakePostgresClientSocket:
+    def __init__(
+        self,
+        factory: _FakePostgresClientSocketFactory,
+    ) -> None:
+        self.factory = factory
+        self.timeouts: list[float] = []
+        self.closed = False
+        self.connected = False
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeouts.append(timeout)
+
+    def connect(self, socket_name: str) -> None:
+        self.factory.connect_names.append(socket_name)
+        outcome = self.factory.next_outcome()
+        if outcome == "success":
+            self.connected = True
+            return
+        if outcome == "timeout":
+            assert self.timeouts
+            self.factory.clock.elapsed += self.timeouts[-1]
+            raise TimeoutError("timeout-canary")
+        if outcome == "not-found":
+            raise FileNotFoundError("not-found-canary")
+        if outcome == "refused":
+            raise ConnectionRefusedError("refused-canary")
+        if outcome == "fatal":
+            raise OSError("fatal-canary")
+        raise AssertionError(f"unknown fake socket outcome {outcome!r}")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakePostgresClientSocketFactory:
+    AF_UNIX = socket.AF_UNIX
+    SOCK_STREAM = socket.SOCK_STREAM
+
+    def __init__(self, clock: _FakePostgresClientClock, outcomes: list[str]) -> None:
+        self.clock = clock
+        self.outcomes = list(outcomes)
+        self.instances: list[_FakePostgresClientSocket] = []
+        self.connect_names: list[str] = []
+
+    def socket(self, family: int, kind: int) -> _FakePostgresClientSocket:
+        assert family == socket.AF_UNIX
+        assert kind == socket.SOCK_STREAM
+        instance = _FakePostgresClientSocket(self)
+        self.instances.append(instance)
+        return instance
+
+    def next_outcome(self) -> str:
+        if self.outcomes:
+            return self.outcomes.pop(0)
+        return "timeout"
+
+
+def _load_extracted_client_connect_broker_socket(
+    client_source: str,
+    *,
+    fake_clock: _FakePostgresClientClock,
+    fake_socket: _FakePostgresClientSocketFactory,
+) -> Callable[[], _FakePostgresClientSocket]:
+    start = client_source.index("def connect_broker_socket() -> socket.socket:")
+    end = client_source.index("\n\nwith connect_broker_socket() as client:", start)
+    function_source = client_source[start:end]
+    namespace = {
+        "os": SimpleNamespace(chdir=lambda _path: None),
+        "socket": fake_socket,
+        "socket_dir": Path("/fake/socket-parent"),
+        "socket_name": "broker.sock",
+        "sys": sys,
+        "time": fake_clock,
+    }
+    exec(function_source, namespace)
+    return namespace["connect_broker_socket"]
+
+
+def test_postgres_gate_client_wrapper_bounds_attempt_timeout_by_remaining_deadline() -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    fake_clock = _FakePostgresClientClock()
+    fake_socket = _FakePostgresClientSocketFactory(fake_clock, ["timeout"] * 64)
+    connect_broker_socket = _load_extracted_client_connect_broker_socket(
+        client_source,
+        fake_clock=fake_clock,
+        fake_socket=fake_socket,
+    )
+
+    stderr = io.StringIO()
+    with pytest.raises(SystemExit) as exc_info, contextlib.redirect_stderr(stderr):
+        connect_broker_socket()
+
+    assert exc_info.value.code == 70
+    assert stderr.getvalue().strip() == "PostgreSQL client broker is unavailable"
+    assert "Traceback" not in stderr.getvalue()
+    assert "timeout-canary" not in stderr.getvalue()
+    assert fake_clock.elapsed <= 15.0
+    assert fake_clock.elapsed == pytest.approx(15.0)
+    assert fake_socket.instances
+    assert all(instance.closed for instance in fake_socket.instances)
+    assert all(instance.timeouts for instance in fake_socket.instances)
+    assert max(instance.timeouts[-1] for instance in fake_socket.instances) <= 1.0
+    assert fake_clock.sleeps
+    assert max(fake_clock.sleeps) <= 0.05
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        ["not-found", "success"],
+        ["refused", "success"],
+        ["timeout", "success"],
+    ],
+)
+def test_postgres_gate_client_wrapper_retries_transient_connect_errors_then_succeeds(
+    outcomes: list[str],
+) -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    fake_clock = _FakePostgresClientClock()
+    fake_socket = _FakePostgresClientSocketFactory(fake_clock, outcomes)
+    connect_broker_socket = _load_extracted_client_connect_broker_socket(
+        client_source,
+        fake_clock=fake_clock,
+        fake_socket=fake_socket,
+    )
+
+    connected = connect_broker_socket()
+    try:
+        assert connected.connected
+        assert not connected.closed
+        assert connected.timeouts[-1] == 15
+        assert len(fake_socket.instances) == 2
+        assert fake_socket.instances[0].closed
+        assert fake_socket.instances[1] is connected
+        assert fake_socket.connect_names == ["broker.sock", "broker.sock"]
+    finally:
+        connected.close()
+
+
+def test_postgres_gate_client_wrapper_closes_post_alloc_nontransient_connect_error() -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    fake_clock = _FakePostgresClientClock()
+    fake_socket = _FakePostgresClientSocketFactory(fake_clock, ["fatal"])
+    connect_broker_socket = _load_extracted_client_connect_broker_socket(
+        client_source,
+        fake_clock=fake_clock,
+        fake_socket=fake_socket,
+    )
+
+    stderr = io.StringIO()
+    with pytest.raises(SystemExit) as exc_info, contextlib.redirect_stderr(stderr):
+        connect_broker_socket()
+
+    assert exc_info.value.code == 70
+    assert stderr.getvalue().strip() == "PostgreSQL client broker is unavailable"
+    assert "fatal-canary" not in stderr.getvalue()
+    assert fake_socket.instances
+    assert all(instance.closed for instance in fake_socket.instances)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "source_mutation", "expected_missing"),
+    [
+        (
+            "missing-parent",
+            lambda source, socket_path: source,
+            "missing-parent",
+        ),
+        (
+            "constructor-failure",
+            lambda source, socket_path: source.replace(
+                "client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)",
+                "raise OSError('socket-canary-secret')",
+                1,
+            ),
+            "socket-canary-secret",
+        ),
+    ],
+)
+def test_postgres_gate_client_wrapper_failures_are_generic_without_traceback_or_path(
+    tmp_path: Path,
+    case_name: str,
+    source_mutation: Callable[[str, Path], str],
+    expected_missing: str,
+) -> None:
+    _broker_source, client_source = _postgres_gate_client_sources()
+    socket_parent = tmp_path / case_name / "parent"
+    socket_path = socket_parent / "broker.sock"
+    if case_name != "missing-parent":
+        socket_parent.mkdir(parents=True)
+    client_source = source_mutation(client_source, socket_path)
+    client_path = _write_extracted_postgres_client(tmp_path, client_source)
+    side_effect = tmp_path / f"{case_name}-side-effect"
+
+    result = subprocess.run(
+        [sys.executable, str(client_path), "--format=custom", f"--file={side_effect}"],
+        env={
+            **os.environ,
+            "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
+            "PGHOST": "/run/acgs-pg",
+            "PGPORT": "5432",
+            "PGUSER": "operator",
+            "PGPASSWORD": "request-secret",
+            "PGDATABASE": "acgs_control_plane_test",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert result.stderr.strip() == "PostgreSQL client broker is unavailable"
+    assert "Traceback" not in result.stderr
+    assert str(socket_path) not in result.stderr
+    assert expected_missing not in result.stderr
+    assert not side_effect.exists()
 
 
 def _postgres_gate_script_source() -> str:
