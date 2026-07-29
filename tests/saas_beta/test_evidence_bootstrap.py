@@ -9096,7 +9096,10 @@ def test_clean_sibling_guardian_scope_stop_state_machine_uses_exact_systemctl_id
     assert "MAX_STATUS_FRAME_BYTES = 4 * 1024 * 1024" in launcher
     assert "status_parent.recvmsg(" in launcher
     assert "flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC)" in launcher
-    assert "len(status_frames) != 1 or len(status_run_fds) != 1" in launcher
+    assert "len(status_frames) != 1 or status_run_fds or status_frame_fd_counts != [0]" in (
+        launcher
+    )
+    assert "or len(status_frames) != 1\n        or len(status_run_fds) != 1" in launcher
     assert "trusted success status must be exactly one bounded frame" in launcher
     internal = (EVIDENCE_SCRIPTS / "prove_clean_sibling.sh").read_text(encoding="utf-8")
     assert "readonly ACGS_PROOF_QUOTA_BYTES=8589934592" in internal
@@ -20741,6 +20744,122 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
         )
         assert create_offset < mount_verify_offset < config_verify_offset < first_start_offset
 
+    def assert_proof_fuse_options_are_private(prover_source: str) -> None:
+        assert 'exec "$FUSE2FS_BIN" -f -o fakeroot,auto_unmount ' in prover_source
+        assert "allow_root" not in prover_source
+        assert "allow_other" not in prover_source
+
+    def _function_node(module: ast.Module, name: str) -> ast.FunctionDef:
+        matches = [
+            node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name
+        ]
+        assert len(matches) == 1
+        return matches[0]
+
+    def _assignment_node(function: ast.FunctionDef, name: str) -> ast.Assign:
+        matches = [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+        ]
+        assert len(matches) == 1
+        return matches[0]
+
+    def _name_context_count(
+        function: ast.FunctionDef,
+        name: str,
+        context: type[ast.expr_context],
+    ) -> int:
+        return sum(
+            1
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, context)
+        )
+
+    def assert_broker_create_contract(broker_source: str) -> None:
+        assert "ambient" not in broker_source.lower()
+        module = ast.parse(broker_source)
+        validator = _function_node(module, "validate_final_docker_create_argv")
+        execute = _function_node(module, "execute")
+        validator_source = ast.get_source_segment(broker_source, validator)
+        assert validator_source is not None
+        required_validator_fragments = (
+            "if not isinstance(docker_create_args, tuple):",
+            "if not docker_create_args[: len(expected_prefix)] == expected_prefix:",
+            "if docker_create_args[len(expected_prefix) :] != expected_tail:",
+            "if not expected_tail or expected_tail[0] != IMAGE:",
+            "if IMAGE in docker_create_args[: len(expected_prefix)]:",
+            '"--privileged",',
+            '"--add-host",',
+            '"--network=host"',
+            'item == "--network"',
+            'docker_create_args[index + 1] != "none"',
+            "str(RECOVERY_ROOT),",
+            "str(STATE_DIR),",
+            "str(HOST_TMP),",
+            "str(HOST_PROOF_SCRATCH),",
+            (
+                "inspect_exact_docker_mounts("
+                "list(docker_create_args[: len(expected_prefix)]), exchange_roots)"
+            ),
+        )
+        for fragment in required_validator_fragments:
+            assert fragment in validator_source
+
+        tail_assignment = _assignment_node(execute, "docker_create_tail")
+        assert isinstance(tail_assignment.value, ast.Tuple)
+        assert [ast.unparse(item) for item in tail_assignment.value.elts] == [
+            "IMAGE",
+            "'sh'",
+            "'-ec'",
+            "marker_wrapper",
+            "'acgs-client-marker-wrapper'",
+            "tool",
+            "*args",
+        ]
+        args_assignment = _assignment_node(execute, "docker_create_args")
+        assert isinstance(args_assignment.value, ast.Tuple)
+        assert [ast.unparse(item) for item in args_assignment.value.elts] == [
+            "*docker_args",
+            "*docker_create_tail",
+        ]
+        assert _name_context_count(execute, "validated_docker_create_args", ast.Store) == 1
+        assert _name_context_count(execute, "validated_docker_create_args", ast.Load) == 1
+        validate_calls = [
+            node
+            for node in ast.walk(execute)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "validate_final_docker_create_argv"
+        ]
+        assert len(validate_calls) == 1
+        found_direct_validation = False
+        for parent in ast.walk(execute):
+            body = getattr(parent, "body", None)
+            if not isinstance(body, list):
+                continue
+            for index, statement in enumerate(body[:-1]):
+                if not (
+                    isinstance(statement, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name) and target.id == "validated_docker_create_args"
+                        for target in statement.targets
+                    )
+                ):
+                    continue
+                next_statement = body[index + 1]
+                assert isinstance(next_statement, ast.Assign)
+                assert any(
+                    isinstance(target, ast.Name) and target.id == "created"
+                    for target in next_statement.targets
+                )
+                assert isinstance(next_statement.value, ast.Call)
+                assert ast.unparse(next_statement.value.func) == "subprocess.run"
+                assert ast.unparse(next_statement.value.args[0]) == "validated_docker_create_args"
+                found_direct_validation = True
+        assert found_direct_validation
+
     assert f"local trusted_runner_sha256='{reviewed_sha}'" in pg_runner
     assert 'exec {runner_fd}<"$runner_path"' in pg_runner
     assert "stat -Lc '%d:%i:%u:%a:%h' -- \"$runner_path\"" in pg_runner
@@ -20925,6 +21044,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert 'exec /usr/local/bin/docker-entrypoint.sh "$@"' in guard_wrapper
     assert "verify_docker_mounts()" in reviewed_runner_source
     assert "verify_server_config_before_start()" in reviewed_runner_source
+    assert_proof_fuse_options_are_private(source)
     assert_server_config_verified_before_first_start(reviewed_runner_source)
     raw_env_mutation = reviewed_runner_source.replace(
         '{{json (index (split $value "=") 0)}}',
@@ -20945,6 +21065,20 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     )
     with pytest.raises(AssertionError):
         assert_server_config_verified_before_first_start(early_start_mutation)
+    fuse_allow_root_mutation = source.replace(
+        " -o fakeroot,auto_unmount ",
+        " -o fakeroot,allow_root,auto_unmount ",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_proof_fuse_options_are_private(fuse_allow_root_mutation)
+    fuse_allow_other_mutation = source.replace(
+        " -o fakeroot,auto_unmount ",
+        " -o fakeroot,allow_other,auto_unmount ",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_proof_fuse_options_are_private(fuse_allow_other_mutation)
     create_index = reviewed_runner_source.index("timeout --preserve-status 60s docker create")
     first_mount_verify_index = reviewed_runner_source.index(
         'verify_docker_mounts "$container_id" "$server_mount_expectation"',
@@ -21007,6 +21141,34 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     client_payload = reviewed_runner_source.split(client_marker, 1)[1].split("\nPY\n", 1)[0]
     assert broker_payload.strip()
     assert client_payload.strip()
+    assert_broker_create_contract(broker_payload)
+    broker_privileged_mutation = broker_payload.replace('"--privileged",', "", 1)
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_privileged_mutation)
+    broker_host_mutation = broker_payload.replace(
+        'item == "--network" and index + 1 < len(expected_prefix)',
+        'item == "--network-disabled" and index + 1 < len(expected_prefix)',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_host_mutation)
+    broker_add_host_mutation = broker_payload.replace('"--add-host",', "", 1)
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_add_host_mutation)
+    broker_recovery_mount_mutation = broker_payload.replace("str(RECOVERY_ROOT),\n", "", 1)
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_recovery_mount_mutation)
+    broker_quota_mount_mutation = broker_payload.replace("str(STATE_DIR),\n", "", 1)
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_quota_mount_mutation)
+    broker_intervening_mutation = broker_payload.replace(
+        "            created = subprocess.run(\n",
+        "            docker_create_args = tuple(docker_create_args)\n"
+        "            created = subprocess.run(\n",
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_broker_create_contract(broker_intervening_mutation)
     assert "def handle(conn: socket.socket)" in broker_payload
     assert "with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:" in client_payload
     assert "--log-opt max-size=1m" in reviewed_runner_source
@@ -21092,14 +21254,25 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert 'write_postgres_recovery_intent server-intent server "$server_namefile"' in (
         reviewed_runner_source
     )
-    assert "write_client_recovery_intent(client_name, cidfile, namefile)" in (
+    assert "write_client_recovery_intent(client_name, cidfile, namefile, exchange_meta)" in (
         reviewed_runner_source
     )
     assert "intent_version=2" in reviewed_runner_source
     assert "schema=acgs-postgres-recovery-intent/server/v2" in reviewed_runner_source
+    assert "schema=acgs-postgres-recovery-intent/client/v2" in reviewed_runner_source
     assert 'phase not in {"server-intent"}' in reviewed_runner_source
     assert 'f"phase={phase}"' in reviewed_runner_source
     assert "phase=client-intent" in reviewed_runner_source
+    assert 'exchange_basename = str(exchange_meta["basename"])' in reviewed_runner_source
+    assert 'exchange_identity = str(exchange_meta["identity"])' in reviewed_runner_source
+    assert 'exchange_marker_sha256 = str(exchange_meta["marker_sha256"])' in (
+        reviewed_runner_source
+    )
+    assert 'exchange_mnt_id = str(exchange_meta["mnt_id"])' in reviewed_runner_source
+    assert "exchange_basename={exchange_basename}" in reviewed_runner_source
+    assert "exchange_identity={exchange_identity}" in reviewed_runner_source
+    assert "exchange_marker_sha256={exchange_marker_sha256}" in reviewed_runner_source
+    assert "exchange_mnt_id={exchange_mnt_id}" in reviewed_runner_source
     assert 'ACGS_POSTGRES_RECOVERY_ROOT_BINDING_V2="$recovery_root_binding"' in pg_runner
     assert "acgs-postgres-recovery-root/v2\\t{observed_identity}\\t{mnt_id}" in pg_runner
     for hook_name in (
@@ -21118,7 +21291,7 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert "server_name={SERVER_NAME}" in reviewed_runner_source
     assert "os.O_EXCL | os.O_NOFOLLOW" in reviewed_runner_source
     assert "written != len(payload)" in reviewed_runner_source
-    assert "written != len(name_payload)" in reviewed_runner_source
+    assert "write_all(name_fd, name_payload)" in reviewed_runner_source
     assert "os.fsync(root_fd)" in reviewed_runner_source
     assert "os.fsync(parent_fd)" in reviewed_runner_source
     assert "summarize_private_output_sink()" in reviewed_runner_source
@@ -21127,6 +21300,28 @@ def test_clean_sibling_postgres_gate_pins_runner_fd_digest_and_private_proc() ->
     assert 'pytest_output_file="$state_dir/tmp/pytest-output.bin"' in reviewed_runner_source
     assert "pytest_output_sha256={digest.hexdigest()}" in reviewed_runner_source
     assert "pytest command failed: status=%s %s\\n" in reviewed_runner_source
+    assert "MAX_STAGED_INPUT_FILES = 32" in broker_payload
+    assert "MAX_STAGED_INPUT_BYTES = 8_388_608" in broker_payload
+    assert "if len(read_paths) >= MAX_STAGED_INPUT_FILES:" in broker_payload
+    assert "if path in read_paths:" in broker_payload
+    assert "if len(read_paths) > MAX_STAGED_INPUT_FILES:" in broker_payload
+    assert "remaining=MAX_STAGED_INPUT_BYTES - copied_total" in broker_payload
+    assert "if copied + len(chunk) > remaining:" in broker_payload
+    assert "if before.st_size > remaining:" in broker_payload
+    assert "os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC" in broker_payload
+    assert "ALLOWED_RW_ROOTS = tuple(SANDBOX_RW_ROOTS)" in broker_payload
+    assert "ALLOWED_RO_ROOTS = tuple(SANDBOX_RW_ROOTS)" in broker_payload
+    assert '"/run/acgs-exchange/tmp": (str(exchange_roots[Path("/run/tmp")])' in (broker_payload)
+    assert '"/run/acgs-exchange/proof-scratch": (' in broker_payload
+    assert 'exchange_root_identities = exchange_meta["root_identities"]' in broker_payload
+    assert "check_exchange /run/acgs-exchange/tmp" in broker_payload
+    assert "check_exchange /run/acgs-exchange/proof-scratch" in broker_payload
+    assert "container_absence_confirmed = not container_might_exist" in broker_payload
+    assert "if container_absence_confirmed and not exchange_cleaned:" in broker_payload
+    assert "cleanup_request_exchange(exchange_meta)" in broker_payload
+    assert broker_payload.index("container_absence_confirmed = not container_might_exist") < (
+        broker_payload.index("if container_absence_confirmed and not exchange_cleaned:")
+    )
 
 
 def test_clean_sibling_outer_bwrap_allows_reviewed_inner_userns_only(tmp_path: Path) -> None:
@@ -21520,11 +21715,13 @@ def test_postgres_gate_cleanup_uses_exact_private_records_not_cross_run_labels(
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_client_id} || "$ref" == {q_client_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f"    printf '%s|/%s|%s||trusted-broker\\n' {q_client_id} {q_client_name} {q_proof_label}\n"
+        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_client_id} '
+        f"{q_client_name} {q_proof_label}\n"
         "    exit 0\n"
         "  fi\n"
         f'  if [[ "$ref" == {q_other_id} || "$ref" == {q_other_name} ]]; then\n'
-        f"    printf '%s|/%s|%s||trusted-broker\\n' {q_other_id} {q_other_name} {q_other_label}\n"
+        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_other_id} '
+        f"{q_other_name} {q_other_label}\n"
         "    exit 0\n"
         "  fi\n"
         "  exit 1\n"
@@ -21632,7 +21829,8 @@ def test_postgres_gate_malformed_client_cid_does_not_block_valid_name_cleanup(
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_client_id} || "$ref" == {q_client_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f"    printf '%s|/%s|%s||trusted-broker\\n' {q_client_id} {q_client_name} {q_proof_label}\n"
+        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' {q_client_id} '
+        f"{q_client_name} {q_proof_label}\n"
         "    exit 0\n"
         "  fi\n"
         f'  [[ "$ref" != {q_other_id} ]] || exit 77\n'
@@ -21747,7 +21945,7 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
         f'  [[ "$ref" != {shlex.quote(stale_id)} ]] || exit 1\n'
         f'  if [[ "$ref" == {shlex.quote(client_name)} ]]; then\n'
         f"    [[ ! -e {shlex.quote(str(removed_marker))} ]] || exit 1\n"
-        f"    printf '%s|/%s|%s||trusted-broker\\n' "
+        f'    printf \'["%s","/%s","%s",null,"trusted-broker"]\\n\' '
         f"{shlex.quote(expected_id)} {shlex.quote(client_name)} {shlex.quote(proof_label)}\n"
         "    exit 0\n"
         "  fi\n"
@@ -21815,7 +22013,7 @@ def test_postgres_gate_stale_valid_client_cid_still_uses_expected_name_record(
     assert "BODY_REACHED" in completed.stdout
     assert "PASS" not in completed.stdout + completed.stderr
     logged = log.read_text(encoding="utf-8")
-    assert "inspect --format {{.Id}}|{{.Name}}|" in logged
+    assert 'inspect --format {{printf "["}}{{json .Id}},{{json .Name}},' in logged
     assert stale_id in logged
     assert f"rm -f {expected_id}" in logged
     assert f"rm -f {stale_id}" not in logged
@@ -23202,7 +23400,8 @@ def test_postgres_gate_partial_server_cidfile_cleanup_removes_exact_recorded_con
         '  ref="${4:-}"\n'
         f'  if [[ "$ref" == {q_server_id} || "$ref" == {q_server_name} ]]; then\n'
         f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-        f"    printf '%s|/%s|%s|main|\\n' {q_server_id} {q_server_name} {q_proof_label}\n"
+        f'    printf \'["%s","/%s","%s","main",null]\\n\' {q_server_id} '
+        f"{q_server_name} {q_proof_label}\n"
         "    exit 0\n"
         "  fi\n"
         "  exit 1\n"
@@ -23321,7 +23520,8 @@ def test_postgres_gate_server_cleanup_continues_to_name_after_bad_cid_or_stdout(
             '  ref="${4:-}"\n'
             f'  if [[ "$ref" == {q_server_id} || "$ref" == {q_server_name} ]]; then\n'
             f"    [[ ! -e {q_removed_marker} ]] || exit 1\n"
-            f"    printf '%s|/%s|%s|main|\\n' {q_server_id} {q_server_name} {q_proof_label}\n"
+            f'    printf \'["%s","/%s","%s","main",null]\\n\' {q_server_id} '
+            f"{q_server_name} {q_proof_label}\n"
             "    exit 0\n"
             "  fi\n"
             "  exit 1\n"

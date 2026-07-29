@@ -2376,12 +2376,19 @@ try:
             client_name = name[:-7]
             client_cidfile = os.path.join(expected_client_dir, f"{client_name}.cid")
             client_namefile = os.path.join(expected_client_dir, f"{client_name}.name")
+            exchange_basename = f"{client_name}-exchange"
             assert_expected_path(client_cidfile, client_cidfile)
             assert_expected_path(client_namefile, client_namefile)
+            if not re.fullmatch(
+                rf"{re.escape(proof_label)}-client-[0-9]+-[0-9]+-exchange",
+                exchange_basename,
+            ):
+                raise SystemExit(70)
             assert_exact_payload(
                 payload,
                 (
-                    ("intent_version", "1"),
+                    ("intent_version", "2"),
+                    ("schema", "acgs-postgres-recovery-intent/client/v2"),
                     ("phase", "client-intent"),
                     ("proof_nonce", proof_label.rsplit("-", 1)[1]),
                     ("proof_label", proof_label),
@@ -2390,8 +2397,19 @@ try:
                     ("record_path", client_namefile),
                     ("client_cidfile", client_cidfile),
                     ("client_namefile", client_namefile),
+                    ("exchange_basename", exchange_basename),
+                    ("exchange_identity", dict(payload).get("exchange_identity", "")),
+                    ("exchange_marker_sha256", dict(payload).get("exchange_marker_sha256", "")),
+                    ("exchange_mnt_id", dict(payload).get("exchange_mnt_id", "")),
                 ),
             )
+            payload_dict = dict(payload)
+            if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:700", payload_dict["exchange_identity"]):
+                raise SystemExit(70)
+            if not re.fullmatch(r"[0-9a-f]{64}", payload_dict["exchange_marker_sha256"]):
+                raise SystemExit(70)
+            if not payload_dict["exchange_mnt_id"].isdigit():
+                raise SystemExit(70)
         validated.append((name, before))
     for name, before in validated:
         current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
@@ -3135,9 +3153,14 @@ PINNED_PGHOST = "/run/acgs-pg"
 PINNED_PGPORT = "5432"
 HOST_TMP = STATE_DIR / "tmp"
 HOST_PROOF_SCRATCH = STATE_DIR / "proof-scratch"
+EXCHANGE_MARKER = ".acgs-postgres-client-exchange.v2"
 SANDBOX_RW_ROOTS = {
     Path("/run/tmp"): HOST_TMP.resolve(strict=True),
     Path("/proof-scratch"): HOST_PROOF_SCRATCH.resolve(strict=True),
+}
+EXCHANGE_CONTAINER_ROOTS = {
+    Path("/run/tmp"): Path("/run/acgs-exchange/tmp"),
+    Path("/proof-scratch"): Path("/run/acgs-exchange/proof-scratch"),
 }
 ALLOWED_ENV = {
     "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGPASSFILE",
@@ -3148,6 +3171,8 @@ FORBIDDEN_ENDPOINT_ENV = {"PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"}
 FORBIDDEN_CONNINFO_KEYS = {"host", "hostaddr", "port", "service", "servicefile"}
 MAX_REQUEST_BYTES = 131_072
 MAX_COMBINED_OUTPUT_BYTES = 2_097_152
+MAX_STAGED_INPUT_FILES = 32
+MAX_STAGED_INPUT_BYTES = 8_388_608
 MAX_RESPONSE_BYTES = 16_777_216
 BROKER_SOCKET_TIMEOUT_SECONDS = 15
 BROKER_DOCKER_TIMEOUT_SECONDS = 120
@@ -3166,6 +3191,19 @@ if DOCKER_BIN.resolve(strict=True) != DOCKER_BIN:
     fail("broker docker client must already be canonical", 69)
 if not RECOVERY_ROOT.is_absolute() or RECOVERY_ROOT.is_symlink():
     fail("broker recovery root must be absolute non-symlink", 70)
+
+
+def fd_mnt_id(fd: int) -> str:
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            if line.startswith("mnt_id:"):
+                value = line.split(":", 1)[1].strip()
+                if not value.isdigit():
+                    fail("PostgreSQL socket bridge mount id is unsafe", 70)
+                return value
+    fail("PostgreSQL socket bridge mount id is missing", 70)
+
+
 RECOVERY_ROOT_STAT = RECOVERY_ROOT.stat()
 if RECOVERY_ROOT_STAT.st_uid != os.getuid() or RECOVERY_ROOT_STAT.st_mode & 0o077:
     fail("broker recovery root must be owner-only", 70)
@@ -3183,15 +3221,12 @@ if not PG_RECOVERY_ROOT_MNT_ID.isdigit() or PG_RECOVERY_ROOT_MNT_ID != PG_SOCKET
     fail("PostgreSQL socket bridge root mount id is malformed", 70)
 
 
-def fd_mnt_id(fd: int) -> str:
-    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
-        for line in fdinfo:
-            if line.startswith("mnt_id:"):
-                value = line.split(":", 1)[1].strip()
-                if not value.isdigit():
-                    fail("PostgreSQL socket bridge mount id is unsafe", 70)
-                return value
-    fail("PostgreSQL socket bridge mount id is missing", 70)
+def fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def validate_socket_bridge() -> None:
@@ -3243,11 +3278,16 @@ def validate_socket_bridge() -> None:
         os.close(root_fd)
 
 
-def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
+def inspect_exact_docker_mounts(docker_args: list[str], exchange_roots: dict[Path, Path]) -> None:
     expected_binds = {
         "/run/acgs-pg": (str(PG_SOCKET_BRIDGE), False, "ro", "rprivate"),
-        "/run/tmp": (str(HOST_TMP), True, "", "rprivate"),
-        "/proof-scratch": (str(HOST_PROOF_SCRATCH), True, "", "rprivate"),
+        "/run/acgs-exchange/tmp": (str(exchange_roots[Path("/run/tmp")]), True, "", "rprivate"),
+        "/run/acgs-exchange/proof-scratch": (
+            str(exchange_roots[Path("/proof-scratch")]),
+            True,
+            "",
+            "rprivate",
+        ),
     }
     expected_tmpfs = {
         "/var/lib/postgresql/data": canonical_tmpfs_options(
@@ -3292,8 +3332,110 @@ def inspect_exact_docker_mounts(docker_args: list[str]) -> None:
         index += 1
     if observed_binds != expected_binds or observed_tmpfs != expected_tmpfs:
         fail("PostgreSQL client broker Docker mounts changed", 70)
-    if any(source == str(STATE_DIR) for source, _rw, _mode, _propagation in observed_binds.values()):
-        fail("PostgreSQL client broker must not bind the whole state directory", 70)
+    forbidden_sources = {str(STATE_DIR), str(HOST_TMP), str(HOST_PROOF_SCRATCH)}
+    if any(source in forbidden_sources for source, _rw, _mode, _propagation in observed_binds.values()):
+        fail("PostgreSQL client broker must not bind quota-backed state directories", 70)
+
+
+def validate_final_docker_create_argv(
+    docker_create_args: tuple[str, ...],
+    expected_prefix: tuple[str, ...],
+    expected_tail: tuple[str, ...],
+    exchange_roots: dict[Path, Path],
+) -> tuple[str, ...]:
+    if not isinstance(docker_create_args, tuple):
+        fail("PostgreSQL client broker Docker create argv must be immutable", 70)
+    if not docker_create_args[: len(expected_prefix)] == expected_prefix:
+        fail("PostgreSQL client broker Docker create argv changed", 70)
+    if docker_create_args[len(expected_prefix) :] != expected_tail:
+        fail("PostgreSQL client broker Docker create tail changed", 70)
+    if not expected_tail or expected_tail[0] != IMAGE:
+        fail("PostgreSQL client broker Docker create image boundary changed", 70)
+    if IMAGE in docker_create_args[: len(expected_prefix)]:
+        fail("PostgreSQL client broker Docker create image boundary changed", 70)
+    if any(not isinstance(item, str) or "\0" in item for item in docker_create_args):
+        fail("PostgreSQL client broker Docker create argv is malformed", 70)
+
+    allowed_flag_counts = {
+        "--pull=never": 1,
+        "--network": 1,
+        "--name": 1,
+        "--cidfile": 1,
+        "--label": 2,
+        "--log-driver": 1,
+        "--log-opt": 2,
+        "--memory": 1,
+        "--cpus": 1,
+        "--pids-limit": 1,
+        "--ulimit": 2,
+        "--cap-drop": 1,
+        "--security-opt": 2,
+        "--user": 1,
+        "--read-only": 1,
+        "--tmpfs": 2,
+        "--mount": 3,
+        "--env": len([item for item in expected_prefix if item == "--env"]),
+    }
+    observed_counts: dict[str, int] = {}
+    value_options = {
+        "--network",
+        "--name",
+        "--cidfile",
+        "--label",
+        "--log-driver",
+        "--log-opt",
+        "--memory",
+        "--cpus",
+        "--pids-limit",
+        "--ulimit",
+        "--cap-drop",
+        "--security-opt",
+        "--user",
+        "--tmpfs",
+        "--mount",
+        "--env",
+    }
+    forbidden_options = {"--privileged", "--add-host", "--hostname", "--network=host"}
+    forbidden_sources = {
+        str(RECOVERY_ROOT),
+        str(STATE_DIR),
+        str(HOST_TMP),
+        str(HOST_PROOF_SCRATCH),
+    }
+    index = 2
+    while index < len(expected_prefix):
+        item = docker_create_args[index]
+        if item in forbidden_options:
+            fail("PostgreSQL client broker Docker create argv is forbidden", 70)
+        if item == "--network" and index + 1 < len(expected_prefix) and docker_create_args[index + 1] != "none":
+            fail("PostgreSQL client broker Docker network changed", 70)
+        if item == "--mount":
+            if index + 1 >= len(expected_prefix):
+                fail("PostgreSQL client broker Docker mount is malformed", 70)
+            mount_value = docker_create_args[index + 1]
+            mount_parts = dict(part.split("=", 1) for part in mount_value.split(",") if "=" in part)
+            source = mount_parts.get("src")
+            target = mount_parts.get("dst")
+            if (
+                mount_parts.get("type") != "bind"
+                or not source
+                or not target
+                or source in forbidden_sources
+            ):
+                fail("PostgreSQL client broker Docker mount is forbidden", 70)
+        if item.startswith("--") or item == "--pull=never":
+            observed_counts[item] = observed_counts.get(item, 0) + 1
+            if item not in allowed_flag_counts:
+                fail("PostgreSQL client broker Docker create option is unsupported", 70)
+            if observed_counts[item] > allowed_flag_counts[item]:
+                fail("PostgreSQL client broker Docker create option is duplicated", 70)
+            index += 2 if item in value_options else 1
+            continue
+        fail("PostgreSQL client broker Docker create option is unsupported", 70)
+    if observed_counts != allowed_flag_counts:
+        fail("PostgreSQL client broker Docker create options changed", 70)
+    inspect_exact_docker_mounts(list(docker_create_args[: len(expected_prefix)]), exchange_roots)
+    return docker_create_args
 
 
 def canonical_tmpfs_options(raw_options: str) -> dict[str, str]:
@@ -3337,7 +3479,7 @@ def require_inspected_string(value: object) -> str:
     return value
 
 
-def validate_mount_snapshot(snapshot: object) -> None:
+def validate_mount_snapshot(snapshot: object, exchange_roots: dict[Path, Path]) -> None:
     expected_binds = {
         "/run/acgs-pg": {
             "source": str(PG_SOCKET_BRIDGE),
@@ -3345,14 +3487,14 @@ def validate_mount_snapshot(snapshot: object) -> None:
             "mode": "",
             "propagation": "rprivate",
         },
-        "/run/tmp": {
-            "source": str(HOST_TMP),
+        "/run/acgs-exchange/tmp": {
+            "source": str(exchange_roots[Path("/run/tmp")]),
             "rw": True,
             "mode": "",
             "propagation": "rprivate",
         },
-        "/proof-scratch": {
-            "source": str(HOST_PROOF_SCRATCH),
+        "/run/acgs-exchange/proof-scratch": {
+            "source": str(exchange_roots[Path("/proof-scratch")]),
             "rw": True,
             "mode": "",
             "propagation": "rprivate",
@@ -3411,7 +3553,7 @@ def validate_mount_snapshot(snapshot: object) -> None:
             fail("PostgreSQL client broker actual Docker tmpfs options changed", 70)
 
 
-def inspect_actual_docker_mounts(container_ref: str) -> bool:
+def inspect_actual_docker_mounts(container_ref: str, exchange_roots: dict[Path, Path]) -> bool:
     try:
         completed = subprocess.run(
             [
@@ -3439,13 +3581,13 @@ def inspect_actual_docker_mounts(container_ref: str) -> bool:
         )
     except (json.JSONDecodeError, UnicodeDecodeError):
         fail("PostgreSQL client broker mount inspection is malformed", 70)
-    validate_mount_snapshot(snapshot)
+    validate_mount_snapshot(snapshot, exchange_roots)
     return True
 
 
-def wait_for_actual_docker_mounts(container_ref: str) -> None:
+def wait_for_actual_docker_mounts(container_ref: str, exchange_roots: dict[Path, Path]) -> None:
     for _attempt in range(25):
-        if inspect_actual_docker_mounts(container_ref):
+        if inspect_actual_docker_mounts(container_ref, exchange_roots):
             return
         time.sleep(0.1)
     fail("PostgreSQL client broker mount inspection is uncertain", 70)
@@ -3574,86 +3716,686 @@ def translate_sandbox_path(path: Path, roots: tuple[Path, ...], label: str) -> t
     return matching_root, host_path
 
 
-def require_safe_owned_directory(path: Path, roots: tuple[Path, ...], label: str) -> Path:
-    sandbox_root, host_path = translate_sandbox_path(path, roots, label)
+def safe_relative_parts(relative: Path, label: str) -> tuple[str, ...]:
+    parts = relative.parts
+    if not parts:
+        return ()
+    for part in parts:
+        if part in {"", ".", ".."} or "/" in part or "\0" in part:
+            fail(f"{label} path is malformed")
+    return parts
+
+
+def open_trusted_quota_root(sandbox_root: Path, label: str) -> int:
+    fd = os.open(
+        SANDBOX_RW_ROOTS[sandbox_root],
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+    )
     try:
-        resolved = host_path.resolve(strict=True)
-    except OSError as exc:
-        fail(f"{label} path resolution failed: {exc}", 65)
-    if not resolved.is_dir():
-        fail(f"{label} parent must be a directory")
-    host_root = SANDBOX_RW_ROOTS[sandbox_root]
-    if not (resolved == host_root or host_root in resolved.parents):
-        fail(f"{label} path is outside broker-owned roots")
-    fd = os.open(resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
-        stat_result = os.fstat(fd)
-        if stat_result.st_uid != os.getuid():
-            fail(f"{label} parent is not owned by the broker user")
-        if stat_result.st_mode & 0o022:
-            fail(f"{label} parent is group/world writable")
-        descriptor_path = Path(f"/proc/self/fd/{fd}").resolve(strict=True)
-        if descriptor_path != resolved:
-            fail(f"{label} parent changed during validation", 65)
-    finally:
+        root_stat = os.fstat(fd)
+        if root_stat.st_uid != os.getuid() or root_stat.st_mode & 0o022:
+            fail(f"{label} root is unsafe")
+        return fd
+    except Exception:
         os.close(fd)
-    return sandbox_root
+        raise
 
 
-def add_read_path(paths: dict[str, str], candidate: str, label: str) -> None:
-    path = Path(candidate)
-    sandbox_root, host_path = translate_sandbox_path(path, ALLOWED_RO_ROOTS, label)
+def open_quota_parent_fd(sandbox_root: Path, relative_parent: Path, label: str) -> int:
+    parent_fd = open_trusted_quota_root(sandbox_root, label)
     try:
-        resolved = host_path.resolve(strict=True)
-    except OSError as exc:
-        fail(f"{label} path resolution failed: {exc}", 65)
-    host_root = SANDBOX_RW_ROOTS[sandbox_root]
-    if not (resolved == host_root or host_root in resolved.parents):
-        fail(f"{label} path is outside broker-owned roots")
-    if host_path.is_symlink():
-        fail(f"{label} path must not be a symlink")
-    stat_result = resolved.stat()
-    if stat_result.st_uid != os.getuid():
-        fail(f"{label} path is not owned by the broker user")
-    paths[str(sandbox_root)] = "ro"
+        for part in safe_relative_parts(relative_parent, label):
+            try:
+                next_fd = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=parent_fd,
+                )
+            except OSError:
+                fail(f"{label} parent is unavailable", 65)
+            os.close(parent_fd)
+            parent_fd = next_fd
+            dir_stat = os.fstat(parent_fd)
+            if not stat.S_ISDIR(dir_stat.st_mode):
+                fail(f"{label} parent must be a directory")
+            if dir_stat.st_uid != os.getuid() or dir_stat.st_mode & 0o022:
+                fail(f"{label} parent is unsafe")
+        return parent_fd
+    except Exception:
+        os.close(parent_fd)
+        raise
 
 
-def add_write_file(paths: dict[str, str], candidate: str) -> None:
+def write_all(fd: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    offset = 0
+    while offset < len(payload):
+        written = os.write(fd, view[offset:])
+        if written <= 0:
+            fail("short write", 70)
+        offset += written
+
+
+def regular_identity(file_stat: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        file_stat.st_dev,
+        file_stat.st_ino,
+        file_stat.st_uid,
+        file_stat.st_nlink,
+        stat.S_IFMT(file_stat.st_mode),
+        stat.S_IMODE(file_stat.st_mode),
+        file_stat.st_size,
+    )
+
+
+def open_quota_regular_fd(
+    sandbox_root: Path,
+    relative: Path,
+    label: str,
+    *,
+    private: bool = False,
+) -> tuple[int, os.stat_result]:
+    parent_fd = open_quota_parent_fd(sandbox_root, relative.parent, label)
+    try:
+        parts = safe_relative_parts(relative, label)
+        if not parts:
+            fail(f"{label} path must be a regular file")
+        try:
+            fd = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent_fd,
+            )
+        except OSError:
+            fail(f"{label} path is unavailable", 65)
+    finally:
+        os.close(parent_fd)
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            fail(f"{label} path must be a regular file")
+        if file_stat.st_uid != os.getuid() or file_stat.st_nlink != 1:
+            fail(f"{label} path identity is unsafe")
+        if private and stat.S_IMODE(file_stat.st_mode) & 0o077:
+            fail(f"{label} path must be private")
+        if file_stat.st_size > MAX_COMBINED_OUTPUT_BYTES:
+            fail(f"{label} source is too large", 65)
+        return fd, file_stat
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def add_read_path(read_paths: dict[Path, tuple[Path, Path, bool]], candidate: str, label: str) -> Path:
+    path = Path(candidate)
+    if path in read_paths:
+        sandbox_root, relative, _private = read_paths[path]
+        return EXCHANGE_CONTAINER_ROOTS[sandbox_root] / relative
+    if len(read_paths) >= MAX_STAGED_INPUT_FILES:
+        fail("PostgreSQL input staging count exceeds broker limit", 65)
+    sandbox_root, host_path = translate_sandbox_path(path, ALLOWED_RO_ROOTS, label)
+    relative = host_path.relative_to(SANDBOX_RW_ROOTS[sandbox_root])
+    fd, _stat_result = open_quota_regular_fd(
+        sandbox_root,
+        relative,
+        label,
+        private=label in {"PGPASSFILE", "PGSSLKEY"},
+    )
+    os.close(fd)
+    read_paths[path] = (sandbox_root, relative, label in {"PGPASSFILE", "PGSSLKEY"})
+    return EXCHANGE_CONTAINER_ROOTS[sandbox_root] / relative
+
+
+def add_write_file(candidate: str) -> tuple[Path, Path, Path]:
     path = Path(candidate)
     sandbox_root, host_path = translate_sandbox_path(path, ALLOWED_RW_ROOTS, "--file")
-    require_safe_owned_directory(path.parent, ALLOWED_RW_ROOTS, "--file")
+    relative = host_path.relative_to(SANDBOX_RW_ROOTS[sandbox_root])
+    parts = safe_relative_parts(relative, "--file")
+    if not parts:
+        fail("--file path is malformed")
+    parent_fd = open_quota_parent_fd(sandbox_root, relative.parent, "--file")
     try:
-        existing = host_path.resolve(strict=True)
-    except FileNotFoundError:
-        existing = host_path
-    except OSError as exc:
-        fail(f"--file path resolution failed: {exc}", 65)
-    else:
-        host_root = SANDBOX_RW_ROOTS[sandbox_root]
-        if not (existing == host_root or host_root in existing.parents):
-            fail("--file path is outside broker-owned roots")
-        if host_path.is_symlink():
-            fail("--file path must not be a symlink")
-        if existing.stat().st_uid != os.getuid():
-            fail("--file path is not owned by the broker user")
-    paths[str(sandbox_root)] = "rw"
+        try:
+            existing = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            if not stat.S_ISREG(existing.st_mode):
+                fail("--file path must be a regular file")
+            if existing.st_uid != os.getuid() or existing.st_nlink != 1:
+                fail("--file path identity is unsafe")
+            fail("PostgreSQL output destination already exists", 65)
+    finally:
+        os.close(parent_fd)
+    return (
+        path,
+        relative,
+        EXCHANGE_CONTAINER_ROOTS[sandbox_root] / relative,
+    )
 
 
-def write_client_recovery_intent(client_name: str, cidfile: Path, namefile: Path) -> None:
+def parse_pg_dump_output(args: list[str]) -> str | None:
+    if args == ["--version"]:
+        return None
+    output: str | None = None
+    saw_custom_format = False
+    for argument in args:
+        if argument == "--file" or argument == "-f" or argument.startswith("-f"):
+            fail("PostgreSQL client broker pg_dump output must use --file=PATH")
+        if argument == "--format" or argument == "-F" or argument.startswith("-F"):
+            fail("PostgreSQL client broker allows only custom-format pg_dump output")
+        if argument.startswith("--fo") and not argument.startswith("--format="):
+            fail("PostgreSQL client broker allows only explicit pg_dump file and format options")
+        if argument.startswith("--f") and not (
+            argument.startswith("--file=") or argument.startswith("--format=")
+        ):
+            fail("PostgreSQL client broker allows only explicit pg_dump file and format options")
+        if argument.startswith("--file="):
+            if output is not None:
+                fail("PostgreSQL client broker allows only one pg_dump output")
+            value = argument.split("=", 1)[1]
+            if not value:
+                fail("PostgreSQL client broker pg_dump output is malformed")
+            output = value
+            continue
+        if argument == "--format=custom":
+            if saw_custom_format:
+                fail("PostgreSQL client broker pg_dump format is duplicated")
+            saw_custom_format = True
+            continue
+        if argument.startswith("--format="):
+            fail("PostgreSQL client broker allows only custom-format pg_dump output")
+    if output is None:
+        return None
+    if not saw_custom_format:
+        fail("PostgreSQL client broker allows only custom-format pg_dump output")
+    return output
+
+
+def replace_exact_path(value: str, original: Path, rewritten: Path) -> str:
+    text = str(original)
+    replacement = str(rewritten)
+    if value == text:
+        return replacement
+    return value.replace(text, replacement)
+
+
+def rewrite_client_paths(
+    tool: str,
+    args: list[str],
+    env: dict[str, str],
+) -> tuple[list[str], dict[str, str], dict[Path, tuple[Path, Path, bool]], tuple[Path, Path, Path] | None]:
+    read_paths: dict[Path, tuple[Path, Path, bool]] = {}
+    write_file: tuple[Path, Path, Path] | None = None
+    parsed_pg_dump_output = parse_pg_dump_output(args) if tool == "pg_dump" else None
+    rewritten_env = dict(env)
+    for variable in ("PGPASSFILE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"):
+        if env.get(variable):
+            rewritten_env[variable] = str(add_read_path(read_paths, env[variable], variable))
+    rewritten_args: list[str] = []
+    write_count = 0
+    for argument in args:
+        if argument.startswith("--file="):
+            write_count += 1
+            if tool != "pg_dump":
+                fail("PostgreSQL client broker writes are restricted to pg_dump")
+            if argument.split("=", 1)[1] != parsed_pg_dump_output:
+                fail("PostgreSQL client broker pg_dump output changed during validation")
+            write_file = add_write_file(argument.split("=", 1)[1])
+            rewritten_args.append(f"--file={write_file[2]}")
+            continue
+        rewritten_argument = argument
+        if argument.startswith("/"):
+            rewritten_argument = str(add_read_path(read_paths, argument, "argument"))
+        else:
+            for original, (_sandbox_root, _host_path, _private) in tuple(read_paths.items()):
+                rewritten_argument = replace_exact_path(
+                    rewritten_argument,
+                    original,
+                    add_read_path(read_paths, str(original), "argument"),
+                )
+        rewritten_args.append(rewritten_argument)
+    if write_count > 1:
+        fail("PostgreSQL client broker allows only one pg_dump output")
+    return rewritten_args, rewritten_env, read_paths, write_file
+
+
+def dir_identity(dir_stat: os.stat_result) -> str:
+    return f"{dir_stat.st_dev}:{dir_stat.st_ino}:{dir_stat.st_uid}:{stat.S_IMODE(dir_stat.st_mode):03o}"
+
+
+def open_recovery_root_fd() -> int:
+    fd = os.open(RECOVERY_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        root_stat = os.fstat(fd)
+        if root_stat.st_uid != os.getuid() or stat.S_IMODE(root_stat.st_mode) != 0o700:
+            fail("PostgreSQL client recovery root is unsafe", 70)
+        if fd_mnt_id(fd) != PG_RECOVERY_ROOT_MNT_ID:
+            fail("PostgreSQL client recovery root mount id changed", 70)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def make_exchange_marker(client_name: str, basename: str, identity: str, mnt_id: str) -> tuple[bytes, str]:
+    payload = "\n".join(
+        (
+            "schema=acgs-postgres-client-exchange/v2",
+            f"proof_nonce={PROOF_NONCE}",
+            f"proof_label={PROOF_LABEL}",
+            f"client_name={client_name}",
+            f"exchange_basename={basename}",
+            f"exchange_identity={identity}",
+            f"exchange_mnt_id={mnt_id}",
+            "",
+        )
+    ).encode("ascii")
+    return payload, hashlib.sha256(payload).hexdigest()
+
+
+def write_exchange_marker(parent_fd: int, payload: bytes) -> None:
+    fd = os.open(
+        EXCHANGE_MARKER,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o444,
+        dir_fd=parent_fd,
+    )
+    try:
+        marker_stat = os.fstat(fd)
+        if not stat.S_ISREG(marker_stat.st_mode):
+            fail("PostgreSQL client exchange marker is not regular", 70)
+        if marker_stat.st_uid != os.getuid() or marker_stat.st_nlink != 1:
+            fail("PostgreSQL client exchange marker identity is unsafe", 70)
+        if stat.S_IMODE(marker_stat.st_mode) != 0o444:
+            fail("PostgreSQL client exchange marker mode is unsafe", 70)
+        write_all(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def create_request_exchange(client_name: str) -> dict[str, object]:
+    basename = f"{client_name}-exchange"
+    if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+-exchange", basename):
+        fail("PostgreSQL client exchange name is unsafe", 70)
+    root_fd = open_recovery_root_fd()
+    try:
+        os.mkdir(basename, 0o700, dir_fd=root_fd)
+        exchange_fd = os.open(
+            basename,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=root_fd,
+        )
+        try:
+            exchange_stat = os.fstat(exchange_fd)
+            if (
+                not stat.S_ISDIR(exchange_stat.st_mode)
+                or exchange_stat.st_uid != os.getuid()
+                or stat.S_IMODE(exchange_stat.st_mode) != 0o700
+            ):
+                fail("PostgreSQL client exchange directory is unsafe", 70)
+            if fd_mnt_id(exchange_fd) != PG_RECOVERY_ROOT_MNT_ID:
+                fail("PostgreSQL client exchange mount id changed", 70)
+            exchange_identity = dir_identity(exchange_stat)
+            marker_payload, marker_sha256 = make_exchange_marker(
+                client_name,
+                basename,
+                exchange_identity,
+                PG_RECOVERY_ROOT_MNT_ID,
+            )
+            write_exchange_marker(exchange_fd, marker_payload)
+            roots: dict[Path, Path] = {
+                Path("/run/tmp"): RECOVERY_ROOT / basename / "tmp",
+                Path("/proof-scratch"): RECOVERY_ROOT / basename / "proof-scratch",
+            }
+            root_identities: dict[str, str] = {}
+            for name, sandbox_root in (("tmp", "/run/tmp"), ("proof-scratch", "/proof-scratch")):
+                os.mkdir(name, 0o700, dir_fd=exchange_fd)
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=exchange_fd,
+                )
+                try:
+                    child_stat = os.fstat(child_fd)
+                    if (
+                        not stat.S_ISDIR(child_stat.st_mode)
+                        or child_stat.st_uid != os.getuid()
+                        or stat.S_IMODE(child_stat.st_mode) != 0o700
+                    ):
+                        fail("PostgreSQL client exchange child directory is unsafe", 70)
+                    if fd_mnt_id(child_fd) != PG_RECOVERY_ROOT_MNT_ID:
+                        fail("PostgreSQL client exchange child mount id changed", 70)
+                    write_exchange_marker(child_fd, marker_payload)
+                    root_identities[sandbox_root] = dir_identity(child_stat)
+                    os.fsync(child_fd)
+                finally:
+                    os.close(child_fd)
+            os.fsync(exchange_fd)
+            os.fsync(root_fd)
+            return {
+                "basename": basename,
+                "identity": exchange_identity,
+                "marker_sha256": marker_sha256,
+                "mnt_id": PG_RECOVERY_ROOT_MNT_ID,
+                "roots": roots,
+                "root_identities": root_identities,
+            }
+        finally:
+            os.close(exchange_fd)
+    finally:
+        os.close(root_fd)
+
+
+def ensure_private_parent(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        parent_stat = os.fstat(fd)
+        if parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) != 0o700:
+            fail("PostgreSQL client exchange parent is unsafe", 70)
+        if fd_mnt_id(fd) != PG_RECOVERY_ROOT_MNT_ID:
+            fail("PostgreSQL client exchange parent mount id changed", 70)
+    finally:
+        os.close(fd)
+
+
+def copy_regular_file_atomic(
+    sandbox_root: Path,
+    source_relative: Path,
+    destination: Path,
+    label: str,
+    *,
+    private: bool = False,
+    remaining: int,
+) -> int:
+    source_fd, before = open_quota_regular_fd(
+        sandbox_root,
+        source_relative,
+        label,
+        private=private,
+    )
+    try:
+        if before.st_size > remaining:
+            fail("PostgreSQL input staging bytes exceed broker limit", 65)
+        before_identity = regular_identity(before)
+        ensure_private_parent(destination.parent)
+        tmp_name = f".{destination.name}.tmp-{os.getpid()}-{time.monotonic_ns()}"
+        tmp_path = destination.parent / tmp_name
+        destination_fd = os.open(
+            tmp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        copied = 0
+        try:
+            while True:
+                chunk = os.read(source_fd, 65_536)
+                if not chunk:
+                    break
+                if copied + len(chunk) > remaining:
+                    fail("PostgreSQL input staging bytes exceed broker limit", 65)
+                write_all(destination_fd, chunk)
+                copied += len(chunk)
+                if copied > before.st_size:
+                    fail(f"{label} source changed during copy", 65)
+            after = os.fstat(source_fd)
+            if regular_identity(after) != before_identity or copied != before.st_size:
+                fail(f"{label} source changed during copy", 65)
+            os.fsync(destination_fd)
+        finally:
+            os.close(destination_fd)
+        os.replace(tmp_path, destination)
+        fsync_directory(destination.parent)
+        return copied
+    finally:
+        os.close(source_fd)
+
+
+def stage_read_paths(
+    read_paths: dict[Path, tuple[Path, Path, bool]],
+    exchange_roots: dict[Path, Path],
+) -> None:
+    if len(read_paths) > MAX_STAGED_INPUT_FILES:
+        fail("PostgreSQL input staging count exceeds broker limit", 65)
+    copied_total = 0
+    for _sandbox_path, (sandbox_root, relative, private) in read_paths.items():
+        copied = copy_regular_file_atomic(
+            sandbox_root,
+            relative,
+            exchange_roots[sandbox_root] / relative,
+            "PostgreSQL input",
+            private=private,
+            remaining=MAX_STAGED_INPUT_BYTES - copied_total,
+        )
+        copied_total += copied
+        if copied_total > MAX_STAGED_INPUT_BYTES:
+            fail("PostgreSQL input staging bytes exceed broker limit", 65)
+
+
+def publish_regular_file_no_replace(source: Path, sandbox_root: Path, destination_relative: Path) -> None:
+    try:
+        source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        fail("PostgreSQL output path is unavailable", 65)
+    try:
+        before = os.fstat(source_fd)
+        if not stat.S_ISREG(before.st_mode):
+            fail("PostgreSQL output path must be a regular file")
+        if before.st_uid != os.getuid() or before.st_nlink != 1:
+            fail("PostgreSQL output path identity is unsafe")
+        if before.st_size > MAX_COMBINED_OUTPUT_BYTES:
+            fail("PostgreSQL output source is too large", 65)
+        before_identity = regular_identity(before)
+        magic = os.read(source_fd, 5)
+        if magic != b"PGDMP":
+            fail("PostgreSQL output is not a custom-format dump", 65)
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        parts = safe_relative_parts(destination_relative, "--file")
+        if not parts:
+            fail("--file path is malformed")
+        parent_fd = open_quota_parent_fd(sandbox_root, destination_relative.parent, "--file")
+        tmp_name = f".{parts[-1]}.tmp-{os.getpid()}-{time.monotonic_ns()}"
+        temp_created = False
+        try:
+            destination_fd = os.open(
+                tmp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            temp_created = True
+            copied = 0
+            try:
+                while True:
+                    chunk = os.read(source_fd, 65_536)
+                    if not chunk:
+                        break
+                    write_all(destination_fd, chunk)
+                    copied += len(chunk)
+                    if copied > before.st_size:
+                        fail("PostgreSQL output changed during publish", 65)
+                after = os.fstat(source_fd)
+                if regular_identity(after) != before_identity or copied != before.st_size:
+                    fail("PostgreSQL output changed during publish", 65)
+                os.fsync(destination_fd)
+            finally:
+                os.close(destination_fd)
+            try:
+                os.link(
+                    tmp_name,
+                    parts[-1],
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                fail("PostgreSQL output destination already exists", 65)
+            os.fsync(parent_fd)
+        finally:
+            if temp_created:
+                try:
+                    os.unlink(tmp_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+            os.close(parent_fd)
+    finally:
+        os.close(source_fd)
+
+
+def publish_write_path(
+    write_file: tuple[Path, Path, Path] | None,
+    exchange_roots: dict[Path, Path],
+) -> None:
+    if write_file is None:
+        return
+    _sandbox_path, quota_relative_path, exchange_container_path = write_file
+    matching_root = next(
+        root for root, exchange_container_root in EXCHANGE_CONTAINER_ROOTS.items()
+        if exchange_container_path == exchange_container_root
+        or exchange_container_root in exchange_container_path.parents
+    )
+    exchange_path = exchange_roots[matching_root] / exchange_container_path.relative_to(
+        EXCHANGE_CONTAINER_ROOTS[matching_root]
+    )
+    publish_regular_file_no_replace(exchange_path, matching_root, quota_relative_path)
+
+
+def cleanup_tree_fd(parent_fd: int, name: str) -> bool:
+    try:
+        child_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    except OSError:
+        return False
+    try:
+        child_stat = os.fstat(child_fd)
+        if child_stat.st_uid != os.getuid() or stat.S_IMODE(child_stat.st_mode) != 0o700:
+            return False
+        for entry in os.listdir(child_fd):
+            try:
+                entry_stat = os.stat(entry, dir_fd=child_fd, follow_symlinks=False)
+            except OSError:
+                return False
+            if stat.S_ISDIR(entry_stat.st_mode):
+                if not cleanup_tree_fd(child_fd, entry):
+                    return False
+                continue
+            if (
+                not stat.S_ISREG(entry_stat.st_mode)
+                or entry_stat.st_uid != os.getuid()
+                or entry_stat.st_nlink != 1
+            ):
+                return False
+            try:
+                os.unlink(entry, dir_fd=child_fd)
+            except OSError:
+                return False
+        try:
+            os.fsync(child_fd)
+        except OSError:
+            return False
+    finally:
+        os.close(child_fd)
+    try:
+        os.rmdir(name, dir_fd=parent_fd)
+    except OSError:
+        return False
+    return True
+
+
+def cleanup_request_exchange(exchange_meta: dict[str, object]) -> bool:
+    basename = str(exchange_meta["basename"])
+    root_fd = open_recovery_root_fd()
+    try:
+        exchange_fd = os.open(
+            basename,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=root_fd,
+        )
+        try:
+            exchange_stat = os.fstat(exchange_fd)
+            if dir_identity(exchange_stat) != exchange_meta["identity"]:
+                return False
+            if fd_mnt_id(exchange_fd) != exchange_meta["mnt_id"]:
+                return False
+            for child in ("tmp", "proof-scratch"):
+                if not cleanup_tree_fd(exchange_fd, child):
+                    return False
+            marker_stat = os.stat(EXCHANGE_MARKER, dir_fd=exchange_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(marker_stat.st_mode)
+                or marker_stat.st_uid != os.getuid()
+                or marker_stat.st_nlink != 1
+                or stat.S_IMODE(marker_stat.st_mode) != 0o444
+            ):
+                return False
+            os.unlink(EXCHANGE_MARKER, dir_fd=exchange_fd)
+            os.fsync(exchange_fd)
+        finally:
+            os.close(exchange_fd)
+        os.rmdir(basename, dir_fd=root_fd)
+        os.fsync(root_fd)
+    except OSError:
+        return False
+    finally:
+        os.close(root_fd)
+    return True
+
+
+def docker_create_failure_diagnostic(returncode: int, payload: bytes) -> bytes:
+    digest = hashlib.sha256(payload).hexdigest()
+    reason = "docker-create-failed"
+    lower_payload = payload.lower()
+    if b"permission denied" in lower_payload and b"mount" in lower_payload:
+        reason = "docker-create-bind-mount-permission-denied"
+    return json.dumps(
+        {
+            "event": "postgres_client_docker_create_failed",
+            "broker_rc": 70,
+            "docker_rc": returncode,
+            "output_bytes": len(payload),
+            "output_sha256": digest,
+            "safe_reason": reason,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii") + b"\n"
+
+
+def write_client_recovery_intent(
+    client_name: str,
+    cidfile: Path,
+    namefile: Path,
+    exchange_meta: dict[str, object],
+) -> None:
     if not re.fullmatch(r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+", client_name):
         fail("client recovery intent name is unsafe", 70)
     if not re.fullmatch(r"[0-9a-f]{32}", PROOF_NONCE):
         fail("client recovery intent nonce is unsafe", 70)
     if SERVER_NAME != f"{PROOF_LABEL}-server":
         fail("client recovery intent server name is unsafe", 70)
-    root_fd = os.open(RECOVERY_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    exchange_basename = str(exchange_meta["basename"])
+    exchange_identity = str(exchange_meta["identity"])
+    exchange_marker_sha256 = str(exchange_meta["marker_sha256"])
+    exchange_mnt_id = str(exchange_meta["mnt_id"])
+    if exchange_basename != f"{client_name}-exchange":
+        fail("client recovery intent exchange name is unsafe", 70)
+    if not re.fullmatch(r"[0-9]+:[0-9]+:[0-9]+:700", exchange_identity):
+        fail("client recovery intent exchange identity is unsafe", 70)
+    if not re.fullmatch(r"[0-9a-f]{64}", exchange_marker_sha256):
+        fail("client recovery intent exchange marker is unsafe", 70)
+    if not exchange_mnt_id.isdigit():
+        fail("client recovery intent exchange mount id is unsafe", 70)
+    root_fd = open_recovery_root_fd()
     try:
-        root_stat = os.fstat(root_fd)
-        if root_stat.st_uid != os.getuid() or root_stat.st_mode & 0o077:
-            fail("client recovery root identity is unsafe", 70)
         payload = "\n".join(
             (
-                "intent_version=1",
+                "intent_version=2",
+                "schema=acgs-postgres-recovery-intent/client/v2",
                 "phase=client-intent",
                 f"proof_nonce={PROOF_NONCE}",
                 f"proof_label={PROOF_LABEL}",
@@ -3662,6 +4404,10 @@ def write_client_recovery_intent(client_name: str, cidfile: Path, namefile: Path
                 f"record_path={namefile}",
                 f"client_cidfile={cidfile}",
                 f"client_namefile={namefile}",
+                f"exchange_basename={exchange_basename}",
+                f"exchange_identity={exchange_identity}",
+                f"exchange_marker_sha256={exchange_marker_sha256}",
+                f"exchange_mnt_id={exchange_mnt_id}",
                 "",
             )
         ).encode("ascii")
@@ -3679,9 +4425,7 @@ def write_client_recovery_intent(client_name: str, cidfile: Path, namefile: Path
                 fail("client recovery intent identity is unsafe", 70)
             if file_stat.st_mode & 0o777 != 0o600:
                 fail("client recovery intent mode is unsafe", 70)
-            written = os.write(fd, payload)
-            if written != len(payload):
-                fail("client recovery intent short write", 70)
+            write_all(fd, payload)
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -3718,339 +4462,402 @@ def execute(request: dict[str, object]) -> tuple[int, bytes, bytes]:
         fail("PostgreSQL client broker endpoint is pinned")
     env = {**env, "PGHOST": PINNED_PGHOST, "PGPORT": PINNED_PGPORT}
     reject_endpoint_override_args(tool, args)
+    args, env, read_paths, write_file = rewrite_client_paths(tool, args, env)
     docker_cli_env = {
         "PATH": "/usr/bin:/bin",
         "HOME": str(STATE_DIR / "home"),
     }
     docker_cli_env.update(env)
-    paths: dict[str, str] = {}
-    for variable in ("PGPASSFILE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"):
-        if env.get(variable):
-            add_read_path(paths, env[variable], variable)
-    for argument in args:
-        if argument.startswith("--file="):
-            add_write_file(paths, argument.split("=", 1)[1])
-        elif argument.startswith("/"):
-            add_read_path(paths, argument, "argument")
     client_name = f"{PROOF_LABEL}-client-{os.getpid()}-{REQUESTS}"
+    exchange_meta = create_request_exchange(client_name)
+    exchange_roots = exchange_meta["roots"]
+    exchange_cleaned = False
     cidfile = STATE_DIR / "client" / f"{client_name}.cid"
     namefile = STATE_DIR / "client" / f"{client_name}.name"
-    name_fd = os.open(
-        namefile,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-        0o600,
-    )
+    container_might_exist = False
     try:
-        name_stat = os.fstat(name_fd)
-        if not stat.S_ISREG(name_stat.st_mode):
-            fail("client broker name record is not regular", 70)
-        if name_stat.st_uid != os.getuid() or name_stat.st_nlink != 1:
-            fail("client broker name record identity is unsafe", 70)
-        if name_stat.st_mode & 0o777 != 0o600:
-            fail("client broker name record mode is unsafe", 70)
-        name_payload = client_name.encode("ascii") + b"\n"
-        written = os.write(name_fd, name_payload)
-        if written != len(name_payload):
-            fail("client broker name record short write", 70)
-        os.fsync(name_fd)
-    finally:
-        os.close(name_fd)
-    client_dir_fd = os.open(STATE_DIR / "client", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    try:
-        os.fsync(client_dir_fd)
-    finally:
-        os.close(client_dir_fd)
-    write_client_recovery_intent(client_name, cidfile, namefile)
-
-    docker_args = [
-        str(DOCKER_BIN), "create", "--pull=never", "--network", "none",
-        "--name", client_name,
-        "--cidfile", str(cidfile),
-        "--label", "acgs.postgres.client=trusted-broker",
-        "--label", f"acgs.postgres.proof={PROOF_LABEL}",
-        "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=2",
-        "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
-        "--ulimit", "nofile=256:256",
-        "--ulimit", f"fsize={MAX_COMBINED_OUTPUT_BYTES}:{MAX_COMBINED_OUTPUT_BYTES}",
-        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-        "--security-opt", "label=disable", "--user", f"{os.getuid()}:{os.getgid()}",
-        "--read-only",
-        "--tmpfs", "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777,size=512m",
-        "--mount", f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly",
-        "--mount", f"type=bind,src={HOST_TMP},dst=/run/tmp",
-        "--mount", f"type=bind,src={HOST_PROOF_SCRATCH},dst=/proof-scratch",
-    ]
-    for key in sorted(env):
-        docker_args.extend(["--env", key])
-    marker_wrapper = (
-        "marker=/run/acgs-pg/.acgs-postgres-socket-bridge.v2; "
-        "test -f \"$marker\" && test ! -L \"$marker\" || exit 70; "
-        f"test \"$(stat -c '%u:%h:%a' \"$marker\")\" = \"{os.getuid()}:1:444\" || exit 70; "
-        f"test \"$(sha256sum \"$marker\" | awk '{{print $1}}')\" = \"{PG_SOCKET_BRIDGE_MARKER_SHA256}\" || exit 70; "
-        "exec \"$@\""
-    )
-    docker_create_args = [
-        *docker_args,
-        IMAGE,
-        "sh",
-        "-ec",
-        marker_wrapper,
-        "acgs-client-marker-wrapper",
-        tool,
-        *args,
-    ]
-    validate_socket_bridge()
-    inspect_exact_docker_mounts(docker_args)
-    del paths
-    combined = bytearray()
-    timed_out = False
-    overflow = False
-    process: subprocess.Popen[bytes] | None = None
-    created_container_ref: str | None = None
-    client_cleanup_confirmed = False
-
-    def read_record(path: Path, pattern: str) -> str | None:
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        except OSError:
-            return None
-        try:
-            record_stat = os.fstat(fd)
-            if not stat.S_ISREG(record_stat.st_mode):
-                return None
-            if record_stat.st_uid != os.getuid() or record_stat.st_nlink != 1:
-                return None
-            if record_stat.st_mode & 0o777 != 0o600:
-                return None
-            raw = os.read(fd, 512)
-        finally:
-            os.close(fd)
-        try:
-            text = raw.decode("ascii").strip()
-        except UnicodeDecodeError:
-            return None
-        if "\n" in text or not re.fullmatch(pattern, text):
-            return None
-        return text
-
-    def candidate_refs() -> list[str]:
-        refs: list[str] = []
-        if created_container_ref and re.fullmatch(r"[0-9a-f]{12,64}", created_container_ref):
-            refs.append(created_container_ref)
-        cid = read_record(cidfile, r"[0-9a-f]{12,64}")
-        if cid and cid not in refs:
-            refs.append(cid)
-        recorded_name = read_record(
-            namefile,
-            r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+",
-        )
-        if recorded_name and recorded_name not in refs:
-            refs.append(recorded_name)
-        if client_name not in refs:
-            refs.append(client_name)
-        return refs
-
-    def inspect_ref(ref: str) -> tuple[str, str, str, str, str] | None:
-        inspect_format = (
-            '{{printf "["}}{{json .Id}},{{json .Name}},'
-            '{{with index .Config.Labels "acgs.postgres.proof"}}{{json .}}{{else}}null{{end}},'
-            '{{with index .Config.Labels "acgs.postgres.server"}}{{json .}}{{else}}null{{end}},'
-            '{{with index .Config.Labels "acgs.postgres.client"}}{{json .}}{{else}}null{{end}}'
-            '{{printf "]"}}'
-        )
-        try:
-            completed = subprocess.run(
-                [
-                    str(DOCKER_BIN), "inspect",
-                    "--format",
-                    inspect_format,
-                    ref,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                timeout=15,
+            name_fd = os.open(
+                namefile,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
             )
-        except (OSError, subprocess.SubprocessError):
-            fail("PostgreSQL client broker container inspection is uncertain", 70)
-        if completed.returncode == 1:
-            return None
-        if completed.returncode != 0:
-            fail("PostgreSQL client broker container inspection is uncertain", 70)
-        if len(completed.stdout) > 8192:
-            fail("PostgreSQL client broker container inspection is uncertain", 70)
-        try:
-            fields = json.loads(completed.stdout.decode("utf-8", "strict"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            fail("PostgreSQL client broker container inspection is uncertain", 70)
-        if not isinstance(fields, list) or len(fields) != 5:
-            fail("PostgreSQL client broker container inspection is uncertain", 70)
-        normalized_fields: list[str] = []
-        for field in fields:
-            if field is None:
-                normalized_fields.append("")
-            elif isinstance(field, str):
-                normalized_fields.append(field)
-            else:
-                fail("PostgreSQL client broker container inspection is uncertain", 70)
-        return tuple(normalized_fields)  # type: ignore[return-value]
+            try:
+                name_stat = os.fstat(name_fd)
+                if not stat.S_ISREG(name_stat.st_mode):
+                    fail("client broker name record is not regular", 70)
+                if name_stat.st_uid != os.getuid() or name_stat.st_nlink != 1:
+                    fail("client broker name record identity is unsafe", 70)
+                if name_stat.st_mode & 0o777 != 0o600:
+                    fail("client broker name record mode is unsafe", 70)
+                name_payload = client_name.encode("ascii") + b"\n"
+                write_all(name_fd, name_payload)
+                os.fsync(name_fd)
+            finally:
+                os.close(name_fd)
+            client_dir_fd = os.open(STATE_DIR / "client", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            try:
+                os.fsync(client_dir_fd)
+            finally:
+                os.close(client_dir_fd)
+            write_client_recovery_intent(client_name, cidfile, namefile, exchange_meta)
+            stage_read_paths(read_paths, exchange_roots)
+        except Exception:
+            raise
 
-    def is_expected_client(inspected: tuple[str, str, str, str, str]) -> bool:
-        container_id, name, proof_label, server_role, client_role = inspected
-        return (
-            created_container_ref is not None
-            and re.fullmatch(r"[0-9a-f]{12,64}", container_id) is not None
-            and container_id == created_container_ref
-            and name == f"/{client_name}"
-            and proof_label == PROOF_LABEL
-            and server_role == ""
-            and client_role == "trusted-broker"
+        docker_args = [
+            str(DOCKER_BIN), "create", "--pull=never", "--network", "none",
+            "--name", client_name,
+            "--cidfile", str(cidfile),
+            "--label", "acgs.postgres.client=trusted-broker",
+            "--label", f"acgs.postgres.proof={PROOF_LABEL}",
+            "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=2",
+            "--memory", "512m", "--cpus", "1", "--pids-limit", "128",
+            "--ulimit", "nofile=256:256",
+            "--ulimit", f"fsize={MAX_COMBINED_OUTPUT_BYTES}:{MAX_COMBINED_OUTPUT_BYTES}",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--security-opt", "label=disable", "--user", f"{os.getuid()}:{os.getgid()}",
+            "--read-only",
+            "--tmpfs", "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=2g,uid=999,gid=999,mode=700",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,mode=1777,size=512m",
+            "--mount", f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly",
+            "--mount", f"type=bind,src={exchange_roots[Path('/run/tmp')]},dst=/run/acgs-exchange/tmp",
+            "--mount", (
+                "type=bind,"
+                f"src={exchange_roots[Path('/proof-scratch')]},"
+                "dst=/run/acgs-exchange/proof-scratch"
+            ),
+        ]
+        for key in sorted(env):
+            docker_args.extend(["--env", key])
+        exchange_root_identities = exchange_meta["root_identities"]
+        marker_wrapper = (
+            "check_exchange() { "
+            "dir=$1; expected=$2; marker=\"$dir/.acgs-postgres-client-exchange.v2\"; "
+            "test -d \"$dir\" && test ! -L \"$dir\" || exit 70; "
+            "test \"$(stat -c '%d:%i:%u:%a' \"$dir\")\" = \"$expected\" || exit 70; "
+            "test -f \"$marker\" && test ! -L \"$marker\" || exit 70; "
+            f"test \"$(stat -c '%u:%h:%a' \"$marker\")\" = \"{os.getuid()}:1:444\" || exit 70; "
+            f"test \"$(sha256sum \"$marker\" | awk '{{print $1}}')\" = \"{exchange_meta['marker_sha256']}\" || exit 70; "
+            "}; "
+            f"check_exchange /run/acgs-exchange/tmp {shlex.quote(exchange_root_identities['/run/tmp'])}; "
+            f"check_exchange /run/acgs-exchange/proof-scratch {shlex.quote(exchange_root_identities['/proof-scratch'])}; "
+            "marker=/run/acgs-pg/.acgs-postgres-socket-bridge.v2; "
+            f"test \"$(stat -c '%d:%i:%u:%a' /run/acgs-pg)\" = \"{PG_SOCKET_BRIDGE_IDENTITY}\" || exit 70; "
+            "test -f \"$marker\" && test ! -L \"$marker\" || exit 70; "
+            f"test \"$(stat -c '%u:%h:%a' \"$marker\")\" = \"{os.getuid()}:1:444\" || exit 70; "
+            f"test \"$(sha256sum \"$marker\" | awk '{{print $1}}')\" = \"{PG_SOCKET_BRIDGE_MARKER_SHA256}\" || exit 70; "
+            "exec \"$@\""
         )
+        docker_create_tail = (
+            IMAGE,
+            "sh",
+            "-ec",
+            marker_wrapper,
+            "acgs-client-marker-wrapper",
+            tool,
+            *args,
+        )
+        docker_create_args = (
+            *docker_args,
+            *docker_create_tail,
+        )
+        validate_socket_bridge()
+        inspect_exact_docker_mounts(docker_args, exchange_roots)
+        combined = bytearray()
+        timed_out = False
+        overflow = False
+        process: subprocess.Popen[bytes] | None = None
+        created_container_ref: str | None = None
+        client_cleanup_confirmed = False
 
-    def inspect_expected_ref(ref: str) -> tuple[str, str, str, str, str] | None:
-        inspected = inspect_ref(ref)
-        if inspected is None:
-            return None
-        if not is_expected_client(inspected):
-            fail("PostgreSQL client broker container identity is not trusted", 70)
-        return inspected
+        def read_record(path: Path, pattern: str) -> str | None:
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            except OSError:
+                return None
+            try:
+                record_stat = os.fstat(fd)
+                if not stat.S_ISREG(record_stat.st_mode):
+                    return None
+                if record_stat.st_uid != os.getuid() or record_stat.st_nlink != 1:
+                    return None
+                if record_stat.st_mode & 0o777 != 0o600:
+                    return None
+                raw = os.read(fd, 512)
+            finally:
+                os.close(fd)
+            try:
+                text = raw.decode("ascii").strip()
+            except UnicodeDecodeError:
+                return None
+            if "\n" in text or not re.fullmatch(pattern, text):
+                return None
+            return text
 
-    def validate_created_container_records() -> None:
-        if read_record(cidfile, r"[0-9a-f]{12,64}") != created_container_ref:
-            fail("PostgreSQL client broker container ID record is inconsistent", 70)
-        if read_record(
-            namefile,
-            r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+",
-        ) != client_name:
-            fail("PostgreSQL client broker container name record is inconsistent", 70)
+        def candidate_refs() -> list[str]:
+            refs: list[str] = []
+            if created_container_ref and re.fullmatch(r"[0-9a-f]{12,64}", created_container_ref):
+                refs.append(created_container_ref)
+            cid = read_record(cidfile, r"[0-9a-f]{12,64}")
+            if cid and cid not in refs:
+                refs.append(cid)
+            recorded_name = read_record(
+                namefile,
+                r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+",
+            )
+            if recorded_name and recorded_name not in refs:
+                refs.append(recorded_name)
+            if client_name not in refs:
+                refs.append(client_name)
+            return refs
 
-    def client_exists() -> bool:
-        for ref in candidate_refs():
-            if inspect_expected_ref(ref) is not None:
-                return True
-        return False
-
-    def candidate_refs_are_absent() -> bool:
-        for ref in candidate_refs():
-            if inspect_expected_ref(ref) is not None:
-                return False
-        return True
-
-    def kill_client() -> bool:
-        nonlocal client_cleanup_confirmed
-        if client_cleanup_confirmed:
-            return True
-        for ref in candidate_refs():
-            inspected = inspect_expected_ref(ref)
-            if inspected is None:
-                continue
-            container_id = inspected[0]
+        def inspect_ref(ref: str) -> tuple[str, str, str, str, str] | None:
+            inspect_format = (
+                '{{printf "["}}{{json .Id}},{{json .Name}},'
+                '{{with index .Config.Labels "acgs.postgres.proof"}}{{json .}}{{else}}null{{end}},'
+                '{{with index .Config.Labels "acgs.postgres.server"}}{{json .}}{{else}}null{{end}},'
+                '{{with index .Config.Labels "acgs.postgres.client"}}{{json .}}{{else}}null{{end}}'
+                '{{printf "]"}}'
+            )
             try:
                 completed = subprocess.run(
-                    [str(DOCKER_BIN), "rm", "-f", container_id],
-                    stdout=subprocess.DEVNULL,
+                    [
+                        str(DOCKER_BIN), "inspect",
+                        "--format",
+                        inspect_format,
+                        ref,
+                    ],
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     check=False,
                     timeout=15,
                 )
             except (OSError, subprocess.SubprocessError):
-                return False
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+            if completed.returncode == 1:
+                return None
             if completed.returncode != 0:
-                return False
-            if not candidate_refs_are_absent():
-                return False
-            client_cleanup_confirmed = True
-            return True
-        return False
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+            if len(completed.stdout) > 8192:
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+            try:
+                fields = json.loads(completed.stdout.decode("utf-8", "strict"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+            if not isinstance(fields, list) or len(fields) != 5:
+                fail("PostgreSQL client broker container inspection is uncertain", 70)
+            normalized_fields: list[str] = []
+            for field in fields:
+                if field is None:
+                    normalized_fields.append("")
+                elif isinstance(field, str):
+                    normalized_fields.append(field)
+                else:
+                    fail("PostgreSQL client broker container inspection is uncertain", 70)
+            return tuple(normalized_fields)  # type: ignore[return-value]
 
-    try:
-        created = subprocess.run(
-            docker_create_args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-            timeout=20,
-            env=docker_cli_env,
-        )
-        if created.returncode != 0:
-            return created.returncode, created.stdout, b""
+        def is_expected_client(inspected: tuple[str, str, str, str, str]) -> bool:
+            container_id, name, proof_label, server_role, client_role = inspected
+            return (
+                created_container_ref is not None
+                and re.fullmatch(r"[0-9a-f]{12,64}", container_id) is not None
+                and container_id == created_container_ref
+                and name == f"/{client_name}"
+                and proof_label == PROOF_LABEL
+                and server_role == ""
+                and client_role == "trusted-broker"
+            )
+
+        def inspect_expected_ref(ref: str) -> tuple[str, str, str, str, str] | None:
+            inspected = inspect_ref(ref)
+            if inspected is None:
+                return None
+            if not is_expected_client(inspected):
+                fail("PostgreSQL client broker container identity is not trusted", 70)
+            return inspected
+
+        def validate_created_container_records() -> None:
+            if read_record(cidfile, r"[0-9a-f]{12,64}") != created_container_ref:
+                fail("PostgreSQL client broker container ID record is inconsistent", 70)
+            if read_record(
+                namefile,
+                r"acp-postgres-gate-[0-9]+-[0-9a-f]{32}-client-[0-9]+-[0-9]+",
+            ) != client_name:
+                fail("PostgreSQL client broker container name record is inconsistent", 70)
+
+        def client_exists() -> bool:
+            for ref in candidate_refs():
+                if inspect_expected_ref(ref) is not None:
+                    return True
+            return False
+
+        def candidate_refs_are_absent() -> bool:
+            for ref in candidate_refs():
+                if inspect_expected_ref(ref) is not None:
+                    return False
+            return True
+
+        def kill_client() -> bool:
+            nonlocal client_cleanup_confirmed
+            if client_cleanup_confirmed:
+                return True
+            for ref in candidate_refs():
+                inspected = inspect_expected_ref(ref)
+                if inspected is None:
+                    continue
+                container_id = inspected[0]
+                try:
+                    completed = subprocess.run(
+                        [str(DOCKER_BIN), "rm", "-f", container_id],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                        timeout=15,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    return False
+                if completed.returncode != 0:
+                    return False
+                if not candidate_refs_are_absent():
+                    return False
+                client_cleanup_confirmed = True
+                return True
+            return False
+
         try:
-            created_container_ref = created.stdout.decode("ascii", "strict").strip()
-        except UnicodeDecodeError:
-            fail("PostgreSQL client broker Docker create output is malformed", 70)
-        if "\n" in created_container_ref or not re.fullmatch(
-            r"[0-9a-f]{12,64}", created_container_ref
-        ):
-            fail("PostgreSQL client broker Docker create output is malformed", 70)
-        inspected_client = inspect_ref(created_container_ref)
-        if inspected_client is None or not is_expected_client(inspected_client):
-            fail("PostgreSQL client broker created container labels are not trusted", 70)
-        validate_created_container_records()
-        wait_for_actual_docker_mounts(created_container_ref)
-        validate_socket_bridge()
-        process = subprocess.Popen(
-            [str(DOCKER_BIN), "start", "-a", created_container_ref],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env={"PATH": "/usr/bin:/bin", "HOME": str(STATE_DIR / "home")},
-        )
-        assert process.stdout is not None
-        selector = selectors.DefaultSelector()
-        selector.register(process.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + BROKER_DOCKER_TIMEOUT_SECONDS
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                if not kill_client():
-                    fail("PostgreSQL client broker container cleanup is uncertain", 70)
-                break
-            events = selector.select(min(0.2, remaining))
-            for key, _mask in events:
-                chunk = key.fileobj.read1(65_536)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    break
-                combined.extend(chunk)
-                if len(combined) > MAX_COMBINED_OUTPUT_BYTES:
-                    overflow = True
+            container_might_exist = True
+            validated_docker_create_args = validate_final_docker_create_argv(
+                docker_create_args, tuple(docker_args), docker_create_tail, exchange_roots
+            )
+            created = subprocess.run(
+                validated_docker_create_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=20,
+                env=docker_cli_env,
+            )
+            if created.returncode != 0:
+                return (
+                    70,
+                    b"",
+                    docker_create_failure_diagnostic(created.returncode, created.stdout),
+                )
+            try:
+                created_container_ref = created.stdout.decode("ascii", "strict").strip()
+            except UnicodeDecodeError:
+                fail("PostgreSQL client broker Docker create output is malformed", 70)
+            if "\n" in created_container_ref or not re.fullmatch(
+                r"[0-9a-f]{12,64}", created_container_ref
+            ):
+                fail("PostgreSQL client broker Docker create output is malformed", 70)
+            inspected_client = inspect_ref(created_container_ref)
+            if inspected_client is None or not is_expected_client(inspected_client):
+                fail("PostgreSQL client broker created container labels are not trusted", 70)
+            validate_created_container_records()
+            wait_for_actual_docker_mounts(created_container_ref, exchange_roots)
+            validate_socket_bridge()
+            process = subprocess.Popen(
+                [str(DOCKER_BIN), "start", "-a", created_container_ref],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env={"PATH": "/usr/bin:/bin", "HOME": str(STATE_DIR / "home")},
+            )
+            assert process.stdout is not None
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + BROKER_DOCKER_TIMEOUT_SECONDS
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
                     if not kill_client():
                         fail("PostgreSQL client broker container cleanup is uncertain", 70)
                     break
-            if overflow:
-                break
-            if not selector.get_map():
-                break
-            if process.poll() is not None and not events:
-                rest = process.stdout.read()
-                if rest:
-                    combined.extend(rest)
-                break
-        try:
-            rc = process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            if not kill_client():
-                fail("PostgreSQL client broker container cleanup is uncertain", 70)
-            rc = process.wait(timeout=15)
-        if timed_out:
-            raise TimeoutError("PostgreSQL client broker request timed out")
-        if overflow:
-            fail("PostgreSQL client broker combined output is too large", 70)
-    finally:
-        if created_container_ref is not None and not kill_client():
-            fail("PostgreSQL client broker container cleanup is uncertain", 70)
-        if client_exists():
-            fail("PostgreSQL client broker container cleanup is uncertain", 70)
-        if client_cleanup_confirmed:
+                events = selector.select(min(0.2, remaining))
+                for key, _mask in events:
+                    chunk = key.fileobj.read1(65_536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        break
+                    combined.extend(chunk)
+                    if len(combined) > MAX_COMBINED_OUTPUT_BYTES:
+                        overflow = True
+                        if not kill_client():
+                            fail("PostgreSQL client broker container cleanup is uncertain", 70)
+                        break
+                if overflow:
+                    break
+                if not selector.get_map():
+                    break
+                if process.poll() is not None and not events:
+                    rest = process.stdout.read()
+                    if rest:
+                        combined.extend(rest)
+                    break
             try:
-                cidfile.unlink(missing_ok=True)
-                namefile.unlink(missing_ok=True)
-            except OSError:
-                pass
-    if len(combined) > MAX_COMBINED_OUTPUT_BYTES:
-        fail("PostgreSQL client broker combined output is too large", 70)
-    return rc, bytes(combined), b""
+                rc = process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                if not kill_client():
+                    fail("PostgreSQL client broker container cleanup is uncertain", 70)
+                rc = process.wait(timeout=15)
+            if timed_out:
+                raise TimeoutError("PostgreSQL client broker request timed out")
+            if overflow:
+                fail("PostgreSQL client broker combined output is too large", 70)
+        finally:
+            if created_container_ref is not None and not kill_client():
+                fail("PostgreSQL client broker container cleanup is uncertain", 70)
+            if client_exists():
+                fail("PostgreSQL client broker container cleanup is uncertain", 70)
+            if client_cleanup_confirmed:
+                try:
+                    cidfile.unlink(missing_ok=True)
+                    namefile.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if len(combined) > MAX_COMBINED_OUTPUT_BYTES:
+            fail("PostgreSQL client broker combined output is too large", 70)
+        if rc == 0:
+            publish_write_path(write_file, exchange_roots)
+        return rc, bytes(combined), b""
+    finally:
+        container_cleanup_uncertain = False
+        exchange_cleanup_uncertain = False
+        container_absence_confirmed = not container_might_exist
+        if container_might_exist:
+            if "client_exists" not in locals() or "kill_client" not in locals():
+                container_cleanup_uncertain = True
+            else:
+                try:
+                    expected_client_exists = client_exists()
+                    if expected_client_exists:
+                        if not kill_client():
+                            container_cleanup_uncertain = True
+                        elif client_exists():
+                            container_cleanup_uncertain = True
+                        else:
+                            container_absence_confirmed = True
+                    else:
+                        container_absence_confirmed = True
+                except Exception:
+                    container_cleanup_uncertain = True
+            if "client_cleanup_confirmed" in locals() and client_cleanup_confirmed:
+                try:
+                    cidfile.unlink(missing_ok=True)
+                    namefile.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if container_absence_confirmed and not exchange_cleaned:
+            if not cleanup_request_exchange(exchange_meta):
+                exchange_cleanup_uncertain = True
+            else:
+                exchange_cleaned = True
+        if container_cleanup_uncertain:
+            fail("PostgreSQL client broker container cleanup is uncertain", 70)
+        if exchange_cleanup_uncertain:
+            fail("PostgreSQL client broker exchange cleanup is uncertain", 70)
 
 
 def handle(conn: socket.socket) -> None:
@@ -4076,6 +4883,32 @@ def handle(conn: socket.socket) -> None:
     if len(encoded_response) > MAX_RESPONSE_BYTES:
         fail("PostgreSQL client broker response is too large", 70)
     conn.sendall(encoded_response)
+
+
+def sanitize_failure_message(message: str) -> str:
+    allowed_fragments = (
+        "outside broker-owned roots",
+        "endpoint is pinned",
+        "unsupported PostgreSQL client env",
+        "allows only custom-format pg_dump output",
+        "allows only explicit pg_dump file and format options",
+        "pg_dump output must use --file=PATH",
+        "allows only one pg_dump output",
+        "pg_dump format is duplicated",
+        "destination already exists",
+        "not a custom-format dump",
+        "path is unavailable",
+        "path must be private",
+        "path identity is unsafe",
+        "path must be a regular file",
+        "parent is unavailable",
+    )
+    for fragment in allowed_fragments:
+        if fragment in message:
+            return message
+    if "/" in message or "Errno" in message or str(STATE_DIR) in message or str(RECOVERY_ROOT) in message:
+        return "PostgreSQL client broker request failed"
+    return message
 
 
 def main() -> int:
@@ -4105,6 +4938,7 @@ def main() -> int:
                     if ":" in message and message.split(":", 1)[0].isdigit():
                         raw_code, message = message.split(":", 1)
                         code = int(raw_code)
+                    message = sanitize_failure_message(message)
                     conn.sendall(
                         json.dumps(
                             {"returncode": code, "stdout": "", "stderr": message + "\n"},

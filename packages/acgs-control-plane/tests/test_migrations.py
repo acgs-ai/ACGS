@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1903,6 +1904,30 @@ def _write_fake_postgres_client_docker(
                 f"mode = {mode!r}",
                 "cid = 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'",
                 "def normalized_mount_snapshot():",
+                "    if state.exists():",
+                "        raw_args = json.loads(state.read_text(encoding='utf-8'))['args']",
+                "        bind_mounts = []",
+                "        tmpfs = {}",
+                "        for index, value in enumerate(raw_args):",
+                "            if value == '--mount':",
+                "                raw_parts = raw_args[index + 1].split(',')",
+                "                parts = dict(",
+                "                    part.split('=', 1) for part in raw_parts if '=' in part",
+                "                )",
+                "                bind_mounts.append(",
+                "                    {",
+                "                        'Type': parts['type'],",
+                "                        'Source': parts['src'],",
+                "                        'Destination': parts['dst'],",
+                "                        'RW': 'readonly' not in raw_parts,",
+                "                        'Mode': '',",
+                "                        'Propagation': 'rprivate',",
+                "                    }",
+                "                )",
+                "            elif value == '--tmpfs':",
+                "                target, _separator, options = raw_args[index + 1].partition(':')",
+                "                tmpfs[target] = options",
+                "        return {'Mounts': bind_mounts, 'HostConfig': {'Tmpfs': tmpfs}}",
                 "    bind_mounts = []",
                 "    tmpfs = {}",
                 "    for mount in mounts:",
@@ -2208,16 +2233,16 @@ def _write_fake_postgres_client_docker(
                 "            marker,",
                 "            marker.with_name('.acgs-postgres-socket-bridge.v2.link'),",
                 "        )",
-                "    if mode in {'marker-missing-on-start', 'marker-hardlink-on-start'}:",
+                "    if mode == 'bridge-mode-on-start':",
+                "        create_args_mount_source('/run/acgs-pg').chmod(0o700)",
+                "    if mode in {",
+                "        'marker-missing-on-start',",
+                "        'marker-hardlink-on-start',",
+                "        'bridge-mode-on-start',",
+                "    }:",
                 "        wrapper = raw_args[raw_args.index('-ec') + 1]",
-                "        host_marker = (",
-                "            create_args_mount_source('/run/acgs-pg')",
-                "            / '.acgs-postgres-socket-bridge.v2'",
-                "        )",
-                "        wrapper = wrapper.replace(",
-                "            'marker=/run/acgs-pg/.acgs-postgres-socket-bridge.v2;',",
-                "            'marker=' + shlex.quote(str(host_marker)) + ';',",
-                "        )",
+                "        host_bridge = create_args_mount_source('/run/acgs-pg')",
+                "        wrapper = wrapper.replace('/run/acgs-pg', shlex.quote(str(host_bridge)))",
                 "        sentinel = Path(str(state) + '.tool-sentinel')",
                 "        completed = subprocess.run(",
                 "            [",
@@ -2235,8 +2260,8 @@ def _write_fake_postgres_client_docker(
                 "    if 'pg_dump' in raw_args:",
                 "        file_arg = next(arg for arg in raw_args if arg.startswith('--file='))",
                 "        output = Path(file_arg.split('=', 1)[1])",
-                "        source = create_args_mount_source('/run/tmp')",
-                "        host_output = source / output.relative_to('/run/tmp')",
+                "        source = create_args_mount_source('/run/acgs-exchange/tmp')",
+                "        host_output = source / output.relative_to('/run/acgs-exchange/tmp')",
                 "        if host_output.parent.is_symlink() or host_output.is_symlink():",
                 "            print(",
                 "                'container output path resolves outside mounted roots',",
@@ -2244,7 +2269,12 @@ def _write_fake_postgres_client_docker(
                 "            )",
                 "            raise SystemExit(65)",
                 "        host_output.parent.mkdir(parents=True, exist_ok=True)",
-                "        host_output.write_bytes(b'PGDMP-test')",
+                "        payload = (",
+                "            b'not-a-custom-dump'",
+                "            if mode == 'bad-dump-magic'",
+                "            else b'PGDMP-test'",
+                "        )",
+                "        host_output.write_bytes(payload)",
                 "    raise SystemExit(0)",
                 "raise SystemExit(127)",
             ]
@@ -2262,7 +2292,10 @@ def _run_fake_docker_broker_request(
     tool: str = "pg_dump",
     argv: list[str] | None = None,
     env_overrides: dict[str, str] | None = None,
+    broker_source_mutator: Callable[[str], str] | None = None,
     ambient_password: str = "secret",
+    prepare_state: Callable[[Path], None] | None = None,
+    before_request: Callable[[Path], None] | None = None,
 ) -> tuple[dict[str, object], list[object], bool, dict[str, bool] | None, bool]:
     state_dir = tmp_path / f"state-{mode}"
     broker_dir = state_dir / "broker"
@@ -2283,6 +2316,8 @@ def _run_fake_docker_broker_request(
     ):
         directory.mkdir(parents=True)
         directory.chmod(0o700)
+    if prepare_state is not None:
+        prepare_state(state_dir)
     bridge_identity, bridge_marker_sha256, bridge_mnt_id = _write_postgres_socket_bridge(
         socket_bridge,
         proof_label,
@@ -2290,6 +2325,8 @@ def _run_fake_docker_broker_request(
     )
     root_mnt_id = _mount_id(recovery_root)
     broker_source, _client_source = _postgres_gate_client_sources()
+    if broker_source_mutator is not None:
+        broker_source = broker_source_mutator(broker_source)
     broker_path = broker_dir / "postgres_client_broker.py"
     broker_path.write_text(broker_source, encoding="utf-8")
     docker_log = tmp_path / f"docker-{mode}.jsonl"
@@ -2352,16 +2389,21 @@ def _run_fake_docker_broker_request(
                 stdout, stderr = broker.communicate(timeout=1)
                 pytest.fail(f"broker exited early: stdout={stdout!r} stderr={stderr!r}")
             time.sleep(0.05)
+        if mode == "precreate-bridge-mode":
+            socket_bridge.chmod(0o700)
+        if before_request is not None:
+            before_request(state_dir)
         original_cwd = Path.cwd()
         try:
             os.chdir(socket_path.parent)
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as broker_client:
+                broker_client.settimeout(5)
                 broker_client.connect(socket_path.name)
                 broker_client.sendall(
                     json.dumps(
                         {
                             "tool": tool,
-                            "argv": argv or ["--file=/run/tmp/archive.dump"],
+                            "argv": argv or ["--format=custom", "--file=/run/tmp/archive.dump"],
                             "env": {
                                 "PGHOST": "/run/acgs-pg",
                                 "PGPORT": "5432",
@@ -2375,7 +2417,11 @@ def _run_fake_docker_broker_request(
                     ).encode("utf-8")
                 )
                 broker_client.shutdown(socket.SHUT_WR)
-                response = json.loads(broker_client.recv(65536).decode("utf-8"))
+                try:
+                    raw_response = broker_client.recv(65536)
+                except TimeoutError:
+                    pytest.fail("broker request timed out")
+                response = json.loads(raw_response.decode("utf-8"))
         finally:
             os.chdir(original_cwd)
     finally:
@@ -2508,12 +2554,13 @@ def test_postgres_gate_client_broker_uncertain_removal_retains_records(
     assert "container cleanup is uncertain" in response["stderr"]
     starts = [line for line in docker_lines if line[:2] == ["start", "-a"]]
     assert bool(starts)
-    assert archive_exists
+    assert not archive_exists
     assert not tool_sentinel_exists
     assert docker_state.exists()
     assert list(client_dir.glob("*.cid"))
     assert list(client_dir.glob("*.name"))
     assert list(recovery_dir.glob("*.intent"))
+    assert list(recovery_dir.glob("*-exchange"))
     if mode == "rm-fail":
         assert not Path(str(docker_state) + ".removed").exists()
     else:
@@ -2645,7 +2692,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
 
         denied_archive = outside_dir / "escape.dump"
         denied = subprocess.run(
-            [str(client_dir / "pg_dump"), f"--file={denied_archive}"],
+            [str(client_dir / "pg_dump"), "--format=custom", f"--file={denied_archive}"],
             env=client_env,
             capture_output=True,
             text=True,
@@ -2698,7 +2745,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
 
         allowed_archive = allowed_tmp / "archive.dump"
         allowed = subprocess.run(
-            [str(client_dir / "pg_dump"), "--file=/run/tmp/archive.dump"],
+            [str(client_dir / "pg_dump"), "--format=custom", "--file=/run/tmp/archive.dump"],
             env=client_env,
             capture_output=True,
             text=True,
@@ -2726,11 +2773,29 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
             in (docker_invocation)
         )
         assert f"type=bind,src={socket_bridge},dst=/run/acgs-pg,readonly" in docker_invocation
-        assert f"type=bind,src={allowed_tmp},dst=/run/tmp" in docker_invocation
-        assert f"type=bind,src={proof_scratch},dst=/proof-scratch" in docker_invocation
+        assert not any(f"src={allowed_tmp}," in argument for argument in docker_invocation)
+        assert not any(f"src={proof_scratch}," in argument for argument in docker_invocation)
+        exchange_tmp_mount = next(
+            argument for argument in docker_invocation if "dst=/run/acgs-exchange/tmp" in argument
+        )
+        exchange_proof_mount = next(
+            argument
+            for argument in docker_invocation
+            if "dst=/run/acgs-exchange/proof-scratch" in argument
+        )
+        assert "-client-" in exchange_tmp_mount
+        assert "-client-" in exchange_proof_mount
+        assert "-exchange/tmp" in exchange_tmp_mount
+        assert "-exchange/proof-scratch" in exchange_proof_mount
+        assert "client-exchange" not in exchange_tmp_mount
+        assert "client-exchange" not in exchange_proof_mount
         assert not any(f"{state_dir}:/run/acgs-pg" in argument for argument in docker_invocation)
         assert not any(str(outside_dir) in argument for argument in docker_invocation)
-        assert docker_invocation[-2:] == ["pg_dump", "--file=/run/tmp/archive.dump"]
+        assert docker_invocation[-3:] == [
+            "pg_dump",
+            "--format=custom",
+            "--file=/run/acgs-exchange/tmp/archive.dump",
+        ]
 
         docker_log.unlink()
         marker = socket_bridge / ".acgs-postgres-socket-bridge.v2"
@@ -2741,7 +2806,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         )
         marker.chmod(0o444)
         tampered = subprocess.run(
-            [str(client_dir / "pg_dump"), "--file=/run/tmp/tampered.dump"],
+            [str(client_dir / "pg_dump"), "--format=custom", "--file=/run/tmp/tampered.dump"],
             env=client_env,
             capture_output=True,
             text=True,
@@ -2793,6 +2858,7 @@ def test_postgres_gate_client_broker_uses_fixed_roots_and_rejects_endpoint_escap
         ("duplicate-json-tmpfs-destination", 70, False),
         ("marker-missing-on-start", 70, True),
         ("marker-hardlink-on-start", 70, True),
+        ("bridge-mode-on-start", 70, True),
     ],
 )
 def test_postgres_gate_client_broker_fake_docker_mount_and_marker_refusals(
@@ -3003,6 +3069,600 @@ def test_postgres_gate_client_broker_uses_request_env_and_omits_create_id_stdout
     }
 
 
+def test_postgres_gate_client_broker_freezes_and_validates_final_create_argv(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(tmp_path, "ok")
+    )
+
+    assert response["returncode"] == 0, response
+    assert archive_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    assert not tool_sentinel_exists
+    docker_invocation = docker_lines[0]
+    image_index = docker_invocation.index(
+        "postgres:17.10-bookworm@"
+        "sha256:4f736ae292687621d4dbe0d499ffd024a36bd2ee7d8ca6f2ccd4c800f047b394"
+    )
+    create_prefix = docker_invocation[:image_index]
+    assert docker_invocation[:5] == ["create", "--pull=never", "--network", "none", "--name"]
+    assert "--privileged" not in create_prefix
+    assert "--add-host" not in create_prefix
+    assert ["--network", "host"] not in [
+        docker_invocation[index : index + 2]
+        for index, value in enumerate(docker_invocation)
+        if value == "--network"
+    ]
+    assert docker_invocation.count("--mount") == 3
+    mount_values = [
+        docker_invocation[index + 1]
+        for index, value in enumerate(docker_invocation)
+        if value == "--mount"
+    ]
+    assert any("dst=/run/acgs-pg,readonly" in value for value in mount_values)
+    assert any("dst=/run/acgs-exchange/tmp" in value for value in mount_values)
+    assert any("dst=/run/acgs-exchange/proof-scratch" in value for value in mount_values)
+    mount_sources = {
+        part.split("=", 1)[1]
+        for mount_value in mount_values
+        for part in mount_value.split(",")
+        if part.startswith("src=")
+    }
+    state_dir = tmp_path / "state-ok"
+    assert str(state_dir / "tmp") not in mount_sources
+    assert str(state_dir / "proof-scratch") not in mount_sources
+    assert str(state_dir / "recovery") not in mount_sources
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "privileged",
+        "network-host",
+        "add-host",
+        "recovery-root-mount",
+        "quota-root-mount",
+        "tail-extra-arg",
+    ],
+)
+def test_postgres_gate_client_broker_revalidates_mutated_final_create_argv_before_docker(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    def mutate_broker_source(source: str) -> str:
+        validation_call = (
+            "            validated_docker_create_args = validate_final_docker_create_argv(\n"
+            "                docker_create_args, tuple(docker_args), "
+            "docker_create_tail, exchange_roots\n"
+            "            )"
+        )
+        mutations = {
+            "privileged": (
+                "            docker_create_args = docker_create_args[:2] + "
+                "('--privileged',) + docker_create_args[2:]\n"
+            ),
+            "network-host": (
+                "            network_index = docker_create_args.index('--network')\n"
+                "            docker_create_args = docker_create_args[: network_index + 1] "
+                "+ ('host',) + docker_create_args[network_index + 2 :]\n"
+            ),
+            "add-host": (
+                "            docker_create_args = docker_create_args[:2] + "
+                "('--add-host', 'host.docker.internal:host-gateway') + docker_create_args[2:]\n"
+            ),
+            "recovery-root-mount": (
+                "            docker_create_args = docker_create_args[:2] + "
+                "('--mount', f'type=bind,src={RECOVERY_ROOT},"
+                "dst=/run/acgs-exchange/tmp') + docker_create_args[2:]\n"
+            ),
+            "quota-root-mount": (
+                "            docker_create_args = docker_create_args[:2] + "
+                "('--mount', f'type=bind,src={HOST_TMP},"
+                "dst=/run/acgs-exchange/tmp') + docker_create_args[2:]\n"
+            ),
+            "tail-extra-arg": (
+                "            docker_create_args = docker_create_args + ('tail-drift',)\n"
+            ),
+        }
+        mutated = source.replace(validation_call, mutations[mutation] + validation_call, 1)
+        assert mutated != source
+        compile(mutated, f"mutated-broker-{mutation}.py", "exec")
+        return mutated
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            f"final-argv-{mutation}",
+            broker_source_mutator=mutate_broker_source,
+        )
+    )
+
+    assert response["returncode"] == 70, response
+    assert (
+        "Docker create argv" in str(response["stderr"])
+        or "Docker network changed" in str(response["stderr"])
+        or "Docker mount is forbidden" in str(response["stderr"])
+        or "Docker create tail changed" in str(response["stderr"])
+    )
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+
+
+def test_postgres_gate_client_broker_create_failure_is_visible_and_redacted(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "create-fail",
+        )
+    )
+
+    state_dir = tmp_path / "state-create-fail"
+    client_dir = state_dir / "client"
+    recovery_dir = state_dir / "recovery"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 70, response
+    assert response["stdout"] == ""
+    assert '"event":"postgres_client_docker_create_failed"' in stderr
+    assert '"broker_rc":70' in stderr
+    assert '"docker_rc":65' in stderr
+    assert '"output_bytes":' in stderr
+    assert '"output_sha256":"' in stderr
+    assert '"safe_reason":"docker-create-failed"' in stderr
+    assert str(state_dir) not in stderr
+    assert "request-secret" not in stderr
+    assert docker_lines[0][0] == "create"
+    assert not [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert list(client_dir.glob("*.name"))
+    assert not list(client_dir.glob("*.cid"))
+    assert list(recovery_dir.glob("*.intent"))
+
+
+def test_postgres_gate_client_broker_precreate_failure_cleans_exchange(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "precreate-bridge-mode",
+        )
+    )
+
+    state_dir = tmp_path / "state-precreate-bridge-mode"
+
+    assert response["returncode"] == 70, response
+    assert "socket bridge mode is unsafe" in response["stderr"]
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+@pytest.mark.parametrize(
+    ("case_name", "argv", "expected_stderr"),
+    [
+        (
+            "short-file",
+            ["--format=custom", "-f", "/run/tmp/archive.dump"],
+            "pg_dump output must use --file=PATH",
+        ),
+        (
+            "short-format",
+            ["-F", "custom", "--file=/run/tmp/archive.dump"],
+            "allows only custom-format pg_dump output",
+        ),
+        (
+            "split-format",
+            ["--format", "custom", "--file=/run/tmp/archive.dump"],
+            "allows only custom-format pg_dump output",
+        ),
+        (
+            "abbrev-file",
+            ["--format=custom", "--fo=/run/tmp/archive.dump"],
+            "allows only explicit pg_dump file and format options",
+        ),
+        (
+            "abbrev-format",
+            ["--for=plain", "--file=/run/tmp/archive.dump"],
+            "allows only explicit pg_dump file and format options",
+        ),
+        (
+            "plain-format",
+            ["--format=plain", "--file=/run/tmp/archive.dump"],
+            "allows only custom-format pg_dump output",
+        ),
+        (
+            "duplicate-file",
+            [
+                "--format=custom",
+                "--file=/run/tmp/archive.dump",
+                "--file=/run/tmp/other.dump",
+            ],
+            "allows only one pg_dump output",
+        ),
+        (
+            "duplicate-format",
+            ["--format=custom", "--format=custom", "--file=/run/tmp/archive.dump"],
+            "pg_dump format is duplicated",
+        ),
+    ],
+)
+def test_postgres_gate_client_broker_strictly_parses_pg_dump_output_options(
+    tmp_path: Path,
+    case_name: str,
+    argv: list[str],
+    expected_stderr: str,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            f"strict-pg-dump-{case_name}",
+            argv=argv,
+        )
+    )
+
+    assert response["returncode"] == 64, response
+    assert expected_stderr in response["stderr"]
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+
+
+def test_postgres_gate_client_broker_stages_pg_restore_input_from_quota(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        archive = state_dir / "tmp" / "archive.dump"
+        archive.write_bytes(b"PGDMP-test")
+        archive.chmod(0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "ok",
+            tool="pg_restore",
+            argv=["--list", "/run/tmp/archive.dump"],
+            prepare_state=prepare_state,
+        )
+    )
+
+    assert response["returncode"] == 0, response
+    assert archive_exists
+    assert not tool_sentinel_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    docker_invocation = docker_lines[0]
+    assert docker_invocation[-3:] == [
+        "pg_restore",
+        "--list",
+        "/run/acgs-exchange/tmp/archive.dump",
+    ]
+
+
+def test_postgres_gate_client_broker_stages_exact_input_limits_once(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        for index in range(32):
+            archive = state_dir / "tmp" / f"archive-{index}.dump"
+            archive.write_bytes(b"x" * 262_144)
+            archive.chmod(0o600)
+
+    argv = ["/run/tmp/archive-0.dump", "/run/tmp/archive-0.dump"]
+    argv.extend(f"/run/tmp/archive-{index}.dump" for index in range(1, 32))
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "staging-exact-limit",
+            tool="pg_restore",
+            argv=argv,
+            prepare_state=prepare_state,
+        )
+    )
+
+    assert response["returncode"] == 0, response
+    assert not archive_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    assert not tool_sentinel_exists
+    assert [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    docker_invocation = docker_lines[0]
+    assert docker_invocation[-33:] == [
+        "/run/acgs-exchange/tmp/archive-0.dump",
+        "/run/acgs-exchange/tmp/archive-0.dump",
+        *(f"/run/acgs-exchange/tmp/archive-{index}.dump" for index in range(1, 32)),
+    ]
+
+
+def test_postgres_gate_client_broker_duplicate_read_rewrite_uses_cache_before_open() -> None:
+    broker_source, _client_source = _postgres_gate_client_sources()
+    cache_index = broker_source.index("if path in read_paths:")
+    limit_index = broker_source.index("if len(read_paths) >= MAX_STAGED_INPUT_FILES:")
+    open_index = broker_source.index("open_quota_regular_fd(", limit_index)
+
+    assert cache_index < open_index
+    assert limit_index < open_index
+
+
+def test_postgres_gate_client_broker_rejects_input_count_overflow_before_docker(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        for index in range(32):
+            archive = state_dir / "tmp" / f"archive-{index}.dump"
+            archive.write_bytes(b"PGDMP-test")
+            archive.chmod(0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "staging-count-overflow",
+            tool="pg_restore",
+            argv=[f"/run/tmp/archive-{index}.dump" for index in range(33)],
+            prepare_state=prepare_state,
+        )
+    )
+    state_dir = tmp_path / "state-staging-count-overflow"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "staging count exceeds broker limit" in stderr
+    assert str(state_dir) not in stderr
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_rejects_input_byte_overflow_before_docker(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        for index in range(8):
+            archive = state_dir / "tmp" / f"archive-{index}.dump"
+            archive.write_bytes(b"x" * 1_048_576)
+            archive.chmod(0o600)
+        archive = state_dir / "tmp" / "archive-8.dump"
+        archive.write_bytes(b"y")
+        archive.chmod(0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "staging-byte-overflow",
+            tool="pg_restore",
+            argv=[f"/run/tmp/archive-{index}.dump" for index in range(9)],
+            prepare_state=prepare_state,
+        )
+    )
+    state_dir = tmp_path / "state-staging-byte-overflow"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "staging bytes exceed broker limit" in stderr
+    assert str(state_dir) not in stderr
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_stages_exact_byte_limit(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        for index in range(8):
+            archive = state_dir / "tmp" / f"archive-{index}.dump"
+            archive.write_bytes(b"x" * 1_048_576)
+            archive.chmod(0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "staging-byte-exact-limit",
+            tool="pg_restore",
+            argv=[f"/run/tmp/archive-{index}.dump" for index in range(8)],
+            prepare_state=prepare_state,
+        )
+    )
+
+    assert response["returncode"] == 0, response
+    assert not archive_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    assert not tool_sentinel_exists
+    assert [line for line in docker_lines if line[:2] == ["start", "-a"]]
+
+
+def test_postgres_gate_client_broker_rejects_fifo_input_without_hanging(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        os.mkfifo(state_dir / "tmp" / "archive.dump", 0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "fifo-input",
+            tool="pg_restore",
+            argv=["--list", "/run/tmp/archive.dump"],
+            prepare_state=prepare_state,
+        )
+    )
+    state_dir = tmp_path / "state-fifo-input"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 64, response
+    assert "path must be a regular file" in stderr
+    assert str(state_dir) not in stderr
+    assert docker_lines == []
+    assert archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_missing_input_is_redacted_and_leaves_no_exchange(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "missing-input",
+            tool="pg_restore",
+            argv=["--list", "/run/tmp/missing.dump"],
+        )
+    )
+    state_dir = tmp_path / "state-missing-input"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "path is unavailable" in stderr
+    assert str(state_dir) not in stderr
+    assert "request-secret" not in stderr
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_refuses_symlink_input_before_docker(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        outside = state_dir.parent / "outside.dump"
+        outside.write_bytes(b"PGDMP-test")
+        (state_dir / "tmp" / "archive.dump").symlink_to(outside)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "ok",
+            tool="pg_restore",
+            argv=["--list", "/run/tmp/archive.dump"],
+            prepare_state=prepare_state,
+        )
+    )
+
+    assert response["returncode"] == 65, response
+    assert "path is unavailable" in response["stderr"]
+    assert docker_lines == []
+    assert archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+
+
+def test_postgres_gate_client_broker_refuses_symlink_ancestor_before_docker(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        outside = state_dir.parent / "outside"
+        outside.mkdir()
+        outside.chmod(0o700)
+        (outside / "archive.dump").write_bytes(b"PGDMP-test")
+        (state_dir / "tmp" / "slot").symlink_to(outside)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "symlink-ancestor",
+            tool="pg_restore",
+            argv=["--list", "/run/tmp/slot/archive.dump"],
+            prepare_state=prepare_state,
+        )
+    )
+    state_dir = tmp_path / "state-symlink-ancestor"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "parent is unavailable" in stderr
+    assert str(state_dir) not in stderr
+    assert docker_lines == []
+    assert not archive_exists
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_no_replace_publish_cleans_exchange_and_redacts(
+    tmp_path: Path,
+) -> None:
+    def prepare_state(state_dir: Path) -> None:
+        archive = state_dir / "tmp" / "archive.dump"
+        archive.write_bytes(b"existing")
+        archive.chmod(0o600)
+
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "preexisting-output",
+            prepare_state=prepare_state,
+        )
+    )
+    state_dir = tmp_path / "state-preexisting-output"
+    archive = state_dir / "tmp" / "archive.dump"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "destination already exists" in stderr
+    assert str(state_dir) not in stderr
+    assert "request-secret" not in stderr
+    assert docker_lines == []
+    assert archive_exists
+    assert archive.read_bytes() == b"existing"
+    assert env_attestation is None
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
+def test_postgres_gate_client_broker_rejects_non_custom_dump_magic_and_cleans_exchange(
+    tmp_path: Path,
+) -> None:
+    response, docker_lines, archive_exists, env_attestation, tool_sentinel_exists = (
+        _run_fake_docker_broker_request(
+            tmp_path,
+            "bad-dump-magic",
+        )
+    )
+    state_dir = tmp_path / "state-bad-dump-magic"
+    stderr = str(response["stderr"])
+
+    assert response["returncode"] == 65, response
+    assert "not a custom-format dump" in stderr
+    assert str(state_dir) not in stderr
+    assert "request-secret" not in stderr
+    assert [line for line in docker_lines if line[:2] == ["start", "-a"]]
+    assert not archive_exists
+    assert env_attestation == {
+        "pgpassword_is_request": True,
+        "pgpassword_is_ambient": False,
+    }
+    assert not tool_sentinel_exists
+    assert not list((state_dir / "recovery").glob("*-exchange"))
+
+
 def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
     tmp_path: Path,
     request: pytest.FixtureRequest,
@@ -3136,7 +3796,11 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
 
         external_archive = external_dir / "escape.dump"
         raced = subprocess.run(
-            [str(client_dir / "pg_dump"), "--file=/run/tmp/slot/escape.dump"],
+            [
+                str(client_dir / "pg_dump"),
+                "--format=custom",
+                "--file=/run/tmp/slot/escape.dump",
+            ],
             env={
                 "ACP_POSTGRES_CLIENT_BROKER_SOCKET": str(socket_path),
                 "PGHOST": "/run/acgs-pg",
@@ -3149,8 +3813,8 @@ def test_postgres_gate_broker_directory_exchange_cannot_write_external_path(
             text=True,
             check=False,
         )
-        assert raced.returncode == 64
-        assert "outside broker-owned roots" in raced.stderr
+        assert raced.returncode == 65
+        assert "parent is unavailable" in raced.stderr
         assert not external_archive.exists()
         assert not docker_log.exists()
     finally:
@@ -3184,12 +3848,38 @@ def test_postgres_gate_socket_sources_bind_relative_names() -> None:
     assert 'PG_SOCKET_BRIDGE = Path(os.environ["ACP_POSTGRES_SOCKET_BRIDGE"])' in broker_source
     assert 'f"type=bind,src={PG_SOCKET_BRIDGE},dst=/run/acgs-pg,readonly"' in broker_source
     assert "validate_socket_bridge()" in broker_source
-    assert "inspect_exact_docker_mounts(docker_args)" in broker_source
+    assert "inspect_exact_docker_mounts(docker_args, exchange_roots)" in broker_source
+    assert "validate_final_docker_create_argv(" in broker_source
+    assert "maybe_mutate_final_docker_create_argv_for_test(" not in broker_source
+    assert "ACGS_TEST_POSTGRES_CLIENT_BROKER_MUTATE_FINAL_CREATE_ARGV" not in broker_source
     assert 'str(DOCKER_BIN), "create"' in broker_source
+    tail_tuple_index = broker_source.index("docker_create_tail = (")
+    create_tuple_index = broker_source.index("docker_create_args = (", tail_tuple_index)
+    initial_mount_index = broker_source.index(
+        "inspect_exact_docker_mounts(docker_args, exchange_roots)",
+        create_tuple_index,
+    )
+    final_validation_index = broker_source.index(
+        "validate_final_docker_create_argv(",
+        initial_mount_index,
+    )
+    subprocess_create_index = broker_source.index(
+        "subprocess.run(\n                validated_docker_create_args,",
+        final_validation_index,
+    )
+    adjacency = broker_source[final_validation_index:subprocess_create_index]
+    assert "docker_create_tail" in adjacency
+    assert "subprocess." not in adjacency
+    assert "container_might_exist = True\n            validated_docker_create_args" in broker_source
+    assert tail_tuple_index < create_tuple_index < initial_mount_index
+    assert initial_mount_index < final_validation_index < subprocess_create_index
     assert '"--rm"' not in broker_source
-    assert "wait_for_actual_docker_mounts(created_container_ref)" in broker_source
+    assert "wait_for_actual_docker_mounts(created_container_ref, exchange_roots)" in broker_source
     assert 'str(DOCKER_BIN), "start", "-a", created_container_ref' in broker_source
     assert "acgs-client-marker-wrapper" in broker_source
+    assert "stat -c '%d:%i:%u:%a' /run/acgs-pg" in broker_source
+    assert "temp_created = False" in broker_source
+    assert "os.unlink(tmp_name, dir_fd=parent_fd)" in broker_source
     assert "server.bind(str(SOCKET_PATH))" not in broker_source
     assert "client.connect(socket_path)" not in client_source
     assert "os.chdir(SOCKET_DIR)" in broker_source
@@ -4250,9 +4940,14 @@ def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path
     client_name = f"{proof_label}-client-123-1"
     client_cidfile = state_dir / "client" / f"{client_name}.cid"
     client_namefile = state_dir / "client" / f"{client_name}.name"
+    exchange_basename = f"{client_name}-exchange"
+    exchange_identity = "4:5:6:700"
+    exchange_sha = "b" * 64
+    exchange_mnt = "42"
     client_payload = "\n".join(
         (
-            "intent_version=1",
+            "intent_version=2",
+            "schema=acgs-postgres-recovery-intent/client/v2",
             "phase=client-intent",
             f"proof_nonce={proof_nonce}",
             f"proof_label={proof_label}",
@@ -4261,6 +4956,10 @@ def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path
             f"record_path={client_namefile}",
             f"client_cidfile={client_cidfile}",
             f"client_namefile={client_namefile}",
+            f"exchange_basename={exchange_basename}",
+            f"exchange_identity={exchange_identity}",
+            f"exchange_marker_sha256={exchange_sha}",
+            f"exchange_mnt_id={exchange_mnt}",
             "",
         )
     )
@@ -4305,6 +5004,7 @@ def test_postgres_gate_recovery_intent_group_deletes_server_and_clients(tmp_path
         "server-duplicate",
         "server-name-derived-path",
         "client-wrong-record-path",
+        "client-leftover-exchange",
     ],
 )
 def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
@@ -4350,8 +5050,10 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
     client_name = f"{proof_label}-client-123-1"
     client_cidfile = client_dir / f"{client_name}.cid"
     client_namefile = client_dir / f"{client_name}.name"
+    exchange_basename = f"{client_name}-exchange"
     client_pairs = [
-        ("intent_version", "1"),
+        ("intent_version", "2"),
+        ("schema", "acgs-postgres-recovery-intent/client/v2"),
         ("phase", "client-intent"),
         ("proof_nonce", proof_nonce),
         ("proof_label", proof_label),
@@ -4360,6 +5062,10 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
         ("record_path", str(client_namefile)),
         ("client_cidfile", str(client_cidfile)),
         ("client_namefile", str(client_namefile)),
+        ("exchange_basename", exchange_basename),
+        ("exchange_identity", "4:5:6:700"),
+        ("exchange_marker_sha256", "b" * 64),
+        ("exchange_mnt_id", "42"),
     ]
     if case_name == "server-extra":
         server_pairs.append(("unexpected", "1"))
@@ -4370,7 +5076,11 @@ def test_postgres_gate_recovery_intent_strict_contract_refuses_mutation(
     elif case_name == "server-name-derived-path":
         server_pairs[7] = ("server_cidfile", str(state_dir / f"{server_name}.cid"))
     elif case_name == "client-wrong-record-path":
-        client_pairs[6] = ("record_path", str(tmp_path / "outside.name"))
+        client_pairs[7] = ("record_path", str(tmp_path / "outside.name"))
+    elif case_name == "client-leftover-exchange":
+        leftover_exchange = recovery_root / exchange_basename
+        leftover_exchange.mkdir()
+        leftover_exchange.chmod(0o700)
     server_payload = "\n".join(f"{key}={value}" for key, value in server_pairs) + "\n"
     client_payload = "\n".join(f"{key}={value}" for key, value in client_pairs) + "\n"
     server_intent = recovery_root / f"{proof_label}-server.intent"
@@ -4610,7 +5320,7 @@ def test_postgres_gate_server_mount_verifier_requires_exact_type_source_rw(
     assert result.returncode == expected_rc, (case_name, result.stderr)
 
 
-def test_postgres_gate_recovery_intent_keeps_server_v2_and_client_v1_contracts() -> None:
+def test_postgres_gate_recovery_intent_keeps_server_and_client_v2_contracts() -> None:
     script = _postgres_gate_script_source()
     broker_source, _client_source = _postgres_gate_client_sources()
 
@@ -4620,7 +5330,11 @@ def test_postgres_gate_recovery_intent_keeps_server_v2_and_client_v1_contracts()
     assert "socket_bridge_identity=" in script
     assert "socket_bridge_marker_sha256=" in script
     assert "socket_bridge_mnt_id=" in script
-    assert "intent_version=1" in broker_source
+    assert "schema=acgs-postgres-recovery-intent/client/v2" in broker_source
+    assert "exchange_basename=" in broker_source
+    assert "exchange_identity=" in broker_source
+    assert "exchange_marker_sha256=" in broker_source
+    assert "exchange_mnt_id=" in broker_source
     client_payload = broker_source.split("def write_client_recovery_intent", 1)[1].split(
         "\ndef execute", 1
     )[0]
